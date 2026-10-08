@@ -1130,3 +1130,161 @@ async def test_extraction_cache_disabled_flag_bypasses_lookup() -> None:
     metrics = docs_module.get_extraction_cache_metrics()
     assert metrics["per_tenant"][tenant_id]["misses"] == 1
     assert metrics["per_tenant"][tenant_id]["hits"] == 0
+
+
+# ─────────────────────────── force re-extract (2026-10-08) ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_extraction_force_bypasses_cache_and_sibling_reuse() -> None:
+    """``force=True`` (``POST .../extract?force=true``): neither zero-LLM
+    short-circuit is consulted — the content-hash cache lookup is NOT called
+    and sibling reuse is NOT attempted — so the full extractor path runs and
+    the persisted row is a fresh extraction, never a cache clone.
+
+    Live motivation: after the pv=v3 bump a stale v1 sibling mapping
+    reproduced a partial field set and the result was then cached under v3;
+    every further re-extract served that cache. ``force`` is the lever.
+    """
+    import json as _json
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy import text
+
+    import app.services.sibling_template as sibling_template
+    from app.api import documents as docs_module
+    from app.config import get_settings
+    from app.database import get_session_factory
+
+    os.environ.pop("EVALS_MOCK", None)
+    docs_module._reset_extraction_cache_metrics()
+
+    settings = get_settings()
+    tenant_id = settings.DEFAULT_TENANT_ID
+    content_hash = "f" * 64
+    src_agent_version = (
+        f"router:T12;extractor;pv={docs_module.EXTRACTION_PIPELINE_VERSION}"
+    )
+
+    # A valid cache row exists for these bytes (same tenant, current pv)…
+    src_deal, src_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash=content_hash, filename="source.pdf",
+    )
+    await _seed_extraction_result(
+        doc_id=src_doc, deal_id=src_deal, tenant_id=tenant_id,
+        agent_version=src_agent_version,
+    )
+    # …and the doc being forced shares the hash.
+    new_deal, new_doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash=content_hash, filename="forced.pdf",
+        status="UPLOADED",
+    )
+
+    cache_lookup = AsyncMock(
+        side_effect=AssertionError("force=True must not consult the content-hash cache")
+    )
+    sibling_reuse = AsyncMock(
+        side_effect=AssertionError("force=True must not attempt sibling reuse")
+    )
+
+    async def _fresh(**_kwargs):
+        return (
+            [
+                {
+                    "field_name": "noi_year_1",
+                    "value": 444.0,
+                    "unit": "USD",
+                    "source_page": 1,
+                    "confidence": 0.9,
+                    "raw_text": "fresh",
+                }
+            ],
+            {
+                "overall": 0.9,
+                "by_field": {"noi_year_1": 0.9},
+                "low_confidence_fields": [],
+                "requires_human_review": False,
+            },
+            "router:T12;extractor;forced",
+            "T12",
+        )
+
+    extractor = AsyncMock(side_effect=_fresh)
+    with patch.object(docs_module, "_lookup_extraction_cache", cache_lookup), \
+         patch.object(sibling_template, "try_sibling_reuse", sibling_reuse), \
+         patch.object(docs_module, "_run_graph_extraction", extractor):
+        await docs_module._run_extraction_pipeline(
+            deal_id=new_deal, doc_id=new_doc, tenant_id=tenant_id, force=True,
+        )
+
+    cache_lookup.assert_not_awaited()
+    sibling_reuse.assert_not_awaited()
+    extractor.assert_awaited_once()
+
+    factory = get_session_factory()
+    async with factory() as session:
+        r = (
+            await session.execute(
+                text("SELECT status FROM documents WHERE id = :id"), {"id": new_doc},
+            )
+        ).first()
+        assert r._mapping["status"] == "EXTRACTED"
+        r = (
+            await session.execute(
+                text(
+                    "SELECT agent_version, fields FROM extraction_results "
+                    "WHERE document_id = :id"
+                ),
+                {"id": new_doc},
+            )
+        ).first()
+        assert r is not None
+        av = r._mapping["agent_version"]
+        # The fresh path's own stamp — not the cached row's agent_version.
+        assert av.startswith("router:T12;extractor;forced"), av
+        assert av.endswith(f";pv={docs_module.EXTRACTION_PIPELINE_VERSION}")
+        assert av != src_agent_version
+        fields = r._mapping["fields"]
+        if isinstance(fields, str):
+            fields = _json.loads(fields)
+        assert fields[0]["value"] == 444.0  # fresh, not the cached 999999.0
+
+    metrics = docs_module.get_extraction_cache_metrics()
+    assert metrics["per_tenant"][tenant_id]["hits"] == 0
+    assert metrics["per_tenant"][tenant_id]["misses"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("", False), ("?force=true", True), ("?force=1", True), ("?force=false", False)],
+)
+async def test_extract_route_passes_force_to_the_pipeline(query: str, expected: bool) -> None:
+    """``POST /deals/{deal}/documents/{doc}/extract?force=true`` (also
+    ``force=1``) hands ``force=True`` to the background pipeline; the
+    default and ``force=false`` hand ``False`` (unchanged behaviour)."""
+    from unittest.mock import AsyncMock, patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api import documents as docs_module
+    from app.config import get_settings
+    from app.main import app
+
+    tenant_id = get_settings().DEFAULT_TENANT_ID
+    deal, doc = await _seed_deal_and_document(
+        tenant_id=tenant_id, content_hash="9" * 64, filename="route.pdf",
+        status="UPLOADED",
+    )
+    pipeline = AsyncMock()
+    with patch.object(docs_module, "_run_extraction_pipeline", pipeline):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(f"/deals/{deal}/documents/{doc}/extract{query}")
+    assert r.status_code == 202, r.text
+    assert r.json()["status"] == "extraction_started"
+    pipeline.assert_awaited_once()
+    kwargs = pipeline.await_args.kwargs
+    assert kwargs["doc_id"] == doc and kwargs["deal_id"] == deal
+    assert kwargs["force"] is expected

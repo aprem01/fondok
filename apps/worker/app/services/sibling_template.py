@@ -76,10 +76,25 @@ PERSISTENCE — why a separate ``template_mappings`` table
 The mapping is keyed by ``(tenant_id, fingerprint)`` and must be
 consulted BEFORE any extraction row exists for the new document.
 Storing it on ``extraction_results`` would force a JOIN through
-``documents`` on fingerprint plus JSON filtering on every dispatch, and
-the content-hash cache's pipeline-version bumps (``;pv=vN``) would
-spuriously invalidate mappings whose anchors are still perfectly good.
-A dedicated table gives an O(1) lookup and an independent lifecycle.
+``documents`` on fingerprint plus JSON filtering on every dispatch.
+A dedicated table gives an O(1) lookup.
+
+PIPELINE-VERSION EXPIRY (2026-10-08)
+------------------------------------
+A mapping is learned from ONE pipeline version's LLM extraction and
+reproduces that extraction's field set — including its gaps. When the
+content-hash cache was bumped to ``pv=v3`` (Summary-sheet reconciler +
+plausibility critic) the cache correctly re-ran every P&L, but the
+mapping learned from the v1 extraction of the Angler's 2024 workbook
+was still applied: the sibling path emitted the same partial field set
+(no F&B revenue, no total revenues, no F&B dept expense), the reconciler
+found nothing to replace, and the stale result was then cached under v3.
+So ``mapping_json["pipeline_version"]`` records the
+``EXTRACTION_PIPELINE_VERSION`` the mapping was learned under;
+``try_sibling_reuse`` treats an absent or different value as a MISS, and
+``maybe_learn_mapping`` replaces such a mapping with one learned from the
+current pipeline's extraction. The constant itself is read lazily from
+``api.documents`` (which imports this module) to avoid an import cycle.
 
 Safety posture: template reuse must NEVER be the reason an extraction
 fails — every entry point here is wrapped so that any exception logs
@@ -120,6 +135,15 @@ _SIBLING_CONFIDENCE = 0.95
 _DATE_RE = re.compile(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T]00:00:00)?$")
 # How many labels above the cell make up the column-header anchor.
 _HEADER_K = 3
+
+
+def _current_pipeline_version() -> str:
+    """The running ``EXTRACTION_PIPELINE_VERSION`` (lazy import, see module
+    docstring — ``api.documents`` imports this module). Tests monkeypatch
+    this to learn a mapping "under" an older version."""
+    from ..api.documents import EXTRACTION_PIPELINE_VERSION
+
+    return str(EXTRACTION_PIPELINE_VERSION)
 
 
 # ─────────────────────────── cell helpers ───────────────────────────
@@ -562,9 +586,12 @@ async def maybe_learn_mapping(
     """After a successful LLM extraction, persist a template mapping.
 
     No-op when: the doc has no fingerprint (non-workbook / legacy
-    parse), a mapping already exists for (tenant, fingerprint), or
-    provenance recovery finds fewer than ``MIN_MAPPING_FIELDS`` fields.
-    Best-effort: never raises.
+    parse), a mapping learned under the CURRENT pipeline version already
+    exists for (tenant, fingerprint), or provenance recovery finds fewer
+    than ``MIN_MAPPING_FIELDS`` fields. A mapping learned under an older
+    pipeline version (or with no version recorded) is replaced in place —
+    the table has a unique index on (tenant, fingerprint). Best-effort:
+    never raises.
     """
     from datetime import UTC, datetime
     from uuid import uuid4
@@ -580,18 +607,42 @@ async def maybe_learn_mapping(
         fingerprint = await _fingerprint_for(session, tenant_id, doc_id)
         if not fingerprint:
             return
+        pipeline_version = _current_pipeline_version()
         existing = (
             await session.execute(
                 text(
-                    "SELECT id FROM template_mappings "
+                    "SELECT id, mapping_json FROM template_mappings "
                     "WHERE tenant_id = :tenant AND fingerprint = :fp "
                     "LIMIT 1"
                 ),
                 {"tenant": str(tenant_id), "fp": fingerprint},
             )
         ).first()
+        stale_existing_id: str | None = None
         if existing is not None:
-            return
+            raw_existing = existing._mapping["mapping_json"]
+            existing_mj = (
+                json.loads(raw_existing)
+                if isinstance(raw_existing, str)
+                else (raw_existing or {})
+            )
+            existing_pv = (
+                existing_mj.get("pipeline_version")
+                if isinstance(existing_mj, dict)
+                else None
+            )
+            if existing_pv == pipeline_version:
+                return
+            stale_existing_id = str(existing._mapping["id"])
+            logger.info(
+                "sibling template: mapping for fingerprint=%s was learned "
+                "under pipeline_version=%s (current %s) — relearning from "
+                "doc=%s",
+                fingerprint,
+                existing_pv,
+                pipeline_version,
+                doc_id,
+            )
         entries, stats = learn_mapping(pages, fields)
         if len(entries) < MIN_MAPPING_FIELDS:
             logger.info(
@@ -616,39 +667,61 @@ async def maybe_learn_mapping(
             source_score = None
         mapping_json = {
             "version": MAPPING_VERSION,
+            # The pipeline version this mapping reproduces — see module
+            # docstring, PIPELINE-VERSION EXPIRY.
+            "pipeline_version": pipeline_version,
             "source_doc_id": str(doc_id),
             "source_doc_type": doc_type,
             "source_usali_score": source_score,
             "learn_stats": stats,
             "entries": entries,
         }
-        await session.execute(
-            text(
-                "INSERT INTO template_mappings "
-                "(id, tenant_id, fingerprint, source_doc_id, mapping_json, "
-                " created_at) "
-                "VALUES (:id, :tenant, :fp, :src, :mj, :created)"
-            ),
-            {
-                "id": str(uuid4()),
-                "tenant": str(tenant_id),
-                "fp": fingerprint,
-                "src": str(doc_id),
-                "mj": json.dumps(mapping_json),
-                "created": datetime.now(UTC),
-            },
-        )
+        if stale_existing_id is not None:
+            await session.execute(
+                text(
+                    "UPDATE template_mappings "
+                    "SET source_doc_id = :src, mapping_json = :mj, "
+                    "    created_at = :created "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {
+                    "id": stale_existing_id,
+                    "tenant": str(tenant_id),
+                    "src": str(doc_id),
+                    "mj": json.dumps(mapping_json),
+                    "created": datetime.now(UTC),
+                },
+            )
+        else:
+            await session.execute(
+                text(
+                    "INSERT INTO template_mappings "
+                    "(id, tenant_id, fingerprint, source_doc_id, mapping_json, "
+                    " created_at) "
+                    "VALUES (:id, :tenant, :fp, :src, :mj, :created)"
+                ),
+                {
+                    "id": str(uuid4()),
+                    "tenant": str(tenant_id),
+                    "fp": fingerprint,
+                    "src": str(doc_id),
+                    "mj": json.dumps(mapping_json),
+                    "created": datetime.now(UTC),
+                },
+            )
         await session.commit()
         logger.info(
             "sibling template: learned mapping fingerprint=%s source_doc=%s "
-            "fields=%d (of %d numeric; %d ambiguous dropped) "
-            "source_usali_score=%s",
+            "pipeline_version=%s fields=%d (of %d numeric; %d ambiguous "
+            "dropped) source_usali_score=%s%s",
             fingerprint,
             doc_id,
+            pipeline_version,
             len(entries),
             stats.get("numeric", 0),
             stats.get("ambiguous", 0),
             f"{source_score:.1f}" if source_score is not None else "n/a",
+            " (replaced a stale mapping)" if stale_existing_id else "",
         )
     except Exception:  # noqa: BLE001 — learning must never break extraction
         with contextlib.suppress(Exception):
@@ -715,6 +788,22 @@ async def try_sibling_reuse(
                 fingerprint,
                 mapping_version,
                 MAPPING_VERSION,
+            )
+            return None
+        # A mapping reproduces the field set of the pipeline version it
+        # was learned under; after a pipeline bump it must not pre-empt
+        # the fresh extraction (see module docstring, PIPELINE-VERSION
+        # EXPIRY). Absent == learned before the stamp existed == stale.
+        current_pv = _current_pipeline_version()
+        stored_pv = mapping_json.get("pipeline_version")
+        if stored_pv != current_pv:
+            logger.info(
+                "sibling template MISS: doc=%s fingerprint=%s "
+                "reason=stale_pipeline_version (mapping %s != current %s)",
+                doc_id,
+                fingerprint,
+                stored_pv,
+                current_pv,
             )
             return None
         source_doc_id = mrow._mapping["source_doc_id"]

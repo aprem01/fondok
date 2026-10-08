@@ -14,7 +14,13 @@ tests pin:
   grid (sum-of-months beats the labelled column; labelled column is the
   fallback);
 * the gate: never invoked for OM / STR / market documents, never for a
-  monthly statement, and the ``_apply_pnl_quality_passes`` hook honours it.
+  monthly statement, and the ``_apply_pnl_quality_passes`` hook honours it;
+* the ADD rule (2026-10-08): a Summary-stated total the extraction has no
+  field for at all (the stale-sibling-mapping shape — 435 fields, no F&B /
+  total / rooms revenue) is added at the registry's canonical path with
+  ``reviewed="reconciled"`` and ``reconciled_from={"added": true, …}``, on
+  the real workbook and through the hook; totals already present within 5%
+  are left exactly as extracted.
 """
 
 from __future__ import annotations
@@ -255,6 +261,136 @@ def test_real_workbook_summary_labels_cover_the_usali_lines(real_extraction_data
     assert table.rows["ebitda"].annual > 2_000_000  # row 74, not the "Check" delta row
 
 
+# ─────────────────────────── real workbook: add-missing rule ───────────────────────────
+
+_FB_PATH = "p_and_l_usali.operating_revenue.food_beverage_revenue"
+_ROOMS_PATH = "p_and_l_usali.operating_revenue.rooms_revenue"
+_TOTAL_PATH = "p_and_l_usali.operating_revenue.total_revenue"
+_FB_EXP_PATH = "p_and_l_usali.departmental_expenses.food_beverage"
+
+#: (canonical path, Summary annual value, Summary row, Summary label)
+_OMITTED_TOTALS = (
+    (_FB_PATH, 2_739_040.71, 40, "Food & Beverage"),
+    (_TOTAL_PATH, 13_481_730.29, 43, "Total Revenues"),
+    (_ROOMS_PATH, 9_496_407.22, 39, "Rooms"),
+    (_FB_EXP_PATH, 2_290_364.07, 47, "Food & Beverage"),
+)
+
+
+def _fields_without_totals() -> list[dict[str, Any]]:
+    """The 2026-10-08 live shape: a P&L extraction with NO USALI totals.
+
+    The stale v1 sibling mapping reproduced a partial field set — 435 fields
+    and not one of F&B revenue / total revenues / F&B department expense.
+    """
+    return [
+        {
+            "field_name": "p_and_l_usali.operating_revenue.resort_fees",
+            "value": 250_000.0,
+            "unit": "USD",
+            "source_page": 9,
+            "confidence": 0.8,
+        },
+        {"field_name": "property_overview.keys", "value": 132, "source_page": 1, "confidence": 0.7},
+        {"field_name": "p_and_l_usali.period_type", "value": "annual", "source_page": 5, "confidence": 0.9},
+    ]
+
+
+@requires_real_workbook
+def test_real_workbook_adds_the_totals_the_extraction_omitted(real_extraction_data):
+    """Workbook-bytes path: the omitted totals are ADDED with the exact Summary values."""
+    fields = _fields_without_totals()
+    result = reconcile_extraction(
+        fields,
+        _confidence(fields),
+        doc_type="PNL",
+        extraction_data=real_extraction_data,
+        file_bytes=real_extraction_data["bytes"],
+    )
+    assert result.skipped_reason is None
+    assert result.changes == []  # nothing to replace — the fields did not exist
+    assert result.additions and result.changed is True
+
+    out = _by_name(result.fields)
+    for path, expected, row, label in _OMITTED_TOTALS:
+        f = out[path]
+        assert abs(f["value"] - expected) <= 1, (path, f["value"])
+        assert f["confidence"] == RECONCILED_CONFIDENCE == 0.98
+        assert f["source_page"] == _SUMMARY_PAGE
+        assert f["reviewed"] == "reconciled"
+        assert f["unit"] == "USD"
+        assert f["raw_text"].startswith(f"Summary row {row}: {label}")
+        assert f["reconciled_from"] == {"added": True, "sheet": "Summary", "row": row, "label": label}
+        assert f"'{label}' annual total (row {row})" in f["note"]
+    # The F&B expense came from the Departmental Expense block, not Revenues.
+    assert out[_FB_EXP_PATH]["reconciled_from"]["row"] == 47
+
+    # The original fields come back byte-identical, in their original order.
+    assert result.fields[: len(fields)] == _fields_without_totals()
+    # Every added field is accounted for in ``additions`` and the confidence report.
+    added_names = [a.field_name for a in result.additions]
+    assert [f["field_name"] for f in result.fields[len(fields):]] == added_names
+    assert {_FB_PATH, _TOTAL_PATH, _ROOMS_PATH, _FB_EXP_PATH} <= set(added_names)
+    conf = result.confidence
+    assert conf["by_field"][_FB_PATH] == 0.98
+    assert conf["low_confidence_fields"] == [
+        "p_and_l_usali.operating_revenue.resort_fees",
+        "property_overview.keys",
+    ]
+    rec = conf["summary_reconciliation"]
+    assert rec["changes"] == []
+    assert {a["field_name"] for a in rec["added"]} == set(added_names)
+    fb_added = next(a for a in rec["added"] if a["field_name"] == _FB_PATH)
+    assert fb_added["concept"] == "fb_revenue" and fb_added["row"] == 40
+    assert abs(fb_added["value"] - _SUMMARY_FB_REVENUE) <= 1
+
+
+@requires_real_workbook
+def test_real_workbook_adds_the_omitted_totals_on_the_parser_cache_path(real_extraction_data):
+    """Without the bytes the additions come from the ``%g`` grid — six significant digits."""
+    fields = _fields_without_totals()
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="T12", extraction_data=real_extraction_data
+    )
+    assert result.table is not None and result.table.source == "parser_cache"
+    out = _by_name(result.fields)
+    for path, expected, _row, _label in _OMITTED_TOTALS:
+        assert abs(out[path]["value"] - expected) <= expected * 1e-5, (path, out[path]["value"])
+        assert out[path]["reviewed"] == "reconciled"
+        assert out[path]["reconciled_from"]["added"] is True
+
+
+@requires_real_workbook
+def test_real_workbook_present_totals_within_tolerance_are_left_alone(real_extraction_data):
+    """A field list that already carries the totals within 5% is unchanged:
+    nothing replaced, and none of those concepts is added a second time."""
+    present = [
+        {"field_name": _FB_PATH, "value": 2_700_000.0, "unit": "USD", "source_page": 5, "confidence": 0.9},  # 1.4% off
+        {"field_name": _TOTAL_PATH, "value": 13_400_000.0, "unit": "USD", "source_page": 5, "confidence": 0.9},  # 0.6% off
+        {"field_name": _ROOMS_PATH, "value": 9_496_410.0, "unit": "USD", "source_page": 6, "confidence": 0.5},  # live sibling value
+        {"field_name": _FB_EXP_PATH, "value": 2_290_364.07, "unit": "USD", "source_page": 5, "confidence": 0.9},  # exact
+        {"field_name": "p_and_l_usali.period_type", "value": "annual", "source_page": 5, "confidence": 0.9},
+    ]
+    fields = [dict(f) for f in present]
+    result = reconcile_extraction(
+        fields,
+        _confidence(fields),
+        doc_type="PNL",
+        extraction_data=real_extraction_data,
+        file_bytes=real_extraction_data["bytes"],
+    )
+    assert result.changes == []
+    out = _by_name(result.fields)
+    for f in present:
+        assert out[f["field_name"]] == f
+        assert "reviewed" not in out[f["field_name"]]
+    added = {a.field_name for a in result.additions}
+    assert not added & {_FB_PATH, _TOTAL_PATH, _ROOMS_PATH, _FB_EXP_PATH}
+    assert [f["field_name"] for f in result.fields].count(_FB_PATH) == 1
+    # The Summary's OTHER statement lines (no field for them) are still added.
+    assert "p_and_l_usali.gross_operating_profit" in added
+
+
 # ─────────────────────────── synthetic fixture ───────────────────────────
 
 _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
@@ -443,6 +579,126 @@ def test_monthly_statement_is_never_reconciled():
     assert result.fields == fields
 
 
+# ─────────────────────────── the add-missing rule (synthetic) ───────────────────────────
+
+#: Every statement line of ``_summary_grid()`` → (canonical path, annual value, grid row).
+_SYNTHETIC_SUMMARY_LINES = [
+    ("p_and_l_usali.operating_revenue.rooms_revenue", 1200.0, 4),
+    ("p_and_l_usali.operating_revenue.food_beverage_revenue", 600.0, 5),
+    ("p_and_l_usali.operating_revenue.other_revenue", 120.0, 6),
+    ("p_and_l_usali.operating_revenue.total_revenue", 1920.0, 7),
+    ("p_and_l_usali.departmental_expenses.rooms", 360.0, 9),
+    ("p_and_l_usali.departmental_expenses.food_beverage", 240.0, 10),
+    ("p_and_l_usali.departmental_expenses.total", 600.0, 11),
+    ("p_and_l_usali.gross_operating_profit", 1320.0, 12),
+]
+
+
+def _fields_with_no_usali_totals() -> list[dict[str, Any]]:
+    return [
+        {"field_name": "property_overview.name", "value": "Anglers Boutique Resort", "source_page": 1, "confidence": 0.95},
+        {"field_name": "ttm_summary_per_om.occupancy_pct", "value": 0.83, "source_page": 2, "confidence": 0.9},
+        {"field_name": "p_and_l_usali.period_type", "value": "annual", "source_page": 2, "confidence": 0.9},
+    ]
+
+
+def test_missing_totals_are_added_at_the_registry_canonical_paths_in_sheet_order():
+    fields = _fields_with_no_usali_totals()
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="T12", extraction_data=_extraction(_page(_summary_grid()))
+    )
+    assert result.changes == []
+    assert [(a.field_name, a.value, a.row) for a in result.additions] == _SYNTHETIC_SUMMARY_LINES
+    # Originals first and untouched; additions appended.
+    assert result.fields[:3] == _fields_with_no_usali_totals()
+    assert [f["field_name"] for f in result.fields[3:]] == [p for p, _v, _r in _SYNTHETIC_SUMMARY_LINES]
+
+    fb = _by_name(result.fields)["p_and_l_usali.operating_revenue.food_beverage_revenue"]
+    assert fb == {
+        "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "value": 600.0,
+        "unit": "USD",
+        "source_page": 2,
+        "confidence": 0.98,
+        "raw_text": fb["raw_text"],
+        "reviewed": "reconciled",
+        "reconciled_from": {"added": True, "sheet": "Summary", "row": 5, "label": "Food & Beverage"},
+        "note": fb["note"],
+    }
+    assert fb["raw_text"].startswith("Summary row 5: Food & Beverage")
+    assert "600.00 (annual total)" in fb["raw_text"]
+    assert fb["note"].startswith("Added from the Summary sheet's 'Food & Beverage' annual total (row 5): 600.00")
+
+    conf = result.confidence
+    assert conf["by_field"]["p_and_l_usali.operating_revenue.food_beverage_revenue"] == 0.98
+    assert conf["summary_reconciliation"]["changes"] == []
+    assert conf["summary_reconciliation"]["added"][1] == {
+        "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "concept": "fb_revenue",
+        "value": 600.0,
+        "row": 5,
+        "label": "Food & Beverage",
+    }
+
+
+def test_a_present_concept_is_never_added_twice_whatever_its_unit_or_spelling():
+    """Present = ANY extracted field resolves to the concept: a ``$000`` F&B
+    line (not replaceable) and an alias-spelled rooms line both block the add."""
+    fields = _fields(fb=1.0)
+    fields[0]["unit"] = "$000"
+    fields.append(
+        {"field_name": "p_and_l_usali.revenues.rooms_usd", "value": 1150.0, "unit": "USD", "source_page": 7, "confidence": 0.9}
+    )
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="PNL", extraction_data=_extraction(_page(_summary_grid()))
+    )
+    assert result.changes == []
+    names = [f["field_name"] for f in result.fields]
+    assert names.count("p_and_l_usali.operating_revenue.food_beverage_revenue") == 1
+    assert "p_and_l_usali.operating_revenue.rooms_revenue" not in names
+    assert "p_and_l_usali.revenues.rooms_usd" in names
+    assert {a.concept for a in result.additions} == {
+        "other_revenue", "total_revenue", "rooms_dept_expense", "fb_dept_expense", "dept_expenses", "gop",
+    }
+
+
+def test_replace_and_add_rules_compose_in_one_pass():
+    """Present-but-wrong F&B is REPLACED; the absent total is ADDED."""
+    fields = _fields(fb=100.0, rooms=1200.0)
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="PNL", extraction_data=_extraction(_page(_summary_grid()))
+    )
+    assert [c.field_name for c in result.changes] == ["p_and_l_usali.operating_revenue.food_beverage_revenue"]
+    out = _by_name(result.fields)
+    assert out["p_and_l_usali.operating_revenue.food_beverage_revenue"]["value"] == 600.0
+    assert out["p_and_l_usali.operating_revenue.food_beverage_revenue"]["reconciled_from"]["old_value"] == 100.0
+    assert out["p_and_l_usali.operating_revenue.rooms_revenue"]["value"] == 1200.0  # within 5% → untouched
+    assert "reviewed" not in out["p_and_l_usali.operating_revenue.rooms_revenue"]
+    total = out["p_and_l_usali.operating_revenue.total_revenue"]
+    assert total["value"] == 1920.0 and total["reconciled_from"]["added"] is True
+    rec = result.confidence["summary_reconciliation"]
+    assert len(rec["changes"]) == 1 and {a["concept"] for a in rec["added"]} >= {"total_revenue", "gop"}
+
+
+@pytest.mark.parametrize("doc_type", ["PNL", "T12", "PNL_YTD", "PNL_MONTHLY"])
+def test_every_reconcilable_concept_has_a_canonical_path_that_resolves_back(doc_type: str):
+    from app.extraction.usali_summary_reconcile import (
+        RECONCILABLE_CONCEPTS,
+        _field_concept,
+        canonical_path_for_concept,
+    )
+
+    for concept in sorted(RECONCILABLE_CONCEPTS):
+        path = canonical_path_for_concept(concept, doc_type)
+        assert path and path.startswith("p_and_l_usali."), concept
+        assert _field_concept(path, doc_type) == concept, (concept, path)
+    assert canonical_path_for_concept("fb_revenue", doc_type) == _FB_PATH
+    assert canonical_path_for_concept("rooms_revenue", doc_type) == _ROOMS_PATH
+    assert canonical_path_for_concept("total_revenue", doc_type) == _TOTAL_PATH
+    assert canonical_path_for_concept("fb_dept_expense", doc_type) == _FB_EXP_PATH
+    assert canonical_path_for_concept("not_a_concept", doc_type) is None
+
+
 # ─────────────────────────── the gate ───────────────────────────
 
 
@@ -516,6 +772,78 @@ async def test_quality_passes_hook_reconciles_a_pnl_document():
     assert fb["value"] == 600.0 and fb["reviewed"] == "reconciled"
     assert out_conf["by_field"]["p_and_l_usali.operating_revenue.food_beverage_revenue"] == 0.98
     assert out_conf["summary_reconciliation"]["changes"][0]["old_value"] == 100.0
+
+
+@pytest.mark.parametrize("doc_type", ["T12", "PNL", "pnl-ytd"])
+async def test_quality_passes_hook_adds_the_totals_a_partial_extraction_lacks(doc_type: str):
+    """Hook coverage (2026-10-08): a P&L-family document whose extraction —
+    whatever path produced it (LLM, template, or a stale sibling mapping) —
+    carries none of the USALI totals, with a Summary sheet in the parsed
+    workbook → after ``_apply_pnl_quality_passes`` the totals exist with
+    ``reviewed = "reconciled"`` and the confidence report follows."""
+    from app.api import documents as docs
+
+    fields = _fields_with_no_usali_totals()
+    pages = _extraction(
+        _page([["D_REST_CON", "400000", "36834.6"]], sheet_name="D_REST_CON", page_num=1),
+        _page(_summary_grid(), page_num=4),
+    )
+    out_fields, out_conf = await docs._apply_pnl_quality_passes(
+        None,  # no session → plausibility critic is skipped; reconciler still runs
+        deal_id="deal",
+        doc_id="doc",
+        tenant_id="tenant",
+        doc_type=doc_type,
+        fields=fields,
+        confidence=_confidence(fields),
+        extraction_data=pages,
+        storage_key=None,
+    )
+    assert out_fields is not fields  # the hook returned the reconciled list
+    out = _by_name(out_fields)
+    for path, value, row in _SYNTHETIC_SUMMARY_LINES:
+        f = out[path]
+        assert f["value"] == value, path
+        assert f["reviewed"] == "reconciled"
+        assert f["source_page"] == 4
+        assert f["confidence"] == 0.98
+        assert f["reconciled_from"] == {"added": True, "sheet": "Summary", "row": row, "label": f["reconciled_from"]["label"]}
+        assert out_conf["by_field"][path] == 0.98
+    # The partial extraction's own fields are untouched.
+    for f in _fields_with_no_usali_totals():
+        assert out[f["field_name"]] == f
+    rec = out_conf["summary_reconciliation"]
+    assert rec["changes"] == [] and rec["page"] == 4
+    assert [a["field_name"] for a in rec["added"]] == [p for p, _v, _r in _SYNTHETIC_SUMMARY_LINES]
+
+
+async def test_quality_passes_hook_leaves_a_complete_extraction_alone():
+    """A P&L whose totals already agree with the Summary (within 5%) is
+    returned with those fields byte-identical — no replace, no re-add."""
+    from app.api import documents as docs
+
+    fields = _fields(fb=600.0, rooms=1200.0, total=1920.0, fb_exp=240.0, rooms_exp=360.0)
+    out_fields, out_conf = await docs._apply_pnl_quality_passes(
+        None,
+        deal_id="deal",
+        doc_id="doc",
+        tenant_id="tenant",
+        doc_type="PNL",
+        fields=fields,
+        confidence=_confidence(fields),
+        extraction_data=_extraction(_page(_summary_grid())),
+        storage_key=None,
+    )
+    out = _by_name(out_fields)
+    for f in fields:
+        assert out[f["field_name"]] == f
+    names = [f["field_name"] for f in out_fields]
+    assert len(names) == len(set(names)), "no field may be emitted twice"
+    assert out_conf["summary_reconciliation"]["changes"] == []
+    # Only the Summary lines with no field at all (other revenue, dept total, GOP) were added.
+    assert {a["concept"] for a in out_conf["summary_reconciliation"]["added"]} == {
+        "other_revenue", "dept_expenses", "gop",
+    }
 
 
 def test_pipeline_version_bumped_so_v2_rows_rerun():

@@ -12,6 +12,10 @@ Covers, per the task quality gate:
 * coverage below 70% falls back
 * USALI identity-check failure falls back
 * flag-off passthrough (dispatch never consults the mapping)
+* pipeline-version expiry (2026-10-08): a mapping records the
+  ``EXTRACTION_PIPELINE_VERSION`` it was learned under; an older or absent
+  version is a MISS, the same version a HIT, and a fresh extraction under
+  the current version replaces the stale mapping in place
 """
 
 from __future__ import annotations
@@ -514,6 +518,9 @@ async def test_learn_persists_and_sibling_reuses(db_env) -> None:
         mapping_json = json.loads(row._mapping["mapping_json"])
         assert mapping_json["source_doc_id"] == src_doc
         assert len(mapping_json["entries"]) >= 7
+        # Learned under the running pipeline version — the HIT below is
+        # the "same version is accepted" case.
+        assert mapping_json["pipeline_version"] == docs_module.EXTRACTION_PIPELINE_VERSION
 
         sib_doc = await _seed_doc(
             session,
@@ -599,6 +606,227 @@ async def test_sibling_reuse_falls_back_on_low_coverage(db_env) -> None:
             )
             is None
         )
+
+
+# ─────────────────────────── pipeline-version expiry ───────────────────────────
+#
+# 2026-10-08: the content-hash cache was bumped to pv=v3 but the sibling
+# mapping learned from the v1 extraction of the Angler's 2024 workbook was
+# still applied, reproducing the v1 field set (no F&B / total revenue) and
+# then getting cached under v3. Each test below uses its OWN fingerprint so
+# the module's shared SQLite file cannot leak a mapping between tests.
+
+
+def _unique_fp() -> str:
+    return f"tplv1:test-{uuid4().hex}"
+
+
+async def _learn_under(
+    session, *, tenant_id: str, doc_id: str, pipeline_version: str | None, monkeypatch
+) -> None:
+    """``maybe_learn_mapping`` with ``_current_pipeline_version`` pinned."""
+    import app.services.sibling_template as st
+
+    with monkeypatch.context() as m:
+        if pipeline_version is not None:
+            m.setattr(st, "_current_pipeline_version", lambda: pipeline_version)
+        await st.maybe_learn_mapping(
+            session,
+            tenant_id=tenant_id,
+            doc_id=doc_id,
+            doc_type="T12",
+            fields=_extraction_fields(),
+            extraction_data={"pages": [_page(_pnl_grid())]},
+        )
+
+
+async def _mapping_rows(session, *, tenant_id: str, fp: str) -> list[dict[str, Any]]:
+    from sqlalchemy import text
+
+    rows = (
+        await session.execute(
+            text(
+                "SELECT id, source_doc_id, mapping_json FROM template_mappings "
+                "WHERE tenant_id = :t AND fingerprint = :fp"
+            ),
+            {"t": tenant_id, "fp": fp},
+        )
+    ).all()
+    out = []
+    for r in rows:
+        m = dict(r._mapping)
+        m["mapping_json"] = json.loads(m["mapping_json"])
+        out.append(m)
+    return out
+
+
+async def test_mapping_learned_under_an_older_pipeline_version_is_a_miss(
+    db_env, monkeypatch, caplog
+) -> None:
+    """A mapping learned under "v2" must not be applied under the running
+    version (the live 2026-10-08 failure), and the MISS is logged."""
+    import logging
+
+    from app.services.sibling_template import try_sibling_reuse
+
+    factory, tenant_id, deal_id = db_env
+    fp = _unique_fp()
+    async with factory() as session:
+        src_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await _learn_under(
+            session, tenant_id=tenant_id, doc_id=src_doc, pipeline_version="v2",
+            monkeypatch=monkeypatch,
+        )
+        rows = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        assert len(rows) == 1 and rows[0]["mapping_json"]["pipeline_version"] == "v2"
+        assert docs_module.EXTRACTION_PIPELINE_VERSION != "v2"
+
+        sib_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_sibling_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        with caplog.at_level(logging.INFO, logger="app.services.sibling_template"):
+            hit = await try_sibling_reuse(
+                session, tenant_id=tenant_id, doc_id=sib_doc,
+                extraction_data={"pages": [_page(_sibling_grid())]},
+            )
+    assert hit is None, "a mapping from an older pipeline version must be a MISS"
+    assert "reason=stale_pipeline_version" in caplog.text
+    assert f"mapping v2 != current {docs_module.EXTRACTION_PIPELINE_VERSION}" in caplog.text
+
+
+async def test_mapping_without_a_pipeline_version_is_a_miss(db_env) -> None:
+    """Rows written before the stamp existed carry no version → MISS."""
+    from sqlalchemy import text
+
+    from app.services.sibling_template import maybe_learn_mapping, try_sibling_reuse
+
+    factory, tenant_id, deal_id = db_env
+    fp = _unique_fp()
+    async with factory() as session:
+        src_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await maybe_learn_mapping(
+            session, tenant_id=tenant_id, doc_id=src_doc, doc_type="T12",
+            fields=_extraction_fields(), extraction_data={"pages": [_page(_pnl_grid())]},
+        )
+        (row,) = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        legacy = dict(row["mapping_json"])
+        legacy.pop("pipeline_version")
+        await session.execute(
+            text("UPDATE template_mappings SET mapping_json = :mj WHERE id = :id AND tenant_id = :t"),
+            {"mj": json.dumps(legacy), "id": row["id"], "t": tenant_id},
+        )
+        await session.commit()
+
+        sib_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_sibling_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        assert (
+            await try_sibling_reuse(
+                session, tenant_id=tenant_id, doc_id=sib_doc,
+                extraction_data={"pages": [_page(_sibling_grid())]},
+            )
+            is None
+        )
+
+
+async def test_mapping_under_the_same_pipeline_version_is_accepted(db_env) -> None:
+    from app.services.sibling_template import maybe_learn_mapping, try_sibling_reuse
+
+    factory, tenant_id, deal_id = db_env
+    fp = _unique_fp()
+    async with factory() as session:
+        src_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await maybe_learn_mapping(
+            session, tenant_id=tenant_id, doc_id=src_doc, doc_type="T12",
+            fields=_extraction_fields(), extraction_data={"pages": [_page(_pnl_grid())]},
+        )
+        (row,) = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        assert row["mapping_json"]["pipeline_version"] == docs_module.EXTRACTION_PIPELINE_VERSION
+        sib_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_sibling_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        hit = await try_sibling_reuse(
+            session, tenant_id=tenant_id, doc_id=sib_doc,
+            extraction_data={"pages": [_page(_sibling_grid())]},
+        )
+    assert hit is not None
+    got = {f["field_name"]: f["value"] for f in hit[0]}
+    assert got["p_and_l_usali.revenues.total_revenues_usd"] == 588000
+
+
+async def test_stale_mapping_is_relearned_in_place_under_the_current_version(
+    db_env, monkeypatch
+) -> None:
+    """Expiry must not leave the fingerprint dead: a fresh extraction under
+    the current version REPLACES the stale row (unique index on
+    (tenant, fingerprint) — one row, new source, new version) and siblings
+    HIT again. A mapping already at the current version is left alone."""
+    from app.services.sibling_template import try_sibling_reuse
+
+    factory, tenant_id, deal_id = db_env
+    fp = _unique_fp()
+    async with factory() as session:
+        old_src = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await _learn_under(
+            session, tenant_id=tenant_id, doc_id=old_src, pipeline_version="v2",
+            monkeypatch=monkeypatch,
+        )
+        (stale,) = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        assert stale["mapping_json"]["pipeline_version"] == "v2"
+
+        new_src = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await _learn_under(
+            session, tenant_id=tenant_id, doc_id=new_src, pipeline_version=None,
+            monkeypatch=monkeypatch,
+        )
+        rows = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        assert len(rows) == 1, "the stale row is replaced, not duplicated"
+        (fresh,) = rows
+        assert fresh["id"] == stale["id"]
+        assert str(fresh["source_doc_id"]) == new_src
+        assert fresh["mapping_json"]["pipeline_version"] == docs_module.EXTRACTION_PIPELINE_VERSION
+        assert fresh["mapping_json"]["source_doc_id"] == new_src
+
+        # Idempotent at the current version: a third extraction does not rewrite it.
+        third_src = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_pnl_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        await _learn_under(
+            session, tenant_id=tenant_id, doc_id=third_src, pipeline_version=None,
+            monkeypatch=monkeypatch,
+        )
+        (unchanged,) = await _mapping_rows(session, tenant_id=tenant_id, fp=fp)
+        assert str(unchanged["source_doc_id"]) == new_src
+
+        sib_doc = await _seed_doc(
+            session, tenant_id=tenant_id, deal_id=deal_id, grid=_sibling_grid(),
+            fingerprint=fp, content_hash=uuid4().hex * 2,
+        )
+        hit = await try_sibling_reuse(
+            session, tenant_id=tenant_id, doc_id=sib_doc,
+            extraction_data={"pages": [_page(_sibling_grid())]},
+        )
+    assert hit is not None, "siblings HIT again once the mapping is relearned"
+    assert hit[2] == "T12"
 
 
 async def test_dispatch_flag_off_passthrough_and_flag_on_hit(

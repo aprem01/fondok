@@ -1732,10 +1732,16 @@ export const api = {
         `/deals/${dealId}/documents/${docId}/accept_year`,
         { use_ai_year: useAi },
       ),
-    extract: (dealId: string, docId: string) =>
+    /** Kick off (re-)extraction. `force` bypasses the worker's content-hash
+     *  extraction cache AND sibling-template reuse for this run, so the
+     *  document goes through the full router/template/LLM path (then the
+     *  Summary reconciler and critic as normal). Default: unchanged. */
+    extract: (dealId: string, docId: string, opts?: { force?: boolean }) =>
       request<ExtractionStartResponse>(
         'POST',
-        `/deals/${dealId}/documents/${docId}/extract`,
+        `/deals/${dealId}/documents/${docId}/extract${
+          opts?.force ? '?force=true' : ''
+        }`,
       ),
     /** Re-run parse + extract for a FAILED or PARSE_FAILED document.
      *  Pulls bytes back from storage on the worker; user doesn't re-upload. */

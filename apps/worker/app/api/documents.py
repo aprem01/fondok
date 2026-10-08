@@ -42,6 +42,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -5011,12 +5012,29 @@ async def extract_document(
     doc_id: UUID,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    force: Annotated[
+        bool,
+        Query(
+            description=(
+                "Bypass the content-hash extraction cache AND sibling-template "
+                "reuse for this run so the document goes through the full "
+                "router/template/LLM path (then the reconciler and critic as "
+                "normal). Accepts true/1. Default false: unchanged behaviour."
+            ),
+        ),
+    ] = False,
 ) -> ExtractionStartResponse:
     """Kick off the extraction pipeline for a single document.
 
     The route returns immediately with a job id. The actual work runs
     in a FastAPI ``BackgroundTask`` that drives the LangGraph runtime
     up to (but not through) the first HITL gate.
+
+    ``?force=true`` (also ``force=1``) is the operator's lever after a
+    pipeline bump when a prior row or a learned sibling mapping would
+    otherwise short-circuit the extraction (2026-10-08: a stale v1 sibling
+    mapping reproduced a partial field set under v3 and the result was then
+    cached). The resulting row is a fresh extraction, never a cache clone.
     """
     row = (
         await session.execute(
@@ -5049,11 +5067,20 @@ async def extract_document(
     await session.commit()
 
     job_id = uuid4()
+    logger.info(
+        "extraction_started: doc=%s deal=%s tenant=%s job=%s force=%s",
+        doc_id,
+        deal_id,
+        tenant_id,
+        job_id,
+        force,
+    )
     background_tasks.add_task(
         _run_extraction_pipeline,
         deal_id=str(deal_id),
         doc_id=str(doc_id),
         tenant_id=tenant_id,
+        force=force,
     )
     return ExtractionStartResponse(
         document_id=doc_id,
@@ -5462,13 +5489,15 @@ async def review_extraction_field(
 
 
 async def _run_extraction_pipeline(
-    *, deal_id: str, doc_id: str, tenant_id: str
+    *, deal_id: str, doc_id: str, tenant_id: str, force: bool = False
 ) -> None:
     """Drive the LangGraph runtime end-to-end up to the first HITL gate.
 
     On any failure the document row is marked ``FAILED`` and the error
     is logged. ``EVALS_MOCK=true`` short-circuits the agents so CI can
-    exercise the wiring without spending tokens.
+    exercise the wiring without spending tokens. ``force=True`` (the
+    ``POST .../extract?force=true`` lever) skips the content-hash cache
+    lookup and sibling-template reuse for this run only.
 
     Wave 4 reliability fix (Bug #2): every entrypoint into the LLM
     extraction fan-out passes through ``acquire_extractor_slot()`` so
@@ -5482,7 +5511,7 @@ async def _run_extraction_pipeline(
 
     async with acquire_extractor_slot():
         await _run_extraction_pipeline_inner(
-            deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id,
+            deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id, force=force,
         )
 
 
@@ -5505,16 +5534,29 @@ def _sibling_reuse_allowed(doc_type: str | None) -> bool:
 
 
 async def _run_extraction_pipeline_inner(
-    *, deal_id: str, doc_id: str, tenant_id: str
+    *, deal_id: str, doc_id: str, tenant_id: str, force: bool = False
 ) -> None:
     """Inner body of ``_run_extraction_pipeline`` after the process-wide
     extractor-slot semaphore has been acquired. Split out so the slot
     wrapper stays tiny + so tests can exercise the cap by patching
     the wrapper without re-implementing the LangGraph driver.
+
+    ``force`` bypasses BOTH zero-LLM short-circuits — the content-hash
+    cache and sibling-template reuse — so the run takes the full
+    router/template/LLM path; the quality passes and persistence below
+    are unchanged, and the row's ``agent_version`` is whatever that path
+    produced (never a cache clone).
     """
     factory = get_session_factory()
     async with factory() as session:
         try:
+            if force:
+                logger.info(
+                    "extraction FORCE: doc=%s deal=%s — bypassing the "
+                    "content-hash cache and sibling-template reuse for this run",
+                    doc_id,
+                    deal_id,
+                )
             await session.execute(
                 # tenant_id predicate keeps tenant_middleware / Sentry quiet
                 # — see apps/worker/app/tenant_middleware.py.
@@ -5590,7 +5632,7 @@ async def _run_extraction_pipeline_inner(
             # tenant A can never satisfy the lookup from tenant B.
             settings = get_settings()
             cached: dict[str, Any] | None = None
-            if settings.EXTRACTION_CACHE_ENABLED and content_hash:
+            if settings.EXTRACTION_CACHE_ENABLED and content_hash and not force:
                 cached = await _lookup_extraction_cache(
                     session,
                     tenant_id=tenant_id,
@@ -5675,11 +5717,12 @@ async def _run_extraction_pipeline_inner(
                 # or exception returns None and we fall through to the
                 # normal LLM chain. Zero LLM cost on a HIT — and zero
                 # schema drift, because the sibling reuses the source
-                # doc's exact field names.
+                # doc's exact field names. ``force`` skips the attempt
+                # entirely (see ``_run_extraction_pipeline_inner``).
                 sibling_hit = None
                 if settings.SIBLING_TEMPLATE_REUSE_ENABLED and _sibling_reuse_allowed(
                     user_provided_doc_type
-                ):
+                ) and not force:
                     from ..services.sibling_template import (
                         SIBLING_AGENT_VERSION_BASE,
                         try_sibling_reuse,
@@ -7937,7 +7980,10 @@ async def _apply_pnl_quality_passes(
        labels, every canonical USALI total the extractor emitted that
        differs from the Summary's annual value by more than 5% is
        replaced with the Summary value (confidence 0.98, ``reviewed =
-       "reconciled"``, ``reconciled_from`` provenance). The original
+       "reconciled"``, ``reconciled_from`` provenance), and every Summary-
+       stated total the extraction has NO field for (any path — LLM,
+       template or sibling) is ADDED at its canonical registry path with
+       ``reconciled_from = {"added": true, …}``. The original
        workbook bytes are fetched from the raw store for full-precision
        cell values; on any storage failure the cached grid is used.
     2. **Statement plausibility** (``agents/critic``): F&B / Rooms / Total
@@ -7982,19 +8028,23 @@ async def _apply_pnl_quality_passes(
             extraction_data=extraction_data,
             file_bytes=file_bytes,
         )
-        if result.changes:
+        if result.changed:
             fields, confidence = result.fields, result.confidence
             logger.info(
-                "summary reconcile: doc=%s deal=%s replaced %d USALI total(s) from "
-                "sheet %r (page %s): %s",
+                "summary reconcile: doc=%s deal=%s replaced %d and added %d USALI "
+                "total(s) from sheet %r (page %s): %s",
                 doc_id,
                 deal_id,
                 len(result.changes),
+                len(result.additions),
                 result.table.sheet_name if result.table else None,
                 result.table.page_index if result.table else None,
                 ", ".join(
-                    f"{c.field_name} {c.old_value:,.0f}→{c.new_value:,.0f}"
-                    for c in result.changes
+                    [
+                        f"{c.field_name} {c.old_value:,.0f}→{c.new_value:,.0f}"
+                        for c in result.changes
+                    ]
+                    + [f"+{a.field_name}={a.value:,.0f}" for a in result.additions]
                 ),
             )
     except Exception as exc:  # never block extraction

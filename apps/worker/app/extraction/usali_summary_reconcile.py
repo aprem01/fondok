@@ -14,6 +14,23 @@ canonical USALI total the extractor emitted, replaces an extracted value
 that differs from the Summary by more than 5%. Everything here is pure
 Python over the parsed grid (or the workbook bytes when available); no LLM.
 
+Adding totals the extraction omitted (2026-10-08)
+-------------------------------------------------
+Re-extracting the same workbook under pipeline v3 went through a stale
+sibling cell-mapping (learned from the v1 extraction) and reproduced its
+partial field set: 435 fields with NO ``food_beverage_revenue``, NO
+``total_revenue`` and NO ``departmental_expenses.food_beverage`` at all.
+A reconciler that only replaces had nothing to replace, and the
+plausibility critic had no F&B line to judge. So for every canonical total
+the Summary sheet states whose concept has NO extracted field, the
+reconciler now ADDS a field at the registry's canonical path for that
+concept (``p_and_l_usali.operating_revenue.food_beverage_revenue``,
+``.rooms_revenue``, ``.total_revenue``,
+``p_and_l_usali.departmental_expenses.food_beverage``, …) with the Summary
+annual value, confidence 0.98, ``reviewed="reconciled"`` and
+``reconciled_from={"added": True, sheet, row, label}``. The replace rule
+for present-but-different fields is unchanged.
+
 Scope rules
 -----------
 * Runs only for P&L-family documents (``T12`` / ``PNL`` / ``PNL_MONTHLY`` /
@@ -21,9 +38,12 @@ Scope rules
   on doc type and :func:`reconcile_extraction` re-checks it.
 * Needs a sheet named ``Summary`` (case-insensitive; also ``P&L Summary``,
   ``Summary P&L``, ``USALI Summary``) whose rows carry USALI labels.
-* Only fields the Summary STATES are touched. A field whose concept has no
-  Summary row, a non-dollar field, a monthly / quarterly slice, or a field
-  whose value is within 5% of the Summary is left exactly as extracted.
+* Only concepts the Summary STATES are touched. A field whose concept has
+  no Summary row, a non-dollar field, a monthly / quarterly slice, or a
+  field whose value is within 5% of the Summary is left exactly as
+  extracted. A concept is "present" when ANY extracted field resolves to
+  it (whatever its unit or value), so an added field can never duplicate
+  an extracted one.
 * The annual column is the rightmost numeric column that equals the sum of
   the 12 monthly columns within 0.5% on the USALI rows; failing that, the
   column labelled ``Total`` / ``YTD`` / ``Annual`` (``YTD`` only when the
@@ -52,6 +72,10 @@ A replaced field keeps its ``field_name`` and ``unit`` and gets:
 * ``reconciled_from`` — ``{field_name, old_value, sheet, row, label,
   old_source_page, old_raw_text}`` so the analyst can see what the LLM read
 * ``note``         — one sentence saying the same in plain language
+
+An ADDED field carries the same ``value`` / ``confidence`` / ``raw_text`` /
+``source_page`` / ``reviewed`` / ``note`` keys, ``unit = "USD"``, and
+``reconciled_from = {"added": True, "sheet", "row", "label"}``.
 
 Those extra keys (``reconciled_from`` / ``note`` / ``reviewed``) are also
 what keeps the field out of the strict ``fondok_schemas.ExtractionField``
@@ -362,17 +386,31 @@ class ReconciledChange:
     label: str
 
 
+@dataclass(frozen=True)
+class ReconciledAddition:
+    """A Summary-stated total the extraction had no field for."""
+
+    field_name: str
+    concept: str
+    value: float
+    sheet: str
+    row: int
+    label: str
+
+
 @dataclass
 class ReconcileResult:
     fields: list[dict[str, Any]]
     confidence: dict[str, Any]
     changes: list[ReconciledChange] = field(default_factory=list)
+    additions: list[ReconciledAddition] = field(default_factory=list)
     table: SummaryTable | None = None
     skipped_reason: str | None = None
 
     @property
     def changed(self) -> bool:
-        return bool(self.changes)
+        """True when any field was replaced OR added."""
+        return bool(self.changes or self.additions)
 
 
 # ─────────────────────────── sheet discovery ───────────────────────────
@@ -656,6 +694,55 @@ def _field_concept(field_name: str, doc_type: str | None) -> str | None:
     return concept
 
 
+def _present_concept(field_name: Any, doc_type: str | None) -> str | None:
+    """The reconcilable concept an extracted field OCCUPIES, if any.
+
+    Looser than :func:`_field_concept` on purpose: unit and value are
+    ignored, so a ``$000`` or null-valued ``food_beverage_revenue`` still
+    counts as present and the add rule never emits a second field for the
+    same annual concept.
+    """
+    if not isinstance(field_name, str) or not field_name:
+        return None
+    try:
+        return _field_concept(field_name, doc_type)
+    except Exception:  # registry lookups are additive; never block the pass
+        return None
+
+
+def canonical_path_for_concept(concept: str, doc_type: str | None) -> str | None:
+    """The registry's canonical P&L-family path for ``concept``.
+
+    The first plain (non-pattern) alias listed for the document type — or
+    its family (``PNL_FAMILY``) — is the canonical spelling the extractor
+    schema and every downstream reader agree on, e.g. ``fb_revenue`` →
+    ``p_and_l_usali.operating_revenue.food_beverage_revenue``. The path is
+    round-tripped through :func:`_field_concept` so an added field is
+    guaranteed to resolve to the same annual-actual concept the replace
+    rule, the plausibility critic and the engines read. ``None`` when the
+    registry has no such alias (nothing is added for that concept).
+    """
+    from ..ontology import registry as ontology
+
+    reg = ontology.get_registry()
+    meta = reg.concepts.get(concept)
+    if meta is None:
+        return None
+    dt = canonical_doc_type(doc_type) or "PNL"
+    for key in reg.alias_keys_for(dt):
+        for alias in meta.aliases.get(key) or ():
+            path = alias.path
+            if not path or "{" in path or "*" in path:
+                continue
+            if alias.basis not in (None, "actual"):
+                continue
+            if alias.scope not in (None, "annual", "ttm", "unknown"):
+                continue
+            if _field_concept(path, dt) == concept:
+                return path
+    return None
+
+
 def _is_whole_dollar(unit: Any) -> bool:
     if unit is None:
         return True
@@ -684,16 +771,22 @@ def reconcile_fields(
     *,
     doc_type: str | None,
 ) -> ReconcileResult:
-    """Replace extracted USALI totals that disagree with ``table`` by > 5%."""
+    """Replace extracted USALI totals that disagree with ``table`` by > 5%,
+    and add the Summary-stated totals the extraction has no field for."""
     dt = canonical_doc_type(doc_type) or None
     out_fields: list[dict[str, Any]] = []
     changes: list[ReconciledChange] = []
+    additions: list[ReconciledAddition] = []
+    present_concepts: set[str] = set()
     for f in fields:
         if not isinstance(f, Mapping):
             continue
         fd = dict(f)
         name = fd.get("field_name")
         value = fd.get("value")
+        occupied = _present_concept(name, dt)
+        if occupied:
+            present_concepts.add(occupied)
         if (
             not isinstance(name, str)
             or not name
@@ -703,7 +796,7 @@ def reconcile_fields(
         ):
             out_fields.append(fd)
             continue
-        concept = _field_concept(name, dt)
+        concept = occupied
         row = table.rows.get(concept) if concept else None
         if row is None:
             out_fields.append(fd)
@@ -747,8 +840,55 @@ def reconcile_fields(
             )
         )
 
+    # ── Add the Summary-stated totals the extraction omitted ──────────
+    # Iterate the Summary in sheet order so the added fields read like the
+    # statement. Only concepts with NO extracted field (any unit / value /
+    # spelling) are added, at the registry's canonical path. Without a
+    # doc type the registry cannot say which concepts are present, so
+    # nothing is added (a duplicate would be worse than a gap).
+    summary_rows = sorted(table.rows.items(), key=lambda kv: kv[1].row) if dt else []
+    for concept, row in summary_rows:
+        if concept in present_concepts:
+            continue
+        path = canonical_path_for_concept(concept, dt)
+        if path is None:
+            continue
+        present_concepts.add(concept)
+        out_fields.append(
+            {
+                "field_name": path,
+                "value": row.annual,
+                "unit": "USD",
+                "source_page": table.page_index,
+                "confidence": RECONCILED_CONFIDENCE,
+                "raw_text": row.text,
+                "reviewed": "reconciled",
+                "reconciled_from": {
+                    "added": True,
+                    "sheet": table.sheet_name,
+                    "row": row.row,
+                    "label": row.label,
+                },
+                "note": (
+                    f"Added from the {table.sheet_name} sheet's '{row.label}' annual total "
+                    f"(row {row.row}): {row.annual:,.2f}. The extraction had no field for "
+                    "this USALI total."
+                ),
+            }
+        )
+        additions.append(
+            ReconciledAddition(
+                field_name=path,
+                concept=concept,
+                value=row.annual,
+                sheet=table.sheet_name,
+                row=row.row,
+                label=row.label,
+            )
+        )
+
     conf = dict(confidence or {})
-    if changes:
+    if changes or additions:
         conf = _refresh_confidence(conf, out_fields)
         conf["summary_reconciliation"] = {
             "sheet": table.sheet_name,
@@ -766,8 +906,20 @@ def reconcile_fields(
                 }
                 for c in changes
             ],
+            "added": [
+                {
+                    "field_name": a.field_name,
+                    "concept": a.concept,
+                    "value": a.value,
+                    "row": a.row,
+                    "label": a.label,
+                }
+                for a in additions
+            ],
         }
-    return ReconcileResult(fields=out_fields, confidence=conf, changes=changes, table=table)
+    return ReconcileResult(
+        fields=out_fields, confidence=conf, changes=changes, additions=additions, table=table
+    )
 
 
 def _doc_period_basis(fields: Sequence[Mapping[str, Any]], doc_type: str | None) -> str:
@@ -856,6 +1008,16 @@ def reconcile_extraction(
             len(result.changes),
             ", ".join(f"{c.field_name} {c.old_value:,.2f}→{c.new_value:,.2f}" for c in result.changes),
         )
+    if result.additions:
+        logger.info(
+            "summary reconcile: sheet=%s page=%s rule=%s source=%s added %d omitted total(s): %s",
+            table.sheet_name,
+            table.page_index,
+            table.annual_column_rule,
+            table.source,
+            len(result.additions),
+            ", ".join(f"{a.field_name}={a.value:,.2f}" for a in result.additions),
+        )
     return result
 
 
@@ -867,10 +1029,12 @@ __all__ = [
     "RECONCILE_TOLERANCE",
     "SUMMARY_SHEET_NAMES",
     "ReconcileResult",
+    "ReconciledAddition",
     "ReconciledChange",
     "SummaryRow",
     "SummaryTable",
     "canonical_doc_type",
+    "canonical_path_for_concept",
     "find_summary_page",
     "is_pnl_family",
     "parse_summary_grid",
