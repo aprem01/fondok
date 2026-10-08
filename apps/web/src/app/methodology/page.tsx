@@ -227,7 +227,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Year-1 PIP displacement</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-2">
-            When the capital engine carries a renovation budget &gt; $5,000 per key, Year-1 occupancy is depressed 15% and Year-1 ADR is depressed 8% to reflect rooms out of service and disruption pricing. The thresholds are tunable per deal via field_overrides. Year-2 onwards snap back to the stabilized baseline — a heavy PIP affects only the construction year, not the underwriting trajectory.
+            When the capital engine carries a renovation budget &gt; $5,000 per key, Year-1 occupancy is depressed 15% and Year-1 ADR is depressed 8% to reflect rooms out of service and disruption pricing. The thresholds are tunable per deal via field_overrides. Year-2 onwards snap back to the stabilized baseline — a heavy PIP affects only the construction year, not the underwriting trajectory. Only a deal-specific budget displaces — one read off the OM&apos;s broker pro forma (badged &quot;OM Broker&quot;); the Fondok seed budget never does.
           </p>
         </Card>
 

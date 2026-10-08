@@ -1281,3 +1281,48 @@ async def test_shadow_override_equal_to_the_om_figure_keeps_om_broker() -> None:
     assert base["__source_fields__"]["renovation_budget"]["field_name"] == (
         "broker_proforma.renovation_budget_usd"
     )
+
+
+# ═══════════ FON-85 (Step B) — an OM-sourced PIP displaces Year 1 ═══════════
+
+
+@pytest.mark.asyncio
+async def test_om_sourced_pip_triggers_year_one_displacement() -> None:
+    """FON-85 (Step B). The Y1 displacement guard keys off "is the renovation
+    deal-specific". An $8.0M PIP off the OM on 132 keys ($60.6k/key) is, so
+    the 15% / 8% Year-1 haircut fires. Before this the OM path kept the
+    ``seed`` label and the guard never saw it.
+
+    (A persisted ``field_overrides.renovation_budget`` alone does NOT displace
+    today — the override loop runs after this guard — which is a separate,
+    pre-existing gap and deliberately not pinned here.)"""
+    om_deal = uuid4()
+    await _insert_deal(om_deal, name="OM PIP", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(om_deal, fields=[_OM_RENO_ROW])
+    base = await _base_for(om_deal)
+    assert base["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
+    assert base["y1_adr_displacement_pct"] == pytest.approx(0.08)
+
+
+@pytest.mark.asyncio
+async def test_seed_and_immaterial_om_pips_keep_displacement_off() -> None:
+    """The Harbor Palms guard still holds: the Kimpton $5.28M seed (no OM)
+    never displaces, and an OM PIP under the $5k/key materiality floor
+    ($500k on 132 keys = $3.8k/key) does not either."""
+    seed_deal = uuid4()
+    await _insert_deal(seed_deal, name="Seed PIP", keys=132, purchase=36_400_000)
+    base = await _base_for(seed_deal)
+    assert base["renovation_budget"] == pytest.approx(5_280_000.0)
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == 0.0
+
+    small_pip = uuid4()
+    await _insert_deal(small_pip, name="Cosmetic refresh", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(
+        small_pip,
+        fields=[{**_OM_RENO_ROW, "value": 500_000.0}],
+    )
+    base = await _base_for(small_pip)
+    assert base["__sources__"]["renovation_budget"] == "om_broker"
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == 0.0

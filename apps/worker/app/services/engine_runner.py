@@ -1633,13 +1633,17 @@ async def _load_engine_inputs(
     #
     # CRITICAL (QA Harbor Palms): only displace when the renovation is
     # DEAL-SPECIFIC. ``renovation_budget`` seeds to the Kimpton fixture's
-    # $5.28M and is never overwritten by extracted data, so without this
-    # guard EVERY real deal inherited a $5.28M PIP and got a spurious
-    # 15%/8% Year-1 haircut (Harbor Palms base-year 68.8% = 81% x 0.85).
-    # A genuine renovation arrives via field_overrides / deal_row, which
-    # flips the source off ``SOURCE_SEED``.
+    # $5.28M, so without this guard EVERY real deal inherited a $5.28M PIP
+    # and got a spurious 15%/8% Year-1 haircut (Harbor Palms base-year
+    # 68.8% = 81% x 0.85). A genuine renovation arrives via
+    # field_overrides / deal_row (label off ``SOURCE_SEED``) or off the
+    # OM's broker pro forma (FON-85: ``om_broker`` label AND a
+    # ``source_fields`` row). Before FON-85 the OM path kept the ``seed``
+    # label, so a broker-published PIP never displaced Year 1; the row
+    # check makes the guard hold even if a label ever lags again.
     reno_is_deal_specific = (
         sources.get("renovation_budget", SOURCE_SEED) != SOURCE_SEED
+        or "renovation_budget" in source_fields
     )
     if renovation_budget > 0 and pip_per_key > 5_000 and reno_is_deal_specific:
         base.setdefault("y1_occupancy_displacement_pct", 0.15)
