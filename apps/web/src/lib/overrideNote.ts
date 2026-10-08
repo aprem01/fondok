@@ -72,6 +72,10 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // exist. Editing a tier's hurdle or split is a value change and does require
   // a note.
   'partnership.waterfall.tier_count',
+  // FON-44 — a METHOD choice between two NOIs the engines already compute
+  // (forward 12 months vs stabilized). The analyst types no number, and the
+  // Returns output names the basis it ran on (`exit_noi_period_label`).
+  'exit_noi_basis',
 ]);
 
 /**

@@ -77,16 +77,34 @@ def _debt_kwargs(**overrides: object) -> dict[str, object]:
     return base
 
 
+class _NoiFloorDebtInput(DebtEngineInputExt):
+    """The Debt input as it was when E-023 was filed: ``noi_by_year ge=0``.
+
+    FON-63 since let negative NOI flow through the real Debt engine (DSCR N/A
+    + a shortfall instead of a stop — ``test_negative_noi_flow.py``), so the
+    formatter is exercised here against the old floor. The sentence it builds
+    still applies to any engine input that floors an NOI series.
+    """
+
+    noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+
+
 def _raise_debt(**overrides: object) -> ValidationError:
     with pytest.raises(ValidationError) as info:
-        DebtEngineInputExt(**_debt_kwargs(**overrides))
+        _NoiFloorDebtInput(**_debt_kwargs(**overrides))
     return info.value
 
 
 def test_fixture_is_valid_without_the_bad_input() -> None:
     """Guard: the base kwargs construct, so the raise below is the NOI alone."""
-    model = DebtEngineInputExt(**_debt_kwargs(noi_by_year=[4_879_452.5, 1.0]))
+    model = _NoiFloorDebtInput(**_debt_kwargs(noi_by_year=[4_879_452.5, 1.0]))
     assert model.noi_by_year == [4_879_452.5, 1.0]
+
+
+def test_real_debt_input_now_accepts_negative_noi() -> None:
+    """FON-63 — the live Debt input no longer stops on a negative year."""
+    model = DebtEngineInputExt(**_debt_kwargs(noi_by_year=[-4_879_452.5, 1.0]))
+    assert model.noi_by_year == [-4_879_452.5, 1.0]
 
 
 def test_debt_negative_year1_noi_is_the_exact_e023_sentence() -> None:

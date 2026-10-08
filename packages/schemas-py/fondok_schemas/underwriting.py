@@ -492,7 +492,13 @@ class DebtServiceYear(BaseModel):
     principal: Annotated[float, Field(ge=0)]
     debt_service: Annotated[float, Field(ge=0)]
     ending_balance: Annotated[float, Field(ge=0)]
-    dscr: Annotated[float, Field(ge=0)] | None = None
+    # FON-63 — None ("N/A") when the year's NOI is ≤ 0 or there is no debt
+    # service: a coverage ratio on a negative NOI is not a number a lender
+    # reads. No floor — the engine never emits a negative ratio.
+    dscr: float | None = None
+    # FON-63 — debt service the year's NOI does not cover:
+    # max(0, debt_service − noi). 0.0 on every covered year.
+    shortfall_usd: Annotated[float, Field(ge=0)] = 0.0
 
 
 class DebtEngineOutput(BaseModel):
@@ -502,6 +508,13 @@ class DebtEngineOutput(BaseModel):
     annual_debt_service: Annotated[float, Field(ge=0)]
     schedule: list[DebtServiceYear]
     avg_dscr: Annotated[float, Field(ge=0)] | None = None
+    # FON-63 — negative NOI flows through the model instead of stopping it.
+    # ``total_shortfall_usd`` sums the per-year ``shortfall_usd``;
+    # ``negative_noi_years`` lists the 1-based years whose NOI is < 0; and
+    # ``noi_warning`` is the one sentence the Debt tab shows for them.
+    total_shortfall_usd: Annotated[float, Field(ge=0)] = 0.0
+    negative_noi_years: list[int] = Field(default_factory=list)
+    noi_warning: str | None = None
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "schedule[0].debt_service". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
@@ -610,6 +623,12 @@ class ReturnsEngineOutput(BaseModel):
     selling_costs: Annotated[float, Field(ge=0)]
     net_proceeds: float
     hold_years: Annotated[int, Field(ge=1, le=20)]
+    # FON-44 (R-059) — which NOI the reversion capped: the forward 12 months
+    # after the exit (default), the stabilized year's NOI grown to the exit,
+    # or the analyst's ``terminal_noi_override``. ``exit_noi_period_label`` is
+    # the human period, e.g. "Forward 12-month NOI (Year 6)".
+    exit_noi_basis: Literal["forward_12m", "stabilized", "override"] = "forward_12m"
+    exit_noi_period_label: str = ""
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "equity_multiple". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)

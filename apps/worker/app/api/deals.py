@@ -528,12 +528,17 @@ def _coerce_float(value: Any) -> float | None:
 #:                             "qualitative; no numeric covenant math".
 #:   partnership.waterfall.tier_count   the SHAPE of the waterfall (how many
 #:                             promote tiers), not a value inside one.
+#:   exit_noi_basis            FON-44 — a METHOD choice between two NOIs the
+#:                             engines already compute (forward 12 months vs
+#:                             stabilized); the analyst types no number, and the
+#:                             Returns output names the basis it ran on.
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "stabilization_year",
         "property_overview.name",
         "debt.completion_guarantee",
         "partnership.waterfall.tier_count",
+        "exit_noi_basis",
     }
 )
 

@@ -540,6 +540,7 @@ async def test_keys_that_move_no_number_need_no_note() -> None:
         "property_overview.name": "The Angler's",
         "debt.completion_guarantee": "in_place",
         "partnership.waterfall.tier_count": 4,
+        "exit_noi_basis": "stabilized",
         "partnership.waterfall.2.removed": True,
         "memo_thesis": "A long prose thesis the analyst wrote.",
     }
