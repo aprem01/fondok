@@ -222,7 +222,9 @@ async def test_an_out_of_range_year_falls_back_to_the_default() -> None:
     assert stab["source"] == "default_year_3"
 
 
-# ── THE guard: the block moves nothing ────────────────────────────────
+# ── THE guard: the block moves no return ──────────────────────────────
+
+_DEBT_STABILIZED_KEYS = ("stabilized_dscr", "stabilized_debt_yield", "provenance")
 
 
 @pytest.mark.asyncio
@@ -247,6 +249,12 @@ async def test_stabilization_year_does_not_move_returns() -> None:
         after = _comparable(with_year_4[engine]["outputs"])
         before.pop("stabilization", None)
         after.pop("stabilization", None)
+        if engine == "debt":
+            # Debt's stabilized metrics follow the analyst year (R-057);
+            # everything else on Debt stays put.
+            for k in _DEBT_STABILIZED_KEYS:
+                before.pop(k, None)
+                after.pop(k, None)
         assert before == after, engine
 
     # The block itself DID move — otherwise this test proves nothing.
@@ -259,17 +267,20 @@ async def test_stabilization_year_does_not_move_returns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_debt_stabilized_metrics_are_untouched_by_the_analyst_year() -> None:
-    """The analyst's Stabilization Year is a PROJECTION reporting assumption.
-    Debt's stabilized DSCR / debt yield read the Year-3 default (the debt
-    engine is not passed the analyst year) — the override moves no covenant
-    number."""
+async def test_debt_stabilized_metrics_follow_the_analyst_year() -> None:
+    """Sam 2026-10-08 (R-057): the analyst's Stabilization Year is THE
+    stabilized year, so Debt's stabilized DSCR / debt yield read it; with no
+    override they read the Year-3 default."""
     baseline = await _run({})
+    year_3 = await _run({"stabilization_year": 3})
     overridden = await _run({"stabilization_year": 4})
     for key in ("stabilized_dscr", "stabilized_debt_yield"):
-        assert (
-            overridden["debt"]["outputs"][key] == baseline["debt"]["outputs"][key]
-        ), key
+        # Saving the default explicitly changes nothing.
+        assert year_3["debt"]["outputs"][key] == baseline["debt"]["outputs"][key], key
+    assert (
+        overridden["debt"]["outputs"]["stabilized_debt_yield"]
+        != baseline["debt"]["outputs"]["stabilized_debt_yield"]
+    )
 
 
 # ── no resolvable year ────────────────────────────────────────────────

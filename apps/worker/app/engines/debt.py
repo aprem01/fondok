@@ -84,6 +84,10 @@ class DebtEngineInputExt(DebtEngineInput):
     # callers byte-for-byte unchanged.
     occupancy_by_year: list[float] | None = None
     stabilized_occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    # Sam 2026-10-08 (R-057): the analyst's Stabilization Year (1-based) is
+    # the stabilized year everywhere, so Debt's stabilized DSCR / debt yield
+    # follow it. None = the Year-3-after-close default in stabilization.py.
+    stabilization_year: Annotated[int, Field(ge=1)] | None = None
     # FON-72 follow-up — Completion Guarantee covenant status (qualitative; no
     # numeric covenant math). Threaded from ``debt.completion_guarantee`` in the
     # deal's field_overrides. None → the Debt tab's covenant row stays "—".
@@ -1091,6 +1095,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             occupancy_by_year=payload.occupancy_by_year,
             stabilized_occupancy=payload.stabilized_occupancy,
             noi_by_year=payload.noi_by_year,
+            stabilization_year=payload.stabilization_year,
         )
         if (
             stab_idx is not None

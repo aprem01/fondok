@@ -6183,6 +6183,9 @@ def _build_input_for(
             # FON-72 follow-up — stabilized-year signal + Completion Guarantee.
             occupancy_by_year=occupancy_by_year,
             stabilized_occupancy=stabilized_occupancy,
+            stabilization_year=_coerce_stabilization_year(
+                base.get(STABILIZATION_YEAR_KEY)
+            ),
             completion_guarantee=completion_guarantee,
         )
 
