@@ -242,6 +242,12 @@ const EMPTY_META: PropertyMeta = {
 const FLOORS_NOT_IN_OM =
   'Not stated in the OM — the extraction catalog has no floors / stories field, so this row cannot be read from documents.';
 
+/** FON-59 / R-048 — why the Existing brand row is a dash. */
+const EXISTING_BRAND_NOT_SET =
+  'No existing brand was entered at deal creation and none has been read from the Offering Memorandum yet.';
+/** FON-59 / R-048 — the Proposed brand dash: optional, analyst-only. */
+const PROPOSED_BRAND_NONE = 'None selected';
+
 /** FON-59 R-058 — the Exit section's reversion-NOI row: one row, both names. */
 export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
 
@@ -498,6 +504,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const returnProfileId = deal?.return_profile ?? 'value-add';
   const positioningId = deal?.positioning ?? 'default';
   const brand = deal?.brand ?? '';
+  // FON-59 / R-048 (Sam's decision 4) — the analyst's PROPOSED brand, kept
+  // apart from `brand` (the EXISTING flag). Never written by a document.
+  const proposedBrand = deal?.proposed_brand?.trim() ?? '';
   const cfg: Cfg = dealType === 'development' ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
   const keys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
   const isDev = cfg === 'dev';
@@ -688,6 +697,27 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const floorsRow = (): RowDef =>
       awa('pFloors', isDev ? 'Planned Floors' : 'Floors', { reason: 'no_source', reasonDetail: FLOORS_NOT_IN_OM });
 
+    // FON-59 / R-048 — Existing brand (deals.brand: typed at creation, or
+    // filled from the OM only when blank) and Proposed brand
+    // (deals.proposed_brand: the analyst's, never touched by a document).
+    // Read-only here: the Property rows have no inline editor for brand.
+    const READ_ONLY_BRAND = 'Read-only on the Overview.';
+    const brandRows = (): RowDef[] => [
+      brand.trim()
+        ? doc('pBrand', 'Existing brand', brand.trim(), 'Offering Memorandum', 'Property Overview', {
+            where: 'Analyst input at deal creation, or the Offering Memorandum (fills a blank only)',
+            sub: `The flag the hotel carries today. A document only fills it when blank — it never overwrites one. ${READ_ONLY_BRAND}`,
+          })
+        : awa('pBrand', 'Existing brand', { reason: 'no_source', reasonDetail: EXISTING_BRAND_NOT_SET }),
+      proposedBrand
+        ? mk({
+            id: 'pProposedBrand', label: 'Proposed brand', kind: 'input', state: 'assumption',
+            value: proposedBrand, where: 'Analyst input',
+            sub: `The brand you propose for the asset. Optional; never set or changed by a document. ${READ_ONLY_BRAND}`,
+          })
+        : awa('pProposedBrand', 'Proposed brand', { reason: 'awaiting_analyst', reasonDetail: PROPOSED_BRAND_NONE }),
+    ];
+
     // R-055 — Management Fee / Franchise Fee are NOT Property facts; they
     // stay in the P&L (Financials) and the model, off this summary.
     const propertyRows = (): RowDef[] => [
@@ -708,7 +738,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           ? `${fmtPct(meta.trailingOcc, 1)} / ${fmtCurrency(meta.trailingAdr)}`
           : '—',
         '→ Historical P&L', 'pl'),
-      lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
+      ...brandRows(),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
     ];
 
@@ -853,7 +883,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const projectRows = (): RowDef[] => [
       ...identityRows(),
       lnk('pLoc', 'Location', deal?.city ?? '—', '→ Investment Profile', ''),
-      lnk('brand', 'Brand', brand || '—', '→ Investment Profile', ''),
+      ...brandRows(),
       lnk('positioning', 'Positioning', positioningTiers.find((p) => p.id === positioningId)?.label ?? '—', '→ Investment Profile', ''),
       lnk('pKeys', 'Planned Keys', keys != null ? String(keys) : '—', '→ Investment Profile', '', { reasonKey: 'keys' }),
       floorsRow(),
@@ -949,7 +979,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, overrides, keys, brand, positioningId, timeline, outputs, tracedState]);
+  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {

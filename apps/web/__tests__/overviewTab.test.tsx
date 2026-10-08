@@ -814,7 +814,7 @@ describe('OverviewTab — R-055 fee rows left the Property summary', () => {
     expect(screen.queryByText('Management Fee')).toBeNull();
     expect(screen.queryByText(/Franchise/)).toBeNull();
     // The rest of the summary is intact.
-    for (const label of ['Project Name', 'Property Name', 'Property Type', 'Location', 'Year Built', 'Keys', 'Floors', 'Total SF', 'Brand', 'Positioning']) {
+    for (const label of ['Project Name', 'Property Name', 'Property Type', 'Location', 'Year Built', 'Keys', 'Floors', 'Total SF', 'Existing brand', 'Proposed brand', 'Positioning']) {
       expect(within(property).getByText(label)).toBeInTheDocument();
     }
   });
@@ -1062,5 +1062,59 @@ describe('OverviewTab — Future P&L summary card (R-060)', () => {
     expect(link).toHaveTextContent(FUTURE_PL_LINK_LABEL);
     fireEvent.click(link);
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
+  });
+});
+
+describe('OverviewTab — R-048 Existing brand vs Proposed brand (Sam decision 4)', () => {
+  it('renders deal.brand as Existing brand and deal.proposed_brand as Proposed brand, read-only', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, brand: 'Kimpton', proposed_brand: 'Thompson Hotels' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const property = screen.getByTestId('overview-section-property');
+    expect(within(property).getByText('Existing brand')).toBeInTheDocument();
+    expect(within(property).getByText('Proposed brand')).toBeInTheDocument();
+    expect(within(property).queryByText('Brand')).toBeNull();
+    expect(rowValue('Existing brand')).toBe('Kimpton');
+    expect(rowValue('Proposed brand')).toBe('Thompson Hotels');
+
+    // Read-only: the popover explains the value and offers no editor.
+    fireEvent.click(within(property).getByText('Thompson Hotels'));
+    const dialog = screen.getByRole('dialog', { name: /Where Proposed brand came from/i });
+    expect(within(dialog).getByText(/never set or changed by a document/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Read-only on the Overview/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /Save|Override|Rename/ })).toBeNull();
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('empty Existing brand is a dash carrying the no_source refusal', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, brand: null, proposed_brand: 'Thompson Hotels' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Existing brand')).toBe('—');
+    const refusal = (rowFor('Existing brand').lastElementChild as HTMLElement).querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    expect(refusal.getAttribute('data-refused')).toBe('no_source');
+    expect(refusal.getAttribute('aria-label')).toBe(REASONS.no_source.label);
+    fireEvent.focus(refusal);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/Offering Memorandum/);
+  });
+
+  it('empty Proposed brand is a dash that says "None selected" (absent or null on older workers)', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, brand: 'Kimpton' };
+    delete (mockDealRef.deal as Record<string, unknown>).proposed_brand;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Existing brand')).toBe('Kimpton');
+    expect(rowValue('Proposed brand')).toBe('—');
+    const refusal = (rowFor('Proposed brand').lastElementChild as HTMLElement).querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    fireEvent.focus(refusal);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('None selected');
+  });
+
+  it('the development Project section carries the same two rows', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: 'development', brand: null, proposed_brand: 'Thompson Hotels' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const project = screen.getByTestId('overview-section-project');
+    expect(within(project).getByText('Existing brand')).toBeInTheDocument();
+    expect(within(project).getByText('Proposed brand')).toBeInTheDocument();
+    expect(rowValue('Proposed brand')).toBe('Thompson Hotels');
   });
 });

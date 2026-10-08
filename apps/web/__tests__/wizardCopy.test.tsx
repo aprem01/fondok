@@ -14,6 +14,9 @@
  *   R-019  searching a brand under a collapsed chain shows the SPECIFIC brand
  *          with the chain as secondary text, and the specific brand is what
  *          is submitted (Kimpton → IHG chain; Curio → Hilton chain).
+ *   R-048  (FON-59, Sam's decision 4) the picker is the PROPOSED brand and is
+ *          submitted as `proposed_brand`; the optional "Existing brand" text
+ *          input is submitted as `brand` (blank → null, left to the OM).
  *
  * The real page, real DocumentsStep and real brand catalog are rendered;
  * only navigation, the worker api, toasts and the CoachMark popover are
@@ -185,7 +188,12 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
 
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
-    expect(worker.create.mock.calls[0][0]).toMatchObject({ name: 'Workbook Deal', brand: 'Kimpton Hotels & Restaurants' });
+    expect(worker.create.mock.calls[0][0]).toMatchObject({
+      name: 'Workbook Deal',
+      proposed_brand: 'Kimpton Hotels & Restaurants',
+      // No existing brand typed → null, left for the OM to fill.
+      brand: null,
+    });
   });
 
   it('Curio (Hilton, expanded by default) shows "· Hilton" and submits the specific brand — same shape as an IHG sub-brand', async () => {
@@ -200,7 +208,7 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     clickNext();
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
-    expect(worker.create.mock.calls[0][0]).toMatchObject({ brand: 'Curio Collection by Hilton' });
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Curio Collection by Hilton', brand: null });
   });
 
   it('a chain-name search lists every brand in that chain as specific cards', () => {
@@ -208,5 +216,43 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'IHG' } });
     expect(screen.getByRole('button', { name: /Holiday Inn Express/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Kimpton Hotels & Restaurants/ })).toBeInTheDocument();
+  });
+});
+
+describe('R-048 — Existing brand and Proposed brand are two separate fields', () => {
+  it('sends a typed Existing brand as `brand` and the picked brand as `proposed_brand` (Kimpton existing / Thompson proposed)', async () => {
+    driveToBrandStep();
+    expect(screen.getByText('Proposed brand (optional)')).toBeInTheDocument();
+    expect(screen.getByText('Existing brand')).toBeInTheDocument();
+    expect(screen.getByText('Leave blank to source from the Offering Memorandum')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. Kimpton'), { target: { value: '  Kimpton  ' } });
+    fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Thompson' } });
+    fireEvent.click(screen.getByRole('button', { name: /Thompson Hotels/ }));
+
+    clickNext(); // → Positioning
+    clickNext(); // → Review
+    // The Review step shows both, each on its own row.
+    expect(screen.getByText('Existing Brand')).toBeInTheDocument();
+    expect(screen.getByText('Proposed Brand')).toBeInTheDocument();
+    expect(screen.getByText('Existing Brand').nextElementSibling?.textContent).toBe('Kimpton');
+    expect(screen.getByText('Proposed Brand').nextElementSibling?.textContent).toMatch(/^Thompson Hotels/);
+
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    const body = worker.create.mock.calls[0][0] as Record<string, unknown>;
+    expect(body.brand).toBe('Kimpton');
+    expect(body.proposed_brand).toBe('Thompson Hotels');
+  });
+
+  it('Brand Agnostic sends proposed_brand null; a blank Existing brand sends brand null', async () => {
+    driveToBrandStep();
+    clickNext();
+    clickNext();
+    expect(screen.getByText('Existing Brand').nextElementSibling?.textContent).toBe('From the Offering Memorandum');
+    expect(screen.getByText('Proposed Brand').nextElementSibling?.textContent).toBe('Brand Agnostic');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ brand: null, proposed_brand: null });
   });
 });

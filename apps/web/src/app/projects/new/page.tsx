@@ -66,7 +66,11 @@ export default function NewProjectPage() {
     dealType: 'acquisition',
     returnProfile: 'value-add',
     docs: [] as WizardFile[],
+    // FON-59 / R-048 — `brand` is the picker state = the analyst's PROPOSED
+    // brand (submitted as `proposed_brand`); `existingBrand` is the optional
+    // current flag (submitted as `brand`; blank = sourced from the OM).
     brand: 'agnostic',
+    existingBrand: '',
     brandSearch: '',
     expandedFamilies: ['Hilton'] as string[],
     positioning: 'default',
@@ -132,7 +136,11 @@ export default function NewProjectPage() {
       const parsedKeys = Number.parseInt(data.keys, 10);
       const keysInt =
         Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : null;
-      const brandValue = data.brand === 'agnostic' ? null : data.brand;
+      // FON-59 / R-048 (Sam's decision 4) — two separate fields. The picker
+      // is the PROPOSED brand ("agnostic" → none); the typed Existing brand
+      // goes to `brand`, and blank leaves it for the OM to fill.
+      const proposedBrandValue = data.brand === 'agnostic' ? null : data.brand;
+      const existingBrandValue = data.existingBrand.trim() || null;
 
       // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
       // narrow today, but we send the wizard's full intent: extra fields are
@@ -144,7 +152,8 @@ export default function NewProjectPage() {
         keys: keysInt,
         service: null,
         deal_type: data.dealType,
-        brand: brandValue,
+        brand: existingBrandValue,
+        proposed_brand: proposedBrandValue,
         return_profile: data.returnProfile,
         positioning: data.positioning,
         // Sourcing channel for pipeline analytics. Send the canonical
@@ -339,7 +348,7 @@ export default function NewProjectPage() {
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
   dealType: string;
-  returnProfile: string; docs: WizardFile[]; brand: string; brandSearch: string;
+  returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
 };
 
@@ -584,6 +593,17 @@ function Step4({ data, update }: StepProps) {
         <span className="font-medium"> Brand Agnostic</span> for an independent hotel.
       </div>
 
+      <div className="mb-6">
+        <Field
+          label="Existing brand"
+          value={data.existingBrand}
+          onChange={v => update({ existingBrand: v })}
+          placeholder="e.g. Kimpton"
+          help="Leave blank to source from the Offering Memorandum"
+        />
+      </div>
+
+      <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand (optional)</div>
       <button onClick={() => update({ brand: 'agnostic' })}
         className={cn(
           'w-full p-5 rounded-lg border-2 text-left mb-5 transition-colors',
@@ -789,7 +809,12 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
     { label: 'Return Requirements', value: profile ? `${profile.label} (${profile.target})` : '—', step: 2 },
     { label: 'Documents', value: docsSummary, step: 3 },
     {
-      label: 'Brand',
+      label: 'Existing Brand',
+      value: data.existingBrand.trim() || 'From the Offering Memorandum',
+      step: 4,
+    },
+    {
+      label: 'Proposed Brand',
       value: data.brand === 'agnostic'
         ? 'Brand Agnostic'
         : <>{data.brand}{brandChain(data.brand) && <span className="text-ink-500 font-normal"> · {brandChain(data.brand)}</span>}</>,

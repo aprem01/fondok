@@ -11,6 +11,7 @@ LangGraph runtime and the streaming broadcast.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -155,7 +156,12 @@ class CreateDealBody(BaseModel):
     deal_type: str | None = Field(default=None, max_length=40)
     deal_stage: str | None = None
     return_profile: str | None = None
+    # FON-59 / R-048 (Sam's decision 4) — ``brand`` is the EXISTING flag
+    # (the analyst may type it; blank = source it from the OM, which only
+    # ever fills an empty value). ``proposed_brand`` is the analyst's
+    # PROPOSED brand — optional, and never written by a document.
     brand: str | None = None
+    proposed_brand: str | None = Field(default=None, max_length=200)
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
     # Sourcing channel for pipeline analytics (Sam's v2 ask):
@@ -189,6 +195,8 @@ class UpdateDealBody(BaseModel):
     deal_type: str | None = Field(default=None, max_length=40)
     return_profile: str | None = None
     brand: str | None = None
+    # FON-59 / R-048 — analyst's proposed brand; null clears it.
+    proposed_brand: str | None = Field(default=None, max_length=200)
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
     sourcing_channel: str | None = Field(default=None, max_length=40)
@@ -240,7 +248,11 @@ class DealRecord(BaseModel):
     risk: str | None = None
     ai_confidence: float | None = None
     return_profile: str | None = None
+    # Existing brand (OM-sourced when the analyst left it blank).
     brand: str | None = None
+    # FON-59 / R-048 — the analyst's proposed brand; NULL = none selected
+    # (or the live schema predates the column).
+    proposed_brand: str | None = None
     positioning: str | None = None
     purchase_price: float | None = None
     sourcing_channel: str | None = None
@@ -616,6 +628,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         ai_confidence=_coerce_float(row.get("ai_confidence")),
         return_profile=row.get("return_profile"),
         brand=row.get("brand"),
+        proposed_brand=row.get("proposed_brand"),
         positioning=row.get("positioning"),
         purchase_price=_coerce_float(row.get("purchase_price")),
         sourcing_channel=row.get("sourcing_channel"),
@@ -638,6 +651,59 @@ _DEAL_COLUMNS = (
     "state, validation_started_at, validation_complete_at, "
     "created_at, updated_at"
 )
+
+_PROPOSED_BRAND_CACHE_KEY = "fondok_deals_has_proposed_brand"
+
+
+async def _deals_has_proposed_brand(session: AsyncSession) -> bool:
+    """Does the live ``deals`` table carry ``proposed_brand`` (FON-59 / R-048)?
+
+    Introspects the catalog instead of probing with a SELECT — a failed
+    statement inside an open transaction poisons the session. Any failure
+    answers False so a schema without the column (migration not yet run)
+    reads ``proposed_brand`` as NULL and skips its writes instead of 500ing.
+    Memoised on ``session.info``.
+    """
+    try:
+        cached = session.info.get(_PROPOSED_BRAND_CACHE_KEY)
+    except Exception:
+        cached = None
+    if isinstance(cached, bool):
+        return cached
+    try:
+        is_sqlite = (
+            session.bind is not None and session.bind.dialect.name == "sqlite"
+        )
+        if is_sqlite:
+            rows = await session.execute(text("PRAGMA table_info(deals)"))
+            have = {str(r[1]).lower() for r in rows.fetchall()}
+        else:
+            rows = await session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'deals'"
+                )
+            )
+            have = {str(r[0]).lower() for r in rows.fetchall()}
+        answer = "proposed_brand" in have
+    except Exception:
+        answer = False
+    if not answer:
+        logger.warning(
+            "deals: proposed_brand column absent — reading NULL and "
+            "skipping writes until the startup migration runs"
+        )
+    with contextlib.suppress(Exception):
+        session.info[_PROPOSED_BRAND_CACHE_KEY] = answer
+    return answer
+
+
+async def _deal_columns(session: AsyncSession) -> str:
+    """``_DEAL_COLUMNS`` plus ``proposed_brand`` — real when the column
+    exists, a NULL stand-in otherwise."""
+    if await _deals_has_proposed_brand(session):
+        return f"{_DEAL_COLUMNS}, proposed_brand"
+    return f"{_DEAL_COLUMNS}, NULL AS proposed_brand"
 
 
 async def _write_audit(
@@ -743,7 +809,7 @@ async def list_deals(
     rows = await session.execute(
         text(
             f"""
-            SELECT {_DEAL_COLUMNS},
+            SELECT {await _deal_columns(session)},
                    (SELECT COUNT(*) FROM documents d
                      WHERE d.deal_id = deals.id
                        AND d.tenant_id = deals.tenant_id) AS document_count
@@ -791,19 +857,33 @@ async def create_deal(
         "updated_at": now,
     }
 
+    # FON-59 / R-048 — write proposed_brand only when the live schema has
+    # the column; otherwise drop it with a log line rather than 500.
+    has_proposed_brand = await _deals_has_proposed_brand(session)
+    proposed_brand = body.proposed_brand if has_proposed_brand else None
+    pb_col, pb_val = "", ""
+    if has_proposed_brand:
+        params["proposed_brand"] = body.proposed_brand
+        pb_col, pb_val = ", proposed_brand", ", :proposed_brand"
+    elif body.proposed_brand is not None:
+        logger.warning(
+            "deals.create: proposed_brand=%r dropped — column absent on "
+            "this schema", body.proposed_brand,
+        )
+
     await session.execute(
         text(
-            """
+            f"""
             INSERT INTO deals (
                 id, tenant_id, name, city, keys, service, deal_type, status,
                 deal_stage, risk, ai_confidence, return_profile,
                 brand, positioning, purchase_price, sourcing_channel,
-                target_irr, target_moic, created_at, updated_at
+                target_irr, target_moic, created_at, updated_at{pb_col}
             ) VALUES (
                 :id, :tenant, :name, :city, :keys, :service, :deal_type, :status,
                 :deal_stage, :risk, :ai_confidence, :return_profile,
                 :brand, :positioning, :purchase_price, :sourcing_channel,
-                :target_irr, :target_moic, :created_at, :updated_at
+                :target_irr, :target_moic, :created_at, :updated_at{pb_val}
             )
             """
         ),
@@ -822,6 +902,8 @@ async def create_deal(
             "keys": body.keys,
             "service": body.service,
             "deal_stage": body.deal_stage,
+            "brand": body.brand,
+            "proposed_brand": proposed_brand,
         },
     )
     # Wave 3 W3.2 — every deal gets a Base scenario at create time so
@@ -860,7 +942,9 @@ async def create_deal(
         risk=None,
         ai_confidence=0.0,
         return_profile=body.return_profile,
+        deal_type=body.deal_type,
         brand=body.brand,
+        proposed_brand=proposed_brand,
         positioning=body.positioning,
         purchase_price=body.purchase_price,
         sourcing_channel=body.sourcing_channel,
@@ -989,7 +1073,7 @@ async def get_deal(
         await session.execute(
             text(
                 f"""
-                SELECT {_DEAL_COLUMNS}
+                SELECT {await _deal_columns(session)}
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """
@@ -1018,7 +1102,7 @@ async def update_deal(
     existing = (
         await session.execute(
             text(
-                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": str(deal_id), "tenant": tenant_id_str},
@@ -1031,6 +1115,12 @@ async def update_deal(
         )
 
     changes = body.model_dump(exclude_unset=True)
+    if "proposed_brand" in changes and not await _deals_has_proposed_brand(session):
+        logger.warning(
+            "deals.update: proposed_brand dropped for deal=%s — column "
+            "absent on this schema", deal_id,
+        )
+        changes.pop("proposed_brand")
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
@@ -1200,7 +1290,7 @@ async def update_deal(
     refreshed = (
         await session.execute(
             text(
-                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": str(deal_id), "tenant": tenant_id_str},
@@ -1245,7 +1335,7 @@ async def hard_delete_deal(
     existing = (
         await session.execute(
             text(
-                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": deal_id_str, "tenant": tenant_id_str},
@@ -1343,7 +1433,7 @@ async def archive_deal(
     existing = (
         await session.execute(
             text(
-                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": str(deal_id), "tenant": tenant_id_str},
@@ -1383,7 +1473,7 @@ async def archive_deal(
     refreshed = (
         await session.execute(
             text(
-                f"SELECT {_DEAL_COLUMNS} FROM deals "
+                f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": str(deal_id), "tenant": tenant_id_str},
@@ -1980,7 +2070,7 @@ async def transition_deal_state(
         await session.execute(
             text(
                 f"""
-                SELECT {_DEAL_COLUMNS}
+                SELECT {await _deal_columns(session)}
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """

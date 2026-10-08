@@ -141,6 +141,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_type TEXT",
     ),
     (
+        # FON-59 / R-048 (Sam's decision 4) — the analyst's PROPOSED brand,
+        # beside ``brand`` (the EXISTING flag, sourced from the OM when the
+        # analyst left it blank). Optional; NULL = none selected. No
+        # document extraction ever writes this column.
+        "deals.add_proposed_brand",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS proposed_brand TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1227,6 +1235,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # FON-46 — SQLite mirror of the Postgres deal_type ALTER above.
         "deals.add_deal_type_sqlite",
         "ALTER TABLE deals ADD COLUMN deal_type TEXT",
+    ),
+    (
+        # FON-59 / R-048 — SQLite mirror of the Postgres proposed_brand ALTER.
+        "deals.add_proposed_brand_sqlite",
+        "ALTER TABLE deals ADD COLUMN proposed_brand TEXT",
     ),
     (
         "documents.create_table",

@@ -31,7 +31,12 @@ export interface WorkerDeal {
   // worker; surfaced on the Overview's Investment Profile tile.
   return_profile?: string | null;
   positioning?: string | null;
+  /** EXISTING brand — analyst-typed, or filled from the OM's
+   *  `property_overview.brand` only when empty. */
   brand: string | null;
+  /** FON-59 / R-048 — the analyst's PROPOSED brand. Optional; never written
+   *  by a document. Absent on older workers. */
+  proposed_brand?: string | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;
@@ -447,6 +452,10 @@ export interface NewDealBody {
   service?: string | null;
   // FON-46 — deal classification set in the onboarding wizard.
   deal_type?: string | null;
+  // FON-59 / R-048 — existing brand (blank → sourced from the OM) and the
+  // analyst's proposed brand, as two separate fields.
+  brand?: string | null;
+  proposed_brand?: string | null;
 }
 
 export interface WorkerDocument {
@@ -1632,7 +1641,7 @@ export const api = {
     update: (
       id: string,
       patch: Partial<Pick<WorkerDeal,
-        'name' | 'city' | 'keys' | 'service' | 'brand'
+        'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
         | 'target_irr' | 'target_moic'>> & {
         field_overrides?: Record<string, unknown>;
