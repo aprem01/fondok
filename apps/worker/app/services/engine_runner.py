@@ -1403,8 +1403,27 @@ async def _load_engine_inputs(
             key, om_capital_pre[key] if key in om_capital_pre else base.get(key)
         )
         base[key] = value
-        if key in capital_prov:
-            source_fields[key] = capital_prov[key]
+        prov = capital_prov.get(key)
+        if prov is None:
+            # No row behind the number: the loader applied an analyst
+            # override that CHANGED the OM figure and dropped the
+            # provenance. The label stays ``seed`` here; the override
+            # loop below stamps ``analyst_override`` on it.
+            continue
+        source_fields[key] = prov
+        # FON-85 — label truth. A capital key grounded on an OM extraction
+        # row is the broker's number, so its label flips off ``seed`` to
+        # ``om_broker`` (the loader reads ``d.doc_type = 'OM'`` only, so
+        # every row it returns is the broker's; the doc_type check keeps
+        # the rule explicit should the loader ever widen). An override
+        # whose value equals the OM figure keeps the row AND this label
+        # (FON-65: a shadow override reports the source the value really
+        # came from). Before this the label stayed ``seed`` on a
+        # document-grounded value, so the web had to read the
+        # ``source_fields`` row as the document signal, and the Y1
+        # displacement guard below never saw an OM-sourced PIP.
+        if (prov.resolution.doc_type or "OM").upper() == "OM":
+            sources[key] = SOURCE_OM_BROKER
 
     om_debt_pre: dict[str, float] = {}
     debt_actuals, debt_prov = await _load_om_debt_actuals(
@@ -1421,8 +1440,16 @@ async def _load_engine_inputs(
             key, om_debt_pre[key] if key in om_debt_pre else base.get(key)
         )
         base[key] = value
-        if key in debt_prov:
-            source_fields[key] = debt_prov[key]
+        prov = debt_prov.get(key)
+        if prov is None:
+            # Override changed the OM figure; the override loop labels it.
+            continue
+        source_fields[key] = prov
+        # FON-85 / R-070 — the same label rule as the capital loop above:
+        # an in-place-debt figure read off the OM is the broker's, so the
+        # Debt tab's source chip reads "OM · in-place debt", not "Seed".
+        if (prov.resolution.doc_type or "OM").upper() == "OM":
+            sources[key] = SOURCE_OM_BROKER
 
     # External market reports (May 7 scope): when CBRE Horizons has
     # been extracted, derive ADR + RevPAR growth from its 5-year
@@ -1614,13 +1641,17 @@ async def _load_engine_inputs(
     #
     # CRITICAL (QA Harbor Palms): only displace when the renovation is
     # DEAL-SPECIFIC. ``renovation_budget`` seeds to the Kimpton fixture's
-    # $5.28M and is never overwritten by extracted data, so without this
-    # guard EVERY real deal inherited a $5.28M PIP and got a spurious
-    # 15%/8% Year-1 haircut (Harbor Palms base-year 68.8% = 81% x 0.85).
-    # A genuine renovation arrives via field_overrides / deal_row, which
-    # flips the source off ``SOURCE_SEED``.
+    # $5.28M, so without this guard EVERY real deal inherited a $5.28M PIP
+    # and got a spurious 15%/8% Year-1 haircut (Harbor Palms base-year
+    # 68.8% = 81% x 0.85). A genuine renovation arrives via
+    # field_overrides / deal_row (label off ``SOURCE_SEED``) or off the
+    # OM's broker pro forma (FON-85: ``om_broker`` label AND a
+    # ``source_fields`` row). Before FON-85 the OM path kept the ``seed``
+    # label, so a broker-published PIP never displaced Year 1; the row
+    # check makes the guard hold even if a label ever lags again.
     reno_is_deal_specific = (
         sources.get("renovation_budget", SOURCE_SEED) != SOURCE_SEED
+        or "renovation_budget" in source_fields
     )
     if renovation_budget > 0 and pip_per_key > 5_000 and reno_is_deal_specific:
         base.setdefault("y1_occupancy_displacement_pct", 0.15)
@@ -2221,8 +2252,11 @@ async def _load_engine_inputs(
             sources=sources,
             already=reasons,
             # A key that names a real extraction row is grounded, whatever
-            # its (possibly stale) source label says — never tell the
-            # analyst "no source" about a number we can point at.
+            # its source label says — never tell the analyst "no source"
+            # about a number we can point at. Since FON-85 the OM capital
+            # keys carry ``om_broker`` and no longer need this; the two
+            # derived T-12 anchors that deliberately keep the ``seed`` label
+            # (see ``_NON_DOCUMENT_SOURCES``) still do.
             grounded=frozenset(source_fields),
         )
     )
