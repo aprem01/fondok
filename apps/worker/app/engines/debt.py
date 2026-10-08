@@ -13,6 +13,7 @@ schedule identically — see ``test_single_senior_tranche_matches_legacy_single_
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -43,7 +44,10 @@ class DebtEngineInputExt(DebtEngineInput):
 
     model_config = ConfigDict(extra="forbid")
 
-    noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    # FON-63 — NOI may be negative (a ramp / PIP year). It flows through: the
+    # year's DSCR is N/A and its uncovered debt service is a shortfall, instead
+    # of the whole model stopping at this validator.
+    noi_by_year: list[float] = Field(default_factory=list)
     # PROVENANCE ONLY — never read by any calculation. True (the default) means
     # ``noi_by_year[i]`` is the expense engine's ``years[i].noi``, so the DSCR
     # traces can ASSERT ``traces_to="expense.years[i].noi"`` instead of leaving
@@ -233,7 +237,8 @@ class DebtEngineOutputExt(DebtEngineOutput):
     loan_amount: Annotated[float, Field(ge=0)] | None = None
     monthly_schedule: list[DebtMonth] = Field(default_factory=list)
     year_one_dscr: Annotated[float, Field(ge=0)] | None = None
-    year_one_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    # FON-63 — NOI ÷ loan; negative when Year-1 NOI is (no floor).
+    year_one_debt_yield: float | None = None
     # FON-59 — echo the loan terms so the Overview Financing tile can render
     # Interest Rate / Term / Amortization without re-fetching the debt inputs.
     # FON-63 (Wave 2) — these echo the RESOLVED senior tranche the schedule
@@ -317,9 +322,9 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # first year occupancy reaches the stabilized assumption, else the NOI
     # plateau). They stay None only when no stabilized year can be determined
     # (no NOI series) → the tab renders those cards "—".
-    entry_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    entry_debt_yield: float | None = None
     entry_dscr: Annotated[float, Field(ge=0)] | None = None
-    stabilized_debt_yield: Annotated[float, Field(ge=0)] | None = None
+    stabilized_debt_yield: float | None = None
     stabilized_dscr: Annotated[float, Field(ge=0)] | None = None
     # FON-72 follow-up — Completion Guarantee covenant status (qualitative).
     # Echoed from the analyst's ``debt.completion_guarantee`` override; None
@@ -616,6 +621,52 @@ def _compute_refi(
     return ds_by_year, refi_cash_out, refi_proceeds, k, detail
 
 
+def _coverage_ratio(noi: float | None, debt_service: float) -> float | None:
+    """FON-63 — NOI ÷ debt service, or None ("N/A") when the ratio is not a
+    coverage reading: no NOI for the year, NOI ≤ 0, or no debt service."""
+    if noi is None or noi <= 0 or debt_service <= 0:
+        return None
+    return noi / debt_service
+
+
+def _usd(value: float) -> str:
+    """``-69982.5`` → ``−$69,983`` (whole dollars, half away from zero, U+2212)."""
+    whole = Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    sign = "\u2212" if whole < 0 else ""
+    return f"{sign}${abs(int(whole)):,}"
+
+
+def _join(items: list[str]) -> str:
+    """``["1", "2", "3"]`` → ``"1, 2 and 3"``."""
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _negative_noi_warning(
+    negative_years: list[int],
+    noi_by_year: list[float],
+    shortfall_by_year: dict[int, float],
+) -> str | None:
+    """FON-63 — the one sentence the Debt tab shows when NOI goes negative,
+    e.g. "Year 1 NOI is negative (−$69,983); debt service shortfall
+    $1,924,000; DSCR N/A for Year 1". None when no year is negative."""
+    if not negative_years:
+        return None
+    noun = "Year" if len(negative_years) == 1 else "Years"
+    years = _join([str(y) for y in negative_years])
+    nois = _join([_usd(noi_by_year[y - 1]) for y in negative_years])
+    parts = [f"{noun} {years} NOI is negative ({nois})"]
+    shortfall = sum(shortfall_by_year.get(y, 0.0) for y in negative_years)
+    if shortfall > 0:
+        parts.append(f"debt service shortfall {_usd(shortfall)}")
+    na_years = [y for y in negative_years if y in shortfall_by_year]
+    if na_years:
+        na_noun = "Year" if len(na_years) == 1 else "Years"
+        parts.append(f"DSCR N/A for {na_noun} {_join([str(y) for y in na_years])}")
+    return "; ".join(parts)
+
+
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
     """Build the debt service schedule and DSCR / debt-yield headline metrics."""
 
@@ -711,6 +762,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 "expense engine's projection, so no upstream value is asserted."
             )
         )
+        # FON-63 — uncovered debt service per 1-based year (years with NOI).
+        shortfall_by_year: dict[int, float] = {}
         for y in range(1, payload.term_years + 1):
             window = monthly_schedule[(y - 1) * 12 : y * 12]
             if not window:
@@ -724,7 +777,12 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 if y - 1 < len(payload.noi_by_year)
                 else None
             )
-            dscr = (noi_y / ds) if (noi_y is not None and ds > 0) else None
+            # FON-63 — N/A (None) on a year whose NOI is ≤ 0; the uncovered
+            # debt service is reported as that year's shortfall instead.
+            dscr = _coverage_ratio(noi_y, ds)
+            shortfall = max(0.0, ds - noi_y) if noi_y is not None else 0.0
+            if noi_y is not None:
+                shortfall_by_year[y] = shortfall
             idx = len(schedule)
             prov[f"schedule[{idx}].debt_service"] = ValueTrace(
                 value=ds,
@@ -763,6 +821,32 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                         + _noi_note
                     ),
                 )
+            if shortfall > 0:
+                prov[f"schedule[{idx}].shortfall_usd"] = ValueTrace(
+                    value=shortfall,
+                    formula="shortfall_usd = max(0, debt_service − noi)",
+                    inputs=[
+                        ValueInput(
+                            name="debt_service",
+                            value=ds,
+                            traces_to=f"schedule[{idx}].debt_service",
+                        ),
+                        ValueInput(
+                            name="noi", value=noi_y, traces_to=_noi_ref(idx)
+                        ),
+                    ],
+                    note=(
+                        f"Debt service Year {y}'s NOI does not cover. "
+                        + (
+                            f"DSCR is N/A for Year {y}: NOI is "
+                            f"{'negative' if (noi_y or 0.0) < 0 else 'zero'}, so a "
+                            "coverage ratio is not meaningful. "
+                            if dscr is None
+                            else ""
+                        )
+                        + _noi_note
+                    ),
+                )
             schedule.append(
                 DebtServiceYear(
                     year=y,
@@ -771,6 +855,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     debt_service=ds,
                     ending_balance=ending,
                     dscr=dscr,
+                    shortfall_usd=shortfall,
                 )
             )
 
@@ -801,10 +886,13 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 sr.annual_debt_service = senior_annual_ds
                 debt_stack.total_annual_debt_service += delta
                 if payload.noi_by_year and debt_stack.total_annual_debt_service > 0:
-                    debt_stack.year_one_dscr = (
-                        payload.noi_by_year[0]
-                        / debt_stack.total_annual_debt_service
+                    debt_stack.year_one_dscr = _coverage_ratio(
+                        payload.noi_by_year[0],
+                        debt_stack.total_annual_debt_service,
                     )
+        # FON-63 — the stack's own Year-1 DSCR is N/A on a non-positive NOI too.
+        if payload.noi_by_year and payload.noi_by_year[0] <= 0:
+            debt_stack.year_one_dscr = None
 
         # Headline metrics reflect the whole stack: senior debt service from the
         # accurate schedule plus any priced junior tranche (activated PACE/mezz).
@@ -816,8 +904,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         annual_ds = senior_annual_ds + extra_ds
         total_debt = debt_stack.total_debt or loan
         year1_dscr = (
-            (payload.noi_by_year[0] / annual_ds)
-            if payload.noi_by_year and annual_ds > 0
+            _coverage_ratio(payload.noi_by_year[0], annual_ds)
+            if payload.noi_by_year
             else None
         )
         year1_dy = (
@@ -827,6 +915,15 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         )
         dscrs = [yr.dscr for yr in schedule if yr.dscr is not None]
         avg_dscr = sum(dscrs) / len(dscrs) if dscrs else None
+        # FON-63 — negative NOI flows through: list the years, total the
+        # uncovered debt service, and say so in one sentence.
+        negative_noi_years = [
+            i + 1 for i, n in enumerate(payload.noi_by_year) if n < 0
+        ]
+        total_shortfall_usd = sum(yr.shortfall_usd for yr in schedule)
+        noi_warning = _negative_noi_warning(
+            negative_noi_years, payload.noi_by_year, shortfall_by_year
+        )
 
         # FON-67 — model a mid-hold refinance when the analyst sets a refi year.
         # It only produces the returns-facing phased DS series, exit balance and
@@ -1006,8 +1103,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             stab_ds = schedule[sched_i].debt_service + extra_ds
             if total_debt > 0:
                 stabilized_debt_yield = stab_noi / total_debt
-            if stab_ds > 0:
-                stabilized_dscr = stab_noi / stab_ds
+            stabilized_dscr = _coverage_ratio(stab_noi, stab_ds)
             if stabilized_dscr is not None:
                 prov["stabilized_dscr"] = ValueTrace(
                     value=stabilized_dscr,
@@ -1083,6 +1179,9 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             stabilized_debt_yield=stabilized_debt_yield,
             stabilized_dscr=stabilized_dscr,
             completion_guarantee=payload.completion_guarantee,
+            total_shortfall_usd=total_shortfall_usd,
+            negative_noi_years=negative_noi_years,
+            noi_warning=noi_warning,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,

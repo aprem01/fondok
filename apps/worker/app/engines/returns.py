@@ -7,7 +7,7 @@ bisection fallback handles cash-flow series where Newton fails to converge.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +23,91 @@ from fondok_schemas.underwriting import (
 
 from .base import BaseEngine
 from .monthly_cashflow import MonthlyCashFlowInput, build_monthly_cashflow
+from .stabilization import resolve_stabilized_year_index
+
+ExitNoiBasis = Literal["forward_12m", "stabilized"]
+
+
+class _TerminalNoiCheck(BaseModel):
+    """FON-63 — the one REAL stop on NOI. Operating years may be negative and
+    still flow through, but the reversion is ``terminal_noi ÷ exit_cap_rate``:
+    a non-positive exit NOI has no sale value. Validated as its own model so
+    the runner's error names ``terminal_noi`` and attaches its hint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    terminal_noi: Annotated[float, Field(gt=0)]
+
+
+def _resolve_terminal_noi(
+    *,
+    noi_series: list[float],
+    hold: int,
+    growth: float,
+    basis: str,
+    stabilized_year: int | None,
+    override: float | None,
+) -> tuple[float, str, str, int | None, str]:
+    """FON-44 (R-059) — the NOI the reversion caps, and how it was chosen.
+
+    Returns ``(terminal_noi, basis, period_label, source_index, formula)``.
+    ``source_index`` is the 0-based NOI year the figure was read from (None
+    for the override). Precedence: ``terminal_noi_override`` → the selected
+    basis. ``forward_12m`` (default) is the exit year's NOI grown one more year
+    — byte-identical to the pre-FON-44 reversion. ``stabilized`` is the
+    stabilized year's NOI grown to the exit year at the same growth rate; when
+    stabilization lands after the exit, the exit year's NOI is used and the
+    label says so.
+    """
+    if override is not None:
+        return (
+            override,
+            "override",
+            "Reconciliation override",
+            None,
+            "terminal_noi = terminal_noi_override",
+        )
+    if basis == "stabilized":
+        s = stabilized_year
+        if s is None:
+            idx = resolve_stabilized_year_index(
+                occupancy_by_year=None,
+                stabilized_occupancy=None,
+                noi_by_year=noi_series,
+            )
+            s = idx + 1 if idx is not None else None
+        if s is not None and s >= 1:
+            if s > hold:
+                return (
+                    noi_series[-1],
+                    "stabilized",
+                    (
+                        f"Exit-year NOI (Year {hold}; stabilization in Year {s} "
+                        "falls after the exit)"
+                    ),
+                    hold - 1,
+                    "terminal_noi = exit_year_noi",
+                )
+            label = (
+                f"Stabilized NOI (Year {s}, grown to Year {hold})"
+                if s < hold
+                else f"Stabilized NOI (Year {s}, the exit year)"
+            )
+            return (
+                noi_series[s - 1] * ((1.0 + growth) ** (hold - s)),
+                "stabilized",
+                label,
+                s - 1,
+                "terminal_noi = stabilized_year_noi × (1 + revpar_growth)"
+                " ^ (exit_year − stabilized_year)",
+            )
+    return (
+        noi_series[-1] * (1.0 + growth),
+        "forward_12m",
+        f"Forward 12-month NOI (Year {hold + 1})",
+        hold - 1,
+        "terminal_noi = exit_year_noi × (1 + revpar_growth)",
+    )
 
 
 def _exit_value_provenance(
@@ -38,6 +123,8 @@ def _exit_value_provenance(
     equity: float,
     equity_multiple: float,
     terminal_noi_ref: str | None = None,
+    basis: str = "forward_12m",
+    basis_label: str | None = None,
 ) -> dict[str, ValueTrace]:
     """Shared exit-value trace map for both returns construction paths.
 
@@ -68,11 +155,16 @@ def _exit_value_provenance(
             note=(
                 "Direct-cap terminal value at the end of the hold."
                 + (
-                    " terminal_noi is the final projected year's NOI grown one"
-                    " more year at revpar_growth."
+                    (
+                        " terminal_noi is the final projected year's NOI grown one"
+                        " more year at revpar_growth."
+                        if basis == "forward_12m"
+                        else f" terminal_noi basis: {basis_label}."
+                    )
                     if terminal_noi_ref
                     else " terminal_noi is pinned or projected outside the"
                     " expense engine's schedule, so no upstream value is asserted."
+                    + (f" Basis: {basis_label}." if basis_label else "")
                 )
             ),
         ),
@@ -128,6 +220,49 @@ def _exit_value_provenance(
             ),
         ),
     }
+
+
+def _terminal_noi_trace(
+    *,
+    terminal_noi: float,
+    basis: str,
+    label: str,
+    formula: str,
+    source_noi: float | None,
+    source_ref: str | None,
+    growth: float,
+) -> ValueTrace:
+    """FON-44 (R-059) — the reversion NOI, naming the basis it was read on."""
+    inputs: list[ValueInput] = []
+    if basis == "override":
+        inputs.append(
+            ValueInput(
+                name="terminal_noi_override",
+                value=terminal_noi,
+                assumption_key="terminal_noi_override",
+            )
+        )
+    else:
+        if source_noi is not None:
+            inputs.append(
+                ValueInput(
+                    name="source_year_noi", value=source_noi, traces_to=source_ref
+                )
+            )
+        if "revpar_growth" in formula:
+            inputs.append(
+                ValueInput(
+                    name="revpar_growth",
+                    value=growth,
+                    assumption_key="revpar_growth",
+                )
+            )
+    return ValueTrace(
+        value=terminal_noi,
+        formula=formula,
+        inputs=inputs,
+        note=f"Exit NOI basis: {label}.",
+    )
 
 
 def _irr_provenance(
@@ -342,12 +477,14 @@ class ReturnsEngineInputExt(BaseModel):
 
     deal_id: UUID
     assumptions: ModelAssumptions
-    year_one_noi: Annotated[float, Field(gt=0)]
+    # FON-63 — NOI may be negative (a ramp / PIP year): the cash flows carry it
+    # as-is. Only the exit-year NOI must be positive (see _TerminalNoiCheck).
+    year_one_noi: float
     annual_debt_service: Annotated[float, Field(ge=0)] = 0.0
     loan_amount: Annotated[float, Field(ge=0)] = 0.0
     loan_balance_at_exit: Annotated[float, Field(ge=0)] | None = None
     equity: Annotated[float, Field(gt=0)]
-    noi_by_year: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    noi_by_year: list[float] = Field(default_factory=list)
     # Wave 4 W4.4 — full debt-stack DS series. When set, the engine
     # uses these year-by-year debt service totals (senior + mezz + pref
     # equity aggregate) instead of the scalar ``annual_debt_service``.
@@ -398,6 +535,15 @@ class ReturnsEngineInputExt(BaseModel):
             "scenario or a normalized terminal NOI."
         ),
     )
+    # FON-44 (R-059) — which NOI the reversion caps. ``forward_12m`` (default,
+    # byte-identical) = the exit year's NOI grown one more year; ``stabilized``
+    # = the stabilized year's NOI grown to the exit year. A set
+    # ``terminal_noi_override`` beats both.
+    exit_noi_basis: ExitNoiBasis = "forward_12m"
+    # 1-based stabilized year for the ``stabilized`` basis (the runner passes
+    # the analyst's ``stabilization_year``, else the resolved signal). None →
+    # the engine resolves it from the NOI plateau.
+    stabilized_year: Annotated[int, Field(ge=1)] | None = None
     # PROVENANCE ONLY — never read by any calculation. True (the default) means
     # ``noi_by_year[i]`` is the expense engine's ``years[i].noi``, so the exit
     # trace can ASSERT where the reversion NOI came from instead of leaving the
@@ -459,21 +605,34 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 payload.year_one_noi, assumptions.revpar_growth, hold
             )
 
-        # Terminal NOI = NOI in year (hold + 1), used for exit cap calc.
-        terminal_noi = (
-            payload.terminal_noi_override
-            if payload.terminal_noi_override is not None
-            else noi_series[-1] * (1.0 + assumptions.revpar_growth)
+        # Terminal NOI for the exit-cap calc: the override, else the selected
+        # basis (default: NOI in year hold + 1). FON-44 / R-059.
+        (
+            terminal_noi,
+            exit_noi_basis,
+            exit_noi_period_label,
+            terminal_src_idx,
+            terminal_formula,
+        ) = _resolve_terminal_noi(
+            noi_series=noi_series,
+            hold=hold,
+            growth=assumptions.revpar_growth,
+            basis=payload.exit_noi_basis,
+            stabilized_year=payload.stabilized_year,
+            override=payload.terminal_noi_override,
         )
+        # FON-63 — negative operating NOI flows through, but a non-positive
+        # exit NOI has no sale value: stop here, naming ``terminal_noi``.
+        _TerminalNoiCheck(terminal_noi=terminal_noi)
         # PROVENANCE ONLY — the traced value the reversion NOI was grown from,
-        # named only when it honestly IS the expense engine's final projected
-        # year: not pinned by an override, sourced from the expense engine, and
+        # named only when it honestly IS one of the expense engine's projected
+        # years: not pinned by an override, sourced from the expense engine, and
         # inside the series the runner handed over (a hold longer than the P&L
         # is extrapolated here, and no upstream value backs that).
         terminal_noi_ref = (
-            f"expense.years[{hold - 1}].noi"
+            f"expense.years[{terminal_src_idx}].noi"
             if (
-                payload.terminal_noi_override is None
+                terminal_src_idx is not None
                 and payload.noi_from_expense_engine
                 and hold >= 1
                 and len(payload.noi_by_year) >= hold
@@ -674,12 +833,29 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             hold_years=hold,
             exit_cap_rate=assumptions.exit_cap_rate,
             terminal_noi=terminal_noi,
+            exit_noi_basis=exit_noi_basis,
+            exit_noi_period_label=exit_noi_period_label,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
             noi_by_year=list(noi_series),
             provenance=apply_states({
+                "terminal_noi": _terminal_noi_trace(
+                    terminal_noi=terminal_noi,
+                    basis=exit_noi_basis,
+                    label=exit_noi_period_label,
+                    formula=terminal_formula,
+                    source_noi=(
+                        noi_series[terminal_src_idx]
+                        if terminal_src_idx is not None
+                        else None
+                    ),
+                    source_ref=terminal_noi_ref,
+                    growth=assumptions.revpar_growth,
+                ),
                 **_exit_value_provenance(
                     terminal_noi=terminal_noi,
+                    basis_label=exit_noi_period_label,
+                    basis=exit_noi_basis,
                     exit_cap_rate=assumptions.exit_cap_rate,
                     gross_sale=gross_sale,
                     selling_costs_pct=assumptions.selling_costs_pct,

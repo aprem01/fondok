@@ -558,7 +558,10 @@ export const DebtServiceYear = z.object({
   principal: z.number().nonnegative(),
   debt_service: z.number().nonnegative(),
   ending_balance: z.number().nonnegative(),
-  dscr: z.number().nonnegative().nullable().optional(),
+  // FON-63 — null ("N/A") on a year whose NOI is <= 0 or with no debt service.
+  dscr: z.number().nullable().optional(),
+  // FON-63 — max(0, debt_service − noi); 0 on every covered year.
+  shortfall_usd: z.number().nonnegative().default(0),
 });
 export type DebtServiceYear = z.infer<typeof DebtServiceYear>;
 
@@ -567,6 +570,10 @@ export const DebtEngineOutput = z.object({
   annual_debt_service: z.number().nonnegative(),
   schedule: z.array(DebtServiceYear),
   avg_dscr: z.number().nonnegative().nullable().optional(),
+  // FON-63 — negative NOI flows through instead of stopping the model.
+  total_shortfall_usd: z.number().nonnegative().default(0),
+  negative_noi_years: z.array(z.number().int().min(1)).default([]),
+  noi_warning: z.string().nullable().optional(),
   provenance: ProvenanceMap.default({}),
 });
 export type DebtEngineOutput = z.infer<typeof DebtEngineOutput>;
@@ -612,6 +619,9 @@ export const ReturnsEngineOutput = z.object({
   selling_costs: z.number().nonnegative(),
   net_proceeds: z.number(),
   hold_years: z.number().int().min(1).max(20),
+  // FON-44 (R-059) — which NOI the reversion capped, and its period label.
+  exit_noi_basis: z.enum(["forward_12m", "stabilized", "override"]).default("forward_12m"),
+  exit_noi_period_label: z.string().default(""),
   provenance: ProvenanceMap.default({}),
 });
 export type ReturnsEngineOutput = z.infer<typeof ReturnsEngineOutput>;

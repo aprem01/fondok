@@ -100,6 +100,7 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
+from ..engines.stabilization import resolve_stabilized_year_index
 from fondok_schemas.underwriting import (
     PIPDisplacement,
     RevenueEngineInput,
@@ -248,6 +249,12 @@ _VALIDATION_HINTS: dict[tuple[str, str], str] = {
     ("debt", "noi_by_year"): (
         "Check key count, revenue base, expense base, or a starting-occupancy "
         "override, then re-run."
+    ),
+    # FON-63 — operating NOI may be negative and flows through; the exit-year
+    # NOI is the one real stop, because the reversion is NOI ÷ exit cap.
+    ("returns", "terminal_noi"): (
+        "Exit-year NOI is not positive, so no exit value can be computed. "
+        "Check the hold period, growth or the stabilized exit basis."
     ),
 }
 
@@ -903,6 +910,27 @@ def _is_str_market_note(note: Any) -> bool:
 # the expense output, and a lone re-run of one engine would re-fragment the
 # canonical snapshot (FON-73).
 STABILIZATION_YEAR_KEY = "stabilization_year"
+
+# ──────────────── Exit NOI basis (FON-44 / R-059) ─────────────────────
+#
+# Which NOI the reversion caps. ``forward_12m`` (the default, and the only
+# behavior before FON-44) = the exit year's NOI grown one more year;
+# ``stabilized`` = the stabilized year's NOI grown to the exit year. Arrives
+# as a scalar ``field_overrides.exit_noi_basis`` through the generic routing
+# branch; anything outside this allow-list reads as the default. Note: with
+# ``stabilized`` selected, the stabilization year above DOES move returns —
+# it is display-only on the default basis.
+EXIT_NOI_BASIS_KEY = "exit_noi_basis"
+_EXIT_NOI_BASES: frozenset[str] = frozenset({"forward_12m", "stabilized"})
+
+
+def _coerce_exit_noi_basis(value: Any) -> str:
+    """The allow-listed basis, or ``forward_12m``. Never a guess."""
+    if isinstance(value, dict):
+        value = value.get("value")
+    if isinstance(value, str) and value.strip() in _EXIT_NOI_BASES:
+        return value.strip()
+    return "forward_12m"
 
 # ──────────────── field_overrides keys that are NOT engine input ──────
 #
@@ -6216,12 +6244,30 @@ def _build_input_for(
             )
         except (TypeError, ValueError):
             refi_time_years = None
+        # FON-44 (R-059) — the exit NOI basis. Only the ``stabilized`` basis
+        # reads a stabilized year: the analyst's ``stabilization_year`` wins,
+        # else the same occupancy-first signal the debt / expense engines use.
+        exit_noi_basis = _coerce_exit_noi_basis(base.get(EXIT_NOI_BASIS_KEY))
+        stabilized_year: int | None = None
+        if exit_noi_basis == "stabilized":
+            stabilized_year = _coerce_stabilization_year(
+                base.get(STABILIZATION_YEAR_KEY)
+            )
+            if stabilized_year is None:
+                _stab_idx = resolve_stabilized_year_index(
+                    occupancy_by_year=_occupancy_by_year(accumulated),
+                    stabilized_occupancy=_stabilized_occupancy_assumption(base),
+                    noi_by_year=noi_by_year,
+                )
+                stabilized_year = _stab_idx + 1 if _stab_idx is not None else None
         return ReturnsEngineInputExt(
             deal_id=deal_uuid,
             assumptions=assumptions,
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
             noi_from_expense_engine=noi_from_expense_engine,
+            exit_noi_basis=exit_noi_basis,
+            stabilized_year=stabilized_year,
             annual_debt_service=debt_out.annual_debt_service,
             debt_service_by_year=getattr(debt_out, "debt_service_by_year", []) or [],
             loan_amount=capital_out.debt_amount,

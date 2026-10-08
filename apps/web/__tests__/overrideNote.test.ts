@@ -124,6 +124,8 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     // The shape of the waterfall, not a value in it.
     'partnership.waterfall.tier_count',
     'partnership.waterfall.0.removed',
+    // FON-44 — a method choice between two engine-computed NOIs; no typed number.
+    'exit_noi_basis',
     // IC-memo prose and its UI state.
     'memo_thesis',
     'memo_thesis_edited',
