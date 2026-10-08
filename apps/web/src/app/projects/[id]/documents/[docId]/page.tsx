@@ -17,6 +17,7 @@ import { cn, formatValue } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { humanizeFieldName } from '@/lib/fieldLabels';
 import { api } from '@/lib/api';
+import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useToast } from '@/components/ui/Toast';
 
 const DOC_TYPE_LABEL: Record<string, string> = {
@@ -107,7 +108,10 @@ export default function DocumentDetailPage() {
           <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[12px] text-ink-500">
             {docType && (
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-ink-100 text-ink-600">
-                {DOC_TYPE_LABEL[docType] ?? docType}
+                {/* FON-41 / R-036 — a CAPEX file tagged future is Future CapEx. */}
+                {effectiveDocSubtype(docType, doc?.doc_subtype) === 'future'
+                  ? 'Future CapEx'
+                  : DOC_TYPE_LABEL[docType] ?? docType}
               </span>
             )}
             {doc?.status && <span>{doc.status === 'EXTRACTED' ? 'Extracted' : doc.status}</span>}

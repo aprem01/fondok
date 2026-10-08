@@ -7,6 +7,7 @@
 import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
+import { wizardDocSubtype, type DocSubtype } from './docSubtype';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -513,7 +514,23 @@ export interface WorkerDocument {
   ai_proposed_doc_type?: string | null;
   year_mismatch?: boolean;
   extracted_period_year?: number | null;
+  /** FON-41 / R-036 — subcategory inside ``doc_type``. Only CAPEX carries
+   *  one: ``future`` (PIP budget / forward capital plan) or ``historic``.
+   *  ``null`` / absent = not stated (pre-FON-41 uploads, legacy bulk drop,
+   *  or a worker whose schema lacks the column) — the Data Room files those
+   *  under Historic CapEx. */
+  doc_subtype?: DocSubtype | null;
 }
+
+// FON-41 / R-036 — CAPEX subcategory helpers live in ./docSubtype (kept out
+// of this module so tests that mock '@/lib/api' still get the real grouping).
+export {
+  DOC_SUBTYPES_BY_DOC_TYPE,
+  WIZARD_CATEGORY_DOC_SUBTYPE,
+  effectiveDocSubtype,
+  wizardDocSubtype,
+} from './docSubtype';
+export type { DocSubtype } from './docSubtype';
 
 /** Wizard-step file payload — what the new-project guided onboarding hands to
  *  ``api.documents.upload``. The category drives the right-rail checklist; the
@@ -538,7 +555,8 @@ export type WizardCategory =
   | 'historical_pnl'
   | 'str'
   // FON-41 decision 5 — wizard-only display slots over existing doc types:
-  // 'comp_set' uploads as STR_TREND, 'future_capex' as CAPEX.
+  // 'comp_set' uploads as STR_TREND; 'future_capex' uploads as CAPEX with
+  // doc_subtype 'future' (FON-41 / R-036), 'capex' as CAPEX + 'historic'.
   | 'comp_set'
   | 'insurance'
   | 'property_tax'
@@ -575,6 +593,9 @@ export interface WizardFile {
   /** Fiscal year for financials. Optional even for the financials category
    *  (year prompt is OPTIONAL per locked Wave 1 product decision). */
   fiscal_year?: number | null;
+  /** FON-41 — explicit subtype; when absent the slot's default
+   *  (``WIZARD_CATEGORY_DOC_SUBTYPE``) applies. */
+  doc_subtype?: DocSubtype | null;
 }
 
 // ─── USALI compliance ─────────────────────────────────────────────────
@@ -1704,7 +1725,8 @@ export const api = {
      *  ``user_doc_type`` ("Annual / T-12", "Monthly", …) and an optional
      *  ``fiscal_year``; both are sent as positionally-aligned form
      *  arrays so the worker can map ``files[i] → user_doc_types[i] →
-     *  fiscal_years[i]``. */
+     *  fiscal_years[i] → user_doc_subtypes[i]`` (FON-41: CAPEX files carry
+     *  ``future`` / ``historic`` from their wizard slot). */
     upload: (dealId: string, files: File[] | WizardFile[]) => {
       const fd = new FormData();
       const isWizard = files.length > 0 && 'file' in (files[0] as object);
@@ -1720,6 +1742,7 @@ export const api = {
             'fiscal_years',
             w.fiscal_year != null ? String(w.fiscal_year) : '',
           );
+          fd.append('user_doc_subtypes', wizardDocSubtype(w));
         }
       } else {
         (files as File[]).forEach((f) => fd.append('files', f, f.name));
@@ -1799,7 +1822,8 @@ export const api = {
     reclassify: (
       dealId: string,
       docId: string,
-      body: { doc_type?: string; fiscal_year?: number },
+      // FON-41: ``doc_subtype`` omitted = unchanged; ``null`` clears it.
+      body: { doc_type?: string; fiscal_year?: number; doc_subtype?: DocSubtype | null },
     ) =>
       request<WorkerDocument>(
         'PATCH',

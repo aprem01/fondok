@@ -7,7 +7,8 @@
  *  1. The wizard's upload slots run in Sam's order with Sam's labels.
  *  2. The new slots upload with the doc types the worker already knows
  *     (Hotel Program → ROOM_MIX, Comp Set / Market Reports → STR_TREND,
- *     Future CapEx → CAPEX).
+ *     Future CapEx → CAPEX + doc_subtype ``future`` — R-036; the upload
+ *     wire format is pinned in futureCapex.test.tsx).
  *  3. Due Diligence uses the same status colour as every other slot (it used
  *     to render gray because the dot was keyed off ``requiredForIc``).
  *  4. The Data Room's category rows mirror the slot labels and order.
@@ -224,19 +225,24 @@ describe('Data Room categories mirror the slots', () => {
     expect(dd.textContent).not.toMatch(/optional/);
   });
 
-  it('files market studies under Comp Set / Market Reports and CapEx under Historic CapEx', () => {
+  it('files market studies under Comp Set / Market Reports and CapEx by doc_subtype', () => {
     const files: CoverageFile[] = [
       { id: 'm1', name: 'CoStar Submarket.pdf', docType: 'MARKET_STUDY', fields: 3, confidence: 90, toReview: 0, fiscalYear: null, status: 'EXTRACTED' },
-      { id: 'c1', name: 'PIP Budget.xlsx', docType: 'CAPEX', fields: 3, confidence: 90, toReview: 0, fiscalYear: null, status: 'EXTRACTED' },
+      { id: 'c1', name: 'CapEx History.xlsx', docType: 'CAPEX', docSubtype: 'historic', fields: 3, confidence: 90, toReview: 0, fiscalYear: null, status: 'EXTRACTED' },
+      { id: 'c2', name: 'PIP Budget.xlsx', docType: 'CAPEX', docSubtype: 'future', fields: 3, confidence: 90, toReview: 0, fiscalYear: null, status: 'EXTRACTED' },
     ];
     const { container } = render(
       <DocumentCoverage files={files} onReclassify={vi.fn()} onOpenDoc={vi.fn()} />,
     );
     expect(container.querySelector('li[data-category="comp_set"]')!.textContent).toContain('CoStar Submarket.pdf');
-    expect(container.querySelector('li[data-category="capex"]')!.textContent).toContain('PIP Budget.xlsx');
-    expect(container.querySelector('li[data-category="future_capex"]')!.textContent).toMatch(
-      /listed under Historic CapEx/,
-    );
+    const historic = container.querySelector('li[data-category="capex"]')!.textContent;
+    const future = container.querySelector('li[data-category="future_capex"]')!.textContent;
+    expect(historic).toContain('CapEx History.xlsx');
+    expect(historic).not.toContain('PIP Budget.xlsx');
+    expect(future).toContain('PIP Budget.xlsx');
+    expect(future).not.toContain('CapEx History.xlsx');
+    // The old "Filed as CapEx — listed under Historic CapEx" stand-in is gone.
+    expect(container.textContent).not.toMatch(/listed under Historic CapEx/);
   });
 });
 

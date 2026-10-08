@@ -9,6 +9,7 @@
  * categories expand to their files; financial files carry inline
  * [T-12 / P&L] · [Annual / Monthly / YTD] · [Year] dropdowns wired to the
  * reclassify endpoint (POST-upload correction, re-buckets ranking + coverage).
+ * CapEx files carry a [Historic / Future] select (FON-41 / R-036 doc_subtype).
  *
  * Currently rendered behind a ``?coverage=1`` preview flag so the live Data
  * Room is untouched until the layout is signed off.
@@ -39,6 +40,7 @@ import {
   formatElapsed,
   isProcessingStatus,
 } from '@/lib/progress';
+import { DOC_SUBTYPES_BY_DOC_TYPE, effectiveDocSubtype, type DocSubtype } from '@/lib/docSubtype';
 
 export interface CoverageFile {
   id: string;
@@ -56,6 +58,9 @@ export interface CoverageFile {
    *  flagged (no line is rendered). */
   reviewReason?: string | null;
   fiscalYear: number | null;
+  /** FON-41 / R-036 — the worker's ``doc_subtype`` (CAPEX: ``future`` |
+   *  ``historic``). Null / absent groups a CAPEX file under Historic CapEx. */
+  docSubtype?: string | null;
   /** Upstream doc status (UPLOADED / EXTRACTED / FAILED / …) — drives the
    *  processing-state badge (FON-40). */
   status?: string;
@@ -142,13 +147,17 @@ function docStatusState(
   return { label: 'Ready for Review', tone: 'green' };
 }
 
+/** What a reclassify can change — ``doc_subtype`` omitted = unchanged. */
+export type ReclassifyBody = {
+  doc_type?: string;
+  fiscal_year?: number;
+  doc_subtype?: DocSubtype | null;
+};
+
 export interface DocumentCoverageProps {
   files: CoverageFile[];
   /** Reclassify a financial doc's type / year (fires the PATCH endpoint). */
-  onReclassify: (
-    docId: string,
-    body: { doc_type?: string; fiscal_year?: number },
-  ) => void;
+  onReclassify: (docId: string, body: ReclassifyBody) => void;
   /** Open a file's extracted-data / review panel. */
   onOpenDoc: (docId: string, financial?: boolean) => void;
   /** Open the document's field review focused on its flagged fields — the
@@ -170,13 +179,16 @@ type CategorySpec = {
   label: string;
   /** doc_type tokens that count toward this category. */
   match: string[];
+  /** FON-41 / R-036 — only files whose effective ``doc_subtype`` equals this
+   *  count (CAPEX: Historic vs Future). A drop onto the row sets it too. */
+  subtype?: DocSubtype;
   optional?: boolean;
   financial?: boolean;
   /** Token a file dragged onto this row is reclassified to (defaults to
    *  ``match[0]``; financials use a generic annual P&L). */
   dropAs?: string;
-  /** Shown instead of "Not uploaded" when the row can't be filled by
-   *  doc_type alone. */
+  /** Shown instead of "Not uploaded" (e.g. a row that can't be filled by
+   *  doc_type alone). */
   note?: string;
 };
 
@@ -186,9 +198,9 @@ type CategorySpec = {
 // doc_type, so:
 //  - Comp Set / Market Reports holds MARKET_STUDY — the Router's lane for
 //    CoStar / market files (the wizard slot uploads them as STR_TREND).
-//  - Future CapEx can't be told apart from Historic CapEx: both upload as
-//    CAPEX (no future/historic hint survives the upload), so CAPEX files list
-//    under Historic CapEx and Future CapEx stays out of the coverage count.
+//  - Historic CapEx and Future CapEx both hold CAPEX files, split by the
+//    worker's ``doc_subtype`` (FON-41 / R-036): ``future`` → Future CapEx,
+//    ``historic`` or unstated (legacy uploads, bulk drop) → Historic CapEx.
 export const CATEGORIES: CategorySpec[] = [
   { id: 'om', label: 'Offering Memorandum', match: ['OM'] },
   { id: 'room_mix', label: 'Hotel Program', match: ['ROOM_MIX'] },
@@ -201,17 +213,10 @@ export const CATEGORIES: CategorySpec[] = [
   },
   { id: 'str', label: 'STR Reports', match: ['STR', 'STR_TREND'] },
   { id: 'comp_set', label: 'Comp Set / Market Reports', match: ['MARKET_STUDY'] },
-  { id: 'capex', label: 'Historic CapEx', match: ['CAPEX'] },
+  { id: 'capex', label: 'Historic CapEx', match: ['CAPEX'], subtype: 'historic' },
   { id: 'insurance', label: 'Insurance Records', match: ['INSURANCE'] },
   { id: 'property_tax', label: 'Property Taxes', match: ['PROPERTY_TAX'] },
-  {
-    id: 'future_capex',
-    label: 'Future CapEx',
-    match: [],
-    optional: true,
-    dropAs: 'CAPEX',
-    note: 'Filed as CapEx — listed under Historic CapEx',
-  },
+  { id: 'future_capex', label: 'Future CapEx', match: ['CAPEX'], subtype: 'future' },
   { id: 'property_info', label: 'Other Property Info', match: ['PROPERTY_INFO'] },
   { id: 'leases', label: 'Leases & Agreements', match: ['LEASES', 'CONTRACT'] },
   // R-031 — Due Diligence is a regular row (no muted "optional" tag).
@@ -274,7 +279,7 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'STR_TREND', label: 'STR Trend (TTM)' },
   { value: 'STR', label: 'STR Star (Daily)' },
   { value: 'MARKET_STUDY', label: 'Comp Set / Market Reports' },
-  { value: 'CAPEX', label: 'CapEx' },
+  { value: 'CAPEX', label: 'CapEx' },  // Historic / Future via the subtype select
   { value: 'INSURANCE', label: 'Insurance Records' },
   { value: 'PROPERTY_TAX', label: 'Property Taxes' },
   { value: 'PROPERTY_INFO', label: 'Other Property Info' },
@@ -285,6 +290,25 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'PARTNERSHIP', label: 'Partnership / JV Docs' },
   { value: 'OTHER', label: 'Other' },
 ];
+
+const SUBTYPE_LABEL: Record<DocSubtype, string> = {
+  historic: 'Historic',
+  future: 'Future',
+};
+
+/** The coverage category a file lands in: doc_type match, then — for rows
+ *  pinned to a subtype — the file's effective ``doc_subtype``. */
+export function categoryForFile(
+  file: Pick<CoverageFile, 'docType' | 'docSubtype'>,
+): CategorySpec | undefined {
+  const t = normToken(file.docType);
+  if (!t) return undefined;
+  return CATEGORIES.find((c) => {
+    const m = c.match.find((x) => normToken(x) === t);
+    if (!m) return false;
+    return !c.subtype || effectiveDocSubtype(m, file.docSubtype) === c.subtype;
+  });
+}
 
 export function DocumentCoverage({
   files,
@@ -306,16 +330,13 @@ export function DocumentCoverage({
   for (const c of CATEGORIES) byCategory.set(c.id, []);
   const unclassified: CoverageFile[] = [];
   for (const f of files) {
-    const t = normToken(f.docType);
-    const cat = t
-      ? CATEGORIES.find((c) => c.match.some((m) => normToken(m) === t))
-      : undefined;
+    const cat = categoryForFile(f);
     if (cat) byCategory.get(cat.id)!.push(f);
     else unclassified.push(f);
   }
 
   // The header counts against the core diligence types — every non-optional
-  // row. Future CapEx (indistinguishable from Historic by doc_type) and Debt /
+  // row (Future CapEx counts since FON-41 gave it its own doc_subtype). Debt /
   // Partnership / Other are extra buckets that don't move the "of N" number.
   const coreCats = CATEGORIES.filter((c) => !c.optional);
   const CORE_TOTAL = coreCats.length;
@@ -347,7 +368,12 @@ export function DocumentCoverage({
   const dropDocInto = (cat: CategorySpec) => {
     if (!dragDocId) return;
     const token = cat.dropAs ?? cat.match[0];
-    if (token) onReclassify(dragDocId, { doc_type: token });
+    if (token) {
+      onReclassify(
+        dragDocId,
+        cat.subtype ? { doc_type: token, doc_subtype: cat.subtype } : { doc_type: token },
+      );
+    }
     setDragDocId(null);
   };
 
@@ -749,6 +775,10 @@ function CoverageFileRow({
     strReport && !(meta?.userProvidedDocType ?? '').trim()
       ? detectedStrReportType(file.docType, meta)
       : null;
+  // FON-41 / R-036 — doc_types that split by subtype (CAPEX) get a second
+  // select; ``subtype`` is the effective one (unstated CAPEX → Historic).
+  const subtypeOptions = DOC_SUBTYPES_BY_DOC_TYPE[(file.docType ?? '').toUpperCase().trim()];
+  const subtype = effectiveDocSubtype(file.docType, file.docSubtype);
   const confTone =
     file.confidence >= 95 ? 'text-success-700' : file.confidence >= 85 ? 'text-warn-700' : 'text-danger-700';
 
@@ -867,23 +897,47 @@ function CoverageFileRow({
         // FON-58 — any classified document can be re-typed inline (e.g. an OM
         // mis-tagged as a comp set → STR / Comp Set). Extracted data is kept;
         // the reclassify endpoint just re-buckets it.
-        <select
-          aria-label={`Document type for ${file.name}`}
-          className={selectCls}
-          value={file.docType}
-          disabled={busy}
-          onChange={(e) => {
-            if (e.target.value && e.target.value !== file.docType) {
-              onReclassify(file.id, { doc_type: e.target.value });
-            }
-          }}
-        >
-          {DOC_TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <select
+            aria-label={`Document type for ${file.name}`}
+            className={selectCls}
+            value={file.docType}
+            disabled={busy}
+            onChange={(e) => {
+              if (e.target.value && e.target.value !== file.docType) {
+                onReclassify(file.id, { doc_type: e.target.value });
+              }
+            }}
+          >
+            {DOC_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {subtypeOptions && (
+            // FON-41 / R-036 — CapEx files move between Historic and Future
+            // CapEx by subtype; the doc_type stays CAPEX.
+            <select
+              aria-label={`CapEx timing for ${file.name}`}
+              className={selectCls}
+              value={subtype ?? ''}
+              disabled={busy}
+              onChange={(e) => {
+                const next = e.target.value as DocSubtype;
+                if (next && next !== subtype) {
+                  onReclassify(file.id, { doc_subtype: next });
+                }
+              }}
+            >
+              {subtypeOptions.map((o) => (
+                <option key={o} value={o}>
+                  {SUBTYPE_LABEL[o] ?? o}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       )}
       {detectedReport && (
         <span

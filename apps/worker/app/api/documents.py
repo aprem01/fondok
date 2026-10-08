@@ -21,6 +21,7 @@ transitions the row through ``CLASSIFYING → EXTRACTING → EXTRACTED``
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -531,6 +532,13 @@ class DocumentRecord(BaseModel):
     # "Primary source" and mark the rest as supplemental. Purely derived —
     # not persisted; recomputed on every list.
     primary_financial_source: bool = False
+    # FON-41 / R-036 — per-file subcategory inside a doc_type. Today only
+    # CAPEX carries one: ``future`` (forward capital plan / PIP budget) or
+    # ``historic`` (spend already incurred). NULL = not stated, which the
+    # Data Room files under Historic CapEx. Set by the upload's
+    # ``user_doc_subtypes[]`` or the reclassify endpoint; never by the
+    # Router or extraction.
+    doc_subtype: str | None = None
 
 
 # doc_type families for the FON-22 primary-source ranking. Full-year
@@ -1504,6 +1512,87 @@ async def classify_for_extraction(
     )
 
 
+# ─────────── FON-41 / R-036 — CAPEX subcategory (doc_subtype) ───────────
+
+# The subcategories each doc_type accepts. Only CAPEX has any today; every
+# other doc_type stores NULL. Deliberately NOT new DocType values — the
+# Router, the extractor and every engine keep reading plain ``CAPEX``.
+DOC_SUBTYPES_BY_DOC_TYPE: dict[str, frozenset[str]] = {
+    "CAPEX": frozenset({"future", "historic"}),
+}
+
+_DOC_SUBTYPE_CACHE_KEY = "fondok_documents_has_doc_subtype"
+
+
+def _normalize_doc_subtype(doc_type: str | None, raw: Any) -> str | None:
+    """Return the canonical subtype for ``doc_type`` or ``None``.
+
+    Empty / unknown values and subtypes on a doc_type that takes none
+    collapse to ``None`` — the upload must never fail on a stray tag.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    allowed = DOC_SUBTYPES_BY_DOC_TYPE.get((doc_type or "").upper().strip())
+    candidate = raw.strip().lower()
+    if not allowed or candidate not in allowed:
+        return None
+    return candidate
+
+
+async def _documents_has_doc_subtype(session: AsyncSession) -> bool:
+    """Does the live ``documents`` table carry ``doc_subtype`` (FON-41)?
+
+    Same catalog-introspection pattern as ``deals._deals_has_proposed_brand``:
+    a failed probe SELECT would poison the open transaction, so we read the
+    catalog instead. Any failure answers False — reads then return NULL and
+    writes are skipped rather than 500ing on a not-yet-migrated schema.
+    Memoised on ``session.info``.
+    """
+    try:
+        cached = session.info.get(_DOC_SUBTYPE_CACHE_KEY)
+    except Exception:
+        cached = None
+    if isinstance(cached, bool):
+        return cached
+    try:
+        is_sqlite = (
+            session.bind is not None and session.bind.dialect.name == "sqlite"
+        )
+        if is_sqlite:
+            rows = await session.execute(text("PRAGMA table_info(documents)"))
+            have = {str(r[1]).lower() for r in rows.fetchall()}
+        else:
+            rows = await session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'documents'"
+                )
+            )
+            have = {str(r[0]).lower() for r in rows.fetchall()}
+        answer = "doc_subtype" in have
+    except Exception:
+        answer = False
+    if not answer:
+        logger.warning(
+            "documents: doc_subtype column absent — reading NULL and "
+            "skipping writes until the startup migration runs"
+        )
+    with contextlib.suppress(Exception):
+        session.info[_DOC_SUBTYPE_CACHE_KEY] = answer
+    return answer
+
+
+async def _with_doc_subtype(session: AsyncSession, sql: str) -> str:
+    """Fill the ``/*doc_subtype*/`` marker in a documents SELECT with the
+    real column, or a NULL stand-in on a schema without it."""
+    col = (
+        ", doc_subtype"
+        if await _documents_has_doc_subtype(session)
+        else ", NULL AS doc_subtype"
+    )
+    return sql.replace("/*doc_subtype*/", col)
+
+
 def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
     # Surface typed error info to the UI when present. The
     # extraction_data JSON blob carries `error_kind` and
@@ -1637,6 +1726,9 @@ def _row_to_record(row: dict[str, Any]) -> DocumentRecord:
         year_mismatch=year_mismatch,
         extracted_period_year=extracted_period_year,
         structural_pnl_score=structural_pnl_score,
+        doc_subtype=_normalize_doc_subtype(
+            row.get("doc_type"), row.get("doc_subtype")
+        ),
     )
 
 
@@ -1731,7 +1823,9 @@ async def _find_duplicate_document(
         row = (
             await session.execute(
                 text(
-                    """
+                    await _with_doc_subtype(
+                        session,
+                        """
                     SELECT id, deal_id, tenant_id, filename, doc_type,
                            status, uploaded_at, content_hash,
                            storage_key, size_bytes, page_count, parser,
@@ -1740,12 +1834,13 @@ async def _find_duplicate_document(
                            user_provided_doc_type, fiscal_year,
                            misclassified, ai_proposed_doc_type,
                            year_mismatch, extracted_period_year,
-                           structural_pnl_score
+                           structural_pnl_score /*doc_subtype*/
                       FROM documents
                      WHERE deal_id = :deal AND content_hash = :h
                      ORDER BY uploaded_at DESC
                      LIMIT 1
-                    """
+                    """,
+                    )
                 ),
                 {"deal": deal_id, "h": content_hash},
             )
@@ -1810,6 +1905,11 @@ async def upload_documents(
     # parser. Each entry is coerced to int inside the loop with a
     # plausibility window (1900-2100).
     fiscal_years: list[str] | None = Form(None),
+    # FON-41 / R-036 — optional per-file subcategory, index-aligned with
+    # ``files`` exactly like ``fiscal_years``. CAPEX accepts ``future`` /
+    # ``historic``; anything else (or a subtype on another doc_type)
+    # collapses to NULL.
+    user_doc_subtypes: list[str] | None = Form(None),
 ) -> list[DocumentRecord]:
     """Persist one-or-more documents against ``deal_id`` and kick off
     parse + extract in the background.
@@ -1833,6 +1933,11 @@ async def upload_documents(
     out-of-range entries are treated as "not provided" (the legacy
     bulk-upload zone on the Data Room calls this endpoint without
     either array, which must still work).
+
+    ``user_doc_subtypes`` (FON-41 / R-036) rides the same positional
+    contract and lands on ``documents.doc_subtype``: a CAPEX file is
+    ``future`` (forward plan / PIP budget) or ``historic``. It never
+    changes ``doc_type`` — the Router and extractor still see ``CAPEX``.
 
     ``user_provided_doc_type`` is stored verbatim. Once extraction runs,
     if the Router agent's classification disagrees with the analyst's
@@ -1860,6 +1965,8 @@ async def upload_documents(
 
     user_doc_types_padded = _pad(user_doc_types, len(files))
     fiscal_years_padded = _pad(fiscal_years, len(files))
+    user_doc_subtypes_padded = _pad(user_doc_subtypes, len(files))
+    has_doc_subtype = await _documents_has_doc_subtype(session)
 
     settings = get_settings()
     tenant_id_str = str(tenant_id)
@@ -2050,25 +2157,40 @@ async def upload_documents(
         guessed_doc_type = _guess_doc_type(filename, size_bytes=len(body))
         doc_type = user_provided_type or guessed_doc_type
         uploaded_at = _now()
+        # FON-41 — the subtype only means something on the doc_type the
+        # analyst tagged (CAPEX → future / historic).
+        doc_subtype = _normalize_doc_subtype(
+            doc_type, user_doc_subtypes_padded[idx]
+        )
+        if doc_subtype is not None and not has_doc_subtype:
+            logger.warning(
+                "upload: doc_subtype=%r dropped for %s — column absent on "
+                "this schema",
+                doc_subtype,
+                filename,
+            )
+            doc_subtype = None
+        subtype_col = ", doc_subtype" if has_doc_subtype else ""
+        subtype_val = ", :doc_subtype" if has_doc_subtype else ""
 
         try:
             await session.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO documents (
                         id, deal_id, tenant_id, filename, doc_type, status,
                         uploaded_at, content_hash, storage_key, size_bytes,
                         page_count, parser, extraction_data,
                         user_provided_doc_type, fiscal_year, misclassified,
                         ai_proposed_doc_type,
-                        year_mismatch, extracted_period_year
+                        year_mismatch, extracted_period_year{subtype_col}
                     ) VALUES (
                         :id, :deal_id, :tenant_id, :filename, :doc_type, :status,
                         :uploaded_at, :content_hash, :storage_key, :size_bytes,
                         :page_count, :parser, :extraction_data,
                         :user_provided_doc_type, :fiscal_year, :misclassified,
                         :ai_proposed_doc_type,
-                        :year_mismatch, :extracted_period_year
+                        :year_mismatch, :extracted_period_year{subtype_val}
                     )
                     """
                 ),
@@ -2101,6 +2223,7 @@ async def upload_documents(
                     "ai_proposed_doc_type": None,
                     "year_mismatch": False,
                     "extracted_period_year": None,
+                    "doc_subtype": doc_subtype,
                 },
             )
             await session.commit()
@@ -2135,6 +2258,7 @@ async def upload_documents(
                 user_provided_doc_type=user_provided_type,
                 fiscal_year=fiscal_year,
                 misclassified=False,
+                doc_subtype=doc_subtype,
             )
         )
         pending_parse.append((str(doc_id), str(deal_id), tenant_id_str, body))
@@ -2662,7 +2786,9 @@ async def list_documents(
     )
     rows = await session.execute(
         text(
-            """
+            await _with_doc_subtype(
+                session,
+                """
             SELECT id, deal_id, tenant_id, filename, doc_type, status,
                    uploaded_at, content_hash, storage_key, size_bytes,
                    page_count, parser, extraction_data,
@@ -2671,12 +2797,13 @@ async def list_documents(
                    user_provided_doc_type, fiscal_year, misclassified,
                    ai_proposed_doc_type,
                    year_mismatch, extracted_period_year,
-                   structural_pnl_score
+                   structural_pnl_score /*doc_subtype*/
               FROM documents
              WHERE deal_id = :deal_id
                AND tenant_id = :tenant
              ORDER BY uploaded_at DESC
-            """
+            """,
+            )
         ),
         {"deal_id": str(deal_id), "tenant": str(tenant_id)},
     )
@@ -4214,7 +4341,9 @@ async def accept_classification(
     row = (
         await session.execute(
             text(
-                """
+                await _with_doc_subtype(
+                    session,
+                    """
                 SELECT id, deal_id, tenant_id, filename, doc_type, status,
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
@@ -4223,12 +4352,13 @@ async def accept_classification(
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
                        year_mismatch, extracted_period_year,
-                       structural_pnl_score
+                       structural_pnl_score /*doc_subtype*/
                   FROM documents
                  WHERE id = :id
                    AND deal_id = :deal_id
                    AND tenant_id = :tenant
-                """
+                """,
+                )
             ),
             {
                 "id": str(doc_id),
@@ -4321,7 +4451,9 @@ async def accept_classification(
     refreshed = (
         await session.execute(
             text(
-                """
+                await _with_doc_subtype(
+                    session,
+                    """
                 SELECT id, deal_id, tenant_id, filename, doc_type, status,
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
@@ -4330,10 +4462,11 @@ async def accept_classification(
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
                        year_mismatch, extracted_period_year,
-                       structural_pnl_score
+                       structural_pnl_score /*doc_subtype*/
                   FROM documents
                  WHERE id = :id
-                """
+                """,
+                )
             ),
             {"id": str(doc_id)},
         )
@@ -4375,6 +4508,11 @@ class ReclassifyBody(BaseModel):
 
     doc_type: str | None = None
     fiscal_year: int | None = None
+    # FON-41 / R-036 — CAPEX subcategory (``future`` | ``historic``).
+    # Omitted = unchanged; explicit ``null`` clears it (Data Room then
+    # files the doc under Historic CapEx). Moving a doc OFF CAPEX always
+    # clears it.
+    doc_subtype: str | None = None
 
 
 @router.patch(
@@ -4388,7 +4526,8 @@ async def reclassify_document(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DocumentRecord:
-    """Set a document's ``doc_type`` / ``fiscal_year`` post-upload.
+    """Set a document's ``doc_type`` / ``fiscal_year`` / ``doc_subtype``
+    post-upload.
 
     The analyst's explicit reclassify becomes the source of truth: we
     mirror ``doc_type`` onto ``user_provided_doc_type`` and clear the
@@ -4407,10 +4546,15 @@ async def reclassify_document(
             )
         new_doc_type = candidate
 
-    if new_doc_type is None and body.fiscal_year is None:
+    # FON-41 — ``doc_subtype`` sent at all (even as null) means "set it".
+    subtype_sent = "doc_subtype" in body.model_fields_set
+    if new_doc_type is None and body.fiscal_year is None and not subtype_sent:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="nothing to update: provide doc_type and/or fiscal_year",
+            detail=(
+                "nothing to update: provide doc_type, fiscal_year and/or "
+                "doc_subtype"
+            ),
         )
 
     # Tenant gate — confirm the doc exists under this tenant first so we
@@ -4418,7 +4562,7 @@ async def reclassify_document(
     row = (
         await session.execute(
             text(
-                "SELECT id FROM documents "
+                "SELECT id, doc_type FROM documents "
                 "WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant"
             ),
             {
@@ -4452,6 +4596,49 @@ async def reclassify_document(
         sets += ["fiscal_year = :fy", "year_mismatch = :false"]
         params["fy"] = int(body.fiscal_year)
 
+    # FON-41 / R-036 — CAPEX subcategory. Validated against the doc_type
+    # the row will carry AFTER this call; moving a doc off a doc_type that
+    # takes subtypes clears it.
+    effective_doc_type = (
+        new_doc_type or str(row._mapping.get("doc_type") or "")
+    ).upper()
+    allowed_subtypes = DOC_SUBTYPES_BY_DOC_TYPE.get(effective_doc_type)
+    new_subtype: str | None = None
+    if subtype_sent and body.doc_subtype is not None:
+        new_subtype = _normalize_doc_subtype(effective_doc_type, body.doc_subtype)
+        if new_subtype is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"doc_subtype '{body.doc_subtype}' is not valid for "
+                    f"doc_type '{effective_doc_type or 'unknown'}'"
+                    + (
+                        f" (expected one of {sorted(allowed_subtypes)})"
+                        if allowed_subtypes
+                        else ""
+                    )
+                ),
+            )
+    write_subtype = subtype_sent or (
+        new_doc_type is not None and not allowed_subtypes
+    )
+    if write_subtype:
+        if await _documents_has_doc_subtype(session):
+            sets.append("doc_subtype = :subtype")
+            params["subtype"] = new_subtype
+        elif new_subtype is not None:
+            logger.warning(
+                "reclassify_document: doc_subtype=%r dropped for doc=%s — "
+                "column absent on this schema",
+                new_subtype,
+                doc_id,
+            )
+
+    if not sets:
+        # Only a subtype was sent and the schema can't hold it — a no-op,
+        # not an error (never 500 on an old DB).
+        sets.append("doc_type = doc_type")
+
     await session.execute(
         text(
             f"UPDATE documents SET {', '.join(sets)} "
@@ -4464,7 +4651,9 @@ async def reclassify_document(
     refreshed = (
         await session.execute(
             text(
-                """
+                await _with_doc_subtype(
+                    session,
+                    """
                 SELECT id, deal_id, tenant_id, filename, doc_type, status,
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
@@ -4473,21 +4662,24 @@ async def reclassify_document(
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
                        year_mismatch, extracted_period_year,
-                       structural_pnl_score
+                       structural_pnl_score /*doc_subtype*/
                   FROM documents
                  WHERE id = :id
-                """
+                """,
+                )
             ),
             {"id": str(doc_id)},
         )
     ).first()
     assert refreshed is not None  # we just updated it
     logger.info(
-        "reclassify_document: deal=%s doc=%s doc_type=%s fiscal_year=%s",
+        "reclassify_document: deal=%s doc=%s doc_type=%s fiscal_year=%s "
+        "doc_subtype=%s",
         deal_id,
         doc_id,
         new_doc_type,
         body.fiscal_year,
+        new_subtype if write_subtype else "(unchanged)",
     )
     return _row_to_record(dict(refreshed._mapping))
 
@@ -4586,7 +4778,9 @@ async def accept_year(
         await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
-                """
+                await _with_doc_subtype(
+                    session,
+                    """
                 SELECT id, deal_id, tenant_id, filename, doc_type, status,
                        uploaded_at, content_hash, storage_key, size_bytes,
                        page_count, parser, extraction_data,
@@ -4595,10 +4789,11 @@ async def accept_year(
                        user_provided_doc_type, fiscal_year, misclassified,
                        ai_proposed_doc_type,
                        year_mismatch, extracted_period_year,
-                       structural_pnl_score
+                       structural_pnl_score /*doc_subtype*/
                   FROM documents
                  WHERE id = :id AND tenant_id = :tenant
-                """
+                """,
+                )
             ),
             {"id": str(doc_id), "tenant": str(tenant_id)},
         )

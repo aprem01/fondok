@@ -125,10 +125,11 @@ type WizardCategorySpec = {
 // FON-41 / Sam's decision 5 (R-027, R-031, R-034..R-038) — slot order and
 // labels follow the IC diligence reading order. This is a DISPLAY taxonomy
 // over the existing DocType enum: two slots share a doc type with a sibling
-// (Comp Set / Market Reports → STR_TREND, Future CapEx → CAPEX) because the
-// upload carries only ``user_doc_types[]`` + ``fiscal_years[]`` — there is no
-// field that could tell the worker "future" vs "historic" CapEx. The Router
-// still lanes CoStar / market files to MARKET_STUDY on extraction.
+// (Comp Set / Market Reports → STR_TREND, Future CapEx → CAPEX). Historic vs
+// Future CapEx travel as ``user_doc_subtypes[]`` (FON-41 / R-036 — see
+// ``WIZARD_CATEGORY_DOC_SUBTYPE`` in lib/api), so the Data Room can list them
+// apart. The Router still lanes CoStar / market files to MARKET_STUDY on
+// extraction.
 export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'om',
@@ -334,8 +335,8 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   },
   {
     // R-037 — forward-looking capital gets its own slot. It uploads as
-    // CAPEX like Historic CapEx: the upload payload has no field that
-    // could carry a future-vs-historic hint, and the DocType enum is fixed.
+    // CAPEX like Historic CapEx, tagged doc_subtype ``future`` (R-036);
+    // the Historic CapEx slot tags ``historic``.
     id: 'future_capex',
     label: 'Future CapEx',
     sidebarLabel: 'Future CapEx',

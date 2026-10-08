@@ -11,7 +11,8 @@
  *     live counts; selecting "Needs Review" narrows the table to only the
  *     flagged rows (and drops sections that no longer have a visible field).
  *
- *  3. DOCUMENT COVERAGE CARD. The coverage card reports "N of 11 types" (FON-41 decision 5),
+ *  3. DOCUMENT COVERAGE CARD. The coverage card reports "N of 12 types" (FON-41 decision 5;
+ *     Future CapEx counts since R-036 gave it its own doc_subtype),
  *     buckets files into their category, exposes the drag handle +
  *     open-in-new-tab / download affordances, and offers the full-label period
  *     dropdown including the "Not Sure" option.
@@ -172,10 +173,10 @@ describe('Data Room — document coverage card', () => {
       />,
     );
 
-  it('reports coverage as "N of 11 types"', () => {
+  it('reports coverage as "N of 12 types"', () => {
     renderCard();
     const summary = screen.getByText(
-      (_c, el) => el?.tagName === 'P' && /2 of 11 types/.test(el.textContent || ''),
+      (_c, el) => el?.tagName === 'P' && /2 of 12 types/.test(el.textContent || ''),
     );
     expect(summary).toBeInTheDocument();
   });

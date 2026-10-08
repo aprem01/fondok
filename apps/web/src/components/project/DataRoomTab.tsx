@@ -25,6 +25,7 @@ import {
   EngineOutputResponse,
   WorkerError,
 } from '@/lib/api';
+import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { openDocumentInNewTab, shortReason } from '@/lib/openDocument';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -49,7 +50,12 @@ import { UsaliDeviationsAccordion } from './validation/UsaliDeviationsAccordion'
 import { GapChipsStrip } from './validation/GapChipsStrip';
 import { MisclassificationBanner } from './wizard/MisclassificationBanner';
 import { YearMismatchBanner } from './wizard/YearMismatchBanner';
-import { DocumentCoverage, type CoverageDocMeta, type CoverageFile } from './DocumentCoverage';
+import {
+  DocumentCoverage,
+  type CoverageDocMeta,
+  type CoverageFile,
+  type ReclassifyBody,
+} from './DocumentCoverage';
 import { WORKSHEET_ROWS } from './pl/GroundedWorksheet';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -128,9 +134,10 @@ const DOC_TYPE_LABEL: Record<string, string> = {
 // uploaded document carries a matching token the row flips green and
 // drops its REQ badge. Wave 1 expanded the DocType enum to cover every
 // category — Surveys is the only one marked optional.
-const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
-  // FON-41 decision 5 — same labels + order as the wizard slots. Future
-  // CapEx has no row here: it uploads as CAPEX, indistinguishable by type.
+const REQUIRED_CHECKLIST: { label: string; match: string[]; subtype?: string }[] = [
+  // FON-41 decision 5 — same labels + order as the wizard slots. Historic and
+  // Future CapEx both match CAPEX, split by doc_subtype (R-036; unstated →
+  // Historic).
   { label: 'Offering Memorandum',           match: ['OM'] },
   { label: 'Hotel Program',                 match: ['ROOM_MIX'] },
   // FON-18: a single "Financial Statements" requirement satisfied by ANY
@@ -141,9 +148,10 @@ const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
   { label: 'Financial Statements (T-12 or P&L)', match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
   { label: 'STR Reports',                   match: ['STR', 'STR_TREND'] },
   { label: 'Comp Set / Market Reports',     match: ['MARKET_STUDY'] },
-  { label: 'Historic CapEx',                match: ['CAPEX'] },
+  { label: 'Historic CapEx',                match: ['CAPEX'], subtype: 'historic' },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
+  { label: 'Future CapEx',                  match: ['CAPEX'], subtype: 'future' },
   { label: 'Other Property Info',           match: ['PROPERTY_INFO'] },
   { label: 'Leases & Agreements',           match: ['LEASES', 'CONTRACT'] },
   { label: 'Due Diligence',                 match: ['SURVEYS'] },
@@ -410,7 +418,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // doc_type / year re-buckets coverage + ranking immediately.
   const [reclassifyingDoc, setReclassifyingDoc] = useState<string | null>(null);
   const handleReclassify = useCallback(
-    async (docId: string, body: { doc_type?: string; fiscal_year?: number }) => {
+    async (docId: string, body: ReclassifyBody) => {
       setReclassifyingDoc(docId);
       try {
         await api.documents.reclassify(rawId, docId, body);
@@ -539,6 +547,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     extractedPeriodYear?: number | null;
     /** FON-22 — the primary financial source of truth for this deal. */
     primaryFinancialSource?: boolean;
+    /** FON-41 / R-036 — CAPEX ``future`` / ``historic`` (null = unstated). */
+    docSubtype?: string | null;
   };
 
   const docs: Row[] = useMemo(() => {
@@ -570,6 +580,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           yearMismatch: d.year_mismatch ?? false,
           extractedPeriodYear: d.extracted_period_year ?? null,
           primaryFinancialSource: d.primary_financial_source ?? false,
+          docSubtype: d.doc_subtype ?? null,
         };
       });
     }
@@ -624,20 +635,28 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // list against the live `documents` array's doc_type values. An item
   // flips to "complete" the moment any uploaded doc carries one of its
   // mapped tokens.
+  // FON-41 / R-036 — each doc also contributes ``TYPE:subtype`` (its
+  // effective subtype) so Historic vs Future CapEx rows can tell CAPEX
+  // files apart.
   const uploadedDocTypes = useMemo(() => {
+    const keys = new Set<string>();
     if (liveMode) {
-      return new Set(
-        documents
-          .map((d) => (d.doc_type ?? '').toUpperCase().trim())
-          .filter(Boolean),
-      );
+      for (const d of documents) {
+        const t = (d.doc_type ?? '').toUpperCase().trim();
+        if (!t) continue;
+        keys.add(t);
+        const sub = effectiveDocSubtype(t, d.doc_subtype);
+        if (sub) keys.add(`${t}:${sub}`);
+      }
     }
-    return new Set<string>();
+    return keys;
   }, [liveMode, documents]);
 
   const checklist = REQUIRED_CHECKLIST.map((item) => ({
     name: item.label,
-    complete: item.match.some((m) => uploadedDocTypes.has(m)),
+    complete: item.match.some((m) =>
+      uploadedDocTypes.has(item.subtype ? `${m}:${item.subtype}` : m),
+    ),
   }));
 
   const completeCount = checklist.filter((d) => d.complete).length;
@@ -651,7 +670,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     for (const d of docs) {
       const raw = (d.type ?? '').toUpperCase().trim();
       if (!raw || raw === '—') continue;
-      const label = DOC_TYPE_LABEL[raw] ?? raw
+      // FON-41 / R-036 — CapEx counts split by subtype.
+      const sub = effectiveDocSubtype(raw, d.docSubtype);
+      const label = sub
+        ? `${sub === 'future' ? 'Future' : 'Historic'} ${DOC_TYPE_LABEL[raw] ?? raw}`
+        : DOC_TYPE_LABEL[raw] ?? raw
         .toLowerCase()
         .split('_')
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -1211,6 +1234,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               toReview: flaggedByDoc.get(d.id)?.length ?? 0,
               reviewReason: buildReviewReason(flaggedByDoc.get(d.id) ?? [])?.text ?? null,
               fiscalYear: d.fiscalYear ?? null,
+              docSubtype: d.docSubtype ?? null,
               status: d.rawStatus,
             }),
           )}

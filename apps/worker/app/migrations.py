@@ -816,6 +816,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
         "structural_pnl_score DOUBLE PRECISION",
     ),
+    # FON-41 / R-036 — per-file subcategory inside a doc_type. Only CAPEX
+    # uses it today (``future`` | ``historic``); NULL = not stated, which
+    # the Data Room files under Historic CapEx. Not a DocType value — the
+    # Router / extractor / engines keep reading plain ``CAPEX``.
+    (
+        "documents.add_doc_subtype",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_subtype TEXT",
+    ),
     # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
     # YoY variance-driven follow-ups for the seller broker. Produced by
     # the deterministic ``HistoricalVariance`` engine (NOT the LLM-
@@ -1634,6 +1642,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "documents.add_structural_pnl_score",
         "ALTER TABLE documents ADD COLUMN structural_pnl_score REAL",
+    ),
+    # FON-41 / R-036 — SQLite mirror of the Postgres doc_subtype ALTER.
+    (
+        "documents.add_doc_subtype",
+        "ALTER TABLE documents ADD COLUMN doc_subtype TEXT",
     ),
     # ─────────────────── Wave 1 — Broker questions (#4) ───────────────
     # SQLite mirror of the Postgres broker_questions table. JSONB →
