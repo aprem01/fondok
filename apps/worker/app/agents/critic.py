@@ -28,7 +28,9 @@ adapted to hotel underwriting instead of credit policy.
 from __future__ import annotations
 
 import logging
+import statistics
 import time
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4, uuid5
@@ -872,9 +874,217 @@ async def run_critic(
     )
 
 
+# ─────────────────── statement plausibility (FON-41) ───────────────────
+#
+# A per-DEAL sanity check on one P&L-family extraction: when a statement's
+# F&B / Rooms / Total revenue is below 25% of the median of the deal's OTHER
+# full-period statements for the same line, the extractor almost certainly
+# read a single outlet, segment or GL line instead of the department total
+# (the Angler's 2024 P&L came through at F&B $96,528 against a 2023 P&L at
+# $2.11M and a T-12 at $3.22M — the restaurant-concession line). The field
+# keeps its value (nothing is invented) but its confidence is capped at 0.5
+# so it lands in ``low_confidence_fields`` / the Data Room's review queue,
+# and the reason is written on the field and on the confidence report.
+#
+# Deterministic, LLM-free, best-effort. Only full-period statements take
+# part on either side: a monthly / YTD slice is legitimately a fraction of
+# an annual figure and must never trip the rule.
+
+
+#: Concept → analyst-facing line label.
+_PLAUSIBILITY_CONCEPTS: dict[str, str] = {
+    "fb_revenue": "F&B revenue",
+    "rooms_revenue": "Rooms revenue",
+    "total_revenue": "Total revenue",
+}
+
+#: What the implausible line most likely is, per concept.
+_PLAUSIBILITY_LIKELY_CAUSE: dict[str, str] = {
+    "fb_revenue": "likely a single outlet or GL line, not the department total",
+    "rooms_revenue": "likely a single segment or GL line, not the department total",
+    "total_revenue": "likely a single department or GL line, not the statement total",
+}
+
+PLAUSIBILITY_FLOOR_RATIO = 0.25  #: flag when value < 25% of the sibling median
+PLAUSIBILITY_CONFIDENCE_CAP = 0.5
+_EN_DASH = chr(0x2013)  #: en-dash range separator in the reason ("$2.1M to $3.2M")
+
+#: Analyst decisions the critic must not override.
+_ANALYST_REVIEWED: frozenset[str] = frozenset({"accepted", "edited", "verified"})
+
+
+class StatementPlausibilityFlag(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    concept: str
+    value: float
+    sibling_values: list[float]
+    sibling_median: float
+    ratio: float
+    reason: str
+
+
+def _compact_usd(value: float) -> str:
+    a = abs(value)
+    if a >= 1e6:
+        s = f"${a / 1e6:.1f}M"
+    elif a >= 1e3:
+        s = f"${a / 1e3:.0f}K"
+    else:
+        s = f"${a:,.0f}"
+    return f"-{s}" if value < 0 else s
+
+
+def _is_full_period(fields: Any, doc_type: str | None) -> bool:
+    """True when the statement's own period basis is FY / T12 (not a slice)."""
+    from ..engines.historical_baseline import _period_basis
+
+    try:
+        _basis, partial = _period_basis(
+            list(fields) if fields is not None else [],
+            (doc_type or "").strip().upper() or None,
+        )
+    except Exception:  # unknown basis → do not compare
+        return False
+    return not partial
+
+
+def check_statement_plausibility(
+    fields: Any,
+    *,
+    doc_type: str | None,
+    siblings: Sequence[tuple[str | None, Any]],
+) -> list[StatementPlausibilityFlag]:
+    """Flag revenue lines below 25% of the deal's other statements' median.
+
+    ``siblings`` are ``(doc_type, fields)`` pairs for the deal's OTHER
+    P&L-family extractions (one per document). Returns one flag per
+    implausible line; an empty list when there is nothing to compare.
+    """
+    from ..ontology import registry as ontology
+
+    if not fields or not siblings:
+        return []
+    if not _is_full_period(fields, doc_type):
+        return []
+    full_siblings = [(dt, fl) for dt, fl in siblings if fl and _is_full_period(fl, dt)]
+    if not full_siblings:
+        return []
+
+    flags: list[StatementPlausibilityFlag] = []
+    for concept, label in _PLAUSIBILITY_CONCEPTS.items():
+        own = ontology.resolve(fields, concept, doc_type=doc_type, want="annual", basis="actual")
+        if own.value is None or own.field_name is None:
+            continue
+        if own.reviewed in _ANALYST_REVIEWED:
+            continue
+        try:
+            value = float(own.value)
+        except (TypeError, ValueError):
+            continue
+        others: list[float] = []
+        for dt, fl in full_siblings:
+            r = ontology.resolve(fl, concept, doc_type=dt, want="annual", basis="actual")
+            if r.value is None:
+                continue
+            try:
+                v = float(r.value)
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                others.append(v)
+        if not others:
+            continue
+        median = float(statistics.median(others))
+        if median <= 0 or value < 0:
+            continue
+        ratio = value / median
+        if ratio >= PLAUSIBILITY_FLOOR_RATIO:
+            continue
+        lo, hi = min(others), max(others)
+        span = (
+            _compact_usd(lo)
+            if len(others) == 1 or lo == hi
+            else f"{_compact_usd(lo)}{_EN_DASH}{_compact_usd(hi)}"
+        )
+        reason = (
+            f"{label} ${value:,.0f} is {ratio:.0%} of the deal's other statements ({span}); "
+            f"{_PLAUSIBILITY_LIKELY_CAUSE[concept]}"
+        )
+        flags.append(
+            StatementPlausibilityFlag(
+                field_name=own.field_name,
+                concept=concept,
+                value=value,
+                sibling_values=sorted(others),
+                sibling_median=median,
+                ratio=ratio,
+                reason=reason,
+            )
+        )
+    return flags
+
+
+def apply_statement_plausibility(
+    fields: Sequence[Mapping[str, Any]],
+    confidence: Mapping[str, Any] | None,
+    *,
+    doc_type: str | None,
+    siblings: Sequence[tuple[str | None, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[StatementPlausibilityFlag]]:
+    """Run :func:`check_statement_plausibility` and write the result back.
+
+    Each flagged field has its ``confidence`` capped at 0.5 and the reason
+    written to its ``note``; the confidence report gets the field under
+    ``low_confidence_fields``, the reason under ``plausibility_flags`` and
+    ``requires_human_review`` set. Returns new objects; inputs are not
+    mutated.
+    """
+    out_fields = [dict(f) for f in fields if isinstance(f, Mapping)]
+    conf: dict[str, Any] = dict(confidence or {})
+    flags = check_statement_plausibility(out_fields, doc_type=doc_type, siblings=siblings)
+    if not flags:
+        return out_fields, conf, []
+
+    by_name = {f.get("field_name"): f for f in out_fields}
+    by_field = dict(conf.get("by_field") or {})
+    low = list(conf.get("low_confidence_fields") or [])
+    for flag in flags:
+        fd = by_name.get(flag.field_name)
+        if fd is None:
+            continue
+        cur = fd.get("confidence")
+        cur_f = float(cur) if isinstance(cur, int | float) and not isinstance(cur, bool) else 1.0
+        fd["confidence"] = min(cur_f, PLAUSIBILITY_CONFIDENCE_CAP)
+        prior = fd.get("note")
+        fd["note"] = f"{prior} {flag.reason}" if isinstance(prior, str) and prior else flag.reason
+        by_field[flag.field_name] = fd["confidence"]
+        if flag.field_name not in low:
+            low.append(flag.field_name)
+
+    conf["by_field"] = by_field
+    if by_field:
+        conf["overall"] = sum(float(v) for v in by_field.values()) / len(by_field)
+    conf["low_confidence_fields"] = low
+    conf["requires_human_review"] = True
+    conf["plausibility_flags"] = [f.model_dump() for f in flags]
+    logger.info(
+        "critic: statement plausibility flagged %d field(s): %s",
+        len(flags),
+        "; ".join(f.reason for f in flags),
+    )
+    return out_fields, conf, flags
+
+
 __all__ = [
+    "PLAUSIBILITY_CONFIDENCE_CAP",
+    "PLAUSIBILITY_FLOOR_RATIO",
     "CriticInput",
     "CriticOutput",
+    "StatementPlausibilityFlag",
+    "apply_statement_plausibility",
+    "check_statement_plausibility",
     "run_critic",
     "validate_grounding",
 ]

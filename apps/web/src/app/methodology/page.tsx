@@ -98,7 +98,7 @@ export default function MethodologyPage() {
         id="extraction"
         number="1"
         title="Extraction workflow"
-        intro="Every uploaded document moves through five stages — parse, classify, extract, verify, reclassify. The pipeline is format-agnostic by design: a single OM may be a text PDF, scanned image, multi-tab Excel, or PowerPoint deck."
+        intro="Every uploaded document moves through six stages — parse, classify, extract, reconcile, verify, reclassify. The pipeline is format-agnostic by design: a single OM may be a text PDF, scanned image, multi-tab Excel, or PowerPoint deck."
       >
         <Stages>
           <Stage
@@ -121,12 +121,18 @@ export default function MethodologyPage() {
           />
           <Stage
             n="4"
+            title="Reconcile"
+            Icon={Database}
+            body="When a P&L-family workbook (T-12 / P&L) carries its own USALI Summary sheet, a deterministic reconciler reads that sheet by row label — Rooms, Food & Beverage, Other Operated, Total Revenues, the departmental and undistributed expense lines, GOP, EBITDA — and takes the annual column that sums the twelve months; any canonical USALI total the extractor read from a department or outlet sheet that differs from the Summary by more than 5% is replaced with the Summary value, marked reconciled with the original value and source kept beside it. A second per-deal check caps a statement's F&B, Rooms or Total revenue at 50% confidence when it is below a quarter of the deal's other full-period statements for the same line, so a single-outlet GL line can never pass as the department total unreviewed."
+          />
+          <Stage
+            n="5"
             title="Verify"
             Icon={Link2}
             body="A Critic pass re-reads each cited number against the parser cache. Verified fields get a 0.98 confidence floor; mismatches drop to 0.50. The downstream UI surfaces this as the field-level confidence badge."
           />
           <Stage
-            n="5"
+            n="6"
             title="Reclassify"
             Icon={ArrowRight}
             body="A post-extraction reclassifier reads p_and_l_usali.period_type off the extracted fields and narrows broad PNL/T12 classifications into PNL_MONTHLY, PNL_YTD, or T12. This is why a single-month upload no longer outranks an annual T-12 in the engine actuals loaders."
