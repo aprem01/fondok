@@ -267,7 +267,7 @@ describe('ReturnsTab ephemeral sandbox', () => {
     // Guardrail banner appears while the sandbox differs from base.
     expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/canonical assumptions in Investment and Debt are unchanged/i),
+      screen.getByText(/canonical assumptions in CAPEX and Financing are unchanged/i),
     ).toBeInTheDocument();
 
     // The debounced sandbox call hits the NON-persisting preview endpoint only.
@@ -335,7 +335,7 @@ describe('ReturnsTab — Returns Summary shows the sandbox case', () => {
     // …and every moved tile says so.
     expect(screen.getAllByText('Sandbox').length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/sandbox case — Investment and Debt are unchanged/i),
+      screen.getByText(/sandbox case — CAPEX and Financing are unchanged/i),
     ).toBeInTheDocument();
   });
 

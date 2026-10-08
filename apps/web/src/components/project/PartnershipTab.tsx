@@ -619,12 +619,12 @@ export default function PartnershipTab() {
               {/* Equity Structure + Waterfall Terms */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
                 {/* FON-66 §1 (Sam, 9/11): the Summary showed ONE "Total Equity
-                    → Investment" row whose number included the deficit-period
+                    → CAPEX" row whose number included the deficit-period
                     capital calls, while the Investment page it links to shows
                     the close draw — "the Summary label is simply conflating
                     initial equity with subsequent capital calls." The bridge
                     already existed on Cash Flows; the Summary now carries it
-                    too, and the "→ Investment" link sits on the INITIAL row,
+                    too, and the "→ CAPEX" link sits on the INITIAL row,
                     the one number Investment actually owns. */}
                 <SectionCard title="Equity Structure" note="Initial equity comes from the deal financing; later calls come from the waterfall">
                   <KeyRow
@@ -632,8 +632,8 @@ export default function PartnershipTab() {
                     dot={dotState('total_equity_usd', 'linked')}
                     value={money(initialEquity)}
                     valueColor={prov.green}
-                    link={{ label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' }}
-                    note="Drawn at close — this is the equity line in Investment › Sources & Uses"
+                    link={{ label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' }}
+                    note="Drawn at close — this is the equity line in CAPEX › Sources & Uses"
                   />
                   <KeyRow
                     label="Additional Contributions"

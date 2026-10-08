@@ -197,7 +197,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL } from '@/components/project/OverviewTab';
+import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -288,7 +288,7 @@ describe('OverviewTab — value-add section set + benchmark strip', () => {
     expect(screen.getByText('Return benchmark')).toBeInTheDocument();
     expect(screen.getByText('Target levered IRR')).toBeInTheDocument();
     expect(screen.getByText('No target')).toBeInTheDocument();
-    expect(screen.getByText('Set Target Levered IRR above')).toBeInTheDocument();
+    expect(screen.getByText('Set Target LIRR above')).toBeInTheDocument();
     expect(screen.getByText('Benchmark only — it does not drive the model')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Use profile midpoint (15%)' })).toBeInTheDocument();
     expect(screen.queryByText('12-18%')).not.toBeInTheDocument();
@@ -313,7 +313,7 @@ describe('OverviewTab — FON-68 return targets on the Investment Profile', () =
 
   it('editing Target Levered IRR / Target MOIC writes target_irr / target_moic (no re-run)', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const irr = screen.getByRole('spinbutton', { name: 'Target Levered IRR value' });
+    const irr = screen.getByRole('spinbutton', { name: 'Target LIRR (levered IRR) value' });
     expect(irr).toHaveValue(null); // unset → "—" placeholder, no invented number
     fireEvent.change(irr, { target: { value: '16' } });
     fireEvent.blur(irr);
@@ -332,7 +332,7 @@ describe('OverviewTab — FON-68 return targets on the Investment Profile', () =
   it('shows the set targets and clears one back to null', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.15, target_moic: 1.8 };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    expect(screen.getByRole('spinbutton', { name: 'Target Levered IRR value' })).toHaveValue(15);
+    expect(screen.getByRole('spinbutton', { name: 'Target LIRR (levered IRR) value' })).toHaveValue(15);
     expect(screen.getByRole('spinbutton', { name: 'Target MOIC value' })).toHaveValue(1.8);
     // The midpoint action disappears once a target is set.
     expect(screen.queryByRole('button', { name: /Use profile/ })).not.toBeInTheDocument();
@@ -347,7 +347,7 @@ describe('OverviewTab — FON-68 return targets on the Investment Profile', () =
     expect(screen.getByText('15.0%')).toBeInTheDocument();
     expect(screen.getByText('Above target')).toBeInTheDocument();
     expect(screen.queryByText('No target')).not.toBeInTheDocument();
-    expect(screen.queryByText('Set Target Levered IRR above')).not.toBeInTheDocument();
+    expect(screen.queryByText('Set Target LIRR above')).not.toBeInTheDocument();
 
     // Target 19% → within 200bp → Within.
     mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.19 };
@@ -643,7 +643,7 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
   it('a non-Financials link is unchanged — no sub is invented', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
-    fireEvent.click(screen.getByText('View Debt details →'));
+    fireEvent.click(screen.getByText('View Financing details →'));
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=debt');
   });
 });
@@ -1136,5 +1136,120 @@ describe('OverviewTab — R-048 Existing brand vs Proposed brand (Sam decision 4
     expect(within(project).getByText('Existing brand')).toBeInTheDocument();
     expect(within(project).getByText('Proposed brand')).toBeInTheDocument();
     expect(rowValue('Proposed brand')).toBe('Thompson Hotels');
+  });
+});
+
+// ── R-049 — ONE target control: Target LIRR (levered IRR) + preset ───────
+describe('OverviewTab — R-049 one Target LIRR control', () => {
+  it('renders a single "Target LIRR (levered IRR)" control and no separate Returns Profile field', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(TARGET_LIRR_LABEL).toBe('Target LIRR (levered IRR)');
+    expect(screen.getAllByText(TARGET_LIRR_LABEL)).toHaveLength(1);
+    expect(screen.queryByText('Returns Profile')).not.toBeInTheDocument();
+    expect(screen.queryByText('Target Levered IRR')).not.toBeInTheDocument();
+    // The preset lives ON the target control (one combobox, one number input).
+    const preset = screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` });
+    expect(preset).toHaveValue('value-add');
+    expect(within(preset).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Core (8-12%)', 'Value Add (12-18%)', 'Opportunistic (18%+)',
+    ]);
+    expect(screen.getAllByRole('spinbutton', { name: `${TARGET_LIRR_LABEL} value` })).toHaveLength(1);
+  });
+
+  it('choosing a preset writes the return_profile tag AND fills target_irr in one PATCH (no re-run)', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.16 };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.change(screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` }), { target: { value: 'core' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { return_profile: 'core', target_irr: 0.1 });
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('an open band preset (Opportunistic 18%+) fills its floor', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.change(screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` }), { target: { value: 'opportunistic' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { return_profile: 'opportunistic', target_irr: 0.18 }));
+  });
+
+  it('the analyst can still edit the number after a preset (writes target_irr only)', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, return_profile: 'core', target_irr: 0.1 };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const irr = screen.getByRole('spinbutton', { name: `${TARGET_LIRR_LABEL} value` });
+    expect(irr).toHaveValue(10);
+    fireEvent.change(irr, { target: { value: '11.5' } });
+    fireEvent.blur(irr);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_irr: 0.115 }));
+  });
+});
+
+// ── R-050 — Target Stabilized Yield on Cost ──────────────────────────────
+describe('OverviewTab — R-050 Target Stabilized Yield on Cost', () => {
+  /** OUTPUTS plus a published stabilization block: stabilized NOI $4.3M over
+   *  the fixture's $43.0M total capital → a 10.00% stabilized yield on cost. */
+  const withStab = (): EngineOutputsResponse => {
+    const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    return {
+      ...OUTPUTS,
+      engines: {
+        ...base.engines,
+        expense: {
+          ...base.engines.expense,
+          outputs: {
+            ...base.engines.expense.outputs,
+            stabilization: { stabilized_year_index: 0, stabilized_year: 1, stabilized_noi_before_reserve: 4_300_000 },
+          },
+        },
+      },
+    } as unknown as EngineOutputsResponse;
+  };
+
+  it('saving the target persists field_overrides.target_stabilized_yoc (no note, no re-run)', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { 'property_overview.name': { value: 'Keep me' } } };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByRole('spinbutton', { name: `${TARGET_YOC_LABEL} value` });
+    expect(input).toHaveValue(null);
+    fireEvent.change(input, { target: { value: '9.5' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(TARGET_YOC_KEY).toBe('target_stabilized_yoc');
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      field_overrides: { 'property_overview.name': { value: 'Keep me' }, target_stabilized_yoc: { value: 0.095 } },
+    });
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('reads the saved target back and clearing it deletes the key', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { target_stabilized_yoc: { value: 0.09 } } };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByRole('spinbutton', { name: `${TARGET_YOC_LABEL} value` })).toHaveValue(9);
+    expect(screen.getByTestId('yoc-target')).toHaveTextContent('9.00%');
+    fireEvent.click(screen.getByRole('button', { name: `Clear ${TARGET_YOC_LABEL}` }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { field_overrides: {} }));
+  });
+
+  it('with no stabilized year the actual is "—" and the badge never claims a pass', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { target_stabilized_yoc: { value: 0.09 } } };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('yoc-actual')).toHaveTextContent('—');
+    expect(screen.getByTestId('yoc-status')).toHaveTextContent('Pending');
+  });
+
+  it('compares the derived stabilized yield on cost to the target: Pass at/above, Short below', () => {
+    outputsRef.value = withStab();
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { target_stabilized_yoc: { value: 0.09 } } };
+    const { rerender } = render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('yoc-actual')).toHaveTextContent('10.00%');
+    expect(screen.getByTestId('yoc-status')).toHaveTextContent('Pass');
+
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { target_stabilized_yoc: { value: 0.11 } } };
+    rerender(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('yoc-status')).toHaveTextContent('Short');
+  });
+
+  it('no target → "No target set", the actual still shown', () => {
+    outputsRef.value = withStab();
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('yoc-target')).toHaveTextContent('—');
+    expect(screen.getByTestId('yoc-status')).toHaveTextContent('No target set');
   });
 });

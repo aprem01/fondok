@@ -261,7 +261,7 @@ export const EXIT_COLUMN_BASIS = 'display-only';
 
 /** The one-line note shown when the deal has no acquisition close date. */
 export const NO_CLOSE_DATE_NOTE =
-  'Set the acquisition date on Investment to map years to calendar years';
+  'Set the acquisition date on CAPEX to map years to calendar years';
 /** The help line under the controls — why the columns carry the years they do. */
 export const CALENDAR_MAPPING_HELP =
   'The acquisition close date sets the year mapping: Year 1 is the calendar year of the first operating month after close, and each later year is that year plus one.';
@@ -2576,8 +2576,8 @@ function ProjectionsControls({
     borderRadius: 6, cursor: 'pointer', fontSize: 14, color: '#3a3f47', lineHeight: 1,
   };
   const baseYearTitle = baseYear != null
-    ? `Base year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the Investment tab.`
-    : 'No acquisition close date on this deal, so the projection has no calendar year. The base year is derived from that date — set the Acquisition Date on the Investment tab.';
+    ? `Base year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the CAPEX tab.`
+    : 'No acquisition close date on this deal, so the projection has no calendar year. The base year is derived from that date — set the Acquisition Date on the CAPEX tab.';
   return (
     <div
       data-testid="projections-controls"
@@ -2603,10 +2603,10 @@ function ProjectionsControls({
         <Link
           href={`/projects/${dealId}?tab=investment`}
           data-testid="projection-base-year-owner"
-          title="The acquisition close date — the only input the base year is derived from — is owned by the Investment tab"
+          title="The acquisition close date — the only input the base year is derived from — is owned by the CAPEX tab"
           style={ownerLink}
         >
-          Investment →
+          CAPEX →
         </Link>
       </div>
 
@@ -2662,7 +2662,7 @@ function ProjectionsControls({
       {/* What replaced the dead Annual / Monthly toggle: the basis, stated. */}
       <span
         data-testid="projection-basis-note"
-        title="The revenue and expense engines project 365-day annual periods (apps/worker/app/engines/revenue.py, DAYS_PER_YEAR), so this statement has no monthly series to show. Monthly detail exists for the debt schedule on the Debt tab."
+        title="The revenue and expense engines project 365-day annual periods (apps/worker/app/engines/revenue.py, DAYS_PER_YEAR), so this statement has no monthly series to show. Monthly detail exists for the debt schedule on the Financing tab."
         style={{
           fontSize: 11, color: '#6b6f76', cursor: 'help',
           textDecoration: 'underline dotted', textUnderlineOffset: 3,
@@ -2686,7 +2686,7 @@ function ProjectionsControls({
               href={`/projects/${dealId}?tab=investment`}
               style={{ color: '#2f4a8c', textDecoration: 'none', fontWeight: 600 }}
             >
-              Investment →
+              CAPEX →
             </Link>
           </span>
         )}
@@ -3014,15 +3014,15 @@ function AssumptionsPanel({
               <span style={{ fontSize: 12, color: '#6b6f76' }}>Exit cap rate</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 600, color: '#1a2233', fontVariantNumeric: 'tabular-nums' }}>
-                  <ProvenanceDot state="linked" size={8} title="Linked from the Investment tab" />
+                  <ProvenanceDot state="linked" size={8} title="Linked from the CAPEX tab" />
                   {(exitCapFraction * 100).toFixed(1)}%
                 </span>
                 <Link
                   href={`/projects/${dealId}?tab=investment`}
-                  title="Exit cap rate is owned by the Investment tab"
+                  title="Exit cap rate is owned by the CAPEX tab"
                   style={{ fontSize: 10.5, color: '#2f4a8c', textDecoration: 'none', whiteSpace: 'nowrap' }}
                 >
-                  Investment →
+                  CAPEX →
                 </Link>
               </div>
             </div>

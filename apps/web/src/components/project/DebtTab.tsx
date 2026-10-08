@@ -250,6 +250,59 @@ interface RowDef {
 
 const has = (v: number | undefined | null): v is number => v != null && Number.isFinite(v);
 const money = (v: number | undefined): string => (has(v) ? fmtCurrency(v) : '—');
+
+// ─── R-069 — Capital Stack: one row per financing position ─────────────
+/** The capital-stack class a tranche `kind` belongs to (mortgage / senior loan
+ *  = Senior debt; mezzanine loan = Mezzanine; preferred equity = Preferred
+ *  equity; PACE = PACE / C-PACE). Unknown kinds keep their own label. */
+export function trancheClassLabel(kind: string | null | undefined): string {
+  const k = String(kind ?? '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (k === 'senior' || k === 'mortgage' || k === 'senior_loan') return 'Senior debt';
+  if (k === 'mezz' || k === 'mezzanine' || k === 'mezzanine_loan') return 'Mezzanine';
+  if (k === 'pref' || k === 'pref_equity' || k === 'preferred_equity') return 'Preferred equity';
+  if (k === 'pace' || k === 'cpace' || k === 'c_pace') return 'PACE / C-PACE';
+  return kind ? String(kind) : '—';
+}
+
+export interface CapitalStackRow {
+  cls: string;
+  instrument: string;
+  amount: string;
+  status: string;
+  modelled: boolean;
+}
+
+/** The Capital Stack rows, built ONLY from the debt engine's tranche stack
+ *  (no new financing math). A class the stack does not carry is listed as
+ *  "not modelled yet" with a dash, never an invented amount. */
+export function buildCapitalStack(
+  tranches: DebtStackTrancheLite[] | undefined,
+  fallbacks: { seniorAmount?: number; paceAmount?: number } = {},
+): CapitalStackRow[] {
+  const list = tranches ?? [];
+  const find = (cls: string) => list.find((t) => trancheClassLabel(t.kind) === cls);
+  const status = (t: DebtStackTrancheLite, amount: number | undefined): string =>
+    !has(amount) || amount <= 0 ? 'Not funded' : t.terms_pending ? 'Terms pending' : 'Modelled';
+  const row = (cls: string, instrument: string, fallback?: number): CapitalStackRow => {
+    const t = find(cls);
+    if (!t) {
+      // Senior / PACE are always in the engine's default stack; a run without
+      // the stack still knows the senior amount from the deal-level output.
+      if (fallback != null && (cls === 'Senior debt' || cls === 'PACE / C-PACE')) {
+        return { cls, instrument, amount: fallback > 0 ? money(fallback) : '—', status: fallback > 0 ? 'Modelled' : 'Not funded', modelled: true };
+      }
+      return { cls, instrument, amount: '—', status: 'not modelled yet', modelled: false };
+    }
+    const amount = t.loan_amount ?? fallback;
+    return { cls, instrument: t.label || instrument, amount: has(amount) && amount > 0 ? money(amount) : '—', status: status(t, amount), modelled: true };
+  };
+  return [
+    row('Senior debt', 'Mortgage / senior loan', fallbacks.seniorAmount),
+    row('Mezzanine', 'Mezzanine loan'),
+    row('Preferred equity', 'Preferred equity'),
+    row('PACE / C-PACE', 'PACE loan', fallbacks.paceAmount),
+  ];
+}
 const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
 const pctv = (v: number | undefined, d = 1): string => (has(v) ? fmtPct(v, d) : '—');
 const ratio = (v: number | undefined): string => (has(v) ? `${v.toFixed(2)}x` : '—');
@@ -677,13 +730,19 @@ export default function DebtTab() {
     />
   );
 
+  // ─── R-069 — Capital Stack rows (engine tranche stack only) ───────────
+  const capitalStack = buildCapitalStack(wStack?.tranches, {
+    seniorAmount: has(seniorAmount) ? seniorAmount : undefined,
+    paceAmount,
+  });
+
   // ─── Debt Overview rows ───────────────────────────────────────────────
   const capitalStructure: RowDef[] = [
     { id: 'purchase', label: 'Purchase Price / Property Value', kind: 'linked', state: 'linked',
-      value: money(wPurchase), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' },
+      value: money(wPurchase), link: { label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' },
       note: 'The LTV denominator — purchase price at close' },
     { id: 'basis', label: 'Total Cost / Basis', kind: 'linked', state: 'linked',
-      value: money(wTotalBasis), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' },
+      value: money(wTotalBasis), link: { label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' },
       note: 'Purchase plus renovation, closing costs and reserves — the LTC denominator' },
     { id: 'loan', label: 'Senior Loan Amount', kind: 'input',
       state: 'assumption', value: seniorAmountNode, overridden: ltvOverridden,
@@ -709,7 +768,7 @@ export default function DebtTab() {
     { id: 'ltc', label: 'LTC', kind: 'calc',
       state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1) },
     { id: 'equity', label: 'Equity Requirement', kind: 'calc', bold: true, state: 'linked',
-      value: money(wEquity), link: { label: '→ Investment', tab: 'investment', sub: 'sources-and-uses' } },
+      value: money(wEquity), link: { label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' } },
   ];
 
   // ─── Loan Terms (senior) — every core term is an input ───────────────
@@ -1029,7 +1088,7 @@ export default function DebtTab() {
   ];
 
   const financingImpact = [
-    { label: 'Equity Requirement', value: mm(wEquity), source: 'Calculated in Investment', state: 'linked' as ValueState },
+    { label: 'Equity Requirement', value: mm(wEquity), source: 'Calculated in CAPEX', state: 'linked' as ValueState },
     { label: 'Levered IRR', value: pctv(wLeveredIrr, 1), source: 'Returns output', state: 'linked' as ValueState },
     { label: 'MOIC', value: ratio(wMoic), source: 'Returns output', state: 'linked' as ValueState },
     {
@@ -1201,6 +1260,27 @@ export default function DebtTab() {
           {/* ─── Debt Overview ─────────────────────────────────────────── */}
           {tab === 'debt-overview' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* R-069 — Capital Stack: each financing position, labelled by
+                  class, read from the debt engine's tranche stack. */}
+              <SectionCard title="Capital Stack" note="Positions from the modelled tranche stack — classes the model does not carry yet are listed as such">
+                <div data-testid="capital-stack" role="table" aria-label="Capital Stack" style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div role="row" style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) minmax(140px,1.4fr) minmax(100px,1fr) minmax(110px,1fr)', gap: 10, padding: '6px 0', borderBottom: `1px solid ${palette.border}`, fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+                    <span role="columnheader">Class</span>
+                    <span role="columnheader">Instrument</span>
+                    <span role="columnheader" style={{ textAlign: 'right' }}>Amount</span>
+                    <span role="columnheader" style={{ textAlign: 'right' }}>Status</span>
+                  </div>
+                  {capitalStack.map((r) => (
+                    <div key={r.cls} role="row" data-testid={`capital-stack-${r.cls.toLowerCase().replace(/[^a-z]+/g, '-')}`}
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) minmax(140px,1.4fr) minmax(100px,1fr) minmax(110px,1fr)', gap: 10, padding: '7px 0', borderBottom: `1px solid ${palette.hairlineSection}`, fontSize: 12.5, alignItems: 'baseline' }}>
+                      <span role="cell" style={{ fontWeight: 600, color: r.modelled ? palette.ink : palette.textMuted }}>{r.cls}</span>
+                      <span role="cell" style={{ color: palette.textSecondary }}>{r.instrument}</span>
+                      <span role="cell" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r.modelled ? palette.ink : palette.textMuted }}>{r.amount}</span>
+                      <span role="cell" style={{ textAlign: 'right', fontSize: 11, color: palette.textMuted, fontStyle: r.modelled ? 'normal' : 'italic' }}>{r.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
                 <SectionCard title="Capital Structure" note="Amounts and LTV are your inputs — LTC and equity are outputs">
                   {capitalStructure.map((r) => <DebtRow key={r.id} row={r} />)}

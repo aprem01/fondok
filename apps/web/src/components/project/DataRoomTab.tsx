@@ -166,9 +166,9 @@ const ENGINE_STATUS_ROWS: {
   icon: typeof Wallet;
   engines: EngineName[];
 }[] = [
-  { id: 'investment',  label: 'Investment',  icon: Wallet,     engines: ['capital'] },
+  { id: 'investment',  label: 'CAPEX',       icon: Wallet,     engines: ['capital'] },
   { id: 'pl',          label: 'P&L',         icon: Receipt,    engines: ['revenue', 'fb', 'expense'] },
-  { id: 'debt',        label: 'Debt',        icon: Banknote,   engines: ['debt'] },
+  { id: 'debt',        label: 'Financing',   icon: Banknote,   engines: ['debt'] },
   { id: 'cash-flow',   label: 'Cash Flow',   icon: TrendingUp, engines: ['revenue', 'expense'] },
   { id: 'returns',     label: 'Returns',     icon: Coins,      engines: ['returns'] },
   { id: 'partnership', label: 'Partnership', icon: Users2,     engines: ['partnership'] },

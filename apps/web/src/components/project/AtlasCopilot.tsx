@@ -44,7 +44,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   market: {
-    title: 'Market',
+    title: 'Market Comps',
     guide: "STR/CoStar data — the subject's occupancy, ADR, and RevPAR vs its competitive set. Toggle 'Use STR rates in the model' to seed the forecast from live performance.",
     suggestions: [
       "How does the subject's RevPAR compare to its comp set?",
@@ -62,7 +62,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   investment: {
-    title: 'Investment',
+    title: 'CAPEX',
     guide: 'Sources & uses and the acquisition basis — purchase price, renovation, closing costs, and how the deal is capitalized.',
     suggestions: [
       "What's the total capitalization and the price per key?",
@@ -71,7 +71,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   debt: {
-    title: 'Debt',
+    title: 'Financing',
     guide: 'Senior loan terms and debt-service coverage — LTV, rate, amortization, DSCR, and debt yield.',
     suggestions: [
       'What is the Year-1 DSCR and debt yield?',

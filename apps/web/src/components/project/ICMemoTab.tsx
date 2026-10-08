@@ -1225,18 +1225,18 @@ export default function ICMemoTab({ project }: { project: Project }) {
   }
   const overriddenPP = (deal?.field_overrides ?? {})['purchase_price'] != null;
   const snapshot: Snap[] = [
-    { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'Investment', engine: 'capital', path: 'purchase_price' },
-    { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'Investment', engine: 'capital', path: 'price_per_key' },
+    { label: 'Purchase Price', value: mm(metrics.purchasePrice), state: provState('capital', 'purchase_price', overriddenPP ? 'assumption' : 'linked'), src: 'CAPEX', engine: 'capital', path: 'purchase_price' },
+    { label: 'Price / Key', value: perKeyK(metrics.pricePerKey), state: provState('capital', 'price_per_key', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'price_per_key' },
     { label: 'RevPAR', value: whole$(metrics.revpar), state: provState('revenue', 'years.0.revpar', 'linked'), src: 'P&L / Future P&L', engine: 'revenue', path: 'years.0.revpar' },
     // FON-59 #1 — `metrics.noi` reads `noi_institutional` first (NOI before the
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
-    { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'Investment', engine: 'capital', path: 'entry_cap_rate' },
+    { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
-    { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Debt', engine: 'debt', path: 'year_one_dscr' },
-    { label: 'Hold Period', value: metrics.holdYears != null ? `${metrics.holdYears} years` : '—', state: provState('returns', 'hold_years', 'assumption'), src: 'Investment', engine: 'returns', path: 'hold_years' },
+    { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Financing', engine: 'debt', path: 'year_one_dscr' },
+    { label: 'Hold Period', value: metrics.holdYears != null ? `${metrics.holdYears} years` : '—', state: provState('returns', 'hold_years', 'assumption'), src: 'CAPEX', engine: 'returns', path: 'hold_years' },
   ];
 
   // ── underwriting summary groups ────────────────────────────────────────
@@ -1253,7 +1253,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Capitalization', link: 'View Investment →', tab: 'investment', sub: 'sources-and-uses',
+      title: 'Capitalization', link: 'View CAPEX →', tab: 'investment', sub: 'sources-and-uses',
       rows: [
         ['Purchase Price', mm(metrics.purchasePrice)],
         ['Renovation / CapEx', mm(metrics.renovation)],
@@ -1262,7 +1262,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Debt', link: 'View Debt →', tab: 'debt', sub: 'debt-overview',
+      title: 'Debt', link: 'View Financing →', tab: 'debt', sub: 'debt-overview',
       rows: [
         ['Loan Amount', mm(metrics.loanAmount)],
         ['LTV', metrics.loanAmount != null && metrics.purchasePrice ? pctOr(metrics.loanAmount / metrics.purchasePrice, 0) : '—'],

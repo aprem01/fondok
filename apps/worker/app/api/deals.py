@@ -544,6 +544,10 @@ def _coerce_float(value: Any) -> float | None:
 #:                             engines already compute (forward 12 months vs
 #:                             stabilized); the analyst types no number, and the
 #:                             Returns output names the basis it ran on.
+#:   target_stabilized_yoc     R-050 — a STATED OBJECTIVE (the analyst's target
+#:                             stabilized yield on cost), like the target_irr /
+#:                             target_moic deal columns. No engine reads it; the
+#:                             Overview compares the derived actual against it.
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "stabilization_year",
@@ -551,6 +555,7 @@ _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
         "debt.completion_guarantee",
         "partnership.waterfall.tier_count",
         "exit_noi_basis",
+        "target_stabilized_yoc",
     }
 )
 

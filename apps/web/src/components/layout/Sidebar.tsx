@@ -11,6 +11,7 @@ import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
 import FondokMark from '@/components/brand/FondokMark';
 import { useToast } from '@/components/ui/Toast';
+import { ShowHintsAgainButton } from '@/components/help/HintOptionsMenu';
 import {
   isClerkConfigured,
   setCurrentOrgId,
@@ -321,6 +322,14 @@ export default function Sidebar({
             >
               <UserCog size={13} className="text-ink-500" /> Account Settings
             </button>
+            {/* R-074 — the global way back after "Hide all hints". */}
+            <ShowHintsAgainButton
+              onDone={(n) => {
+                setUserOpen(false);
+                toast(n > 0 ? `Hints are back on — ${n} dismissed hint${n === 1 ? '' : 's'} will show again.` : 'Hints are back on.', { type: 'success' });
+              }}
+              className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
+            />
             <div className="border-t border-border my-1" />
             <button
               onClick={handleSignOut}

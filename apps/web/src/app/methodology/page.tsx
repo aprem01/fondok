@@ -8,6 +8,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import { ShowHintsAgainButton } from '@/components/help/HintOptionsMenu';
 import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
 import { CONCEPTS, CONCEPT_IDS, REGISTRY_VERSION } from '@/lib/ontology/concepts.generated';
 
@@ -76,6 +77,7 @@ export default function MethodologyPage() {
         eyebrow="Methodology"
         title="How Fondok underwrites"
         subtitle="The reasoning behind every number on the platform — what gets extracted, how projections are built, where market data comes from, and which assumptions are model-driven vs analyst-controlled."
+        action={<ShowHintsAgainButton />}
       />
 
       {/* ─── Video walkthrough ─────────────────────────────────────── */}
@@ -181,7 +183,7 @@ export default function MethodologyPage() {
             The tab is <strong>P&amp;L</strong>, with two views: <strong>Historical P&amp;L</strong> — the normalized operating actuals, one column per extracted statement — and <strong>Future P&amp;L</strong>, the forward business plan the returns are built on. The Overview carries a compact <em>Future P&amp;L · Years 1–5</em> card (Total Revenue and NOI before the FF&amp;E reserve per year, read from <code className="text-[11.5px]">revenue.years</code> and <code className="text-[11.5px]">expense.years</code>) with a &quot;→ P&amp;L&quot; link; it shows a dash until the engines have run.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            <strong>Column headers.</strong> Every projected column reads <code className="text-[11.5px]">Year N · 2026</code> — the ordinal and the calendar year the revenue engine derived from the acquisition close date. With no close date the header is the bare <code className="text-[11.5px]">Year N</code> and a one-line note says to set the acquisition date on Investment; no year is ever guessed. The first column reads <code className="text-[11.5px]">Base year (Year 1) · 2025</code>, and its basis line names the period of the primary financial statement (&quot;T12 Mar 2025&quot;, exactly as the Historical P&amp;L column heads it) when the Data Room has flagged one and its extraction states the period; otherwise that line is a dash.
+            <strong>Column headers.</strong> Every projected column reads <code className="text-[11.5px]">Year N · 2026</code> — the ordinal and the calendar year the revenue engine derived from the acquisition close date. With no close date the header is the bare <code className="text-[11.5px]">Year N</code> and a one-line note says to set the acquisition date on CAPEX; no year is ever guessed. The first column reads <code className="text-[11.5px]">Base year (Year 1) · 2025</code>, and its basis line names the period of the primary financial statement (&quot;T12 Mar 2025&quot;, exactly as the Historical P&amp;L column heads it) when the Data Room has flagged one and its extraction states the period; otherwise that line is a dash.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             <strong>Click-through.</strong> Every projected Occupancy, ADR, RevPAR and statement amount opens the value-lineage drawer for its engine field (<code className="text-[11.5px]">revenue.years[i].adr</code>, <code className="text-[11.5px]">expense.years[i].noi_institutional</code>, …), which walks the inputs the engine asserted — starting value, growth, index or penetration where present — down to the source rows. When the lineage record carries no walk for a cell the drawer says &quot;No trace available for this cell.&quot;; the app never prints a formula it did not record.
@@ -203,7 +205,7 @@ export default function MethodologyPage() {
             &quot;Stabilized&quot; names one projection year, and every stabilized figure on every screen — Stabilized Occupancy, ADR, Revenue, NOI, NOI Margin, Yield on Cost, the IC memo&apos;s scenario summary and Scenario Analysis&apos; comparison row — is read from <em>that</em> year. It is published as a single block by the expense engine, so two surfaces cannot resolve it differently.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            The stabilization year defaults to <strong>Year 3 after acquisition close</strong> (badged &quot;Default — confirm&quot;); on a hold shorter than three years it is the last projected year, and the card says so. The analyst can override it in P&amp;L → Future P&amp;L → Assumptions (badged &quot;Analyst override&quot;; re-saving the default unchanged is not an override), and the same default year drives the Debt tab&apos;s stabilized DSCR and debt yield. The year in which occupancy first reaches the stabilized assumption (or NOI growth settles) is still shown beneath it as a <em>model-detected</em> hint, but it never selects the year — and stabilized NOI (that year&apos;s operating NOI) is a separate figure from the exit NOI the sale is capitalised on.
+            The stabilization year defaults to <strong>Year 3 after acquisition close</strong> (badged &quot;Default — confirm&quot;); on a hold shorter than three years it is the last projected year, and the card says so. The analyst can override it in P&amp;L → Future P&amp;L → Assumptions (badged &quot;Analyst override&quot;; re-saving the default unchanged is not an override), and the same default year drives the Financing tab&apos;s stabilized DSCR and debt yield. The year in which occupancy first reaches the stabilized assumption (or NOI growth settles) is still shown beneath it as a <em>model-detected</em> hint, but it never selects the year — and stabilized NOI (that year&apos;s operating NOI) is a separate figure from the exit NOI the sale is capitalised on.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             The Stabilization Year is a <strong>reporting</strong> assumption: it selects which projected year the stabilized figures are read from. It moves no cash flow. Setting or changing it leaves the gross sale price, the levered and unlevered IRRs, the equity multiple and the terminal NOI bit-identical — there is a regression test that asserts exactly that. When no year resolves, every stabilized figure renders as a dash with a reason; none of them falls back to another year.
@@ -219,7 +221,7 @@ export default function MethodologyPage() {
             This matters because the entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI <em>after</em> it. Both are defensible conventions and Fondok keeps both, but it names each one wherever it prints it — the Overview&apos;s Exit row reads &quot;Exit NOI (forward 12-month, after FF&amp;E reserve)&quot; and the Projections row &quot;Forward 12-Month Cash NOI (after FF&amp;E reserve)&quot;, never a bare &quot;NOI&quot;. Modelling a real year hold+1 through the waterfall instead would move the gross sale price, both IRRs and the equity multiple on every persisted deal; that is a deliberate post-MVP decision, not an oversight.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="exit-noi-basis-methodology">
-            <strong>Exit NOI basis.</strong> Forward 12-month NOI is the default. An analyst can switch the basis to <strong>Stabilized NOI</strong> on Investment → Exit / Reversion: the reversion then capitalises the stabilized year&apos;s NOI grown to exit instead. An analyst-entered terminal NOI override beats both bases. Wherever the Exit NOI is printed, its label names the basis and the period it was taken on, as the run reports them (<code className="text-[11.5px]">returns.exit_noi_period_label</code>).
+            <strong>Exit NOI basis.</strong> Forward 12-month NOI is the default. An analyst can switch the basis to <strong>Stabilized NOI</strong> on CAPEX → Exit / Reversion: the reversion then capitalises the stabilized year&apos;s NOI grown to exit instead. An analyst-entered terminal NOI override beats both bases. Wherever the Exit NOI is printed, its label names the basis and the period it was taken on, as the run reports them (<code className="text-[11.5px]">returns.exit_noi_period_label</code>).
           </p>
         </Card>
 
@@ -278,9 +280,9 @@ export default function MethodologyPage() {
         intro="Every assumption surfaced on the Overview carries a provenance badge telling you exactly where the value came from. The legend below explains each source label and its precedence."
       >
         <Card className="p-5 mb-4" data-testid="market-tab-methodology">
-          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Market tab: comp set, the TTM comp-set blend, demand and supply growth</h4>
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Market Comps tab: comp set, the TTM comp-set blend, demand and supply growth</h4>
           <p className="text-[12.5px] text-ink-600 leading-relaxed">
-            <strong className="text-ink-700">One comp set, one derivation.</strong> The Market tab&apos;s hotel count and its key count are computed from the same set: the <em>active</em> hotels of the STR roster (<code className="text-[11.5px]">ttm_performance.compset.&lt;n&gt;.*</code>). The roster is the <em>union</em> of every STR report on the deal — a hotel is matched across reports by its STR id (<code className="text-[11.5px]">ttm_performance.compset.&lt;n&gt;.str_id</code>) or, failing that, by its name with STR&apos;s closed label stripped — because a closure often appears in only one report (a daily report lists &ldquo;Closed - Blue Moon Hotel · 0 rooms&rdquo; while the newer trend report still lists &ldquo;Blue Moon Hotel · 75 rooms&rdquo;). A hotel is treated as closed only when <em>any</em> report says so explicitly — an extracted <code className="text-[11.5px]">status</code> of <code className="text-[11.5px]">closed</code>, or STR&apos;s own roster label, which prints a closed competitor as &ldquo;Closed - &lt;name&gt;&rdquo;. A zero-room row with neither marker stays an active hotel contributing no keys; nothing is inferred. Its keys are read from the newest report that lists a positive count. Closed hotels are listed on the roster with a &ldquo;closed · excluded&rdquo; chip and are excluded from <em>both</em> the count and the keys, and the roster note names the marker and the document that carried it — or says that none was found, in which case every listed hotel is counted. The report&apos;s own rollups (<code className="text-[11.5px]">comp_set.comp_set_size</code>, <code className="text-[11.5px]">comp_set.total_keys</code>) are kept for transparency but are never the headline while a roster exists; they are used only when no roster was extracted, and the tab says so. Which reports count as STR is decided by the lane each extraction ran in, not by the document&apos;s tag: a CoStar market report an analyst filed under &ldquo;STR / Comp Set&rdquo; is read as a market study (below) and never feeds the comp set or the blend.
+            <strong className="text-ink-700">One comp set, one derivation.</strong> The Market Comps tab&apos;s hotel count and its key count are computed from the same set: the <em>active</em> hotels of the STR roster (<code className="text-[11.5px]">ttm_performance.compset.&lt;n&gt;.*</code>). The roster is the <em>union</em> of every STR report on the deal — a hotel is matched across reports by its STR id (<code className="text-[11.5px]">ttm_performance.compset.&lt;n&gt;.str_id</code>) or, failing that, by its name with STR&apos;s closed label stripped — because a closure often appears in only one report (a daily report lists &ldquo;Closed - Blue Moon Hotel · 0 rooms&rdquo; while the newer trend report still lists &ldquo;Blue Moon Hotel · 75 rooms&rdquo;). A hotel is treated as closed only when <em>any</em> report says so explicitly — an extracted <code className="text-[11.5px]">status</code> of <code className="text-[11.5px]">closed</code>, or STR&apos;s own roster label, which prints a closed competitor as &ldquo;Closed - &lt;name&gt;&rdquo;. A zero-room row with neither marker stays an active hotel contributing no keys; nothing is inferred. Its keys are read from the newest report that lists a positive count. Closed hotels are listed on the roster with a &ldquo;closed · excluded&rdquo; chip and are excluded from <em>both</em> the count and the keys, and the roster note names the marker and the document that carried it — or says that none was found, in which case every listed hotel is counted. The report&apos;s own rollups (<code className="text-[11.5px]">comp_set.comp_set_size</code>, <code className="text-[11.5px]">comp_set.total_keys</code>) are kept for transparency but are never the headline while a roster exists; they are used only when no roster was extracted, and the tab says so. Which reports count as STR is decided by the lane each extraction ran in, not by the document&apos;s tag: a CoStar market report an analyst filed under &ldquo;STR / Comp Set&rdquo; is read as a market study (below) and never feeds the comp set or the blend.
           </p>
           <p className="text-[12.5px] text-ink-600 leading-relaxed mt-3">
             <strong className="text-ink-700">&ldquo;TTM · comp-set blend&rdquo; is defined on the card.</strong> Market Occupancy, ADR and RevPAR are the comp set&apos;s blended trailing-twelve-month figures, recovered exactly from the STR penetration indices: comp-set Occupancy = subject TTM Occupancy ÷ MPI, comp-set ADR = subject TTM ADR ÷ ARI, comp-set RevPAR = subject TTM RevPAR ÷ RGI (each index is subject ÷ comp set, as STR publishes it). The Submarket Snapshot prints a methodology line composed from the inputs actually used: the STR report(s) the subject TTM and the indices were read from, the period (the subject&apos;s monthly series, e.g. Jul 2025 – Jun 2026, or the report year when no monthly series was extracted), and the active comp-set hotels with their keys and any closed hotel excluded. STR&apos;s comp-set figures are room-night totals across those hotels, so larger hotels weigh more; Fondok applies no weighting of its own, and a metric whose index is missing shows a dash rather than a substitute.
@@ -315,10 +317,10 @@ export default function MethodologyPage() {
               The subject property&apos;s OWN trailing-twelve-month occupancy &amp; ADR as reported by STR — an actual, not a forecast. This is what the model seeds the Base Year from when the STR basis is on: the forward forecast&apos;s Month-12 point can land far below the subject&apos;s current performance, which would understate the deal. Because the Base Year is a TTM window, Index Analysis shows N/A for the first forecast year&apos;s growth whenever the last historical column is a full fiscal year — the two are not the same period basis.
             </BadgeRow>
             <BadgeRow source="str_comp_set" name="STR Comp-Set Rates">
-              The comp set&apos;s blended occupancy &amp; ADR shown on the Market tab, applied as the Year-1 input by &quot;Use STR rates in the model&quot; (explicit overrides carrying the note &quot;STR comp-set market rates (Market tab)&quot;). This is the competitive set&apos;s performance, not the subject&apos;s own — the Market tab states the comp-set benchmark and the model&apos;s Base Year as two separate figures and never claims the benchmark is the assumption.
+              The comp set&apos;s blended occupancy &amp; ADR shown on the Market Comps tab, applied as the Year-1 input by &quot;Use STR rates in the model&quot; (explicit overrides carrying the note &quot;STR comp-set market rates (Market tab)&quot;). This is the competitive set&apos;s performance, not the subject&apos;s own — the Market Comps tab states the comp-set benchmark and the model&apos;s Base Year as two separate figures and never claims the benchmark is the assumption.
             </BadgeRow>
             <BadgeRow source="str_forecast" name="STR Trend Forecast">
-              The BASE STR forward-forecast scenario&apos;s Month-12 point — a projection of the subject, used only when the subject&apos;s own TTM is not extracted. P&amp;L → Future P&amp;L shows &quot;Active basis: Market / STR · Revert&quot; when the rates carry any of these three tags, and the Market tab&apos;s STR card reads the same tags — &quot;STR / Market basis active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
+              The BASE STR forward-forecast scenario&apos;s Month-12 point — a projection of the subject, used only when the subject&apos;s own TTM is not extracted. P&amp;L → Future P&amp;L shows &quot;Active basis: Market / STR · Revert&quot; when the rates carry any of these three tags, and the Market Comps tab&apos;s STR card reads the same tags — &quot;STR / Market basis active&quot;, &quot;STR rates unavailable — using T-12 base&quot;, or &quot;Pending re-run&quot; when the worker has not tagged the rates yet — never the request flag alone.
             </BadgeRow>
             <BadgeRow source="str_forecast_unavailable" name="STR Unavailable">
               STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a loader failure). The model stays on the T-12 base and says so — the STR seed is never silently &quot;active&quot;. Reason code: <ReasonTag code="str_unavailable" />.
@@ -384,10 +386,12 @@ export default function MethodologyPage() {
             is a revert to source, not an override, and needs no note either.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
-            <span className="font-semibold text-ink-900">Target Levered IRR and Target MOIC are not overrides.</span>{' '}
+            <span className="font-semibold text-ink-900">Target LIRR (levered IRR), Target MOIC and Target Stabilized Yield on Cost are not overrides.</span>{' '}
             They are stored on the deal as stated objectives — the benchmark the returns are read against and the
             hurdle the Max Price Solver prices to — not replacements for a value Fondok sourced from a document.
             They are editable without a justification, and a value that came from a source is never behind them.
+            Target Stabilized Yield on Cost is kept in the deal&apos;s <code className="text-[11.5px]">field_overrides</code> as{' '}
+            <code className="text-[11.5px]">target_stabilized_yoc</code> and is exempt from the note rule on both the browser and the API for the same reason.
           </p>
         </Card>
 
@@ -481,7 +485,7 @@ export default function MethodologyPage() {
               ['Revenue', 'Rooms × occupancy × ADR projection + F&B + Other Operated + Resort Fees + Misc.'],
               ['F&B', 'Per-occupied-room F&B model with food/beverage split; resort fees handled as a separate line.'],
               ['Expense', 'USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges → GOP, NOI (institutional), Net Cash Flow.'],
-              ['Capital', 'Purchase price + closing costs + renovation budget + working capital → property uses; plus the senior origination fee (owned by the Debt tab) → total capital; Sources & Uses.'],
+              ['Capital', 'Purchase price + closing costs + renovation budget + working capital → property uses; plus the senior origination fee (owned by the Financing tab) → total capital; Sources & Uses.'],
               ['Debt', 'Senior + PACE tranche stack from analyst-entered terms (fixed or index + spread with floor / cap, amortization or interest-only, IO stub, maturity); monthly amortization schedule; DSCR, debt yield, LTV / LTC; analyst-entered covenant thresholds; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
               ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
@@ -498,7 +502,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mt-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Debt is an assumptions workspace</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
-            Debt documents are optional. The Debt tab is where the financing is entered, and every core term is an analyst input the model runs on — Fondok does not read the term sheet in this release. Each edit is persisted as an analyst override <AssumptionBadge source="analyst_override" /> and re-runs the chain, so the Debt Schedule, DSCR, debt yield, LTV / LTC, Cash Flow and Returns all reflect what was entered. A year whose NOI is negative (a ramp or PIP year) no longer stops the model: its DSCR shows N/A, the debt service its NOI does not cover is reported as that year&apos;s shortfall, and the Debt tab names the negative years in one warning. Returns, Cash Flow and Partnership then run on the actual negative cash flow; only a non-positive exit-year NOI stops Returns, because no sale value can be capitalised from it.
+            Debt documents are optional. The Financing tab is where the financing is entered, and every core term is an analyst input the model runs on — Fondok does not read the term sheet in this release. Each edit is persisted as an analyst override <AssumptionBadge source="analyst_override" /> and re-runs the chain, so the Debt Schedule, DSCR, debt yield, LTV / LTC, Cash Flow and Returns all reflect what was entered. A year whose NOI is negative (a ramp or PIP year) no longer stops the model: its DSCR shows N/A, the debt service its NOI does not cover is reported as that year&apos;s shortfall, and the Financing tab names the negative years in one warning. Returns, Cash Flow and Partnership then run on the actual negative cash flow; only a non-positive exit-year NOI stops Returns, because no sale value can be capitalised from it.
           </p>
           <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
             <li>
@@ -527,7 +531,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">Missing inputs are inputs.</span>{' '}
-              Wherever a required assumption is absent, the Debt tab renders the input to provide (&ldquo;Enter rate&rdquo;, &ldquo;Enter spread&rdquo;, &ldquo;Enter threshold&rdquo;) with the consequence stated, instead of an unexplained dash.
+              Wherever a required assumption is absent, the Financing tab renders the input to provide (&ldquo;Enter rate&rdquo;, &ldquo;Enter spread&rdquo;, &ldquo;Enter threshold&rdquo;) with the consequence stated, instead of an unexplained dash.
             </li>
           </ul>
         </Card>
@@ -544,11 +548,11 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">It runs the whole chain, in memory.</span>{' '}
-              <code className="text-[11.5px]">POST /deals/{'{id}'}/engines/returns/preview</code> re-runs revenue → F&amp;B → expense → capital → debt → returns on a copy of the deal&apos;s canonical inputs. Nothing is written: no <code className="text-[11.5px]">engine_outputs</code> row, no run id, no advance of the canonical run, and no change to the deal&apos;s <code className="text-[11.5px]">field_overrides</code>. Investment and Debt keep showing the canonical case throughout — that is the point, not a bug.
+              <code className="text-[11.5px]">POST /deals/{'{id}'}/engines/returns/preview</code> re-runs revenue → F&amp;B → expense → capital → debt → returns on a copy of the deal&apos;s canonical inputs. Nothing is written: no <code className="text-[11.5px]">engine_outputs</code> row, no run id, no advance of the canonical run, and no change to the deal&apos;s <code className="text-[11.5px]">field_overrides</code>. CAPEX and Financing keep showing the canonical case throughout — that is the point, not a bug.
             </li>
             <li>
               <span className="font-semibold text-ink-900">The LTV lever is honest.</span>{' '}
-              The Debt tab writes both &ldquo;Senior Loan Amount&rdquo; and &ldquo;LTV&rdquo; as the same pinned senior principal. When the sandbox flexes LTV, that pin is released <em>on the in-memory copy only</em>, so the flexed LTV resizes the senior end-to-end — interest, principal, debt service and DSCR all move with it. Without the release the preview reported returns levered on one loan amount against another loan&apos;s debt service, and DSCR never moved at all. A funded PACE or mezzanine tranche keeps its principal: LTV sizes the senior.
+              The Financing tab writes both &ldquo;Senior Loan Amount&rdquo; and &ldquo;LTV&rdquo; as the same pinned senior principal. When the sandbox flexes LTV, that pin is released <em>on the in-memory copy only</em>, so the flexed LTV resizes the senior end-to-end — interest, principal, debt service and DSCR all move with it. Without the release the preview reported returns levered on one loan amount against another loan&apos;s debt service, and DSCR never moved at all. A funded PACE or mezzanine tranche keeps its principal: LTV sizes the senior.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Where the sandbox number shows, it says so.</span>{' '}
@@ -588,16 +592,20 @@ export default function MethodologyPage() {
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Investment Profile is the source of truth</h4>
           <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
             <li>
-              <span className="font-semibold text-ink-900">Two analyst inputs.</span>{' '}
-              <span className="font-medium">Target Levered IRR</span> and <span className="font-medium">Target MOIC</span> are stored on the deal (<code className="text-[11.5px]">target_irr</code> / <code className="text-[11.5px]">target_moic</code>) as analyst inputs <AssumptionBadge source="analyst_override" />. Either may be unset; an unset target renders as &ldquo;—&rdquo;.
+              <span className="font-semibold text-ink-900">Two pricing hurdles.</span>{' '}
+              <span className="font-medium">Target LIRR (levered IRR)</span> and <span className="font-medium">Target MOIC</span> are stored on the deal (<code className="text-[11.5px]">target_irr</code> / <code className="text-[11.5px]">target_moic</code>) as analyst inputs <AssumptionBadge source="analyst_override" />. Either may be unset; an unset target renders as &ldquo;—&rdquo;. There is one Target LIRR control — no separate returns-profile field.
             </li>
             <li>
-              <span className="font-semibold text-ink-900">The returns profile only suggests.</span>{' '}
-              A profile band such as Value Add (12-18%) is a suggestion. The &ldquo;Use profile midpoint&rdquo; action writes that midpoint (15%) to the deal explicitly — Fondok never applies a band implicitly, and an open band (18%+) offers its floor.
+              <span className="font-semibold text-ink-900">The return profile is a preset.</span>{' '}
+              The Target LIRR control carries a Core / Value Add / Opportunistic preset. Choosing one stores it as the deal&apos;s <code className="text-[11.5px]">return_profile</code> tag and writes the band&apos;s midpoint (Value Add 12-18% → 15%; an open band such as 18%+ → its floor) as the target — an explicit action, never applied implicitly. The analyst can then edit the number; the tag stays as the preset it started from. While no target is set, &ldquo;Use profile midpoint&rdquo; writes the current preset&apos;s figure.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Benchmark only.</span>{' '}
               Saving a target never re-runs the model. The Overview&apos;s Return benchmark strip compares the calculated levered IRR from the canonical returns run against Target Levered IRR: below the target is <em>Below target</em>, at or above it up to 200bp over is <em>Within target</em>, and more than 200bp over is <em>Above target</em>. It is display only and does not drive any engine.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Target Stabilized Yield on Cost.</span>{' '}
+              The Overview&apos;s Yield on cost benchmark compares the analyst&apos;s target against the stabilized year&apos;s yield on cost — stabilized-year NOI ÷ total capital, both from the model run — and reads <em>Pass</em> at or above the target, <em>Short</em> below it. With no stabilized year or no total capital the actual is &ldquo;—&rdquo;, never estimated.
             </li>
           </ul>
         </Card>

@@ -328,7 +328,7 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
     render(<OverviewTab projectId="deal-uuid-1" />);
     const banner = screen.getByTestId('stabilization-needs-rerun');
     expect(banner).toHaveTextContent(/re-run the model/i);
-    expect(banner).toHaveTextContent(/investment/i);
+    expect(banner).toHaveTextContent(/CAPEX tab/);
     // It must not imply a number is available somewhere else.
     expect(banner).toHaveTextContent(/will not stand another projection year/i);
   });

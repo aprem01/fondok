@@ -249,9 +249,9 @@ function SolvedBlock({ data, link }: { data: PricingMaxPriceResponse; link: Reac
     { label: `Max price @ ${irrLabel} IRR`, value: solvedValue(irrPrice, data.irr_status), state: 'calculated', color: prov.gray, weight: 400, title: 'Bisection on purchase price until levered IRR equals the target' },
     { label: `Max price @ ${moicLabel} MOIC`, value: solvedValue(emPrice, data.em_status), state: 'calculated', color: prov.gray, weight: 400, title: 'Bisection on purchase price until the equity multiple equals the target' },
     { label: 'Binding constraint', value: BINDING_LABEL[data.binding_constraint], state: 'calculated', color: prov.black, weight: 700, title: 'The hurdle that yields the lower max price' },
-    { label: 'Hold period', value: `${Number.isInteger(data.hold_years) ? data.hold_years : data.hold_years.toFixed(1)} years`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Investment → Exit / Reversion' },
-    { label: 'Exit cap rate', value: fmtPct(data.exit_cap_rate, 2), state: 'linked', color: prov.green, weight: 400, title: 'Linked from Investment → Exit / Reversion' },
-    { label: 'LTV / interest rate', value: `${fmtPct(data.ltv, 1)} · ${fmtPct(data.interest_rate, 2)}`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Debt' },
+    { label: 'Hold period', value: `${Number.isInteger(data.hold_years) ? data.hold_years : data.hold_years.toFixed(1)} years`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from CAPEX → Exit / Reversion' },
+    { label: 'Exit cap rate', value: fmtPct(data.exit_cap_rate, 2), state: 'linked', color: prov.green, weight: 400, title: 'Linked from CAPEX → Exit / Reversion' },
+    { label: 'LTV / interest rate', value: `${fmtPct(data.ltv, 1)} · ${fmtPct(data.interest_rate, 2)}`, state: 'linked', color: prov.green, weight: 400, title: 'Linked from Financing' },
   ];
 
   const bindingNote = data.binding_constraint === 'both'

@@ -110,8 +110,8 @@ const STATEMENT_LABEL_CANONICAL: Record<string, string> = {
 // amortization / payoff series is Debt → Debt Schedule.
 const CROSS_TAB_LINKS: { label: string; tab: string; sub: string }[] = [
   { label: 'P&L →', tab: 'pl', sub: 'projections' },
-  { label: 'Investment →', tab: 'investment', sub: 'sources-and-uses' },
-  { label: 'Debt →', tab: 'debt', sub: 'debt-schedule' },
+  { label: 'CAPEX →', tab: 'investment', sub: 'sources-and-uses' },
+  { label: 'Financing →', tab: 'debt', sub: 'debt-schedule' },
   { label: 'Partnership →', tab: 'partnership', sub: 'cash-flows' },
 ];
 
@@ -122,7 +122,7 @@ function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string, sub: strin
         Output only
       </span>
       <span>
-        No assumptions are entered here — values flow from Financials, Investment and Debt.
+        No assumptions are entered here — values flow from Financials, CAPEX and Financing.
         GP/LP allocation happens in Partnership.
       </span>
       <span className="flex gap-3 ml-auto">
@@ -243,7 +243,7 @@ export default function CashFlowTab() {
             <>
               The operating model converted into property and equity cash flow.
               <span className="font-semibold"> Levered</span> = after debt; <span className="font-semibold">unlevered</span> = before debt.
-              Values flow from Financials, Investment and Debt — nothing is entered directly here.
+              Values flow from Financials, CAPEX and Financing — nothing is entered directly here.
             </>
           }
         />
@@ -354,7 +354,7 @@ function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
       value: initial,
       state: hasData ? 'linked' : 'awaiting_data',
       title:
-        'Investment → Required equity. Reference only — equity funding is already reflected in net cash flow to equity and is not added again.',
+        'CAPEX → Required equity. Reference only — equity funding is already reflected in net cash flow to equity and is not added again.',
     },
     {
       label: 'Additional equity required',

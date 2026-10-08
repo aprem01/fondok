@@ -303,8 +303,8 @@ describe('InvestmentTab — Transaction Timeline', () => {
     expect(screen.getAllByText('Renovation').length).toBeGreaterThan(0);
     // Detail table "Owned by" column + a derived owner label.
     expect(screen.getByText('Owned by')).toBeInTheDocument();
-    expect(screen.getByText('Investment assumption')).toBeInTheDocument();
-    expect(screen.getByText('Linked from Debt')).toBeInTheDocument();
+    expect(screen.getByText('CAPEX assumption')).toBeInTheDocument();
+    expect(screen.getByText('Linked from Financing')).toBeInTheDocument();
   });
 });
 
@@ -989,5 +989,17 @@ describe('InvestmentTab — Exit NOI basis (FON-44 / R-059)', () => {
     render(<InvestmentTab />);
     expect(screen.getByText(/Exit NOI override is in effect/)).toBeInTheDocument();
     expect(select().value).toBe('forward_12m');
+  });
+});
+
+// R-062 / R-069 — the tab is labelled CAPEX and debt lives on Financing; the
+// cross-tab copy names the new labels while the ?tab= ids stay the same.
+describe('InvestmentTab — cross-tab copy names CAPEX / Financing (R-062, R-069)', () => {
+  it('Deal Summary points debt configuration at the Financing tab (?tab=debt unchanged)', () => {
+    render(<InvestmentTab />);
+    expect(screen.getByText('Debt configuration lives on the Financing tab.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Open Financing tab →' });
+    expect(link.getAttribute('href')).toBe('?tab=debt');
+    expect(screen.queryByText(/Open Debt tab/)).toBeNull();
   });
 });

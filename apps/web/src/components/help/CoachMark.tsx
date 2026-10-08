@@ -33,7 +33,8 @@ import {
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/format';
-import { useHintsEnabled } from './useHintsEnabled';
+import { useHintsEnabled, HINTS_CHANGED_EVENT } from './useHintsEnabled';
+import { HintOptionsMenu } from './HintOptionsMenu';
 
 export interface CoachMarkAction {
   label: string;
@@ -264,6 +265,16 @@ export function CoachMark({
     };
   }, [viewKey, anchorId, order]);
 
+  // R-074 — "Show hints again" clears dismissals; re-evaluate this mark.
+  useEffect(() => {
+    const sync = () => {
+      if (viewKey) recompute(viewKey);
+      else setActive(!isDismissed(anchorId));
+    };
+    window.addEventListener(HINTS_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(HINTS_CHANGED_EVENT, sync);
+  }, [viewKey, anchorId]);
+
   // Stop pulsing after 2s.
   useEffect(() => {
     if (!active) return;
@@ -361,15 +372,19 @@ export function CoachMark({
               }
             >
               <div className="relative bg-white border border-brand-300 shadow-xl rounded-lg p-4 max-w-sm">
-                <button
-                  type="button"
-                  onClick={dismiss}
-                  aria-label="Dismiss hint"
-                  className="absolute top-2.5 right-2.5 text-ink-400 hover:text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded p-0.5"
-                >
-                  <X size={13} />
-                </button>
-                <div className="pr-5">
+                {/* R-074 — hint options (Hide this / Hide all) beside the X. */}
+                <div className="absolute top-2 right-2 flex items-center gap-0.5">
+                  <HintOptionsMenu onHideThis={dismiss} />
+                  <button
+                    type="button"
+                    onClick={dismiss}
+                    aria-label="Dismiss hint"
+                    className="text-ink-400 hover:text-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded p-0.5"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="pr-12">
                   <div className="flex items-center gap-1.5 mb-1">
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-500" />
                     <span className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold">
