@@ -1,10 +1,12 @@
 """FON-41 / FON-59 #3 — ONE stabilized year, and it moves no return.
 
 Four incompatible "stabilized" definitions used to ship side by side. The
-expense engine now publishes ONE block (``expense.stabilization``), seeded from
-the same occupancy / NOI-plateau signal the debt engine uses for its stabilized
-DSCR and debt yield, and overridable by the analyst via the persisted
-``stabilization_year`` assumption.
+expense engine now publishes ONE block (``expense.stabilization``). FON-59
+R-057 (Sam's decision 1): the year defaults to Year 3 after acquisition close
+— the same index the debt engine reads for its stabilized DSCR and debt yield
+— clamped to the hold, and is overridable by the analyst via the persisted
+``stabilization_year`` assumption. The old occupancy / NOI-plateau signal is
+published only as the ``detected_year`` hint.
 
 The load-bearing guard is ``test_stabilization_year_does_not_move_returns``:
 the block is DISPLAY-ONLY, so setting or changing it must leave the FON-67
@@ -104,13 +106,17 @@ async def _run(overrides: dict | None = None) -> dict:
         )
 
 
-# ── the seed ──────────────────────────────────────────────────────────
+# ── the default: Year 3 after close ──────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_seeded_stabilization_year_equals_the_debt_signal_plus_one() -> None:
-    """The seed IS the debt engine's stabilized-year signal, 1-based."""
+async def test_default_stabilization_year_is_year_3_and_matches_debt() -> None:
+    """No analyst year → Year 3 after close, the same index debt reads."""
     from app.engines.debt import _resolve_stabilized_year_index
+    from app.engines.stabilization import (
+        DEFAULT_STABILIZATION_ANCHOR,
+        DEFAULT_STABILIZATION_YEAR,
+    )
 
     results = await _run()
     expense = results["expense"]["outputs"]
@@ -118,19 +124,22 @@ async def test_seeded_stabilization_year_equals_the_debt_signal_plus_one() -> No
 
     stab = expense["stabilization"]
     assert stab is not None
+    assert DEFAULT_STABILIZATION_YEAR == 3
+    assert stab["stabilized_year"] == 3
+    assert stab["stabilized_year_index"] == 2
+    assert stab["source"] == "default_year_3"
+    assert stab["anchor"] == DEFAULT_STABILIZATION_ANCHOR == "acquisition_close"
+    assert stab["clamped"] is False
 
-    signal_index = _resolve_stabilized_year_index(
+    debt_index = _resolve_stabilized_year_index(
         occupancy_by_year=[y["occupancy"] for y in revenue["years"]],
-        # ``starting_occupancy`` is the stabilized baseline the runner passes
-        # to BOTH engines.
         stabilized_occupancy=0.762,
         noi_by_year=[y["noi"] for y in expense["years"]],
     )
-    assert signal_index is not None
-    assert stab["stabilized_year"] == signal_index + 1
-    assert stab["stabilized_year_index"] == signal_index
-    assert stab["source"] == "fondok_derived"
-    assert stab["signal"] in ("occupancy", "noi_plateau")
+    assert debt_index == stab["stabilized_year_index"]
+    # The model-detected signal is still reported — as a hint only.
+    assert stab["detected_year"] is not None
+    assert stab["detected_signal"] in ("occupancy", "noi_plateau")
 
 
 @pytest.mark.asyncio
@@ -177,8 +186,8 @@ async def test_stabilized_noi_is_not_the_exit_reversion() -> None:
 async def test_an_analyst_override_wins() -> None:
     """A persisted ``stabilization_year`` selects that year and says so."""
     seeded = await _run()
-    seed_year = seeded["expense"]["outputs"]["stabilization"]["stabilized_year"]
-    other_year = seed_year + 2
+    detected = seeded["expense"]["outputs"]["stabilization"]["detected_year"]
+    other_year = 4
 
     results = await _run({"stabilization_year": {"value": other_year, "note": "IC"}})
     expense = results["expense"]["outputs"]
@@ -187,41 +196,30 @@ async def test_an_analyst_override_wins() -> None:
     assert stab["stabilized_year"] == other_year
     assert stab["stabilized_year_index"] == other_year - 1
     assert stab["source"] == "analyst_override"
-    # The seed is still published alongside it, so the UI can say what Fondok
-    # would have picked.
-    assert stab["derived_year"] == seed_year
+    # The detected hint is still published alongside it.
+    assert stab["detected_year"] == detected
     assert stab["stabilized_revenue"] == pytest.approx(
         expense["years"][other_year - 1]["total_revenue"]
     )
 
 
 @pytest.mark.asyncio
-async def test_a_re_saved_seeded_year_stays_fondok_derived() -> None:
-    """FON-65 — re-confirming the seed unchanged is not an override.
-
-    The analyst opens the Stabilization Year, sees the Fondok-derived value,
-    and saves it. Nothing changed, so the badge must not flip to "analyst
-    override"."""
-    seeded = await _run()
-    seed_year = seeded["expense"]["outputs"]["stabilization"]["stabilized_year"]
-
-    results = await _run({"stabilization_year": {"value": seed_year, "note": "ok"}})
+async def test_a_re_saved_default_year_stays_default() -> None:
+    """FON-65 — re-confirming the default unchanged is not an override."""
+    results = await _run({"stabilization_year": {"value": 3, "note": "ok"}})
     stab = results["expense"]["outputs"]["stabilization"]
 
-    assert stab["stabilized_year"] == seed_year
-    assert stab["source"] == "fondok_derived"
+    assert stab["stabilized_year"] == 3
+    assert stab["source"] == "default_year_3"
 
 
 @pytest.mark.asyncio
-async def test_an_out_of_range_year_falls_back_to_the_seed() -> None:
+async def test_an_out_of_range_year_falls_back_to_the_default() -> None:
     """A year past the hold is not a year this projection has."""
-    seeded = await _run()
-    seed_year = seeded["expense"]["outputs"]["stabilization"]["stabilized_year"]
-
     results = await _run({"stabilization_year": 99})
     stab = results["expense"]["outputs"]["stabilization"]
-    assert stab["stabilized_year"] == seed_year
-    assert stab["source"] == "fondok_derived"
+    assert stab["stabilized_year"] == 3
+    assert stab["source"] == "default_year_3"
 
 
 # ── THE guard: the block moves nothing ────────────────────────────────
@@ -262,9 +260,10 @@ async def test_stabilization_year_does_not_move_returns() -> None:
 
 @pytest.mark.asyncio
 async def test_debt_stabilized_metrics_are_untouched_by_the_analyst_year() -> None:
-    """The Stabilization Year is a PROJECTION assumption. Debt's stabilized
-    DSCR / debt yield keep resolving off their own signal — moving them would
-    move a covenant number on every persisted deal."""
+    """The analyst's Stabilization Year is a PROJECTION reporting assumption.
+    Debt's stabilized DSCR / debt yield read the Year-3 default (the debt
+    engine is not passed the analyst year) — the override moves no covenant
+    number."""
     baseline = await _run({})
     overridden = await _run({"stabilization_year": 4})
     for key in ("stabilized_dscr", "stabilized_debt_yield"):
@@ -290,8 +289,8 @@ def test_no_resolvable_year_publishes_nothing_rather_than_zero() -> None:
     )
     # An occupancy path that never reaches the assumption HANDS OFF to the NOI
     # plateau rather than refusing (changed 2026-09-12). The block still says
-    # WHICH signal answered, so an unmet occupancy assumption stays visible
-    # rather than being silently papered over.
+    # WHICH signal answered the detected hint, so an unmet occupancy
+    # assumption stays visible rather than being silently papered over.
     block = build_stabilized_year(
         total_revenue_by_year=[10.0, 11.0],
         noi_before_reserve_by_year=[4.0, 5.0],
@@ -300,7 +299,7 @@ def test_no_resolvable_year_publishes_nothing_rather_than_zero() -> None:
         stabilized_occupancy=0.80,
     )
     assert block is not None
-    assert block.signal == "noi_plateau"
+    assert block.detected_signal == "noi_plateau"
 
 
 def test_a_pre_upgrade_projection_reports_no_before_reserve_noi() -> None:
@@ -318,7 +317,8 @@ def test_a_pre_upgrade_projection_reports_no_before_reserve_noi() -> None:
     assert block is not None
     assert block.stabilized_noi_before_reserve is None
     assert block.stabilized_noi_margin is None
-    assert block.stabilized_cash_noi == pytest.approx(3_000_000.0)
+    # Two-year projection → the Year-3 default clamps to Year 2.
+    assert block.stabilized_cash_noi == pytest.approx(3_300_000.0)
 
 
 # ── Step F — worksheet_layout is never engine input ───────────────────
@@ -410,3 +410,145 @@ def test_no_signal_at_all_still_refuses() -> None:
     assert resolve_stabilized_year(
         occupancy_by_year=None, stabilized_occupancy=None, noi_by_year=[]
     ) == (None, None)
+
+
+# ── FON-59 R-057 — Year 3 after close: default / clamp / override ─────────
+
+_FIVE = dict(
+    total_revenue_by_year=[10.0, 11.0, 12.0, 12.4, 12.8],
+    noi_before_reserve_by_year=[3.0, 3.6, 4.2, 4.3, 4.4],
+    cash_noi_by_year=[2.6, 3.1, 3.7, 3.8, 3.9],
+    # Un-displaced: occupancy is at its stabilized assumption from Year 1 —
+    # the shape that used to tell testers the deal "stabilizes" in Year 1.
+    occupancy_by_year=[0.76, 0.765, 0.77, 0.77, 0.77],
+    adr_by_year=[300.0, 309.0, 318.0, 327.0, 337.0],
+    stabilized_occupancy=0.76,
+)
+
+
+def test_default_is_index_2_on_a_five_year_hold() -> None:
+    from app.engines.stabilization import (
+        build_stabilized_year,
+        resolve_stabilized_year_index,
+    )
+
+    block = build_stabilized_year(**_FIVE)
+    assert block is not None
+    assert block.stabilized_year_index == 2
+    assert block.stabilized_year == 3
+    assert block.source == "default_year_3"
+    assert block.clamped is False
+    assert block.stabilized_cash_noi == pytest.approx(3.7)
+    assert block.stabilized_noi_before_reserve == pytest.approx(4.2)
+    assert (
+        resolve_stabilized_year_index(
+            occupancy_by_year=_FIVE["occupancy_by_year"],
+            stabilized_occupancy=0.76,
+            noi_by_year=_FIVE["cash_noi_by_year"],
+        )
+        == 2
+    )
+
+
+def test_detected_year_is_still_reported_as_a_hint() -> None:
+    from app.engines.stabilization import build_stabilized_year
+
+    block = build_stabilized_year(**_FIVE)
+    assert block is not None
+    assert block.detected_year == 1
+    assert block.detected_signal == "occupancy"
+    # …and it does not select the year.
+    assert block.stabilized_year == 3
+
+
+def test_default_clamps_to_the_last_year_on_a_two_year_hold() -> None:
+    from app.engines.stabilization import (
+        build_stabilized_year,
+        resolve_stabilized_year_index,
+    )
+
+    block = build_stabilized_year(
+        total_revenue_by_year=[10.0, 11.0],
+        noi_before_reserve_by_year=[3.0, 3.6],
+        cash_noi_by_year=[2.6, 3.1],
+    )
+    assert block is not None
+    assert block.stabilized_year_index == 1
+    assert block.stabilized_year == 2
+    assert block.source == "default_year_3"
+    assert block.clamped is True
+    assert block.default_year == 3
+    assert (
+        resolve_stabilized_year_index(
+            occupancy_by_year=None, stabilized_occupancy=None, noi_by_year=[2.6, 3.1]
+        )
+        == 1
+    )
+    assert (
+        resolve_stabilized_year_index(
+            occupancy_by_year=None, stabilized_occupancy=None, noi_by_year=[]
+        )
+        is None
+    )
+
+
+def test_analyst_override_wins_over_the_default() -> None:
+    from app.engines.stabilization import (
+        build_stabilized_year,
+        resolve_stabilized_year_index,
+    )
+
+    block = build_stabilized_year(**_FIVE, stabilization_year=5)
+    assert block is not None
+    assert block.stabilized_year == 5
+    assert block.source == "analyst_override"
+    assert block.clamped is False
+    assert block.stabilized_cash_noi == pytest.approx(3.9)
+    # Detected hint unchanged by the override.
+    assert block.detected_year == 1
+    assert (
+        resolve_stabilized_year_index(
+            occupancy_by_year=None,
+            stabilized_occupancy=None,
+            noi_by_year=_FIVE["cash_noi_by_year"],
+            stabilization_year=5,
+        )
+        == 4
+    )
+    # Out of range → the default, never a guessed year.
+    assert (
+        resolve_stabilized_year_index(
+            occupancy_by_year=None,
+            stabilized_occupancy=None,
+            noi_by_year=_FIVE["cash_noi_by_year"],
+            stabilization_year=9,
+        )
+        == 2
+    )
+
+
+def test_debt_stabilized_dscr_reads_year_3_by_default() -> None:
+    """Through the debt engine: stabilized DSCR / debt yield are Year 3's —
+    even on a deal whose occupancy is already stabilized in Year 1."""
+    from app.engines.debt import DebtEngine, DebtEngineInputExt
+
+    noi = [2_000_000.0, 2_300_000.0, 2_600_000.0, 2_700_000.0, 2_800_000.0]
+    out = DebtEngine().run(
+        DebtEngineInputExt(
+            deal_id=uuid4(),
+            loan_amount=25_000_000.0,
+            ltv=0.65,
+            interest_rate=0.068,
+            term_years=5,
+            amortization_years=30,
+            interest_only_years=0,
+            noi_by_year=noi,
+            occupancy_by_year=[0.76, 0.76, 0.77, 0.77, 0.77],
+            stabilized_occupancy=0.76,
+        )
+    )
+    assert out.stabilized_dscr == pytest.approx(
+        noi[2] / out.schedule[2].debt_service
+    )
+    assert out.stabilized_debt_yield == pytest.approx(noi[2] / out.loan_amount)
+    assert out.stabilized_dscr != pytest.approx(out.entry_dscr)

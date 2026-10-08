@@ -87,9 +87,14 @@ export interface EngineOutputsLike {
 // reason — never a zero, never a figure borrowed from the exit.
 // ────────────────────────────────────────────────────────────────────
 
-/** Who owns the stabilization year on a published block. */
-export type StabilizationSource = 'fondok_derived' | 'analyst_override';
-/** Which signal produced the Fondok-derived seed. */
+/**
+ * Who owns the stabilization year on a published block. FON-59 R-057: the
+ * default is Year 3 after acquisition close (`default_year_3`), analyst-
+ * overridable. `fondok_derived` is the pre-R-057 label a stale run may still
+ * carry; it reads as "not an override" and renders the bare year.
+ */
+export type StabilizationSource = 'default_year_3' | 'analyst_override' | 'fondok_derived';
+/** Which signal produced the model-detected hint. */
 export type StabilizationSignal = 'occupancy' | 'noi_plateau';
 
 /** `expense.stabilization` as the worker emits it. */
@@ -98,9 +103,15 @@ export interface StabilizedYearBlock {
   /** 1-based model year — what the analyst reads ("Year 2"). */
   stabilized_year: number;
   source: StabilizationSource;
-  signal?: StabilizationSignal | null;
-  /** The Fondok-derived seed, kept alongside an analyst override. */
-  derived_year?: number | null;
+  /** What the default counts from (`acquisition_close`). */
+  anchor?: string | null;
+  /** The configured default year (3), before any clamp to the hold. */
+  default_year?: number | null;
+  /** True when the default was pulled back to the hold's last year. */
+  clamped?: boolean | null;
+  /** Model-detected hint (occupancy / NOI plateau) — never selects the year. */
+  detected_year?: number | null;
+  detected_signal?: StabilizationSignal | null;
   stabilized_occupancy?: number | null;
   stabilized_adr?: number | null;
   stabilized_revenue?: number | null;
@@ -157,31 +168,62 @@ export const STABILIZED_NOI_LABEL = 'Stabilized NOI';
 
 /**
  * How the stabilized year was arrived at, for the badge next to it.
- * "Fondok-derived — confirm" until the analyst has moved it.
+ * "Default — confirm" until the analyst has moved it.
  */
-export const STABILIZATION_DERIVED_BADGE = 'Fondok-derived — confirm';
+export const STABILIZATION_DEFAULT_BADGE = 'Default — confirm';
 export const STABILIZATION_ANALYST_BADGE = 'Analyst override';
 
 export function stabilizationBadge(block: StabilizedYearBlock | null): string | null {
   if (!block) return null;
   return block.source === 'analyst_override'
     ? STABILIZATION_ANALYST_BADGE
-    : STABILIZATION_DERIVED_BADGE;
+    : STABILIZATION_DEFAULT_BADGE;
 }
 
-/** One-line explanation of where the derived seed came from. */
+/**
+ * The year as the Overview card states it (FON-59 R-057):
+ *   default → "Year 3 after close (default)"
+ *   clamped → "Year 2 (default Year 3 is past the 2-year hold)"
+ *   override → "Year N (your override)"
+ * A stale pre-R-057 block renders the bare "Year N".
+ */
+export function stabilizationYearLabel(block: StabilizedYearBlock | null): string | null {
+  if (!block) return null;
+  const y = block.stabilized_year;
+  if (block.source === 'analyst_override') return `Year ${y} (your override)`;
+  if (block.source === 'default_year_3') {
+    const def = block.default_year ?? 3;
+    return block.clamped
+      ? `Year ${y} (default Year ${def} is past the ${y}-year hold)`
+      : `Year ${y} after close (default)`;
+  }
+  return `Year ${y}`;
+}
+
+/** The model-detected hint shown beneath the year, or `null` without one. */
+export function stabilizationDetectedHint(block: StabilizedYearBlock | null): string | null {
+  if (!block || block.detected_year == null) return null;
+  const why =
+    block.detected_signal === 'occupancy'
+      ? 'occupancy reaches the stabilized assumption'
+      : block.detected_signal === 'noi_plateau'
+        ? 'NOI growth settles to its terminal rate'
+        : null;
+  return `Model-detected: Year ${block.detected_year}${why ? ` (${why})` : ''}. A hint only — it does not set the year.`;
+}
+
+/** One-line explanation of where the year came from (badge tooltip / note). */
 export function stabilizationSignalNote(block: StabilizedYearBlock | null): string | null {
   if (!block) return null;
+  const hint = stabilizationDetectedHint(block);
   if (block.source === 'analyst_override') {
-    return block.derived_year != null
-      ? `Analyst-selected. Fondok's signal points at Year ${block.derived_year}.`
-      : 'Analyst-selected.';
+    return hint ? `Analyst-selected. ${hint}` : 'Analyst-selected.';
   }
-  if (block.signal === 'occupancy') {
-    return 'Derived — the first projected year occupancy reaches the stabilized assumption. Confirm or change it.';
-  }
-  if (block.signal === 'noi_plateau') {
-    return 'Derived — the first projected year NOI growth settles to its terminal rate. Confirm or change it.';
+  if (block.source === 'default_year_3') {
+    const base = block.clamped
+      ? `Default is Year ${block.default_year ?? 3} after acquisition close, clamped to the last projected year.`
+      : `Default: Year ${block.default_year ?? 3} after acquisition close.`;
+    return hint ? `${base} ${hint}` : `${base} Confirm or change it.`;
   }
   return 'Derived from the projection. Confirm or change it.';
 }

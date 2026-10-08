@@ -495,12 +495,12 @@ describe('Financials · Projections — the Stabilization Year', () => {
     },
   }) as unknown as EngineOutputsResponse;
 
-  it('shows the seeded year with its calendar year and the Fondok-derived badge', () => {
+  it('shows the seeded year with its calendar year and the Default badge', () => {
     OUTPUTS_OVERRIDE = withBlock();
     render(<ProjectionsSection dealId="deal-uuid-1" />);
 
     expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 — 2026');
-    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Fondok-derived — confirm');
+    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Default — confirm');
     // …and the selected column carries the STABILIZED badge.
     expect(screen.getByTestId('stabilized-badge')).toBeInTheDocument();
     OUTPUTS_OVERRIDE = undefined;
@@ -544,7 +544,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
     OUTPUTS_OVERRIDE = undefined;
   });
 
-  it('re-saving the seeded year unchanged writes nothing — it stays Fondok-derived', async () => {
+  it('re-saving the seeded year unchanged writes nothing — it stays Default', async () => {
     OUTPUTS_OVERRIDE = withBlock();
     render(<ProjectionsSection dealId="deal-uuid-1" />);
 
@@ -556,7 +556,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
 
     expect(updateSpy).not.toHaveBeenCalled();
     expect(engineRunSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Fondok-derived — confirm');
+    expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Default — confirm');
     OUTPUTS_OVERRIDE = undefined;
   });
 

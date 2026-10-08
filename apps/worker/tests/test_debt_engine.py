@@ -214,9 +214,9 @@ def test_stabilized_metrics_populate_and_entry_unchanged() -> None:
     """Stabilized DSCR / debt yield populate to sane values; the existing
     Year-1 (entry) metrics and schedule stay byte-identical.
 
-    The golden-style ``_input`` is a stabilized acquisition (steady 3% NOI
-    growth, no ramp, no occupancy signal) → the NOI-plateau fallback puts the
-    stabilized year at Year 1, so stabilized == entry (a stabilized asset)."""
+    FON-59 R-057 — the stabilized year is the Year-3-after-close default, so
+    the stabilized metrics read Year 3 (index 2) of the golden-style
+    ``_input`` (steady 3% NOI growth), not Year 1."""
     inp = _input(loan=20_000_000.0, noi=2_400_000.0)
     baseline = DebtEngine().run(inp)  # what the tab shows today (stabilized None)
 
@@ -233,15 +233,19 @@ def test_stabilized_metrics_populate_and_entry_unchanged() -> None:
     # Stabilized now populates to sane values.
     assert out.stabilized_dscr is not None and out.stabilized_dscr > 0
     assert out.stabilized_debt_yield is not None and out.stabilized_debt_yield > 0
-    # Stabilized == entry for a stabilized (no-ramp) acquisition.
-    assert out.stabilized_dscr == pytest.approx(out.entry_dscr)
-    assert out.stabilized_debt_yield == pytest.approx(out.entry_debt_yield)
+    # Year 3's NOI, not Year 1's.
+    assert out.stabilized_debt_yield == pytest.approx(
+        inp.noi_by_year[2] / out.loan_amount
+    )
+    assert out.stabilized_dscr == pytest.approx(
+        inp.noi_by_year[2] / out.schedule[2].debt_service
+    )
 
 
-def test_stabilized_year_from_occupancy_signal_when_ramping() -> None:
-    """With an occupancy ramp + stabilized-occupancy assumption, the stabilized
-    year is the first year occupancy reaches the assumption — and the stabilized
-    metrics reflect THAT year's NOI, distinct from entry."""
+def test_stabilized_year_ignores_the_occupancy_signal_when_ramping() -> None:
+    """FON-59 R-057 — an occupancy ramp reaching its assumption in Year 4 no
+    longer selects the year: the stabilized metrics read the Year-3 default,
+    distinct from entry."""
     noi = [2_000_000.0, 2_500_000.0, 2_900_000.0, 3_100_000.0, 3_150_000.0]
     inp = _input(loan=25_000_000.0).model_copy(
         update={
@@ -252,29 +256,28 @@ def test_stabilized_year_from_occupancy_signal_when_ramping() -> None:
         }
     )
     out = DebtEngine().run(inp)
-    stab_noi = noi[3]
+    stab_noi = noi[2]
     # Debt yield uses the loan denominator (total_debt == senior on this stack).
     assert out.stabilized_debt_yield == pytest.approx(stab_noi / out.loan_amount)
-    # DSCR uses the stabilized-year (Y4) debt service off the same schedule.
-    stab_ds = out.schedule[3].debt_service
+    # DSCR uses the stabilized-year (Y3) debt service off the same schedule.
+    stab_ds = out.schedule[2].debt_service
     assert out.stabilized_dscr == pytest.approx(stab_noi / stab_ds)
-    # Clearly a stabilized-year (Y4) reading, not Year 1.
+    # Clearly a stabilized-year (Y3) reading, not Year 1.
     assert out.stabilized_debt_yield > (out.entry_debt_yield or 0.0)
     # Entry metrics untouched (Year-1 NOI ÷ loan).
     assert out.entry_debt_yield == pytest.approx(noi[0] / out.loan_amount)
 
 
-def test_stabilized_year_noi_plateau_fallback() -> None:
-    """No occupancy signal → derive the stabilized year from the NOI plateau:
-    the year after the last above-terminal growth step."""
-    # Big early ramp (30%, 11.5%, 3.4%) settling to ~2% terminal → stabilizes Y4.
+def test_stabilized_year_ignores_the_noi_plateau() -> None:
+    """FON-59 R-057 — the NOI plateau (Y4 here) is a detected hint only; the
+    stabilized metrics read the Year-3 default."""
     noi = [100.0, 130.0, 145.0, 150.0, 153.0]
     inp = _input(loan=25_000_000.0).model_copy(update={"noi_by_year": noi})
     out = DebtEngine().run(inp)
-    stab_noi = noi[3]  # Year 4
+    stab_noi = noi[2]  # Year 3
     assert out.stabilized_debt_yield == pytest.approx(stab_noi / out.loan_amount)
     assert out.stabilized_dscr == pytest.approx(
-        stab_noi / out.schedule[3].debt_service
+        stab_noi / out.schedule[2].debt_service
     )
 
 

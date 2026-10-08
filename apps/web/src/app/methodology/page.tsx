@@ -203,17 +203,7 @@ export default function MethodologyPage() {
             &quot;Stabilized&quot; names one projection year, and every stabilized figure on every screen — Stabilized Occupancy, ADR, Revenue, NOI, NOI Margin, Yield on Cost, the IC memo&apos;s scenario summary and Scenario Analysis&apos; comparison row — is read from <em>that</em> year. It is published as a single block by the expense engine, so two surfaces cannot resolve it differently.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            The year is an <strong>analyst assumption</strong>, editable in P&amp;L → Future P&amp;L → Assumptions and persisted on the deal. Fondok seeds it rather than leaving it blank, and always says so:
-          </p>
-          <Chain
-            steps={[
-              { label: 'Analyst selection', desc: 'The year set on the Projections panel wins. Badged "Analyst override", with Fondok\u2019s own signal shown beside it.' },
-              { label: 'Occupancy signal (seed)', desc: 'The first projected year occupancy reaches the deal\u2019s post-ramp stabilized-occupancy assumption. This is the primary signal, and the same one the Debt engine keys its stabilized DSCR and debt yield off.' },
-              { label: 'NOI plateau (seed fallback)', desc: 'With no occupancy signal, the first year year-over-year NOI growth settles to its terminal rate \u2014 i.e. the ramp is complete.' },
-            ]}
-          />
-          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            A seeded year is labelled <strong>&quot;Fondok-derived — confirm&quot;</strong> until the analyst moves it. Re-saving the seeded value unchanged is not an override: it keeps reporting as Fondok-derived, because nothing changed. It is deliberately <em>not</em> derived from renovation completion alone.
+            The stabilization year defaults to <strong>Year 3 after acquisition close</strong> (badged &quot;Default — confirm&quot;); on a hold shorter than three years it is the last projected year, and the card says so. The analyst can override it in P&amp;L → Future P&amp;L → Assumptions (badged &quot;Analyst override&quot;; re-saving the default unchanged is not an override), and the same default year drives the Debt tab&apos;s stabilized DSCR and debt yield. The year in which occupancy first reaches the stabilized assumption (or NOI growth settles) is still shown beneath it as a <em>model-detected</em> hint, but it never selects the year — and stabilized NOI (that year&apos;s operating NOI) is a separate figure from the exit NOI the sale is capitalised on.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             The Stabilization Year is a <strong>reporting</strong> assumption: it selects which projected year the stabilized figures are read from. It moves no cash flow. Setting or changing it leaves the gross sale price, the levered and unlevered IRRs, the equity multiple and the terminal NOI bit-identical — there is a regression test that asserts exactly that. When no year resolves, every stabilized figure renders as a dash with a reason; none of them falls back to another year.
