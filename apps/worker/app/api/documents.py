@@ -131,7 +131,15 @@ DOC_STATUS_FAILED = "FAILED"
 # ``.status`` and classifies monthly vs daily/weekly by the report's own
 # period line; the market-study reader expects those rows. Every STR
 # extraction cached under v1 must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v2"
+# v3 (2026-10-07): FON-41 — P&L-family extractions now pass through the
+# deterministic Summary-sheet reconciler (``extraction/usali_summary_reconcile``:
+# a USALI total that disagrees with the workbook's own ``Summary`` sheet by
+# > 5% is replaced with the Summary value, ``reviewed="reconciled"``) and the
+# per-deal statement-plausibility critic (``agents/critic``: a revenue line
+# below 25% of the deal's other statements is capped at 0.5 confidence)
+# BEFORE the row is persisted. Every P&L extraction cached under v2 still
+# carries the outlet-level F&B line and must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v3"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -587,7 +595,17 @@ class ExtractionFieldOut(BaseModel):
     # accept/edit workflow. "accepted" (value confirmed as-is) or
     # "edited" (value corrected). Distinguishes analyst-verified High
     # Confidence from AI-high-confidence; None for un-reviewed fields.
+    # FON-41: "reconciled" when the Summary-sheet reconciler replaced
+    # the extracted value with the workbook's own Summary total.
     reviewed: str | None = None
+    # FON-41: set by the Summary-sheet reconciler — ``{field_name,
+    # old_value, sheet, row, label, old_source_page, old_raw_text}``:
+    # what the extractor read and where, so the Data Room can show the
+    # change. None for every other field.
+    reconciled_from: dict[str, Any] | None = None
+    # FON-41: one-sentence plain-language provenance / plausibility note
+    # (reconciler or statement-plausibility critic). None otherwise.
+    note: str | None = None
 
 
 class ConfidenceReportOut(BaseModel):
@@ -5722,6 +5740,24 @@ async def _run_extraction_pipeline_inner(
                             extraction_data=extraction_data,
                         )
 
+            # FON-41 — P&L quality passes, BEFORE the row is persisted so
+            # the Data Room, the Historicals grid and the engines all read
+            # the reconciled values: (1) the deterministic Summary-sheet
+            # reconciler, (2) the per-deal statement-plausibility critic.
+            # Both are no-ops for OM / STR / market documents and
+            # best-effort — a failure logs and leaves ``fields`` untouched.
+            fields, confidence = await _apply_pnl_quality_passes(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                doc_type=classified_doc_type or user_provided_doc_type,
+                fields=fields,
+                confidence=confidence,
+                extraction_data=extraction_data,
+                storage_key=storage_key,
+            )
+
             ext_id = uuid4()
             # HOTFIX 2026-07-05: terse compression-on-write shipped
             # ungated in 4fa867b while every downstream consumer of
@@ -7819,6 +7855,177 @@ async def _persist_report_as_of(
             deal_id,
         )
         return (None, None)
+
+
+# ─────────────── FON-41: P&L quality passes (pre-INSERT) ───────────────
+
+
+async def _load_pnl_sibling_fields(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    exclude_doc_id: str,
+) -> list[tuple[str | None, list[dict[str, Any]]]]:
+    """``(doc_type, long-form fields)`` for the deal's OTHER P&L-family docs.
+
+    One entry per document — its most recent ``extraction_results`` row —
+    expanded through the shared terse accessor. Feeds the statement-
+    plausibility critic; same-tenant only (both ``er`` and ``d`` are
+    scoped, belt and braces).
+    """
+    from ..extraction.terse_schema import read_extraction_fields
+
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.document_id, er.fields, er.catalog_version, d.doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND er.document_id <> :doc
+               AND UPPER(d.doc_type) IN ('T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD')
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": str(tenant_id), "doc": str(exclude_doc_id)},
+    )
+    out: list[tuple[str | None, list[dict[str, Any]]]] = []
+    seen: set[str] = set()
+    for r in rows.fetchall():
+        m = r._mapping
+        did = str(m["document_id"])
+        if did in seen:
+            continue
+        seen.add(did)
+        raw = m["fields"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw else []
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw, list):
+            continue
+        try:
+            fields = list(read_extraction_fields(raw, m.get("catalog_version")))
+        except Exception:  # one bad row must not drop the pass
+            continue
+        if fields:
+            out.append((m.get("doc_type"), fields))
+    return out
+
+
+async def _apply_pnl_quality_passes(
+    session: AsyncSession | None,
+    *,
+    deal_id: str,
+    doc_id: str,
+    tenant_id: str,
+    doc_type: str | None,
+    fields: list[dict[str, Any]],
+    confidence: dict[str, Any],
+    extraction_data: dict[str, Any] | None,
+    storage_key: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """FON-41 — deterministic post-extraction passes for P&L-family docs.
+
+    1. **Summary-sheet reconciliation** (``extraction/usali_summary_reconcile``):
+       when the parsed workbook carries a ``Summary`` sheet with USALI
+       labels, every canonical USALI total the extractor emitted that
+       differs from the Summary's annual value by more than 5% is
+       replaced with the Summary value (confidence 0.98, ``reviewed =
+       "reconciled"``, ``reconciled_from`` provenance). The original
+       workbook bytes are fetched from the raw store for full-precision
+       cell values; on any storage failure the cached grid is used.
+    2. **Statement plausibility** (``agents/critic``): F&B / Rooms / Total
+       revenue below 25% of the median of the deal's other full-period
+       statements is capped at 0.5 confidence with the reason on the
+       field and the confidence report.
+
+    Never runs for OM / STR / market documents. Best-effort throughout:
+    any failure logs and returns the inputs unchanged.
+    """
+    from ..extraction.usali_summary_reconcile import (
+        find_summary_page,
+        is_pnl_family,
+        reconcile_extraction,
+    )
+
+    if not fields or not is_pnl_family(doc_type):
+        return fields, confidence
+
+    # ── 1. Summary-sheet reconciliation ─────────────────────────────
+    try:
+        pages = (
+            (extraction_data or {}).get("pages")
+            if isinstance(extraction_data, dict)
+            else None
+        )
+        file_bytes: bytes | None = None
+        if storage_key and find_summary_page(pages) is not None:
+            try:
+                file_bytes = await get_raw_store(get_settings()).get(storage_key)
+            except Exception as exc:  # cached grid is the fallback
+                logger.info(
+                    "summary reconcile: raw-store fetch failed for doc=%s (%s); "
+                    "using the parser cache (6 significant digits)",
+                    doc_id,
+                    exc,
+                )
+        result = reconcile_extraction(
+            fields,
+            confidence,
+            doc_type=doc_type,
+            extraction_data=extraction_data,
+            file_bytes=file_bytes,
+        )
+        if result.changes:
+            fields, confidence = result.fields, result.confidence
+            logger.info(
+                "summary reconcile: doc=%s deal=%s replaced %d USALI total(s) from "
+                "sheet %r (page %s): %s",
+                doc_id,
+                deal_id,
+                len(result.changes),
+                result.table.sheet_name if result.table else None,
+                result.table.page_index if result.table else None,
+                ", ".join(
+                    f"{c.field_name} {c.old_value:,.0f}→{c.new_value:,.0f}"
+                    for c in result.changes
+                ),
+            )
+    except Exception as exc:  # never block extraction
+        logger.warning("summary reconcile: failed for doc=%s: %s", doc_id, exc)
+
+    # ── 2. Per-deal statement plausibility ──────────────────────────
+    if session is None:
+        return fields, confidence
+    try:
+        from ..agents.critic import apply_statement_plausibility
+
+        siblings = await _load_pnl_sibling_fields(
+            session, deal_id=deal_id, tenant_id=tenant_id, exclude_doc_id=doc_id
+        )
+        if siblings:
+            fields, confidence, flags = apply_statement_plausibility(
+                fields, confidence, doc_type=doc_type, siblings=siblings
+            )
+            if flags:
+                logger.info(
+                    "critic: doc=%s deal=%s %d implausible line(s) capped at 0.5",
+                    doc_id,
+                    deal_id,
+                    len(flags),
+                )
+    except Exception as exc:  # never block extraction
+        await _rollback_after_best_effort(session, "statement plausibility")
+        logger.warning(
+            "critic: statement plausibility failed for doc=%s: %s", doc_id, exc
+        )
+    return fields, confidence
 
 
 # ─────────────────────────── critic ───────────────────────────
