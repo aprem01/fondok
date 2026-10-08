@@ -382,14 +382,14 @@ describe('PartnershipTab — Summary equity bridge (FON-66 §1)', () => {
     expect(shown).not.toBe('$18,836,676');
   });
 
-  it('puts the → Investment link on the INITIAL row only', () => {
+  it('puts the → CAPEX link on the INITIAL row only', () => {
     activeOutputs = withAdditional();
     render(<PartnershipTab />);
 
-    const link = within(summaryRow('Initial Equity Required')).getByRole('link', { name: '→ Investment' });
+    const link = within(summaryRow('Initial Equity Required')).getByRole('link', { name: '→ CAPEX' });
     expect(link.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
     // Exactly one — neither the additional nor the total row claims Investment.
-    expect(screen.getAllByRole('link', { name: '→ Investment' })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: '→ CAPEX' })).toHaveLength(1);
     // Additional contributions points at the sub-tab that dates them instead.
     expect(
       within(summaryRow('Additional Contributions'))
@@ -544,9 +544,9 @@ describe('PartnershipTab — `?tab=partnership&sub=<slug>` routing', () => {
 
   // FON-66 (Sam, 09-11) — Total Equity cites Investment; the initial equity
   // requirement lives on Investment → Sources & Uses, so land there.
-  it('the "→ Investment" link deep-links to Sources & Uses (FON-66)', () => {
+  it('the "→ CAPEX" link deep-links to Sources & Uses (FON-66)', () => {
     render(<PartnershipTab />);
-    const a = screen.getByRole('link', { name: '→ Investment' });
+    const a = screen.getByRole('link', { name: '→ CAPEX' });
     expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
   });
 });

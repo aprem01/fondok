@@ -289,7 +289,7 @@ describe('Financials · Projections — Exit cap is Investment-owned (read-only)
     // A "sourced from Investment →" reference deep-links to the Investment tab.
     // Scoped to the exit-cap row: FON-41 added a second Investment reference on
     // the control bar (the derived Base year names its owner the same way).
-    const ref = within(exitRow).getByText('Investment →');
+    const ref = within(exitRow).getByText('CAPEX →');
     expect(ref).toBeInTheDocument();
     expect(ref.closest('a')?.getAttribute('href')).toContain('tab=investment');
   });

@@ -207,7 +207,7 @@ describe('FON-41 · Base year is DERIVED — no editable affordance survives', (
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const title = screen.getByTestId('projection-base-year').getAttribute('title') ?? '';
     expect(title).toMatch(/acquisition close date/i);
-    expect(title).toMatch(/Investment tab/i);
+    expect(title).toMatch(/CAPEX tab/);
     // …and the link goes there, so "edit it where it lives" is one click.
     const owner = screen.getByTestId('projection-base-year-owner');
     expect(owner.getAttribute('href')).toContain('tab=investment');
@@ -219,7 +219,7 @@ describe('FON-41 · Base year is DERIVED — no editable affordance survives', (
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const value = screen.getByTestId('projection-base-year');
     expect(value.textContent?.trim()).toBe('—');
-    expect(value.getAttribute('title') ?? '').toMatch(/Acquisition Date on the Investment tab/i);
+    expect(value.getAttribute('title') ?? '').toMatch(/Acquisition Date on the CAPEX tab/);
     // No wall-clock fallback.
     expect(value.textContent).not.toContain(String(new Date().getFullYear()));
   });
@@ -417,6 +417,6 @@ describe('FON-41 · Assumptions panel — editable fields are wired, the linked 
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const row = screen.getByText('Exit cap rate').parentElement as HTMLElement;
     expect(interactiveIn(row)).toEqual([]);
-    expect(within(row).getByText('Investment →').getAttribute('href')).toContain('tab=investment');
+    expect(within(row).getByText('CAPEX →').getAttribute('href')).toContain('tab=investment');
   });
 });

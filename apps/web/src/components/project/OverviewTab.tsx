@@ -40,8 +40,9 @@
  * OWNERSHIP (design + DESIGN_MAP): Acquisition / Reversion / Financing rows are
  * READ-ONLY / linked — operating overrides stay owned by Financials, debt by
  * Debt. The only assumptions edited here are the Investment Profile (deal type,
- * returns profile, brand, positioning, and — FON-68 — the return targets:
- * Target Levered IRR / Target MOIC), and a deal-type change routes through a
+ * brand, positioning, and — FON-68 — the return targets:
+ * Target LIRR with its return-profile preset / Target MOIC / Target Stabilized
+ * Yield on Cost), and a deal-type change routes through a
  * confirmation ("Update model") before the model re-runs.
  *
  * RETURN TARGETS (FON-68): `deal.target_irr` / `deal.target_moic` are analyst
@@ -49,6 +50,11 @@
  * the Returns → Pricing Max Price Solver. The returns-profile band ("12-18%")
  * is only a suggestion — "Use profile midpoint" writes it explicitly; nothing
  * defaults. Saving a target never re-runs the model (benchmark only).
+ * R-049: ONE control, "Target LIRR (levered IRR)" — the return-profile select
+ * is its preset (choosing one writes `return_profile` + the band's midpoint as
+ * `target_irr`), and the number stays editable. R-050: "Target Stabilized
+ * Yield on Cost" persists as `field_overrides.target_stabilized_yoc` and is
+ * compared (Pass / Short) to the derived stabilized-year yield on cost.
  *
  * PROVENANCE: dots + the anchored "Where this came from" popover read the real
  * per-value `state` / formula / inputs from GET /deals/{id}/provenance via
@@ -209,6 +215,9 @@ interface RowDef {
    */
   reasonDetail?: string;
 }
+
+/** R-050 — the field_overrides key holding the analyst's Target Stabilized Yield on Cost. */
+export const TARGET_YOC_KEY = 'target_stabilized_yoc';
 
 /** FON-59 — the field_overrides key the worker's market_overview honors as the Property Name. */
 const PROPERTY_NAME_OVERRIDE_PATH = 'property_overview.name';
@@ -414,6 +423,51 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       }
     },
     [dealId, liveMode, toast, refreshDeal],
+  );
+
+  // ─── R-049 — the return-profile PRESET fills Target LIRR (one control) ───
+  // Choosing Core / Value Add / Opportunistic writes the preset tag
+  // (`return_profile`) AND the band's midpoint (floor for an open band) as
+  // `target_irr` in one PATCH — an explicit analyst action, never a silent
+  // default. The analyst then edits the number freely. `return_profile` feeds
+  // no engine (it only picks the Overview section set), so no re-run.
+  const persistPreset = useCallback(
+    async (profileId: string) => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      const sug = suggestedTarget(returnProfiles.find((p) => p.id === profileId)?.target);
+      const patch: { return_profile: string; target_irr?: number } = { return_profile: profileId };
+      if (sug) patch.target_irr = sug.pct / 100;
+      try {
+        await api.deals.update(dealId, patch);
+        toast('Target LIRR preset applied — edit the number if needed; the model is unchanged', { type: 'success' });
+        void refreshDeal?.();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [dealId, liveMode, toast, refreshDeal],
+  );
+
+  // ─── R-050 — Target Stabilized Yield on Cost (field_overrides target) ───
+  // A stated objective stored as `field_overrides.target_stabilized_yoc`
+  // (note-exempt on both sides — `overrideNote.ts` / worker `_NOTE_EXEMPT_KEYS`).
+  // No engine reads it; clearing deletes the key. No re-run.
+  const persistYocTarget = useCallback(
+    async (v: number | null) => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      const { [TARGET_YOC_KEY]: _prev, ...rest } = overrides;
+      const next = v == null ? rest : { ...rest, [TARGET_YOC_KEY]: overrideEnvelope(TARGET_YOC_KEY, v, '') };
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Target saved — benchmark only; the model is unchanged', { type: 'success' });
+        void refreshDeal?.();
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [dealId, liveMode, toast, refreshDeal, overrides],
   );
 
   // ─── FON-59 — per-row analyst override + Project Name rename ───────────
@@ -770,7 +824,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
     const renovationRows = (): RowDef[] => [
       doc('renoScope', 'Renovation Scope', '—', 'PIP Scope of Work', 'Scope Summary'),
-      lnk('renoPerKey', 'Renovation / Key', perKey(renoBudget), '→ Investment (renovation)', 'investment'),
+      lnk('renoPerKey', 'Renovation / Key', perKey(renoBudget), '→ CAPEX (renovation)', 'investment'),
       cal('renoHard', 'Hard Costs', money(renoHard), { formula: '75% of base renovation budget (PIP allocation)' }),
       cal('renoSoft', 'Soft Costs', money(renoSoft), { formula: '15% of base renovation budget' }),
       cal('renoProf', 'Professional Fees', money(renoProf), { formula: '10% of base renovation budget' }),
@@ -778,17 +832,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       cal('renoTotal', 'Total Renovation Budget', money(renoBudget), { bold: true, formula: 'Base renovation budget incl. contingency' }),
       cal('renoTotalPerKey', 'Total Renovation / Key', perKey(renoBudget), { formula: 'Total Renovation Budget ÷ Keys' }),
       awa('renoStart', 'Renovation Start'),
-      lnk('renoDuration', 'Renovation Duration', timelineDuration(timeline, /renov/i), '→ Investment (schedule)', 'investment'),
+      lnk('renoDuration', 'Renovation Duration', timelineDuration(timeline, /renov/i), '→ CAPEX (schedule)', 'investment'),
     ];
 
     const capitalizationRows = (): RowDef[] => [
-      lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Debt (senior loan)', 'debt'),
-      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Debt (capital structure)', 'debt', { reasonKey: 'ltv' }),
+      lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Financing (senior loan)', 'debt'),
+      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
       cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: 'Debt module', kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
-      lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
+      lnk('bench', 'Benchmark', '—', '→ Financing (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
       cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
-      lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Debt (senior origination fee)', 'debt'),
+      lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Financing (senior origination fee)', 'debt'),
       cal('equity', isDev ? 'Equity Contribution' : 'Equity', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Uses − Loan', inputs: [{ name: 'Total Uses', from: 'Calculated', kind: 'calc' }, { name: 'Loan', from: 'Debt module', kind: 'linked' }] }),
       awa('refi', isDev ? 'Permanent Financing' : 'Planned Refinancing'),
     ];
@@ -881,7 +935,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             testId: 'stabilization-needs-rerun',
             text:
               'No stabilization block in this deal’s engine output, so every figure '
-              + 'here is a dash. Re-run the model (Investment tab → Re-run) to publish '
+              + 'here is a dash. Re-run the model (CAPEX tab → Re-run) to publish '
               + 'one — Fondok will not stand another projection year in its place.',
           };
 
@@ -895,7 +949,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const exitRows = (): RowDef[] => [
-      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ Investment (exit)', 'investment', { reasonKey: 'hold_years' }),
+      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ CAPEX (exit)', 'investment', { reasonKey: 'hold_years' }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
       // FON-59 R-058 — testers asked for "Exit NOI" in this section. It IS the
       // forward 12-month cash NOI the reversion capitalizes
@@ -909,8 +963,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             ? 'The NOI the exit value capitalizes — your Exit NOI override.'
             : 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
       }),
-      lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
-      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: exitNoiLabel(wExitNoiPeriodLabel), from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
+      lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ CAPEX (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
+      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: exitNoiLabel(wExitNoiPeriodLabel), from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'CAPEX assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
       lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
       awa('transferPct', 'Transfer Tax'),
@@ -947,20 +1001,20 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       awa('preOpen', 'Pre-Opening Costs'),
       awa('contPct', 'Contingency %'),
       cal('contingency', 'Contingency', money(contingency)),
-      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Debt', 'debt'),
-      lnk('interestReserve', 'Interest Reserve', '—', '→ Debt (draw schedule)', 'debt'),
+      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Financing', 'debt'),
+      lnk('interestReserve', 'Interest Reserve', '—', '→ Financing (draw schedule)', 'debt'),
       cal('tdc', 'Total Development Cost', money(totalCapital), { bold: true, trace: { engine: 'capital', path: 'total_capital_usd' }, formula: 'Sum of all development budget lines' }),
       cal('tdcPerKey', 'Development Cost / Key', money(totalPerKey), { formula: 'Total Development Cost ÷ Planned Keys' }),
     ];
     const constFinRows = (): RowDef[] => [
-      lnk('loan', 'Construction Loan', money(loan), '→ Debt (construction facility)', 'debt'),
+      lnk('loan', 'Construction Loan', money(loan), '→ Financing (construction facility)', 'debt'),
       cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Construction Loan ÷ Total Development Cost' }),
-      lnk('bench', 'Benchmark', '—', '→ Debt (loan terms)', 'debt'),
+      lnk('bench', 'Benchmark', '—', '→ Financing (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Construction Loan Term Sheet', 'Pricing'),
       cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
-      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Debt', 'debt'),
-      lnk('draws', 'Loan Draws', '—', '→ Debt (draw schedule)', 'debt'),
-      lnk('interestReserve', 'Interest Reserve', '—', '→ Debt (draw schedule)', 'debt'),
+      lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Financing', 'debt'),
+      lnk('draws', 'Loan Draws', '—', '→ Financing (draw schedule)', 'debt'),
+      lnk('interestReserve', 'Interest Reserve', '—', '→ Financing (draw schedule)', 'debt'),
       cal('equity', 'Equity Contribution', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Development Cost − Construction Loan' }),
       awa('permFin', 'Permanent Financing'),
     ];
@@ -988,7 +1042,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
         { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
-        { kind: 'rows', title: 'Construction Financing', action: { label: 'View Debt details →', tab: 'debt' }, rows: constFinRows() },
+        { kind: 'rows', title: 'Construction Financing', action: { label: 'View Financing details →', tab: 'debt' }, rows: constFinRows() },
         { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: openingRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'timeline', title: 'Development Timeline' },
@@ -999,7 +1053,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { kind: 'rows', title: 'Property', note: 'Extracted from diligence documents — override where needed', rows: propertyRows() },
         { kind: 'su', title: 'Transaction Sources & Uses' },
         { kind: 'rows', title: 'Entry', rows: entryRows() },
-        { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
+        { kind: 'rows', title: 'Capitalization', action: { label: 'View Financing details →', tab: 'debt' }, rows: capitalizationRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'timeline', title: 'Transaction Timeline' },
       ];
@@ -1010,7 +1064,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'su', title: 'Transaction Sources & Uses' },
       { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
       { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
-      { kind: 'rows', title: 'Capitalization', action: { label: 'View Debt details →', tab: 'debt' }, rows: capitalizationRows() },
+      { kind: 'rows', title: 'Capitalization', action: { label: 'View Financing details →', tab: 'debt' }, rows: capitalizationRows() },
       { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: stabilizationRows() },
       { kind: 'rows', title: 'Exit', rows: exitRows() },
       { kind: 'timeline', title: 'Transaction Timeline' },
@@ -1096,6 +1150,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     return { target: targetIrr != null ? fmtPct(targetIrr, 1) : '—', actual: pctv(leveredIrr, 1), status, statusColor, statusBg };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetIrr, leveredIrr]);
+
+  // ─── R-050 — stabilized yield on cost: actual vs the analyst's target ───
+  // Actual = the same derived figure the Yield on Cost row prints (stabilized
+  // year NOI ÷ total capital, both engine outputs). No stabilized year / no
+  // capital → actual "—", never a fabricated number.
+  const targetYoc = numFromOverride(overrides[TARGET_YOC_KEY]);
+  const yocBenchmark = useMemo(() => {
+    const actual = has(yieldOnCost) ? yieldOnCost : null;
+    const status: 'Pass' | 'Short' | 'Pending' | 'No target set' =
+      targetYoc == null ? 'No target set' : actual == null ? 'Pending' : actual >= targetYoc ? 'Pass' : 'Short';
+    return { actual, status };
+  }, [targetYoc, yieldOnCost]);
 
   // ─── Popover open / close ──────────────────────────────────────────────
   const openProv = useCallback((e: React.MouseEvent, row: RowDef) => {
@@ -1292,11 +1358,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             </div>
 
             <ProfileSelect
-              label="Returns Profile" hint="Suggests the target band only" value={returnProfileId}
-              options={returnProfiles.map((p) => ({ value: p.id, label: `${p.label} (${p.target})` }))}
-              onChange={(v) => void persist({ return_profile: v })}
-            />
-            <ProfileSelect
               label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
               options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
               onChange={(v) => void persist({ brand: v })}
@@ -1306,12 +1367,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
               onChange={(v) => void persist({ positioning: v })}
             />
-            {/* FON-68 — return targets: analyst inputs, source of truth for the
-                benchmark strip + Returns → Pricing. Unset renders "—"; the
-                profile band is offered as an explicit action, never applied. */}
+            {/* FON-68 / R-049 — ONE target control: the return-profile preset
+                fills Target LIRR (explicit action) and the analyst edits the
+                number. Source of truth for the benchmark strip + Returns →
+                Pricing. Unset renders "—"; nothing defaults. */}
             <TargetField
-              label="Target Levered IRR"
-              hint="Analyst input · benchmark and pricing hurdle"
+              label={TARGET_LIRR_LABEL}
+              hint="Preset fills the band; edit the number · benchmark and pricing hurdle"
+              preset={{
+                value: returnProfileId,
+                options: returnProfiles.map((p) => ({ value: p.id, label: `${p.label} (${p.target})` })),
+                onChange: (v) => void persistPreset(v),
+              }}
               value={targetIrr}
               unit="%"
               step={0.5}
@@ -1329,6 +1396,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               step={0.05}
               onSave={(v) => void persistTarget({ target_moic: v })}
             />
+            <TargetField
+              label={TARGET_YOC_LABEL}
+              hint="Analyst input · stabilized year · benchmark only"
+              value={targetYoc}
+              unit="%"
+              step={0.25}
+              onSave={(v) => void persistYocTarget(v)}
+            />
           </div>
         </div>
 
@@ -1339,9 +1414,24 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Calculated <b style={{ color: prov.green }}>{benchmark.actual}</b></span>
           <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.03em', textTransform: 'uppercase', color: benchmark.statusColor, background: benchmark.statusBg, borderRadius: 5, padding: '3px 8px' }}>{benchmark.status}</span>
           {targetIrr == null && (
-            <span style={{ fontSize: 10.5, color: palette.textMuted }}>Set Target Levered IRR above</span>
+            <span style={{ fontSize: 10.5, color: palette.textMuted }}>Set Target LIRR above</span>
           )}
           <span style={{ fontSize: 10.5, color: palette.textFaint, marginLeft: 'auto' }}>Benchmark only — it does not drive the model</span>
+        </div>
+
+        {/* R-050 — stabilized yield on cost vs target (Pass / Short). */}
+        <div data-testid="yoc-benchmark" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 7, padding: '8px 12px' }}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase' }}>Yield on cost benchmark</span>
+          <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Target stabilized YoC <b data-testid="yoc-target" style={{ color: prov.blue }}>{targetYoc != null ? fmtPct(targetYoc, 2) : '—'}</b></span>
+          <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Actual{stab ? ` (${stabYearLabel})` : ''}: <b data-testid="yoc-actual" style={{ color: prov.green }}>{yocBenchmark.actual != null ? fmtPct(yocBenchmark.actual, 2) : '—'}</b></span>
+          <span data-testid="yoc-status" style={{
+            fontSize: 10.5, fontWeight: 700, letterSpacing: '.03em', textTransform: 'uppercase', borderRadius: 5, padding: '3px 8px',
+            color: yocBenchmark.status === 'Pass' ? 'oklch(45% 0.12 155)' : yocBenchmark.status === 'Short' ? 'oklch(50% 0.14 40)' : palette.textMuted,
+            background: yocBenchmark.status === 'Pass' ? 'oklch(45% 0.12 155 / .1)' : yocBenchmark.status === 'Short' ? 'oklch(56% 0.12 40 / .12)' : palette.hairlineSection,
+          }}>{yocBenchmark.status}</span>
+          {yocBenchmark.actual == null && (
+            <span style={{ fontSize: 10.5, color: palette.textMuted }}>Actual needs a stabilized year and total capital from the model run</span>
+          )}
         </div>
       </div>
 
@@ -1473,7 +1563,8 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Investment Profile select (Returns Profile / Brand / Positioning).
+// Investment Profile select (Brand / Positioning). The return profile is now
+// the preset on the Target LIRR control (R-049).
 // ─────────────────────────────────────────────────────────────────────────
 function ProfileSelect({
   label, hint, value, options, onChange,
@@ -1510,11 +1601,13 @@ function ProfileSelect({
 // clears (writes null). Percent targets are typed as "15" and stored 0.15.
 // ─────────────────────────────────────────────────────────────────────────
 function TargetField({
-  label, hint, value, unit, step, onSave, action,
+  label, hint, value, unit, step, onSave, action, preset,
 }: {
   label: string; hint: string; value: number | null; unit: '%' | 'x'; step: number;
   onSave: (v: number | null) => void;
   action?: { label: string; onClick: () => void };
+  /** R-049 — a preset select that FILLS the target (the return profile). */
+  preset?: { value: string; options: { value: string; label: string }[]; onChange: (v: string) => void };
 }) {
   const shown = value == null ? '' : unit === '%' ? String(Math.round(value * 1000) / 10) : String(Math.round(value * 100) / 100);
   const [draft, setDraft] = useState(shown);
@@ -1537,7 +1630,23 @@ function TargetField({
         {label}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+        {preset && (
+          <select
+            aria-label={`${label} preset`}
+            title="Return profile preset — fills the target band"
+            value={preset.value}
+            onChange={(e) => preset.onChange(e.target.value)}
+            style={{
+              flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11.5, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
+              background: palette.surfaceTint, border: `1px solid ${palette.disabledBorder}`, borderRadius: 6,
+              padding: '5px 6px', cursor: 'pointer', textOverflow: 'ellipsis',
+            }}
+          >
+            {!preset.options.some((o) => o.value === preset.value) && preset.value && <option value={preset.value}>{preset.value}</option>}
+            {preset.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        )}
+        <div style={{ position: 'relative', flex: 1, minWidth: 56 }}>
           <input
             type="number"
             step={step}
@@ -1610,7 +1719,7 @@ function SourcesUsesSection({
     return {
       id: `${side}-${l.label}`, label: l.label, kind, value: money(l.amount), bold: total,
       state: total ? 'calculated' : (tracedState('capital', `${side}.${l.label}`) ?? kindToState(kind)),
-      linkLabel: kind === 'linked' ? (/key money/i.test(l.label) ? '→ Partnership' : '→ Debt') : undefined,
+      linkLabel: kind === 'linked' ? (/key money/i.test(l.label) ? '→ Partnership' : '→ Financing') : undefined,
       linkTab: kind === 'linked' ? (/key money/i.test(l.label) ? 'partnership' : 'debt') : undefined,
     };
   };
@@ -1838,6 +1947,19 @@ const cardShell: CSSProperties = { background: palette.cardWhite, border: `1px s
 const profileLabel: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textMuted, textTransform: 'uppercase' };
 const primaryBtn: CSSProperties = { background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };
 const secondaryBtn: CSSProperties = { background: '#fff', border: `1px solid ${palette.disabledBorder}`, color: palette.hoverInk, borderRadius: 6, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };
+
+/** R-049 / R-050 — the Investment Profile target labels (exported for tests). */
+export const TARGET_LIRR_LABEL = 'Target LIRR (levered IRR)';
+export const TARGET_YOC_LABEL = 'Target Stabilized Yield on Cost';
+
+/** A numeric field_overrides entry ({value} envelope or bare scalar) → number | null. */
+function numFromOverride(entry: unknown): number | null {
+  const raw = entry && typeof entry === 'object' && 'value' in (entry as Record<string, unknown>)
+    ? (entry as Record<string, unknown>).value
+    : entry;
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
 
 function has2(v: number | undefined | null): v is number { return v != null && Number.isFinite(v); }
 

@@ -77,6 +77,11 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // projection either way, and the run echoes which basis it used. A typed
   // Exit NOI value (the override lever) is a number and does require a note.
   'exit_noi_basis',
+  // R-050 — the analyst's Target Stabilized Yield on Cost. A STATED OBJECTIVE,
+  // like the `target_irr` / `target_moic` deal columns below: no engine reads
+  // it, and the Overview only compares the derived stabilized yield on cost
+  // against it. Nothing sourced is being overridden, so nothing to justify.
+  'target_stabilized_yoc',
 ]);
 
 /**

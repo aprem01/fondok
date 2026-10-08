@@ -5,9 +5,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
   ArrowLeft, MapPin, Building2, Calendar, Users, Share2, X,
-  Sparkles, FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
-  Briefcase, MapPinned, FileSearch, Download, AlertTriangle, ShieldCheck,
-  GitCompareArrows, History,
+  Sparkles, FileText, Activity, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
@@ -25,6 +23,7 @@ import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected } from '@/lib/api';
+import { PROJECT_TABS } from '@/lib/projectTabs';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
@@ -79,45 +78,14 @@ const ActivityFeed = dynamic(() => import('@/components/project/ActivityFeed'), 
   loading: () => <TabLoadingSkeleton />,
 });
 
-// Per the May 7 scope alignment, five tabs are visually grayed in the tab
-// strip while the design partner demo focuses on the Data Room → P&L →
-// Market underwriting flow. The route still works on click — Returns in
-// particular keeps its Live Assumptions sliders functional — only the nav
-// pill is dimmed and labelled "Soon".
-type Tab = {
-  id: string;
-  label: string;
-  icon: typeof FolderOpen;
-  inactive?: boolean;
-  /** FON-55 — internal/admin-only tab, hidden from the investor-facing nav. */
-  adminOnly?: boolean;
-};
-
-// FON-52 — investor-workflow navigation. Order mirrors how an institutional
-// investor evaluates a deal: source data → underwriting → returns → scenario
-// analysis → IC output. Validation, Forecasting, Analysis and Export are
-// removed from the end-user nav (functionality preserved: forecasting lives in
-// Financials → Projections; Analysis + Export are consolidated into IC Memo;
-// Validation stays engine-internal, still deep-linkable). Activity is
-// admin-only (FON-55). The removed tabs' render blocks below stay reachable via
-// ?tab= for internal use — EXCEPT Export (FON-54b, 2026-09-09): the legacy
-// ExportTab surface is no longer routed at all, so it can't disagree with the
-// IC Memo export cards (it also used an unauthenticated window.location.href).
-// The ExportTab file is kept, just unmounted.
-const tabs: Tab[] = [
-  { id: '', label: 'Data Room', icon: FolderOpen },
-  { id: 'overview', label: 'Overview', icon: FileText },
-  { id: 'market', label: 'Market', icon: MapPinned },
-  { id: 'pl', label: 'P&L', icon: BarChart3 },
-  { id: 'investment', label: 'Investment', icon: Briefcase },
-  { id: 'debt', label: 'Debt', icon: DollarSign },
-  { id: 'partnership', label: 'Partnership', icon: Users },
-  { id: 'cash-flow', label: 'Cash Flow', icon: Activity },
-  { id: 'returns', label: 'Returns', icon: TrendingUp },
-  { id: 'scenarios', label: 'Scenario Analysis', icon: GitCompareArrows },
-  { id: 'ic-memo', label: 'IC Memo', icon: FileSearch },
-  { id: 'activity', label: 'Activity', icon: History, adminOnly: true },
-];
+// Tab registry (ids, labels, order) lives in `@/lib/projectTabs` so the
+// tab-order test can pin it — a Next.js page may only export its component.
+// The removed tabs' render blocks below stay reachable via ?tab= for internal
+// use — EXCEPT Export (FON-54b, 2026-09-09): the legacy ExportTab surface is
+// no longer routed at all, so it can't disagree with the IC Memo export cards
+// (it also used an unauthenticated window.location.href). The ExportTab file
+// is kept, just unmounted.
+const tabs = PROJECT_TABS;
 
 export default function ProjectDetailPage() {
   const params = useParams();

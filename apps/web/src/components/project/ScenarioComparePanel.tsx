@@ -640,7 +640,7 @@ function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
     },
     {
       title: 'Financing',
-      link: 'Debt →',
+      link: 'Financing →',
       rows: [
         { label: 'LTV', value: dash('ltv', baseValueFor('ltv', outputs)) },
         { label: 'Interest Rate', value: dash('interest_rate', baseValueFor('interest_rate', outputs)) },
@@ -649,7 +649,7 @@ function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
     },
     {
       title: 'Investment & Exit',
-      link: 'Investment →',
+      link: 'CAPEX →',
       rows: [
         { label: 'Purchase Price', value: dash('purchase_price', baseValueFor('purchase_price', outputs)) },
         { label: 'Hold Period', value: dash('hold_years', baseValueFor('hold_years', outputs)) },

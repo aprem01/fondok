@@ -213,7 +213,7 @@ vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null })
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
-import DebtTab from '@/components/project/DebtTab';
+import DebtTab, { trancheClassLabel, buildCapitalStack } from '@/components/project/DebtTab';
 
 beforeEach(() => {
   cleanup();
@@ -941,9 +941,9 @@ describe('DebtTab — `?tab=debt&sub=<slug>` routing', () => {
 
   // FON-66 / FON-67 §1 — the linked capital figures Debt echoes live on
   // Investment → Sources & Uses, so that is where the link must land.
-  it('the "→ Investment" links deep-link to Sources & Uses', () => {
+  it('the "→ CAPEX" links deep-link to Sources & Uses', () => {
     render(<DebtTab />);
-    const links = screen.getAllByRole('link', { name: '→ Investment' });
+    const links = screen.getAllByRole('link', { name: '→ CAPEX' });
     expect(links.length).toBeGreaterThan(0);
     for (const a of links) {
       expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
@@ -1033,5 +1033,65 @@ describe('DebtTab — negative NOI (FON-63)', () => {
     expect(screen.queryByText('Debt Service Shortfall')).toBeNull();
     expect(screen.queryByTestId('dscr-na')).toBeNull();
     expect(screen.queryByText('N/A')).toBeNull();
+  });
+});
+
+// ─── R-069 — Financing: Capital Stack heading + tranche class labels ───────
+describe('DebtTab — R-069 Capital Stack', () => {
+  it('trancheClassLabel maps the instrument kinds onto the finding\'s classes', () => {
+    expect(trancheClassLabel('senior')).toBe('Senior debt');
+    expect(trancheClassLabel('mortgage')).toBe('Senior debt');
+    expect(trancheClassLabel('mezz')).toBe('Mezzanine');
+    expect(trancheClassLabel('mezzanine')).toBe('Mezzanine');
+    expect(trancheClassLabel('pref_equity')).toBe('Preferred equity');
+    expect(trancheClassLabel('preferred equity')).toBe('Preferred equity');
+    expect(trancheClassLabel('pace')).toBe('PACE / C-PACE');
+    expect(trancheClassLabel('c-pace')).toBe('PACE / C-PACE');
+  });
+
+  it('renders a "Capital Stack" section over the tranche table on Debt Overview', () => {
+    render(<DebtTab />);
+    expect(screen.getByText('Capital Stack')).toBeInTheDocument();
+    const stack = screen.getByTestId('capital-stack');
+    const senior = within(stack).getByTestId('capital-stack-senior-debt');
+    expect(senior).toHaveTextContent('Senior debt');
+    expect(senior).toHaveTextContent('$23,000,000');
+    expect(senior).toHaveTextContent('Modelled');
+  });
+
+  it('lists Mezzanine and Preferred equity as "not modelled yet" with a dash — no invented amount', () => {
+    render(<DebtTab />);
+    for (const id of ['capital-stack-mezzanine', 'capital-stack-preferred-equity']) {
+      const row = screen.getByTestId(id);
+      expect(row).toHaveTextContent('not modelled yet');
+      expect(row).toHaveTextContent('—');
+      expect(row).not.toHaveTextContent('$');
+    }
+  });
+
+  it('PACE / C-PACE reads the modelled PACE tranche (funded amount + terms state)', () => {
+    currentOutputs = makeOutputs({
+      loan_amount: 28_000_000,
+      debt_stack: {
+        tranches: [
+          SENIOR_TRANCHE,
+          { ...SENIOR_TRANCHE, kind: 'pace', label: 'PACE Loan', loan_amount: 5_000_000, all_in_rate: null,
+            annual_debt_service: null, terms_pending: true },
+        ],
+        total_debt: 28_000_000, priced_debt: 23_000_000, total_annual_debt_service: 1_667_500, warnings: [],
+      },
+    });
+    render(<DebtTab />);
+    const pace = screen.getByTestId('capital-stack-pace-c-pace');
+    expect(pace).toHaveTextContent('PACE / C-PACE');
+    expect(pace).toHaveTextContent('$5,000,000');
+    expect(pace).toHaveTextContent('Terms pending');
+  });
+
+  it('buildCapitalStack uses only the stack it is given', () => {
+    const rows = buildCapitalStack([{ kind: 'mezz', label: 'Mezz Loan', loan_amount: 2_000_000, rate_type: 'fixed', terms_pending: false }]);
+    expect(rows.map((r) => r.cls)).toEqual(['Senior debt', 'Mezzanine', 'Preferred equity', 'PACE / C-PACE']);
+    expect(rows[1]).toMatchObject({ amount: '$2,000,000', status: 'Modelled', modelled: true });
+    expect(rows[0]).toMatchObject({ amount: '—', status: 'not modelled yet', modelled: false });
   });
 });

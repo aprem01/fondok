@@ -296,7 +296,7 @@ describe('CashFlowTab — `?tab=cash-flow&sub=<slug>` routing', () => {
   // upstream": every banner chip names the sub-tab that holds the figure.
   it('the output-only banner chips carry the upstream sub-tab', () => {
     render(<CashFlowTab />);
-    fireEvent.click(screen.getByRole('button', { name: 'Investment →' }));
+    fireEvent.click(screen.getByRole('button', { name: 'CAPEX →' }));
     expect(nav.push).toHaveBeenLastCalledWith(
       '/projects/deal-1?tab=investment&sub=sources-and-uses',
       { scroll: false },
@@ -308,7 +308,7 @@ describe('CashFlowTab — `?tab=cash-flow&sub=<slug>` routing', () => {
       { scroll: false },
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Debt →' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Financing →' }));
     expect(nav.push).toHaveBeenLastCalledWith(
       '/projects/deal-1?tab=debt&sub=debt-schedule',
       { scroll: false },

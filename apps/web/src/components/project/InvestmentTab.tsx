@@ -1024,11 +1024,11 @@ export default function InvestmentTab() {
                 {/* Debt configuration lives on the Debt tab; here debt is a read-only source. */}
                 <div className="rounded-md border border-border bg-ink-50/40 px-4 py-3 flex items-center justify-between gap-3">
                   <div className="text-[12.5px] text-ink-600 leading-relaxed">
-                    <span className="font-medium text-ink-900">Debt configuration lives on the Debt tab.</span>{' '}
+                    <span className="font-medium text-ink-900">Debt configuration lives on the Financing tab.</span>{' '}
                     Loan terms, tranches, and the schedule are managed there — debt shows here only as a source in Sources &amp; Uses.
                   </div>
                   <a href="?tab=debt" className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-md border border-border text-brand-700 hover:bg-brand-50 whitespace-nowrap">
-                    Open Debt tab →
+                    Open Financing tab →
                   </a>
                 </div>
               </div>
@@ -1167,8 +1167,8 @@ interface SURow {
  * calls it *"a calculation, not an assumption"*, so it keeps the grey dot.
  */
 const SU_LABEL_ASSUMPTION: Record<string, { key: string; note: string }> = {
-  'Purchase Price': { key: 'purchase_price', note: 'Investment assumption — edit it on Deal Summary' },
-  Renovation: { key: 'renovation_budget', note: 'Investment assumption — edit the budget on Deal Summary' },
+  'Purchase Price': { key: 'purchase_price', note: 'CAPEX assumption — edit it on Deal Summary' },
+  Renovation: { key: 'renovation_budget', note: 'CAPEX assumption — edit the budget on Deal Summary' },
   'Working Capital': { key: 'working_capital', note: 'Analyst assumption, not a calculated line' },
   'Insurance Reserve': { key: 'insurance_reserve', note: 'Analyst assumption, not a calculated line' },
   'Soft Costs': { key: 'soft_costs', note: 'Analyst assumption, not a calculated line' },
@@ -1182,9 +1182,9 @@ function classifySU(label: string, renoHasContingency: boolean): {
   assumptionKey?: string;
 } {
   if (/senior loan|senior debt/i.test(label)) {
-    return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' }, note: 'Sized in Debt — Investment consumes the result' };
+    return { kind: 'linked', link: { label: '→ Financing', tab: 'debt' }, note: 'Sized in Financing — CAPEX consumes the result' };
   }
-  if (/lender fee|loan fee|loan cost/i.test(label)) return { kind: 'linked', link: { label: '→ Debt', tab: 'debt' } };
+  if (/lender fee|loan fee|loan cost/i.test(label)) return { kind: 'linked', link: { label: '→ Financing', tab: 'debt' } };
   if (/key money/i.test(label)) return { kind: 'linked', link: { label: '→ Partnership', tab: 'partnership' } };
   // The worker's own carve-out (`capital._property_line_input`): once a
   // contingency is folded in, the Renovation line "is no longer the
@@ -1402,7 +1402,7 @@ function TimelinePanel({
   // Acquisition Date itself) stops claiming Fondok calculated it. Anything
   // genuinely arithmetic on that date — the Exit included — stays 'derived'.
   const ownerFor = (basis: string): string => {
-    if (basis === 'assumption') return 'Investment assumption';
+    if (basis === 'assumption') return 'CAPEX assumption';
     if (basis === 'linked') return 'Linked from Deal Summary';
     if (basis === 'pending') return 'Awaiting acquisition date';
     return 'Calculated';
@@ -1516,9 +1516,9 @@ function TimelinePanel({
                   {(r.duration_months ?? 0) > 0 ? `${r.duration_months} months` : '—'}
                 </span>
                 <span style={{ color: palette.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {isDebt ? 'Linked from Debt' : ownerFor(r.basis)}
+                  {isDebt ? 'Linked from Financing' : ownerFor(r.basis)}
                   {isDebt && (
-                    <a href="?tab=debt" style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, textDecoration: 'none' }}>Open Debt →</a>
+                    <a href="?tab=debt" style={{ color: palette.linkBlue, cursor: 'pointer', fontWeight: 600, textDecoration: 'none' }}>Open Financing →</a>
                   )}
                 </span>
               </div>

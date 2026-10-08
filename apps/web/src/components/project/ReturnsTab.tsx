@@ -472,7 +472,7 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
           </span>
           {overrideSummary && <span>{overrideSummary}</span>}
           <span style={{ color: palette.textSecondary }}>
-            Testing only — the canonical assumptions in Investment and Debt are unchanged.
+            Testing only — the canonical assumptions in CAPEX and Financing are unchanged.
           </span>
           <button
             onClick={resetToBase}
@@ -665,7 +665,7 @@ function ReturnsSummary({
           Deal-level returns · before GP/LP allocation
           {sandboxOn && (
             <span style={{ marginLeft: 8, color: palette.linkBlue, letterSpacing: '.04em' }}>
-              · sandbox case — Investment and Debt are unchanged
+              · sandbox case — CAPEX and Financing are unchanged
             </span>
           )}
         </span>
@@ -828,7 +828,7 @@ function SandboxChip({ variant = 'white' }: { variant?: 'white' | 'navy' }) {
   const navy = variant === 'navy';
   return (
     <span
-      title="Live-Assumptions sandbox — the canonical assumptions in Investment and Debt are unchanged"
+      title="Live-Assumptions sandbox — the canonical assumptions in CAPEX and Financing are unchanged"
       style={{
         fontSize: 9.5,
         fontWeight: 700,
@@ -884,7 +884,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
       state: 'linked',
       color: prov.green,
       weight: 400,
-      title: 'Linked from Investment → Exit / Reversion',
+      title: 'Linked from CAPEX → Exit / Reversion',
     },
     {
       label: 'Exit Year',
@@ -902,7 +902,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
       state: 'linked',
       color: prov.green,
       weight: 400,
-      title: 'Linked from Investment → Exit / Reversion',
+      title: 'Linked from CAPEX → Exit / Reversion',
     },
     {
       label: 'Gross Sale Price',
@@ -946,7 +946,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
           }}
           style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', fontSize: 11.5 }}
         >
-          Edit in Investment →
+          Edit in CAPEX →
         </span>
       }
     >
@@ -1238,7 +1238,7 @@ function Sensitivities({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <SectionCard
         title="Live Assumptions"
-        note="Temporary overrides for testing — the source of truth stays in Investment and Debt"
+        note="Temporary overrides for testing — the source of truth stays in CAPEX and Financing"
       >
         <div
           style={{

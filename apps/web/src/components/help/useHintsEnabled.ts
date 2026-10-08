@@ -12,7 +12,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
 const KEY = 'fondok:coachmarks:disabled';
-const EVENT = 'fondok:hints-changed';
+/** Fired (same tab) whenever any hint preference changes. */
+export const HINTS_CHANGED_EVENT = 'fondok:hints-changed';
+const EVENT = HINTS_CHANGED_EVENT;
 
 function readDisabled(): boolean {
   if (typeof window === 'undefined') return false;
@@ -75,6 +77,65 @@ export function resetAllCoachMarks(): number {
       ls.removeItem(k);
       removed += 1;
     });
+    window.dispatchEvent(new Event(EVENT));
+  } catch {
+    // ignore
+  }
+  return removed;
+}
+
+/** R-074 — "Hide all hints": the same global switch as Settings → Hints. */
+export function hideAllHints(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(KEY, 'true');
+  } catch {
+    // ignore — storage unavailable (private mode etc.)
+  }
+  try {
+    window.dispatchEvent(new Event(EVENT));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * R-074 — "Show hints again": turn hints back on AND forget every per-hint
+ * dismissal — coach marks (`fondok:coachmark:*`), tours (`fondok:tour:*`) and
+ * intro cards (`fondok-intro-*`, kept in localStorage plus a cookie fallback).
+ * Returns how many dismissals were cleared.
+ */
+export function showHintsAgain(): number {
+  if (typeof window === 'undefined') return 0;
+  let removed = 0;
+  try {
+    const ls = window.localStorage;
+    ls.setItem(KEY, 'false');
+    const toRemove: string[] = [];
+    for (let i = 0; i < ls.length; i += 1) {
+      const k = ls.key(i);
+      if (k && (k.startsWith('fondok:coachmark:') || k.startsWith('fondok:tour:') || k.startsWith('fondok-intro-'))) {
+        toRemove.push(k);
+      }
+    }
+    toRemove.forEach((k) => {
+      ls.removeItem(k);
+      removed += 1;
+    });
+  } catch {
+    // ignore
+  }
+  try {
+    document.cookie.split(';').forEach((c) => {
+      const name = c.split('=')[0]?.trim();
+      if (name && name.startsWith('fondok-intro-')) {
+        document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
+      }
+    });
+  } catch {
+    // ignore
+  }
+  try {
     window.dispatchEvent(new Event(EVENT));
   } catch {
     // ignore
