@@ -524,8 +524,9 @@ export interface WorkerDocument {
  * (`om | financials | str | other`) into the 11 below; the worker reads
  * ``user_doc_type`` directly, so the category id is purely a UI grouping
  * and the worker treats every entry the same. ``surveys`` is the only
- * category marked "recommended" rather than "required for IC" — it
- * shows up gray instead of red in the right-rail until covered.
+ * category marked "recommended" rather than "required for IC" — it is
+ * left out of the readiness percentage, but its status colour matches
+ * every other slot (R-031).
  */
 export type WizardCategory =
   | 'om'
@@ -536,10 +537,14 @@ export type WizardCategory =
   | 't12'
   | 'historical_pnl'
   | 'str'
+  // FON-41 decision 5 — wizard-only display slots over existing doc types:
+  // 'comp_set' uploads as STR_TREND, 'future_capex' as CAPEX.
+  | 'comp_set'
   | 'insurance'
   | 'property_tax'
   | 'room_mix'
   | 'capex'
+  | 'future_capex'
   | 'property_info'
   | 'leases'
   | 'surveys';
@@ -611,6 +616,14 @@ export interface ExtractionConfidenceReport {
   by_field: Record<string, number>;
   low_confidence_fields: string[];
   requires_human_review: boolean;
+  /** Template-extractor name when a deterministic template handled the file
+   *  (e.g. ``str_trend``); absent on LLM extractions. */
+  template?: string | null;
+  /** Template extractor's coverage note. The STR template leads with
+   *  ``variant=<monthly_star_xlsx|weekly_star_xlsx|daily_star_xlsx|
+   *  custom_trend_xls>;`` — the Data Room reads it for the detected STR
+   *  report type (R-034). */
+  coverage_note?: string | null;
 }
 
 export interface ExtractionResult {
