@@ -56,7 +56,14 @@ async def _reset_db() -> None:
 _TENANT = "00000000-0000-0000-0000-000000000001"
 
 
-async def _insert_deal(deal_id: UUID, *, name: str, keys: int, purchase: float) -> None:
+async def _insert_deal(
+    deal_id: UUID,
+    *,
+    name: str,
+    keys: int,
+    purchase: float,
+    field_overrides: dict[str, object] | None = None,
+) -> None:
     from app.database import get_session_factory
 
     factory = get_session_factory()
@@ -66,10 +73,10 @@ async def _insert_deal(deal_id: UUID, *, name: str, keys: int, purchase: float) 
                 """
                 INSERT INTO deals (
                     id, tenant_id, name, status, ai_confidence, keys,
-                    purchase_price, created_at, updated_at
+                    purchase_price, field_overrides, created_at, updated_at
                 ) VALUES (
                     :id, :tenant, :name, 'Underwriting', 0.0, :keys,
-                    :pp, :ts, :ts
+                    :pp, :fo, :ts, :ts
                 )
                 """
             ),
@@ -79,6 +86,10 @@ async def _insert_deal(deal_id: UUID, *, name: str, keys: int, purchase: float) 
                 "name": name,
                 "keys": keys,
                 "pp": purchase,
+                # The column is NOT NULL with a ``'{}'`` default; writing the
+                # same empty object keeps the pre-existing tests on the row
+                # they always inserted.
+                "fo": json.dumps(field_overrides or {}),
                 "ts": datetime.now(UTC),
             },
         )
@@ -1104,3 +1115,169 @@ async def test_annual_ratios_never_anchor_on_a_monthly_rooms_line() -> None:
         base_b = await _load_engine_inputs(session, str(deal_b), tenant_id=_TENANT)
     assert base_a["other_revenue_pct_of_rooms"] == pytest.approx(0.065)  # seed, not 0.30
     assert base_b["other_revenue_pct_of_rooms"] == pytest.approx(0.1378, abs=0.001)
+
+
+# ═══════════════════ FON-85 — OM capital keys carry ``om_broker`` ═══════════════
+
+
+async def _insert_om_extraction(
+    deal_id: UUID, *, fields: list[dict[str, object]]
+) -> tuple[UUID, UUID]:
+    """Insert an EXTRACTED OM with the broker's capital rows; ``(doc_id, er_id)``."""
+    return await _insert_financial_extraction(
+        deal_id,
+        doc_type="OM",
+        filename="Offering Memorandum.pdf",
+        fields=fields,
+        ts=datetime.now(UTC),
+    )
+
+
+async def _base_for(deal_id: UUID) -> dict:
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    factory = get_session_factory()
+    async with factory() as session:
+        return await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+
+
+_OM_RENO_ROW = {
+    "field_name": "broker_proforma.renovation_budget_usd",
+    "value": 8_000_000.0,
+    "source_page": 31,
+    "confidence": 0.9,
+}
+
+
+@pytest.mark.asyncio
+async def test_om_renovation_budget_row_is_labelled_om_broker() -> None:
+    """FON-85 (Step A). A renovation budget read off the OM's broker pro forma
+    is the broker's number: ``sources`` says ``om_broker`` and
+    ``source_fields`` still names the exact row. Before this the label stayed
+    ``seed`` on a document-grounded value and the web had to treat the
+    ``source_fields`` row as the document signal."""
+    from app.services.engine_runner import SOURCE_OM_BROKER
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="OM PIP Deal", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(deal_id, fields=[_OM_RENO_ROW])
+
+    base = await _base_for(deal_id)
+
+    assert base["renovation_budget"] == pytest.approx(8_000_000.0)
+    assert base["__sources__"]["renovation_budget"] == SOURCE_OM_BROKER == "om_broker"
+    row = base["__source_fields__"]["renovation_budget"]
+    assert row["field_name"] == "broker_proforma.renovation_budget_usd"
+    assert row["doc_type"] == "OM"
+    assert row["source_page"] == 31
+    assert row["document_id"] is not None
+    # A grounded key is not a seed, so it gets no "no source" reason.
+    assert "renovation_budget" not in base["__reasons__"]
+
+
+@pytest.mark.asyncio
+async def test_om_asking_price_is_om_broker_unless_the_deals_row_carries_it() -> None:
+    """The same rule for the other OM capital keys. The deals row still
+    outranks the OM headline (deals table > OM actuals > seed): a deal with a
+    persisted purchase price keeps ``deal_row`` and no OM row is claimed for
+    it; a deal without one takes the broker's asking price as ``om_broker``."""
+    from app.services.engine_runner import SOURCE_DEAL_ROW, SOURCE_OM_BROKER
+
+    asking = {"field_name": "asking_price.headline_price_usd", "value": 40_000_000.0}
+
+    with_price = uuid4()
+    await _insert_deal(with_price, name="Priced on the row", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(with_price, fields=[asking, _OM_RENO_ROW])
+    base = await _base_for(with_price)
+    assert base["purchase_price"] == pytest.approx(36_400_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_DEAL_ROW
+    assert "purchase_price" not in base["__source_fields__"]
+    # …while the renovation budget on the same OM is still the broker's.
+    assert base["__sources__"]["renovation_budget"] == SOURCE_OM_BROKER
+
+    without_price = uuid4()
+    await _insert_deal(without_price, name="Unpriced", keys=132, purchase=0)
+    await _insert_om_extraction(without_price, fields=[asking])
+    base = await _base_for(without_price)
+    assert base["purchase_price"] == pytest.approx(40_000_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_OM_BROKER
+    assert base["__source_fields__"]["purchase_price"]["field_name"] == (
+        "asking_price.headline_price_usd"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_om_row_keeps_the_renovation_budget_on_the_seed() -> None:
+    """No OM → the Kimpton seed stays, labelled ``seed``, with no row and a
+    ``no_document`` reason. An OM without a renovation row reads ``no_source``
+    — the same ``seed`` label either way."""
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.services.engine_runner import SOURCE_SEED
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="No OM", keys=132, purchase=36_400_000)
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(5_280_000.0)
+    assert base["__sources__"]["renovation_budget"] == SOURCE_SEED
+    assert "renovation_budget" not in base["__source_fields__"]
+    assert base["__reasons__"]["renovation_budget"]["code"] is ReasonCode.NO_DOCUMENT
+
+    om_without_reno = uuid4()
+    await _insert_deal(om_without_reno, name="OM, no PIP", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(
+        om_without_reno,
+        fields=[{"field_name": "property_overview.year_built", "value": 1962}],
+    )
+    base = await _base_for(om_without_reno)
+    assert base["__sources__"]["renovation_budget"] == SOURCE_SEED
+    assert "renovation_budget" not in base["__source_fields__"]
+    assert base["__reasons__"]["renovation_budget"]["code"] is ReasonCode.NO_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_analyst_override_still_wins_over_the_om_renovation_budget() -> None:
+    """An analyst override that CHANGES the broker's figure wins on value and
+    label, and the OM row is not claimed for a number it did not supply."""
+    from app.services.engine_runner import SOURCE_ANALYST_OVERRIDE
+
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id,
+        name="Overridden PIP",
+        keys=132,
+        purchase=36_400_000,
+        field_overrides={"renovation_budget": {"value": 9_500_000, "note": "GC bid"}},
+    )
+    await _insert_om_extraction(deal_id, fields=[_OM_RENO_ROW])
+
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(9_500_000.0)
+    assert base["__sources__"]["renovation_budget"] == SOURCE_ANALYST_OVERRIDE
+    assert "renovation_budget" not in base["__source_fields__"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_override_equal_to_the_om_figure_keeps_om_broker() -> None:
+    """FON-65 interplay: re-saving the broker's number unchanged is not an
+    override. The value is byte-identical, the row survives and the label
+    reports where the number really came from."""
+    from app.services.engine_runner import SOURCE_OM_BROKER
+
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id,
+        name="Shadow PIP",
+        keys=132,
+        purchase=36_400_000,
+        field_overrides={"renovation_budget": {"value": 8_000_000, "note": ""}},
+    )
+    await _insert_om_extraction(deal_id, fields=[_OM_RENO_ROW])
+
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(8_000_000.0)
+    assert base["__sources__"]["renovation_budget"] == SOURCE_OM_BROKER
+    assert base["__source_fields__"]["renovation_budget"]["field_name"] == (
+        "broker_proforma.renovation_budget_usd"
+    )
