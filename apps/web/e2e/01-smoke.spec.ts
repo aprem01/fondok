@@ -70,14 +70,16 @@ test.describe('smoke', () => {
     const expectedCategories = [
       /Offering Memorandum/,
       /Financial Statements/,
-      /STR \/ Comp Set Report/,
+      /STR Reports/,
+      /Comp Set \/ Market Reports/,
       /Insurance Records/,
       /Property Taxes/,
-      /Room Mix \/ Unit Mix/,
-      /Historical CapEx/,
-      /Basic Property Info/,
+      /Hotel Program/,
+      /Historic CapEx/,
+      /Future CapEx/,
+      /Other Property Info/,
       /Leases & Agreements/,
-      /Surveys & Reviews/,
+      /Due Diligence/,
     ];
     for (const re of expectedCategories) {
       await expect(

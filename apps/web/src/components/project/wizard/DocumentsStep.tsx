@@ -27,6 +27,7 @@ import {
   ArrowRight,
   Briefcase,
   Building2,
+  CalendarClock,
   ChevronRight,
   ClipboardCheck,
   FileSearch,
@@ -38,6 +39,7 @@ import {
   Receipt,
   ShieldCheck,
   Trash2,
+  TrendingUp,
   UploadCloud,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -91,7 +93,8 @@ type WizardCategorySpec = {
    *  `label` when undefined). Keep ≤ 24 chars so the row never
    *  truncates at standard sidebar widths. */
   sidebarLabel?: string;
-  /** Recommended for IC — false only for SURVEYS. */
+  /** Counts toward the IC-readiness percentage — false only for SURVEYS
+   *  (Due Diligence). Does NOT change the sidebar status colour (R-031). */
   requiredForIc: boolean;
   /** Whether this category accepts multiple files (almost everything does). */
   multiFile: boolean;
@@ -119,6 +122,13 @@ type WizardCategorySpec = {
   showYearTagging: boolean;
 };
 
+// FON-41 / Sam's decision 5 (R-027, R-031, R-034..R-038) — slot order and
+// labels follow the IC diligence reading order. This is a DISPLAY taxonomy
+// over the existing DocType enum: two slots share a doc type with a sibling
+// (Comp Set / Market Reports → STR_TREND, Future CapEx → CAPEX) because the
+// upload carries only ``user_doc_types[]`` + ``fiscal_years[]`` — there is no
+// field that could tell the worker "future" vs "historic" CapEx. The Router
+// still lanes CoStar / market files to MARKET_STUDY on extraction.
 export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     id: 'om',
@@ -136,6 +146,25 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     dropHint: 'One file · PDF or Word. Click to browse.',
     skipWarning:
       'Most IC reviewers expect the OM. You can add it later from the Data Room.',
+    showYearTagging: false,
+  },
+  {
+    // R-035 — "Room Mix / Unit Mix" widened to the whole hotel program.
+    id: 'room_mix',
+    label: 'Hotel Program',
+    sidebarLabel: 'Hotel Program',
+    requiredForIc: true,
+    multiFile: true,
+    Icon: Building2,
+    description:
+      'Room mix and unit count, floor plans, design documents, and program summaries. Used to verify the keys count against the OM and to seed brand-system distributions.',
+    exampleChip: 'e.g. room mix / unit count, floor plans, design documents, program summary',
+    defaultDocType: 'ROOM_MIX',
+    emptyState:
+      'No hotel program uploaded yet. Most IC reviewers expect a room mix to test the broker keys count.',
+    dropHint: 'Multiple files welcome · Excel / PDF.',
+    skipWarning:
+      'The hotel program is recommended for IC. You can add it later from the Data Room.',
     showYearTagging: false,
   },
   {
@@ -190,15 +219,18 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     showYearTagging: true,
   },
   {
+    // R-034 — STR exports only; CoStar / market files moved to their own
+    // slot below. "Not sure" is still offered: once the file is extracted
+    // the Data Room shows the report type Fondok detected next to it.
     id: 'str',
-    label: 'STR / Comp Set Report',
-    sidebarLabel: 'STR / Comp Set',
+    label: 'STR Reports',
+    sidebarLabel: 'STR Reports',
     requiredForIc: true,
     multiFile: true,
     Icon: ClipboardCheck,
     description:
-      'CoStar STR exports. Trend reports power the comp-set drift detector and feed the Market tab; Star benchmarks anchor RGI / ARI / MPI.',
-    exampleChip: 'e.g. STR Trend (TTM), STR Star daily snapshot, comp-set summary',
+      'STR exports. Trend reports power the comp-set drift detector and feed the Market tab; Star benchmarks anchor RGI / ARI / MPI. Unsure of the report type? Leave it on "Not sure" — the Data Room shows the type Fondok detected.',
+    exampleChip: 'e.g. STR Trend (TTM), monthly STAR, STR Star daily snapshot',
     picker: {
       label: 'Report type',
       options: [
@@ -225,6 +257,45 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     dropHint: 'Multiple files welcome · .xls / .xlsx / PDF.',
     skipWarning:
       'Most IC reviewers expect at least one trailing-twelve STR Trend. You can add it later from the Data Room.',
+    showYearTagging: false,
+  },
+  {
+    // R-036 — CoStar / market reports get their own slot. Uploads as
+    // STR_TREND (the existing comp-set lane); the Router re-lanes CoStar
+    // submarket / pipeline / sales files to MARKET_STUDY on extraction.
+    id: 'comp_set',
+    label: 'Comp Set / Market Reports',
+    sidebarLabel: 'Comp Set / Market',
+    requiredForIc: true,
+    multiFile: true,
+    Icon: TrendingUp,
+    description:
+      'CoStar submarket, pipeline, and sales reports plus comp-set definitions. Frames the competitive set and new supply around the hotel.',
+    exampleChip: 'e.g. CoStar submarket report, pipeline report, sales comps, comp-set definition',
+    defaultDocType: 'STR_TREND',
+    emptyState:
+      'No comp set or market reports yet. Most IC reviewers expect a comp-set definition and a submarket view.',
+    dropHint: 'Multiple files welcome · PDF / Excel.',
+    skipWarning:
+      'Comp set and market reports are recommended for IC. You can add them later from the Data Room.',
+    showYearTagging: false,
+  },
+  {
+    id: 'capex',
+    label: 'Historic CapEx',
+    sidebarLabel: 'Historic CapEx',
+    requiredForIc: true,
+    multiFile: true,
+    Icon: Hammer,
+    description:
+      'Capital-expenditure history and FF&E reserve reports. Feeds the capital engine with what has already been spent on the asset.',
+    exampleChip: 'e.g. 3-year CapEx schedule, FF&E reserve report',
+    defaultDocType: 'CAPEX',
+    emptyState:
+      'No CapEx history yet. Most IC reviewers expect a multi-year schedule.',
+    dropHint: 'Multiple files welcome · PDF / Excel.',
+    skipWarning:
+      'Historic CapEx is recommended for IC. You can add it later from the Data Room.',
     showYearTagging: false,
   },
   {
@@ -262,52 +333,41 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     showYearTagging: false,
   },
   {
-    id: 'room_mix',
-    label: 'Room Mix / Unit Mix',
+    // R-037 — forward-looking capital gets its own slot. It uploads as
+    // CAPEX like Historic CapEx: the upload payload has no field that
+    // could carry a future-vs-historic hint, and the DocType enum is fixed.
+    id: 'future_capex',
+    label: 'Future CapEx',
+    sidebarLabel: 'Future CapEx',
     requiredForIc: true,
     multiFile: true,
-    Icon: Building2,
+    Icon: CalendarClock,
     description:
-      'Room-type breakdown (king, double, suite) by floor and category. Used to verify keys count against the OM and to seed brand-system distributions.',
-    exampleChip: 'e.g. room types breakdown, unit mix lookup, key count by floor',
-    defaultDocType: 'ROOM_MIX',
-    emptyState:
-      'No room mix uploaded yet. Most IC reviewers expect a category-by-floor breakdown to test the broker keys count.',
-    dropHint: 'Single tab welcome · Excel / PDF.',
-    skipWarning:
-      'Room mix is recommended for IC. You can add it later from the Data Room.',
-    showYearTagging: false,
-  },
-  {
-    id: 'capex',
-    label: 'Historical CapEx',
-    requiredForIc: true,
-    multiFile: true,
-    Icon: Hammer,
-    description:
-      'Capital-expenditure history, FF&E reserve reports, and priced PIP scopes. Feeds the capital engine and PIP-displacement model.',
-    exampleChip: 'e.g. 3-year CapEx schedule, FF&E reserve, PIP scope',
+      'PIP budgets and rebranding / repositioning capital plans. Feeds the capital engine and the PIP-displacement model.',
+    exampleChip: 'e.g. PIP budget, rebranding capital plan, repositioning budget',
     defaultDocType: 'CAPEX',
     emptyState:
-      'No CapEx history yet. Most IC reviewers expect a multi-year schedule plus a PIP scope.',
+      'No forward capital plan yet. Most IC reviewers expect the PIP budget when a brand change or renovation is planned.',
     dropHint: 'Multiple files welcome · PDF / Excel.',
     skipWarning:
-      'Historical CapEx is recommended for IC. You can add it later from the Data Room.',
+      'Future CapEx is recommended for IC. You can add it later from the Data Room.',
     showYearTagging: false,
   },
   {
+    // R-038 — agreements and ownership docs lead; floor plans moved to
+    // Hotel Program.
     id: 'property_info',
-    label: 'Basic Property Info',
-    sidebarLabel: 'Property Info',
+    label: 'Other Property Info',
+    sidebarLabel: 'Other Property Info',
     requiredForIc: true,
     multiFile: true,
     Icon: Briefcase,
     description:
-      'Floorplans, photos, brand standards, franchise agreements, PIP letters. Anchors property metadata when the OM is thin and feeds the property-condition narrative in the IC memo.',
-    exampleChip: 'e.g. floorplans, brand standards, franchise agreement, PIP letter',
+      'Management Agreement, Franchise Agreement, business plans, and ownership / entity documents. Anchors property metadata when the OM is thin and feeds the IC memo narrative.',
+    exampleChip: 'e.g. management agreement, franchise agreement, business plan, ownership / entity docs',
     defaultDocType: 'PROPERTY_INFO',
     emptyState:
-      'No property info uploaded yet. Most IC reviewers expect floorplans + the current franchise agreement.',
+      'No property info uploaded yet. Most IC reviewers expect the current management and franchise agreements.',
     dropHint: 'Multiple files welcome · PDF / Word.',
     skipWarning:
       'Property info is recommended for IC. You can add it later from the Data Room.',
@@ -332,21 +392,25 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     showYearTagging: false,
   },
   {
+    // R-031 — "Surveys & Reviews" widened to Due Diligence. Still excluded
+    // from the IC-readiness percentage (matches the worker's completeness
+    // categories), but its sidebar status colour is the same as every
+    // other slot's — see the dot in DocumentsStep below.
     id: 'surveys',
-    label: 'Surveys & Reviews',
-    sidebarLabel: 'Surveys',
+    label: 'Due Diligence',
+    sidebarLabel: 'Due Diligence',
     requiredForIc: false,
     multiFile: true,
     Icon: FileSearch,
     description:
-      'ALTA surveys, structural / engineering reports, Phase I environmental, PCAs. Optional at screening but expected by Closing — surface them now so the IC narrative is ready.',
-    exampleChip: 'e.g. ALTA survey, Phase I environmental, PCA, engineering report',
+      'Property condition reports (PCRs), legal memos, surveys, and reviews. Optional at screening but expected by Closing — surface them now so the IC narrative is ready.',
+    exampleChip: 'e.g. PCR, legal memo, ALTA survey, Phase I environmental, reviews',
     defaultDocType: 'SURVEYS',
     emptyState:
-      'No third-party reports yet. Optional at screening, expected by Closing — drop them as the broker drips them in.',
+      'No due diligence reports yet. Optional at screening, expected by Closing — drop them as the broker drips them in.',
     dropHint: 'Multiple files welcome · PDF.',
     skipWarning:
-      'Surveys & reviews are optional. They unlock once the broker shares them.',
+      'Due diligence reports are optional. They unlock once the broker shares them.',
     showYearTagging: false,
   },
 ];
@@ -528,14 +592,13 @@ export function DocumentsStep({
               const count = filesByCategory[spec.id].length;
               const active = spec.id === stage;
               const covered = count > 0;
-              const missing = !covered && spec.requiredForIc;
-              // Status dot IS the status. Green = covered, red =
-              // required-and-missing, gray = optional / not-yet-touched.
-              const dotClass = covered
-                ? 'bg-success-500'
-                : missing
-                  ? 'bg-danger-500/80'
-                  : 'bg-ink-300';
+              // Status dot IS the status. Green = covered, red = not yet
+              // covered. R-031: the colour no longer depends on
+              // ``requiredForIc`` — keying it off that flag is what rendered
+              // the optional Surveys / Due Diligence slot gray while every
+              // other empty slot was red. ``requiredForIc`` still drives the
+              // readiness percentage and the accessible "optional" wording.
+              const dotClass = covered ? 'bg-success-500' : 'bg-danger-500/80';
               const triggerBtn = (
                 <button
                   type="button"
@@ -552,6 +615,7 @@ export function DocumentsStep({
                   )}
                 >
                   <span
+                    data-testid={`slot-status-${spec.id}`}
                     className={cn(
                       'inline-block w-1.5 h-1.5 rounded-full flex-shrink-0',
                       dotClass,

@@ -79,6 +79,44 @@ export interface CoverageDocMeta {
    *  instead of flashing "Ready for Review" and then flipping. Omit (or
    *  ``true``) when the host has no lazy extraction step. */
   extractionLoaded?: boolean;
+  /** R-034 — the analyst's upload-time tag (``user_provided_doc_type``).
+   *  Empty when they left the report type on "Not sure" (or uploaded
+   *  straight into the Data Room). */
+  userProvidedDocType?: string | null;
+  /** R-034 — the Router's proposal, when it differs from the stored type. */
+  aiProposedDocType?: string | null;
+  /** R-034 — the extraction's ``confidence_report.coverage_note``; the STR
+   *  template leads it with ``variant=…`` (monthly / weekly / daily STAR,
+   *  legacy Custom Trend). */
+  coverageNote?: string | null;
+}
+
+// R-034 — the STR report type Fondok detected, read ONLY from what the worker
+// returned for the document: the STR template's ``variant=`` in the
+// extraction coverage note first (the most specific read), then the Router's
+// proposal, then the stored doc_type. Null when none of them name an STR
+// report (no browser-side guessing from the filename).
+const STR_VARIANT_LABEL: Record<string, string> = {
+  monthly_star_xlsx: 'STR Trend (TTM) · monthly STAR',
+  weekly_star_xlsx: 'STR Star (Weekly)',
+  daily_star_xlsx: 'STR Star (Daily)',
+  custom_trend_xls: 'STR Trend · Custom Trend',
+};
+const STR_DOC_TYPE_LABEL: Record<string, string> = {
+  STR_TREND: 'STR Trend (TTM)',
+  STR: 'STR Star (Daily)',
+};
+export function detectedStrReportType(
+  docType: string | null | undefined,
+  meta?: Pick<CoverageDocMeta, 'aiProposedDocType' | 'coverageNote'>,
+): string | null {
+  const variant = /variant=([a-z_]+)/.exec(meta?.coverageNote ?? '')?.[1];
+  if (variant && STR_VARIANT_LABEL[variant]) return STR_VARIANT_LABEL[variant];
+  for (const t of [meta?.aiProposedDocType, docType]) {
+    const label = STR_DOC_TYPE_LABEL[(t ?? '').toUpperCase().trim()];
+    if (label) return label;
+  }
+  return null;
 }
 
 // FON-40 — a single processing state per document, so a parsing file reads
@@ -134,26 +172,50 @@ type CategorySpec = {
   match: string[];
   optional?: boolean;
   financial?: boolean;
+  /** Token a file dragged onto this row is reclassified to (defaults to
+   *  ``match[0]``; financials use a generic annual P&L). */
+  dropAs?: string;
+  /** Shown instead of "Not uploaded" when the row can't be filled by
+   *  doc_type alone. */
+  note?: string;
 };
 
-// Mirrors the worker's COMPLETENESS_CATEGORIES, with T-12 + P&L collapsed
-// into one "Financial Statements" row (FON-18). Order = the Data Room list.
-const CATEGORIES: CategorySpec[] = [
+// Mirrors the wizard slots (DocumentsStep WIZARD_CATEGORIES — FON-41 decision
+// 5: same labels, same order), with T-12 + P&L collapsed into one "Financial
+// Statements" row (FON-18). Order = the Data Room list. Rows bucket by stored
+// doc_type, so:
+//  - Comp Set / Market Reports holds MARKET_STUDY — the Router's lane for
+//    CoStar / market files (the wizard slot uploads them as STR_TREND).
+//  - Future CapEx can't be told apart from Historic CapEx: both upload as
+//    CAPEX (no future/historic hint survives the upload), so CAPEX files list
+//    under Historic CapEx and Future CapEx stays out of the coverage count.
+export const CATEGORIES: CategorySpec[] = [
   { id: 'om', label: 'Offering Memorandum', match: ['OM'] },
+  { id: 'room_mix', label: 'Hotel Program', match: ['ROOM_MIX'] },
   {
     id: 'financials',
     label: 'Financial Statements',
     match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'],
     financial: true,
+    dropAs: 'PNL',
   },
-  { id: 'str', label: 'STR / Comp Set Report', match: ['STR', 'STR_TREND'] },
+  { id: 'str', label: 'STR Reports', match: ['STR', 'STR_TREND'] },
+  { id: 'comp_set', label: 'Comp Set / Market Reports', match: ['MARKET_STUDY'] },
+  { id: 'capex', label: 'Historic CapEx', match: ['CAPEX'] },
   { id: 'insurance', label: 'Insurance Records', match: ['INSURANCE'] },
   { id: 'property_tax', label: 'Property Taxes', match: ['PROPERTY_TAX'] },
-  { id: 'room_mix', label: 'Room Mix / Unit Mix', match: ['ROOM_MIX'] },
-  { id: 'capex', label: 'Historical CapEx', match: ['CAPEX'] },
-  { id: 'property_info', label: 'Basic Property Info', match: ['PROPERTY_INFO'] },
+  {
+    id: 'future_capex',
+    label: 'Future CapEx',
+    match: [],
+    optional: true,
+    dropAs: 'CAPEX',
+    note: 'Filed as CapEx — listed under Historic CapEx',
+  },
+  { id: 'property_info', label: 'Other Property Info', match: ['PROPERTY_INFO'] },
   { id: 'leases', label: 'Leases & Agreements', match: ['LEASES', 'CONTRACT'] },
-  { id: 'surveys', label: 'Surveys & Reviews', match: ['SURVEYS'], optional: true },
+  // R-031 — Due Diligence is a regular row (no muted "optional" tag).
+  { id: 'surveys', label: 'Due Diligence', match: ['SURVEYS'] },
   // FON-64 — Debt / Partnership source docs + catch-all (all optional).
   { id: 'debt', label: 'Debt / Loan Docs', match: ['DEBT'], optional: true },
   { id: 'partnership', label: 'Partnership / JV Docs', match: ['PARTNERSHIP'], optional: true },
@@ -207,14 +269,17 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'PNL', label: 'Annual P&L' },
   { value: 'PNL_MONTHLY', label: 'Monthly P&L' },
   { value: 'PNL_YTD', label: 'YTD P&L' },
-  { value: 'STR_TREND', label: 'STR / Comp Set' },
+  { value: 'ROOM_MIX', label: 'Hotel Program' },
+  // R-034 — the STR row's type select doubles as the report-type sub-select.
+  { value: 'STR_TREND', label: 'STR Trend (TTM)' },
+  { value: 'STR', label: 'STR Star (Daily)' },
+  { value: 'MARKET_STUDY', label: 'Comp Set / Market Reports' },
+  { value: 'CAPEX', label: 'CapEx' },
   { value: 'INSURANCE', label: 'Insurance Records' },
   { value: 'PROPERTY_TAX', label: 'Property Taxes' },
-  { value: 'ROOM_MIX', label: 'Room Mix / Unit Mix' },
-  { value: 'CAPEX', label: 'Historical CapEx' },
-  { value: 'PROPERTY_INFO', label: 'Basic Property Info' },
+  { value: 'PROPERTY_INFO', label: 'Other Property Info' },
   { value: 'LEASES', label: 'Leases & Agreements' },
-  { value: 'SURVEYS', label: 'Surveys & Reviews' },
+  { value: 'SURVEYS', label: 'Due Diligence' },
   // FON-64 — Debt / Partnership source docs + catch-all.
   { value: 'DEBT', label: 'Debt / Loan Docs' },
   { value: 'PARTNERSHIP', label: 'Partnership / JV Docs' },
@@ -249,11 +314,12 @@ export function DocumentCoverage({
     else unclassified.push(f);
   }
 
-  // The canonical Data Room v2 header counts against the 10 core diligence
-  // types (the required checklist) — the first 10 CATEGORIES; Debt / Partnership
-  // / Other are extra optional buckets that don't move the "of 10" number.
-  const CORE_TOTAL = 10;
-  const coreCovered = CATEGORIES.slice(0, CORE_TOTAL).filter(
+  // The header counts against the core diligence types — every non-optional
+  // row. Future CapEx (indistinguishable from Historic by doc_type) and Debt /
+  // Partnership / Other are extra buckets that don't move the "of N" number.
+  const coreCats = CATEGORIES.filter((c) => !c.optional);
+  const CORE_TOTAL = coreCats.length;
+  const coreCovered = coreCats.filter(
     (c) => byCategory.get(c.id)!.length > 0,
   ).length;
   const canRun = (byCategory.get('financials')!.length ?? 0) > 0;
@@ -280,8 +346,8 @@ export function DocumentCoverage({
   const [dragDocId, setDragDocId] = useState<string | null>(null);
   const dropDocInto = (cat: CategorySpec) => {
     if (!dragDocId) return;
-    const token = cat.id === 'financials' ? 'PNL' : cat.match[0];
-    onReclassify(dragDocId, { doc_type: token });
+    const token = cat.dropAs ?? cat.match[0];
+    if (token) onReclassify(dragDocId, { doc_type: token });
     setDragDocId(null);
   };
 
@@ -351,6 +417,7 @@ export function DocumentCoverage({
           return (
             <li
               key={cat.id}
+              data-category={cat.id}
               className={cn(
                 'border-b border-border last:border-0 transition-[outline] outline-offset-[-2px]',
                 dropActive && 'outline-dashed outline-2 outline-brand-500/50',
@@ -385,7 +452,7 @@ export function DocumentCoverage({
                   )}
                 >
                   {cat.label}
-                  {cat.optional && (
+                  {cat.optional && !cat.note && (
                     <span className="text-[10.5px] text-ink-400 ml-1.5">optional</span>
                   )}
                 </span>
@@ -405,7 +472,7 @@ export function DocumentCoverage({
                   </>
                 ) : (
                   <span className="text-[10.5px] text-ink-400 bg-ink-300/15 rounded px-2 py-0.5">
-                    Not uploaded
+                    {cat.note ?? 'Not uploaded'}
                   </span>
                 )}
               </button>
@@ -417,6 +484,7 @@ export function DocumentCoverage({
                       key={f.id}
                       file={f}
                       financial={!!cat.financial}
+                      strReport={cat.id === 'str'}
                       busy={busyDocId === f.id}
                       dragging={dragDocId === f.id}
                       onDragStart={() => setDragDocId(f.id)}
@@ -629,6 +697,7 @@ function UnclassifiedRow({
 function CoverageFileRow({
   file,
   financial,
+  strReport = false,
   busy,
   dragging,
   onDragStart,
@@ -643,6 +712,9 @@ function CoverageFileRow({
 }: {
   file: CoverageFile;
   financial: boolean;
+  /** R-034 — STR Reports row: show the detected report type when the
+   *  analyst left it on "Not sure". */
+  strReport?: boolean;
   busy: boolean;
   meta?: CoverageDocMeta;
   now: number;
@@ -672,6 +744,11 @@ function CoverageFileRow({
     yearView.year != null && !YEARS.includes(yearView.year)
       ? [yearView.year, ...YEARS].sort((a, b) => b - a)
       : YEARS;
+  // R-034 — only when the analyst didn't pick a report type themselves.
+  const detectedReport =
+    strReport && !(meta?.userProvidedDocType ?? '').trim()
+      ? detectedStrReportType(file.docType, meta)
+      : null;
   const confTone =
     file.confidence >= 95 ? 'text-success-700' : file.confidence >= 85 ? 'text-warn-700' : 'text-danger-700';
 
@@ -807,6 +884,15 @@ function CoverageFileRow({
             </option>
           ))}
         </select>
+      )}
+      {detectedReport && (
+        <span
+          data-testid="detected-report-type"
+          className="text-[10.5px] text-ink-500 whitespace-nowrap"
+          title="Report type Fondok detected from the file (you left it on “Not sure”)"
+        >
+          Detected: {detectedReport}
+        </span>
       )}
 
       <div className="ml-auto flex items-center gap-3 text-[11px] tabular-nums">

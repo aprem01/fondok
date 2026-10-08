@@ -112,38 +112,41 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   INSURANCE: 'Insurance',
   PROPERTY_TAX: 'Prop. Tax',
   CAPEX: 'CapEx',
-  PROPERTY_INFO: 'Property Info',
+  PROPERTY_INFO: 'Other Property Info',
   LEASES: 'Leases',
   CONTRACT: 'Contract',
-  SURVEYS: 'Surveys',
-  ROOM_MIX: 'Room Mix',
+  SURVEYS: 'Due Diligence',
+  ROOM_MIX: 'Hotel Program',
   RENT_ROLL: 'Rent Roll',
   MARKET_STUDY: 'Market Study',
   UNKNOWN: 'Uncategorized',
 };
 
-// Canonical 10-item Data Room checklist — mirrors the wizard's
+// Canonical Data Room checklist (demo fallback) — mirrors the wizard's
 // COMPLETENESS_CATEGORIES so the two surfaces never drift. Each row
 // maps to one or more upstream `doc_type` tokens; when any live
 // uploaded document carries a matching token the row flips green and
 // drops its REQ badge. Wave 1 expanded the DocType enum to cover every
 // category — Surveys is the only one marked optional.
 const REQUIRED_CHECKLIST: { label: string; match: string[] }[] = [
+  // FON-41 decision 5 — same labels + order as the wizard slots. Future
+  // CapEx has no row here: it uploads as CAPEX, indistinguishable by type.
   { label: 'Offering Memorandum',           match: ['OM'] },
+  { label: 'Hotel Program',                 match: ['ROOM_MIX'] },
   // FON-18: a single "Financial Statements" requirement satisfied by ANY
   // financial doc (T-12 OR Annual/YTD/Monthly P&L). Previously T-12 and
   // P&L were separate required rows, so uploading a P&L still left
   // "T-12 Missing" — analysts shouldn't need to know Fondok's internal
   // taxonomy to clear the financials requirement.
   { label: 'Financial Statements (T-12 or P&L)', match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
-  { label: 'STR / Comp Set Report',         match: ['STR', 'STR_TREND'] },
+  { label: 'STR Reports',                   match: ['STR', 'STR_TREND'] },
+  { label: 'Comp Set / Market Reports',     match: ['MARKET_STUDY'] },
+  { label: 'Historic CapEx',                match: ['CAPEX'] },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
-  { label: 'Room Mix / Unit Mix',           match: ['ROOM_MIX'] },
-  { label: 'Historical CapEx',              match: ['CAPEX'] },
-  { label: 'Basic Property Info',           match: ['PROPERTY_INFO'] },
+  { label: 'Other Property Info',           match: ['PROPERTY_INFO'] },
   { label: 'Leases & Agreements',           match: ['LEASES', 'CONTRACT'] },
-  { label: 'Surveys & Reviews',             match: ['SURVEYS'] },
+  { label: 'Due Diligence',                 match: ['SURVEYS'] },
 ];
 
 // Engine Status card mapping — UI label/icon plus the underlying worker
@@ -490,6 +493,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         extractedPeriodYear: d.extracted_period_year ?? null,
         yearMismatch: d.year_mismatch,
         extractionLoaded: Boolean(extractions[d.id]),
+        // R-034 — signals for the STR row's "Detected: …" report type.
+        userProvidedDocType: d.user_provided_doc_type ?? null,
+        aiProposedDocType: d.ai_proposed_doc_type ?? null,
+        coverageNote: extractions[d.id]?.confidence_report?.coverage_note ?? null,
       };
     }
     return m;
