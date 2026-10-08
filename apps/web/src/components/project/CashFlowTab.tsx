@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
+import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
@@ -260,6 +261,9 @@ export default function CashFlowTab() {
         />
 
         <OutputOnlyBanner onNavigate={go} />
+
+        {/* FON-63 — negative NOI flows through levered cash flow; same strip as Debt. */}
+        <NoiWarningStrip outputs={outputs} />
 
         <SubTabNav
           className="mb-3"

@@ -123,6 +123,8 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'debt.completion_guarantee',
     // The shape of the waterfall, not a value in it.
     'partnership.waterfall.tier_count',
+    // FON-44 (R-059) — which NOI basis the exit uses; a choice, not a number.
+    'exit_noi_basis',
     'partnership.waterfall.0.removed',
     // FON-44 — a method choice between two engine-computed NOIs; no typed number.
     'exit_noi_basis',

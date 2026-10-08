@@ -485,3 +485,36 @@ describe('CashFlowTab — Summary statement (FON-67 / R-072)', () => {
     expect(screen.queryByTestId('cash-flow-irr-block')).toBeNull();
   });
 });
+
+// ─── FON-63 — the negative-NOI strip rides along on Cash Flow ─────────────
+describe('CashFlowTab — negative-NOI strip (FON-63)', () => {
+  beforeEach(() => cleanup());
+  const withDebt = (debt: Record<string, unknown> | null): EngineOutputsResponse => {
+    const env = envelope(CF);
+    if (debt) {
+      (env.engines as unknown as Record<string, unknown>).debt = {
+        deal_id: 'deal-1', engine: 'debt', status: 'complete', summary: '',
+        outputs: debt, inputs: null, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: null,
+      };
+    }
+    return env;
+  };
+
+  it('shows the strip when the debt output lists a negative year', () => {
+    hoisted.outputs = withDebt({ negative_noi_years: [1], total_shortfall_usd: 1_920_000, noi_warning: null });
+    render(<CashFlowTab />);
+    expect(screen.getByTestId('noi-warning-strip')).toHaveTextContent(
+      'Year 1 NOI is negative · debt service shortfall $1.92M · DSCR N/A for Year 1',
+    );
+  });
+
+  it('no strip when empty, or on a run that predates the fields', () => {
+    hoisted.outputs = withDebt({ negative_noi_years: [], total_shortfall_usd: 0, noi_warning: null });
+    render(<CashFlowTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+    cleanup();
+    hoisted.outputs = withDebt({ year_one_dscr: 1.3 });
+    render(<CashFlowTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+  });
+});

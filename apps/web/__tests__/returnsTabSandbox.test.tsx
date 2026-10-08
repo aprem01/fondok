@@ -15,7 +15,7 @@
  *     the NON-persisting preview endpoint; "Reset to base case" restores the
  *     base and clears the banner. No persisting engine run is ever invoked.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   render,
   screen,
@@ -492,5 +492,49 @@ describe('ReturnsTab — `?tab=returns&sub=<slug>` routing', () => {
     expect(screen.getByText(/Sensitivity override active/i)).toBeInTheDocument();
     fireEvent.click(tabEl('Sensitivities'));
     expect((screen.getAllByRole('slider')[0] as HTMLInputElement).value).toBe('0.09');
+  });
+});
+
+// ─── FON-63 strip + FON-44 exit NOI basis label ──────────────────────────
+describe('ReturnsTab — negative-NOI strip (FON-63) and Exit NOI basis label (FON-44)', () => {
+  const engines = OUTPUTS.engines as unknown as Record<string, { outputs: Record<string, unknown> }>;
+  const debtOutputs = engines.debt.outputs;
+  const returnsOutputs = engines.returns.outputs;
+  afterEach(() => {
+    engines.debt.outputs = debtOutputs;
+    engines.returns.outputs = returnsOutputs;
+  });
+
+  it('shows the one-line strip when the debt output lists a negative year', () => {
+    engines.debt.outputs = {
+      ...debtOutputs,
+      negative_noi_years: [1],
+      total_shortfall_usd: 1_920_000,
+      noi_warning: 'Year 1 NOI is negative (−$69,983) · debt service shortfall $1.92M · DSCR N/A for Year 1',
+    };
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('noi-warning-strip')).toHaveTextContent(
+      'Year 1 NOI is negative (−$69,983) · debt service shortfall $1.92M · DSCR N/A for Year 1',
+    );
+  });
+
+  it('no strip when the list is empty or absent', () => {
+    render(<ReturnsTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+    cleanup();
+    engines.debt.outputs = { ...debtOutputs, negative_noi_years: [], total_shortfall_usd: 0, noi_warning: null };
+    render(<ReturnsTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+  });
+
+  it('appends the exit NOI basis label beside the exit value', () => {
+    engines.returns.outputs = { ...returnsOutputs, exit_noi_basis: 'forward_12m', exit_noi_period_label: 'forward 12-month, Year 6' };
+    render(<ReturnsTab />);
+    expect(screen.getByText('7.00% exit cap · Exit NOI (forward 12-month, Year 6)')).toBeInTheDocument();
+  });
+
+  it('keeps today’s sub-label on a run without the basis label', () => {
+    render(<ReturnsTab />);
+    expect(screen.getByText('7.00% exit cap')).toBeInTheDocument();
   });
 });

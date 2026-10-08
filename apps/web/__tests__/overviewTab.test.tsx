@@ -197,7 +197,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import OverviewTab, { EXIT_NOI_LABEL, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL } from '@/components/project/OverviewTab';
+import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -947,6 +947,26 @@ describe('OverviewTab — R-058 Exit NOI in the Exit section', () => {
   it('falls back to returns.terminal_noi when the run predates terminal_noi_usd', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(rowValue(EXIT_NOI_LABEL)).toBe('$3,640,000');
+  });
+
+  // FON-44 (R-059) — the label names the basis + period the run reports.
+  it('labels the row from returns.exit_noi_period_label when the run carries it', () => {
+    outputsRef.value = withReturns({
+      terminal_noi_usd: 3_900_000,
+      exit_noi_basis: 'stabilized',
+      exit_noi_period_label: 'stabilized, Year 3 grown to Year 6',
+    } as unknown as Record<string, number | undefined>);
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const exit = screen.getByTestId('overview-section-exit');
+    expect(exitNoiLabel('stabilized, Year 3 grown to Year 6')).toBe('Exit NOI (stabilized, Year 3 grown to Year 6)');
+    expect(within(exit).getByText('Exit NOI (stabilized, Year 3 grown to Year 6)')).toBeInTheDocument();
+    expect(within(exit).queryByText(EXIT_NOI_LABEL)).toBeNull();
+    expect(rowValue('Exit NOI (stabilized, Year 3 grown to Year 6)')).toBe('$3,900,000');
+  });
+
+  it('keeps today’s label when the run has no period label', () => {
+    expect(exitNoiLabel(undefined)).toBe(EXIT_NOI_LABEL);
+    expect(exitNoiLabel('  ')).toBe(EXIT_NOI_LABEL);
   });
 
   it('is a dash when the returns engine emitted neither', () => {

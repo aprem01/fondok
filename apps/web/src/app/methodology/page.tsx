@@ -218,6 +218,9 @@ export default function MethodologyPage() {
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             This matters because the entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI <em>after</em> it. Both are defensible conventions and Fondok keeps both, but it names each one wherever it prints it — the Overview&apos;s Exit row reads &quot;Exit NOI (forward 12-month, after FF&amp;E reserve)&quot; and the Projections row &quot;Forward 12-Month Cash NOI (after FF&amp;E reserve)&quot;, never a bare &quot;NOI&quot;. Modelling a real year hold+1 through the waterfall instead would move the gross sale price, both IRRs and the equity multiple on every persisted deal; that is a deliberate post-MVP decision, not an oversight.
           </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="exit-noi-basis-methodology">
+            <strong>Exit NOI basis.</strong> Forward 12-month NOI is the default. An analyst can switch the basis to <strong>Stabilized NOI</strong> on Investment → Exit / Reversion: the reversion then capitalises the stabilized year&apos;s NOI grown to exit instead. An analyst-entered terminal NOI override beats both bases. Wherever the Exit NOI is printed, its label names the basis and the period it was taken on, as the run reports them (<code className="text-[11.5px]">returns.exit_noi_period_label</code>).
+          </p>
         </Card>
 
         <Card className="p-5 mb-4">

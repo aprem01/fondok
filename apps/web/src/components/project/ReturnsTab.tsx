@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
+import NoiWarningStrip from './NoiWarningStrip';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
@@ -60,6 +61,13 @@ type SubTab = (typeof SUB_TABS)[number]['id'];
 const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
 type EngineOutputs = ReturnType<typeof useEngineOutputs>['outputs'];
+
+/** FON-44 (R-059) — the returns engine's Exit NOI basis/period label, or
+ *  undefined on a run that predates it (callers keep today's wording). */
+function exitNoiPeriodLabel(outputs: EngineOutputs): string | undefined {
+  const label = getEngineField<string>(outputs, 'returns', 'exit_noi_period_label');
+  return typeof label === 'string' && label.trim() ? label.trim() : undefined;
+}
 
 // ── Formatting helpers (canonical: money() / mm() / pct() / x()) ──
 const money = (v: number) =>
@@ -421,6 +429,9 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
         </span>
       </div>
 
+      {/* FON-63 — negative-NOI warning, the same one-liner the Debt tab shows. */}
+      <NoiWarningStrip outputs={outputs} />
+
       <SubTabNav
         items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
         activeId={tab}
@@ -628,6 +639,10 @@ function ReturnsSummary({
     preview?.exit_cap_rate,
     getEngineField<number>(outputs, 'returns', 'exit_cap_rate'),
   );
+  // FON-44 (R-059) — the basis + period of the NOI the exit capitalizes.
+  // Canonical run only: a sandbox preview can move the hold, and with it the
+  // period, so the label is withheld while a preview is showing.
+  const exitNoiPeriod = sandboxOn ? undefined : exitNoiPeriodLabel(outputs);
   const hasFlows = Array.isArray(flows) && flows.length >= 2;
   const initialEquity = hasFlows ? -flows![0] : undefined; // −close-period outflow
   const totalToEquity = hasFlows ? flows!.slice(1).reduce((a, b) => a + b, 0) : undefined;
@@ -718,7 +733,13 @@ function ReturnsSummary({
           engine="returns"
           path="gross_sale_price"
           flashKey={exitValue}
-          sub={exitCap != null ? `${fmtPct(exitCap, 2)} exit cap` : 'Gross sale — forward NOI ÷ exit cap'}
+          sub={
+            exitCap != null
+              ? `${fmtPct(exitCap, 2)} exit cap${exitNoiPeriod ? ` · Exit NOI (${exitNoiPeriod})` : ''}`
+              : exitNoiPeriod
+                ? `Gross sale — Exit NOI (${exitNoiPeriod}) ÷ exit cap`
+                : 'Gross sale — forward NOI ÷ exit cap'
+          }
           value={fmtM(exitValue)}
         />
         <ReturnsKpi
@@ -835,6 +856,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
   const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
   const grossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const sellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+  const exitNoiPeriod = exitNoiPeriodLabel(outputs);
   // Net Sale Proceeds here is GROSS − SELLING (computed client-side) so the
   // three visible rows foot. (The engine's ``net_proceeds`` is net-to-equity —
   // gross less selling, transfer tax AND the loan payoff — which would not
@@ -889,7 +911,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
       state: 'calculated',
       color: prov.black,
       weight: 700,
-      title: 'Forward NOI ÷ exit cap rate',
+      title: exitNoiPeriod ? `Exit NOI (${exitNoiPeriod}) ÷ exit cap rate` : 'Forward NOI ÷ exit cap rate',
     },
     {
       label: 'Selling Costs',

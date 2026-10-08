@@ -55,6 +55,8 @@ import {
   WorkerError,
   type TimelineResponse,
   type ValueState,
+  type ExitNoiBasis,
+  type ExitNoiBasisChoice,
 } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
@@ -119,6 +121,49 @@ function overrideScalar(overrides: Record<string, unknown>, key: string): unknow
   return raw && typeof raw === 'object' && 'value' in raw
     ? (raw as { value: unknown }).value
     : raw;
+}
+
+// ─── FON-44 (R-059) Exit NOI basis selector ─────────────────────────────
+const EXIT_NOI_BASIS_OPTIONS: { value: ExitNoiBasisChoice; label: string }[] = [
+  { value: 'forward_12m', label: 'Forward 12-month (default)' },
+  { value: 'stabilized', label: 'Stabilized NOI' },
+];
+
+/** The selectable basis a stored / echoed value names, or null. */
+function asBasisChoice(v: unknown): ExitNoiBasisChoice | null {
+  return v === 'forward_12m' || v === 'stabilized' ? v : null;
+}
+
+function ExitNoiBasisSelect({
+  value,
+  editable,
+  onChange,
+}: {
+  value: ExitNoiBasisChoice;
+  editable: boolean;
+  onChange: (v: ExitNoiBasisChoice) => void;
+}) {
+  return (
+    <select
+      data-testid="exit-noi-basis"
+      aria-label="Exit NOI basis"
+      value={value}
+      disabled={!editable}
+      onChange={(e) => {
+        const next = asBasisChoice(e.target.value);
+        if (next && next !== value) onChange(next);
+      }}
+      style={{
+        fontSize: 12, fontFamily: 'inherit', color: palette.ink,
+        border: `1px solid ${palette.border}`, borderRadius: 6, padding: '3px 6px',
+        background: '#fff', cursor: editable ? 'pointer' : 'default',
+      }}
+    >
+      {EXIT_NOI_BASIS_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
 }
 
 interface RowDef {
@@ -215,6 +260,35 @@ export default function InvestmentTab() {
         if (invRerunRef.current) clearTimeout(invRerunRef.current);
         invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
+
+  // FON-44 (R-059) — the Exit NOI BASIS (forward 12-month vs stabilized). A
+  // basis choice, not a number, so it saves with no justification note
+  // (`exit_noi_basis` is note-exempt), through the same PATCH + debounced
+  // run-all as every other exit assumption. `pendingExitBasis` shows the pick
+  // optimistically until the deal refetch carries it; a failed save drops it.
+  const [pendingExitBasis, setPendingExitBasis] = useState<ExitNoiBasisChoice | null>(null);
+  const onSaveExitNoiBasis = useCallback(
+    async (choice: ExitNoiBasisChoice) => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      setPendingExitBasis(choice);
+      const next = applyOverridePatch(invOverrides, { exit_noi_basis: choice }, '');
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast('Saved — re-running the model…', { type: 'success' });
+        void refreshDeal?.();
+        if (invRerunRef.current) clearTimeout(invRerunRef.current);
+        invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
+      } catch (err) {
+        setPendingExitBasis(null);
         const detail = err instanceof WorkerError ? err.body : String(err);
         toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
       }
@@ -335,6 +409,14 @@ export default function InvestmentTab() {
     getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
     getEngineField<number>(outputs, 'returns', 'terminal_noi');
   const wSellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
+  // FON-44 (R-059) — which NOI the reversion capitalized, and its period.
+  // Older runs carry neither → the Exit rows keep today's forward-12 wording.
+  const wExitNoiBasis = getEngineField<ExitNoiBasis>(outputs, 'returns', 'exit_noi_basis');
+  const wExitNoiPeriodLabelRaw = getEngineField<string>(outputs, 'returns', 'exit_noi_period_label');
+  const wExitNoiPeriodLabel =
+    typeof wExitNoiPeriodLabelRaw === 'string' && wExitNoiPeriodLabelRaw.trim()
+      ? wExitNoiPeriodLabelRaw.trim()
+      : undefined;
   const wHoldYears = getEngineField<number>(outputs, 'returns', 'hold_years');
   // E-022 (FON-44) — Hold Period is the analyst's INPUT; the engine's
   // `returns.hold_years` is only its echo. When Returns fails or is skipped
@@ -680,7 +762,28 @@ export default function InvestmentTab() {
               },
               { id: 'exitDate', label: 'Exit Date', kind: 'calc', state: 'calculated', value: timeline?.exit_date ? fmtISODate(timeline.exit_date) : '—' },
               {
-                id: 'fwdNoi', label: 'Forward 12-Month NOI', kind: 'linked', state: 'linked',
+                id: 'exitNoiBasis', label: 'Exit NOI basis', kind: 'input', state: 'assumption',
+                overridden: overridden('exit_noi_basis'),
+                note: wExitNoiBasis === 'override'
+                  ? 'An Exit NOI override is in effect — it wins over either basis until it is cleared.'
+                  : undefined,
+                value: (
+                  <ExitNoiBasisSelect
+                    value={
+                      pendingExitBasis
+                      ?? asBasisChoice(overrideScalar(invOverrides, 'exit_noi_basis'))
+                      ?? asBasisChoice(wExitNoiBasis)
+                      ?? 'forward_12m'
+                    }
+                    editable={liveMode}
+                    onChange={(v) => { void onSaveExitNoiBasis(v); }}
+                  />
+                ),
+              },
+              {
+                id: 'fwdNoi',
+                label: wExitNoiPeriodLabel ? `Exit NOI (${wExitNoiPeriodLabel})` : 'Forward 12-Month NOI',
+                kind: 'linked', state: 'linked',
                 value: money(terminalNoi), link: { label: '→ P&L', tab: 'pl' },
               },
               {
@@ -850,7 +953,7 @@ export default function InvestmentTab() {
               {
                 title: 'Exit / Reversion', note: 'One place for every exit assumption', rows: exit,
                 formula: (has(terminalNoi) && has(exitCap) && has(grossExit) && has(netExit))
-                  ? `Forward NOI ${fmtCurrency(terminalNoi)} ÷ Exit Cap ${fmtPct(exitCap, 2)} → Gross Exit ${fmtCurrency(grossExit)} − costs → Net ${fmtCurrency(netExit)}`
+                  ? `${wExitNoiPeriodLabel ? `Exit NOI (${wExitNoiPeriodLabel})` : 'Forward NOI'} ${fmtCurrency(terminalNoi)} ÷ Exit Cap ${fmtPct(exitCap, 2)} → Gross Exit ${fmtCurrency(grossExit)} − costs → Net ${fmtCurrency(netExit)}`
                   : undefined,
               },
               // FON-44 §3 — the two PIPs are different buckets, named for what

@@ -27,7 +27,7 @@
  *  canonical kind when useTraceGraph / useSource find no context.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act, within } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
 // Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
@@ -948,5 +948,90 @@ describe('DebtTab — `?tab=debt&sub=<slug>` routing', () => {
     for (const a of links) {
       expect(a.getAttribute('href')).toBe('?tab=investment&sub=sources-and-uses');
     }
+  });
+});
+
+// ─── FON-63 — negative NOI: N/A DSCR, shortfall, warning strip ─────────────
+describe('DebtTab — negative NOI (FON-63)', () => {
+  const NEG = {
+    year_one_dscr: null,
+    avg_dscr: 1.4,
+    covenants: [
+      { name: 'ltv', label: 'Loan-to-Value', kind: 'max', current: 0.639, threshold: 0.65, headroom: 0.011, passes: true },
+      { name: 'ltc', label: 'Loan-to-Cost', kind: 'max', current: 0.535, threshold: 0.75, headroom: 0.215, passes: true },
+      { name: 'dscr', label: 'DSCR (Year 1)', kind: 'min', current: null, threshold: 1.25, headroom: null, passes: null },
+      { name: 'debt_yield', label: 'Debt Yield (Year 1)', kind: 'min', current: -0.003, threshold: 0.1, headroom: -0.103, passes: false },
+    ],
+    schedule: [
+      { year: 1, interest: 1_667_500, principal: 0, debt_service: 1_667_500, ending_balance: 23_000_000, dscr: null, shortfall_usd: 1_737_483 },
+      { year: 2, interest: 1_667_500, principal: 0, debt_service: 1_667_500, ending_balance: 23_000_000, dscr: 1.4, shortfall_usd: 0 },
+    ],
+    total_shortfall_usd: 1_737_483,
+    negative_noi_years: [1],
+    noi_warning: null,
+  };
+
+  beforeEach(() => { nav.params = new URLSearchParams(''); });
+
+  it('shows the warning strip (composed) — not the failure banner — when a year is negative', () => {
+    currentOutputs = makeOutputs(NEG);
+    (currentOutputs.engines as unknown as Record<string, unknown>).expense = {
+      deal_id: 'deal-uuid-1', engine: 'expense', status: 'complete', summary: '',
+      outputs: { years: [{ noi: -69_983 }, { noi: 2_400_000 }] },
+      inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'run-1',
+    };
+    render(<DebtTab />);
+    const strip = screen.getByTestId('noi-warning-strip');
+    expect(strip).toHaveTextContent(
+      'Year 1 NOI is negative (−$69,983) · debt service shortfall $1.74M · DSCR N/A for Year 1',
+    );
+    // A warning, not a failure: the strip is a status, never the red banner.
+    expect(strip).toHaveAttribute('role', 'status');
+    expect(screen.queryByTestId('engine-failure-lead')).toBeNull();
+  });
+
+  it('renders the engine noi_warning verbatim', () => {
+    currentOutputs = makeOutputs({ ...NEG, noi_warning: 'Year 1 NOI is negative per the engine.' });
+    render(<DebtTab />);
+    expect(screen.getByTestId('noi-warning-strip')).toHaveTextContent('Year 1 NOI is negative per the engine.');
+  });
+
+  it('no strip when negative_noi_years is empty', () => {
+    currentOutputs = makeOutputs({ negative_noi_years: [], total_shortfall_usd: 0, noi_warning: null });
+    render(<DebtTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+  });
+
+  it('schedule: a null DSCR is N/A with the tooltip; Shortfall row shows the gap and — when covered', () => {
+    currentOutputs = makeOutputs(NEG);
+    render(<DebtTab />);
+    const na = screen.getAllByTestId('dscr-na');
+    expect(na.length).toBeGreaterThan(0);
+    expect(na[0]).toHaveTextContent('N/A');
+    expect(na[0]).toHaveAttribute('title', 'NOI ≤ 0 or no debt service — DSCR not meaningful');
+    expect(screen.getByText('Shortfall')).toBeInTheDocument();
+    // Year 1 shortfall cell + the summary KPI carry the same engine figure.
+    expect(screen.getAllByText('$1,737,483').length).toBe(2);
+    expect(screen.getByText('Debt Service Shortfall')).toBeInTheDocument();
+  });
+
+  it('Year-1 DSCR KPI renders N/A (with tooltip), not a dash or Awaiting', () => {
+    currentOutputs = makeOutputs(NEG);
+    render(<DebtTab />);
+    const label = screen.getByText('DSCR — Year 1');
+    const card = label.parentElement!.parentElement as HTMLElement;
+    const value = within(card).getByText('N/A');
+    expect(value).toHaveAttribute('title', 'NOI ≤ 0 or no debt service — DSCR not meaningful');
+    expect(within(card).getByText('Not meaningful')).toBeInTheDocument();
+  });
+
+  it('a run without the fields renders today’s schedule: no DSCR/Shortfall rows, no strip, no N/A', () => {
+    currentOutputs = makeOutputs();
+    render(<DebtTab />);
+    expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+    expect(screen.queryByText('Shortfall')).toBeNull();
+    expect(screen.queryByText('Debt Service Shortfall')).toBeNull();
+    expect(screen.queryByTestId('dscr-na')).toBeNull();
+    expect(screen.queryByText('N/A')).toBeNull();
   });
 });

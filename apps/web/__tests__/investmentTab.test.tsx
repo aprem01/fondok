@@ -898,3 +898,96 @@ describe('InvestmentTab — Renovation Budget states its basis (E-021 / FON-44)'
     expect(rowDot('Renovation Budget').getAttribute('aria-label')).toBe('Assumption');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-44 (R-059) — Exit NOI basis: forward 12-month (default) | stabilized.
+// A basis choice, not a number → saved with no justification note, through
+// the same PATCH + debounced run-all as every other exit assumption. The NOI
+// row's label is the engine's `exit_noi_period_label` when the run has one.
+// ─────────────────────────────────────────────────────────────────────────
+describe('InvestmentTab — Exit NOI basis (FON-44 / R-059)', () => {
+  type ReturnsRow = { status: string; outputs: Record<string, unknown> | null };
+  const engines = (OUTPUTS as unknown as { engines: Record<string, ReturnsRow | undefined> }).engines;
+  const originalReturns = engines.returns as ReturnsRow;
+  const withReturnsOutputs = (patch: Record<string, unknown>) => {
+    engines.returns = { ...originalReturns, outputs: { ...originalReturns.outputs, ...patch } };
+  };
+  afterEach(() => {
+    engines.returns = originalReturns;
+    updateSpy.mockImplementation(async () => ({ id: 'deal-uuid-1' }));
+  });
+
+  const select = () => screen.getByTestId('exit-noi-basis') as HTMLSelectElement;
+
+  it('defaults to Forward 12-month and offers Stabilized NOI', () => {
+    render(<InvestmentTab />);
+    expect(select().value).toBe('forward_12m');
+    const labels = Array.from(select().options).map((o) => o.textContent);
+    expect(labels).toEqual(['Forward 12-month (default)', 'Stabilized NOI']);
+  });
+
+  it('saves exit_noi_basis with NO note, shows it at once, and debounces the run-all', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<InvestmentTab />);
+      fireEvent.change(select(), { target: { value: 'stabilized' } });
+      // Optimistic — the pick shows before the refetch lands.
+      expect(select().value).toBe('stabilized');
+
+      await vi.waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+      const [id, body] = updateSpy.mock.calls[0] as unknown as [
+        string, { field_overrides: Record<string, unknown> },
+      ];
+      expect(id).toBe('deal-uuid-1');
+      // Note-exempt → the bare scalar, never a software-authored note.
+      expect(body.field_overrides.exit_noi_basis).toBe('stabilized');
+
+      expect(engineRunSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1300);
+      expect(engineRunSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a failed save drops the optimistic pick', async () => {
+    updateSpy.mockImplementation(async () => { throw new Error('boom'); });
+    render(<InvestmentTab />);
+    fireEvent.change(select(), { target: { value: 'stabilized' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    await waitFor(() => expect(select().value).toBe('forward_12m'));
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('reads the saved override, then the engine echo', () => {
+    mockOverrides = { exit_noi_basis: 'stabilized' };
+    render(<InvestmentTab />);
+    expect(select().value).toBe('stabilized');
+    cleanup();
+    mockOverrides = {};
+    withReturnsOutputs({ exit_noi_basis: 'stabilized' });
+    render(<InvestmentTab />);
+    expect(select().value).toBe('stabilized');
+  });
+
+  it('labels the NOI row with the engine period label', () => {
+    withReturnsOutputs({ exit_noi_basis: 'stabilized', exit_noi_period_label: 'stabilized, Year 3 grown to Year 6' });
+    render(<InvestmentTab />);
+    expect(screen.getByText('Exit NOI (stabilized, Year 3 grown to Year 6)')).toBeInTheDocument();
+    expect(screen.queryByText('Forward 12-Month NOI')).toBeNull();
+    expect(rowValueCell('Exit NOI (stabilized, Year 3 grown to Year 6)').textContent).toContain('$3,640,000');
+  });
+
+  it('falls back to today’s wording on a run without the label', () => {
+    render(<InvestmentTab />);
+    expect(screen.getByText('Forward 12-Month NOI')).toBeInTheDocument();
+    expect(rowValueCell('Forward 12-Month NOI').textContent).toContain('$3,640,000');
+  });
+
+  it('says so when an Exit NOI override is in effect', () => {
+    withReturnsOutputs({ exit_noi_basis: 'override', exit_noi_period_label: 'analyst override' });
+    render(<InvestmentTab />);
+    expect(screen.getByText(/Exit NOI override is in effect/)).toBeInTheDocument();
+    expect(select().value).toBe('forward_12m');
+  });
+});

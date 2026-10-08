@@ -253,6 +253,14 @@ const PROPOSED_BRAND_NONE = 'None selected';
 /** FON-59 R-058 — the Exit section's reversion-NOI row: one row, both names. */
 export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
 
+/** FON-44 (R-059) — the Exit NOI row label: the engine's own basis/period
+ *  label when the run carries one, today's forward-12 wording otherwise. */
+export function exitNoiLabel(periodLabel: string | null | undefined): string {
+  return typeof periodLabel === 'string' && periodLabel.trim()
+    ? `Exit NOI (${periodLabel.trim()})`
+    : EXIT_NOI_LABEL;
+}
+
 /** Slug of a title — the stable test hook for one section / tile. */
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -559,6 +567,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wInterestRate = dbt('interest_rate');
   const wExitCap = ret('exit_cap_rate');
   const wTerminalNoi = ret('terminal_noi_usd') ?? ret('terminal_noi');
+  // FON-44 (R-059) — the basis + period the reversion NOI was taken on. Older
+  // runs carry neither → the row keeps today's forward-12 wording.
+  const wExitNoiBasis = getEngineField<string>(outputs, 'returns', 'exit_noi_basis');
+  const wExitNoiPeriodLabel = getEngineField<string>(outputs, 'returns', 'exit_noi_period_label');
   const wGrossSale = ret('gross_sale_price');
   const wSellingCosts = ret('selling_costs');
   const wHoldYears = ret('hold_years');
@@ -889,9 +901,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // forward 12-month cash NOI the reversion capitalizes
       // (`returns.terminal_noi_usd` ?? `terminal_noi`, the year hold+1 figure),
       // so it is ONE row carrying both names — never the same number twice.
-      lnk('exitNOI', EXIT_NOI_LABEL, money(terminalNoi), '→ Future P&L', 'pl', {
+      lnk('exitNOI', exitNoiLabel(wExitNoiPeriodLabel), money(terminalNoi), '→ Future P&L', 'pl', {
         linkSub: 'projections',
-        sub: 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
+        sub: wExitNoiBasis === 'stabilized'
+          ? 'The NOI the exit value capitalizes — the stabilized year\u2019s NOI grown to exit, after the FF&E reserve.'
+          : wExitNoiBasis === 'override'
+            ? 'The NOI the exit value capitalizes — your Exit NOI override.'
+            : 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
       }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: 'Exit NOI (forward 12-month)', from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
