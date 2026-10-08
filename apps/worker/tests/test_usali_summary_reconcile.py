@@ -20,7 +20,15 @@ tests pin:
   total / rooms revenue) is added at the registry's canonical path with
   ``reviewed="reconciled"`` and ``reconciled_from={"added": true, …}``, on
   the real workbook and through the hook; totals already present within 5%
-  are left exactly as extracted.
+  are left exactly as extracted;
+* the NAMESPACE GUARD (2026-10-08 live defect, pipeline v4): the registry
+  matches on the LAST path segment, so department sub-rows
+  (``dept_house_laundry.total_revenue`` = 0, ``dept_pm_con.total_dept_expense``
+  = 691,361) were read as the hotel totals and overwritten with the Summary's
+  13.48M / 5.06M. A hotel-level concept now matches only a statement-level
+  path; a department concept only its own department's namespace; budget /
+  prior-year / reference / monthly rows are never replaced nor counted as
+  present; a zero in a department sub-row is a real zero.
 """
 
 from __future__ import annotations
@@ -699,6 +707,379 @@ def test_every_reconcilable_concept_has_a_canonical_path_that_resolves_back(doc_
     assert canonical_path_for_concept("not_a_concept", doc_type) is None
 
 
+# ─────────────────────────── namespace guard (2026-10-08 live defect) ───────────────────────────
+#
+# Forced re-extraction of the Angler's workbook under pipeline v3. The
+# registry resolves a path by its LAST segment, so the department sheets'
+# own sub-totals were read as the hotel's and overwritten with the Summary:
+#
+#   p_and_l_usali.dept_house_laundry.total_revenue      0 → 13,481,730.29
+#   p_and_l_usali.dept_staff_dining.total_revenue       0 → 13,481,730.29
+#   p_and_l_usali.dept_pm_con.total_dept_expense  691,361 →  5,064,971.75
+#
+# Those were correct department figures. The five replacements and four
+# additions the same run made were right and must keep happening.
+
+_LIVE_ROOMS = 9_496_407.22
+_LIVE_FB_REVENUE = 2_739_040.71
+_LIVE_MISC = 1_228_475.94
+_LIVE_TOTAL_REVENUE = 13_481_730.29
+_LIVE_FB_EXPENSE = 2_290_364.07
+_LIVE_TOTAL_DEPT_EXPENSE = 5_064_971.75
+_LIVE_AG = 1_264_087.54
+_LIVE_IT = 177_127.0
+_LIVE_SM = 1_169_427.16
+_LIVE_POM = 637_067.46
+
+
+def _live_summary_grid() -> list[list[str]]:
+    """The Angler's Summary totals as a single labelled-total column.
+
+    Only the concepts the live field list occupies plus the four additions
+    are stated, so the expected ``additions`` are exactly those four.
+    """
+    return [
+        ["", "FY2024"],
+        ["Revenues", ""],
+        ["Rooms", f"{_LIVE_ROOMS:.2f}"],  # row 3
+        ["Food & Beverage", f"{_LIVE_FB_REVENUE:.2f}"],  # row 4
+        ["Miscellaneous Income", f"{_LIVE_MISC:.2f}"],  # row 5
+        ["Total Revenues", f"{_LIVE_TOTAL_REVENUE:.2f}"],  # row 6
+        ["Departmental Expense", ""],
+        ["Food & Beverage", f"{_LIVE_FB_EXPENSE:.2f}"],  # row 8
+        ["Total Departmental Expenses", f"{_LIVE_TOTAL_DEPT_EXPENSE:.2f}"],  # row 9
+        ["Undistributed Expenses", ""],
+        ["Administrative & General", f"{_LIVE_AG:.2f}"],  # row 11
+        ["Information & Telecom Systems", f"{_LIVE_IT:.2f}"],  # row 12
+        ["Sales & Marketing", f"{_LIVE_SM:.2f}"],  # row 13
+        ["Property Operation & Maintenance", f"{_LIVE_POM:.2f}"],  # row 14
+    ]
+
+
+def _usd(name: str, value: float, *, page: int = 3) -> dict[str, Any]:
+    return {"field_name": name, "value": value, "unit": "USD", "source_page": page, "confidence": 0.9}
+
+
+def _live_defect_fields() -> list[dict[str, Any]]:
+    """The 2026-10-08 production field list, by path and value."""
+    return [
+        # Statement-level totals the extractor got wrong → replaced.
+        _usd("p_and_l_usali.total_revenue_usd", 10_839_200.0),
+        _usd("p_and_l_usali.total_departmental_expense_usd", 2_829_970.0),
+        _usd("p_and_l_usali.fb.revenue_usd", 96_528.1),
+        _usd("p_and_l_usali.fb.departmental_expense_usd", 55_358.5),
+        _usd("p_and_l_usali.undistributed.ag_expense_usd", 1_120_710.0),
+        # Statement-level total within 5% → untouched (and not re-added).
+        _usd("p_and_l_usali.rooms.revenue_usd", _LIVE_ROOMS, page=6),
+        # Department sub-rows: real zeros and a real department figure.
+        _usd("p_and_l_usali.dept_house_laundry.total_revenue", 0.0, page=11),
+        _usd("p_and_l_usali.dept_staff_dining.total_revenue", 0.0, page=12),
+        _usd("p_and_l_usali.dept_pm_con.total_dept_expense", 691_361.0, page=13),
+        # Budget / prior-year / reference rows (left alone on the live run — pinned).
+        _usd("p_and_l_usali.total_revenue.budget_usd", 12_000_000.0, page=5),
+        _usd("p_and_l_usali.total_revenue.prior_year_2023_usd", 12_480_000.0, page=5),
+        _usd("p_and_l_usali.admin_and_general.total_revenue_reference_2024", _LIVE_TOTAL_REVENUE, page=7),
+        {"field_name": "p_and_l_usali.period_type", "value": "annual", "source_page": 5, "confidence": 0.9},
+    ]
+
+
+_LIVE_DEPT_SUBROWS = (
+    "p_and_l_usali.dept_house_laundry.total_revenue",
+    "p_and_l_usali.dept_staff_dining.total_revenue",
+    "p_and_l_usali.dept_pm_con.total_dept_expense",
+)
+_LIVE_REFERENCE_ROWS = (
+    "p_and_l_usali.total_revenue.budget_usd",
+    "p_and_l_usali.total_revenue.prior_year_2023_usd",
+    "p_and_l_usali.admin_and_general.total_revenue_reference_2024",
+)
+#: path → (extracted value, Summary value)
+_LIVE_REPLACEMENTS: dict[str, tuple[float, float]] = {
+    "p_and_l_usali.fb.revenue_usd": (96_528.1, _LIVE_FB_REVENUE),
+    "p_and_l_usali.fb.departmental_expense_usd": (55_358.5, _LIVE_FB_EXPENSE),
+    "p_and_l_usali.total_revenue_usd": (10_839_200.0, _LIVE_TOTAL_REVENUE),
+    "p_and_l_usali.total_departmental_expense_usd": (2_829_970.0, _LIVE_TOTAL_DEPT_EXPENSE),
+    "p_and_l_usali.undistributed.ag_expense_usd": (1_120_710.0, _LIVE_AG),
+}
+#: canonical path → Summary value, in sheet order
+_LIVE_ADDITIONS: dict[str, float] = {
+    "p_and_l_usali.operating_revenue.misc_revenue": _LIVE_MISC,
+    "p_and_l_usali.undistributed.information_telecom": _LIVE_IT,
+    "p_and_l_usali.undistributed.sales_marketing": _LIVE_SM,
+    "p_and_l_usali.undistributed.property_operations": _LIVE_POM,
+}
+#: Concepts the live list already occupies — none may be added a second time.
+_LIVE_PRESENT_CONCEPTS = {
+    "total_revenue", "dept_expenses", "fb_revenue", "fb_dept_expense", "administrative_general", "rooms_revenue",
+}
+
+
+def _assert_live_shape(result: Any, *, tolerance: float) -> None:
+    original = _by_name(_live_defect_fields())
+    out = _by_name(result.fields)
+    names = [f["field_name"] for f in result.fields]
+    assert len(names) == len(set(names)), "no field may be emitted twice"
+
+    # 1. Department sub-rows: a zero there is a real zero — byte-identical.
+    for name in _LIVE_DEPT_SUBROWS:
+        assert out[name] == original[name], (name, out[name])
+        assert "reviewed" not in out[name] and "reconciled_from" not in out[name]
+    # 2. Reference rows: never replaced.
+    for name in _LIVE_REFERENCE_ROWS:
+        assert out[name] == original[name], (name, out[name])
+    # 3. A present-and-correct statement total is untouched.
+    assert out["p_and_l_usali.rooms.revenue_usd"] == original["p_and_l_usali.rooms.revenue_usd"]
+    assert out["p_and_l_usali.period_type"] == original["p_and_l_usali.period_type"]
+
+    # 4. The five intended replacements.
+    for name, (old, new) in _LIVE_REPLACEMENTS.items():
+        f = out[name]
+        assert abs(f["value"] - new) <= tolerance, (name, f["value"])
+        assert f["reviewed"] == "reconciled" and f["confidence"] == RECONCILED_CONFIDENCE
+        assert f["reconciled_from"]["field_name"] == name
+        assert f["reconciled_from"]["old_value"] == old
+    assert {c.field_name for c in result.changes} == set(_LIVE_REPLACEMENTS)
+
+    # 5. The four intended additions, at the registry's canonical paths.
+    for name, value in _LIVE_ADDITIONS.items():
+        f = out[name]
+        assert abs(f["value"] - value) <= tolerance, (name, f["value"])
+        assert f["reviewed"] == "reconciled" and f["reconciled_from"]["added"] is True
+    added_concepts = {a.concept for a in result.additions}
+    assert set(_LIVE_ADDITIONS) <= {a.field_name for a in result.additions}
+    assert not added_concepts & _LIVE_PRESENT_CONCEPTS, added_concepts
+
+    rec = result.confidence["summary_reconciliation"]
+    assert {c["field_name"] for c in rec["changes"]} == set(_LIVE_REPLACEMENTS)
+    assert set(_LIVE_ADDITIONS) <= {a["field_name"] for a in rec["added"]}
+
+
+def test_live_shape_department_subrows_are_out_of_scope_while_totals_still_reconcile():
+    """Synthetic Summary with the Angler's totals; the live field list."""
+    fields = _live_defect_fields()
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="PNL", extraction_data=_extraction(_page(_live_summary_grid()))
+    )
+    assert result.skipped_reason is None
+    assert result.table is not None and result.table.annual_column_rule == "labelled_total"
+    _assert_live_shape(result, tolerance=0.005)
+    # Exactly the four additions, in sheet order; nothing else grew the list.
+    assert [(a.field_name, a.value) for a in result.additions] == list(_LIVE_ADDITIONS.items())
+    assert [a.row for a in result.additions] == [5, 12, 13, 14]
+    assert len(result.fields) == len(fields) + len(_LIVE_ADDITIONS)
+    # Original order preserved, additions appended.
+    assert [f["field_name"] for f in result.fields[: len(fields)]] == [f["field_name"] for f in fields]
+
+
+@requires_real_workbook
+def test_real_workbook_live_shape_department_subrows_are_out_of_scope(real_extraction_data):
+    """The same field list against the real Summary sheet (workbook bytes)."""
+    fields = _live_defect_fields()
+    result = reconcile_extraction(
+        fields,
+        _confidence(fields),
+        doc_type="PNL",
+        extraction_data=real_extraction_data,
+        file_bytes=real_extraction_data["bytes"],
+    )
+    assert result.skipped_reason is None
+    assert result.table is not None and result.table.source == "workbook"
+    _assert_live_shape(result, tolerance=1.0)
+    # The real Summary states more lines (GOP, NOI, …) — those are added too,
+    # but never for a concept a department sub-row was wrongly standing in for.
+    assert {"gop", "noi"} <= {a.concept for a in result.additions}
+
+
+async def test_quality_passes_hook_live_shape(monkeypatch):
+    """Through ``_apply_pnl_quality_passes`` (no session → reconciler only)."""
+    from app.api import documents as docs
+
+    fields = _live_defect_fields()
+    out_fields, out_conf = await docs._apply_pnl_quality_passes(
+        None,
+        deal_id="deal",
+        doc_id="doc",
+        tenant_id="tenant",
+        doc_type="PNL",
+        fields=fields,
+        confidence=_confidence(fields),
+        extraction_data=_extraction(_page(_live_summary_grid())),
+        storage_key=None,
+    )
+    out = _by_name(out_fields)
+    original = _by_name(_live_defect_fields())
+    for name in _LIVE_DEPT_SUBROWS + _LIVE_REFERENCE_ROWS:
+        assert out[name] == original[name], name
+    assert out["p_and_l_usali.total_revenue_usd"]["value"] == _LIVE_TOTAL_REVENUE
+    assert out["p_and_l_usali.dept_pm_con.total_dept_expense"]["value"] == 691_361.0
+    assert out["p_and_l_usali.operating_revenue.misc_revenue"]["value"] == _LIVE_MISC
+    assert {c["field_name"] for c in out_conf["summary_reconciliation"]["changes"]} == set(_LIVE_REPLACEMENTS)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        # Statement level: directly under the root, or under a statement namespace.
+        ("p_and_l_usali.total_revenue_usd", "total_revenue"),
+        ("p_and_l_usali.operating_revenue.total_revenue", "total_revenue"),
+        ("p_and_l_usali.summary.total_revenue_usd", "total_revenue"),
+        ("p_and_l_usali.totals.gop_usd", "gop"),
+        ("p_and_l_usali.total_departmental_expense_usd", "dept_expenses"),
+        ("p_and_l_usali.departmental_expenses.total", "dept_expenses"),
+        ("p_and_l_usali.undistributed.total", "undistributed_expenses"),
+        ("p_and_l_usali.undistributed.ag_expense_usd", "administrative_general"),
+        ("p_and_l_usali.fixed_charges.property_taxes", "property_taxes"),
+        ("total_revenue_usd", "total_revenue"),
+        # A concept's OWN block is statement level for that concept.
+        ("p_and_l_usali.gop.total_usd", "gop"),
+        ("p_and_l_usali.gross_operating_profit.total", "gop"),
+        ("p_and_l_usali.management_fees.total_usd", "mgmt_fee"),
+        ("p_and_l_usali.net_operating_income.noi_usd", "noi"),
+        # A department concept under its own department's namespace.
+        ("p_and_l_usali.fb.revenue_usd", "fb_revenue"),
+        ("p_and_l_usali.food_and_beverage.revenue_usd", "fb_revenue"),
+        ("p_and_l_usali.fb.departmental_expense_usd", "fb_dept_expense"),
+        ("p_and_l_usali.rooms.revenue_usd", "rooms_revenue"),
+        ("p_and_l_usali.operating_revenue.food_beverage_revenue", "fb_revenue"),
+        ("p_and_l_usali.departmental_expenses.food_beverage", "fb_dept_expense"),
+        # Hotel-level concept under a department / cost-centre namespace → out of scope.
+        ("p_and_l_usali.dept_house_laundry.total_revenue", None),
+        ("p_and_l_usali.dept_staff_dining.total_revenue", None),
+        ("p_and_l_usali.dept_pm_con.total_dept_expense", None),
+        ("p_and_l_usali.rooms.total_revenue", None),
+        ("p_and_l_usali.fb.total_revenue", None),
+        ("p_and_l_usali.food_beverage.total_revenue", None),
+        ("p_and_l_usali.hc_spa.total_revenue", None),
+        ("p_and_l_usali.reservations.total_revenue", None),
+        ("p_and_l_usali.minor_operated_departments.total_revenue", None),
+        ("p_and_l_usali.fb_detail.total_revenue", None),
+        ("p_and_l_usali.fb_retail.total_revenue", None),
+        ("p_and_l_usali.payroll_related.total_dept_expense", None),
+        ("p_and_l_usali.admin_and_general.total_revenue", None),
+        ("p_and_l_usali.sales_and_marketing.total_revenue", None),
+        ("p_and_l_usali.information_telecom.total_revenue", None),
+        ("p_and_l_usali.property_operations_maintenance.total_revenue", None),
+        ("p_and_l_usali.d_rest_con.total_revenue", None),
+        # An unknown block is never the statement.
+        ("kpis.total_revenue", None),
+        ("p_and_l_usali.ratios.gop_usd", None),
+        # A department concept under a DIFFERENT department's namespace.
+        ("p_and_l_usali.rooms.fb_revenue", None),
+        ("p_and_l_usali.fb.rooms_revenue", None),
+        ("p_and_l_usali.hc_spa.fb_revenue", None),
+        # Reference / budget / prior-year / monthly / pct rows.
+        ("p_and_l_usali.total_revenue.budget_usd", None),
+        ("p_and_l_usali.budget.total_revenue_usd", None),
+        ("p_and_l_usali.total_revenue.prior_year_2023_usd", None),
+        ("p_and_l_usali.admin_and_general.total_revenue_reference_2024", None),
+        ("p_and_l_usali.operating_revenue.total_revenue_reference", None),
+        ("p_and_l_usali.pct_calculations.total_revenue", None),
+        ("p_and_l_usali.forecast.total_revenue_usd", None),
+        ("p_and_l_usali.total_revenue.variance_usd", None),
+        ("p_and_l_usali.monthly.jan_2024.total_revenue", None),
+        ("p_and_l_usali.operating_revenue.total_revenue_dec", None),
+        ("p_and_l_usali.2023.total_revenue_usd", None),
+        ("p_and_l_usali.fy2024.gop_usd", None),
+    ],
+)
+def test_namespace_guard_resolves_statement_level_paths_only(path: str, expected: str | None):
+    from app.extraction.usali_summary_reconcile import _field_concept
+
+    assert _field_concept(path, "PNL") == expected
+
+
+def test_namespace_guard_rule_components():
+    from app.extraction.usali_summary_reconcile import (
+        STATEMENT_NAMESPACES,
+        department_namespaces,
+        is_department_namespace,
+        is_reference_path,
+        namespace_permits,
+    )
+
+    # Derived from the registry's department / cost-centre line concepts …
+    derived = department_namespaces()
+    assert {
+        "rooms", "fb", "food_and_beverage", "other_operated_departments", "miscellaneous_income",
+        "administrative_and_general", "information_and_telecom", "sales_and_marketing",
+        "property_operations_and_maintenance", "utilities",
+        # … including the concepts' own bare names used as a block name …
+        "rooms_revenue", "fb_revenue", "food_beverage", "sales_marketing",
+    } <= derived
+    # … never a statement namespace.
+    assert not derived & STATEMENT_NAMESPACES
+    assert "p_and_l_usali" not in derived
+    # The supplement + the ``dept_`` / ``d_`` sheet prefixes.
+    for seg in (
+        "dept_house_laundry", "dept_pm_con", "d_rest_con", "hc_spa", "reservations", "payroll_related",
+        "fb_detail", "fb_retail", "minor_operated_departments", "admin_and_general", "information_telecom",
+        "property_operations_maintenance",
+    ):
+        assert is_department_namespace(seg), seg
+    for seg in ("operating_revenue", "undistributed", "summary", "totals", "fixed_charges", "departmental_expenses", "gop"):
+        assert not is_department_namespace(seg), seg
+
+    # Statement-level spellings the requirement names are permitted for the hotel total.
+    assert namespace_permits("p_and_l_usali.total_revenue_usd", "total_revenue")
+    assert namespace_permits("p_and_l_usali.total_revenue.annual_usd", "total_revenue")
+    assert namespace_permits("p_and_l_usali.summary.total_revenue_usd", "total_revenue")
+    # The generic sub-row leaves under a department path are denied outright.
+    for leaf in ("total_revenue", "total_dept_expense", "total_expense", "total", "total_usd"):
+        assert not namespace_permits(f"p_and_l_usali.dept_house_laundry.{leaf}", "total_revenue"), leaf
+        assert not namespace_permits(f"p_and_l_usali.fb.{leaf}", "total_revenue"), leaf
+    # A department concept: own namespace yes, another department's no.
+    assert namespace_permits("p_and_l_usali.fb.revenue_usd", "fb_revenue")
+    assert not namespace_permits("p_and_l_usali.rooms.fb_revenue", "fb_revenue")
+
+    for p in (
+        "p_and_l_usali.total_revenue.budget_usd", "p_and_l_usali.total_revenue.prior_year_2023_usd",
+        "p_and_l_usali.admin_and_general.total_revenue_reference_2024", "p_and_l_usali.pct_calculations.total_revenue",
+        "p_and_l_usali.monthly.jan_2024.total_revenue", "p_and_l_usali.forecast.total_revenue_usd",
+        "p_and_l_usali.total_revenue.variance_usd", "p_and_l_usali.operating_revenue.rooms_revenue_sep",
+    ):
+        assert is_reference_path(p), p
+    for p in (
+        "p_and_l_usali.total_revenue_usd", "p_and_l_usali.operating_revenue.food_beverage_revenue",
+        "p_and_l_usali.undistributed.sales_marketing", "p_and_l_usali.ffe_reserve.proforma_calculation_usd",
+        "p_and_l_usali.net_operating_income.noi_before_reserve_usd",
+    ):
+        assert not is_reference_path(p), p
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "p_and_l_usali.total_revenue.budget_usd",
+        "p_and_l_usali.total_revenue.prior_year_2023_usd",
+        "p_and_l_usali.admin_and_general.total_revenue_reference_2024",
+        "p_and_l_usali.operating_revenue.total_revenue_reference",
+        "p_and_l_usali.pct_calculations.total_revenue",
+        "p_and_l_usali.monthly.jan_2024.total_revenue",
+        "p_and_l_usali.operating_revenue.total_revenue_dec",
+        "p_and_l_usali.forecast.total_revenue_usd",
+        "p_and_l_usali.total_revenue.variance_usd",
+        "p_and_l_usali.2023.total_revenue_usd",
+        # And a department sub-row standing in for the hotel total.
+        "p_and_l_usali.dept_house_laundry.total_revenue",
+    ],
+)
+def test_reference_and_department_rows_are_neither_replaced_nor_present(path: str):
+    """Excluded from replacement AND from presence: the only ``total_revenue``
+    field is a reference / sub-row, so the actual total is ADDED at the
+    canonical path and the reference row comes back byte-identical."""
+    fields = [
+        _usd(path, 1.0, page=7),
+        {"field_name": "p_and_l_usali.period_type", "value": "annual", "source_page": 2, "confidence": 0.9},
+    ]
+    result = reconcile_extraction(
+        fields, _confidence(fields), doc_type="PNL", extraction_data=_extraction(_page(_summary_grid()))
+    )
+    assert result.changes == []
+    assert result.fields[0] == fields[0]
+    added = {a.field_name: a.value for a in result.additions}
+    assert added["p_and_l_usali.operating_revenue.total_revenue"] == 1920.0
+
+
 # ─────────────────────────── the gate ───────────────────────────
 
 
@@ -846,10 +1227,12 @@ async def test_quality_passes_hook_leaves_a_complete_extraction_alone():
     }
 
 
-def test_pipeline_version_bumped_so_v2_rows_rerun():
+def test_pipeline_version_bumped_so_v3_rows_rerun():
+    """v3 rows persisted the over-reached department sub-rows (the live
+    defect) into the cache; without the bump a re-extract would serve them."""
     from app.api.documents import EXTRACTION_PIPELINE_VERSION
 
-    assert EXTRACTION_PIPELINE_VERSION == "v3"
+    assert EXTRACTION_PIPELINE_VERSION == "v4"
 
 
 def test_extraction_field_out_carries_reconciliation_provenance():

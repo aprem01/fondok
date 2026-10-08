@@ -140,7 +140,19 @@ DOC_STATUS_FAILED = "FAILED"
 # below 25% of the deal's other statements is capped at 0.5 confidence)
 # BEFORE the row is persisted. Every P&L extraction cached under v2 still
 # carries the outlet-level F&B line and must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v3"
+# v4 (2026-10-08): the reconciler gained a NAMESPACE GUARD. The ontology
+# registry resolves a path by its LAST segment, so under v3 department
+# sub-rows (``p_and_l_usali.dept_house_laundry.total_revenue`` = 0,
+# ``.dept_pm_con.total_dept_expense`` = 691,361) were read as the hotel's
+# totals and overwritten with the Summary's 13.48M / 5.06M — and persisted
+# that way into the cache. A hotel-level total now reconciles only at
+# statement level (directly under ``p_and_l_usali.`` or under
+# ``operating_revenue`` / ``summary`` / ``totals`` / ``undistributed`` /
+# ``fixed_charges`` / ``departmental_expenses``), a department line only
+# under its own department's namespace, and budget / prior-year /
+# reference / monthly rows are never touched. Every P&L extraction cached
+# under v3 may carry the over-reached sub-rows and must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v4"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads

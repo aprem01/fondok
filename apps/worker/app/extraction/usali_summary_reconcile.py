@@ -31,6 +31,35 @@ annual value, confidence 0.98, ``reviewed="reconciled"`` and
 ``reconciled_from={"added": True, sheet, row, label}``. The replace rule
 for present-but-different fields is unchanged.
 
+Namespace guard (2026-10-08, pipeline v4)
+-----------------------------------------
+The registry resolves a path by its LAST segment, so on the forced
+re-extraction of the same workbook the department sheets' own sub-totals
+(``p_and_l_usali.dept_house_laundry.total_revenue`` = 0,
+``.dept_staff_dining.total_revenue`` = 0, ``.dept_pm_con.total_dept_expense``
+= 691,361) resolved to the hotel's ``total_revenue`` / ``dept_expenses``
+and were overwritten with the Summary's 13,481,730.29 / 5,064,971.75 —
+correct department figures destroyed. :func:`namespace_permits` now vetoes
+the registry's answer unless the path is at statement level FOR THAT
+CONCEPT: every segment between the ``p_and_l_usali`` root and the leaf
+must be a :data:`STATEMENT_NAMESPACES` member (``operating_revenue`` /
+``revenues`` / ``departmental_expenses`` / ``undistributed`` /
+``fixed_charges`` / ``summary`` / ``totals`` …) or one of the concept's
+OWN registry namespaces (``fb`` / ``food_and_beverage`` for F&B, ``gop`` /
+``gross_operating_profit`` for GOP …). So a hotel-level total matches only
+``p_and_l_usali.total_revenue_usd``-style paths, a department line only
+its own department's block (never another department's), and ``dept_*`` /
+``hc_spa`` / ``payroll_related`` / ``fb_detail`` blocks are out of scope
+altogether — a zero there is a real zero. The department namespaces are
+derived from the registry's department / cost-centre line concepts
+(:func:`department_namespaces`) plus a short supplement, and the generic
+sub-row leaves (``total_revenue`` / ``total_dept_expense`` /
+``total_expense`` / ``total``) under any of them are refused outright.
+Budget / prior-year / reference / %-calculation / forecast / variance /
+month / year rows (:func:`is_reference_path`) are never replaced and never
+count as "present" — so when only such rows exist, the actual total is
+ADDED from the Summary at the canonical path.
+
 Scope rules
 -----------
 * Runs only for P&L-family documents (``T12`` / ``PNL`` / ``PNL_MONTHLY`` /
@@ -42,8 +71,9 @@ Scope rules
   no Summary row, a non-dollar field, a monthly / quarterly slice, or a
   field whose value is within 5% of the Summary is left exactly as
   extracted. A concept is "present" when ANY extracted field resolves to
-  it (whatever its unit or value), so an added field can never duplicate
-  an extracted one.
+  it AT STATEMENT LEVEL (whatever its unit or value; never a department
+  sub-row or a reference row — see the namespace guard above), so an added
+  field can never duplicate an extracted one.
 * The annual column is the rightmost numeric column that equals the sum of
   the 12 monthly columns within 0.5% on the USALI rows; failing that, the
   column labelled ``Total`` / ``YTD`` / ``Annual`` (``YTD`` only when the
@@ -87,6 +117,7 @@ Summary total it cannot find verbatim.
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import math
 import re
@@ -274,6 +305,260 @@ RECONCILABLE_CONCEPTS: frozenset[str] = frozenset(
     set(_GLOBAL_LABELS.values())
     | {c for m in _SECTION_SCOPED_LABELS.values() for c in m.values()}
 )
+
+
+# ─────────────────────────── namespace guard ───────────────────────────
+#
+# 2026-10-08 live defect. ``registry.concept_for_path`` resolves a path by
+# its LAST segment (tier 5), so ``p_and_l_usali.dept_house_laundry.
+# total_revenue`` = 0 resolved to the hotel's ``total_revenue`` and was
+# overwritten with the Summary's 13,481,730.29; ``dept_pm_con.
+# total_dept_expense`` = 691,361 likewise became 5,064,971.75. Those were
+# correct DEPARTMENT figures. Everything below is a pure veto on top of the
+# registry's answer: it never picks a concept, it only refuses one when the
+# path's namespaces say the field is not the statement-level line the
+# concept names.
+
+#: Namespaces directly under ``p_and_l_usali.`` that hold the statement's
+#: own lines — the hotel-level totals and the department / cost-centre
+#: lines as the Summary states them. A path whose intermediate segments are
+#: all drawn from this set (or from the concept's OWN registry namespaces,
+#: see :func:`namespace_permits`) is statement level.
+STATEMENT_NAMESPACES: frozenset[str] = frozenset(
+    {
+        "operating_revenue",
+        "revenues",
+        "revenue",
+        "departmental_expenses",
+        "departmental_expense",
+        "undistributed",
+        "undistributed_expenses",
+        "fixed_charges",
+        "non_operating",
+        "summary",
+        "totals",
+    }
+)
+
+#: Department / cost-centre block names seen on live extractions that the
+#: registry has no alias for, so :func:`department_namespaces` cannot derive
+#: them. Unioned with the derived set.
+_DEPARTMENT_NAMESPACE_SUPPLEMENT: frozenset[str] = frozenset(
+    {
+        "rooms",
+        "fb",
+        "food_beverage",
+        "food_and_beverage",
+        "fb_detail",
+        "fb_retail",
+        "fb_revenue",
+        "minor_operated_departments",
+        "other_operated_departments",
+        "hc_spa",
+        "spa",
+        "reservations",
+        "admin_and_general",
+        "administrative_and_general",
+        "sales_and_marketing",
+        "property_operations_maintenance",
+        "property_operations_and_maintenance",
+        "information_telecom",
+        "information_and_telecom",
+        "payroll_related",
+    }
+)
+#: A segment with one of these prefixes names a department sheet
+#: (``dept_house_laundry``, ``d_rest_con``).
+_DEPARTMENT_SEGMENT_PREFIXES: tuple[str, ...] = ("dept_", "department_", "d_")
+
+#: Generic sub-row leaves. Under a department namespace these are the
+#: DEPARTMENT's own totals (``dept_pm_con.total_dept_expense`` = 691,361),
+#: never the statement's — whatever the registry's tail match says.
+_GENERIC_TOTAL_LEAVES: frozenset[str] = frozenset(
+    {
+        "total",
+        "total_revenue",
+        "total_revenues",
+        "total_dept_expense",
+        "total_departmental_expense",
+        "total_departmental_expenses",
+        "total_expense",
+        "total_expenses",
+    }
+)
+
+#: USALI sections whose identity-less concepts are the lines of ONE
+#: department or cost centre (Rooms, F&B, Other operated, Misc income, A&G,
+#: IT, S&M, POM, Utilities …). Their alias namespaces are department
+#: namespaces; the totals (concepts WITH an identity) contribute nothing.
+_DEPARTMENT_LINE_SECTIONS: frozenset[str] = frozenset({"revenue", "departmental", "undistributed"})
+
+#: Reference rows — budget / prior-year / reference / %-of-revenue /
+#: forecast / variance blocks and month / year columns. Never the
+#: document's own-period actual, so never replaced and never "present".
+_REFERENCE_SEGMENTS: frozenset[str] = frozenset(
+    {"budget", "prior_year", "reference", "pct_calculations", "forecast", "variance", "plan", "adjusted"}
+)
+_REFERENCE_TOKENS: frozenset[str] = frozenset(
+    {
+        "budget",
+        "budgeted",
+        "prior",
+        "reference",
+        "forecast",
+        "forecasted",
+        "projection",
+        "projected",
+        "variance",
+        "plan",
+        "adjusted",
+    }
+)
+_YEAR_TOKEN_RE = re.compile(r"^(?:fy|cy)?(?:19|20)\d{2}$")
+_MONTH_TOKEN_RE = re.compile(
+    r"^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$"
+)
+
+
+def is_reference_path(field_name: str) -> bool:
+    """True when the path names a budget / prior-year / reference / monthly row.
+
+    Checked on every dotted segment and on every ``_``-token inside it, so
+    ``total_revenue.budget_usd``, ``total_revenue.prior_year_2023_usd``,
+    ``admin_and_general.total_revenue_reference_2024``,
+    ``pct_calculations.total_revenue`` and ``monthly.jan_2024.total_revenue``
+    are all excluded. A four-digit year anywhere excludes the path too: the
+    Summary states the document's OWN period, a year-labelled column is
+    either a restatement of the plain path or another year, and the
+    reconciler cannot tell which — the add rule still supplies the canonical
+    total when no plain path exists.
+    """
+    lname = field_name.strip().lower()
+    for seg in lname.split("."):
+        if seg in _REFERENCE_SEGMENTS:
+            return True
+        for tok in seg.split("_"):
+            if tok and (
+                tok in _REFERENCE_TOKENS or _YEAR_TOKEN_RE.match(tok) or _MONTH_TOKEN_RE.match(tok)
+            ):
+                return True
+    return False
+
+
+def _alias_namespaces(concept: str, *, pnl_only: bool) -> frozenset[str]:
+    """Namespaces the registry itself uses for ``concept``.
+
+    Every intermediate segment of its aliases (``gop`` → ``gop``,
+    ``gross_operating_profit``; ``fb_revenue`` → ``fb``,
+    ``food_and_beverage``, ``operating_revenue`` …) plus the concept's own
+    names — the unit-stripped leaf of each bare or root-level alias
+    (``total_revenue``, ``noi``, ``ffe_reserve``) — so a block named after
+    the concept (``p_and_l_usali.total_revenue.annual_usd``,
+    ``p_and_l_usali.gop.total_usd``) is that concept's own statement line.
+    ``pnl_only`` drops aliases rooted outside ``p_and_l_usali``
+    (``broker_proforma.*``, ``ttm_summary_per_om.*``) for the department
+    derivation. Wildcard segments (``{year}``) are never namespaces.
+    """
+    from ..ontology import registry as ontology
+
+    meta = ontology.get_registry().concepts.get(concept)
+    if meta is None:
+        return frozenset()
+    out: set[str] = set()
+    for aliases in meta.aliases.values():
+        for alias in aliases:
+            segs = alias.path.strip().lower().split(".")
+            if pnl_only and len(segs) > 1 and segs[0] != "p_and_l_usali":
+                continue
+            out.update(s for s in segs[:-1] if s and "{" not in s)
+            if len(segs) == 1 or (len(segs) == 2 and segs[0] == "p_and_l_usali"):
+                out.add(ontology._strip_unit(segs[-1]))
+    return frozenset(out)
+
+
+@functools.cache
+def _own_namespaces(concept: str) -> frozenset[str]:
+    """All of ``concept``'s registry namespaces (any alias root)."""
+    return _alias_namespaces(concept, pnl_only=False)
+
+
+@functools.cache
+def department_namespaces() -> frozenset[str]:
+    """Department / cost-centre namespaces, derived from the registry.
+
+    Every concept filed under a USALI ``revenue`` / ``departmental`` /
+    ``undistributed`` section WITHOUT an identity is a line of ONE
+    department or cost centre; its ``p_and_l_usali.*`` alias namespaces
+    (``rooms``, ``fb``, ``food_and_beverage``, ``other_operated_departments``,
+    ``miscellaneous_income``, ``administrative_and_general``,
+    ``sales_and_marketing``, ``property_operations_and_maintenance``,
+    ``information_and_telecom``, ``utilities`` …) and its own names
+    (``rooms_revenue``, ``food_beverage``, ``sales_marketing`` …) are
+    department namespaces. The statement namespaces are removed and the
+    hard-coded supplement (``hc_spa``, ``payroll_related``, ``fb_detail`` …)
+    is added. Totals — concepts WITH an identity — contribute nothing.
+    """
+    from ..ontology import registry as ontology
+
+    reg = ontology.get_registry()
+    out: set[str] = set(_DEPARTMENT_NAMESPACE_SUPPLEMENT)
+    for cid, meta in reg.concepts.items():
+        if meta.identity or meta.usali is None:
+            continue
+        if meta.usali.section not in _DEPARTMENT_LINE_SECTIONS:
+            continue
+        out |= _alias_namespaces(cid, pnl_only=True)
+    out -= STATEMENT_NAMESPACES
+    out.discard("p_and_l_usali")
+    return frozenset(out)
+
+
+def is_department_namespace(segment: str) -> bool:
+    """``rooms`` / ``fb`` / ``dept_house_laundry`` / ``hc_spa`` … → True."""
+    seg = segment.strip().lower()
+    return seg in department_namespaces() or seg.startswith(_DEPARTMENT_SEGMENT_PREFIXES)
+
+
+def namespace_permits(field_name: str, concept: str) -> bool:
+    """The namespace rule — a veto on the registry's ``concept`` for ``field_name``.
+
+    With ``inner`` = the segments between the ``p_and_l_usali`` root and the
+    leaf:
+
+    1. every ``inner`` segment must be a :data:`STATEMENT_NAMESPACES`
+       member or one of the concept's OWN registry namespaces. A
+       hotel-level total (``total_revenue``, ``dept_expenses``,
+       ``undistributed_expenses``, ``gop``, ``mgmt_fee``,
+       ``income_before_nonop``, ``fixed_charges``, ``ebitda``, ``noi``,
+       ``ffe_reserve``) therefore matches only at statement level; a
+       department line (``rooms_revenue``, ``fb_revenue``,
+       ``fb_dept_expense``, ``other_revenue`` …) matches under its own
+       department's namespace (``rooms.*``, ``fb.*``,
+       ``food_and_beverage.*``) or a statement namespace, never under
+       another department's; an unknown block (``dept_*``, ``hc_spa``,
+       ``payroll_related``, ``kpis`` …) is never the statement;
+    2. a generic sub-row leaf (:data:`_GENERIC_TOTAL_LEAVES`) under any
+       department namespace (:func:`is_department_namespace`) is that
+       department's total and is refused outright.
+
+    A path with no intermediate segment (``p_and_l_usali.total_revenue_usd``,
+    bare ``total_revenue``) is statement level by construction.
+    """
+    from ..ontology import registry as ontology
+
+    segs = field_name.strip().lower().split(".")
+    inner = segs[:-1]
+    if inner and inner[0] == "p_and_l_usali":
+        inner = inner[1:]
+    if not inner:
+        return True
+    allowed = STATEMENT_NAMESPACES | _own_namespaces(concept)
+    if any(seg not in allowed for seg in inner):
+        return False
+    leaf = ontology._strip_unit(segs[-1])
+    return not (leaf in _GENERIC_TOTAL_LEAVES and any(is_department_namespace(s) for s in inner))
+
 
 _MONTH_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b")
 _TOTAL_HEADER_RE = re.compile(
@@ -678,9 +963,18 @@ def parse_summary_grid(
 
 
 def _field_concept(field_name: str, doc_type: str | None) -> str | None:
-    """Registry concept for an extracted path when it is an annual actual line."""
+    """Registry concept for an extracted path when it is an annual actual line
+    AT STATEMENT LEVEL for that concept (:func:`namespace_permits`).
+
+    ``None`` for a reference / budget / prior-year / monthly row
+    (:func:`is_reference_path`), a subordinate slice, a non-actual basis, or
+    a department sub-row standing in for a hotel total.
+    """
     from ..ontology import registry as ontology
 
+    lname = field_name.strip().lower()
+    if not lname or is_reference_path(lname):
+        return None
     reg = ontology.get_registry()
     hit = ontology.concept_for_path(field_name, doc_type=doc_type)
     if hit is None:
@@ -688,8 +982,10 @@ def _field_concept(field_name: str, doc_type: str | None) -> str | None:
     concept, basis, scope = hit
     if concept not in RECONCILABLE_CONCEPTS or basis != "actual":
         return None
-    is_slice, _ = ontology._subordinate_scope(field_name.strip().lower(), reg._subordinate)
+    is_slice, _ = ontology._subordinate_scope(lname, reg._subordinate)
     if is_slice or scope not in ("annual", "ttm", "unknown"):
+        return None
+    if not namespace_permits(lname, concept):
         return None
     return concept
 
@@ -1027,6 +1323,7 @@ __all__ = [
     "RECONCILABLE_CONCEPTS",
     "RECONCILED_CONFIDENCE",
     "RECONCILE_TOLERANCE",
+    "STATEMENT_NAMESPACES",
     "SUMMARY_SHEET_NAMES",
     "ReconcileResult",
     "ReconciledAddition",
@@ -1035,8 +1332,12 @@ __all__ = [
     "SummaryTable",
     "canonical_doc_type",
     "canonical_path_for_concept",
+    "department_namespaces",
     "find_summary_page",
+    "is_department_namespace",
     "is_pnl_family",
+    "is_reference_path",
+    "namespace_permits",
     "parse_summary_grid",
     "reconcile_extraction",
     "reconcile_fields",
