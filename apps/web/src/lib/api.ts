@@ -2745,6 +2745,42 @@ export interface DebtEngineOutputExtras {
   completion_guarantee: 'required' | 'in_place' | 'not_required' | null;
 }
 
+// ─── Negative NOI (FON-63) + exit NOI basis (FON-44, R-059) ─────────
+// Additive fields. Runs persisted before these shipped carry none of them, so
+// every reader treats them as optional and degrades to the prior rendering.
+
+/** One annual debt-schedule row's FON-63 additions. `dscr` is null when NOI
+ *  ≤ 0 or there is no debt service (DSCR not meaningful — render "N/A");
+ *  `shortfall_usd` is the debt service NOI did not cover (0 when covered). */
+export interface DebtYearNoiFields {
+  year: number;
+  dscr: number | null;
+  shortfall_usd?: number;
+}
+
+/** FON-63 negative-NOI summary on the debt engine output. */
+export interface DebtNoiShortfallExtras {
+  /** Σ shortfall_usd across the schedule. */
+  total_shortfall_usd?: number;
+  /** 1-based years whose NOI is negative. Absent on older runs. */
+  negative_noi_years?: number[];
+  /** The engine's one-line warning; rendered verbatim when present. */
+  noi_warning?: string | null;
+}
+
+/** FON-44 — which NOI the reversion capitalizes. */
+export type ExitNoiBasis = 'forward_12m' | 'stabilized' | 'override';
+
+/** The analyst-selectable subset, saved as `field_overrides.exit_noi_basis`. */
+export type ExitNoiBasisChoice = Exclude<ExitNoiBasis, 'override'>;
+
+/** FON-44 additions on the returns engine output. */
+export interface ReturnsExitNoiExtras {
+  exit_noi_basis?: ExitNoiBasis;
+  /** The basis AND the period, e.g. "forward 12-month, Year 6". */
+  exit_noi_period_label?: string;
+}
+
 /** One priced/pending tranche in the debt stack (subset the Debt tab reads).
  *  Mirrors apps/worker/app/engines/tranche_stack.py TrancheResult. */
 export interface DebtTrancheResult {

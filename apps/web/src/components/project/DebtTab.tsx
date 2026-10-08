@@ -73,6 +73,8 @@ import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
+import NoiWarningStrip from './NoiWarningStrip';
+import { readNoiWarning } from '@/lib/noiWarning';
 import { IntroCard } from '@/components/help/IntroCard';
 import { sourceKind } from '@/lib/provenance';
 import { SOURCE_BADGE_FROM_REGISTRY, SOURCE_LABEL_FROM_REGISTRY } from '@/lib/ontology/adapters';
@@ -132,6 +134,8 @@ interface DebtYearLite {
   debt_service: number;
   ending_balance: number;
   dscr: number | null;
+  /** FON-63 — debt service NOI did not cover (0 when covered). Absent on older runs. */
+  shortfall_usd?: number;
 }
 interface DebtMonthLite {
   month: number;
@@ -249,6 +253,8 @@ const money = (v: number | undefined): string => (has(v) ? fmtCurrency(v) : '—
 const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
 const pctv = (v: number | undefined, d = 1): string => (has(v) ? fmtPct(v, d) : '—');
 const ratio = (v: number | undefined): string => (has(v) ? `${v.toFixed(2)}x` : '—');
+/** FON-63 — the tooltip on every DSCR the engine declared not meaningful. */
+export const DSCR_NA_TOOLTIP = 'NOI ≤ 0 or no debt service — DSCR not meaningful';
 // Fees arrive in the codebase 0..10 PERCENT convention (1.0 = 1.00%).
 const feePct = (v: number | undefined): string => (has(v) ? `${v.toFixed(2)}%` : '—');
 
@@ -409,6 +415,16 @@ export default function DebtTab() {
   const wExitFeeUsd = getEngineField<number>(outputs, 'debt', 'exit_fee_usd');
   const wCovenants = getEngineField<DebtCovenantStatus[]>(outputs, 'debt', 'covenants') ?? [];
   const wAnnual = getEngineField<DebtYearLite[]>(outputs, 'debt', 'schedule') ?? [];
+  // FON-63 — negative NOI. `present` is false on runs that predate the fields,
+  // and then every DSCR / schedule cell renders exactly as before.
+  const noiShortfall = readNoiWarning(outputs);
+  /** A null DSCR the engine declared not meaningful (vs. not yet computed). */
+  const dscrNa = (v: number | null | undefined, year?: number): boolean =>
+    noiShortfall.present && !has(v) && (
+      year == null
+        ? noiShortfall.negativeYears.length > 0
+        : noiShortfall.negativeYears.includes(year) || wAnnual.some((y) => y.year === year && y.dscr === null)
+    );
   const wMonthly = getEngineField<DebtMonthLite[]>(outputs, 'debt', 'monthly_schedule') ?? [];
   const wStack = getEngineField<DebtStackLite>(outputs, 'debt', 'debt_stack');
   const wRefiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
@@ -973,10 +989,17 @@ export default function DebtTab() {
     statusBg: !hasThreshold || passes == null ? '#f5f4f0' : passes ? 'oklch(96.5% 0.03 155)' : 'oklch(96% 0.04 40)',
     needsThreshold: !hasThreshold,
   });
-  const covCard = (c: DebtCovenantStatus | null, label: string, basis: string) =>
-    c
+  const covCard = (c: DebtCovenantStatus | null, label: string, basis: string, naYear?: number) => {
+    const card = c
       ? { label, value: covCurrent(c), basis, covenant: c.threshold != null ? covCovenantCaption(c) : 'Enter threshold →', ...statusOf(c.passes, c.threshold != null) }
       : { label, value: '—', basis, covenant: 'Enter threshold →', ...statusOf(null, false) };
+    // FON-63 — a Year-1 DSCR the engine nulled for negative NOI reads N/A.
+    const na = naYear != null && dscrNa(c?.current ?? wDscr, naYear);
+    // No "Awaiting" on an N/A — nothing is pending; the ratio has no meaning.
+    return na
+      ? { ...card, value: 'N/A', title: DSCR_NA_TOOLTIP as string | undefined, status: 'Not meaningful' }
+      : { ...card, title: undefined as string | undefined };
+  };
   const stabCard = (
     label: string, v: number | undefined, isDscr: boolean,
     threshCov: DebtCovenantStatus | null, basis: string,
@@ -985,12 +1008,15 @@ export default function DebtTab() {
     // stabilized value) renders "—" with an Awaiting status — never fabricated.
     const threshold = threshCov?.threshold ?? null;
     const passes = has(v) && threshold != null ? v >= threshold : null;
+    const na = isDscr && dscrNa(v);
     return {
       label,
-      value: has(v) ? (isDscr ? `${v.toFixed(2)}x` : fmtPct(v, 1)) : '—',
+      title: na ? DSCR_NA_TOOLTIP : undefined,
+      value: na ? 'N/A' : has(v) ? (isDscr ? `${v.toFixed(2)}x` : fmtPct(v, 1)) : '—',
       basis,
       covenant: threshold != null && threshCov ? covCovenantCaption(threshCov) : 'Enter threshold →',
       ...statusOf(passes, threshold != null),
+      ...(na ? { status: 'Not meaningful' } : {}),
     };
   };
   const creditMetrics = [
@@ -998,7 +1024,7 @@ export default function DebtTab() {
     covCard(covLtc, covLtc?.label ?? 'LTC', COV_BASIS.ltc),
     covCard(covDy, 'Debt Yield — Entry', 'Entry NOI ÷ loan'),
     stabCard('Debt Yield — Stabilized', wStabDy, false, covDy, 'Stabilized NOI ÷ loan'),
-    covCard(covDscr, 'DSCR — Year 1', COV_BASIS.dscr),
+    covCard(covDscr, 'DSCR — Year 1', COV_BASIS.dscr, 1),
     stabCard('DSCR — Stabilized', wStabDscr, true, covDscr, 'Stabilized NOI ÷ stabilized-year debt service'),
   ];
 
@@ -1006,7 +1032,24 @@ export default function DebtTab() {
     { label: 'Equity Requirement', value: mm(wEquity), source: 'Calculated in Investment', state: 'linked' as ValueState },
     { label: 'Levered IRR', value: pctv(wLeveredIrr, 1), source: 'Returns output', state: 'linked' as ValueState },
     { label: 'MOIC', value: ratio(wMoic), source: 'Returns output', state: 'linked' as ValueState },
-    { label: 'Avg. DSCR', value: ratio(wAvgDscr), source: 'Calculated from this schedule', state: 'calculated' as ValueState },
+    {
+      label: 'Avg. DSCR',
+      value: dscrNa(wAvgDscr) ? 'N/A' : ratio(wAvgDscr),
+      title: dscrNa(wAvgDscr) ? DSCR_NA_TOOLTIP : undefined,
+      source: 'Calculated from this schedule',
+      state: 'calculated' as ValueState,
+    },
+    // FON-63 — only on runs that publish it; `—` when operations cover debt service.
+    ...(noiShortfall.present
+      ? [{
+          label: 'Debt Service Shortfall',
+          value: has(noiShortfall.totalShortfallUsd) && noiShortfall.totalShortfallUsd > 0
+            ? fmtCurrency(noiShortfall.totalShortfallUsd) : '—',
+          title: undefined as string | undefined,
+          source: 'Debt service NOI does not cover, summed over the schedule',
+          state: 'calculated' as ValueState,
+        }]
+      : []),
   ];
 
   // ─── Schedule builders ────────────────────────────────────────────────
@@ -1014,6 +1057,7 @@ export default function DebtTab() {
     label: `Year ${y.year}`,
     begin: (y.ending_balance ?? 0) + (y.principal ?? 0),
     interest: y.interest, principal: y.principal, end: y.ending_balance, ds: y.debt_service,
+    dscr: y.dscr as number | null | undefined, shortfall: y.shortfall_usd,
   }));
   const monthlySrc = wMonthly.slice(0, 24).map((m) => ({
     label: `M${m.month}`,
@@ -1024,9 +1068,28 @@ export default function DebtTab() {
   // A priced PACE tranche adds its (flat) debt service so Total Debt Service
   // is the same figure DSCR, Cash Flow and Returns use; monthly shows 1/12.
   const scheduleRows = (
-    src: { begin: number; interest: number; principal: number; end: number; ds: number }[],
+    src: { begin: number; interest: number; principal: number; end: number; ds: number; dscr?: number | null; shortfall?: number }[],
     periodsPerYear: 1 | 12,
   ): StatementRow[] => {
+    // FON-63 — DSCR + Shortfall rows on the annual schedule of runs that carry
+    // the negative-NOI fields. A null DSCR is N/A (not meaningful), never 0.
+    const noiRows: StatementRow[] = periodsPerYear === 1 && noiShortfall.present
+      ? [
+          {
+            label: 'DSCR',
+            cells: src.map((p) => (p.dscr === null
+              ? { text: <span title={DSCR_NA_TOOLTIP} data-testid="dscr-na">N/A</span>, color: prov.muted }
+              : { text: has(p.dscr) ? `${p.dscr.toFixed(2)}x` : '—', color: prov.gray })),
+          },
+          {
+            label: 'Shortfall',
+            title: 'Debt service NOI did not cover in the year',
+            cells: src.map((p) => (has(p.shortfall) && p.shortfall > 0
+              ? { text: fmtCurrency(p.shortfall), color: prov.amber }
+              : { text: '—', color: prov.muted })),
+          },
+        ]
+      : [];
     const c = (v: number, color: string) => ({ text: has(v) ? fmtCurrency(v) : '—', color });
     const paceDs = has(paceDebtService) ? paceDebtService / periodsPerYear : null;
     return [
@@ -1039,6 +1102,7 @@ export default function DebtTab() {
         : []),
       { label: 'Ending Balance', total: true, cells: src.map((p) => c(p.end, prov.black)) },
       { label: 'Total Debt Service', total: true, cells: src.map((p) => c(p.ds + (paceDs ?? 0), prov.black)) },
+      ...noiRows,
     ];
   };
   const scheduleFootnote = (monthly: boolean) =>
@@ -1072,6 +1136,9 @@ export default function DebtTab() {
           previous={previous}
           runToken={runToken}
         />
+
+        {/* FON-63 — negative-NOI warning (a warning, not the failure banner). */}
+        <NoiWarningStrip outputs={outputs} />
 
         {/* Manual-inputs banner (canonical) — honest about the current release:
             loan terms are entered manually, not extracted from financing docs. */}
@@ -1155,7 +1222,7 @@ export default function DebtTab() {
                     <div key={m.label} style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: '12px 14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase' }}>{m.label}</span>
-                        <span style={{ fontSize: 19, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</span>
+                        <span title={m.title} style={{ fontSize: 19, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</span>
                       </div>
                       <div style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 5, lineHeight: 1.4 }}>{m.basis}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 8 }}>
@@ -1206,7 +1273,7 @@ export default function DebtTab() {
                         <ProvenanceDot state={m.state} size={8} />
                         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.04em', color: palette.eyebrow, textTransform: 'uppercase' }}>{m.label}</span>
                       </div>
-                      <div style={{ fontSize: 19, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</div>
+                      <div title={m.title} style={{ fontSize: 19, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</div>
                       <div style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 4 }}>{m.source}</div>
                     </div>
                   ))}
