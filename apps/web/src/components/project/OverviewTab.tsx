@@ -910,7 +910,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             : 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
       }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ Investment (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
-      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: 'Exit NOI (forward 12-month)', from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
+      cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: exitNoiLabel(wExitNoiPeriodLabel), from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'Investment assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
       lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
       awa('transferPct', 'Transfer Tax'),
