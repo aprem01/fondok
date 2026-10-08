@@ -1297,7 +1297,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               onChange={(v) => void persist({ return_profile: v })}
             />
             <ProfileSelect
-              label="Existing brand" hint="Current flag; the proposed brand is set on the Property rows" value={brand}
+              label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
               options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
               onChange={(v) => void persist({ brand: v })}
             />
