@@ -1,11 +1,11 @@
 'use client';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Check, ChevronDown, Target, TrendingUp, Rocket, Tag, Search,
   Sparkles, Crown, DollarSign, Pencil, AlertTriangle, ArrowLeft, ChevronRight,
-  Loader2, Star, Award,
+  Loader2, Star, Award, Info,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -14,11 +14,17 @@ import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingCh
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
-import { DocumentsStep } from '@/components/project/wizard/DocumentsStep';
+import { DocumentsStep, WIZARD_CATEGORIES } from '@/components/project/wizard/DocumentsStep';
 import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
 import { CoachMark } from '@/components/help/CoachMark';
 import { useNow } from '@/lib/hooks/useNow';
 import { formatElapsed } from '@/lib/progress';
+import { normalizeLocation, locationSuggestions } from '@/lib/markets';
+import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
+import {
+  loadDraft, saveDraft, clearDraft, relativeTime, DRAFT_DEBOUNCE_MS,
+  loadDefaultReturnProfile, saveDefaultReturnProfile, type DraftFileRef,
+} from '@/lib/wizardDraft';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -43,6 +49,63 @@ const iconForPos: Record<string, any> = {
   luxury: Crown,
 };
 
+type WizardFields = Omit<WizardData, 'docs'>;
+
+// The wizard's untouched state. `returnProfile` is replaced by the analyst's
+// saved default (R-015) when one exists.
+const INITIAL_FIELDS: WizardFields = {
+  dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
+  dealType: 'acquisition',
+  returnProfile: 'value-add',
+  // FON-59 / R-048 — `brand` is the picker state = the analyst's PROPOSED
+  // brand (submitted as `proposed_brand`); `existingBrand` is the optional
+  // current flag (submitted as `brand`; blank = sourced from the OM).
+  brand: 'agnostic',
+  existingBrand: '',
+  brandSearch: '',
+  expandedFamilies: ['Hilton'],
+  positioning: 'default',
+  sourcing: 'Broker',
+};
+
+const isKnownProfile = (id: string | null | undefined): id is string =>
+  !!id && returnProfiles.some((p) => p.id === id);
+
+function freshFields(defaultProfile: string | null): WizardFields {
+  return {
+    ...INITIAL_FIELDS,
+    expandedFamilies: [...INITIAL_FIELDS.expandedFamilies],
+    returnProfile: isKnownProfile(defaultProfile) ? defaultProfile : INITIAL_FIELDS.returnProfile,
+  };
+}
+
+/** Keep only draft keys the wizard knows, with the expected shape. */
+function pickDraftFields(raw: Record<string, unknown>): Partial<WizardFields> {
+  const out: Partial<WizardFields> = {};
+  for (const k of Object.keys(INITIAL_FIELDS) as (keyof WizardFields)[]) {
+    const v = raw[k];
+    if (k === 'expandedFamilies') {
+      if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out.expandedFamilies = v as string[];
+    } else if (typeof v === 'string') {
+      (out as Record<string, string>)[k] = v;
+    }
+  }
+  return out;
+}
+
+/** R-011 — only a wizard the analyst actually touched is worth a draft
+ *  (opening the page must not leave a "Restored…" banner behind). UI-only
+ *  state (brand search box, expanded chains) doesn't count. */
+function draftIsMeaningful(fields: WizardFields, step: number, fileCount: number, defaultProfile: string | null): boolean {
+  if (step > 1 || fileCount > 0) return true;
+  const base = freshFields(defaultProfile);
+  return (Object.keys(base) as (keyof WizardFields)[]).some(
+    (k) => k !== 'brandSearch' && k !== 'expandedFamilies' && fields[k] !== base[k],
+  );
+}
+
+const sameFile = (a: DraftFileRef, b: DraftFileRef) => a.name === b.name && a.category === b.category;
+
 export default function NewProjectPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -57,25 +120,22 @@ export default function NewProjectPage() {
   const [uploadStartedAt, setUploadStartedAt] = useState<number | null>(null);
   const [uploadingCount, setUploadingCount] = useState(0);
   const now = useNow(uploadStartedAt != null);
+  // R-011 — warn before leaving only while files are still leaving the
+  // browser; the deal itself already exists by then.
+  useEffect(() => {
+    if (uploadStartedAt == null) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [uploadStartedAt]);
   const uploadCopy =
     uploadStartedAt != null
       ? `Uploading ${uploadingCount} file${uploadingCount === 1 ? '' : 's'} · ${formatElapsed((now - uploadStartedAt) / 1000)}`
       : null;
-  const [data, setData] = useState({
-    dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
-    dealType: 'acquisition',
-    returnProfile: 'value-add',
-    docs: [] as WizardFile[],
-    // FON-59 / R-048 — `brand` is the picker state = the analyst's PROPOSED
-    // brand (submitted as `proposed_brand`); `existingBrand` is the optional
-    // current flag (submitted as `brand`; blank = sourced from the OM).
-    brand: 'agnostic',
-    existingBrand: '',
-    brandSearch: '',
-    expandedFamilies: ['Hilton'] as string[],
-    positioning: 'default',
-    sourcing: 'Broker',
-  });
+  const [data, setData] = useState<WizardData>(() => ({ ...freshFields(null), docs: [] }));
   // Gate for Step 3 → Step 4: financials are required per locked Wave 1
   // product decision. ``DocumentsStep`` reports this back via
   // onCanContinueChange whenever the WizardFile[] changes.
@@ -86,6 +146,96 @@ export default function NewProjectPage() {
   const [docsGateNudge, setDocsGateNudge] = useState(false);
 
   const update = (patch: Partial<typeof data>) => setData(d => ({ ...d, ...patch }));
+
+  // ─── R-011 — autosave + restore (browser-local draft) ───────────────────
+  // Read on mount (not in the state initializer) so the server render and
+  // the first client render agree; autosave only starts after that read.
+  const [hydrated, setHydrated] = useState(false);
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  // Files the restored draft had staged. Bytes can't survive a reload, so
+  // they're listed for re-attach and drop off as the analyst re-adds them.
+  const [pendingFiles, setPendingFiles] = useState<DraftFileRef[]>([]);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const createdRef = useRef(false);
+  // R-015 — the analyst's default Return Profile (this browser).
+  const [defaultProfile, setDefaultProfile] = useState<string | null>(null);
+
+  useEffect(() => {
+    const def = loadDefaultReturnProfile();
+    const validDef = isKnownProfile(def) ? def : null;
+    setDefaultProfile(validDef);
+    const draft = loadDraft();
+    if (draft) {
+      setData({ ...freshFields(validDef), ...pickDraftFields(draft.fields), docs: [] });
+      setStep(Math.min(6, Math.max(1, Math.round(draft.step))));
+      setRestoredAt(draft.savedAt);
+      setPendingFiles(draft.files);
+    } else if (validDef) {
+      setData(d => ({ ...d, returnProfile: validDef }));
+    }
+    setHydrated(true);
+  }, []);
+
+  const remainingFiles = useMemo(
+    () => pendingFiles.filter(p => !data.docs.some(d => sameFile(p, { name: d.file.name, category: d.category }))),
+    [pendingFiles, data.docs],
+  );
+
+  useEffect(() => {
+    if (!hydrated || createdRef.current) return;
+    const { docs, ...fields } = data;
+    const files: DraftFileRef[] = [
+      ...docs.map(d => ({ name: d.file.name, category: d.category, fiscal_year: d.fiscal_year ?? null })),
+      ...remainingFiles,
+    ];
+    if (!draftIsMeaningful(fields, step, files.length, defaultProfile)) {
+      clearDraft();
+      setSaveStatus('idle');
+      return;
+    }
+    setSaveStatus('saving');
+    const t = setTimeout(() => {
+      if (createdRef.current) return;
+      setSaveStatus(saveDraft({ savedAt: Date.now(), step, fields, files }) ? 'saved' : 'idle');
+    }, DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [data, step, hydrated, remainingFiles, defaultProfile]);
+
+  const discardDraft = () => {
+    clearDraft();
+    setData({ ...freshFields(defaultProfile), docs: [] });
+    setStep(1);
+    setRestoredAt(null);
+    setPendingFiles([]);
+    setDocsGateNudge(false);
+    setSaveStatus('idle');
+  };
+
+  const setDefaultReturnProfile = (id: string | null) => {
+    saveDefaultReturnProfile(id);
+    setDefaultProfile(id);
+  };
+
+  // ─── R-012 — City / Submarket suggestions ───────────────────────────────
+  // Distinct cities already used on this tenant's deals, then the static
+  // US market list. A failed / absent list just means market names only.
+  const [tenantCities, setTenantCities] = useState<string[]>([]);
+  useEffect(() => {
+    if (!isWorkerConnected()) return;
+    const ctrl = new AbortController();
+    Promise.resolve()
+      .then(() => api.deals.list(ctrl.signal))
+      .then((deals) => {
+        if (ctrl.signal.aborted || !Array.isArray(deals)) return;
+        setTenantCities(
+          deals.map(d => d.city).filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
+        );
+      })
+      .catch(() => { /* suggestions are best-effort */ });
+    return () => ctrl.abort();
+  }, []);
+  const citySuggestions = useMemo(() => locationSuggestions(tenantCities), [tenantCities]);
+  const normalizeCity = (v: string) => normalizeLocation(v, tenantCities);
   const setDocs = useCallback(
     (docs: WizardFile[]) => setData(d => ({ ...d, docs })),
     [],
@@ -120,6 +270,8 @@ export default function NewProjectPage() {
     }
     if (!isWorkerConnected()) {
       // No worker configured — accept the deal locally and continue.
+      createdRef.current = true;
+      clearDraft();
       setSavedLocally(true);
       toast(`Saved · ${data.dealName.trim()}`, { type: 'success' });
       setTimeout(() => router.push('/projects'), 600);
@@ -148,7 +300,8 @@ export default function NewProjectPage() {
       // ignored. Cast at the call site so we don't have to touch lib/api.ts.
       const body = {
         name: data.dealName.trim(),
-        city: data.city.trim() || null,
+        // R-012 — trim / comma-space / fold onto a known market spelling.
+        city: normalizeCity(data.city) || null,
         keys: keysInt,
         service: null,
         deal_type: data.dealType,
@@ -164,6 +317,11 @@ export default function NewProjectPage() {
           ?? data.sourcing.toLowerCase().replace(/\s+/g, '_'),
       };
       const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
+      // R-011 — the deal exists now; a restored draft would only create a
+      // duplicate, so drop it before the (long) upload starts.
+      createdRef.current = true;
+      clearDraft();
+      setSaveStatus('idle');
       toast(`Deal created · ${created.name}`, { type: 'success' });
 
       // If the wizard collected files in step 3, upload them to the
@@ -220,8 +378,55 @@ export default function NewProjectPage() {
         <Link href="/projects" className="inline-flex items-center gap-1 text-[12.5px] text-ink-500 hover:text-ink-900 mb-3">
           <ArrowLeft size={13} /> Back to Projects
         </Link>
-        <h1 className="text-[24px] font-semibold text-ink-900">New Project</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-[24px] font-semibold text-ink-900">New Project</h1>
+          {saveStatus !== 'idle' && (
+            <span data-testid="draft-save-status" aria-live="polite" className="text-[11.5px] text-ink-500">
+              {saveStatus === 'saving' ? 'Saving…' : 'Saved locally'}
+            </span>
+          )}
+        </div>
       </div>
+
+      {restoredAt != null && (
+        <Card className="p-4 mb-5 border-brand-100 bg-brand-50" data-testid="draft-restored-banner">
+          <div className="flex items-start gap-3">
+            <Info size={15} className="text-brand-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] text-ink-900">
+                Restored your unfinished deal from {relativeTime(restoredAt)}
+                <span className="text-ink-500"> · </span>
+                <button
+                  type="button"
+                  onClick={discardDraft}
+                  className="text-[12.5px] font-medium text-brand-700 hover:text-brand-500"
+                >
+                  Discard
+                </button>
+              </div>
+              {remainingFiles.length > 0 && (
+                <div className="mt-2 text-[12px] text-ink-700" data-testid="draft-reattach">
+                  <div>
+                    Re-attach {remainingFiles.length === 1 ? 'this file' : `these ${remainingFiles.length} files`} on
+                    the Documents step — browsers can&apos;t keep files between visits:
+                  </div>
+                  <ul className="mt-1 list-disc pl-5">
+                    {remainingFiles.map(f => (
+                      <li key={`${f.category}::${f.name}`}>
+                        {f.name}
+                        <span className="text-ink-500">
+                          {' '}· {WIZARD_CATEGORIES.find(c => c.id === f.category)?.label ?? f.category}
+                          {typeof f.fiscal_year === 'number' ? ` · ${f.fiscal_year}` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Stepper */}
       <Card className="p-5 mb-5">
@@ -253,8 +458,12 @@ export default function NewProjectPage() {
 
       {/* Step body */}
       <Card className="p-7">
-        {step === 1 && <Step1 data={data} update={update} />}
-        {step === 2 && <Step2 data={data} update={update} />}
+        {step === 1 && (
+          <Step1 data={data} update={update} citySuggestions={citySuggestions} normalizeCity={normalizeCity} />
+        )}
+        {step === 2 && (
+          <Step2 data={data} update={update} defaultProfile={defaultProfile} onSetDefault={setDefaultReturnProfile} />
+        )}
         {step === 3 && (
           <Step3Documents
             files={data.docs}
@@ -353,19 +562,15 @@ type WizardData = {
 };
 
 // FON-46 — Deal Type classifies the project so Fondok applies the right
-// engines, assumptions, and workflows downstream.
-const DEAL_TYPES = [
-  { id: 'acquisition', label: 'Acquisition', desc: 'Purchase of an existing hotel' },
-  { id: 'development', label: 'Development / New Build', desc: 'Ground-up hotel development' },
-  { id: 'redevelopment', label: 'Redevelopment / Adaptive Reuse', desc: 'Reposition or convert an existing asset' },
-] as const;
-
-function dealTypeLabel(id: string | null | undefined): string {
-  return DEAL_TYPES.find((d) => d.id === id)?.label ?? '—';
-}
+// engines, assumptions, and workflows downstream. FON-41 / R-047 — shared
+// with the Overview toggle: Acquisition · Development · Adaptive Reuse.
+const DEAL_TYPES = DEAL_TYPE_OPTIONS;
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
 
-function Step1({ data, update }: StepProps) {
+function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
+  citySuggestions: string[];
+  normalizeCity: (v: string) => string;
+}) {
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Create New Deal</h2>
@@ -404,7 +609,23 @@ function Step1({ data, update }: StepProps) {
           <p className="text-[11px] text-ink-400 mt-1.5">Classifies the deal so Fondok applies the right engines and assumptions.</p>
         </div>
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
-        <Field label="City / Submarket *" value={data.city} onChange={v => update({ city: v })} placeholder="Chicago, IL" />
+        {/* R-012 — suggestions from this tenant's deals + US hotel markets;
+            the typed value is tidied / folded onto a known spelling on blur
+            (and again on save). Free text is always allowed. */}
+        <Field
+          label="City / Submarket *"
+          value={data.city}
+          onChange={v => update({ city: v })}
+          onBlur={v => {
+            const n = normalizeCity(v);
+            if (n !== v) update({ city: n });
+          }}
+          placeholder="Chicago, IL"
+          listId="wizard-city-suggestions"
+        />
+        <datalist id="wizard-city-suggestions" data-testid="city-suggestions">
+          {citySuggestions.map(c => <option key={c} value={c} />)}
+        </datalist>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Keys" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
             help="Guest room count. Leave blank to source from the OM's `property_overview.keys` field on extraction." />
@@ -445,7 +666,10 @@ function Step1({ data, update }: StepProps) {
   );
 }
 
-function Step2({ data, update }: StepProps) {
+function Step2({ data, update, defaultProfile, onSetDefault }: StepProps & {
+  defaultProfile: string | null;
+  onSetDefault: (id: string | null) => void;
+}) {
   // Institutional example for each return profile. Sam's v2: refine
   // platform language to match institutional hotel-investment workflows
   // rather than retail-investor primers.
@@ -479,10 +703,13 @@ function Step2({ data, update }: StepProps) {
         {returnProfiles.map(p => {
           const Icon = iconForReturn[p.id] ?? Target;
           const selected = data.returnProfile === p.id;
+          const isDefault = defaultProfile === p.id;
           return (
-            <button key={p.id} onClick={() => update({ returnProfile: p.id })}
+            <div key={p.id} className="flex flex-col gap-1.5">
+            <button onClick={() => update({ returnProfile: p.id })}
+              aria-pressed={selected}
               className={cn(
-                'p-5 rounded-lg border-2 text-left transition-colors',
+                'p-5 rounded-lg border-2 text-left transition-colors flex-1',
                 selected ? 'border-brand-500 bg-brand-50' : 'border-border bg-white hover:border-ink-300'
               )}>
               <div className="flex items-start justify-between mb-3">
@@ -500,6 +727,25 @@ function Step2({ data, update }: StepProps) {
                 </p>
               )}
             </button>
+            {/* R-015 — remembered per analyst in this browser and preselected on new deals. */}
+            <div className="flex items-center gap-2 px-1 text-[11.5px]" data-testid={`profile-default-${p.id}`}>
+              {isDefault ? (
+                <>
+                  <Badge tone="blue">Default</Badge>
+                  <button type="button" onClick={() => onSetDefault(null)}
+                    className="text-ink-500 hover:text-ink-900 font-medium">
+                    Clear default
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={() => onSetDefault(p.id)}
+                  aria-label={`Set ${p.label} as default`}
+                  className="text-brand-700 hover:text-brand-500 font-medium">
+                  Set as default
+                </button>
+              )}
+            </div>
+            </div>
           );
         })}
       </div>
@@ -604,6 +850,18 @@ function Step4({ data, update }: StepProps) {
       </div>
 
       <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand</div>
+      {/* R-018 — contextual note on what the proposed brand will drive. */}
+      <div
+        role="note"
+        data-testid="brand-wip-note"
+        className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-3 flex gap-2"
+      >
+        <Info size={14} className="text-brand-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
+        <span>
+          This section is a work in progress. The intent is to use the selected brand&apos;s preliminary
+          programming requirements when assessing the property improvement plan and required CapEx.
+        </span>
+      </div>
       <button onClick={() => update({ brand: 'agnostic' })}
         className={cn(
           'w-full p-5 rounded-lg border-2 text-left mb-5 transition-colors',
@@ -965,13 +1223,16 @@ function SummaryRow({
   );
 }
 
-function Field({ label, value, onChange, placeholder, type = 'text', help }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; help?: string;
+function Field({ label, value, onChange, onBlur, placeholder, type = 'text', help, listId }: {
+  label: string; value: string; onChange: (v: string) => void; onBlur?: (v: string) => void;
+  placeholder?: string; type?: string; help?: string; listId?: string;
 }) {
   return (
     <div>
       <label className="block text-[12px] font-medium text-ink-700 mb-1.5">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        onBlur={onBlur ? e => onBlur(e.target.value) : undefined}
+        list={listId} autoComplete={listId ? 'off' : undefined}
         className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500" />
       {help && <div className="mt-1 text-[11px] text-ink-500 leading-relaxed">{help}</div>}
     </div>

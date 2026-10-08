@@ -90,6 +90,7 @@ import {
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
 import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
+import { DEAL_TYPE_OPTIONS, normalizeDealType, isDevelopmentLike, dealTypeLabel, type DealTypeId } from '@/lib/dealTypes';
 import {
   noiBeforeReserveLabel,
   stabilizedYearBlock,
@@ -284,10 +285,9 @@ interface SuSection { kind: 'su'; title: string }
 interface TimelineSection { kind: 'timeline'; title: string }
 type SectionSpec = RowsSection | SuSection | TimelineSection;
 
-const DEAL_TYPES: { label: string; id: 'acquisition' | 'development' }[] = [
-  { label: 'Acquisition', id: 'acquisition' },
-  { label: 'Development', id: 'development' },
-];
+// FON-41 / R-047 — shared vocabulary (lib/dealTypes): Acquisition,
+// Development, Adaptive Reuse. Adaptive Reuse takes the Development config.
+const DEAL_TYPES = DEAL_TYPE_OPTIONS;
 
 /** Section titles for the deal-type-change confirmation ("Sections after the change"). */
 function sectionTitles(cfg: Cfg): string {
@@ -506,18 +506,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // ─── UI state ──────────────────────────────────────────────────────────
   const [reviewOnly, setReviewOnly] = useState(false);
-  const [pendingDealType, setPendingDealType] = useState<'acquisition' | 'development' | null>(null);
+  const [pendingDealType, setPendingDealType] = useState<DealTypeId | null>(null);
   const [popover, setPopover] = useState<{ row: RowDef; top: number; left: number; caretRight: number } | null>(null);
 
   // ─── Deal configuration ────────────────────────────────────────────────
-  const dealType: 'acquisition' | 'development' = deal?.deal_type === 'development' ? 'development' : 'acquisition';
+  const dealType: DealTypeId = normalizeDealType(deal?.deal_type);
   const returnProfileId = deal?.return_profile ?? 'value-add';
   const positioningId = deal?.positioning ?? 'default';
   const brand = deal?.brand ?? '';
   // FON-59 / R-048 (Sam's decision 4) — the analyst's PROPOSED brand, kept
   // apart from `brand` (the EXISTING flag). Never written by a document.
   const proposedBrand = deal?.proposed_brand?.trim() ?? '';
-  const cfg: Cfg = dealType === 'development' ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
+  const cfg: Cfg = isDevelopmentLike(dealType) ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
   const keys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
   const isDev = cfg === 'dev';
 
@@ -1206,7 +1206,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   }
 
   // Deal-type toggle → confirmation → persist + re-run.
-  const onSelectDealType = (id: 'acquisition' | 'development') => {
+  const onSelectDealType = (id: DealTypeId) => {
     if (id === dealType) return;
     setPendingDealType(id);
     setPopover(null);
@@ -1216,7 +1216,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     void persist({ deal_type: pendingDealType }, 'Deal type updated — re-running the model…');
     setPendingDealType(null);
   };
-  const pendingCfg: Cfg = pendingDealType === 'development' ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
+  const pendingCfg: Cfg = pendingDealType && isDevelopmentLike(pendingDealType) ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
 
   // ─── Render ────────────────────────────────────────────────────────────
   return (
@@ -1414,7 +1414,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           <div onClick={() => setPendingDealType(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(16,24,40,.34)', zIndex: 80 }} aria-hidden />
           <div role="dialog" aria-label="Change deal type" style={{ position: 'fixed', left: '50%', top: '22vh', transform: 'translateX(-50%)', width: 432, background: '#fff', borderRadius: 11, boxShadow: '0 24px 56px rgba(16,24,40,.28)', zIndex: 81, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: palette.ink }}>
-              Change deal type to {pendingDealType === 'development' ? 'Development' : 'Acquisition'}?
+              Change deal type to {dealTypeLabel(pendingDealType)}?
             </div>
             <div style={{ fontSize: 12.5, color: palette.hoverInk, lineHeight: 1.55 }}>
               Changing the deal type will update the assumptions and modeling sections used for this investment.

@@ -25,7 +25,7 @@ export interface WorkerDeal {
   city: string | null;
   keys: number | null;
   service: string | null;
-  // FON-46 — deal classification (acquisition / development / redevelopment).
+  // FON-46 / R-047 — deal classification (acquisition / development / adaptive_reuse; legacy "redevelopment" reads as adaptive_reuse — see lib/dealTypes).
   deal_type?: string | null;
   // FON-59 — Investment Profile captured in the onboarding wizard (return
   // strategy id e.g. "value-add", positioning-tier id). Persisted by the

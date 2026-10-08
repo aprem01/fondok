@@ -409,6 +409,31 @@ describe('OverviewTab — deal-type-aware (development)', () => {
   });
 });
 
+describe('OverviewTab — FON-41 R-047 Adaptive Reuse deal type', () => {
+  it('reads adaptive_reuse (and legacy "redevelopment") as Adaptive Reuse with the development section set', () => {
+    for (const stored of ['adaptive_reuse', 'redevelopment']) {
+      cleanup();
+      mockDealRef.deal = { ...mockDealRef.deal, deal_type: stored };
+      render(<OverviewTab projectId="deal-uuid-1" />);
+      expect(screen.getByRole('button', { name: 'Adaptive Reuse' })).toBeInTheDocument();
+      expect(screen.getByText('Development Budget')).toBeInTheDocument();
+      expect(screen.getByText('Construction Financing')).toBeInTheDocument();
+      expect(screen.queryByText('Renovation / CapEx')).not.toBeInTheDocument();
+    }
+  });
+
+  it('switching an Acquisition to Adaptive Reuse confirms and persists deal_type "adaptive_reuse"', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Adaptive Reuse' }));
+    const dialog = screen.getByRole('dialog', { name: 'Change deal type' });
+    expect(dialog.textContent).toContain('Change deal type to Adaptive Reuse?');
+    expect(dialog.textContent).toContain('Development Budget');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update model' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { deal_type: 'adaptive_reuse' });
+  });
+});
+
 describe('OverviewTab — FON-59 Project Name vs Property Name', () => {
   it('renders Project Name (deal.name) directly above Property Name, which never falls back to the deal name', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, name: 'Project Unicorn' };
