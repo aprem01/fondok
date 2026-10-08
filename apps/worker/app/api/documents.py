@@ -4111,9 +4111,9 @@ async def reprocess_document(
     await session.execute(
         text(
             "UPDATE documents SET status = :s, extraction_data = NULL "
-            "WHERE id = :id"
+            "WHERE id = :id AND tenant_id = :tenant"
         ),
-        {"s": DOC_STATUS_PARSING, "id": str(doc_id)},
+        {"s": DOC_STATUS_PARSING, "id": str(doc_id), "tenant": str(tenant_id)},
     )
     await session.commit()
 
@@ -4926,9 +4926,9 @@ async def rescore_usali(
                         "UPDATE documents "
                         "SET misclassified = :m, "
                         "ai_proposed_doc_type = NULL "
-                        "WHERE id = :id"
+                        "WHERE id = :id AND tenant_id = :tenant"
                     ),
-                    {"m": False, "id": str(doc_id)},
+                    {"m": False, "id": str(doc_id), "tenant": str(tenant_id)},
                 )
                 also_cleared_misclassified = True
 
@@ -5024,9 +5024,9 @@ async def extract_document(
     # the transition before the background task lands.
     await session.execute(
         text(
-            "UPDATE documents SET status = :s WHERE id = :id"
+            "UPDATE documents SET status = :s WHERE id = :id AND tenant_id = :tenant"
         ),
-        {"s": DOC_STATUS_CLASSIFYING, "id": str(doc_id)},
+        {"s": DOC_STATUS_CLASSIFYING, "id": str(doc_id), "tenant": tenant_id},
     )
     await session.commit()
 
