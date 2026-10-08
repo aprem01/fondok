@@ -603,7 +603,7 @@ function Step4({ data, update }: StepProps) {
         />
       </div>
 
-      <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand (optional)</div>
+      <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand</div>
       <button onClick={() => update({ brand: 'agnostic' })}
         className={cn(
           'w-full p-5 rounded-lg border-2 text-left mb-5 transition-colors',

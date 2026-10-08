@@ -222,7 +222,7 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
 describe('R-048 — Existing brand and Proposed brand are two separate fields', () => {
   it('sends a typed Existing brand as `brand` and the picked brand as `proposed_brand` (Kimpton existing / Thompson proposed)', async () => {
     driveToBrandStep();
-    expect(screen.getByText('Proposed brand (optional)')).toBeInTheDocument();
+    expect(screen.getByText('Proposed brand')).toBeInTheDocument();
     expect(screen.getByText('Existing brand')).toBeInTheDocument();
     expect(screen.getByText('Leave blank to source from the Offering Memorandum')).toBeInTheDocument();
 

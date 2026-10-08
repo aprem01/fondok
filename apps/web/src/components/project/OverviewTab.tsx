@@ -725,7 +725,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       propertyTypeRow(),
       doc('pLoc', 'Location', deal?.city ?? '—', 'Offering Memorandum', 'Location'),
       doc('pYear', 'Year Built', meta.year_built != null ? String(Math.round(meta.year_built)) : '—', 'Offering Memorandum', 'Property History'),
-      doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Room Mix', { reasonKey: 'keys' }),
+      doc('pKeys', isDev ? 'Planned Keys' : 'Keys', keys != null ? String(keys) : '—', 'Offering Memorandum', 'Hotel Program', { reasonKey: 'keys' }),
       floorsRow(),
       doc('pSF', isDev ? 'Planned SF' : 'Total SF', meta.gba_sf != null ? `${Math.round(meta.gba_sf).toLocaleString('en-US')} SF` : '—', 'Offering Memorandum', 'Building Summary'),
       awa('pTitle', 'Title / Ownership'),
@@ -746,7 +746,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
       cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
       cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
-      cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Room Mix', kind: 'doc' }] }),
+      cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Hotel Program', kind: 'doc' }] }),
       lnk('acqDate', 'Acquisition Date', fmtISODate(timeline?.close_date), '→ Timeline (drives the schedule)', ''),
       awa('closingPct', 'Closing Costs %'),
       cal('closing', 'Closing Costs', money(closing), { trace: { engine: 'capital', path: 'closing_costs' }, formula: 'Purchase Price × Closing Costs %' }),
@@ -1260,7 +1260,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               onChange={(v) => void persist({ return_profile: v })}
             />
             <ProfileSelect
-              label="Brand" hint="Property classification" value={brand}
+              label="Existing brand" hint="Current flag; the proposed brand is set on the Property rows" value={brand}
               options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
               onChange={(v) => void persist({ brand: v })}
             />

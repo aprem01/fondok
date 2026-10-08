@@ -23,8 +23,8 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   OM: 'Offering Memorandum', T12: 'T-12', PNL: 'P&L', PNL_MONTHLY: 'Monthly P&L',
   PNL_YTD: 'YTD P&L', PNL_BENCHMARK: 'P&L Benchmark', STR: 'STR Report',
   STR_TREND: 'STR / CoStar Trend', CBRE_HORIZONS: 'CBRE Horizons', INSURANCE: 'Insurance',
-  PROPERTY_TAX: 'Property Taxes', ROOM_MIX: 'Room Mix', CAPEX: 'Historical CapEx',
-  PROPERTY_INFO: 'Property Info', LEASES: 'Leases & Agreements', SURVEYS: 'Surveys & Reviews',
+  PROPERTY_TAX: 'Property Taxes', ROOM_MIX: 'Hotel Program', CAPEX: 'Historic CapEx',
+  PROPERTY_INFO: 'Other Property Info', LEASES: 'Leases & Agreements', SURVEYS: 'Due Diligence',
   DEBT: 'Debt / Loan Docs', PARTNERSHIP: 'Partnership / JV Docs', OTHER: 'Other',
 };
 

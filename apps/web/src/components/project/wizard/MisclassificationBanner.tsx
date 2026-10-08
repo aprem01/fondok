@@ -72,7 +72,7 @@ function labelFor(token: string | null | undefined): string {
     case 'PNL_BENCHMARK':
       return 'P&L Benchmark';
     case 'ROOM_MIX':
-      return 'Room Mix / Unit Mix';
+      return 'Hotel Program';
     case 'RENT_ROLL':
       return 'Rent Roll';
     case 'CONTRACT':
@@ -83,11 +83,11 @@ function labelFor(token: string | null | undefined): string {
     case 'PROPERTY_TAX':
       return 'Property Taxes';
     case 'CAPEX':
-      return 'Historical CapEx';
+      return 'Historic CapEx';
     case 'PROPERTY_INFO':
-      return 'Basic Property Info';
+      return 'Other Property Info';
     case 'SURVEYS':
-      return 'Surveys & Reviews';
+      return 'Due Diligence';
     case 'MARKET_STUDY':
       return 'Market Study';
     default:
