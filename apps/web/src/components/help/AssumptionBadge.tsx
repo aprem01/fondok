@@ -267,6 +267,14 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   capex_ffe_default: { tone: TONE.neutral, Icon: Sparkles },
   roi_user: { tone: TONE.input, Icon: Pencil },
   partnership_doc: { tone: TONE.brand, Icon: FileText },
+  // FON-61 / E-028 — an analyst's Index Analysis assumption (market growth or
+  // an MPI / ARI penetration target) applied while the STR basis is on.
+  index_assumption: {
+    tone: TONE.input,
+    tooltip:
+      'Set by your Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while “Use STR rates in the model” is on.',
+    Icon: Pencil,
+  },
 };
 
 const SOURCE_META: Record<AssumptionSource, SourceMeta> = Object.fromEntries(

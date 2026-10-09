@@ -1106,3 +1106,109 @@ async def transaction_comps(
         median_cap_rate_pct=median_cap,
         note=note,
     )
+
+
+
+# ─────────────────────────── Index Analysis methodology (E-028) ───────────────────────────
+
+
+class IndexFigureOut(BaseModel):
+    """One Index Analysis figure: its value and where it came from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: float | None = None
+    #: ``document`` / ``computed`` / ``override``; None = no source (see ``detail``).
+    source: Literal["document", "computed", "override"] | None = None
+    inputs: list[FieldRefOut] = Field(default_factory=list)
+    detail: str | None = None
+    period_label: str | None = None
+
+    @classmethod
+    def of(cls, f: Any) -> IndexFigureOut:
+        return cls(
+            value=f.value, source=f.source, inputs=[FieldRefOut.of(r) for r in f.inputs],
+            detail=f.detail, period_label=f.period_label,
+        )
+
+
+class IndexMethodOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str
+    label: str
+    available: bool
+    disabled_reason: str | None = None
+    occupancy: IndexFigureOut
+    adr: IndexFigureOut
+    documents: list[str] = Field(default_factory=list)
+    segment: str | None = None
+    segments_available: list[str] = Field(default_factory=list)
+
+
+class IndexMethodologyResponse(BaseModel):
+    """``GET /market/{deal_id}/index-methodology`` — the method the analyst
+    picked (``index_methodology`` override; default ``str_comp_set``), what each
+    method reads, and the four editable assumptions with their sources."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    selected: str
+    selected_source: Literal["override", "default"]
+    methods: list[IndexMethodOut]
+    subject_occupancy: IndexFigureOut
+    subject_adr: IndexFigureOut
+    subject_period_label: str | None = None
+    assumptions: dict[str, IndexFigureOut]
+    #: "Use STR rates in the model" — the assumptions feed revenue only when on.
+    toggle_on: bool
+
+
+def index_methodology_response(deal_id: UUID, reading: Any) -> IndexMethodologyResponse:
+    """Serialize a ``resolve_index_methodology`` reading (pure; unit-tested)."""
+    return IndexMethodologyResponse(
+        deal_id=deal_id,
+        selected=reading.selected,
+        selected_source=reading.selected_source,
+        methods=[
+            IndexMethodOut(
+                method=x.method, label=x.label, available=x.available, disabled_reason=x.disabled_reason,
+                occupancy=IndexFigureOut.of(x.occupancy), adr=IndexFigureOut.of(x.adr),
+                documents=list(x.documents), segment=x.segment, segments_available=list(x.segments_available),
+            )
+            for x in reading.methods
+        ],
+        subject_occupancy=IndexFigureOut.of(reading.subject_occupancy),
+        subject_adr=IndexFigureOut.of(reading.subject_adr),
+        subject_period_label=reading.subject_period_label,
+        assumptions={k: IndexFigureOut.of(v) for k, v in reading.assumptions.items()},
+        toggle_on=reading.toggle_on,
+    )
+
+
+@router.get("/{deal_id}/index-methodology", response_model=IndexMethodologyResponse)
+async def index_methodology(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> IndexMethodologyResponse:
+    from ..services.index_methodology import load_index_rows, resolve_index_methodology
+
+    row = (
+        await session.execute(
+            text("SELECT service, field_overrides FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"deal {deal_id} not found")
+    m = row._mapping
+    overrides = _coerce_overrides(m.get("field_overrides"))
+    try:
+        rows = await load_index_rows(session, deal_id=deal_id, tenant_id=tenant_id)
+    except Exception:  # the panel must render (all methods disabled) rather than 500
+        logger.exception("index_methodology: extraction read failed")
+        rows = []
+    reading = resolve_index_methodology(rows, overrides, service_hint=m.get("service"))
+    return index_methodology_response(deal_id, reading)

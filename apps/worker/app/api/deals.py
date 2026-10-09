@@ -548,6 +548,13 @@ def _coerce_float(value: Any) -> float | None:
 #:                             stabilized yield on cost), like the target_irr /
 #:                             target_moic deal columns. No engine reads it; the
 #:                             Overview compares the derived actual against it.
+#:   index_methodology         FON-61 / E-028 — a METHOD choice (STR comp set /
+#:                             market benchmark / CoStar comp set) for Index
+#:                             Analysis; the analyst types no number, and it
+#:                             moves nothing unless a penetration target (which
+#:                             DOES need a note) is also set.
+#:   index_market_segment      which chain-scale segment the market benchmark
+#:                             reads — the same kind of choice.
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "stabilization_year",
@@ -556,6 +563,8 @@ _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
         "partnership.waterfall.tier_count",
         "exit_noi_basis",
         "target_stabilized_yoc",
+        "index_methodology",
+        "index_market_segment",
     }
 )
 

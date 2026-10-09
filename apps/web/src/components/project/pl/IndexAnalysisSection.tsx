@@ -34,6 +34,14 @@ import {
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import {
+  buildReconciliation,
+  IndexMethodologyPanel,
+  ProjectionsReconciliation,
+  type IaColumnOrigin,
+  type ReconciliationSource,
+} from './IndexMethodology';
 
 const HISTORICAL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024];
 const FORECAST_YEARS = [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033];
@@ -255,6 +263,29 @@ function buildSubjectSeries(
     }
   }
   return { ...series, boundary };
+}
+
+/**
+ * FON-41 E-027 — where an Index Analysis SUBJECT column's numbers come from,
+ * mirroring ``buildSubjectSeries``: forecast column ``anchor + i`` is
+ * ``revenue.years[i]``; the anchor column is ``years[0]`` only when no
+ * multi-year P&L filled it (``boundary.comparable``), else the fiscal-year
+ * actual; earlier columns are fiscal-year actuals or blank.
+ */
+export function iaColumnOrigin(
+  colIdx: number,
+  boundaryComparable: boolean,
+  revYearsLength: number,
+  hasValue: boolean,
+): IaColumnOrigin {
+  const anchorIdx = HISTORICAL_YEARS.length - 1;
+  if (!hasValue) return { kind: 'none' };
+  if (colIdx > anchorIdx) {
+    const k = colIdx - anchorIdx;
+    return k < revYearsLength ? { kind: 'engine', yearIndex: k } : { kind: 'none' };
+  }
+  if (colIdx === anchorIdx) return boundaryComparable ? { kind: 'engine', yearIndex: 0 } : { kind: 'fiscal_year' };
+  return { kind: 'fiscal_year' };
 }
 
 // Build the CoStar comp-set year series from the market-data envelope. The
@@ -875,6 +906,63 @@ export default function IndexAnalysisSection({
     [marketData, subjectSeries],
   );
 
+  // FON-41 E-027 — reconcile this table to Financials → Projections. Every
+  // figure is an engine output or a worker source tag, restated.
+  const occSrc = useSource('starting_occupancy');
+  const adrSrc = useSource('starting_adr');
+  const occDispSrc = useSource('y1_occupancy_displacement_pct');
+  const adrDispSrc = useSource('y1_adr_displacement_pct');
+  const occGrowthSrc = useSource('occupancy_growth');
+  const adrGrowthSrc = useSource('adr_growth');
+  const reconciliation = useMemo(() => {
+    const revYears = getEngineField<RevenueYear[]>(outputs, 'revenue', 'years') ?? [];
+    const calendar = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years') ?? [];
+    const y0 = revYears[0];
+    if (!y0) return null;
+    const num = (v: unknown): number | null =>
+      typeof v === 'number' && Number.isFinite(v) ? v : null;
+    const baseCal = num(calendar[0]);
+    const colYear = baseCal != null && ALL_YEARS.includes(baseCal) ? baseCal : FORECAST_YEARS[0];
+    const colIdx = ALL_YEARS.indexOf(colYear);
+    const iaOcc = subjectSeries.occupancy[colIdx] ?? null;
+    const iaAdr = subjectSeries.adr[colIdx] ?? null;
+    const srcOf = (s: ReturnType<typeof useSource>): ReconciliationSource | null =>
+      s
+        ? {
+            source: s.source || null,
+            filename: s.field?.filename ?? null,
+            page: s.field?.page ?? null,
+            asOf: s.field?.as_of ?? null,
+            scope: s.field?.scope ?? null,
+          }
+        : null;
+    const str = marketData?.str_trend ?? null;
+    return buildReconciliation({
+      baseYear: { occupancy: y0.occupancy, adr: y0.adr },
+      baseCalendarYear: baseCal,
+      startingOccupancy: num(occSrc?.value),
+      startingAdr: num(adrSrc?.value),
+      occSource: srcOf(occSrc),
+      adrSource: srcOf(adrSrc),
+      y1OccDisplacement: num(occDispSrc?.value),
+      y1AdrDisplacement: num(adrDispSrc?.value),
+      occupancyGrowth: num(occGrowthSrc?.value),
+      adrGrowth: num(adrGrowthSrc?.value),
+      iaColumnYear: colYear,
+      iaOccupancy: iaOcc,
+      iaAdr: iaAdr,
+      iaOrigin: iaColumnOrigin(
+        colIdx,
+        subjectSeries.boundary.comparable,
+        revYears.length,
+        iaOcc != null || iaAdr != null,
+      ),
+      strOccupancy: occFraction(str?.subject_occupancy_pct),
+      strAdr: posOrNull(str?.subject_adr_usd),
+      strPeriodLabel: str?.report_month ? `TTM to ${str.report_month}` : null,
+    });
+  }, [outputs, subjectSeries, marketData, occSrc, adrSrc, occDispSrc, adrDispSrc, occGrowthSrc, adrGrowthSrc]);
+
   // Comp-set "keys" row = total comp-set room count. Source priority:
   //   1. Sum of the named `compset[i].keys` roster — this is exactly what
   //      Market Overview's blended comp-set row shows, so the two views agree
@@ -944,6 +1032,10 @@ export default function IndexAnalysisSection({
       <div className="text-[11.5px] text-ink-500 leading-relaxed">{forecastCaption}</div>
 
       <div className="text-[11px] text-ink-500 italic leading-relaxed">{NOTES_TEXT}</div>
+
+      <ProjectionsReconciliation rec={reconciliation} />
+
+      <IndexMethodologyPanel dealId={dealId} />
 
       <Card className="p-0 overflow-hidden">
         <IndexTable

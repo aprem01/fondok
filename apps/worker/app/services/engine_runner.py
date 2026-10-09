@@ -2262,6 +2262,37 @@ async def _load_engine_inputs(
                         "populate; the model stays on the T-12 base."
                     ),
                 )
+        # FON-61 / FON-41 E-028 — the Index Analysis assumptions (market
+        # growth, MPI / ARI penetration targets against the selected index
+        # methodology) ride THIS path and no other: the toggle is on. Each
+        # applies only when the analyst overrode it; the penetration targets
+        # only while the Year-1 rates sit on an STR basis (the seed landed).
+        # No override → no read, no change (every golden deal).
+        from .index_methodology import (
+            apply_index_assumptions,
+            load_index_rows,
+            wants_benchmark,
+        )
+
+        index_rows = None
+        if wants_benchmark(base, analyst_override_paths):
+            try:
+                index_rows = await load_index_rows(
+                    session, deal_id=deal_id, tenant_id=effective_tenant
+                )
+            except Exception:
+                logger.exception(
+                    "index methodology: benchmark read failed for deal %s", deal_id
+                )
+        for key in apply_index_assumptions(
+            base,
+            sources,
+            analyst_override_paths,
+            rows=index_rows,
+            str_basis_sources=STR_BASIS_SOURCES,
+            derived_sources=frozenset({SOURCE_DERIVED_FROM_REVPAR_GROWTH}),
+        ):
+            source_fields.pop(key, None)
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
     # An analyst override, a deals-row entry or a derived value does not come

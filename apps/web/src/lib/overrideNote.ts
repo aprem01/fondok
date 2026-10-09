@@ -82,6 +82,13 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // it, and the Overview only compares the derived stabilized yield on cost
   // against it. Nothing sourced is being overridden, so nothing to justify.
   'target_stabilized_yoc',
+  // FON-61 / E-028 — the Index Analysis METHOD choice (STR comp set / market
+  // benchmark / CoStar comp set) and which chain-scale segment the market
+  // benchmark reads. Choices, not numbers: the analyst types nothing, and they
+  // move no figure unless a penetration target — which DOES need a note — is
+  // also set while "Use STR rates in the model" is on.
+  'index_methodology',
+  'index_market_segment',
 ]);
 
 /**
