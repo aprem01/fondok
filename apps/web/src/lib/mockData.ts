@@ -179,11 +179,38 @@ export const engines = [
   { id: 'partnership', label: 'Partnership', progress: 0 },
 ];
 
-// Backfilled from evals/golden-set/brand-catalog.json (191 brands across 12 families).
+// Brand catalog. Originally backfilled from evals/golden-set/brand-catalog.json
+// (191 brands across 12 families). R-020 / R-021 / R-022 (2026-10-08) re-audited
+// every group against an official or authoritative source, recorded per family
+// below (`sources`), added Accor, Meliá, Minor Hotels and Motel One, moved
+// group-owned brands out of "Other Brands", and added missing current brands.
+//
+// Starwood Hotels & Resorts no longer exists as a hotel group — Marriott
+// completed the acquisition on 23 Sep 2016 (https://marriott.gcs-web.com/node/14521).
+// Its legacy brands sit under Marriott and carry the alias "Starwood" so a
+// search for "Starwood" still finds them. (Separately, Starwood Capital renamed
+// its SH Hotels & Resorts — 1 Hotels, Baccarat, Treehouse — "Starwood Hotels"
+// in 2025; those are NOT Marriott and stay under Other Brands.)
+//
+// `tier` is the catalog's pre-existing label (kept as-is for existing brands;
+// new brands take their STR chain scale). `scale` is the brand's STR chain
+// scale per STR's published "STR Chain Scales" table (February 2026,
+// https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales),
+// present only where STR lists the brand. R-024 — `scale` (else `tier`) is the
+// brand's default positioning in the wizard / Overview.
+//
 // Brand names use the canonical catalog form (e.g., "Hampton by Hilton") with the
 // shorter mockData aliases retained as substring-matchable prefixes for legacy deal
 // records that store just the short brand (e.g., kimptonAnglerOverview.general.brand = "Kimpton").
-export type Brand = { name: string; tier: string };
+export type ChainScale = 'Luxury' | 'Upper Upscale' | 'Upscale' | 'Upper Midscale' | 'Midscale' | 'Economy';
+export type Brand = {
+  name: string;
+  tier: string;
+  /** STR chain scale (Feb 2026 table) — only where STR publishes one. */
+  scale?: ChainScale;
+  /** Extra search terms (e.g. "Starwood" for the legacy Starwood brands). */
+  aliases?: string[];
+};
 export type BrandFamily = {
   family: string;
   count: number;
@@ -191,225 +218,398 @@ export type BrandFamily = {
   /** Short parent-chain label shown as secondary text next to a brand
    *  ("IHG" for "IHG Hotels & Resorts"). Falls back to `family`. */
   short?: string;
+  /** Official / authoritative source URLs for this group's brand list. */
+  sources: string[];
+  note?: string;
 };
 
+function family(f: Omit<BrandFamily, 'count'>): BrandFamily {
+  return { ...f, count: f.brands.length };
+}
+
 export const brandFamilies: BrandFamily[] = [
-  { family: 'Hilton', short: 'Hilton', count: 18, brands: [
-    { name: 'Hampton by Hilton', tier: 'Upper Midscale' },
-    { name: 'Hilton Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Hilton Garden Inn', tier: 'Upscale' },
-    { name: 'DoubleTree by Hilton', tier: 'Upscale' },
-    { name: 'Home2 Suites by Hilton', tier: 'Upper Midscale' },
-    { name: 'Embassy Suites by Hilton', tier: 'Upper Upscale' },
-    { name: 'Homewood Suites by Hilton', tier: 'Upscale' },
-    { name: 'Tru by Hilton', tier: 'Midscale' },
-    { name: 'Curio Collection by Hilton', tier: 'Upper Upscale' },
-    { name: 'Tapestry Collection by Hilton', tier: 'Upscale' },
-    { name: 'Canopy by Hilton', tier: 'Upper Upscale' },
-    { name: 'Signia by Hilton', tier: 'Luxury' },
-    { name: 'Motto by Hilton', tier: 'Upscale' },
-    { name: 'Spark by Hilton', tier: 'Midscale' },
-    { name: 'Tempo by Hilton', tier: 'Upscale' },
-    { name: 'LXR Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Conrad Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Waldorf Astoria Hotels & Resorts', tier: 'Luxury' },
-  ]},
-  { family: 'Marriott International', short: 'Marriott', count: 28, brands: [
-    { name: 'Courtyard by Marriott', tier: 'Upscale' },
-    { name: 'Marriott Hotels', tier: 'Upper Upscale' },
-    { name: 'Fairfield by Marriott', tier: 'Upper Midscale' },
-    { name: 'Residence Inn by Marriott', tier: 'Upscale' },
-    { name: 'Sheraton', tier: 'Upper Upscale' },
-    { name: 'SpringHill Suites by Marriott', tier: 'Upscale' },
-    { name: 'TownePlace Suites by Marriott', tier: 'Upper Midscale' },
-    { name: 'Autograph Collection', tier: 'Upper Upscale' },
-    { name: 'Renaissance Hotels', tier: 'Upper Upscale' },
-    { name: 'Aloft Hotels', tier: 'Upscale' },
-    { name: 'Four Points by Sheraton', tier: 'Upscale' },
-    { name: 'Delta Hotels by Marriott', tier: 'Upper Upscale' },
-    { name: 'AC Hotels by Marriott', tier: 'Upscale' },
-    { name: 'JW Marriott', tier: 'Luxury' },
-    { name: 'The Westin Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Element Hotels', tier: 'Upscale' },
-    { name: 'Tribute Portfolio', tier: 'Upper Upscale' },
-    { name: 'Moxy Hotels', tier: 'Upscale' },
-    { name: 'The Luxury Collection', tier: 'Luxury' },
-    { name: 'Le Méridien', tier: 'Upper Upscale' },
-    { name: 'The Ritz-Carlton', tier: 'Luxury' },
-    { name: 'W Hotels', tier: 'Luxury' },
-    { name: 'St. Regis Hotels & Resorts', tier: 'Luxury' },
-    { name: 'EDITION Hotels', tier: 'Luxury' },
-    { name: 'Gaylord Hotels', tier: 'Upper Upscale' },
-    { name: 'Bvlgari Hotels & Resorts', tier: 'Luxury' },
-    { name: 'City Express by Marriott', tier: 'Midscale' },
-    { name: 'Marriott Executive Apartments', tier: 'Upper Upscale' },
-  ]},
-  { family: 'IHG Hotels & Resorts', short: 'IHG', count: 17, brands: [
-    { name: 'Holiday Inn Express', tier: 'Upper Midscale' },
-    { name: 'Holiday Inn', tier: 'Upscale' },
-    { name: 'Candlewood Suites', tier: 'Midscale' },
-    { name: 'Staybridge Suites', tier: 'Upscale' },
-    { name: 'Crowne Plaza Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'InterContinental Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Kimpton Hotels & Restaurants', tier: 'Upper Upscale' },
-    { name: 'Hotel Indigo', tier: 'Upscale' },
-    { name: 'avid hotels', tier: 'Midscale' },
-    { name: 'EVEN Hotels', tier: 'Upscale' },
-    { name: 'voco Hotels', tier: 'Upper Upscale' },
-    { name: 'Vignette Collection', tier: 'Upper Upscale' },
-    { name: 'Atwell Suites', tier: 'Upscale' },
-    { name: 'Garner Hotels', tier: 'Midscale' },
-    { name: 'Iberostar Beachfront Resorts', tier: 'Upper Upscale' },
-    { name: 'Regent Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Six Senses', tier: 'Luxury' },
-  ]},
-  { family: 'Hyatt Hotels Corp.', short: 'Hyatt', count: 18, brands: [
-    { name: 'Hyatt Place', tier: 'Upscale' },
-    { name: 'Hyatt House', tier: 'Upscale' },
-    { name: 'Hyatt Regency', tier: 'Upper Upscale' },
-    { name: 'Grand Hyatt', tier: 'Upper Upscale' },
-    { name: 'Hyatt Centric', tier: 'Upper Upscale' },
-    { name: 'Andaz', tier: 'Luxury' },
-    { name: 'Park Hyatt', tier: 'Luxury' },
-    { name: 'Thompson Hotels', tier: 'Luxury' },
-    { name: 'Alila Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Destination by Hyatt', tier: 'Upper Upscale' },
-    { name: 'JdV by Hyatt', tier: 'Upper Upscale' },
-    { name: 'Caption by Hyatt', tier: 'Upscale' },
-    { name: 'Hyatt Studios', tier: 'Upper Midscale' },
-    { name: 'Hyatt Vacation Club', tier: 'Upper Upscale' },
-    { name: 'Hyatt Ziva', tier: 'Upper Upscale' },
-    { name: 'Hyatt Zilara', tier: 'Luxury' },
-    { name: 'UrCove', tier: 'Upper Midscale' },
-    { name: 'Miraval Resorts', tier: 'Luxury' },
-  ]},
-  { family: 'Wyndham Hotels & Resorts', short: 'Wyndham', count: 21, brands: [
-    { name: 'Super 8 by Wyndham', tier: 'Economy' },
-    { name: 'Days Inn by Wyndham', tier: 'Economy' },
-    { name: 'Ramada by Wyndham', tier: 'Midscale' },
-    { name: 'Howard Johnson by Wyndham', tier: 'Economy' },
-    { name: 'Travelodge by Wyndham', tier: 'Economy' },
-    { name: 'Microtel by Wyndham', tier: 'Economy' },
-    { name: 'Wingate by Wyndham', tier: 'Upper Midscale' },
-    { name: 'Hawthorn Suites by Wyndham', tier: 'Midscale' },
-    { name: 'AmericInn by Wyndham', tier: 'Midscale' },
-    { name: 'Baymont by Wyndham', tier: 'Midscale' },
-    { name: 'La Quinta by Wyndham', tier: 'Midscale' },
-    { name: 'Wyndham Garden', tier: 'Upper Midscale' },
-    { name: 'Wyndham Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Wyndham Grand', tier: 'Upper Upscale' },
-    { name: 'Wyndham Alltra', tier: 'Upper Upscale' },
-    { name: 'TRYP by Wyndham', tier: 'Upscale' },
-    { name: 'Dolce Hotels and Resorts by Wyndham', tier: 'Upper Upscale' },
-    { name: 'Trademark Collection by Wyndham', tier: 'Upper Midscale' },
-    { name: 'Registry Collection Hotels', tier: 'Luxury' },
-    { name: 'Esplendor by Wyndham', tier: 'Upscale' },
-    { name: 'Vienna House by Wyndham', tier: 'Upscale' },
-  ]},
-  { family: 'Choice Hotels International', short: 'Choice', count: 19, brands: [
-    { name: 'Comfort Inn', tier: 'Upper Midscale' },
-    { name: 'Comfort Suites', tier: 'Upper Midscale' },
-    { name: 'Quality Inn', tier: 'Midscale' },
-    { name: 'Sleep Inn', tier: 'Midscale' },
-    { name: 'Clarion', tier: 'Upper Midscale' },
-    { name: 'Clarion Pointe', tier: 'Upper Midscale' },
-    { name: 'Cambria Hotels', tier: 'Upscale' },
-    { name: 'MainStay Suites', tier: 'Midscale' },
-    { name: 'WoodSpring Suites', tier: 'Economy' },
-    { name: 'Suburban Studios', tier: 'Economy' },
-    { name: 'Everhome Suites', tier: 'Midscale' },
-    { name: 'Econo Lodge', tier: 'Economy' },
-    { name: 'Rodeway Inn', tier: 'Economy' },
-    { name: 'Ascend Hotel Collection', tier: 'Upper Midscale' },
-    { name: 'Radisson Hotels Americas', tier: 'Upper Upscale' },
-    { name: 'Radisson Blu', tier: 'Upper Upscale' },
-    { name: 'Radisson RED', tier: 'Upscale' },
-    { name: 'Park Plaza', tier: 'Upper Upscale' },
-    { name: 'Country Inn & Suites by Radisson', tier: 'Upper Midscale' },
-  ]},
-  { family: 'BWH Hotels (Best Western)', short: 'Best Western', count: 17, brands: [
-    { name: 'Best Western', tier: 'Midscale' },
-    { name: 'Best Western Plus', tier: 'Upper Midscale' },
-    { name: 'Best Western Premier', tier: 'Upscale' },
-    { name: 'Vīb', tier: 'Upscale' },
-    { name: 'GLō Best Western', tier: 'Upper Midscale' },
-    { name: 'Executive Residency by Best Western', tier: 'Upper Midscale' },
-    { name: 'BW Signature Collection', tier: 'Upper Midscale' },
-    { name: 'BW Premier Collection', tier: 'Upscale' },
-    { name: 'Sadie Hotel', tier: 'Upper Upscale' },
-    { name: 'Aiden Hotels', tier: 'Upper Midscale' },
-    { name: 'WorldHotels Luxury', tier: 'Luxury' },
-    { name: 'WorldHotels Elite', tier: 'Upper Upscale' },
-    { name: 'WorldHotels Distinctive', tier: 'Upper Upscale' },
-    { name: 'WorldHotels Crafted', tier: 'Upscale' },
-    { name: 'SureStay Hotel by Best Western', tier: 'Economy' },
-    { name: 'SureStay Plus by Best Western', tier: 'Midscale' },
-    { name: 'SureStay Studio by Best Western', tier: 'Economy' },
-  ]},
-  { family: 'Sonesta International Hotels', short: 'Sonesta', count: 12, brands: [
-    { name: 'Sonesta Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Royal Sonesta', tier: 'Upper Upscale' },
-    { name: 'Sonesta Select', tier: 'Upscale' },
-    { name: 'Sonesta Simply Suites', tier: 'Midscale' },
-    { name: 'Sonesta ES Suites', tier: 'Upscale' },
-    { name: 'Classico, A Sonesta Collection', tier: 'Upper Upscale' },
-    { name: 'MOD, A Sonesta Collection', tier: 'Upper Upscale' },
-    { name: 'James Hotels', tier: 'Upper Upscale' },
-    { name: 'Red Lion Hotels', tier: 'Upper Midscale' },
-    { name: 'Red Lion Inn & Suites', tier: 'Midscale' },
-    { name: 'Americas Best Value Inn', tier: 'Economy' },
-    { name: 'Knights Inn', tier: 'Economy' },
-  ]},
-  { family: 'G6 Hospitality', short: 'G6', count: 2, brands: [
-    { name: 'Motel 6', tier: 'Economy' },
-    { name: 'Studio 6', tier: 'Economy' },
-  ]},
-  { family: 'Red Roof', count: 4, brands: [
-    { name: 'Red Roof Inn', tier: 'Economy' },
-    { name: 'Red Roof PLUS+', tier: 'Economy' },
-    { name: 'HomeTowne Studios by Red Roof', tier: 'Economy' },
-    { name: 'The Red Collection', tier: 'Upper Midscale' },
-  ]},
-  { family: 'Extended Stay America', count: 3, brands: [
-    { name: 'Extended Stay America', tier: 'Economy' },
-    { name: 'Extended Stay America Suites', tier: 'Midscale' },
-    { name: 'Extended Stay America Premier Suites', tier: 'Upper Midscale' },
-  ]},
-  { family: 'Other Brands', count: 32, brands: [
-    { name: 'Four Seasons Hotels and Resorts', tier: 'Luxury' },
-    { name: 'Aman Resorts', tier: 'Luxury' },
-    { name: 'Mandarin Oriental Hotel Group', tier: 'Luxury' },
-    { name: 'Rosewood Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Belmond', tier: 'Luxury' },
-    { name: 'Capella Hotels and Resorts', tier: 'Luxury' },
-    { name: 'Auberge Resorts Collection', tier: 'Luxury' },
-    { name: 'Loews Hotels & Co', tier: 'Upper Upscale' },
-    { name: 'Omni Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Fairmont Hotels and Resorts', tier: 'Luxury' },
-    { name: 'Raffles Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Sofitel', tier: 'Luxury' },
-    { name: 'Pullman Hotels and Resorts', tier: 'Upper Upscale' },
-    { name: 'Mövenpick Hotels and Resorts', tier: 'Upper Upscale' },
-    { name: 'Novotel', tier: 'Upscale' },
-    { name: 'ibis', tier: 'Midscale' },
-    { name: 'SLS Hotels', tier: 'Luxury' },
-    { name: 'Mondrian', tier: 'Luxury' },
-    { name: 'Delano', tier: 'Luxury' },
-    { name: '1 Hotels', tier: 'Luxury' },
-    { name: 'Baccarat Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Treehouse Hotels', tier: 'Upper Upscale' },
-    { name: 'Independent / Unflagged', tier: 'Various' },
-    { name: 'Margaritaville Hotels & Resorts', tier: 'Upper Upscale' },
-    { name: 'Great Wolf Lodge', tier: 'Upper Midscale' },
-    { name: 'Drury Hotels', tier: 'Upper Midscale' },
-    { name: 'Hard Rock Hotels', tier: 'Upper Upscale' },
-    { name: 'citizenM', tier: 'Upper Midscale' },
-    { name: 'Pendry Hotels', tier: 'Luxury' },
-    { name: 'Montage Hotels & Resorts', tier: 'Luxury' },
-    { name: 'Nobu Hotels', tier: 'Luxury' },
-    { name: 'Equinox Hotels', tier: 'Luxury' },
-  ]},
+  // Sources: https://stories.hilton.com/brands
+  family({ family: "Hilton", short: "Hilton", sources: ["https://stories.hilton.com/brands"], brands: [
+    { name: "Hampton by Hilton", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Hilton Hotels & Resorts", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Hilton Garden Inn", tier: "Upscale", scale: "Upscale" },
+    { name: "DoubleTree by Hilton", tier: "Upscale", scale: "Upscale" },
+    { name: "Home2 Suites by Hilton", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Embassy Suites by Hilton", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Homewood Suites by Hilton", tier: "Upscale", scale: "Upscale" },
+    { name: "Tru by Hilton", tier: "Midscale", scale: "Midscale" },
+    { name: "Curio Collection by Hilton", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Tapestry Collection by Hilton", tier: "Upscale", scale: "Upper Upscale" },
+    { name: "Canopy by Hilton", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Signia by Hilton", tier: "Luxury", scale: "Luxury" },
+    { name: "Motto by Hilton", tier: "Upscale", scale: "Upscale" },
+    { name: "Spark by Hilton", tier: "Midscale", scale: "Midscale" },
+    { name: "Tempo by Hilton", tier: "Upscale", scale: "Upscale" },
+    { name: "LXR Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Conrad Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Waldorf Astoria Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Graduate by Hilton", tier: "Upper Upscale", scale: "Upper Upscale", aliases: ["Graduate Hotels"] },
+    { name: "NoMad Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Outset Collection by Hilton", tier: "Upscale", scale: "Upscale" },
+    { name: "LivSmart Studios by Hilton", tier: "Midscale", scale: "Midscale" },
+  ]}),
+  // Sources: https://www.marriott.com/marriott-brands.mi · https://www.sec.gov/Archives/edgar/data/1048286/000104828626000007/mar-20251231.htm · https://marriott.gcs-web.com/node/14521
+  family({ family: "Marriott International", short: "Marriott", sources: ["https://www.marriott.com/marriott-brands.mi", "https://www.sec.gov/Archives/edgar/data/1048286/000104828626000007/mar-20251231.htm", "https://marriott.gcs-web.com/node/14521"], note: "Includes the former Starwood Hotels & Resorts brands — Marriott completed its acquisition of Starwood on 23 Sep 2016. Search \"Starwood\" to list them.", brands: [
+    { name: "Courtyard by Marriott", tier: "Upscale", scale: "Upscale" },
+    { name: "Marriott Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Fairfield by Marriott", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Residence Inn by Marriott", tier: "Upscale", scale: "Upscale" },
+    { name: "Sheraton", tier: "Upper Upscale", scale: "Upper Upscale", aliases: ["Starwood"] },
+    { name: "SpringHill Suites by Marriott", tier: "Upscale", scale: "Upscale" },
+    { name: "TownePlace Suites by Marriott", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Autograph Collection", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Renaissance Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Aloft Hotels", tier: "Upscale", scale: "Upscale", aliases: ["Starwood"] },
+    { name: "Four Points by Sheraton", tier: "Upscale", scale: "Upscale", aliases: ["Starwood"] },
+    { name: "Delta Hotels by Marriott", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "AC Hotels by Marriott", tier: "Upscale", scale: "Upscale" },
+    { name: "JW Marriott", tier: "Luxury", scale: "Luxury" },
+    { name: "The Westin Hotels & Resorts", tier: "Upper Upscale", scale: "Upper Upscale", aliases: ["Starwood"] },
+    { name: "Element Hotels", tier: "Upscale", scale: "Upscale", aliases: ["Starwood"] },
+    { name: "Tribute Portfolio", tier: "Upper Upscale", scale: "Upper Upscale", aliases: ["Starwood"] },
+    { name: "Moxy Hotels", tier: "Upscale", scale: "Upper Midscale" },
+    { name: "The Luxury Collection", tier: "Luxury", scale: "Luxury", aliases: ["Starwood"] },
+    { name: "Le Méridien", tier: "Upper Upscale", scale: "Upper Upscale", aliases: ["Starwood"] },
+    { name: "The Ritz-Carlton", tier: "Luxury", scale: "Luxury" },
+    { name: "W Hotels", tier: "Luxury", scale: "Luxury", aliases: ["Starwood"] },
+    { name: "St. Regis Hotels & Resorts", tier: "Luxury", scale: "Luxury", aliases: ["Starwood"] },
+    { name: "EDITION Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Gaylord Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Bvlgari Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "City Express by Marriott", tier: "Midscale", scale: "Midscale" },
+    { name: "Marriott Executive Apartments", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Design Hotels", tier: "Various", aliases: ["Starwood"] },
+    { name: "citizenM", tier: "Upscale", scale: "Upscale" },
+    { name: "The Ritz-Carlton Reserve", tier: "Luxury" },
+    { name: "Protea Hotels by Marriott", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Four Points Flex by Sheraton", tier: "Midscale", scale: "Midscale", aliases: ["Starwood"] },
+    { name: "Series by Marriott", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "StudioRes", tier: "Midscale", scale: "Midscale" },
+    { name: "Apartments by Marriott Bonvoy", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Outdoor Collection by Marriott Bonvoy", tier: "Various" },
+  ]}),
+  // Sources: https://www.ihgplc.com/en/our-brands
+  family({ family: "IHG Hotels & Resorts", short: "IHG", sources: ["https://www.ihgplc.com/en/our-brands"], brands: [
+    { name: "Holiday Inn Express", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Holiday Inn", tier: "Upscale", scale: "Upper Midscale" },
+    { name: "Candlewood Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "Staybridge Suites", tier: "Upscale", scale: "Upscale" },
+    { name: "Crowne Plaza Hotels & Resorts", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "InterContinental Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Kimpton Hotels & Restaurants", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Hotel Indigo", tier: "Upscale", scale: "Upper Upscale" },
+    { name: "avid hotels", tier: "Midscale", scale: "Midscale" },
+    { name: "EVEN Hotels", tier: "Upscale", scale: "Upscale" },
+    { name: "voco Hotels", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Vignette Collection", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "Atwell Suites", tier: "Upscale", scale: "Upper Midscale" },
+    { name: "Garner Hotels", tier: "Midscale", scale: "Midscale" },
+    { name: "Iberostar Beachfront Resorts", tier: "Upper Upscale" },
+    { name: "Regent Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Six Senses", tier: "Luxury", scale: "Luxury" },
+    { name: "Ruby Hotels", tier: "Upscale", scale: "Upscale" },
+    { name: "HUALUXE Hotels and Resorts", tier: "Upscale", scale: "Upscale" },
+  ]}),
+  // Sources: https://www.sec.gov/Archives/edgar/data/1468174/000146817426000007/h-20251231.htm · https://investors.hyatt.com/news/investor-news/news-details/2026/Hyatt-Announces-Timing-of-Third-Quarter-2026-Earnings-Release-and-Investor-Conference-Call/default.aspx
+  family({ family: "Hyatt Hotels Corp.", short: "Hyatt", sources: ["https://www.sec.gov/Archives/edgar/data/1468174/000146817426000007/h-20251231.htm", "https://investors.hyatt.com/news/investor-news/news-details/2026/Hyatt-Announces-Timing-of-Third-Quarter-2026-Earnings-Release-and-Investor-Conference-Call/default.aspx"], brands: [
+    { name: "Hyatt Place", tier: "Upscale", scale: "Upscale" },
+    { name: "Hyatt House", tier: "Upscale", scale: "Upscale" },
+    { name: "Hyatt Regency", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Grand Hyatt", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "Hyatt Centric", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Andaz", tier: "Luxury", scale: "Luxury" },
+    { name: "Park Hyatt", tier: "Luxury", scale: "Luxury" },
+    { name: "Thompson Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Alila Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Destination by Hyatt", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "JdV by Hyatt", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Caption by Hyatt", tier: "Upscale", scale: "Upscale" },
+    { name: "Hyatt Studios", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Hyatt Vacation Club", tier: "Upper Upscale" },
+    { name: "Hyatt Ziva", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "Hyatt Zilara", tier: "Luxury", scale: "Luxury" },
+    { name: "UrCove", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Miraval Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Hyatt", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Hyatt Select", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Hyatt Vivid", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "The Unbound Collection by Hyatt", tier: "Luxury", scale: "Luxury" },
+    { name: "Dream Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Unscripted by Hyatt", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "The Standard", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Bunkhouse Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Me and All Hotels", tier: "Upscale", scale: "Upscale" },
+    { name: "Secrets Resorts & Spas", tier: "Luxury", scale: "Luxury" },
+    { name: "Breathless Resorts & Spas", tier: "Luxury", scale: "Luxury" },
+    { name: "Dreams Resorts & Spas", tier: "Luxury", scale: "Luxury" },
+    { name: "Zoëtry Wellness & Spa Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Alua Hotels & Resorts", tier: "Upscale", scale: "Upscale" },
+    { name: "Sunscape Resorts & Spas", tier: "Upper Upscale", scale: "Upper Upscale" },
+  ]}),
+  // Sources: https://corporate.wyndhamhotels.com/our-brands/
+  family({ family: "Wyndham Hotels & Resorts", short: "Wyndham", sources: ["https://corporate.wyndhamhotels.com/our-brands/"], brands: [
+    { name: "Super 8 by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "Days Inn by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "Ramada by Wyndham", tier: "Midscale", scale: "Midscale" },
+    { name: "Howard Johnson by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "Travelodge by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "Microtel by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "Wingate by Wyndham", tier: "Upper Midscale", scale: "Midscale" },
+    { name: "Hawthorn Suites by Wyndham", tier: "Midscale", scale: "Midscale" },
+    { name: "AmericInn by Wyndham", tier: "Midscale", scale: "Midscale" },
+    { name: "Baymont by Wyndham", tier: "Midscale", scale: "Midscale" },
+    { name: "La Quinta by Wyndham", tier: "Midscale", scale: "Upper Midscale" },
+    { name: "Wyndham Garden", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Wyndham Hotels & Resorts", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Wyndham Grand", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Wyndham Alltra", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "TRYP by Wyndham", tier: "Upscale", scale: "Upper Midscale" },
+    { name: "Dolce Hotels and Resorts by Wyndham", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Trademark Collection by Wyndham", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Registry Collection Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Esplendor by Wyndham", tier: "Upscale", scale: "Upscale" },
+    { name: "Vienna House by Wyndham", tier: "Upscale", scale: "Upscale" },
+    { name: "ECHO Suites Extended Stay by Wyndham", tier: "Economy", scale: "Economy" },
+    { name: "WaterWalk Extended Stay by Wyndham", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Dazzler by Wyndham", tier: "Upscale", scale: "Upscale" },
+    { name: "Ramada Encore by Wyndham", tier: "Midscale", scale: "Midscale" },
+  ]}),
+  // Sources: https://www.sec.gov/Archives/edgar/data/1046311/000104631126000008/chh-20251231.htm
+  family({ family: "Choice Hotels International", short: "Choice", sources: ["https://www.sec.gov/Archives/edgar/data/1046311/000104631126000008/chh-20251231.htm"], brands: [
+    { name: "Comfort Inn", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Comfort Suites", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Quality Inn", tier: "Midscale", scale: "Midscale" },
+    { name: "Sleep Inn", tier: "Midscale", scale: "Midscale" },
+    { name: "Clarion", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Clarion Pointe", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Cambria Hotels", tier: "Upscale", scale: "Upscale" },
+    { name: "MainStay Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "WoodSpring Suites", tier: "Economy", scale: "Economy" },
+    { name: "Suburban Studios", tier: "Economy", scale: "Economy" },
+    { name: "Everhome Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "Econo Lodge", tier: "Economy", scale: "Economy" },
+    { name: "Rodeway Inn", tier: "Economy", scale: "Economy" },
+    { name: "Ascend Hotel Collection", tier: "Upper Midscale", scale: "Upscale" },
+    { name: "Radisson Hotels Americas", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Radisson Blu", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Radisson RED", tier: "Upscale", scale: "Upper Upscale" },
+    { name: "Park Plaza", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Country Inn & Suites by Radisson", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Radisson Individuals", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Park Inn by Radisson", tier: "Midscale", scale: "Midscale" },
+  ]}),
+  // Sources: https://skift.com/2025/11/21/best-westerns-hotel-brands-explained/
+  family({ family: "BWH Hotels (Best Western)", short: "Best Western", sources: ["https://skift.com/2025/11/21/best-westerns-hotel-brands-explained/"], brands: [
+    { name: "Best Western", tier: "Midscale", scale: "Midscale" },
+    { name: "Best Western Plus", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Best Western Premier", tier: "Upscale", scale: "Upscale" },
+    { name: "Vīb", tier: "Upscale", scale: "Upscale" },
+    { name: "GLō Best Western", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Executive Residency by Best Western", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "BW Signature Collection", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "BW Premier Collection", tier: "Upscale", scale: "Upscale" },
+    { name: "Sadie Hotel", tier: "Upper Upscale" },
+    { name: "Aiden Hotels", tier: "Upper Midscale", scale: "Upscale" },
+    { name: "WorldHotels Luxury", tier: "Luxury", scale: "Luxury" },
+    { name: "WorldHotels Elite", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "WorldHotels Distinctive", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "WorldHotels Crafted", tier: "Upscale", scale: "Upper Upscale" },
+    { name: "SureStay Hotel by Best Western", tier: "Economy", scale: "Economy" },
+    { name: "SureStay Plus by Best Western", tier: "Midscale", scale: "Economy" },
+    { name: "SureStay Studio by Best Western", tier: "Economy", scale: "Economy" },
+    { name: "@Home by Best Western", tier: "Midscale", scale: "Midscale" },
+    { name: "SureStay Collection by Best Western", tier: "Economy", scale: "Economy" },
+  ]}),
+  // Sources: https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales
+  family({ family: "Sonesta International Hotels", short: "Sonesta", sources: ["https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales"], brands: [
+    { name: "Sonesta Hotels & Resorts", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Royal Sonesta", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Sonesta Select", tier: "Upscale", scale: "Upscale" },
+    { name: "Sonesta Simply Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "Sonesta ES Suites", tier: "Upscale", scale: "Upper Midscale" },
+    { name: "Classico, A Sonesta Collection", tier: "Upper Upscale" },
+    { name: "MOD, A Sonesta Collection", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "James Hotels", tier: "Upper Upscale" },
+    { name: "Red Lion Hotels", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Red Lion Inn & Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "Americas Best Value Inn", tier: "Economy", scale: "Economy" },
+    { name: "Knights Inn", tier: "Economy", scale: "Economy" },
+    { name: "Sonesta Essential", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Signature Inn", tier: "Midscale", scale: "Midscale" },
+    { name: "Hotel RL", tier: "Upscale", scale: "Upscale" },
+    { name: "GuestHouse", tier: "Midscale", scale: "Midscale" },
+    { name: "Canadas Best Value Inn", tier: "Midscale", scale: "Midscale" },
+    { name: "Jameson Inn", tier: "Economy", scale: "Economy" },
+    { name: "Country Hearth Inn", tier: "Economy", scale: "Economy" },
+    { name: "America's Best Inn", tier: "Economy", scale: "Economy" },
+  ]}),
+  // Sources: https://www.hoteldive.com/news/oyo-parent-company-oravel-stays-rebrands-to-prism/759696/
+  family({ family: "G6 Hospitality", short: "G6", sources: ["https://www.hoteldive.com/news/oyo-parent-company-oravel-stays-rebrands-to-prism/759696/"], brands: [
+    { name: "Motel 6", tier: "Economy", scale: "Economy" },
+    { name: "Studio 6", tier: "Economy", scale: "Economy" },
+  ]}),
+  // Sources: https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales
+  family({ family: "Red Roof", sources: ["https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales"], brands: [
+    { name: "Red Roof Inn", tier: "Economy", scale: "Economy" },
+    { name: "Red Roof PLUS+", tier: "Economy", scale: "Economy" },
+    { name: "HomeTowne Studios by Red Roof", tier: "Economy", scale: "Economy" },
+    { name: "The Red Collection", tier: "Upper Midscale", scale: "Upper Midscale" },
+  ]}),
+  // Sources: https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales
+  family({ family: "Extended Stay America", sources: ["https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales"], brands: [
+    { name: "Extended Stay America", tier: "Economy" },
+    { name: "Extended Stay America Suites", tier: "Midscale", scale: "Midscale" },
+    { name: "Extended Stay America Premier Suites", tier: "Upper Midscale", scale: "Midscale" },
+    { name: "Extended Stay America Select Suites", tier: "Economy", scale: "Economy" },
+  ]}),
+  // Sources: https://group.accor.com/en/brands · https://all.accor.com/a/en/brands.html · https://ennismore.com/brands/
+  family({ family: "Accor", short: "Accor", sources: ["https://group.accor.com/en/brands", "https://all.accor.com/a/en/brands.html", "https://ennismore.com/brands/"], brands: [
+    { name: "Raffles Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Orient Express", tier: "Luxury", scale: "Luxury" },
+    { name: "Fairmont Hotels and Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Emblems Collection", tier: "Luxury", scale: "Luxury" },
+    { name: "Sofitel", tier: "Luxury", scale: "Luxury" },
+    { name: "Sofitel Legend", tier: "Luxury", scale: "Luxury" },
+    { name: "MGallery Collection", tier: "Luxury", scale: "Luxury" },
+    { name: "Faena", tier: "Luxury", scale: "Luxury" },
+    { name: "SO/", tier: "Luxury", scale: "Luxury" },
+    { name: "Rixos", tier: "Luxury", scale: "Luxury" },
+    { name: "SLS Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Mondrian", tier: "Luxury", scale: "Luxury" },
+    { name: "Delano", tier: "Luxury", scale: "Luxury" },
+    { name: "21c Museum Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Our Habitas", tier: "Luxury", scale: "Luxury" },
+    { name: "25hours Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Hyde", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Morgans Originals", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "The Hoxton", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Mama Shelter", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Swissôtel", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Pullman Hotels and Resorts", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Mövenpick Hotels and Resorts", tier: "Upper Upscale", scale: "Upscale" },
+    { name: "Grand Mercure", tier: "Upscale", scale: "Upscale" },
+    { name: "Mantis Collection", tier: "Luxury", scale: "Luxury" },
+    { name: "Peppers", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "The Sebel", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Art Series", tier: "Upscale", scale: "Upscale" },
+    { name: "Novotel", tier: "Upscale", scale: "Upscale" },
+    { name: "Mercure", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Handwritten Collection", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Mantra", tier: "Upscale", scale: "Upscale" },
+    { name: "Adagio", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Adagio Access", tier: "Midscale", scale: "Midscale" },
+    { name: "TRIBE", tier: "Midscale", scale: "Midscale" },
+    { name: "ibis", tier: "Midscale", scale: "Midscale" },
+    { name: "ibis Styles", tier: "Midscale", scale: "Midscale" },
+    { name: "greet", tier: "Midscale", scale: "Midscale" },
+    { name: "BreakFree", tier: "Midscale", scale: "Midscale" },
+    { name: "ibis budget", tier: "Economy", scale: "Economy" },
+    { name: "JO&JOE", tier: "Economy", scale: "Economy" },
+    { name: "hotelF1", tier: "Economy", scale: "Economy" },
+  ]}),
+  // Sources: https://www.hospitalitynet.org/news/4125530.html
+  family({ family: "Meliá Hotels International", short: "Meliá", sources: ["https://www.hospitalitynet.org/news/4125530.html"], brands: [
+    { name: "Gran Meliá", tier: "Luxury", scale: "Luxury" },
+    { name: "ME by Meliá", tier: "Luxury", scale: "Luxury" },
+    { name: "Paradisus by Meliá", tier: "Luxury", scale: "Luxury" },
+    { name: "The Meliá Collection", tier: "Luxury", scale: "Luxury" },
+    { name: "ZEL", tier: "Luxury", scale: "Luxury" },
+    { name: "Meliá Hotels & Resorts", tier: "Upscale", scale: "Upscale" },
+    { name: "INNSiDE by Meliá", tier: "Upscale", scale: "Upscale" },
+    { name: "Sol by Meliá", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "Affiliated by Meliá", tier: "Upscale", scale: "Upscale" },
+  ]}),
+  // Sources: https://www.minorhotels.com/en/brands
+  family({ family: "Minor Hotels", short: "Minor", sources: ["https://www.minorhotels.com/en/brands"], brands: [
+    { name: "Anantara", tier: "Luxury", scale: "Luxury" },
+    { name: "Elewana Collection", tier: "Luxury" },
+    { name: "Tivoli", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "NH Collection", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "nhow", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Avani", tier: "Upscale", scale: "Upscale" },
+    { name: "NH Hotels", tier: "Upscale", scale: "Upscale" },
+    { name: "Oaks Hotels & Resorts", tier: "Upscale", scale: "Upscale" },
+  ]}),
+  // Sources: https://www.motel-one.com/en/ · https://www.presseportal.de/en/pm/31948/6265751
+  family({ family: "Motel One Group", short: "Motel One", sources: ["https://www.motel-one.com/en/", "https://www.presseportal.de/en/pm/31948/6265751"], brands: [
+    { name: "Motel One", tier: "Upper Midscale", scale: "Upper Midscale" },
+    { name: "The Cloud One Hotels", tier: "Upscale", scale: "Upscale" },
+  ]}),
+  // Sources: https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales
+  family({ family: "Other Brands", sources: ["https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales"], note: "Brands that are not part of a hotel group in this catalog (independent, or owned by a company that is not listed here).", brands: [
+    { name: "Four Seasons Hotels and Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Aman Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Mandarin Oriental Hotel Group", tier: "Luxury", scale: "Luxury" },
+    { name: "Rosewood Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Belmond", tier: "Luxury", scale: "Luxury" },
+    { name: "Capella Hotels and Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Auberge Resorts Collection", tier: "Luxury", scale: "Luxury" },
+    { name: "Loews Hotels & Co", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "Omni Hotels & Resorts", tier: "Upper Upscale", scale: "Luxury" },
+    { name: "1 Hotels", tier: "Luxury", scale: "Luxury", aliases: ["Starwood Hotels (Starwood Capital)"] },
+    { name: "Baccarat Hotels & Resorts", tier: "Luxury", aliases: ["Starwood Hotels (Starwood Capital)"] },
+    { name: "Treehouse Hotels", tier: "Upper Upscale", aliases: ["Starwood Hotels (Starwood Capital)"] },
+    { name: "Independent / Unflagged", tier: "Various" },
+    { name: "Margaritaville Hotels & Resorts", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Great Wolf Lodge", tier: "Upper Midscale", scale: "Upper Upscale" },
+    { name: "Drury Hotels", tier: "Upper Midscale", scale: "Upscale" },
+    { name: "Hard Rock Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+    { name: "Pendry Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Montage Hotels & Resorts", tier: "Luxury", scale: "Luxury" },
+    { name: "Nobu Hotels", tier: "Luxury", scale: "Luxury" },
+    { name: "Equinox Hotels", tier: "Luxury" },
+    { name: "Club Quarters Hotels", tier: "Upper Upscale", scale: "Upper Upscale" },
+  ]}),
 ];
+
+/**
+ * R-020 — brand search for the wizard picker. A family-name hit keeps every
+ * brand in that family; otherwise a brand matches on its name or any alias
+ * (so "Starwood" lists the legacy Starwood brands under Marriott). Families
+ * with no hits are dropped. An empty query returns the whole catalog.
+ */
+export function searchBrandFamilies(query: string): BrandFamily[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return brandFamilies;
+  return brandFamilies
+    .map(f =>
+      f.family.toLowerCase().includes(q) || (f.short ?? '').toLowerCase() === q
+        ? f
+        : {
+            ...f,
+            brands: f.brands.filter(
+              b => b.name.toLowerCase().includes(q) || (b.aliases ?? []).some(a => a.toLowerCase().includes(q)),
+            ),
+          },
+    )
+    .filter(f => f.brands.length > 0);
+}
+
+const POSITIONING_BY_SCALE: Record<string, string> = {
+  Luxury: 'luxury',
+  'Upper Upscale': 'upper-upscale',
+  Upscale: 'upscale',
+  'Upper Midscale': 'upper-midscale',
+  Midscale: 'midscale',
+  Economy: 'economy',
+};
+
+/**
+ * R-024 — the brand's default positioning (a `positioningTiers` id): its STR
+ * chain scale where STR publishes one, else its catalog tier. Null when the
+ * brand is unknown or has no single scale ("Various" — Independent, Design
+ * Hotels, the Outdoor Collection), in which case nothing is pre-filled.
+ */
+export function brandDefaultPositioning(name: string | null | undefined): string | null {
+  const hit = findBrand(name);
+  if (!hit) return null;
+  return POSITIONING_BY_SCALE[hit.brand.scale ?? hit.brand.tier] ?? null;
+}
 
 /**
  * Look up a brand by name across all families. Tolerant of legacy short

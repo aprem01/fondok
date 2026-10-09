@@ -34,6 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
+from ..services.comp_cap_range import comp_cap_rate_range, normalize_comp_interest
 from ..services.market_comp_set import (
     CompSetDerivation,
     StrReportOrder,
@@ -859,8 +860,23 @@ class TransactionCompEntry(BaseModel):
     # SELLER column. Emitted as null (renders "—") when the OM row doesn't
     # disclose a seller rather than omitting the field.
     seller: str | None = None
+    # R-064 — ownership interest conveyed. Only an explicit extracted
+    # ``interest_type`` / ``ground_lease`` / ``fee_simple`` sets it; never
+    # inferred, so null (renders "—") is the honest default.
+    interest: Literal["Fee Simple", "Ground Lease"] | None = None
     source_document_id: str | None = None
     source_page: int | None = None
+
+
+class CompCapRateRange(BaseModel):
+    """E-020 — disclosed comp cap rates behind Investment's Entry Cap hint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    low_pct: float
+    high_pct: float
+    median_pct: float
+    n: int
 
 
 class TransactionCompsResponse(BaseModel):
@@ -876,6 +892,9 @@ class TransactionCompsResponse(BaseModel):
         ),
     )
     median_cap_rate_pct: float | None = None
+    # E-020 — range over every extracted comp that discloses a cap rate;
+    # null when fewer than two do (the UI then says so).
+    cap_rate_range: CompCapRateRange | None = None
     note: str | None = None
 
 
@@ -916,6 +935,12 @@ _TXN_FIELD_ALIASES: dict[str, str] = {
     "seller_name": "seller",
     "vendor": "seller",
     "disposition_by": "seller",
+    "interest_type": "interest_type",
+    "interest": "interest_type",
+    "ownership_interest": "interest_type",
+    "property_interest": "interest_type",
+    "ground_lease": "ground_lease",
+    "fee_simple": "fee_simple",
 }
 
 
@@ -1076,6 +1101,11 @@ async def transaction_comps(
                 buyer_name=buyer_name,
                 buyer_type=buyer_type,
                 seller=seller,
+                interest=normalize_comp_interest(
+                    b.get("interest_type"),
+                    ground_lease=b.get("ground_lease"),
+                    fee_simple=b.get("fee_simple"),
+                ),
                 source_document_id=doc_id,
                 source_page=page,
             )
@@ -1104,6 +1134,11 @@ async def transaction_comps(
         comps=comps,
         median_price_per_key=median_ppk,
         median_cap_rate_pct=median_cap,
+        cap_rate_range=(
+            CompCapRateRange(**rng)
+            if (rng := comp_cap_rate_range(c.cap_rate_pct for c in comps))
+            else None
+        ),
         note=note,
     )
 

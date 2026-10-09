@@ -57,6 +57,7 @@ import {
   type ValueState,
   type ExitNoiBasis,
   type ExitNoiBasisChoice,
+  type CompCapRateRange,
 } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
@@ -166,6 +167,14 @@ function ExitNoiBasisSelect({
   );
 }
 
+/** E-020 — the Entry Cap Rate row's comps hint. `undefined` (not loaded)
+ *  renders nothing; `null` (fewer than two disclosed cap rates) says so. */
+export function compCapRangeHint(r: CompCapRateRange | null | undefined): string | undefined {
+  if (r === undefined) return undefined;
+  if (r === null || r.n < 2) return 'Comps range: no comparable cap rates extracted';
+  return `Comps range: ${r.low_pct.toFixed(1)}%–${r.high_pct.toFixed(1)}% (median ${r.median_pct.toFixed(1)}%, ${r.n} deals)`;
+}
+
 interface RowDef {
   id: string;
   label: string;
@@ -210,6 +219,26 @@ export default function InvestmentTab() {
   // provenance map (`assumption_sources`). Resolved here, above the
   // engine-unavailable early return, so the hook order is stable.
   const renoSource = useSource('renovation_budget');
+  // E-020 — "Comps range" hint on the Entry Cap Rate row, from the deal's
+  // extracted transaction comps that disclose a cap rate (worker-computed).
+  // `undefined` = not loaded / unavailable → no hint at all.
+  const [compCapRange, setCompCapRange] = useState<CompCapRateRange | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) return;
+    const ctrl = new AbortController();
+    // Promise-wrapped so a synchronous throw (no `market` client) is swallowed
+    // like a network error — the hint is advisory and never blocks the tab.
+    Promise.resolve()
+      .then(() => api.market.transactionComps(dealId, ctrl.signal))
+      .then((res) => {
+        if (ctrl.signal.aborted || !res) return;
+        // A worker that predates E-020 omits the key — show no hint rather
+        // than a false "none extracted".
+        if ('cap_rate_range' in res) setCompCapRange(res.cap_rate_range ?? null);
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [dealId]);
   const tracedState = useCallback(
     (engine: 'capital' | 'returns', path: string): ValueState | null => {
       const g = engine === 'capital' ? capitalTrace : returnsTrace;
@@ -701,6 +730,7 @@ export default function InvestmentTab() {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: pctv(entryCap, 2),
+                note: compCapRangeHint(compCapRange),
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,

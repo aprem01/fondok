@@ -175,6 +175,12 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 // api surface — spy on the field_overrides PATCH; serve the timeline.
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
 const timelineSpy = vi.fn(async () => TIMELINE);
+// E-020 — the deal's transaction comps (only the cap-rate range matters here).
+let compsRange: unknown = { low_pct: 6.8, high_pct: 8.1, median_pct: 7.5, n: 3 };
+const compsSpy = vi.fn(async () => ({
+  deal_id: 'deal-uuid-1', comps: [], median_price_per_key: null, median_cap_rate_pct: null,
+  cap_rate_range: compsRange, note: null,
+}));
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -184,6 +190,7 @@ vi.mock('@/lib/api', async () => {
       ...actual.api,
       deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
       engines: { ...actual.api.engines, timeline: (...a: unknown[]) => timelineSpy(...(a as [])) },
+      market: { ...actual.api.market, transactionComps: (...a: unknown[]) => compsSpy(...(a as [])) },
     },
   };
 });
@@ -231,7 +238,7 @@ vi.mock('@/lib/hooks/useValueTrace', () => ({
   }),
 }));
 
-import InvestmentTab from '@/components/project/InvestmentTab';
+import InvestmentTab, { compCapRangeHint } from '@/components/project/InvestmentTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -1001,5 +1008,27 @@ describe('InvestmentTab — cross-tab copy names CAPEX / Financing (R-062, R-069
     const link = screen.getByRole('link', { name: 'Open Financing tab →' });
     expect(link.getAttribute('href')).toBe('?tab=debt');
     expect(screen.queryByText(/Open Debt tab/)).toBeNull();
+  });
+});
+
+describe('InvestmentTab — E-020 Entry Cap Rate comps range hint', () => {
+  it('shows the range, median and deal count from comps that disclose a cap rate', async () => {
+    compsRange = { low_pct: 6.8, high_pct: 8.1, median_pct: 7.5, n: 3 };
+    render(<InvestmentTab />);
+    expect(await screen.findByText('Comps range: 6.8%–8.1% (median 7.5%, 3 deals)')).toBeInTheDocument();
+  });
+
+  it('says so when fewer than two comps carry a cap rate', async () => {
+    compsRange = null;
+    render(<InvestmentTab />);
+    expect(await screen.findByText('Comps range: no comparable cap rates extracted')).toBeInTheDocument();
+  });
+});
+
+describe('compCapRangeHint', () => {
+  it('renders nothing until loaded, says why when there is no range', () => {
+    expect(compCapRangeHint(undefined)).toBeUndefined();
+    expect(compCapRangeHint(null)).toBe('Comps range: no comparable cap rates extracted');
+    expect(compCapRangeHint({ low_pct: 6, high_pct: 7, median_pct: 6.5, n: 2 })).toBe('Comps range: 6.0%–7.0% (median 6.5%, 2 deals)');
   });
 });

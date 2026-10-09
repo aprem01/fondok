@@ -85,7 +85,7 @@ function stageFinancialAndAdvance() {
   fireEvent.change(input, { target: { files: [t12] } });
   expect(screen.getByRole('button', { name: 'Financial Statements (1 file)' })).toBeInTheDocument();
   clickNext();
-  expect(screen.getByText('Select Brand')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Brand and Positioning' })).toBeInTheDocument();
 }
 
 function driveToBrandStep() {
@@ -181,8 +181,7 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     const selected = screen.getByText('Selected:', { exact: false });
     expect(selected.textContent).toBe('Selected: Kimpton Hotels & Restaurants · IHG');
 
-    clickNext(); // → Positioning
-    clickNext(); // → Review
+    clickNext(); // → Review (R-024: brand + positioning are one step)
     expect(screen.getByText('Review & Create Deal')).toBeInTheDocument();
     expect(bodyText()).toContain('Kimpton Hotels & Restaurants · IHG');
 
@@ -204,8 +203,7 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     fireEvent.click(card);
     expect(screen.getByText('Selected:', { exact: false }).textContent).toBe('Selected: Curio Collection by Hilton · Hilton');
 
-    clickNext();
-    clickNext();
+    clickNext(); // → Review
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Curio Collection by Hilton', brand: null });
@@ -214,7 +212,8 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
   it('a chain-name search lists every brand in that chain as specific cards', () => {
     driveToBrandStep();
     fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'IHG' } });
-    expect(screen.getByRole('button', { name: /Holiday Inn Express/ })).toBeInTheDocument();
+    // Anchored: the positioning cards on the same step mention Holiday Inn Express as an example.
+    expect(screen.getByRole('button', { name: /^Holiday Inn Express/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Kimpton Hotels & Restaurants/ })).toBeInTheDocument();
   });
 });
@@ -230,8 +229,7 @@ describe('R-048 — Existing brand and Proposed brand are two separate fields', 
     fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Thompson' } });
     fireEvent.click(screen.getByRole('button', { name: /Thompson Hotels/ }));
 
-    clickNext(); // → Positioning
-    clickNext(); // → Review
+    clickNext(); // → Review (R-024: brand + positioning are one step)
     // The Review step shows both, each on its own row.
     expect(screen.getByText('Existing Brand')).toBeInTheDocument();
     expect(screen.getByText('Proposed Brand')).toBeInTheDocument();
@@ -247,12 +245,38 @@ describe('R-048 — Existing brand and Proposed brand are two separate fields', 
 
   it('Brand Agnostic sends proposed_brand null; a blank Existing brand sends brand null', async () => {
     driveToBrandStep();
-    clickNext();
-    clickNext();
+    clickNext(); // → Review
     expect(screen.getByText('Existing Brand').nextElementSibling?.textContent).toBe('From the Offering Memorandum');
     expect(screen.getByText('Proposed Brand').nextElementSibling?.textContent).toBe('Brand Agnostic');
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ brand: null, proposed_brand: null });
+  });
+});
+
+describe('R-024 — Brand and Positioning: choosing a brand pre-fills positioning, still editable', () => {
+  it('Kimpton pre-fills Upper Upscale (STR chain scale); the analyst override is what gets submitted', async () => {
+    driveToBrandStep();
+    expect(screen.getByText('Brand and Positioning', { selector: 'div' })).toBeInTheDocument(); // stepper label
+    fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Kimpton' } });
+    fireEvent.click(screen.getByRole('button', { name: /Kimpton Hotels & Restaurants/ }));
+    expect(bodyText()).toContain('Pre-filled from Kimpton Hotels & Restaurants');
+
+    // Analyst changes it for this property.
+    fireEvent.click(screen.getByRole('button', { name: /^Luxury/ }));
+    clickNext(); // → Review
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Kimpton Hotels & Restaurants', positioning: 'luxury' });
+  });
+
+  it('without an override the pre-filled positioning is submitted', async () => {
+    driveToBrandStep();
+    fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Motel One' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Motel One\s*Upper Midscale/ }));
+    clickNext();
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Motel One', positioning: 'upper-midscale' });
   });
 });

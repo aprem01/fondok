@@ -81,7 +81,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
-import { returnProfiles, positioningTiers, brandFamilies } from '@/lib/mockData';
+import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning } from '@/lib/mockData';
 import {
   KpiTile,
   SectionCard,
@@ -1357,16 +1357,30 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>Configures the underwriting model</div>
             </div>
 
-            <ProfileSelect
-              label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
-              options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
-              onChange={(v) => void persist({ brand: v })}
-            />
-            <ProfileSelect
-              label="Positioning" hint="Property classification" value={positioningId}
-              options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
-              onChange={(v) => void persist({ positioning: v })}
-            />
+            {/* R-024 — one "Brand and Positioning" control: choosing the flag
+                pre-fills its default positioning (the brand's chain scale);
+                the analyst can still change positioning for this property. */}
+            <div
+              data-testid="brand-and-positioning"
+              style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, gridColumn: 'span 2' }}
+            >
+              <div style={profileLabel}>Brand and Positioning</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
+                <ProfileSelect
+                  label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
+                  options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
+                  onChange={(v) => {
+                    const prefill = brandDefaultPositioning(v);
+                    void persist(prefill ? { brand: v, positioning: prefill } : { brand: v });
+                  }}
+                />
+                <ProfileSelect
+                  label="Positioning" hint="Pre-filled from the brand · editable per property" value={positioningId}
+                  options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
+                  onChange={(v) => void persist({ positioning: v })}
+                />
+              </div>
+            </div>
             {/* FON-68 / R-049 — ONE target control: the return-profile preset
                 fills Target LIRR (explicit action) and the analyst edits the
                 number. Source of truth for the benchmark strip + Returns →

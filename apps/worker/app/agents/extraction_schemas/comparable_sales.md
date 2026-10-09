@@ -48,6 +48,9 @@ the OM table. The Extractor agent numbers them in order of appearance.
 - `comparable_sales.<n>.flag` — specific flag (`Courtyard by Marriott`,
   `Hilton Garden Inn`, `Hampton Inn`, etc.). Distinct from
   `brand_family` because a single family has multiple flags.
+- `comparable_sales.<n>.interest_type` — `fee_simple` or
+  `ground_lease`, only when the table or a footnote states the interest
+  conveyed. Never infer it; omit otherwise.
 - `comparable_sales.<n>.note` — any qualifying broker commentary
   ("portfolio sale", "off-market", "redevelopment basis", etc.).
 
