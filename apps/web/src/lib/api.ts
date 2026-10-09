@@ -1668,8 +1668,9 @@ export interface ProjImportChange {
   cell_ref: string;
   key: string;
   label: string;
-  old_value: number | null;
-  new_value: number;
+  // E-016 projection-method rows carry a method code (growth | pct_revenue | por | par).
+  old_value: number | string | null;
+  new_value: number | string;
   note: string;
   note_required: boolean;
 }
@@ -2135,7 +2136,7 @@ export const api = {
     },
     applyProjections: (
       dealId: string,
-      changes: Array<{ key: string; new_value: number; note: string; old_value: number | null }>,
+      changes: Array<{ key: string; new_value: number | string; note: string; old_value: number | string | null }>,
     ) => request<ImportApplyResult>('POST', `/deals/${dealId}/imports/projections/apply`, { changes }),
   },
   analysis: {

@@ -177,6 +177,19 @@ export default function MethodologyPage() {
           </p>
         </Card>
 
+        <Card className="p-5 mb-4" data-testid="methodology-line-methods">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Per-line expense projection methods</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            Eight expense lines can be re-driven one at a time from the method chip on their Future P&amp;L row: Rooms, F&amp;B and Other Operated departmental expense, and A&amp;G, IT &amp; Telecom, Sales &amp; Marketing, Property Operations and Utilities. Management fee, FF&amp;E reserve and fixed charges keep their own drivers. The four methods are <strong>Growth</strong> (Year 1 grown each year; blank = the model expense inflation), <strong>% of revenue</strong> (the department&apos;s own revenue for departmental lines, total revenue for undistributed lines), <strong>POR</strong> (dollars per occupied room) and <strong>PAR</strong> (dollars per available room).
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            A method picked without a value holds the line&apos;s own Year-1 ratio, so no benchmark number is introduced. POR and PAR need the key count; without it the line stays on its default and says why. A line nobody has touched runs exactly as before, and the expense engine reports the active method and value for every line (<code className="text-[11.5px]">expense.line_methods</code>). A method change needs a justification note like any other override. The Future P&amp;L Excel export lists every line&apos;s method and value on its Assumptions sheet, and an edited workbook re-imports through the same preview and note rule. Changing a method there without a new value drops the old value, because its units belonged to the old method.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            <strong>Operating model.</strong> The new-deal wizard records whether the hotel is owner-operated, third-party managed or brand-managed. The Overview shows it and the Future P&amp;L shows it next to the management fee. It moves no number: the fee check is the general USALI 2–6% of total revenue range for every operating model.
+          </p>
+        </Card>
+
         <Card className="p-5 mb-4" data-testid="methodology-future-pl">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Reading the Future P&amp;L</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">

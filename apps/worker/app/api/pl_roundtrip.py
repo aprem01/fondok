@@ -53,6 +53,7 @@ from ..export.pl_workbooks import (
     hist_cell_id,
     parse_historicals_import,
     parse_projections_import,
+    split_projection_method_key,
     projection_values,
     same_number,
     split_hist_cell_id,
@@ -412,18 +413,52 @@ async def _assumption_state(
         )
     ).first()
     overrides = _coerce_overrides(row._mapping["field_overrides"]) if row is not None else {}
+    line_methods = await _active_line_methods(session, deal_id, tenant)
     values: dict[str, Any] = {}
     for spec in ASSUMPTIONS:
+        pm = split_projection_method_key(spec.key)
+        if pm is not None:
+            # E-016 — the method/value the engine actually ran (override or
+            # its default), so the sheet shows the live driver, never a guess.
+            ov = overrides.get(spec.key)
+            ov = ov.get("value") if isinstance(ov, dict) else ov
+            active = line_methods.get(pm[0]) or {}
+            if pm[1] == "method":
+                m = ov if isinstance(ov, str) and ov else active.get("method")
+                values[spec.key] = str(m) if isinstance(m, str) and m else None
+            else:
+                v = to_number(ov)
+                values[spec.key] = v if v is not None else to_number(active.get("value"))
+            continue
         v = base.get(spec.key)
         if v is None and spec.key in overrides:
             ov = overrides[spec.key]
             v = ov.get("value") if isinstance(ov, dict) else ov
         values[spec.key] = to_number(v)
     srcs = {
-        k: ("analyst_override" if k in overrides else str(sources.get(k) or ""))
+        k: (
+            "analyst_override" if k in overrides
+            else ("engine default" if split_projection_method_key(k) and values.get(k) is not None
+                  else str(sources.get(k) or ""))
+        )
         for k in values
     }
     return values, srcs, overrides
+
+
+async def _active_line_methods(
+    session: AsyncSession, deal_id: UUID, tenant: str
+) -> dict[str, dict[str, Any]]:
+    """E-016 — the expense engine's ``line_methods`` from the latest run ({} if none)."""
+    from ..services.engine_runner import get_run_scoped_outputs
+
+    envelopes = await get_run_scoped_outputs(
+        session, deal_id=str(deal_id), tenant_id=tenant
+    )
+    env = envelopes.get("expense")
+    out = env.get("outputs") if isinstance(env, dict) else None
+    lm = out.get("line_methods") if isinstance(out, dict) else None
+    return {k: v for k, v in lm.items() if isinstance(v, dict)} if isinstance(lm, dict) else {}
 
 
 def _needs_note(key: str) -> bool:
@@ -514,9 +549,9 @@ class ProjApplyChange(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     key: Annotated[str, Field(min_length=1, max_length=120)]
-    new_value: float
+    new_value: float | str
     note: Annotated[str, Field(max_length=2000)] = ""
-    old_value: float | None = None
+    old_value: float | str | None = None
 
 
 class ProjApplyBody(BaseModel):
@@ -549,10 +584,36 @@ async def apply_projections_import(
     merged: dict[str, Any] = dict(overrides)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    method_changed_lines: set[str] = set()
+    value_changed_lines: dict[str, str] = {}
+    batch_keys = {ch.key for ch in body.changes}
     for ch in body.changes:
         spec = ASSUMPTION_BY_KEY.get(ch.key)
         if spec is None:
             skipped.append({"key": ch.key, "reason": "unknown_key"})
+            continue
+        if spec.choices:
+            choice = str(ch.new_value).strip().lower()
+            if choice not in spec.choices:
+                skipped.append({"key": ch.key, "reason": "invalid_choice"})
+                continue
+            now_c = cur.get(ch.key)
+            if ch.old_value is not None and str(ch.old_value).strip().lower() != (now_c or ""):
+                skipped.append({"key": ch.key, "reason": "stale", "current_value": now_c})
+                continue
+            if choice == now_c:
+                skipped.append({"key": ch.key, "reason": "unchanged"})
+                continue
+            note = ch.note.strip()
+            if not note and _needs_note(ch.key):
+                skipped.append({"key": ch.key, "reason": "note_required"})
+                continue
+            merged[ch.key] = {"value": choice, "note": note} if note else choice
+            method_changed_lines.add(split_projection_method_key(ch.key)[0])
+            applied.append({"key": ch.key, "old_value": now_c, "new_value": choice, "note": note})
+            continue
+        if isinstance(ch.new_value, str):
+            skipped.append({"key": ch.key, "reason": "non_numeric"})
             continue
         value: float | int = ch.new_value
         if spec.integer:
@@ -561,6 +622,9 @@ async def apply_projections_import(
                 continue
             value = int(value)
         now_val = cur.get(ch.key)
+        if isinstance(ch.old_value, str):
+            skipped.append({"key": ch.key, "reason": "stale", "current_value": now_val})
+            continue
         if ch.old_value is not None and not same_number(ch.old_value, now_val):
             skipped.append({"key": ch.key, "reason": "stale", "current_value": now_val})
             continue
@@ -571,8 +635,33 @@ async def apply_projections_import(
         if not note and _needs_note(ch.key):
             skipped.append({"key": ch.key, "reason": "note_required"})
             continue
+        pm = split_projection_method_key(ch.key)
+        if pm is not None:
+            mkey = f"projection_methods.{pm[0]}.method"
+            if mkey not in overrides and mkey not in batch_keys and not cur.get(mkey):
+                # No method to pair it with (no model run yet) — the engine
+                # would ignore a bare value, so refuse rather than store it.
+                skipped.append({"key": ch.key, "reason": "method_required"})
+                continue
+            value_changed_lines[pm[0]] = note
         merged[ch.key] = {"value": value, "note": note} if note else value
         applied.append({"key": ch.key, "old_value": now_val, "new_value": value, "note": note})
+
+    # E-016 coherence. The engine ignores a value with no method, so a value
+    # edited on a line still on its default pins that line's ACTIVE method
+    # with it. A method switched without a new value drops the old value
+    # (its units belong to the old method) — the line then holds its own
+    # Year-1 ratio, exactly as the method chip does.
+    from ..export.pl_workbooks import projection_method_key
+
+    for line, note in value_changed_lines.items():
+        mkey = projection_method_key(line, "method")
+        if line not in method_changed_lines and mkey not in overrides:
+            active = cur.get(mkey)
+            if active:
+                merged[mkey] = {"value": active, "note": note} if note else active
+    for line in method_changed_lines - set(value_changed_lines):
+        merged.pop(projection_method_key(line, "value"), None)
 
     if applied:
         await update_deal(

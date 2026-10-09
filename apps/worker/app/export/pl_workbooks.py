@@ -136,6 +136,9 @@ class AssumptionSpec:
     unit: str
     method: str
     integer: bool = False
+    #: Non-empty = a text choice key (E-016 projection method); the Value cell
+    #: must be one of these codes, compared case-insensitively.
+    choices: tuple[str, ...] = ()
 
 
 #: Every assumption the Future P&L lets an analyst edit (driver cells, the
@@ -194,6 +197,56 @@ ASSUMPTIONS: tuple[AssumptionSpec, ...] = (
     ),
 )
 ASSUMPTION_BY_KEY: dict[str, AssumptionSpec] = {a.key: a for a in ASSUMPTIONS}
+
+#: E-016 — per-line projection methods (``projection_methods.<line>.method`` /
+#: ``.value``), the same keys the Future P&L method chip writes. Line names
+#: and order mirror ``engines/expense.py`` ``PROJECTION_METHOD_LINES``.
+PROJECTION_METHOD_CHOICES: tuple[str, ...] = ("growth", "pct_revenue", "por", "par")
+PROJECTION_METHOD_LINE_LABELS: tuple[tuple[str, str], ...] = (
+    ("rooms_dept_expense", "Rooms expense"),
+    ("fb_dept_expense", "F&B expense"),
+    ("other_dept_expense", "Other operated dept. expense"),
+    ("administrative_general", "Administrative & General"),
+    ("information_telecom", "Information & Telecom"),
+    ("sales_marketing", "Sales & Marketing"),
+    ("property_operations", "Property Operations & Maintenance"),
+    ("utilities", "Utilities"),
+)
+
+
+def projection_method_key(line: str, field: str) -> str:
+    return f"projection_methods.{line}.{field}"
+
+
+def split_projection_method_key(key: str) -> tuple[str, str] | None:
+    parts = key.split(".")
+    if len(parts) == 3 and parts[0] == "projection_methods":
+        return parts[1], parts[2]
+    return None
+
+
+PROJECTION_METHOD_ASSUMPTIONS: tuple[AssumptionSpec, ...] = tuple(
+    spec
+    for line, label in PROJECTION_METHOD_LINE_LABELS
+    for spec in (
+        AssumptionSpec(
+            projection_method_key(line, "method"), f"{label} — projection method",
+            "growth | pct_revenue | por | par",
+            "growth = Year-1 grown each year; pct_revenue = share of revenue; "
+            "por = $ per occupied room; par = $ per available room",
+            choices=PROJECTION_METHOD_CHOICES,
+        ),
+        AssumptionSpec(
+            projection_method_key(line, "value"), f"{label} — method value",
+            "growth / pct_revenue: fraction (0.03 = 3%); por / par: USD per room",
+            "Driver for the method above; changing the method without a value "
+            "holds the line's own Year-1 ratio",
+        ),
+    )
+)
+ASSUMPTIONS = ASSUMPTIONS + PROJECTION_METHOD_ASSUMPTIONS
+ASSUMPTION_BY_KEY = {a.key: a for a in ASSUMPTIONS}
+
 
 ASSUMPTION_COLUMNS: tuple[str, ...] = (
     "Key", "Assumption", "Value", "Unit", "Source", "Method",
@@ -716,6 +769,34 @@ def parse_projections_import(
                                    "detail": "The key appears more than once."})
             continue
         seen.add(key)
+        if spec.choices:
+            new_txt = str(raw_val).strip().lower() if raw_val not in (None, "") else None
+            old_txt = current_assumptions.get(key)
+            old_txt = str(old_txt).strip().lower() if old_txt not in (None, "") else None
+            if new_txt is not None and new_txt not in spec.choices:
+                non_numeric.append({"cell_ref": ref, "key": key, "label": spec.label,
+                                    "raw": str(raw_val),
+                                    "detail": "Must be one of: " + ", ".join(spec.choices) + "."})
+                continue
+            if new_txt is None and old_txt is not None:
+                rejected.append({
+                    "cell_ref": ref, "key": key, "label": spec.label, "old_value": old_txt,
+                    "new_value": None, "reason": "cleared",
+                    "detail": "Clearing is not imported — use Reset on the Future P&L.",
+                })
+                continue
+            if new_txt == old_txt:
+                unchanged += 1
+                continue
+            required = needs_note(key)
+            row = {"cell_ref": ref, "key": key, "label": spec.label, "old_value": old_txt,
+                   "new_value": new_txt, "note": note, "note_required": required}
+            if required and not note:
+                rejected.append({**row, "reason": "note_required",
+                                 "detail": "This assumption moves the model — add a Note."})
+                continue
+            changes.append(row)
+            continue
         new_val, ok = parse_cell_number(raw_val)
         if ok and new_val is not None and spec.integer and not float(new_val).is_integer():
             ok = False

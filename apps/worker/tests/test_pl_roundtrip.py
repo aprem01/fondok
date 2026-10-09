@@ -399,3 +399,90 @@ async def test_projection_export_route_matches_assumption_sources() -> None:
     r2 = rows["expense_growth"]
     assert wa.cell(row=r2, column=3).value == srcs.values.get("expense_growth")
     assert wa.cell(row=r2, column=5).value == srcs.sources.get("expense_growth")
+
+
+# ─────────────────────── E-016 projection methods ───────────────────────
+
+
+def test_projection_export_carries_per_line_method_rows() -> None:
+    from app.export.pl_workbooks import PROJECTION_METHOD_LINE_LABELS
+
+    data, _ = _proj_workbook()
+    wa = _sheet(data, "Assumptions")
+    keys = [wa.cell(row=r, column=1).value for r in range(2, wa.max_row + 1)]
+    for line, _label in PROJECTION_METHOD_LINE_LABELS:
+        assert f"projection_methods.{line}.method" in keys
+        assert f"projection_methods.{line}.value" in keys
+
+
+def test_projection_import_method_choice_rules() -> None:
+    from app.export.pl_workbooks import parse_projections_import
+
+    data, values = _proj_workbook()
+    wb = load_workbook(io.BytesIO(data))
+    wa = wb["Assumptions"]
+    keys = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    m_rooms = "projection_methods.rooms_dept_expense.method"
+    m_util = "projection_methods.utilities.method"
+    m_ag = "projection_methods.administrative_general.method"
+    wa.cell(row=keys[m_rooms], column=3).value = "POR"
+    wa.cell(row=keys[m_rooms], column=9).value = "Brand standard staffing per occupied room"
+    wa.cell(row=keys[m_util], column=3).value = "per key"          # not a method code
+    wa.cell(row=keys[m_ag], column=3).value = None                  # cleared
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    cur = {r["key"]: r["value"] for r in _assumption_rows()}
+    cur[m_rooms] = "growth"
+    cur[m_util] = "growth"
+    cur[m_ag] = "pct_revenue"
+    p = parse_projections_import(
+        buf.getvalue(), deal_id="deal-1", current_values=values,
+        current_assumptions=cur, needs_note=lambda k: True,
+    )
+    assert [(c["key"], c["old_value"], c["new_value"]) for c in p["changes"]] == [
+        (m_rooms, "growth", "por"),
+    ]
+    assert [x["key"] for x in p["non_numeric"]] == [m_util]
+    assert (m_ag, "cleared") in [(x["key"], x["reason"]) for x in p["rejected"]]
+
+
+@pytest.mark.asyncio
+async def test_projection_apply_method_and_value_stay_coherent() -> None:
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import
+    from app.database import get_session_factory
+
+    m = "projection_methods.{}.method".format
+    v = "projection_methods.{}.value".format
+    deal_id, *_ = await _setup(overrides={
+        m("utilities"): {"value": "growth", "note": "a"},
+        v("utilities"): {"value": 0.04, "note": "a"},
+    })
+    body = ProjApplyBody(changes=[
+        # method switched without a value → the old growth rate is dropped
+        {"key": m("utilities"), "new_value": "PAR", "note": "per-key utility contracts"},
+        # method + value together
+        {"key": m("rooms_dept_expense"), "new_value": "por", "note": "staffing model"},
+        {"key": v("rooms_dept_expense"), "new_value": 42.5, "note": "staffing model"},
+        # value on a line with no method and no model run → refused
+        {"key": v("sales_marketing"), "new_value": 0.06, "note": "x"},
+        {"key": m("information_telecom"), "new_value": "per key", "note": "x"},
+    ])
+    async with get_session_factory()() as s:
+        res = await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert sorted(a["key"] for a in res["applied"]) == sorted(
+        [m("utilities"), m("rooms_dept_expense"), v("rooms_dept_expense")]
+    )
+    assert sorted(x["reason"] for x in res["skipped"]) == ["invalid_choice", "method_required"]
+
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    fo = json.loads(row[0])
+    assert fo[m("utilities")] == {"value": "par", "note": "per-key utility contracts"}
+    assert v("utilities") not in fo
+    assert fo[m("rooms_dept_expense")]["value"] == "por"
+    assert fo[v("rooms_dept_expense")] == {"value": 42.5, "note": "staffing model"}
+    assert v("sales_marketing") not in fo
