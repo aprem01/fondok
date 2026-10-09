@@ -701,7 +701,7 @@ function Step2({ data, update, defaultProfile, onSetDefault }: StepProps & {
         body={<>
           Return profile sets target LIRR thresholds and the default capital structure.
           <span className="block mt-1.5"><b>Core</b> 8–12% · <b>Value-Add</b> 12–18% · <b>Opportunistic</b> 18%+.</span>
-          You can calibrate leverage and exit cap on the Returns tab.
+          You can calibrate leverage and exit cap in the Returns section of the Overview.
         </>}
         side="top"
         learnMoreHref="/methodology#engines"
