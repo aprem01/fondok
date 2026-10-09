@@ -58,6 +58,7 @@ import {
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
 import {
+  applyOverridePatch,
   overrideEnvelope,
   overrideNoteFor,
   requiresNote,
@@ -87,6 +88,15 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { api } from '@/lib/api';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
+import {
+  MethodChip,
+  MethodChipContext,
+  methodOverrideKeys,
+  type LineMethodInfo,
+  type MethodChipCtx,
+  type ProjectionMethodLine,
+} from './MethodChip';
+import { mgmtFeeOperatingModelHint } from '@/lib/operatingModel';
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -392,6 +402,53 @@ export default function ProjectionsSection({
       }
     },
     [overrides, dealId, refreshDeal, run, toast],
+  );
+  // E-016 — per-line projection method (MethodChip). Method + value land in
+  // field_overrides as `projection_methods.<line>.method|value` with the
+  // analyst's note on both, then the model re-runs — the same path as every
+  // other override here. A null value drops the value key (= the method's
+  // default).
+  const lineMethods =
+    getEngineField<Record<string, LineMethodInfo>>(outputs, 'expense', 'line_methods') ?? null;
+  const saveMethod = useCallback<MethodChipCtx['save']>(
+    async (line, method, value, note) => {
+      const k = methodOverrideKeys(line);
+      try {
+        const next = applyOverridePatch(overrides, { [k.method]: method, [k.value]: value }, note);
+        await api.deals.update(dealId, { field_overrides: next });
+        refreshDeal();
+        await run();
+        toast('Projection method applied — re-modeled', { type: 'success' });
+      } catch {
+        toast('Could not apply the projection method', { type: 'error' });
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  const resetMethod = useCallback<MethodChipCtx['reset']>(
+    async (line) => {
+      const k = methodOverrideKeys(line);
+      const { [k.method]: _m, [k.value]: _v, ...rest } = overrides;
+      try {
+        await api.deals.update(dealId, { field_overrides: rest });
+        refreshDeal();
+        await run();
+        toast('Projection method reset — re-modeled', { type: 'success' });
+      } catch {
+        toast('Could not reset the projection method', { type: 'error' });
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  const methodCtx = useMemo<MethodChipCtx>(
+    () => ({
+      lineMethods,
+      overrides,
+      running: runStatus === 'running' || runStatus === 'queued',
+      save: saveMethod,
+      reset: resetMethod,
+    }),
+    [lineMethods, overrides, runStatus, saveMethod, resetMethod],
   );
   const overrideCtx = useMemo<OverrideCtx>(
     () => ({
@@ -843,10 +900,12 @@ export default function ProjectionsSection({
         stabilization={stabilization}
         modelYears={years.length}
         calendarYears={calendarYears ?? null}
+        operatingModel={deal?.operating_model ?? null}
       />
 
       <AssumptionOverrideContext.Provider value={overrideCtx}>
         <DealIdContext.Provider value={dealId}>
+        <MethodChipContext.Provider value={methodCtx}>
         <ProjectionsTable
           years={visibleYears}
           exitCapRate={exitCapRate}
@@ -869,6 +928,7 @@ export default function ProjectionsSection({
           }
           stabilizedYearIndex={stabilization?.stabilized_year_index}
         />
+        </MethodChipContext.Provider>
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
     </Card>
@@ -1523,6 +1583,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.rooms`}
+                methodLine="rooms_dept_expense"
               />
               <FullRow
                 label="Food & Beverage"
@@ -1535,6 +1596,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.food_beverage`}
+                methodLine="fb_dept_expense"
               />
               <FullRow
                 label="Other Operated Departments"
@@ -1547,6 +1609,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.other_operated`}
+                methodLine="other_dept_expense"
               />
               {/* Total Departmental Expense = Σ departmental expense lines
                   (worker dept_expenses.total). */}
@@ -1582,6 +1645,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.administrative_general`}
+                methodLine="administrative_general"
               />
               <FullRow
                 label="Information & Telecom Systems"
@@ -1592,6 +1656,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.information_telecom`}
+                methodLine="information_telecom"
               />
               <FullRow
                 label="Sales & Marketing"
@@ -1602,6 +1667,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.sales_marketing`}
+                methodLine="sales_marketing"
               />
               <FullRow
                 label="Property Operation & Maintenance"
@@ -1612,6 +1678,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.property_operations`}
+                methodLine="property_operations"
               />
               <FullRow
                 label="Utilities"
@@ -1622,6 +1689,7 @@ function ProjectionsTable({
                 {...rowShared}
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.utilities`}
+                methodLine="utilities"
               />
               {/* Total Undistributed Expenses = Σ undistributed lines
                   (worker undistributed.total). */}
@@ -2242,11 +2310,14 @@ function FullRow({
   tracePath,
   columnHeading,
   rowTestId,
+  methodLine,
 }: {
   label: string;
   indexLabel: string;
   unit: string;
   years: ProjYear[];
+  /** E-016 — the expense line whose projection method chip sits in the label cell. */
+  methodLine?: ProjectionMethodLine;
   /** Undefined when the engine did not emit the line for that year → a dash. */
   amountOf: (y: ProjYear) => number | undefined;
   /** R-068 — the denominator for the % cell when it is NOT Total Revenue
@@ -2284,6 +2355,7 @@ function FullRow({
         )}
       >
         {label}
+        {methodLine && <MethodChip line={methodLine} />}
       </td>
       <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
         {indexLabel || unit}
@@ -2914,9 +2986,11 @@ function StabilizationYearField({
 // model (the canonical edit path, shared with the driver cells). Exit cap rate
 // is Investment-owned, so it is shown here linked / read-only.
 function AssumptionsPanel({
-  dealId, overrides, onApply, running, stabilization, modelYears, calendarYears,
+  dealId, overrides, onApply, running, stabilization, modelYears, calendarYears, operatingModel,
 }: {
   dealId: string;
+  /** R-025 — the deal's intended operating model (descriptive; no engine reads it). */
+  operatingModel?: string | null;
   overrides: Record<string, unknown>;
   /** FON-74 — `note` is the ANALYST's justification, or '' on an exempt key. */
   onApply: (key: string, value: number, note: string) => Promise<void>;
@@ -3009,6 +3083,13 @@ function AssumptionsPanel({
           <div style={cardTitle}>Deal economics</div>
           <div style={rowsWrap}>
             <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)} />
+            {/* R-025 — the operating model beside the fee it informs. Context
+                only: the engine's fee math does not read it. */}
+            {mgmtFeeOperatingModelHint(operatingModel) && (
+              <p data-testid="mgmt-fee-operating-model" style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
+                {mgmtFeeOperatingModelHint(operatingModel)}
+              </p>
+            )}
             {/* Exit cap rate is Investment-owned — linked / read-only reference. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ fontSize: 12, color: '#6b6f76' }}>Exit cap rate</span>

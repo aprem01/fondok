@@ -38,6 +38,9 @@ export interface WorkerDeal {
   /** FON-59 / R-048 — the analyst's PROPOSED brand. Optional; never written
    *  by a document. Absent on older workers. */
   proposed_brand?: string | null;
+  /** R-025 — intended operating model (`owner_operated` / `third_party` /
+   *  `brand_managed`). Descriptive only. Absent on older workers. */
+  operating_model?: string | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;
@@ -457,6 +460,8 @@ export interface NewDealBody {
   // analyst's proposed brand, as two separate fields.
   brand?: string | null;
   proposed_brand?: string | null;
+  // R-025 — intended operating model captured in the wizard.
+  operating_model?: string | null;
 }
 
 export interface WorkerDocument {
@@ -1675,7 +1680,7 @@ export const api = {
     update: (
       id: string,
       patch: Partial<Pick<WorkerDeal,
-        'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand'
+        'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
         | 'target_irr' | 'target_moic'>> & {
         field_overrides?: Record<string, unknown>;

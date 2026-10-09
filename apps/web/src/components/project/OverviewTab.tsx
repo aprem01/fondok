@@ -97,6 +97,7 @@ import {
 import { isNoOpEdit } from '@/lib/fieldValue';
 import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
 import { DEAL_TYPE_OPTIONS, normalizeDealType, isDevelopmentLike, dealTypeLabel, type DealTypeId } from '@/lib/dealTypes';
+import { operatingModelLabel } from '@/lib/operatingModel';
 import {
   noiBeforeReserveLabel,
   stabilizedYearBlock,
@@ -259,6 +260,8 @@ const EXISTING_BRAND_NOT_SET =
   'No existing brand was entered at deal creation and none has been read from the Offering Memorandum yet.';
 /** FON-59 / R-048 — the Proposed brand dash: optional, analyst-only. */
 const PROPOSED_BRAND_NONE = 'None selected';
+/** R-025 — the Operating Model row's reason when none was captured. */
+const OPERATING_MODEL_NONE = 'Not captured at deal creation';
 
 /** FON-59 R-058 — the Exit section's reversion-NOI row: one row, both names. */
 export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
@@ -786,6 +789,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             sub: `The brand you propose for the asset. Optional; never set or changed by a document. ${READ_ONLY_BRAND}`,
           })
         : awa('pProposedBrand', 'Proposed brand', { reason: 'awaiting_analyst', reasonDetail: PROPOSED_BRAND_NONE }),
+      // R-025 — the intended operating model captured at New Project
+      // (deals.operating_model). Analyst input; descriptive only.
+      operatingModelLabel(deal?.operating_model)
+        ? mk({
+            id: 'pOperatingModel', label: 'Operating Model', kind: 'input', state: 'assumption',
+            value: operatingModelLabel(deal?.operating_model) as string, where: 'Analyst input at deal creation',
+            sub: `How the hotel will be run under the business plan. It informs, but does not change, the model's management fee. ${READ_ONLY_BRAND}`,
+          })
+        : awa('pOperatingModel', 'Operating Model', { reason: 'awaiting_analyst', reasonDetail: OPERATING_MODEL_NONE }),
     ];
 
     // R-055 — Management Fee / Franchise Fee are NOT Property facts; they

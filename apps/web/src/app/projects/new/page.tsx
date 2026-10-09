@@ -21,6 +21,7 @@ import { useNow } from '@/lib/hooks/useNow';
 import { formatElapsed } from '@/lib/progress';
 import { normalizeLocation, locationSuggestions } from '@/lib/markets';
 import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
+import { OPERATING_MODEL_OPTIONS, isOperatingModelId, operatingModelLabel } from '@/lib/operatingModel';
 import {
   loadDraft, saveDraft, clearDraft, relativeTime, DRAFT_DEBOUNCE_MS,
   loadDefaultReturnProfile, saveDefaultReturnProfile, type DraftFileRef,
@@ -62,6 +63,8 @@ const INITIAL_FIELDS: WizardFields = {
   // current flag (submitted as `brand`; blank = sourced from the OM).
   brand: 'agnostic',
   existingBrand: '',
+  // R-025 — intended operating model ('' = not chosen → sent as null).
+  operatingModel: '',
   brandSearch: '',
   expandedFamilies: ['Hilton'],
   positioning: 'default',
@@ -293,6 +296,8 @@ export default function NewProjectPage() {
       // goes to `brand`, and blank leaves it for the OM to fill.
       const proposedBrandValue = data.brand === 'agnostic' ? null : data.brand;
       const existingBrandValue = data.existingBrand.trim() || null;
+      // R-025 — the intended operating model; '' (not chosen) → null.
+      const operatingModelValue = isOperatingModelId(data.operatingModel) ? data.operatingModel : null;
 
       // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
       // narrow today, but we send the wizard's full intent: extra fields are
@@ -307,6 +312,7 @@ export default function NewProjectPage() {
         deal_type: data.dealType,
         brand: existingBrandValue,
         proposed_brand: proposedBrandValue,
+        operating_model: operatingModelValue,
         return_profile: data.returnProfile,
         positioning: data.positioning,
         // Sourcing channel for pipeline analytics. Send the canonical
@@ -557,7 +563,7 @@ export default function NewProjectPage() {
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
   dealType: string;
-  returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; brandSearch: string;
+  returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; operatingModel: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
 };
 
@@ -849,6 +855,34 @@ function Step4({ data, update }: StepProps) {
         />
       </div>
 
+      {/* R-025 — the intended operating model, linked to the business plan.
+          Optional; re-clicking the active choice clears it. */}
+      <div className="mb-6" role="radiogroup" aria-label="Operating model" data-testid="operating-model">
+        <div className="text-[12px] font-medium text-ink-700 mb-1.5">Operating model</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {OPERATING_MODEL_OPTIONS.map(o => {
+            const active = data.operatingModel === o.id;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => update({ operatingModel: active ? '' : o.id })}
+                className={cn(
+                  'p-3 rounded-lg border-2 text-left transition-colors',
+                  active ? 'border-brand-500 bg-brand-50' : 'border-border bg-white hover:border-ink-300',
+                )}
+              >
+                <div className="text-[12.5px] font-semibold text-ink-900">{o.label}</div>
+                <div className="text-[11.5px] text-ink-500 mt-0.5 leading-snug">{o.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-ink-500 mt-1.5">Optional — how the hotel will be run under the business plan.</div>
+      </div>
+
       <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand</div>
       {/* R-018 — contextual note on what the proposed brand will drive. */}
       <div
@@ -1076,6 +1110,11 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
       value: data.brand === 'agnostic'
         ? 'Brand Agnostic'
         : <>{data.brand}{brandChain(data.brand) && <span className="text-ink-500 font-normal"> · {brandChain(data.brand)}</span>}</>,
+      step: 4,
+    },
+    {
+      label: 'Operating Model',
+      value: operatingModelLabel(data.operatingModel) ?? 'Not specified',
       step: 4,
     },
     { label: 'Positioning', value: positioning?.label || '—', step: 5 },

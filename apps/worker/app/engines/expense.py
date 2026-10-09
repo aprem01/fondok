@@ -68,6 +68,88 @@ HOTEL_TYPE_DEFAULTS: dict[str, dict[str, float]] = {
 }
 
 
+# E-016 — per-line projection methodology. The departmental and undistributed
+# USALI lines an analyst can re-drive line by line (Excel-style). Management
+# fee, FF&E reserve and fixed charges keep their existing drivers.
+PROJECTION_METHOD_LINES: tuple[str, ...] = (
+    "rooms_dept_expense",
+    "fb_dept_expense",
+    "other_dept_expense",
+    "administrative_general",
+    "information_telecom",
+    "sales_marketing",
+    "property_operations",
+    "utilities",
+)
+_DEPARTMENTAL_LINES: frozenset[str] = frozenset(
+    {"rooms_dept_expense", "fb_dept_expense", "other_dept_expense"}
+)
+#: Revenue line each departmental expense is a share of (``pct_revenue``).
+_DEPT_REVENUE_FIELD: dict[str, str] = {
+    "rooms_dept_expense": "rooms_revenue",
+    "fb_dept_expense": "fb_revenue",
+    "other_dept_expense": "other_revenue",
+}
+#: The hotel-type ratio each departmental line uses today.
+_DEPT_RATIO_KEY: dict[str, str] = {
+    "rooms_dept_expense": "rooms_dept_pct",
+    "fb_dept_expense": "fb_dept_pct",
+    "other_dept_expense": "other_dept_pct",
+}
+#: Where each line lands on ``ExpenseYear`` (provenance output path).
+_LINE_OUTPUT_PATH: dict[str, str] = {
+    "rooms_dept_expense": "dept_expenses.rooms",
+    "fb_dept_expense": "dept_expenses.food_beverage",
+    "other_dept_expense": "dept_expenses.other_operated",
+    "administrative_general": "undistributed.administrative_general",
+    "information_telecom": "undistributed.information_telecom",
+    "sales_marketing": "undistributed.sales_marketing",
+    "property_operations": "undistributed.property_operations",
+    "utilities": "undistributed.utilities",
+}
+#: Days in the rooms-available year — the revenue engine's own convention
+#: (``engines/revenue.py`` ``DAYS_PER_YEAR``).
+_DAYS_PER_YEAR = 365
+
+ProjectionMethodName = Literal["growth", "pct_revenue", "por", "par"]
+
+
+class ProjectionMethod(BaseModel):
+    """One analyst-selected projection driver for one expense line.
+
+    ``growth``       Year-1 anchor * (1 + value)^(t-1); value None → the model
+                     expense growth (``other_expense_growth`` for undistributed
+                     lines when set).
+    ``pct_revenue``  value * the relevant revenue (the department's own revenue
+                     for departmental lines, total revenue for undistributed).
+    ``por``          value * occupied rooms (keys * 365 * occupancy).
+    ``par``          value * available rooms (keys * 365).
+
+    For ``pct_revenue`` / ``por`` / ``par`` a None value holds the line's own
+    Year-1 ratio (Year-1 anchor ÷ Year-1 driver) — derived from the model's
+    Year-1 figure, never a benchmark constant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: ProjectionMethodName
+    value: float | None = None
+
+
+class LineMethodInfo(BaseModel):
+    """The ACTIVE projection method for one line, as the engine ran it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: ProjectionMethodName
+    # The driver value actually used (growth rate, share of revenue, $ per
+    # occupied / available room). None only when it could not be resolved.
+    value: float | None = None
+    # ``override`` = analyst-selected; ``default`` = today's engine behaviour.
+    source: Literal["default", "override"] = "default"
+    note: str | None = None
+
+
 class ExpenseEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -134,6 +216,12 @@ class ExpenseEngineInput(BaseModel):
     adr_by_year: list[float] | None = None
     stabilized_occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     stabilization_year: Annotated[int, Field(ge=1)] | None = None
+    # E-016 — analyst per-line projection methods, keyed by a
+    # ``PROJECTION_METHOD_LINES`` name. A line with no entry runs exactly as
+    # before (the Kimpton goldens depend on that). ``keys`` is needed only to
+    # turn POR / PAR into dollars; the runner passes it alongside methods.
+    projection_methods: dict[str, ProjectionMethod] = Field(default_factory=dict)
+    keys: Annotated[int, Field(ge=1)] | None = None
 
 
 class ExpenseYear(BaseModel):
@@ -179,6 +267,9 @@ class ExpenseEngineOutput(BaseModel):
     # resolves — every consumer then renders a dash with a reason, never a zero
     # and never the exit-year reversion.
     stabilization: StabilizedYear | None = None
+    # E-016 — the active projection method per departmental / undistributed
+    # line (default or analyst override) so the P&L can show it on each row.
+    line_methods: dict[str, LineMethodInfo] = Field(default_factory=dict)
 
 
 class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
@@ -259,6 +350,94 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         years: list[ExpenseYear] = []
         # FON-25 — per-value provenance sidecar for the P&L waterfall.
         prov: dict[str, ValueTrace] = {}
+        # E-016 — analyst per-line projection methods (recognized lines only).
+        methods: dict[str, ProjectionMethod] = {
+            k: v
+            for k, v in payload.projection_methods.items()
+            if k in PROJECTION_METHOD_LINES
+        }
+        resolved_value: dict[str, float] = {}
+        unresolved: dict[str, str] = {}
+        occupancy_path = payload.occupancy_by_year or []
+
+        def _line_drivers(line: str, t: int, rev_year: object) -> dict[str, float | None]:
+            if line in _DEPARTMENTAL_LINES:
+                revenue_base = float(getattr(rev_year, _DEPT_REVENUE_FIELD[line]))
+            else:
+                revenue_base = float(rev_year.total_revenue)  # type: ignore[attr-defined]
+            available = (
+                float(payload.keys * _DAYS_PER_YEAR) if payload.keys else None
+            )
+            occupied = (
+                available * float(occupancy_path[t])
+                if available is not None and t < len(occupancy_path)
+                else None
+            )
+            default_growth = (
+                payload.other_expense_growth
+                if line not in _DEPARTMENTAL_LINES
+                and payload.other_expense_growth is not None
+                else payload.expense_growth
+            )
+            return {
+                "revenue": revenue_base,
+                "occupied": occupied,
+                "available": available,
+                "growth": default_growth,
+            }
+
+        def _project_line(
+            line: str,
+            spec: ProjectionMethod,
+            t: int,
+            anchor: float,
+            drivers: dict[str, float | None],
+            y1_drivers: dict[str, float | None],
+        ) -> tuple[float | None, float, str]:
+            """(value, driver value used, formula) — value None if unresolvable."""
+            if spec.method == "growth":
+                g = spec.value if spec.value is not None else float(drivers["growth"] or 0.0)
+                return (
+                    anchor * (1.0 + g) ** t,
+                    g,
+                    f"{line} = year1_anchor * (1 + growth)^{t}",
+                )
+            key = {"pct_revenue": "revenue", "por": "occupied", "par": "available"}[
+                spec.method
+            ]
+            label = {
+                "pct_revenue": (
+                    "department_revenue" if line in _DEPARTMENTAL_LINES
+                    else "total_revenue"
+                ),
+                "por": "occupied_rooms",
+                "par": "available_rooms",
+            }[spec.method]
+            driver = drivers[key]
+            if driver is None:
+                return (
+                    None,
+                    0.0,
+                    f"{spec.method} needs {label}, which is unavailable "
+                    "(no key count / occupancy) — default method kept",
+                )
+            ratio = spec.value
+            if ratio is None:
+                y1_driver = y1_drivers[key]
+                if not y1_driver:
+                    return (
+                        None,
+                        0.0,
+                        f"{spec.method} with no value needs a Year-1 {label} "
+                        "to hold the Year-1 ratio — default method kept",
+                    )
+                ratio = anchor / float(y1_driver)
+            return (
+                ratio * float(driver),
+                ratio,
+                f"{line} = {spec.method}_value * {label}",
+            )
+
         # Year-1 anchors used when growing opex independently of revenue.
         y1_dept_rooms = y1_dept_fb = y1_dept_other = 0.0
         y1_undist_lines: dict[str, float] = {}
@@ -356,6 +535,61 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     y1_undist_total = undist_total
                     y1_fixed_lines = dict(fixed_lines)
                     y1_fixed_total = fixed_total
+
+            if methods:
+                line_values = {
+                    "rooms_dept_expense": dept_rooms,
+                    "fb_dept_expense": dept_fb,
+                    "other_dept_expense": dept_other,
+                    **undist_lines,
+                }
+                y1_anchor = {
+                    "rooms_dept_expense": y1_dept_rooms,
+                    "fb_dept_expense": y1_dept_fb,
+                    "other_dept_expense": y1_dept_other,
+                    **y1_undist_lines,
+                }
+                undist_touched = False
+                for line, spec in methods.items():
+                    new_val, used, formula = _project_line(
+                        line,
+                        spec,
+                        idx,
+                        y1_anchor[line],
+                        _line_drivers(line, idx, rev_year),
+                        _line_drivers(line, 0, payload.revenue.years[0]),
+                    )
+                    if new_val is None:
+                        # Unresolvable (e.g. POR without a key count) — the
+                        # line keeps its default figure; recorded below.
+                        unresolved[line] = formula
+                        continue
+                    line_values[line] = new_val
+                    resolved_value[line] = used
+                    if line not in _DEPARTMENTAL_LINES:
+                        undist_touched = True
+                    prov[f"years[{idx}].{_LINE_OUTPUT_PATH[line]}"] = ValueTrace(
+                        value=new_val,
+                        formula=formula,
+                        inputs=[
+                            ValueInput(
+                                name=f"{spec.method}_value",
+                                value=used,
+                                assumption_key=f"projection_methods.{line}.value",
+                            ),
+                        ],
+                        assumption_key=f"projection_methods.{line}.method",
+                        note=(
+                            f"Analyst projection method '{spec.method}' "
+                            f"(value {used:.6g}) for {line}."
+                        ),
+                    )
+                dept_rooms = line_values["rooms_dept_expense"]
+                dept_fb = line_values["fb_dept_expense"]
+                dept_other = line_values["other_dept_expense"]
+                if undist_touched:
+                    undist_lines = {k: line_values[k] for k in UNDIST_WEIGHTS}
+                    undist_total = sum(undist_lines.values())
 
             dept_total = dept_rooms + dept_fb + dept_other
             undist = UndistributedExpenses(
@@ -503,8 +737,52 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             stabilization_year=payload.stabilization_year,
         )
 
+        # E-016 — publish the ACTIVE method per line (default or override).
+        line_methods: dict[str, LineMethodInfo] = {}
+        for line in PROJECTION_METHOD_LINES:
+            spec = methods.get(line)
+            if spec is not None and line not in unresolved:
+                line_methods[line] = LineMethodInfo(
+                    method=spec.method,
+                    value=resolved_value.get(line, spec.value),
+                    source="override",
+                )
+                continue
+            is_dept = line in _DEPARTMENTAL_LINES
+            note = unresolved.get(line)
+            if payload.grow_opex_independently:
+                growth_default = (
+                    payload.other_expense_growth
+                    if not is_dept and payload.other_expense_growth is not None
+                    else payload.expense_growth
+                )
+                line_methods[line] = LineMethodInfo(
+                    method="growth",
+                    value=growth_default,
+                    source="default",
+                    note=note
+                    or "Year-1 anchor (T-12 actual where extracted, else ratio "
+                    "share) grown at the model expense growth.",
+                )
+            else:
+                ratio = (
+                    float(defaults[_DEPT_RATIO_KEY[line]])
+                    if is_dept
+                    else float(defaults["undistributed_pct_revenue"])
+                    * UNDIST_WEIGHTS[line]
+                )
+                line_methods[line] = LineMethodInfo(
+                    method="pct_revenue",
+                    value=ratio,
+                    source="default",
+                    note=note
+                    or "Share of revenue each year (Year 1 uses the T-12 actual "
+                    "where extracted).",
+                )
+
         return ExpenseEngineOutput(
             deal_id=payload.deal_id,
+            line_methods=line_methods,
             years=years,
             noi_cagr=noi_cagr,
             sourced_from_t12=sourced,
@@ -514,9 +792,12 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
 
 
 __all__ = [
+    "HOTEL_TYPE_DEFAULTS",
+    "PROJECTION_METHOD_LINES",
     "ExpenseEngine",
     "ExpenseEngineInput",
     "ExpenseEngineOutput",
     "ExpenseYear",
-    "HOTEL_TYPE_DEFAULTS",
+    "LineMethodInfo",
+    "ProjectionMethod",
 ]

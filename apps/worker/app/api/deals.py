@@ -144,6 +144,13 @@ class FieldOverrideRecord(BaseModel):
     overridden_at: datetime | None = None  # stamped server-side
 
 
+#: R-025 — the intended operating model captured at New Project:
+#:   owner_operated  owner-operated / in-house management
+#:   third_party     an independent third-party operator
+#:   brand_managed   brand-managed / brand-operated
+OperatingModel = Literal["owner_operated", "third_party", "brand_managed"]
+
+
 class CreateDealBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -162,6 +169,9 @@ class CreateDealBody(BaseModel):
     # PROPOSED brand — optional, and never written by a document.
     brand: str | None = None
     proposed_brand: str | None = Field(default=None, max_length=200)
+    # R-025 — the intended operating model, captured in the New Project
+    # wizard. Descriptive only: no engine reads it.
+    operating_model: OperatingModel | None = None
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
     # Sourcing channel for pipeline analytics (Sam's v2 ask):
@@ -197,6 +207,8 @@ class UpdateDealBody(BaseModel):
     brand: str | None = None
     # FON-59 / R-048 — analyst's proposed brand; null clears it.
     proposed_brand: str | None = Field(default=None, max_length=200)
+    # R-025 — intended operating model; null clears it.
+    operating_model: OperatingModel | None = None
     positioning: str | None = None
     purchase_price: float | None = Field(default=None, ge=0)
     sourcing_channel: str | None = Field(default=None, max_length=40)
@@ -253,6 +265,9 @@ class DealRecord(BaseModel):
     # FON-59 / R-048 — the analyst's proposed brand; NULL = none selected
     # (or the live schema predates the column).
     proposed_brand: str | None = None
+    # R-025 — intended operating model (owner_operated / third_party /
+    # brand_managed); NULL = not captured, or the schema predates the column.
+    operating_model: str | None = None
     positioning: str | None = None
     purchase_price: float | None = None
     sourcing_channel: str | None = None
@@ -639,6 +654,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         return_profile=row.get("return_profile"),
         brand=row.get("brand"),
         proposed_brand=row.get("proposed_brand"),
+        operating_model=row.get("operating_model"),
         positioning=row.get("positioning"),
         purchase_price=_coerce_float(row.get("purchase_price")),
         sourcing_channel=row.get("sourcing_channel"),
@@ -663,6 +679,56 @@ _DEAL_COLUMNS = (
 )
 
 _PROPOSED_BRAND_CACHE_KEY = "fondok_deals_has_proposed_brand"
+_OPERATING_MODEL_CACHE_KEY = "fondok_deals_has_operating_model"
+
+
+async def _deals_has_column(
+    session: AsyncSession, column: str, cache_key: str
+) -> bool:
+    """Does the live ``deals`` table carry ``column``?
+
+    Same contract as :func:`_deals_has_proposed_brand` (catalog introspection,
+    any failure answers False, memoised on ``session.info``).
+    """
+    try:
+        cached = session.info.get(cache_key)
+    except Exception:
+        cached = None
+    if isinstance(cached, bool):
+        return cached
+    try:
+        is_sqlite = (
+            session.bind is not None and session.bind.dialect.name == "sqlite"
+        )
+        if is_sqlite:
+            rows = await session.execute(text("PRAGMA table_info(deals)"))
+            have = {str(r[1]).lower() for r in rows.fetchall()}
+        else:
+            rows = await session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'deals'"
+                )
+            )
+            have = {str(r[0]).lower() for r in rows.fetchall()}
+        answer = column in have
+    except Exception:
+        answer = False
+    if not answer:
+        logger.warning(
+            "deals: %s column absent — reading NULL and skipping writes "
+            "until the startup migration runs", column,
+        )
+    with contextlib.suppress(Exception):
+        session.info[cache_key] = answer
+    return answer
+
+
+async def _deals_has_operating_model(session: AsyncSession) -> bool:
+    """R-025 — does the live ``deals`` table carry ``operating_model``?"""
+    return await _deals_has_column(
+        session, "operating_model", _OPERATING_MODEL_CACHE_KEY
+    )
 
 
 async def _deals_has_proposed_brand(session: AsyncSession) -> bool:
@@ -711,9 +777,15 @@ async def _deals_has_proposed_brand(session: AsyncSession) -> bool:
 async def _deal_columns(session: AsyncSession) -> str:
     """``_DEAL_COLUMNS`` plus ``proposed_brand`` — real when the column
     exists, a NULL stand-in otherwise."""
-    if await _deals_has_proposed_brand(session):
-        return f"{_DEAL_COLUMNS}, proposed_brand"
-    return f"{_DEAL_COLUMNS}, NULL AS proposed_brand"
+    cols = (
+        f"{_DEAL_COLUMNS}, proposed_brand"
+        if await _deals_has_proposed_brand(session)
+        else f"{_DEAL_COLUMNS}, NULL AS proposed_brand"
+    )
+    # R-025 — same contract for ``operating_model``.
+    if await _deals_has_operating_model(session):
+        return f"{cols}, operating_model"
+    return f"{cols}, NULL AS operating_model"
 
 
 async def _write_audit(
@@ -880,6 +952,18 @@ async def create_deal(
             "deals.create: proposed_brand=%r dropped — column absent on "
             "this schema", body.proposed_brand,
         )
+    # R-025 — operating_model, same old-schema contract.
+    has_operating_model = await _deals_has_operating_model(session)
+    operating_model = body.operating_model if has_operating_model else None
+    if has_operating_model:
+        params["operating_model"] = body.operating_model
+        pb_col += ", operating_model"
+        pb_val += ", :operating_model"
+    elif body.operating_model is not None:
+        logger.warning(
+            "deals.create: operating_model=%r dropped — column absent on "
+            "this schema", body.operating_model,
+        )
 
     await session.execute(
         text(
@@ -914,6 +998,7 @@ async def create_deal(
             "deal_stage": body.deal_stage,
             "brand": body.brand,
             "proposed_brand": proposed_brand,
+            "operating_model": operating_model,
         },
     )
     # Wave 3 W3.2 — every deal gets a Base scenario at create time so
@@ -955,6 +1040,7 @@ async def create_deal(
         deal_type=body.deal_type,
         brand=body.brand,
         proposed_brand=proposed_brand,
+        operating_model=operating_model,
         positioning=body.positioning,
         purchase_price=body.purchase_price,
         sourcing_channel=body.sourcing_channel,
@@ -1131,6 +1217,12 @@ async def update_deal(
             "absent on this schema", deal_id,
         )
         changes.pop("proposed_brand")
+    if "operating_model" in changes and not await _deals_has_operating_model(session):
+        logger.warning(
+            "deals.update: operating_model dropped for deal=%s — column "
+            "absent on this schema", deal_id,
+        )
+        changes.pop("operating_model")
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
