@@ -10,7 +10,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { dealStages, returnProfiles, positioningTiers, brandFamilies, sourcingChannels, brandChain, brandFamilyShort } from '@/lib/mockData';
+import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, searchBrandFamilies } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
@@ -24,9 +24,10 @@ const steps = [
   { n: 1, label: 'Deal Details' },
   { n: 2, label: 'Return Profile' },
   { n: 3, label: 'Documents' },
-  { n: 4, label: 'Brand' },
-  { n: 5, label: 'Positioning' },
-  { n: 6, label: 'Review' },
+  // R-024 — one step: picking a brand pre-fills its default positioning,
+  // which the analyst can still change for this property.
+  { n: 4, label: 'Brand and Positioning' },
+  { n: 5, label: 'Review' },
 ];
 
 const iconForReturn: Record<string, any> = { core: Target, 'value-add': TrendingUp, opportunistic: Rocket };
@@ -101,7 +102,7 @@ export default function NewProjectPage() {
       return;
     }
     if (step === 3) setDocsGateNudge(false);
-    setStep(s => Math.min(6, s + 1));
+    setStep(s => Math.min(5, s + 1));
   };
   const back = () => setStep(s => Math.max(1, s - 1));
   // Visual disabled cue (color + cursor) stays, but the button still
@@ -269,8 +270,7 @@ export default function NewProjectPage() {
           />
         )}
         {step === 4 && <Step4 data={data} update={update} />}
-        {step === 5 && <Step5 data={data} update={update} />}
-        {step === 6 && <Step6 data={data} jumpTo={setStep} />}
+        {step === 5 && <Step6 data={data} jumpTo={setStep} />}
       </Card>
 
       {submitError && (
@@ -316,7 +316,7 @@ export default function NewProjectPage() {
         <Button variant="secondary" onClick={back} disabled={step === 1 || submitting}>
           <ArrowLeft size={13} /> Back
         </Button>
-        {step < 6 ? (
+        {step < 5 ? (
           <Button
             variant="primary"
             onClick={next}
@@ -565,26 +565,27 @@ function Step4({ data, update }: StepProps) {
   // results stays expanded while a query is active, so "Kimpton" shows
   // the Kimpton card (· IHG) instead of a closed "IHG Hotels & Resorts"
   // row. The submitted value is unchanged: always the specific brand.
-  const filtered = q
-    ? brandFamilies
-        .map(f =>
-          f.family.toLowerCase().includes(q)
-            ? f
-            : { ...f, brands: f.brands.filter(b => b.name.toLowerCase().includes(q)) },
-        )
-        .filter(f => f.brands.length > 0)
-    : brandFamilies;
+  // R-020 — aliases count too, so "Starwood" finds the legacy Starwood
+  // brands that now sit under Marriott.
+  const filtered = searchBrandFamilies(q);
   const selectedChain = isAgnostic ? null : brandChain(data.brand);
 
   // Re-clicking the active brand drops back to the agnostic default.
   // Keeps the wizard recoverable without a separate "Clear" affordance.
+  // R-024 — choosing a brand pre-fills its default positioning (the brand's
+  // chain scale); the analyst can still change it below for this property.
   const onBrandClick = (name: string) => {
-    update({ brand: data.brand === name ? 'agnostic' : name });
+    if (data.brand === name) {
+      update({ brand: 'agnostic' });
+      return;
+    }
+    const prefill = brandDefaultPositioning(name);
+    update(prefill ? { brand: name, positioning: prefill } : { brand: name });
   };
 
   return (
     <div>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Select Brand</h2>
+      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Brand and Positioning</h2>
       <p className="text-[12.5px] text-ink-500 mb-3">Choose a hotel brand or select brand agnostic for independent analysis.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
         Hotel brands work like franchises — each one has different fees, standards, and
@@ -703,11 +704,17 @@ function Step4({ data, update }: StepProps) {
           );
         })}
       </div>
+
+      <div className="mt-8">
+        <PositioningPicker data={data} update={update} />
+      </div>
     </div>
   );
 }
 
-function Step5({ data, update }: StepProps) {
+function PositioningPicker({ data, update }: StepProps) {
+  const prefill = data.brand === 'agnostic' ? null : brandDefaultPositioning(data.brand);
+  const prefillLabel = prefill ? positioningTiers.find(p => p.id === prefill)?.label : null;
   // Anchor each tier to consumer-recognizable brands so the choice is concrete.
   const tierExample: Record<string, string> = {
     luxury: 'Ritz-Carlton, Four Seasons, St. Regis.',
@@ -718,8 +725,12 @@ function Step5({ data, update }: StepProps) {
   };
   return (
     <div>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Market Positioning</h2>
-      <p className="text-[12.5px] text-ink-500 mb-3">Select the market segment for your analysis.</p>
+      <h3 className="text-[15px] font-semibold text-ink-900 mb-1">Positioning</h3>
+      <p className="text-[12.5px] text-ink-500 mb-3">
+        {prefillLabel
+          ? <>Pre-filled from {data.brand}: <span className="font-medium text-ink-900">{prefillLabel}</span> (the brand&apos;s chain scale). Change it if this property positions differently.</>
+          : 'Select the market segment for your analysis.'}
+      </p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
         Hotels are graded into tiers — luxury, upscale, midscale, economy — based on price
         point and amenities. The tier shapes what comp set we benchmark against and which
@@ -820,7 +831,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
         : <>{data.brand}{brandChain(data.brand) && <span className="text-ink-500 font-normal"> · {brandChain(data.brand)}</span>}</>,
       step: 4,
     },
-    { label: 'Positioning', value: positioning?.label || '—', step: 5 },
+    { label: 'Positioning', value: positioning?.label || '—', step: 4 },
   ];
 
   return (

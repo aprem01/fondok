@@ -2721,8 +2721,19 @@ export interface TransactionCompEntry {
   /** FON-72 Market Tab — SELLER column. Null (renders "—") when the OM row
    *  doesn't disclose a seller. */
   seller: string | null;
+  /** R-064 — ownership interest conveyed, only when the OM states it.
+   *  Null renders "—"; never inferred. Optional for older workers. */
+  interest?: 'Fee Simple' | 'Ground Lease' | null;
   source_document_id: string | null;
   source_page: number | null;
+}
+
+/** E-020 — disclosed comp cap rates (percent, 7.25 = 7.25%). */
+export interface CompCapRateRange {
+  low_pct: number;
+  high_pct: number;
+  median_pct: number;
+  n: number;
 }
 
 export interface TransactionCompsResult {
@@ -2730,6 +2741,8 @@ export interface TransactionCompsResult {
   comps: TransactionCompEntry[];
   median_price_per_key: number | null;
   median_cap_rate_pct: number | null;
+  /** E-020 — null when fewer than two comps disclose a cap rate. */
+  cap_rate_range?: CompCapRateRange | null;
   note: string | null;
 }
 

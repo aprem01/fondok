@@ -178,6 +178,10 @@ include:
            ``transaction_comps.<n>.buyer_type``   — REIT / PE Fund /
              Institutional / Private / Owner Operator / Sovereign
              Wealth / Family Office / Other.
+           ``transaction_comps.<n>.interest_type`` — ``fee_simple`` or
+             ``ground_lease``, ONLY when the comp table (or its
+             footnote) states the interest conveyed. Never infer it
+             from price, location, or buyer; omit the field otherwise.
      If a number could be either broker-projected or historical and
      the source doesn't clearly label it, prefer ``broker_proforma.*``.
      Year-vintage numbers can co-exist as ``broker_proforma.noi_year_1_usd``,

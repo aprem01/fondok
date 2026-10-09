@@ -74,6 +74,7 @@ const COMPS = {
       buyer_name: 'Certares Real Estate',
       buyer_type: null,
       seller: 'Betsy Ross Hospitality',
+      interest: 'Ground Lease', // R-064 — stated by the OM
       source_document_id: 'doc-1',
       source_page: 12,
     },
@@ -88,6 +89,7 @@ const COMPS = {
       buyer_name: 'Sixty Hotels',
       buyer_type: null,
       seller: null, // no seller disclosed → renders "—"
+      interest: null, // R-064 — not stated → renders "—", never inferred
       source_document_id: null,
       source_page: null,
     },
@@ -385,7 +387,18 @@ describe('MarketTab — Transaction Comps SELLER column (new backend field)', ()
     // Z Ocean Hotel discloses a buyer but no seller.
     const row = screen.getByText('Z Ocean Hotel').parentElement as HTMLElement;
     expect(within(row).getByText('Sixty Hotels')).toBeInTheDocument(); // buyer disclosed
-    expect(within(row).getByText('—')).toBeInTheDocument(); // seller → em dash
+    // seller → em dash (the Interest cell is "—" too: neither is disclosed)
+    expect(within(row).getAllByText('—')).toHaveLength(2);
+  });
+
+  it('R-064 — renders the INTEREST column: the stated interest, or "—" when the OM does not state it', async () => {
+    render(<MarketTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByText('Transaction Comps'));
+    await screen.findByText('INTEREST', undefined, { timeout: 5000 });
+    const cells = screen.getAllByTestId('comp-interest').map((c) => c.textContent);
+    expect(cells).toEqual(expect.arrayContaining(['Ground Lease', '—']));
+    expect(cells).toHaveLength(2);
+    expect(screen.queryByText('Fee Simple')).not.toBeInTheDocument();
   });
 
   it('shows real median anchors + a neutral context (no engine outputs, no placeholders)', async () => {

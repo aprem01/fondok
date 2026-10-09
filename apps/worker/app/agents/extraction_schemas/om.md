@@ -71,6 +71,10 @@ exit-cap conversation. For each comp:
 - `transaction_comps.<n>.buyer_type` — one of: REIT, PE Fund,
   Institutional, Private, Owner Operator, Sovereign Wealth,
   Family Office, Other.
+- `transaction_comps.<n>.interest_type` — the ownership interest
+  conveyed: `fee_simple` or `ground_lease`. Emit ONLY when the comp
+  table or its footnote states it ("Fee Simple", "Leasehold — ground
+  lease", "subject to ground lease"). Never infer it; omit otherwise.
 
 ## Tie-breaker rules
 

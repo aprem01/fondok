@@ -1232,7 +1232,8 @@ def test_pipeline_version_bumped_so_v3_rows_rerun():
     defect) into the cache; without the bump a re-extract would serve them."""
     from app.api.documents import EXTRACTION_PIPELINE_VERSION
 
-    assert EXTRACTION_PIPELINE_VERSION == "v4"
+    # Later bumps (v5 = R-064 comp interest_type) still invalidate v3 rows.
+    assert int(EXTRACTION_PIPELINE_VERSION.lstrip("v")) >= 4
 
 
 def test_extraction_field_out_carries_reconciliation_provenance():

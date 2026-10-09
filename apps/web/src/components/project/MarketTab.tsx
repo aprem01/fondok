@@ -1566,11 +1566,13 @@ function TransactionCompsSection({
     { label: 'SALE PRICE', align: 'right' },
     { label: '$ / KEY', align: 'right' },
     { label: 'CAP RATE', align: 'right' },
+    // R-064 — Fee Simple / Ground Lease, only when the OM states it.
+    { label: 'INTEREST', align: 'left' },
     { label: 'BUYER', align: 'left' },
     { label: 'SELLER', align: 'left' },
   ];
   const gridCols =
-    '76px minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px minmax(150px,1fr) minmax(150px,1fr)';
+    '76px minmax(210px,1.6fr) minmax(120px,1fr) 96px 62px 108px 100px 84px 106px minmax(150px,1fr) minmax(150px,1fr)';
 
   const pill = (label: SortKey): CSSProperties => {
     const active = label === sort;
@@ -1715,6 +1717,9 @@ function TransactionCompsSection({
                     }}
                   >
                     {fmtCap2(c.cap_rate_pct)}
+                  </div>
+                  <div data-testid="comp-interest" style={{ ...cellBase, background: bg, color: c.interest ? palette.textSecondary : MUTED }}>
+                    {c.interest ?? '—'}
                   </div>
                   <div style={{ ...cellBase, background: bg, color: buyer ? palette.textSecondary : MUTED }}>{buyer ?? '—'}</div>
                   <div style={{ ...cellBase, background: bg, color: c.seller ? palette.textSecondary : MUTED }}>{c.seller ?? '—'}</div>

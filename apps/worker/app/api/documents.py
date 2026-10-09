@@ -153,7 +153,11 @@ DOC_STATUS_FAILED = "FAILED"
 # under its own department's namespace, and budget / prior-year /
 # reference / monthly rows are never touched. Every P&L extraction cached
 # under v3 may carry the over-reached sub-rows and must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v4"
+# v5 (2026-10-08): R-064 — the OM comp-table guidance now asks for
+# ``transaction_comps.<n>.interest_type`` (fee simple vs ground lease) when
+# the broker's table states it. OMs cached under v4 never emitted it, so the
+# Transaction Comps "Interest" column would stay "—" until they re-run once.
+EXTRACTION_PIPELINE_VERSION = "v5"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
