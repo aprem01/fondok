@@ -1607,6 +1607,99 @@ export interface MarketSupplyGrowthBlock {
   supply_rooms_change_period?: string | null;
 }
 
+// ─────────────── FON-41 E-011 / E-013 / E-017 — P&L comments + round-trip ───────────────
+
+/** One comment on a P&L cell. ``cell_key`` is ``hist:<doc>::<field>`` or
+ *  ``proj:<engine>.years[<i>].<path>`` (see ``lib/cellComments.ts``). */
+export interface CellComment {
+  id: string;
+  deal_id: string;
+  cell_key: string;
+  cell_label: string | null;
+  body: string;
+  author_id: string | null;
+  author_email: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+export interface HistImportChange {
+  cell_ref: string;
+  cell_id: string;
+  document_id: string;
+  field_name: string;
+  line_id: string | null;
+  line_label: string;
+  period_label: string;
+  filename?: string | null;
+  old_value: number | string | null;
+  new_value: number;
+}
+
+export interface ImportIssue {
+  cell_ref: string;
+  reason: string;
+  detail?: string | null;
+  raw?: string;
+  cell_id?: string | null;
+  key?: string | null;
+  label?: string;
+  line_label?: string;
+  period_label?: string;
+  old_value?: number | string | null;
+  new_value?: number | string | null;
+}
+
+export interface HistImportPreview {
+  format: string;
+  changes: HistImportChange[];
+  mapping_errors: ImportIssue[];
+  non_numeric: ImportIssue[];
+  unchanged: number;
+}
+
+export interface ProjImportChange {
+  cell_ref: string;
+  key: string;
+  label: string;
+  old_value: number | null;
+  new_value: number;
+  note: string;
+  note_required: boolean;
+}
+
+export interface ProjImportPreview {
+  format: string;
+  changes: ProjImportChange[];
+  rejected: ImportIssue[];
+  mapping_errors: ImportIssue[];
+  non_numeric: ImportIssue[];
+  computed_edits: ImportIssue[];
+  unchanged: number;
+}
+
+export interface ImportApplyResult {
+  applied: Array<Record<string, unknown>>;
+  skipped: Array<{ reason: string; cell_id?: string; key?: string; detail?: unknown }>;
+  rerun_required?: boolean;
+}
+
+/** Save a Blob through a temporary object URL (browser download). */
+function saveBlob(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+  }
+}
+
 export const api = {
   health: () => request<{ status: string; version: string; db: string }>('GET', '/health'),
   admin: {
@@ -2005,6 +2098,40 @@ export const api = {
         setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
       }
     },
+  },
+  /** FON-41 E-011 — per-cell comment threads on the P&L views. */
+  comments: {
+    list: (dealId: string, signal?: AbortSignal) =>
+      request<CellComment[]>('GET', `/deals/${dealId}/comments`, undefined, { signal }),
+    create: (dealId: string, body: { cell_key: string; body: string; cell_label?: string | null }) =>
+      request<CellComment>('POST', `/deals/${dealId}/comments`, body),
+    resolveThread: (dealId: string, cellKey: string, resolved: boolean) =>
+      request<{ cell_key: string; resolved: boolean; updated: number }>(
+        'POST', `/deals/${dealId}/comments/resolve`, { cell_key: cellKey, resolved },
+      ),
+  },
+  /** FON-41 E-013 / E-017 — editable P&L workbooks (export → edit → validated import). */
+  plRoundTrip: {
+    download: async (dealId: string, kind: 'historicals' | 'projections', filename: string) => {
+      const blob = await requestBlob(`/deals/${dealId}/exports/${kind}.xlsx`);
+      saveBlob(blob, filename);
+    },
+    previewHistoricals: (dealId: string, file: File) => {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      return request<HistImportPreview>('POST', `/deals/${dealId}/imports/historicals`, undefined, { formData: fd });
+    },
+    applyHistoricals: (dealId: string, changes: Array<{ cell_id: string; new_value: number; old_value: unknown }>) =>
+      request<ImportApplyResult>('POST', `/deals/${dealId}/imports/historicals/apply`, { changes }),
+    previewProjections: (dealId: string, file: File) => {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      return request<ProjImportPreview>('POST', `/deals/${dealId}/imports/projections`, undefined, { formData: fd });
+    },
+    applyProjections: (
+      dealId: string,
+      changes: Array<{ key: string; new_value: number; note: string; old_value: number | null }>,
+    ) => request<ImportApplyResult>('POST', `/deals/${dealId}/imports/projections/apply`, { changes }),
   },
   analysis: {
     /** Deterministic broker-vs-T12 variance flags for a deal. */

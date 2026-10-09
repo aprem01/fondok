@@ -14,6 +14,7 @@ from .alerting import init_sentry
 from .api import admin_cost as admin_cost_router
 from .api import analysis as analysis_router
 from .api import audit as audit_router
+from .api import cell_comments as cell_comments_router
 from .api import data_library as data_library_router
 from .api import deals as deals_router
 from .api import documents as documents_router
@@ -26,6 +27,7 @@ from .api import model as model_router
 from .api import observability as observability_router
 from .api import ontology as ontology_router
 from .api import pipeline_filters as pipeline_filters_router
+from .api import pl_roundtrip as pl_roundtrip_router
 from .api import portfolio_library as portfolio_library_router
 from .api import scenarios as scenarios_router
 from .api import settings as settings_router
@@ -228,6 +230,15 @@ def create_app() -> FastAPI:
     # /deals/{id}/dossier + /deals/{id}/ask — Context Data Product surface.
     app.include_router(dossier_router.router, prefix="/deals", tags=["dossier"])
     app.include_router(export_router.router, prefix="/deals", tags=["export"])
+    # FON-41 E-011 — per-cell P&L comments (/deals/{id}/comments).
+    app.include_router(
+        cell_comments_router.router, prefix="/deals", tags=["comments"]
+    )
+    # FON-41 E-013 / E-017 — P&L Excel round-trip
+    # (/deals/{id}/exports/*.xlsx + /deals/{id}/imports/*).
+    app.include_router(
+        pl_roundtrip_router.router, prefix="/deals", tags=["pl-roundtrip"]
+    )
     # /deals/{id}/due-diligence — Lovable parity broker-question packet.
     app.include_router(
         due_diligence_router.router, prefix="/deals", tags=["due-diligence"]

@@ -1162,6 +1162,38 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON lineage_records (deal_id, run_id)
         """,
     ),
+    # ───────────── FON-41 E-011 — per-cell review comments ─────────────
+    # One row per comment on a P&L cell. ``cell_key`` is the cell's stable
+    # id: ``hist:<document_id>::<field_name>`` for a Historical P&L cell (the
+    # same id the historicals Excel round-trip carries) and
+    # ``proj:<engine>.years[<i>].<path>`` for a Future P&L cell. A thread is
+    # every row sharing (deal, cell_key); resolving stamps ``resolved_at`` and
+    # never deletes, so the history stays. Every read/write is tenant-scoped.
+    (
+        "cell_comments.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS cell_comments (
+            id              UUID PRIMARY KEY,
+            tenant_id       UUID NOT NULL,
+            deal_id         UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            cell_key        TEXT NOT NULL,
+            cell_label      TEXT,
+            body            TEXT NOT NULL,
+            author_id       TEXT,
+            author_email    TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at     TIMESTAMPTZ,
+            resolved_by     TEXT
+        )
+        """,
+    ),
+    (
+        "cell_comments.idx_deal_cell",
+        """
+        CREATE INDEX IF NOT EXISTS idx_cell_comments_deal_cell
+        ON cell_comments (tenant_id, deal_id, cell_key)
+        """,
+    ),
 ]
 
 
@@ -1963,6 +1995,32 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_lineage_records_deal_run
         ON lineage_records (deal_id, run_id)
+        """,
+    ),
+    # FON-41 E-011 — SQLite mirror of ``cell_comments`` (UUID/TIMESTAMPTZ → TEXT).
+    (
+        "cell_comments.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS cell_comments (
+            id              TEXT PRIMARY KEY,
+            tenant_id       TEXT NOT NULL,
+            deal_id         TEXT NOT NULL,
+            cell_key        TEXT NOT NULL,
+            cell_label      TEXT,
+            body            TEXT NOT NULL,
+            author_id       TEXT,
+            author_email    TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            resolved_at     TEXT,
+            resolved_by     TEXT
+        )
+        """,
+    ),
+    (
+        "cell_comments.idx_deal_cell",
+        """
+        CREATE INDEX IF NOT EXISTS idx_cell_comments_deal_cell
+        ON cell_comments (tenant_id, deal_id, cell_key)
         """,
     ),
 ]
