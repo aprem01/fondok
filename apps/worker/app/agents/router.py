@@ -57,10 +57,15 @@ Available document types (use exactly one of these tokens):
 - CBRE_HORIZONS  — CBRE Hotel Horizons forecast. Multi-year (usually
                    5-year) ADR / RevPAR / occupancy forecast by submarket
                    and chain scale; feeds the forward-projection engine.
-- PNL_BENCHMARK  — HotStats / industry benchmark P&L. Line-item POR/PAR
-                   ratios (departmental margins, expense ratios, GOP
-                   margin) for a chain scale or market — NOT the subject
-                   property's own statement.
+- PNL_BENCHMARK  — HotStats / CBRE Benchmarker / CBRE "Trends in the
+                   Hotel Industry" / industry benchmark P&L. Line-item
+                   POR/PAR ratios (departmental margins, expense ratios,
+                   GOP margin) for a submarket, chain scale, positioning
+                   or comp set — NOT the subject property's own
+                   statement. A CBRE report whose body is a USALI P&L
+                   (cost lines with % of revenue / POR / PAR) is
+                   PNL_BENCHMARK, not CBRE_HORIZONS (Horizons is an
+                   occupancy / ADR / RevPAR forecast with no cost lines).
 - RENT_ROLL      — Multifamily/extended-stay tenant roster (rare for
                    hotels; surfaces with mixed-use deals).
 - ROOM_MIX       — Room types / unit mix / key-count lookup. Typically

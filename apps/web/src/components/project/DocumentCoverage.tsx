@@ -147,6 +147,26 @@ function docStatusState(
   return { label: 'Ready for Review', tone: 'green' };
 }
 
+/**
+ * R-026 — true when Fondok assigned this document's category on its own and
+ * nobody has confirmed it yet: it was uploaded with no analyst tag (the
+ * wizard's "Drop everything here" zone, or a Data Room drop), the Router has
+ * classified it, and ``user_provided_doc_type`` is still empty. Confirming
+ * (accept-classification) or reclassifying writes the tag and clears it.
+ * Never shown while the file is still in the pipeline or failed, or when the
+ * host passed no per-document meta (nothing to read the tag from).
+ */
+export function isUnconfirmedAutoClassification(
+  file: Pick<CoverageFile, 'docType' | 'status'>,
+  meta?: Pick<CoverageDocMeta, 'userProvidedDocType'>,
+): boolean {
+  if (!meta || !file.docType) return false;
+  if ((meta.userProvidedDocType ?? '').trim()) return false;
+  const s = (file.status ?? '').toUpperCase();
+  if (s === 'FAILED' || s === 'PARSE_FAILED' || s === 'UPLOADING') return false;
+  return !isProcessingStatus(file.status);
+}
+
 /** What a reclassify can change — ``doc_subtype`` omitted = unchanged. */
 export type ReclassifyBody = {
   doc_type?: string;
@@ -167,6 +187,10 @@ export interface DocumentCoverageProps {
   onOpenInNewTab?: (docId: string) => void;
   /** Download the raw uploaded file (⬇). */
   onDownload?: (docId: string) => void;
+  /** R-026 — confirm Fondok's automatic classification (accept-classification
+   *  endpoint). When omitted the "Classified automatically" chip still shows,
+   *  just not as a button. */
+  onConfirmClassification?: (docId: string) => void;
   /** Doc id whose reclassify is in flight (disables its controls). */
   busyDocId?: string | null;
   /** Per-document provenance (upload time, detected year) keyed by id. */
@@ -207,12 +231,18 @@ export const CATEGORIES: CategorySpec[] = [
   {
     id: 'financials',
     label: 'Financial Statements',
-    match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'],
+    match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD'],
     financial: true,
     dropAs: 'PNL',
   },
   { id: 'str', label: 'STR Reports', match: ['STR', 'STR_TREND'] },
-  { id: 'comp_set', label: 'Comp Set / Market Reports', match: ['MARKET_STUDY'] },
+  // R-067 — CBRE / HotStats P&L benchmarks and CBRE Horizons forecasts are
+  // market reports for the submarket, not the property's own statements.
+  {
+    id: 'comp_set',
+    label: 'Comp Set / Market Reports',
+    match: ['MARKET_STUDY', 'PNL_BENCHMARK', 'CBRE_HORIZONS'],
+  },
   { id: 'capex', label: 'Historic CapEx', match: ['CAPEX'], subtype: 'historic' },
   { id: 'insurance', label: 'Insurance Records', match: ['INSURANCE'] },
   { id: 'property_tax', label: 'Property Taxes', match: ['PROPERTY_TAX'] },
@@ -279,6 +309,8 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'STR_TREND', label: 'STR Trend (TTM)' },
   { value: 'STR', label: 'STR Star (Daily)' },
   { value: 'MARKET_STUDY', label: 'Comp Set / Market Reports' },
+  { value: 'PNL_BENCHMARK', label: 'P&L Benchmark (CBRE / HotStats)' },
+  { value: 'CBRE_HORIZONS', label: 'CBRE Horizons forecast' },
   { value: 'CAPEX', label: 'CapEx' },  // Historic / Future via the subtype select
   { value: 'INSURANCE', label: 'Insurance Records' },
   { value: 'PROPERTY_TAX', label: 'Property Taxes' },
@@ -317,6 +349,7 @@ export function DocumentCoverage({
   onOpenReview,
   onOpenInNewTab,
   onDownload,
+  onConfirmClassification,
   busyDocId,
   docMeta,
   className,
@@ -522,6 +555,7 @@ export function DocumentCoverage({
                       onOpenReview={onOpenReview}
                       onOpenInNewTab={onOpenInNewTab}
                       onDownload={onDownload}
+                      onConfirmClassification={onConfirmClassification}
                     />
                   ))}
                 </ul>
@@ -733,11 +767,13 @@ function CoverageFileRow({
   onOpenReview,
   onOpenInNewTab,
   onDownload,
+  onConfirmClassification,
   meta,
   now,
 }: {
   file: CoverageFile;
   financial: boolean;
+  onConfirmClassification?: (docId: string) => void;
   /** R-034 — STR Reports row: show the detected report type when the
    *  analyst left it on "Not sure". */
   strReport?: boolean;
@@ -939,6 +975,28 @@ function CoverageFileRow({
           )}
         </div>
       )}
+      {isUnconfirmedAutoClassification(file, meta) &&
+        (onConfirmClassification ? (
+          <button
+            type="button"
+            data-testid="auto-classified-chip"
+            disabled={busy}
+            onClick={() => onConfirmClassification(file.id)}
+            aria-label={`Confirm Fondok’s classification of ${file.name}`}
+            title="Fondok assigned this category from the file’s contents. Click to confirm it, or pick another type to correct it."
+            className="inline-flex items-center gap-1 text-[10.5px] font-medium whitespace-nowrap rounded-full px-2 py-0.5 border border-brand-500/40 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            <CheckCircle2 size={11} aria-hidden="true" />
+            Classified automatically — confirm
+          </button>
+        ) : (
+          <span
+            data-testid="auto-classified-chip"
+            className="text-[10.5px] font-medium whitespace-nowrap rounded-full px-2 py-0.5 border border-brand-500/40 bg-brand-50 text-brand-700"
+          >
+            Classified automatically
+          </span>
+        ))}
       {detectedReport && (
         <span
           data-testid="detected-report-type"

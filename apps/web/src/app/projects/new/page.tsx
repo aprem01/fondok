@@ -22,6 +22,7 @@ import { formatElapsed } from '@/lib/progress';
 import { normalizeLocation, locationSuggestions } from '@/lib/markets';
 import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
 import { OPERATING_MODEL_OPTIONS, isOperatingModelId, operatingModelLabel } from '@/lib/operatingModel';
+import { unsupportedFileMessage } from '@/lib/uploadFormats';
 import {
   loadDraft, saveDraft, clearDraft, relativeTime, DRAFT_DEBOUNCE_MS,
   loadDefaultReturnProfile, saveDefaultReturnProfile, type DraftFileRef,
@@ -786,7 +787,7 @@ function Step3Documents({
           showGateWarning={showGateWarning}
           onUnsupportedFile={(filename) =>
             toast(
-              `${filename}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
+              unsupportedFileMessage(filename),
               { type: 'error' },
             )
           }

@@ -102,6 +102,7 @@ import {
   type ProjectionMethodLine,
 } from './MethodChip';
 import { mgmtFeeOperatingModelHint } from '@/lib/operatingModel';
+import BenchmarkComparison from './BenchmarkComparison'; // R-067 — read-only Benchmark column
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -952,6 +953,7 @@ export default function ProjectionsSection({
         </MethodChipContext.Provider>
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
+      <BenchmarkComparison dealId={dealId} modelYear={years[0] ?? null} />
     </Card>
     </CellCommentsProvider>
   );

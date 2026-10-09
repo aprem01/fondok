@@ -611,7 +611,12 @@ export type WizardCategory =
   | 'future_capex'
   | 'property_info'
   | 'leases'
-  | 'surveys';
+  | 'surveys'
+  // R-026 — the "Drop everything here" zone. Not a slot: files staged here
+  // go up with NO user tag (``user_doc_types[i] = ''``) and the Router
+  // assigns the category; the Data Room then lists each one under the
+  // category it landed in, flagged "Classified automatically — confirm".
+  | 'auto';
 
 export type WizardUserDocType =
   | 'OM'

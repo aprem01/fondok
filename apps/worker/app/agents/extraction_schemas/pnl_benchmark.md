@@ -24,7 +24,13 @@ Emit ALL four metrics for every USALI line that appears (Total $,
 Ratio-to-Revenue, $PAR, $POR):
 
 - `pnl_benchmark.<column>.<line>.total_usd`
-- `pnl_benchmark.<column>.<line>.ratio_pct`
+- `pnl_benchmark.<column>.<line>.ratio_pct` — the ratio exactly as the
+  report prints it (percent, e.g. `24.6`). Do not convert bases: CBRE /
+  HotStats print departmental expense lines (`rooms_dept_expense`,
+  `fb_dept_expense`, `other_operated_expense`) as a % of THAT
+  department's revenue and undistributed / management-fee / fixed lines
+  as a % of total revenue. Always emit `total_usd` too when printed so
+  the basis can be recomputed.
 - `pnl_benchmark.<column>.<line>.par_usd`
 - `pnl_benchmark.<column>.<line>.por_usd`
 
