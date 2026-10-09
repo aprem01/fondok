@@ -148,7 +148,7 @@ describe('R-016 / R-017 — Return Profile step reads LIRR and the exact calibra
     expect(text.replace(/LIRR/g, '')).not.toContain('IRR');
     expect(screen.getAllByText(/^Target LIRR: /)).toHaveLength(3);
     const hint = screen.getByTestId('coach-hint').textContent ?? '';
-    expect(hint).toContain('You can calibrate leverage and exit cap on the Returns tab.');
+    expect(hint).toContain('You can calibrate leverage and exit cap in the Returns section of the Overview.');
     expect(hint).not.toMatch(/fine-tune/i);
   });
 });
