@@ -544,6 +544,13 @@ def _coerce_float(value: Any) -> float | None:
 #:                             engines already compute (forward 12 months vs
 #:                             stabilized); the analyst types no number, and the
 #:                             Returns output names the basis it ran on.
+#:   index_methodology         FON-61 / E-028 — a METHOD choice (STR comp set /
+#:                             market benchmark / CoStar comp set) for Index
+#:                             Analysis; the analyst types no number, and it
+#:                             moves nothing unless a penetration target (which
+#:                             DOES need a note) is also set.
+#:   index_market_segment      which chain-scale segment the market benchmark
+#:                             reads — the same kind of choice.
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "stabilization_year",
@@ -551,6 +558,8 @@ _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
         "debt.completion_guarantee",
         "partnership.waterfall.tier_count",
         "exit_noi_basis",
+        "index_methodology",
+        "index_market_segment",
     }
 )
 

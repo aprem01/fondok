@@ -8169,6 +8169,14 @@
       ],
       "explanation": "Ownership split, preferred return and promote waterfall extracted from an uploaded partnership / JV document.",
       "reason": null
+    },
+    "index_assumption": {
+      "label": "Index Analysis assumption",
+      "badge": "Index",
+      "kind": "override",
+      "doc_types": [],
+      "explanation": "Set by the analyst's Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while \"Use STR rates in the model\" is on.",
+      "reason": null
     }
   },
   "reasons": {

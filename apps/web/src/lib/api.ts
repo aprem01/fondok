@@ -299,6 +299,47 @@ export interface AssumptionSourceField {
   doc_type?: string | null;
 }
 
+/** FON-61 / E-028 — one extraction row an Index Analysis figure was read from. */
+export interface IndexFieldRef {
+  field_name: string;
+  value?: number | string | boolean | null;
+  doc_name?: string | null;
+  doc_id?: string | null;
+  page?: number | null;
+}
+/** One Index Analysis figure and its source (`null` source = none; see detail). */
+export interface IndexFigure {
+  value: number | null;
+  source: 'document' | 'computed' | 'override' | null;
+  inputs: IndexFieldRef[];
+  detail?: string | null;
+  period_label?: string | null;
+}
+export type IndexMethodId = 'str_comp_set' | 'market_benchmark' | 'costar_comp_set';
+export interface IndexMethod {
+  method: IndexMethodId;
+  label: string;
+  available: boolean;
+  disabled_reason?: string | null;
+  occupancy: IndexFigure;
+  adr: IndexFigure;
+  documents: string[];
+  segment?: string | null;
+  segments_available: string[];
+}
+/** `GET /market/{deal_id}/index-methodology` (apps/worker/app/api/market.py). */
+export interface IndexMethodologyResponse {
+  deal_id: string;
+  selected: IndexMethodId;
+  selected_source: 'override' | 'default';
+  methods: IndexMethod[];
+  subject_occupancy: IndexFigure;
+  subject_adr: IndexFigure;
+  subject_period_label?: string | null;
+  assumptions: Record<string, IndexFigure>;
+  toggle_on: boolean;
+}
+
 /** One named input that fed a modeled value's formula (FON-25/27).
  *  Mirrors fondok_schemas.provenance.ValueInput. */
 export interface ValueInput {
@@ -2191,6 +2232,15 @@ export const api = {
      *  old raw fetch resolved the wrong tenant on the deployed app. */
     overview: (dealId: string, signal?: AbortSignal) =>
       request<unknown>('GET', `/market/${dealId}/overview`, undefined, { signal }),
+    /** FON-61 / E-028 — Index Analysis methodology: the selected method, what
+     *  each method reads (with document + page), and the editable assumptions. */
+    indexMethodology: (dealId: string, signal?: AbortSignal) =>
+      request<IndexMethodologyResponse>(
+        'GET',
+        `/market/${dealId}/index-methodology`,
+        undefined,
+        { signal },
+      ),
   },
   /** AI-generated broker due-diligence question packet. */
   dueDiligence: {

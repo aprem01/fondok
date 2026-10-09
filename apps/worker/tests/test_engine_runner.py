@@ -1336,3 +1336,96 @@ def test_every_str_basis_id_is_in_the_ontology_registry() -> None:
     known = set(registry.sources)
     for source_id in {*STR_BASIS_SOURCES, SOURCE_STR_UNAVAILABLE}:
         assert source_id in known, source_id
+
+
+
+# ─────────── FON-61 / E-028 — Index Analysis assumptions feed revenue ONLY with the STR toggle on ───────────
+
+_INDEX_STR_FIELDS = [
+    *_SUBJECT_TTM_FIELDS,
+    {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": 103.2},
+    {"field_name": "ttm_performance.indices.ari_adr_index", "value": 94.2},
+]
+_INDEX_OVERRIDES = {
+    "index_methodology": "str_comp_set",
+    "index_market_occupancy_growth": {"value": 0.012, "note": "Submarket demand recovery"},
+    "index_market_adr_growth": {"value": 0.033, "note": "CBRE outlook"},
+    "index_mpi_target": {"value": 110.0, "note": "Post-renovation share gain"},
+}
+
+
+@pytest.mark.asyncio
+async def test_index_assumptions_do_not_move_revenue_with_the_toggle_off() -> None:
+    """Default toggle OFF (every golden deal): the Index Analysis overrides are
+    saved but no engine key moves and nothing is badged ``index_assumption``."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+    from app.services.index_methodology import SOURCE_INDEX_ASSUMPTION
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(session, overrides={}, fields=_INDEX_STR_FIELDS)
+        plain = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        deal_id2, tenant_id2 = await _str_deal(
+            session, overrides=dict(_INDEX_OVERRIDES), fields=_INDEX_STR_FIELDS
+        )
+        with_ov = await _load_engine_inputs(session, deal_id2, tenant_id=tenant_id2)
+
+    for key in ("starting_occupancy", "starting_adr", "occupancy_growth", "adr_growth"):
+        assert with_ov[key] == plain[key], key
+        assert with_ov["__sources__"].get(key) == plain["__sources__"].get(key), key
+        assert with_ov["__sources__"].get(key) != SOURCE_INDEX_ASSUMPTION
+
+
+@pytest.mark.asyncio
+async def test_index_assumptions_feed_revenue_with_the_toggle_on() -> None:
+    """Toggle ON + the STR seed landed: market growth replaces the growth
+    assumptions and the MPI target sets Year-1 occupancy = comp set x target.
+    The ADR seed (no ARI target) is the subject TTM, untouched."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import SOURCE_STR_SUBJECT_TTM, _load_engine_inputs
+    from app.services.index_methodology import SOURCE_INDEX_ASSUMPTION
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(
+            session,
+            overrides={**_INDEX_OVERRIDES, "revenue_seed_from_str_forecast": True},
+            fields=_INDEX_STR_FIELDS,
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    assert base["occupancy_growth"] == pytest.approx(0.012)
+    assert base["adr_growth"] == pytest.approx(0.033)
+    assert sources["occupancy_growth"] == SOURCE_INDEX_ASSUMPTION
+    assert sources["adr_growth"] == SOURCE_INDEX_ASSUMPTION
+    # comp occupancy = 78.5% ÷ 1.032; x MPI target 110
+    assert base["starting_occupancy"] == pytest.approx(0.785 / 1.032 * 1.10, abs=1e-4)
+    assert sources["starting_occupancy"] == SOURCE_INDEX_ASSUMPTION
+    assert base["starting_adr"] == pytest.approx(412.0)
+    assert sources["starting_adr"] == SOURCE_STR_SUBJECT_TTM
+    # No stale document row is left pointing at the moved keys.
+    assert "starting_occupancy" not in base["__source_fields__"]
+
+
+@pytest.mark.asyncio
+async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _str_deal(
+            session,
+            overrides={
+                **_INDEX_OVERRIDES,
+                "revenue_seed_from_str_forecast": True,
+                "occupancy_growth": {"value": 0.002, "note": "IC asked for flat occupancy"},
+            },
+            fields=_INDEX_STR_FIELDS,
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    assert base["occupancy_growth"] == pytest.approx(0.002)
+    assert base["__sources__"]["occupancy_growth"] == "analyst_override"

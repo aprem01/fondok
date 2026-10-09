@@ -326,6 +326,22 @@ export default function MethodologyPage() {
             <BadgeRow source="derived_from_revpar_growth" name="Derived from RevPAR Growth">
               An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly takes direct control.
             </BadgeRow>
+            <BadgeRow source="index_assumption" name="Index Analysis Assumption">
+              Index Analysis indexes the subject against one of three benchmarks, chosen on Market → Index Analysis: the
+              <b> STR competitive set</b> (the default — subject STR TTM ÷ the published MPI / ARI, the same blend Market
+              Overview shows), a <b>market / chain-scale benchmark</b> (the market-wide or chain-scale segment occupancy
+              &amp; ADR in the deal&apos;s CoStar / STR market reports), or a <b>CoStar Property Analytics comp set</b>
+              (only when that export has been extracted — otherwise the option is disabled and says why). Each benchmark
+              figure names its document and page. Four assumptions ride on the choice — market occupancy growth, market ADR
+              growth, and the MPI / ARI penetration targets — each showing its document source, the documents a computed
+              default used, or &quot;Your override&quot;. They feed Projections only while &quot;Use STR rates in the
+              model&quot; is on and the STR seed has landed: then Year-1 occupancy = benchmark occupancy × MPI target,
+              Year-1 ADR = benchmark ADR × ARI target, and the growth rates replace the model&apos;s, each only where you
+              set one and never over an explicit override of that input. With the toggle off nothing moves. Index Analysis
+              also restates the Projections Base Year (revenue engine Year 1, its source and every step to it) beside its
+              own figures: its forecast columns start at the model&apos;s Year 2, so its first forecast column is the Base
+              Year grown one year, and the STR subject TTM it indexes against is a different source and period.
+            </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
             </BadgeRow>

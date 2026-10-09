@@ -105,6 +105,12 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'partnership.waterfall.1.hurdle_rate',
     'partnership.waterfall.1.gp_split',
     'noi_override_by_year',
+    // FON-61 / E-028 — the Index Analysis assumptions move Year-1 rates and
+    // growth when the STR basis is on: numbers, so they need a note.
+    'index_market_occupancy_growth',
+    'index_market_adr_growth',
+    'index_mpi_target',
+    'index_ari_target',
   ];
   it.each(engineInputs)('%s needs a justification', (key) => {
     expect(requiresNote(key)).toBe(true);
@@ -145,6 +151,9 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'memo_thesis_run_id',
     'memo_highlights_run_id',
     'memo_risks_run_id',
+    // FON-61 / E-028 — method choices, not numbers.
+    'index_methodology',
+    'index_market_segment',
   ];
   it.each(exempt)('%s does not', (key) => {
     expect(requiresNote(key)).toBe(false);

@@ -97,6 +97,10 @@ const STR_BASIS_SOURCES = new Set<string>([
   'str_forecast',      // the BASE forward forecast's Month-12 point
   'str_subject_ttm',   // the subject property's own trailing twelve months
   'str_comp_set',      // the Market tab's comp-set blended rates
+  // FON-61 / E-028 — the STR-basis rates after the analyst's Index Analysis
+  // penetration target was applied to the selected benchmark. The worker only
+  // stamps it while the STR seed has landed, so the basis is still STR/market.
+  'index_assumption',
 ]);
 
 /** True when a resolved source says the Year-1 rates sit on an STR basis.

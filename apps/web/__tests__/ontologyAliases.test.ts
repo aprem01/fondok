@@ -249,8 +249,10 @@ describe('ontology adapters — provenance labels', () => {
     for (const c of copy) expect(c).not.toBe(p.source_explanation.seed);
   });
 
-  it('isStrBasisSource covers exactly the three STR basis ids', () => {
-    for (const id of ['str_forecast', 'str_subject_ttm', 'str_comp_set']) {
+  it('isStrBasisSource covers exactly the three STR basis ids (+ the Index Analysis penetration step on them)', () => {
+    // FON-61 / E-028 — ``index_assumption`` is stamped on the Year-1 rates only
+    // while the STR seed has landed (a penetration target applied to it).
+    for (const id of ['str_forecast', 'str_subject_ttm', 'str_comp_set', 'index_assumption']) {
       expect(isStrBasisSource(id), id).toBe(true);
     }
     for (const id of ['str_forecast_unavailable', 't12_actual', 'analyst_override', '']) {

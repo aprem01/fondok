@@ -77,6 +77,13 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // projection either way, and the run echoes which basis it used. A typed
   // Exit NOI value (the override lever) is a number and does require a note.
   'exit_noi_basis',
+  // FON-61 / E-028 — the Index Analysis METHOD choice (STR comp set / market
+  // benchmark / CoStar comp set) and which chain-scale segment the market
+  // benchmark reads. Choices, not numbers: the analyst types nothing, and they
+  // move no figure unless a penetration target — which DOES need a note — is
+  // also set while "Use STR rates in the model" is on.
+  'index_methodology',
+  'index_market_segment',
 ]);
 
 /**
