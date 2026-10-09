@@ -70,13 +70,23 @@ import {
   NO_SOURCE_TEXT,
   type FlaggedField,
 } from '@/lib/reviewReasons';
+import {
+  ACCEPTED_FORMATS_LABEL,
+  GOOGLE_EXPORT_GUIDANCE,
+  UPLOAD_ACCEPT,
+  isUploadableFile,
+  unsupportedFileMessage,
+} from '@/lib/uploadFormats';
 
 // FON-41 — doc types whose data lands in the Financials historical view. Their
 // "to review" count IS that view's flagged-cell count for the document (one
 // shared review state — lib/reviewState), so the badge, the red cells and the
 // global count can never disagree.
+// R-067 — a P&L benchmark (CBRE / HotStats) is a market report, not the
+// property's statement: it is filed under Comp Set / Market Reports and its
+// fields are reviewed in its own field review, not on the Historicals sheet.
 const FINANCIAL_DOC_TYPES = new Set([
-  'T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK',
+  'T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD',
 ]);
 
 // Same dependency order EngineHeader uses for run-all fallbacks — mirrors the
@@ -145,9 +155,9 @@ const REQUIRED_CHECKLIST: { label: string; match: string[]; subtype?: string }[]
   // P&L were separate required rows, so uploading a P&L still left
   // "T-12 Missing" — analysts shouldn't need to know Fondok's internal
   // taxonomy to clear the financials requirement.
-  { label: 'Financial Statements (T-12 or P&L)', match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD', 'PNL_BENCHMARK'] },
+  { label: 'Financial Statements (T-12 or P&L)', match: ['T12', 'PNL', 'PNL_MONTHLY', 'PNL_YTD'] },
   { label: 'STR Reports',                   match: ['STR', 'STR_TREND'] },
-  { label: 'Comp Set / Market Reports',     match: ['MARKET_STUDY'] },
+  { label: 'Comp Set / Market Reports',     match: ['MARKET_STUDY', 'PNL_BENCHMARK', 'CBRE_HORIZONS'] },
   { label: 'Historic CapEx',                match: ['CAPEX'], subtype: 'historic' },
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
@@ -354,6 +364,25 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       }
     },
     [rawId, refresh, toast],
+  );
+
+  // R-026 — confirm a category Fondok assigned on its own (file uploaded with
+  // no tag). Same accept-classification endpoint as the banner above: it
+  // copies the Router's doc_type onto user_provided_doc_type, which is what
+  // clears the "Classified automatically — confirm" chip.
+  const confirmAutoClassification = useCallback(
+    async (docId: string) => {
+      const doc = documents.find((d) => d.id === docId);
+      try {
+        await api.documents.acceptClassification(rawId, docId, true);
+        toast(`Confirmed the category for ${doc?.filename ?? 'the document'}`, { type: 'success' });
+        refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(`Couldn’t confirm the classification: ${msg}`, { type: 'error' });
+      }
+    },
+    [documents, rawId, refresh, toast],
   );
 
   // Wave 1 #4 — resolve a year-mismatch banner. Symmetric with the
@@ -859,9 +888,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // a stray .heic / .mov / .zip never even hits the worker. The
   // <input accept=> attribute only filters the picker dialog, NOT
   // drag-drop, on every browser.
-  const ALLOWED_DROP_EXTENSIONS = new Set([
-    '.pdf', '.xls', '.xlsx', '.xlsm', '.csv', '.doc', '.docx',
-  ]);
+  // R-030 — accepted formats (incl. .pptx and Google Sheets / Slides
+  // exports) come from lib/uploadFormats, which mirrors the worker.
   // Mirrors the worker's MAX_UPLOAD_MB default (apps/worker/app/config.py).
   // Client-side check is purely a UX shortcut — the server is still the
   // source of truth, so a tenant bumping MAX_UPLOAD_MB above 50 will
@@ -882,13 +910,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     }
     const allowed: File[] = [];
     for (const f of files) {
-      const dot = f.name.lastIndexOf('.');
-      const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : '';
-      if (!ALLOWED_DROP_EXTENSIONS.has(ext)) {
-        toast(
-          `${f.name}: unsupported file type — Fondok accepts PDF, Excel, CSV, Word.`,
-          { type: 'error' },
-        );
+      if (!isUploadableFile(f.name)) {
+        toast(unsupportedFileMessage(f.name), { type: 'error' });
         continue;
       }
       if (f.size > MAX_UPLOAD_BYTES) {
@@ -966,7 +989,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.xlsx,.xlsm,.xls,.csv,.doc,.docx,.ppt,.pptx"
+        accept={UPLOAD_ACCEPT}
         onChange={onFilesSelected}
         className="hidden"
       />
@@ -1122,12 +1145,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               <UploadCloud size={26} className="text-brand-500" />
             </div>
             <div className="text-[14px] font-semibold text-ink-900">
-              Upload OM, T-12, monthly P&amp;Ls, STR, or CBRE Horizons to begin underwriting
+              Drop everything here — OM, T-12, monthly P&amp;Ls, STR, CBRE reports
             </div>
-            <div className="text-[12px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              Drag and drop, or click to select. Accepts PDF, .xlsx / .xlsm, .xls, and .csv —
-              extractor routes each file by type and writes structured fields to the deal record.
+            <div className="text-[12px] text-ink-500 mt-1 max-w-lg mx-auto leading-relaxed">
+              Drag and drop, or click to select. Fondok reads each file and assigns it to its
+              category — confirm or correct each assignment in the list. Accepts{' '}
+              {ACCEPTED_FORMATS_LABEL}.
             </div>
+            <div className="text-[11.5px] text-ink-500 mt-1">{GOOGLE_EXPORT_GUIDANCE}</div>
             <div className="flex items-center justify-center gap-2 mt-4">
               <Button variant="primary" size="sm" disabled={uploading}>
                 {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
@@ -1178,10 +1203,12 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               <UploadCloud size={24} className="text-brand-500" />
             </div>
             <div className="flex-1">
-              <h3 className="text-[14px] font-semibold text-ink-900">Upload Documents</h3>
+              <h3 className="text-[14px] font-semibold text-ink-900">Drop everything here</h3>
               <p className="text-[12px] text-ink-500 mt-0.5">
-                Drag and drop OM, T12, STR reports · AI auto-extracts key data
+                Fondok assigns each file to its category — confirm or correct it below ·{' '}
+                {ACCEPTED_FORMATS_LABEL}
               </p>
+              <p className="text-[11.5px] text-ink-500 mt-0.5">{GOOGLE_EXPORT_GUIDANCE}</p>
             </div>
             <Button variant="primary" size="sm" onClick={onPickFiles} disabled={uploading}>
               {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
@@ -1275,6 +1302,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               toast(`Couldn't download ${name}: ${shortReason(err)}`, { type: 'error' });
             });
           }}
+          onConfirmClassification={confirmAutoClassification}
           busyDocId={reclassifyingDoc}
           docMeta={docMeta}
         />

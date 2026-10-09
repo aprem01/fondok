@@ -56,14 +56,12 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
     content_hash = hashlib.sha256(file_bytes).hexdigest()
     ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
 
-    # Legacy binary .ppt — python-pptx can't read it; surface an
-    # actionable error before we hit the registry.
-    if ext == "ppt":
-        raise ParseError(
-            f"legacy binary .ppt ({filename}) is not supported — please "
-            "re-save the deck as .pptx (File → Save As → PowerPoint "
-            "Presentation) and re-upload."
-        )
+    # Formats we deliberately do not parse (legacy binary .ppt, Keynote,
+    # OpenDocument, Google Drive shortcut files, …) — surface an
+    # actionable "convert it first" error before we hit the registry.
+    hint = conversion_hint(filename)
+    if hint is not None:
+        raise ParseError(hint)
 
     handler = get_parser(ext)
     if handler is None:
@@ -79,6 +77,74 @@ async def parse_document(file_bytes: bytes, filename: str) -> ParsedDocument:
         filename=filename,
         content_hash=content_hash,
     )
+
+
+# R-030 — formats a broker or analyst plausibly sends that Fondok does NOT
+# parse. Each maps to the one-line conversion the user should do. Used by
+# the upload boundary (``api/documents.py``) to reject with this exact copy
+# and by ``parse_document`` as a backstop. Google Sheets / Slides / Docs are
+# not files at all — a ``.gsheet`` / ``.gslides`` / ``.gdoc`` on disk is a
+# Google Drive shortcut (a tiny JSON pointer), so the fix is an export.
+_GOOGLE_EXPORT = (
+    "Google Sheets / Slides / Docs are not files Fondok can read directly — "
+    "in Google, use File → Download → Microsoft Excel (.xlsx), Microsoft "
+    "PowerPoint (.pptx), Microsoft Word (.docx) or PDF, then upload that file."
+)
+CONVERT_FIRST_HINTS: dict[str, str] = {
+    "ppt": (
+        "Legacy PowerPoint (.ppt) is not supported — re-save the deck as "
+        ".pptx (File → Save As → PowerPoint Presentation) or export it to "
+        "PDF, then re-upload."
+    ),
+    "pps": (
+        "PowerPoint shows (.pps) are not supported — re-save the deck as "
+        ".pptx or export it to PDF, then re-upload."
+    ),
+    "ppsx": (
+        "PowerPoint shows (.ppsx) are not supported — re-save the deck as "
+        ".pptx or export it to PDF, then re-upload."
+    ),
+    "key": (
+        "Keynote (.key) is not supported — in Keynote use File → Export To → "
+        "PowerPoint (.pptx) or PDF, then re-upload."
+    ),
+    "numbers": (
+        "Apple Numbers (.numbers) is not supported — in Numbers use File → "
+        "Export To → Excel (.xlsx) or CSV, then re-upload."
+    ),
+    "pages": (
+        "Apple Pages (.pages) is not supported — in Pages use File → Export "
+        "To → Word (.docx) or PDF, then re-upload."
+    ),
+    "doc": (
+        "Legacy Word (.doc) is not supported — re-save the document as "
+        ".docx (File → Save As → Word Document) or export it to PDF, then "
+        "re-upload."
+    ),
+    "odp": (
+        "OpenDocument presentations (.odp) are not supported — re-save as "
+        ".pptx or export to PDF, then re-upload."
+    ),
+    "ods": (
+        "OpenDocument spreadsheets (.ods) are not supported — re-save as "
+        ".xlsx (or CSV), then re-upload."
+    ),
+    "odt": (
+        "OpenDocument text (.odt) is not supported — re-save as .docx or "
+        "export to PDF, then re-upload."
+    ),
+    "gsheet": _GOOGLE_EXPORT,
+    "gslides": _GOOGLE_EXPORT,
+    "gdoc": _GOOGLE_EXPORT,
+}
+
+
+def conversion_hint(filename: str | None) -> str | None:
+    """The "convert it first" message for a known-but-unparsed format, or
+    ``None`` when the extension is not one of them."""
+    name = (filename or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    return CONVERT_FIRST_HINTS.get(ext)
 
 
 def _pdf_parser(*, file_bytes: bytes, filename: str, content_hash: str) -> ParsedDocument:
@@ -252,9 +318,9 @@ def _parse_with_pymupdf(
 
     pdfplumber_pdf: Any | None = None
     try:
-        import pdfplumber  # type: ignore[import-untyped]
-
         import io
+
+        import pdfplumber  # type: ignore[import-untyped]
 
         pdfplumber_pdf = pdfplumber.open(io.BytesIO(file_bytes))
     except ImportError:
@@ -724,6 +790,71 @@ def _parse_with_docx(
     )
 
 
+def _decode_text(file_bytes: bytes) -> str:
+    """Decode a text export. UTF-8 (with or without BOM) first — what Excel
+    "CSV UTF-8" and Google Sheets' CSV download write — then Windows-1252,
+    the encoding Excel's plain "CSV (Comma delimited)" uses on Windows."""
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return file_bytes.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode("latin-1")
+
+
+def _parse_with_csv(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_hash: str,
+) -> ParsedDocument:
+    """Parse a ``.csv`` export (one sheet) into a single ``ParsedPage``.
+
+    The upload allowlist has accepted ``.csv`` for a long time, but no
+    parser was registered, so every CSV failed at parse time with
+    "unsupported file extension". A CSV is one sheet: it is serialized
+    with the same tab-joined grid + ``tables`` shape the Excel parsers
+    use, so the extractor sees a CSV P&L exactly as it would the same
+    sheet in a workbook. The delimiter is sniffed (comma / semicolon /
+    tab / pipe) so a European-locale ``;`` export reads as columns.
+    """
+    import csv
+    import io
+
+    text_body = _decode_text(file_bytes)
+    if not text_body.strip():
+        raise ParseError(f"{filename} has no text content")
+    sample = text_body[:8192]
+    dialect: Any
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    try:
+        rows = [
+            [(c or "").strip() for c in row]
+            for row in csv.reader(io.StringIO(text_body), dialect)
+        ]
+    except csv.Error as exc:
+        raise ParseError(f"could not read {filename} as CSV: {exc}") from exc
+
+    page = _xls_sheet_to_page(
+        sheet_index=1,
+        sheet_name=filename.rsplit(".", 1)[0] if "." in filename else filename,
+        rows=rows,
+    )
+    page.metadata["source"] = "csv"
+    return ParsedDocument(
+        filename=filename,
+        total_pages=1,
+        pages=[page],
+        content_hash=content_hash,
+        parsed_at=datetime.now(UTC),
+        parser="csv",
+        metadata={"backend": "csv", "sheet_count": 1},
+    )
+
+
 # ─────────────────────── parser registry wiring ───────────────────────
 # Module-level registrations so adding a new format becomes one line.
 # Re-imports stay idempotent because register_parser dedupes by ext.
@@ -735,12 +866,16 @@ register_parser("xlsx", _parse_with_openpyxl)
 register_parser("xlsm", _parse_with_openpyxl)
 register_parser("pptx", _parse_with_pptx)
 register_parser("docx", _parse_with_docx)
+# R-030 — CSV exports (Excel "Save As CSV", Google Sheets "Download → CSV").
+register_parser("csv",  _parse_with_csv)
 
 
 __all__ = [
-    "parse_pdf",
-    "parse_document",
-    "register_parser",
+    "CONVERT_FIRST_HINTS",
+    "conversion_hint",
     "get_parser",
+    "parse_document",
+    "parse_pdf",
+    "register_parser",
     "registered_extensions",
 ]

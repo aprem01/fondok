@@ -87,6 +87,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { api } from '@/lib/api';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
+import BenchmarkComparison from './BenchmarkComparison'; // R-067 — read-only Benchmark column
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -871,6 +872,7 @@ export default function ProjectionsSection({
         />
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
+      <BenchmarkComparison dealId={dealId} modelYear={years[0] ?? null} />
     </Card>
   );
 }

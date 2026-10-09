@@ -113,7 +113,7 @@ export default function MethodologyPage() {
             n="2"
             title="Classify"
             Icon={Sparkles}
-            body="A Haiku 4.5 Router agent reads the filename plus the first ~2K characters and emits a doc_type: OM, T12, PNL, STR, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, RENT_ROLL, MARKET_STUDY, ROOM_MIX, or CONTRACT. A filename heuristic provides the fallback when the Router is unsure."
+            body="A Haiku 4.5 Router agent reads the filename plus the first ~2K characters and emits a doc_type: OM, T12, PNL, STR, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, RENT_ROLL, MARKET_STUDY, ROOM_MIX, or CONTRACT. A filename heuristic provides the fallback when the Router is unsure. Files dropped in the “Drop everything here” zone carry no analyst tag, so the Router’s doc_type is the category; the Data Room marks them “Classified automatically — confirm” until the analyst confirms or reclassifies. Accepted formats: PDF, Excel (.xlsx / .xlsm / .xls), CSV, Word (.docx) and PowerPoint (.pptx) — Google Sheets / Slides via File → Download → Excel / PowerPoint."
           />
           <Stage
             n="3"
@@ -247,6 +247,9 @@ export default function MethodologyPage() {
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Expense waterfall</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
             Departmental, undistributed, and fixed-charge lines source from the T-12 first. Zero-valued extractor rows are treated as &quot;not present&quot; rather than authoritative — those gaps are filled from USALI 11th industry benchmarks (CBRE Benchmarker / HotStats) when uploaded, with brand-specific overrides as the final layer.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            When a P&amp;L benchmark is uploaded (Comp Set / Market slot → &quot;P&amp;L Benchmark (CBRE / HotStats)&quot;), its comp-set cost lines are mapped to the model&apos;s expense categories and shown on the Future P&amp;L as a read-only <strong>Benchmark</strong> column beside the model&apos;s Year-1 ratios — departmental expense as a % of that department&apos;s revenue, every other line as a % of total revenue, plus the benchmark&apos;s POR and PAR. The ratio is computed from the report&apos;s own line and revenue totals where printed, else from its PAR figures, else taken as printed. The comparison does not change the model; lines the report does not publish show &quot;—&quot;.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             The waterfall produces <strong>two</strong> distinct NOI figures, and every screen names which one it is showing:

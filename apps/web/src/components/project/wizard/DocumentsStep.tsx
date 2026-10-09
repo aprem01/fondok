@@ -51,22 +51,21 @@ import type {
 } from '@/lib/api';
 import { YearCoverageHint } from './YearCoverageHint';
 import { CoachMark } from '@/components/help/CoachMark';
+import {
+  ACCEPTED_FORMATS_LABEL,
+  GOOGLE_EXPORT_GUIDANCE,
+  UPLOAD_ACCEPT,
+  isUploadableFile,
+} from '@/lib/uploadFormats';
 
 // ─────────────────────────── allowlist (B3) ───────────────────────────
-// Mirrors the worker's _ALLOWED_EXTENSIONS in apps/worker/app/api/documents.py.
-// The HTML <input accept=> attribute alone only filters the picker dialog
-// (and unreliably across browsers) — the drag-drop handlers filter using
-// this set so a misformatted file never sneaks into the staged list.
-const ALLOWED_EXTENSIONS = new Set([
-  '.pdf',
-  '.xls',
-  '.xlsx',
-  '.xlsm',
-  '.csv',
-  '.doc',
-  '.docx',
-]);
-const ACCEPT = '.pdf,.xls,.xlsx,.xlsm,.csv,.doc,.docx,application/pdf';
+// R-030 — the accepted formats (incl. PowerPoint, and the Excel / PowerPoint
+// exports of Google Sheets / Slides) live in lib/uploadFormats, which mirrors
+// the worker's _ALLOWED_EXTENSIONS. The HTML <input accept=> attribute alone
+// only filters the picker dialog (and unreliably across browsers) — the
+// drag-drop handlers filter with the same list so a misformatted file never
+// sneaks into the staged list.
+const ACCEPT = UPLOAD_ACCEPT;
 
 // R-029 — the drop prompts name the document exactly as labelled
 // ("Offering Memorandum", not "offering memorandum"), so the article has
@@ -75,13 +74,8 @@ function indefiniteArticle(label: string): 'a' | 'an' {
   return /^[aeiou]/i.test(label) ? 'an' : 'a';
 }
 
-function getExtension(name: string): string {
-  const dot = name.lastIndexOf('.');
-  return dot >= 0 ? name.slice(dot).toLowerCase() : '';
-}
-
 function isAllowedFile(file: File): boolean {
-  return ALLOWED_EXTENSIONS.has(getExtension(file.name));
+  return isUploadableFile(file.name);
 }
 
 // ─────────────────────────── category catalog ───────────────────────────
@@ -144,7 +138,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     defaultDocType: 'OM',
     emptyState:
       'No OM uploaded yet. The broker memorandum is the first read of every deal — it anchors property metadata before extraction.',
-    dropHint: 'One file · PDF or Word. Click to browse.',
+    dropHint: 'One file · PDF, PowerPoint or Word. Click to browse.',
     skipWarning:
       'Most IC reviewers expect the OM. You can add it later from the Data Room.',
     showYearTagging: false,
@@ -270,13 +264,36 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     requiredForIc: true,
     multiFile: true,
     Icon: TrendingUp,
+    // R-067 — a CBRE / HotStats P&L benchmark for the submarket and
+    // positioning also lands here; tag it so its cost ratios are mapped to
+    // the expense categories and shown as the Future P&L's Benchmark column.
     description:
-      'CoStar submarket, pipeline, and sales reports plus comp-set definitions. Frames the competitive set and new supply around the hotel.',
-    exampleChip: 'e.g. CoStar submarket report, pipeline report, sales comps, comp-set definition',
+      'CoStar submarket, pipeline, and sales reports plus comp-set definitions. Frames the competitive set and new supply around the hotel. Add a CBRE / HotStats P&L benchmark for the submarket and positioning to compare the business plan’s cost ratios.',
+    exampleChip: 'e.g. CoStar submarket report, pipeline report, sales comps, comp-set definition, CBRE P&L benchmark',
+    picker: {
+      label: 'Report type',
+      options: [
+        {
+          value: 'STR_TREND',
+          label: 'Market / comp-set report',
+          help: 'CoStar submarket, pipeline or sales report, or a comp-set definition.',
+        },
+        {
+          value: 'PNL_BENCHMARK',
+          label: 'P&L Benchmark (CBRE / HotStats)',
+          help: 'Peer-set operating P&L (% of revenue, POR, PAR) for the submarket and positioning — shown as the Benchmark column on the Future P&L.',
+        },
+        {
+          value: '',
+          label: 'Not sure',
+          help: 'Fondok will classify on extraction.',
+        },
+      ],
+    },
     defaultDocType: 'STR_TREND',
     emptyState:
       'No comp set or market reports yet. Most IC reviewers expect a comp-set definition and a submarket view.',
-    dropHint: 'Multiple files welcome · PDF / Excel.',
+    dropHint: 'Multiple files welcome · PDF / Excel / PowerPoint.',
     skipWarning:
       'Comp set and market reports are recommended for IC. You can add them later from the Data Room.',
     showYearTagging: false,
@@ -481,9 +498,18 @@ export function DocumentsStep({
     return m;
   }, [files]);
 
+  // R-026 — files dropped in the "Drop everything here" zone. Not a slot:
+  // they upload untagged and the Router assigns each one's category.
+  const autoFiles = useMemo(() => files.filter((f) => f.category === 'auto'), [files]);
+
   // Wave 1 gate — financials required. ONE upload in the merged
   // Financial Statements bucket (T-12 / full year / monthly / YTD) clears it.
-  const canContinue = (filesByCategory.financials?.length ?? 0) > 0;
+  // R-026: files in the auto-classify zone also clear it — the analyst who
+  // drops the whole data room in one place should not be blocked on a
+  // category Fondok assigns only after upload. If none of them turns out to
+  // be a financial statement, the Data Room's Financial Statements row
+  // reads "Not uploaded" and the coverage gap chips say so.
+  const canContinue = (filesByCategory.financials?.length ?? 0) > 0 || autoFiles.length > 0;
   useEffect(() => {
     onCanContinueChange(canContinue);
   }, [canContinue, onCanContinueChange]);
@@ -578,6 +604,12 @@ export function DocumentsStep({
       <h2 className="text-[18px] font-semibold text-ink-900 mb-5">
         Documents
       </h2>
+
+      <AutoClassifyZone
+        files={autoFiles}
+        onAdd={(fs) => addFiles(fs, 'auto', { user_doc_type: null })}
+        onRemove={removeAt}
+      />
 
       <div className="grid grid-cols-12 gap-5">
         {/* ─────────────── Vertical sidebar — single-row, status dot ─────────────── */}
@@ -726,12 +758,133 @@ export function DocumentsStep({
             >
               <Info size={13} aria-hidden="true" />
               Add at least one financial (T-12 or Annual / YTD / Monthly
-              P&amp;L) to continue.
+              P&amp;L) — or drop your files in “Drop everything here” — to
+              continue.
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────── auto-classify zone (R-026) ───────────────────────
+
+/**
+ * R-026 — one place to drop every document. Files staged here are uploaded
+ * with no category tag; the Router reads each one and assigns its category
+ * (``ai_proposed_doc_type`` → ``doc_type``). The Data Room then lists each
+ * file under the category it landed in with a "Classified automatically —
+ * confirm" chip and the usual reclassify control. The per-category slots
+ * below stay for analysts who prefer to tag files themselves.
+ */
+export function AutoClassifyZone({
+  files,
+  onAdd,
+  onRemove,
+}: {
+  files: WizardFile[];
+  onAdd: (files: File[]) => void;
+  onRemove: (file: WizardFile) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [drag, setDrag] = useState(false);
+  const open = () => inputRef.current?.click();
+  return (
+    <section
+      aria-label="Drop everything here"
+      data-testid="wizard-auto-classify"
+      className="mb-5"
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept={ACCEPT}
+        className="hidden"
+        aria-label="Add files for automatic classification"
+        onChange={(e) => {
+          const list = e.target.files ? Array.from(e.target.files) : [];
+          e.target.value = '';
+          onAdd(list);
+        }}
+      />
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={open}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            open();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDrag(true);
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          const dropped = Array.from(e.dataTransfer.files ?? []);
+          if (dropped.length) onAdd(dropped);
+        }}
+        aria-label="Drop everything here — Fondok sorts each file into its category"
+        className={cn(
+          'border-2 border-dashed rounded-lg cursor-pointer px-5 py-5 flex items-start gap-4',
+          'transition-colors motion-reduce:transition-none',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+          drag
+            ? 'border-brand-500 bg-brand-50'
+            : 'border-brand-500/40 bg-brand-50/30 hover:border-brand-500 hover:bg-brand-50/60',
+        )}
+      >
+        <UploadCloud size={24} className="text-brand-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="min-w-0">
+          <div className="text-[13.5px] font-semibold text-ink-900">
+            {drag ? 'Drop to add' : 'Drop everything here'}
+          </div>
+          <p className="text-[12px] text-ink-500 mt-0.5 leading-snug max-w-[680px]">
+            The whole data room in one go — Fondok reads each file and assigns it to its
+            category. You review and correct every assignment in the Data Room. Prefer to tag
+            files yourself? Use the category slots below.
+          </p>
+          <p className="text-[11px] text-ink-500 mt-1.5">
+            {ACCEPTED_FORMATS_LABEL}. {GOOGLE_EXPORT_GUIDANCE}
+          </p>
+        </div>
+      </div>
+      {files.length > 0 && (
+        <ul
+          className="mt-2.5 space-y-1.5"
+          role="list"
+          aria-label="Files to classify automatically"
+        >
+          {files.map((f) => (
+            <li
+              key={dedupeKey(f)}
+              className="rounded-md border border-border bg-white px-3 py-2 flex items-center gap-3"
+            >
+              <FileText size={14} className="text-ink-700 flex-shrink-0" aria-hidden="true" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[12.5px] font-medium text-ink-900 truncate">{f.file.name}</div>
+                <div className="text-[11px] text-ink-500 tabular-nums">{formatBytes(f.file.size)}</div>
+              </div>
+              <span className="text-[11px] text-ink-500 italic">Category assigned on upload</span>
+              <button
+                type="button"
+                onClick={() => onRemove(f)}
+                aria-label={`Remove ${f.file.name}`}
+                className="p-1 rounded text-ink-400 hover:text-danger-700 hover:bg-danger-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500"
+              >
+                <Trash2 size={13} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

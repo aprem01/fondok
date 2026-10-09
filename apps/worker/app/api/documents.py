@@ -52,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..database import get_session, get_session_factory
 from ..engines.historical_baseline import (
@@ -61,6 +62,7 @@ from ..engines.historical_baseline import (
     walk_yoy,
 )
 from ..extraction import ParseError, parse_document
+from ..extraction.parser import conversion_hint
 from ..services.comp_set_drift import (
     CompSetDriftReportOut,
     compute_comp_set_drift,
@@ -68,10 +70,12 @@ from ..services.comp_set_drift import (
 )
 from ..services.financial_source_rank import (
     FULL_YEAR_DOC_TYPES as _SHARED_FULL_YEAR_DOC_TYPES,
+)
+from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
+from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
-from ..auth import AuthContext, get_current_auth, require_role
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -157,7 +161,14 @@ DOC_STATUS_FAILED = "FAILED"
 # ``transaction_comps.<n>.interest_type`` (fee simple vs ground lease) when
 # the broker's table states it. OMs cached under v4 never emitted it, so the
 # Transaction Comps "Interest" column would stay "—" until they re-run once.
-EXTRACTION_PIPELINE_VERSION = "v5"
+# v6 (2026-10-08): R-067 / R-030 — the Router now names CBRE Benchmarker /
+# "Trends in the Hotel Industry" P&L reports as PNL_BENCHMARK (they were read
+# as CBRE_HORIZONS by the bare ``cbre`` cue), and the PNL_BENCHMARK schema
+# pins ``ratio_pct`` to the report's printed basis + asks for ``total_usd``
+# so the benchmark → expense-category map can recompute departmental ratios.
+# CSV uploads now parse (they previously failed at parse time). Every
+# benchmark extraction cached under v5 must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v6"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -723,12 +734,41 @@ class CbreHorizonsBlock(BaseModel):
     years: list[CbreYearProjection] = Field(default_factory=list)
 
 
+class PnlBenchmarkCategory(BaseModel):
+    """R-067 — one benchmark line mapped onto a model expense category.
+
+    Built by ``services.pnl_benchmark_map`` from the report's comp-set
+    ("peer") column. ``ratio`` is a fraction on ``ratio_basis`` —
+    departmental lines over their own department's revenue, everything
+    else over total revenue (the same basis the Future P&L's "% Rev" cell
+    uses). Read-only: the engines do not read this block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    benchmark_line: str
+    ratio: float | None = None
+    ratio_basis: Literal["department_revenue", "total_revenue"]
+    ratio_source: (
+        Literal["computed_from_totals", "computed_from_par", "reported", "legacy_summary"]
+        | None
+    ) = None
+    par_usd: float | None = None
+    por_usd: float | None = None
+
+
 class PnlBenchmarkBlock(BaseModel):
     """Peer-set ratios + PAR/POR figures from a PNL_BENCHMARK extraction."""
 
     model_config = ConfigDict(extra="forbid")
 
     peer_set_size: int | None = None
+    peer_set_avg_keys: int | None = None
+    # R-067 — the report's cost lines mapped to the model's expense
+    # categories (empty when the extraction carried no per-line rows).
+    categories: list[PnlBenchmarkCategory] = Field(default_factory=list)
     rooms_dept_pct: float | None = None
     fb_dept_margin: float | None = None
     gop_margin: float | None = None
@@ -802,15 +842,21 @@ _MAX_UPLOAD_BYTES = _max_upload_bytes()
 
 # Lower-cased file extensions Fondok accepts. PDF for OMs / reports,
 # Excel for P&Ls / room mixes, CSV for raw exports, Word for the
-# rare narrative spec sheet.
+# narrative spec sheet, PowerPoint for OM teasers (R-030 — OMs often
+# arrive as decks). Google Sheets / Slides arrive as their .xlsx /
+# .pptx / .csv exports. Every entry has a registered parser
+# (``extraction/parser.py``); legacy / foreign formats (.ppt, .key,
+# .doc, .ods, .gsheet, …) are rejected up front with a conversion
+# hint (``extraction.parser.CONVERT_FIRST_HINTS``) rather than
+# accepted and then failing at parse time.
 _ALLOWED_EXTENSIONS = {
     ".pdf",
     ".xls",
     ".xlsx",
     ".xlsm",
     ".csv",
-    ".doc",
     ".docx",
+    ".pptx",
 }
 
 # Lower-cased Content-Type prefixes. We match by prefix so the
@@ -824,7 +870,7 @@ _ALLOWED_MIME_PREFIXES = (
     "application/vnd.openxmlformats",  # .xlsx / .docx / .pptx family
     "application/vnd.ms-excel",  # .xls
     "application/vnd.ms-excel.sheet.macroenabled",  # .xlsm
-    "application/msword",  # .doc
+    "application/msword",  # legacy .doc — the conversion hint rejects it first
     "text/csv",
     # Some browsers / OSes send no explicit MIME for legitimate
     # .csv uploads ("application/octet-stream" or ""); the extension
@@ -841,9 +887,9 @@ def _content_matches_extension(filename: str, body: bytes) -> bool:
     so broker-stripped uploads aren't blocked). This second pass reads
     the first few bytes and rejects anything whose magic doesn't match.
 
-    Permissive on .csv and .doc — CSVs have no magic and legacy .doc
-    has weak heuristics; we accept whatever the allowlist passed for
-    those. Everything else (PDF / xlsx / xlsm / xls) has a well-known
+    Permissive on .csv — CSVs have no magic (legacy .doc is now rejected
+    earlier with a conversion hint); we accept whatever the allowlist passed for
+    those. Everything else (PDF / xlsx / xlsm / docx / pptx / xls) has a well-known
     magic and we enforce it.
     """
     if not body or len(body) < 4:
@@ -857,7 +903,7 @@ def _content_matches_extension(filename: str, body: bytes) -> bool:
         # first 1024 bytes. We require it in the first 8 — every PDF
         # I've ever seen lands it at offset 0.
         return head.startswith(b"%PDF-")
-    if ext in (".xlsx", ".xlsm", ".docx"):
+    if ext in (".xlsx", ".xlsm", ".docx", ".pptx"):
         # ZIP archive (Office Open XML) — starts with ``PK\x03\x04``.
         return head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06")
     if ext == ".xls":
@@ -964,6 +1010,26 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
         or ("str" in tokens and ("comp" in tokens or "competitive" in tokens))
     ):
         return "STR_TREND"
+    # R-067 — a CBRE P&L benchmark ("CBRE Benchmarker", "CBRE Trends in
+    # the Hotel Industry", "CBRE_PnL_Benchmark_Submarket.pdf") is a
+    # PNL_BENCHMARK, not a Horizons forecast. Checked BEFORE the bare
+    # ``cbre`` token below, which otherwise swallowed every CBRE file.
+    if "horizons" not in tokens and (
+        "benchmark" in tokens
+        or "benchmarker" in tokens
+        or "benchmarks" in tokens
+        or (
+            "cbre" in tokens
+            and (
+                "trends" in tokens
+                or "pnl" in tokens
+                or "p&l" in name
+                or "usali" in tokens
+                or "hotstats" in tokens
+            )
+        )
+    ):
+        return "PNL_BENCHMARK"
     if "cbre" in tokens or "horizons" in tokens or "forecast" in tokens:
         return "CBRE_HORIZONS"
     if (
@@ -2060,10 +2126,30 @@ async def upload_documents(
             )
             continue
 
+        # R-030 — a known format Fondok does not parse (legacy .ppt /
+        # .doc, Keynote, Numbers, OpenDocument, a Google Drive
+        # ``.gsheet`` / ``.gslides`` shortcut) gets the specific
+        # "convert it to …" instruction instead of the generic
+        # allowlist copy below. Checked first: ``.doc`` / ``.ppsx``
+        # would otherwise pass the MIME-prefix side of the allowlist
+        # and only fail later, at parse time.
+        convert_hint = conversion_hint(filename)
+        if convert_hint is not None:
+            records.append(
+                _failed_upload_record(
+                    deal_id=deal_id,
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    error_kind="unsupported_type",
+                    error_message=convert_hint,
+                )
+            )
+            continue
+
         # Wave 1 MIME / extension allowlist (B2). Rejects any file
         # whose extension AND content_type are both outside the hotel-
-        # doc envelope (PDF / Excel / CSV / Word). Either-or so a
-        # broker-stripped MIME ("application/octet-stream") on a real
+        # doc envelope (PDF / Excel / CSV / Word / PowerPoint). Either-or
+        # so a broker-stripped MIME ("application/octet-stream") on a real
         # PDF still passes.
         if not _is_allowed_upload(filename, upload.content_type):
             records.append(
@@ -2073,9 +2159,11 @@ async def upload_documents(
                     filename=filename,
                     error_kind="unsupported_type",
                     error_message=(
-                        "Fondok accepts PDF, Excel, CSV, and Word "
-                        "documents only. Re-export this file as one of "
-                        "those formats and try again."
+                        "Fondok accepts PDF, Excel (.xlsx / .xlsm / .xls), "
+                        "CSV, Word (.docx) and PowerPoint (.pptx) files. "
+                        "Re-export this file as one of those formats and "
+                        "try again (Google Sheets / Slides: File → Download "
+                        "→ Microsoft Excel / PowerPoint)."
                     ),
                 )
             )
@@ -2098,7 +2186,7 @@ async def upload_documents(
                     error_message=(
                         "This file's contents don't match its extension. "
                         "Re-export the original document as a PDF, Excel, "
-                        "CSV, or Word file and re-upload."
+                        "CSV, Word or PowerPoint file and re-upload."
                     ),
                 )
             )
@@ -3073,6 +3161,10 @@ def _build_pnl_block(flat: dict[str, Any]) -> PnlBenchmarkBlock | None:
         noi_par=_coerce_float(flat.get("pnl_benchmark.noi_par")),
         rooms_revenue_por=_coerce_float(flat.get("pnl_benchmark.rooms_revenue_por")),
         fb_revenue_por=_coerce_float(flat.get("pnl_benchmark.fb_revenue_por")),
+        peer_set_avg_keys=_coerce_int(flat.get("pnl_benchmark.peer_set_avg_keys")),
+        categories=[
+            PnlBenchmarkCategory(**c) for c in map_benchmark_to_categories(flat)
+        ],
     )
 
 
@@ -3532,8 +3624,9 @@ def _merge_scenario_overrides(
     """
     if not overrides:
         return None
-    from ..engines.str_forecast import default_scenarios
     from fondok_schemas.str_forecast import STRForecastScenario
+
+    from ..engines.str_forecast import default_scenarios
 
     defaults_by_name = {s.name: s for s in default_scenarios()}
     merged: list[STRForecastScenario] = []
@@ -7109,6 +7202,7 @@ async def _run_graph_extraction(
         # frontend polls documents.doc_type mid-extraction.
         try:
             from sqlalchemy import text as _sa_text
+
             from ..database import get_session_factory
 
             _Session = get_session_factory()
