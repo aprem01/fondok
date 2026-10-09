@@ -1344,7 +1344,7 @@ export default function DebtTab() {
 
               <SectionCard
                 title="Financing Impact on Returns"
-                note={<a href="?tab=returns" style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>View Returns →</a>}
+                note={<a href="?tab=overview&sub=returns-summary" style={{ color: palette.linkBlue, fontWeight: 600, cursor: 'pointer', textDecoration: 'none' }}>View Returns →</a>}
               >
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 4 }}>
                   {financingImpact.map((m) => (

@@ -1271,7 +1271,8 @@ export default function ICMemoTab({ project }: { project: Project }) {
       ],
     },
     {
-      title: 'Returns', link: 'View Returns →', tab: 'returns', sub: 'returns-summary',
+      // R-061 — Returns is Overview's Returns section now.
+      title: 'Returns', link: 'View Returns →', tab: 'overview', sub: 'returns-summary',
       rows: [
         ['Unlevered IRR', pctOr(metrics.unleveredIrr)],
         ['Levered IRR', pctOr(metrics.leveredIrr)],

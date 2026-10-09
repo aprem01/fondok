@@ -222,8 +222,8 @@ export default function AnalysisTab() {
           A flat curve means the deal is robust; a steep one means small changes flip the IRR.
           {' '}
           <span className="font-medium">
-            For interactive what-ifs, open the <span className="text-brand-700">Returns</span>{' '}
-            tab — the &ldquo;Live Assumptions&rdquo; panel there exposes draggable sliders for
+            For interactive what-ifs, open <span className="text-brand-700">Overview → Returns</span>{' '}
+            → Sensitivities — the &ldquo;Live Assumptions&rdquo; panel there exposes draggable sliders for
             exit cap, RevPAR growth, hold, LTV and rate; IRR, multiple and exit value recompute
             on every change. The table below is a static snapshot at base case.
           </span>
@@ -398,7 +398,7 @@ export default function AnalysisTab() {
           <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Sensitivity not computed</h3>
           <p className="text-[12.5px] text-ink-500 max-w-md mx-auto leading-relaxed">
             Run the underwriting engines on this deal, then open the{' '}
-            <span className="font-medium text-brand-700">Returns</span> tab for live sliders
+            <span className="font-medium text-brand-700">Overview → Returns</span> section for live sliders
             (exit cap, RevPAR growth, hold, LTV, rate). A snapshot table will appear here
             once a base case has been generated.
           </p>
