@@ -78,6 +78,11 @@ import {
 import { Traced } from '@/components/help/Traced';
 import { openLineage, type LineageOpenDetail } from '@/components/project/LineageDrawer';
 import { HScroll } from './HScroll';
+import {
+  CellCommentsProvider, CommentMarker, CommentedCellsToggle, useCellCommentsState, useCommentFilter,
+} from './CellComments';
+import { PlRoundTripControls } from './PlRoundTrip';
+import { projCommentKey } from '@/lib/cellComments';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
@@ -360,6 +365,8 @@ export default function ProjectionsSection({
   // there — analyst intent wins over every data source) then re-runs the
   // model. useEngineOutputs auto-refreshes when the run completes.
   const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
+  // FON-41 E-011 — per-cell comment threads keyed proj:<engine>.years[i].<path>.
+  const comments = useCellCommentsState(dealId, 'proj');
   const overrides = useMemo(
     () => (deal?.field_overrides ?? {}) as Record<string, unknown>,
     [deal],
@@ -745,6 +752,7 @@ export default function ProjectionsSection({
   const visibleYears = years.slice(0, shownForecast + 1);
 
   return (
+    <CellCommentsProvider state={comments}>
     <Card className="p-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border bg-bg/40">
@@ -811,6 +819,19 @@ export default function ProjectionsSection({
               </button>
             </span>
           )}
+          <CommentedCellsToggle />
+          {/* FON-41 E-017 — editable workbook (projection + Assumptions sheet
+              with stable override keys); Import previews, Apply saves the
+              assumptions through the field_overrides PATCH, then re-models. */}
+          <PlRoundTripControls
+            dealId={dealId}
+            kind="projections"
+            onApplied={async (res) => {
+              if (!res.applied.length) return;
+              refreshDeal();
+              await run();
+            }}
+          />
           <Button variant="secondary" size="sm" onClick={onExport}>
             <Download size={11} /> Export
           </Button>
@@ -872,6 +893,7 @@ export default function ProjectionsSection({
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
     </Card>
+    </CellCommentsProvider>
   );
 }
 
@@ -1055,6 +1077,7 @@ function LineageCell({
   const dealId = useContext(DealIdContext);
   if (!dealId) return <>{children}</>;
   return (
+    <span className="inline-flex items-center gap-1">
     <button
       type="button"
       data-testid={`lineage-cell-${engine}.${path}`}
@@ -1070,11 +1093,15 @@ function LineageCell({
     >
       {children}
     </button>
+    {/* FON-41 E-011 — this cell's comment thread (engine path + year index). */}
+    <CommentMarker cellKey={projCommentKey(engine, path)} label={`${label} · ${columnLabel}`} />
+    </span>
   );
 }
 
 /** A full-width section band inside the statement. */
 function SectionBand({ label, span }: { label: string; span: number }) {
+  if (useCommentFilter()) return null;
   return (
     <tr className="bg-brand-500/95">
       <td
@@ -2164,8 +2191,12 @@ function SimpleRow({
 }) {
   const { subCols } = useContext(ColumnLayoutContext);
   const dealId = useContext(DealIdContext);
+  const commentFilter = useCommentFilter();
+  if (commentFilter && !(traceEngine && tracePath && years.some((_, i) => commentFilter.has(projCommentKey(traceEngine, tracePath(i)))))) {
+    return null;
+  }
   return (
-    <tr className="border-b border-border/60 hover:bg-ink-300/5">
+    <tr className="group border-b border-border/60 hover:bg-ink-300/5">
       <td className="px-3 py-2 text-[11px] text-ink-700 font-medium border-r border-border bg-bg/30">
         {label}
       </td>
@@ -2269,10 +2300,14 @@ function FullRow({
   columnHeading: (i: number) => string;
   rowTestId?: string;
 }) {
+  const commentFilter = useCommentFilter();
+  if (commentFilter && !(traceEngine && tracePath && years.some((_, i) => commentFilter.has(projCommentKey(traceEngine, tracePath(i)))))) {
+    return null;
+  }
   return (
     <tr
       className={cn(
-        'border-b border-border/60 hover:bg-ink-300/5',
+        'group border-b border-border/60 hover:bg-ink-300/5',
         bold && 'bg-brand-50/30 font-semibold',
       )}
       data-testid={rowTestId}

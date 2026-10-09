@@ -60,6 +60,11 @@ import {
 } from '@/lib/worksheetFooting';
 import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
 import { worksheetBinding } from '@/lib/ontology/adapters';
+import { histCommentKey } from '@/lib/cellComments';
+import {
+  CellCommentsProvider, CommentMarker, CommentedCellsToggle, useCellCommentsState,
+} from '@/components/project/pl/CellComments';
+import { PlRoundTripControls } from '@/components/project/pl/PlRoundTrip';
 
 // ── Row model ──────────────────────────────────────────────────────────
 // Historical values are mapped by row id in histValue(); overrideKey (present
@@ -370,6 +375,8 @@ export default function GroundedWorksheet({
   const { toast } = useToast();
   const { run, status } = useEngineRun(rawId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
+  // FON-41 E-011 — per-cell comment threads keyed hist:<doc>::<field>.
+  const comments = useCellCommentsState(rawId, 'hist');
 
   const searchParams = useSearchParams();
   // FON-41 §3 — structure editing (add / move / rename / hide / split) is an
@@ -660,9 +667,22 @@ export default function GroundedWorksheet({
   // editable detail lines, their splits, and memo lines); Detailed shows all.
   const visibleRendered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // FON-41 E-011 — "Commented cells" filter: only rows where some shown
+    // statement's cell carries a comment thread (keyed on its source line).
+    const commentFilter = comments.available && comments.filterOn;
     return rendered.filter((item) => {
       if (format === 'summary' && (item.type === 'input' || item.type === 'split' || item.type === 'curated')) {
         return false;
+      }
+      if (commentFilter) {
+        if (item.type !== 'input' && item.type !== 'anchor') return false;
+        const mk = item.row.metaKey;
+        if (!mk) return false;
+        const hit = histYears.some((y) => {
+          const m = y.meta?.[mk];
+          return !!(m?.docId && comments.threads.has(histCommentKey(m.docId, m.field)));
+        });
+        if (!hit) return false;
       }
       if (!q) return true;
       if (item.type === 'section') return false;
@@ -672,7 +692,7 @@ export default function GroundedWorksheet({
         : item.row.label;
       return label.toLowerCase().includes(q);
     });
-  }, [rendered, search, format]);
+  }, [rendered, search, format, comments.available, comments.filterOn, comments.threads, histYears]);
 
   // Deep-link focus: a "→ Financials" jump from the Data Room field review
   // carries ?focus=<field_name>. Resolve it to a worksheet row and scroll +
@@ -840,6 +860,7 @@ export default function GroundedWorksheet({
   );
 
   return (
+    <CellCommentsProvider state={comments}>
     <Card className="p-0 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border bg-surface-2/40">
         <div className="flex items-center gap-3 flex-wrap">
@@ -881,6 +902,19 @@ export default function GroundedWorksheet({
               <Loader2 size={12} className="animate-spin" /> Working…
             </span>
           )}
+          <CommentedCellsToggle />
+          {/* FON-41 E-013 — editable Excel round-trip; Apply corrects each
+              changed line at its source (the review path), then re-models. */}
+          <PlRoundTripControls
+            dealId={rawId}
+            kind="historicals"
+            onApplied={async (res, docIds) => {
+              if (!res.applied.length) return;
+              for (const id of docIds) await refreshExtraction(id);
+              await run();
+              await refresh();
+            }}
+          />
         </div>
       </div>
       {/* Canonical row 2 — Format + Granularity view toggles, structure editing, confidence chip. */}
@@ -1273,6 +1307,7 @@ export default function GroundedWorksheet({
         />
       )}
     </Card>
+    </CellCommentsProvider>
   );
 }
 
@@ -1423,6 +1458,11 @@ function WorksheetCell({
         </div>
       )}
       <span className="inline-flex items-center gap-1.5 justify-end">
+        {/* FON-41 E-011 — the cell's comment thread, keyed on its source line. */}
+        <CommentMarker
+          cellKey={historical && histMeta?.docId ? histCommentKey(histMeta.docId, histMeta.field) : null}
+          label={`${row.label} · ${colLabel}`}
+        />
         <button
           type="button"
           onClick={openInspect}
