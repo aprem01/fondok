@@ -168,7 +168,7 @@ export default function NewProjectPage() {
     const draft = loadDraft();
     if (draft) {
       setData({ ...freshFields(validDef), ...pickDraftFields(draft.fields), docs: [] });
-      setStep(Math.min(6, Math.max(1, Math.round(draft.step))));
+      setStep(Math.min(steps.length, Math.max(1, Math.round(draft.step))));
       setRestoredAt(draft.savedAt);
       setPendingFiles(draft.files);
     } else if (validDef) {

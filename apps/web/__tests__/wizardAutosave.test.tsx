@@ -153,7 +153,7 @@ describe('R-011 — autosave + restore', () => {
   });
 
   it('clears the draft on a successful create and never re-saves it', async () => {
-    seedDraft({ step: 6, files: [] });
+    seedDraft({ step: 5, files: [] });
     render(<NewProjectPage />);
     expect(screen.getByText('Review & Create Deal')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
@@ -240,7 +240,7 @@ describe('R-018 — brand work-in-progress note', () => {
   it('shows the exact note at the Proposed brand picker', () => {
     seedDraft({ step: 4, files: [] });
     render(<NewProjectPage />);
-    expect(screen.getByText('Select Brand')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Brand and Positioning' })).toBeInTheDocument();
     expect(screen.getByTestId('brand-wip-note').textContent?.replace(/\s+/g, ' ').trim()).toBe(
       "This section is a work in progress. The intent is to use the selected brand's preliminary programming requirements when assessing the property improvement plan and required CapEx.",
     );
@@ -259,7 +259,7 @@ describe('R-047 — Adaptive Reuse deal type', () => {
     // gate) and create from there.
     await waitFor(() => expect(readDraft()?.fields?.dealType).toBe('adaptive_reuse'), { timeout: 2000 });
     cleanup();
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...readDraft(), step: 6 }));
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...readDraft(), step: 5 }));
     render(<NewProjectPage />);
     const row = screen.getByText('Deal Type').nextElementSibling;
     expect(row?.textContent).toBe('Adaptive Reuse');
