@@ -1801,6 +1801,25 @@ async def _load_engine_inputs(
             # landing on ``base`` and changing engine input.
             if path in _OVERRIDE_NON_ENGINE_KEYS:
                 continue
+            # E-016 — per-line projection method
+            # ``projection_methods.<line>.method|value``. Parked in a nested
+            # map the expense input builder reads; a line with no entry keeps
+            # the engine's default behaviour.
+            parsed_pm = _parse_projection_method_path(path)
+            if parsed_pm is not None:
+                pm_line, pm_field = parsed_pm
+                prior_pm = (
+                    (base.get("projection_methods") or {})
+                    .get(pm_line, {})
+                    .get(pm_field)
+                )
+                base.setdefault("projection_methods", {}).setdefault(
+                    pm_line, {}
+                )[pm_field] = value
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior_pm, value
+                )
+                continue
             # Wave 2 P2.5 — capex array overrides land first because
             # they're the only override paths that legitimately carry a
             # JSON list (``roi_projects``, ``timing_pct_by_year``). The
@@ -2475,6 +2494,85 @@ _OVERRIDE_EXPENSE_ACTUAL_KEYS: frozenset[str] = frozenset({
     "mgmt_fee",
     "ffe_reserve",
 })
+
+# E-016 — per-line projection-method override paths:
+# ``projection_methods.<line>.method`` (growth | pct_revenue | por | par) and
+# ``projection_methods.<line>.value`` (number, or null = the method's default).
+_PROJECTION_METHOD_FIELDS: frozenset[str] = frozenset({"method", "value"})
+_PROJECTION_METHOD_NAMES: frozenset[str] = frozenset(
+    {"growth", "pct_revenue", "por", "par"}
+)
+
+
+def _parse_projection_method_path(path: str) -> tuple[str, str] | None:
+    """Split ``projection_methods.<line>.<field>`` → ``(line, field)``."""
+    if not isinstance(path, str) or not path.startswith("projection_methods."):
+        return None
+    from ..engines.expense import PROJECTION_METHOD_LINES
+
+    parts = path.split(".")
+    if len(parts) != 3:
+        return None
+    _, line, field = parts
+    if line not in PROJECTION_METHOD_LINES or field not in _PROJECTION_METHOD_FIELDS:
+        return None
+    return line, field
+
+
+def _coerce_projection_methods(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The analyst's per-line methods as ``{line: {method, value}}``.
+
+    Reads the nested map the persisted-override loop builds AND flat
+    ``projection_methods.<line>.<field>`` keys a run request body may carry.
+    Entries with no / an unknown method are dropped (the line keeps its
+    default); a non-numeric value reads as None (the method's default).
+    """
+    raw: dict[str, dict[str, Any]] = {}
+    nested = base.get("projection_methods")
+    if isinstance(nested, dict):
+        for line, entry in nested.items():
+            if isinstance(entry, dict):
+                raw.setdefault(str(line), {}).update(entry)
+    for key, val in base.items():
+        parsed = _parse_projection_method_path(key)
+        if parsed is not None:
+            raw.setdefault(parsed[0], {})[parsed[1]] = val
+    out: dict[str, dict[str, Any]] = {}
+    for line, entry in raw.items():
+        method = entry.get("method")
+        if isinstance(method, dict):
+            method = method.get("value")
+        if method not in _PROJECTION_METHOD_NAMES:
+            continue
+        value = entry.get("value")
+        if isinstance(value, dict):
+            value = value.get("value")
+        try:
+            num = (
+                float(value)
+                if value not in (None, "") and not isinstance(value, bool)
+                else None
+            )
+        except (TypeError, ValueError):
+            num = None
+        out[line] = {"method": method, "value": num}
+    return out
+
+
+def _projection_method_kwargs(base: dict[str, Any]) -> dict[str, Any]:
+    """ExpenseEngineInput kwargs for E-016 — empty when no method is set."""
+    methods = _coerce_projection_methods(base)
+    if not methods:
+        return {}
+    kwargs: dict[str, Any] = {"projection_methods": methods}
+    try:
+        keys = int(base.get("keys") or 0)
+    except (TypeError, ValueError):
+        keys = 0
+    if keys >= 1:
+        kwargs["keys"] = keys
+    return kwargs
+
 
 # Hotel-type ratio overrides — these beat the HOTEL_TYPE_DEFAULTS dict
 # on the Expense engine. Land them in ``base['overrides']`` so the
@@ -6096,6 +6194,10 @@ def _build_input_for(
             stabilization_year=_coerce_stabilization_year(
                 base.get(STABILIZATION_YEAR_KEY)
             ),
+            # E-016 — analyst per-line projection methods. Empty → the
+            # engine's default per-line behaviour (byte-identical); ``keys``
+            # rides along only when a method needs it (POR / PAR).
+            **_projection_method_kwargs(base),
         )
 
     if engine_name == "capital":

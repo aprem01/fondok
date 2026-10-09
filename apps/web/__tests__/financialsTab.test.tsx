@@ -643,11 +643,18 @@ function withProjection(patch: { calendar?: number[]; rev?: RevPatch; exp?: ExpP
 
 const header = (i: number) => screen.getByTestId(`projection-col-header-${i}`);
 const basis = (i: number) => screen.getByTestId(`projection-col-basis-${i}`);
+/** A label cell's own text — without the E-016 projection-method chip. */
+function labelText(cell: HTMLTableCellElement | undefined): string {
+  if (!cell) return '';
+  const copy = cell.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('[data-method-chip]').forEach((n) => n.remove());
+  return (copy.textContent ?? '').trim();
+}
 /** The statement row whose label cell reads exactly `label` (nth match). */
 function rowLabelled(label: string, nth = 0): HTMLTableRowElement {
   const table = screen.getByTestId('projections-table');
   const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>('tbody tr')).filter(
-    (r) => (r.cells[0]?.textContent ?? '').trim() === label,
+    (r) => labelText(r.cells[0]) === label,
   );
   const row = rows[nth];
   if (!row) throw new Error(`no statement row labelled "${label}" (#${nth})`);
@@ -657,7 +664,7 @@ function rowLabelled(label: string, nth = 0): HTMLTableRowElement {
 function rowLabels(): string[] {
   const table = screen.getByTestId('projections-table');
   return Array.from(table.querySelectorAll<HTMLTableRowElement>('tbody tr')).map(
-    (r) => (r.cells[0]?.textContent ?? '').trim(),
+    (r) => labelText(r.cells[0]),
   );
 }
 

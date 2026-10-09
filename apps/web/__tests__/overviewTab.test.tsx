@@ -1164,6 +1164,26 @@ describe('OverviewTab — R-048 Existing brand vs Proposed brand (Sam decision 4
   });
 });
 
+describe('OverviewTab — R-025 Operating Model on the Property rows', () => {
+  it('shows the captured operating model as an analyst input', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, operating_model: 'brand_managed' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const property = screen.getByTestId('overview-section-property');
+    expect(within(property).getByText('Operating Model')).toBeInTheDocument();
+    expect(rowValue('Operating Model')).toBe('Brand-managed / brand-operated');
+  });
+
+  it('is a dash saying it was not captured when absent (older workers)', async () => {
+    delete (mockDealRef.deal as Record<string, unknown>).operating_model;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Operating Model')).toBe('—');
+    const refusal = (rowFor('Operating Model').lastElementChild as HTMLElement).querySelector('[data-refused]') as HTMLElement;
+    expect(refusal).toBeTruthy();
+    fireEvent.focus(refusal);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Not captured at deal creation');
+  });
+});
+
 // ── R-049 — ONE target control: Target LIRR (levered IRR) + preset ───────
 describe('OverviewTab — R-049 one Target LIRR control', () => {
   it('renders a single "Target LIRR (levered IRR)" control and no separate Returns Profile field', () => {

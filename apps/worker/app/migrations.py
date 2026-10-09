@@ -149,6 +149,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS proposed_brand TEXT",
     ),
     (
+        # R-025 — the intended operating model captured at New Project
+        # (owner_operated / third_party / brand_managed). Nullable; no engine
+        # reads it.
+        "deals.add_operating_model",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS operating_model TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1280,6 +1287,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # FON-59 / R-048 — SQLite mirror of the Postgres proposed_brand ALTER.
         "deals.add_proposed_brand_sqlite",
         "ALTER TABLE deals ADD COLUMN proposed_brand TEXT",
+    ),
+    (
+        # R-025 — SQLite mirror of the Postgres operating_model ALTER.
+        "deals.add_operating_model_sqlite",
+        "ALTER TABLE deals ADD COLUMN operating_model TEXT",
     ),
     (
         "documents.create_table",

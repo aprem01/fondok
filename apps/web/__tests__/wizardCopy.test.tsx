@@ -23,7 +23,7 @@
  * stubbed (the stub renders the hint body inline so its copy is testable).
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import React from 'react';
 
 vi.mock('next/navigation', () => ({
@@ -278,5 +278,30 @@ describe('R-024 — Brand and Positioning: choosing a brand pre-fills positionin
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Motel One', positioning: 'upper-midscale' });
+  });
+});
+
+describe('R-025 — Operating model is captured on the Brand step and sent as `operating_model`', () => {
+  it('a picked operating model shows on Review and is submitted', async () => {
+    driveToBrandStep();
+    const group = screen.getByRole('radiogroup', { name: 'Operating model' });
+    fireEvent.click(within(group).getByRole('radio', { name: /Third-party operator/ }));
+    expect(within(group).getByRole('radio', { name: /Third-party operator/ })).toHaveAttribute('aria-checked', 'true');
+
+    clickNext(); // → Review
+    expect(screen.getByText('Operating Model').nextElementSibling?.textContent).toBe('Third-party operator');
+
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ operating_model: 'third_party' });
+  });
+
+  it('is optional — nothing picked sends operating_model null', async () => {
+    driveToBrandStep();
+    clickNext();
+    expect(screen.getByText('Operating Model').nextElementSibling?.textContent).toBe('Not specified');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ operating_model: null });
   });
 });
