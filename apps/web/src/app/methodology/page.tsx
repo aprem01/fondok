@@ -539,7 +539,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mt-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Returns sensitivity sandbox</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-3">
-            Returns → Sensitivities carries a <span className="font-medium">Live Assumptions</span> card whose sliders are a sandbox, not an edit. It answers &ldquo;what would this deal do if…&rdquo; without changing what the deal <em>is</em>.
+            Overview → Returns → Sensitivities carries a <span className="font-medium">Live Assumptions</span> card whose sliders are a sandbox, not an edit. It answers &ldquo;what would this deal do if…&rdquo; without changing what the deal <em>is</em>.
           </p>
           <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
             <li>
@@ -586,7 +586,7 @@ export default function MethodologyPage() {
         id="pricing"
         number="5"
         title="Return targets & the Max Price Solver"
-        intro="The hurdles a deal must clear are the analyst's, set once on Overview → Investment Profile. Returns → Pricing reads them from the deal — there is no hidden 15% / 1.80x default anywhere in the pricing path."
+        intro="The hurdles a deal must clear are the analyst's, set once on Overview → Investment Profile. Overview → Returns → Pricing reads them from the deal — there is no hidden 15% / 1.80x default anywhere in the pricing path."
       >
         <Card className="p-5">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Investment Profile is the source of truth</h4>
@@ -611,7 +611,7 @@ export default function MethodologyPage() {
         </Card>
 
         <Card className="p-5 mt-4">
-          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Max Price Solver (Returns → Pricing)</h4>
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Max Price Solver (Overview → Returns → Pricing)</h4>
           <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
             <li>
               <span className="font-semibold text-ink-900">No silent hurdles.</span>{' '}
@@ -636,6 +636,46 @@ export default function MethodologyPage() {
             <li>
               <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
               The IC memo / Excel max-price section still prints the legacy 15% / 1.80x hurdles until the export path is migrated to the deal&apos;s targets.
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Asking vs Bidding price (Overview KPIs)</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Two comparable sets.</span>{' '}
+              On an acquisition deal the Overview KPI area shows the same metrics twice — Purchase Price, Total Capitalization, Renovation, Stabilized NOI, Levered and Unlevered IRR — once at the <em>asking</em> price and once at the <em>bidding</em> price, from <code className="text-[11.5px]">GET /analysis/{'{id}'}/pricing/asking-vs-bid</code> (read-only; nothing is persisted).
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Asking price.</span>{' '}
+              The OM&apos;s extracted asking price (<code className="text-[11.5px]">asking_price.headline_price_usd</code>, as extracted, before any analyst override). With no OM price the modeled purchase price stands in and is labelled with its source (deal record, analyst override or seed). When the asking price is the modeled price the set shows the canonical Base Case run; otherwise the deal is re-priced at the asking price with everything else held.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Bidding price — solved backward from Target LIRR.</span>{' '}
+              The bid is the existing Max Price Solver run on the IRR hurdle alone: bisect the purchase price until the returns engine&apos;s levered IRR equals the deal&apos;s Target LIRR (50%–200% of the modeled price, 5bp / $50K tolerance). As in the solver, the loan amount is held, equity absorbs the price difference, and closing costs, renovation and the NOI path are unchanged — so Total Capitalization moves one-for-one with price and Renovation / Stabilized NOI read the same in both sets. Each set&apos;s IRRs are a fresh returns-engine run at that price.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">No target, no bid.</span>{' '}
+              With no Target LIRR on the Investment Profile the Bidding set reads &ldquo;Set Target LIRR to solve&rdquo; and shows no numbers; a target outside the solver&apos;s bracket reports that instead of a bracket-end price.
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Investment Bridge</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li>
+              <span className="font-semibold text-ink-900">Equity invested → equity returned.</span>{' '}
+              The Investment Bridge tab (immediately before Scenario Analysis) is a waterfall from the equity funded at close (<code className="text-[11.5px]">−returns.cash_flows[0]</code> = <code className="text-[11.5px]">capital.equity_amount</code>) to the total cash returned to equity (<code className="text-[11.5px]">Σ returns.cash_flows[1:]</code>), deal-level before GP/LP allocation, read from the Base Case run via <code className="text-[11.5px]">GET /deals/{'{id}'}/engines/investment-bridge</code>.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Five legs, each an engine field.</span>{' '}
+              <em>Acquisition</em> = −every Sources &amp; Uses line except Renovation and the senior loan fee (purchase price, closing costs, working capital, reserves…). <em>Renovation / PIP</em> = −the Renovation use line (contingency included). <em>Operations</em> = Σ <code className="text-[11.5px]">returns.noi_by_year</code> over the hold. <em>Financing</em> = loan proceeds − loan origination fee − Σ debt service + any refinance cash-out − the loan payoff at exit, using the exact debt-service series, exit balance and refi cash-out the returns engine consumed. <em>Exit</em> = gross sale price − selling costs − transfer tax.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">It foots by construction.</span>{' '}
+              Because equity = total uses − debt and each levered cash flow = NOI − debt service (+ refi, + net sale less payoff at exit), equity invested plus the five legs equals equity returned exactly. The tab states the check; a test pins it on the Kimpton fixture. A leg the run cannot support shows &ldquo;—&rdquo; with the reason (never a zero bar) and the bridge then says it does not foot.
             </li>
           </ul>
         </Card>

@@ -2582,6 +2582,23 @@ async def _build_returns_input_for_deal(
     No DB writes. No engine_outputs row. This is the safety guarantee
     we promise the UI: viewing the pricing tab cannot mutate the deal.
     """
+    _base, _accumulated, returns_input = await _build_pricing_context(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    return returns_input
+
+
+async def _build_pricing_context(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    """``(base assumptions, accumulated engine outputs, returns input)`` —
+    the in-memory chain ``_build_returns_input_for_deal`` walks, with the
+    intermediate pieces kept for callers that also need the capital output
+    or the assumption sources (R-051 asking-vs-bid). No DB writes.
+    """
     from ..services.engine_runner import (
         ENGINE_REGISTRY,
         _build_input_for,
@@ -2601,7 +2618,9 @@ async def _build_returns_input_for_deal(
         engine = ENGINE_REGISTRY[engine_name]()
         accumulated[engine_name] = engine.run(engine_input)
 
-    return _build_input_for("returns", str(deal_id), base, accumulated)
+    return base, accumulated, _build_input_for(
+        "returns", str(deal_id), base, accumulated
+    )
 
 
 async def _load_asset_facts(
@@ -2800,6 +2819,162 @@ async def get_pricing_max_price(
         interest_rate=a.interest_rate,
         hold_years=float(a.hold_years),
         iters=res.iters,
+    )
+
+
+# ─── R-051 — Asking vs Bidding price ────────────────────────────────────
+
+# Human labels for where the modeled purchase price came from
+# (``base["__sources__"]["purchase_price"]``).
+_PRICE_SOURCE_LABEL: dict[str, str] = {
+    "deal_row": "Deal record purchase price",
+    "om_broker": "OM asking price",
+    "analyst_override": "Analyst override",
+    "seed": "Seed default (no price on the deal or OM)",
+}
+
+
+class _PriceScenarioOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purchase_price: float | None
+    price_per_key: float | None
+    total_capitalization: float | None
+    equity: float | None
+    renovation: float | None
+    levered_irr: float | None
+    unlevered_irr: float | None
+    equity_multiple: float | None
+
+
+class _AskingBidOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: UUID
+    target_irr: float | None
+    # The price the model runs on and where it came from.
+    model_purchase_price: float
+    model_price_source: str
+    # The OM's extracted asking price (``asking_price.headline_price_usd``,
+    # before any analyst override); None when no OM price was extracted.
+    om_asking_price: float | None
+    # Which price the Asking column uses: the OM asking price when the OM
+    # published one, else the modeled price (labelled with its source).
+    asking_price_source: Literal["om_asking_price", "model_purchase_price"]
+    asking_price_label: str
+    asking_is_model_price: bool
+    asking: _PriceScenarioOut
+    bidding: _PriceScenarioOut
+    bid_status: Literal["converged", "no_target", "unreachable", "above_ceiling"]
+    bid_message: str | None
+    bid_vs_asking: float | None
+    rooms: int | None
+
+
+@router.get(
+    "/{deal_id}/pricing/asking-vs-bid",
+    response_model=_AskingBidOut,
+)
+async def get_pricing_asking_vs_bid(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> _AskingBidOut:
+    """R-051 — two comparable summaries: the deal at the seller's asking
+    price, and at the bid price solved backward from the deal's Target LIRR
+    (the existing max-price solver, IRR constraint only). Every other
+    assumption is held at the base case. Read-only; no target → the bidding
+    scenario is empty with ``bid_status="no_target"`` (never a default
+    hurdle).
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    from ..engines.asking_bid import solve_asking_and_bid
+    from ..services.engine_runner import _load_om_capital_actuals
+
+    base, accumulated, base_input = await _build_pricing_context(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    _name, _address, rooms = await _load_asset_facts(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    row = (
+        await session.execute(
+            text("SELECT target_irr FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    target_irr = (
+        float(row._mapping["target_irr"])
+        if row is not None and row._mapping.get("target_irr") is not None
+        else None
+    )
+
+    # The OM's asking price as extracted — BEFORE any analyst override, so a
+    # price the analyst typed is never relabelled as the seller's ask.
+    om_pre: dict[str, float] = {}
+    await _load_om_capital_actuals(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id), pre_override=om_pre
+    )
+    om_raw = om_pre.get("purchase_price")
+    om_asking = float(om_raw) if om_raw and om_raw > 0 else None
+
+    model_price = float(base_input.assumptions.purchase_price)
+    src = str((base.get("__sources__") or {}).get("purchase_price") or "seed")
+    asking_source: Literal["om_asking_price", "model_purchase_price"]
+    if om_asking is not None:
+        asking_price = om_asking
+        asking_source = "om_asking_price"
+        asking_label = "OM asking price"
+    else:
+        asking_price = model_price
+        asking_source = "model_purchase_price"
+        asking_label = _PRICE_SOURCE_LABEL.get(src, src)
+
+    res = solve_asking_and_bid(
+        base_input,
+        asking_price=asking_price,
+        target_irr=target_irr,
+        rooms=rooms or None,
+    )
+    capital_out = accumulated.get("capital")
+    renovation = (
+        float(getattr(capital_out, "renovation_total_usd", 0.0) or 0.0)
+        if capital_out is not None
+        else None
+    )
+
+    def _out(s: Any) -> _PriceScenarioOut:
+        priced = s.purchase_price is not None
+        return _PriceScenarioOut(
+            purchase_price=s.purchase_price,
+            price_per_key=s.price_per_key,
+            total_capitalization=s.total_capitalization,
+            equity=s.equity,
+            # Renovation does not move with price; shown only on a scenario
+            # that was actually priced.
+            renovation=renovation if priced else None,
+            levered_irr=s.levered_irr,
+            unlevered_irr=s.unlevered_irr,
+            equity_multiple=s.equity_multiple,
+        )
+
+    return _AskingBidOut(
+        deal_id=deal_id,
+        target_irr=target_irr,
+        model_purchase_price=model_price,
+        model_price_source=src,
+        om_asking_price=om_asking,
+        asking_price_source=asking_source,
+        asking_price_label=asking_label,
+        asking_is_model_price=res.asking_is_model_price,
+        asking=_out(res.asking),
+        bidding=_out(res.bidding),
+        bid_status=res.bid_status,
+        bid_message=res.bid_message,
+        bid_vs_asking=res.bid_vs_asking,
+        rooms=rooms or None,
     )
 
 

@@ -1908,6 +1908,15 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** R-073 — Investment Bridge (equity invested → equity returned by leg),
+     *  derived from the canonical run. Read-only. */
+    investmentBridge: (dealId: string, signal?: AbortSignal) =>
+      request<InvestmentBridgeResponse>(
+        'GET',
+        `/deals/${dealId}/engines/investment-bridge`,
+        undefined,
+        { signal },
+      ),
     /** Latest persisted output for a single engine. */
     getOne: (dealId: string, name: EngineName, signal?: AbortSignal) =>
       request<EngineOutputResponse>(
@@ -2001,6 +2010,15 @@ export const api = {
           'POST',
           `/analysis/${dealId}/pricing/max-price`,
           body,
+          { signal },
+        ),
+      /** R-051 — the deal at the seller's asking price and at the bid price
+       *  solved backward from Target LIRR (existing max-price solver). */
+      askingVsBid: (dealId: string, signal?: AbortSignal) =>
+        request<AskingVsBidResponse>(
+          'GET',
+          `/analysis/${dealId}/pricing/asking-vs-bid`,
+          undefined,
           { signal },
         ),
       /** FON-68 — max purchase price clearing both hurdles per exit cap ×
@@ -2566,6 +2584,78 @@ export interface PricingMaxPriceBody {
  *  `not_requested` = that hurdle is unset. */
 export type PricingSolveStatus = 'converged' | 'unreachable' | 'above_ceiling' | 'not_requested';
 export type PricingTargetSource = 'deal' | 'request' | 'mixed';
+
+/** R-051 — one priced summary (asking or bidding). Null = not computed. */
+export interface PriceScenario {
+  purchase_price: number | null;
+  price_per_key: number | null;
+  /** Equity + loan at this price (loan held at the base case). */
+  total_capitalization: number | null;
+  equity: number | null;
+  /** Price-invariant; null on a scenario that was not priced. */
+  renovation: number | null;
+  levered_irr: number | null;
+  unlevered_irr: number | null;
+  equity_multiple: number | null;
+}
+
+/** R-051 — GET /analysis/{id}/pricing/asking-vs-bid. */
+export interface AskingVsBidResponse {
+  deal_id: string;
+  target_irr: number | null;
+  model_purchase_price: number;
+  model_price_source: string;
+  om_asking_price: number | null;
+  asking_price_source: 'om_asking_price' | 'model_purchase_price';
+  asking_price_label: string;
+  /** True when the asking price IS the modeled price — the canonical run's
+   *  figures stand for the Asking set. */
+  asking_is_model_price: boolean;
+  asking: PriceScenario;
+  bidding: PriceScenario;
+  bid_status: 'converged' | 'no_target' | 'unreachable' | 'above_ceiling';
+  bid_message: string | null;
+  bid_vs_asking: number | null;
+  rooms: number | null;
+}
+
+/** R-073 — one figure inside a bridge leg, with the engine field it reads. */
+export interface InvestmentBridgeComponent {
+  label: string;
+  value: number;
+  source: string;
+}
+
+export type InvestmentBridgeLegKey = 'acquisition' | 'renovation' | 'operations' | 'financing' | 'exit';
+
+export interface InvestmentBridgeLeg {
+  key: InvestmentBridgeLegKey;
+  label: string;
+  /** Null when unavailable (or the deal has no such item) — never zero. */
+  value: number | null;
+  status: 'ok' | 'none' | 'unavailable';
+  formula: string;
+  components: InvestmentBridgeComponent[];
+  reason: string | null;
+}
+
+/** R-073 — GET /deals/{id}/engines/investment-bridge. */
+export interface InvestmentBridgeResponse {
+  deal_id: string;
+  available: boolean;
+  reason: string | null;
+  equity_invested: number | null;
+  equity_invested_source: string;
+  equity_returned: number | null;
+  equity_returned_source: string;
+  equity_profit: number | null;
+  hold_years: number | null;
+  legs: InvestmentBridgeLeg[];
+  unavailable: string[];
+  computed_equity_returned: number | null;
+  residual: number | null;
+  reconciles: boolean;
+}
 
 export interface PricingMaxPriceResponse {
   deal_id: string;

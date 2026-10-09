@@ -56,6 +56,17 @@
  * Yield on Cost" persists as `field_overrides.target_stabilized_yoc` and is
  * compared (Pass / Short) to the derived stabilized-year yield on cost.
  *
+ * TESTER ROUND R-051 / R-061:
+ *   R-051 — the KPI area is two comparable sets: ASKING (the seller's asking
+ *           price — the OM's `asking_price.headline_price_usd` when extracted,
+ *           else the modeled price, labelled with its source) and BIDDING (the
+ *           price whose levered IRR equals Target LIRR, solved backward by the
+ *           existing max-price solver — GET /analysis/{id}/pricing/asking-vs-bid).
+ *           No Target LIRR → the Bidding set reads "Set Target LIRR to solve".
+ *   R-061 — the former Returns tab is the "Returns" section at the foot of
+ *           this tab (`ReturnsSection`, anchor `#overview-returns`); legacy
+ *           Returns-tab links (`tab` = returns) redirect here.
+ *
  * PROVENANCE: dots + the anchored "Where this came from" popover read the real
  * per-value `state` / formula / inputs from GET /deals/{id}/provenance via
  * `useTraceGraph`, falling back to the canonical semantic kind.
@@ -107,10 +118,13 @@ import {
   STABILIZED_NOI_LABEL,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
+import { ReturnsSection } from './ReturnsTab';
 import {
   api,
   isWorkerConnected,
   WorkerError,
+  type AskingVsBidResponse,
+  type PriceScenario,
   type EngineOutputsResponse,
   type MarketOverviewResult,
   type PropertyNameOriginal,
@@ -966,7 +980,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ CAPEX (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: exitNoiLabel(wExitNoiPeriodLabel), from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'CAPEX assumption', kind: 'input' }] }),
       cal('exitPerKey', 'Exit Value / Key', money(exitPerKey), { formula: 'Gross Exit Value ÷ Keys' }),
-      lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'returns', { trace: { engine: 'returns', path: 'selling_costs' } }),
+      lnk('salesPct', 'Disposition Costs', money(sellingCosts), '→ Returns', 'overview', { linkSub: 'returns-summary', trace: { engine: 'returns', path: 'selling_costs' } }),
       awa('transferPct', 'Transfer Tax'),
     ];
 
@@ -1133,6 +1147,62 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel]);
+
+  // ─── R-051 — Asking vs Bidding price ───────────────────────────────────
+  // One read-only worker call prices the deal at the seller's asking price and
+  // at the Target-LIRR bid (existing max-price solver). Refetched when the
+  // target or a run changes. Development deals have no purchase price → none.
+  const [askBid, setAskBid] = useState<AskingVsBidResponse | null>(null);
+  const [askBidError, setAskBidError] = useState<string | null>(null);
+  const dealTargetIrr = deal?.target_irr ?? null;
+  useEffect(() => {
+    if (!liveMode || cfg === 'dev') { setAskBid(null); return; }
+    const ac = new AbortController();
+    setAskBidError(null);
+    api.analysis.pricing.askingVsBid(dealId, ac.signal)
+      .then(setAskBid)
+      .catch((e: unknown) => {
+        if (ac.signal.aborted) return;
+        setAskBid(null);
+        setAskBidError(e instanceof WorkerError ? (e.body || e.message) : String(e));
+      });
+    return () => ac.abort();
+  }, [dealId, liveMode, cfg, dealTargetIrr, runToken, purchase]);
+
+  // A priced scenario mapped onto the SAME tile labels as the base set, so the
+  // two sets compare line for line. Price-invariant tiles (Renovation,
+  // Stabilized NOI, Exit Value) carry the base value; price-driven tiles read
+  // the scenario. Anything the scenario lacks renders "—".
+  const scenarioTiles = useCallback(
+    (s: PriceScenario): { label: string; value: string; sub?: string }[] =>
+      kpis.map((k) => {
+        const price = s.purchase_price ?? undefined;
+        switch (k.label) {
+          case 'Purchase Price':
+            return { label: k.label, value: mm(price), sub: has(price) && has(keys) ? `${fmtCurrency(price / keys)} / key` : undefined };
+          case 'Total Capitalization':
+            return { label: k.label, value: mm(s.total_capitalization ?? undefined), sub: has(s.total_capitalization ?? undefined) && has(keys) ? `${fmtCurrency((s.total_capitalization as number) / keys)} / key` : undefined };
+          case 'Equity':
+            return { label: k.label, value: mm(s.equity ?? undefined) };
+          case 'Going-In Cap': {
+            // Entry NOI is price-invariant: entry cap × base price ÷ scenario price.
+            const entryNoi = has(entryCap) && has(purchase) ? entryCap * purchase : undefined;
+            return { label: k.label, value: has(entryNoi) && has(price) && price > 0 ? pctv(entryNoi / price) : '—' };
+          }
+          case 'Levered IRR':
+            return { label: k.label, value: pctv(s.levered_irr ?? undefined, 1), sub: k.sub };
+          case 'Unlevered IRR':
+            return { label: k.label, value: pctv(s.unlevered_irr ?? undefined, 1), sub: k.sub };
+          default:
+            // Renovation · Stabilized NOI · Exit Value — unchanged by price.
+            return k;
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [kpis, keys, entryCap, purchase],
+  );
+  const askingKpis = askBid && !askBid.asking_is_model_price ? scenarioTiles(askBid.asking) : kpis;
+  const biddingKpis = askBid && askBid.bid_status === 'converged' ? scenarioTiles(askBid.bidding) : null;
 
   // ─── Return targets + benchmark strip (FON-68) ─────────────────────────
   // The strip compares the CALCULATED levered IRR (canonical returns run)
@@ -1322,7 +1392,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       )}
 
       {/* Investment Profile card + return benchmark strip */}
-      <div style={{ ...cardShell, padding: '11px 16px 12px', display: 'flex', flexDirection: 'column', gap: 11 }}>
+      <div id="overview-investment-profile" style={{ ...cardShell, padding: '11px 16px 12px', display: 'flex', flexDirection: 'column', gap: 11, scrollMarginTop: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '118px 1fr', gap: 16, alignItems: 'center' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase', lineHeight: 1.25 }}>
@@ -1435,12 +1505,62 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         </div>
       </div>
 
-      {/* KPI tiles — R-053: one baseline for every primary number in the row */}
-      <div data-testid="overview-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
-        {kpis.map((k) => (
-          <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} alignValues data-testid={`overview-kpi-${slug(k.label)}`} />
-        ))}
-      </div>
+      {/* KPI tiles — R-053: one baseline for every primary number in the row.
+          R-051: acquisition deals show two comparable sets side by side —
+          Asking (seller's ask) and Bidding (solved from Target LIRR). */}
+      {cfg === 'dev' ? (
+        <div data-testid="overview-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
+          {kpis.map((k) => (
+            <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} alignValues data-testid={`overview-kpi-${slug(k.label)}`} />
+          ))}
+        </div>
+      ) : (
+        <div data-testid="overview-price-sets" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,460px),1fr))', gap: 14 }}>
+          <div data-testid="overview-asking-set" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <PriceSetHeader
+              title="Asking price"
+              detail={askBid
+                ? `${askBid.asking_price_label}${askBid.asking_is_model_price ? ' · the modeled Base Case' : ` · re-priced from the modeled ${fmtMillions(askBid.model_purchase_price, 2)}, all else held`}`
+                : 'The modeled Base Case purchase price'}
+            />
+            <div data-testid="overview-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 12 }}>
+              {askingKpis.map((k) => (
+                <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} alignValues data-testid={`overview-kpi-${slug(k.label)}`} />
+              ))}
+            </div>
+          </div>
+          <div data-testid="overview-bidding-set" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <PriceSetHeader
+              title="Bidding price"
+              detail={targetIrr != null
+                ? `Solved backward to the ${fmtPct(targetIrr, 1)} Target LIRR · loan and all other assumptions held`
+                : 'Solved backward from Target LIRR'}
+            />
+            {biddingKpis ? (
+              <div data-testid="overview-kpis-bid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 12 }}>
+                {biddingKpis.map((k) => (
+                  <KpiTile key={k.label} label={k.label} value={k.value} sub={k.sub} alignValues data-testid={`overview-bid-kpi-${slug(k.label)}`} />
+                ))}
+              </div>
+            ) : (
+              <div
+                data-testid="overview-bid-pending"
+                style={{ ...cardShell, flex: 1, minHeight: 96, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '14px 16px', fontSize: 12.5, color: palette.textMuted, textAlign: 'center' }}
+              >
+                {targetIrr == null || askBid?.bid_status === 'no_target'
+                  ? <span><b style={{ color: palette.ink }}>Set Target LIRR to solve</b> — the Investment Profile above sets the hurdle the bid is solved to.</span>
+                  : askBid?.bid_message
+                    ? <span>{askBid.bid_message}</span>
+                    : askBidError
+                      ? <span>Bid price unavailable: {askBidError}</span>
+                      : liveMode
+                        ? <span>Solving the bid price…</span>
+                        : <span>The bid price is solved by the live model — open a worker-backed deal.</span>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* FON-41 R-060 — the Future P&L at a glance: Total Revenue and NOI
           (before FF&E reserve) per projected year, straight from the revenue
@@ -1489,6 +1609,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           </SectionCard>
         );
       })}
+
+      {/* R-061 — the former Returns tab, in full: Returns Summary · Sensitivities
+          (Live Assumptions sandbox + grids) · Pricing (Max Price Solver + grid). */}
+      <ReturnsSection />
 
       {/* Where this came from — anchored provenance popover */}
       {provProps && (
@@ -1802,7 +1926,7 @@ function TimelineSectionCard({
   const railCols = `repeat(${Math.max(1, events.length)},minmax(0,1fr))`;
 
   return (
-    <SectionCard title={title} note={holdCaption} bodyStyle={{ padding: '18px 20px' }}>
+    <SectionCard title={title} note={holdCaption} bodyStyle={{ padding: '18px 20px' }} data-testid={`overview-section-${slug(title)}`}>
       {events.length === 0 ? (
         <p style={{ fontSize: 12.5, color: palette.textMuted, paddingTop: 10 }}>
           {liveMode ? 'Run the model to build the timeline.' : 'Timeline is available on live deals.'}
@@ -1943,6 +2067,16 @@ function FuturePLSummaryCard({
 }
 
 // ─── Local helpers / style constants ─────────────────────────────────────
+// R-051 — the eyebrow over each comparable KPI set (Asking / Bidding).
+function PriceSetHeader({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase' }}>{title}</span>
+      <span style={{ fontSize: 11, color: palette.textMuted }}>{detail}</span>
+    </div>
+  );
+}
+
 const cardShell: CSSProperties = { background: palette.cardWhite, border: `1px solid ${palette.border}`, borderRadius: 10 };
 const profileLabel: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textMuted, textTransform: 'uppercase' };
 const primaryBtn: CSSProperties = { background: palette.inkNavy, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };

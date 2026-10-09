@@ -24,6 +24,7 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected } from '@/lib/api';
 import { PROJECT_TABS } from '@/lib/projectTabs';
+import { legacyReturnsRedirect } from '@/lib/returnsSection';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
 import InvestmentTab from '@/components/project/InvestmentTab';
@@ -48,7 +49,9 @@ const PLTab = dynamic(() => import('@/components/project/PLTab'), {
 const CashFlowTab = dynamic(() => import('@/components/project/CashFlowTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
-const ReturnsTab = dynamic(() => import('@/components/project/ReturnsTab'), {
+// R-061 — Returns is a section of Overview now (no tab); R-073 — the
+// Investment Bridge view sits immediately before Scenario Analysis.
+const InvestmentBridgeTab = dynamic(() => import('@/components/project/InvestmentBridgeTab'), {
   loading: () => <TabLoadingSkeleton />,
 });
 const PartnershipTab = dynamic(() => import('@/components/project/PartnershipTab'), {
@@ -301,6 +304,16 @@ export default function ProjectDetailPage() {
 
   const activeTab = searchParams.get('tab') || '';
   const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? 'Data Room';
+
+  // R-061 — the Returns tab moved into Overview. A legacy `?tab=returns[&sub=…]`
+  // link / bookmark is rewritten to `?tab=overview&sub=…`; Overview's Returns
+  // section then scrolls itself into view on that view.
+  const queryString = searchParams.toString();
+  useEffect(() => {
+    if (activeTab === 'returns') {
+      router.replace(legacyReturnsRedirect(rawId, queryString), { scroll: false });
+    }
+  }, [activeTab, rawId, queryString, router]);
 
   const setTab = (tab: string) => {
     const url = tab ? `/projects/${id}?tab=${tab}` : `/projects/${id}`;
@@ -752,8 +765,8 @@ export default function ProjectDetailPage() {
         {activeTab === 'cash-flow' && (
           <ErrorBoundary tabName="Cash Flow"><CashFlowTab /></ErrorBoundary>
         )}
-        {activeTab === 'returns' && (
-          <ErrorBoundary tabName="Returns"><ReturnsTab /></ErrorBoundary>
+        {activeTab === 'investment-bridge' && (
+          <ErrorBoundary tabName="Investment Bridge"><InvestmentBridgeTab dealId={rawId} /></ErrorBoundary>
         )}
         {activeTab === 'partnership' && (
           <ErrorBoundary tabName="Partnership"><PartnershipTab /></ErrorBoundary>

@@ -43,10 +43,13 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
-const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: new URLSearchParams('tab=overview') }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
   useRouter: () => ({ push: nav.push, replace: nav.replace }),
+  // R-061 — the Returns section (now on Overview) reads `?sub=`.
+  useSearchParams: () => nav.params,
+  usePathname: () => '/projects/deal-uuid-1',
 }));
 
 // The worker outputs under test — the whole tab reads from these.
@@ -171,6 +174,10 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
 const timelineSpy = vi.fn(async () => TIMELINE);
 const overviewRef: { value: Record<string, unknown> } = { value: {} };
+// R-051 — the asking-vs-bid payload; `null` = the call never resolves (the
+// Bidding set stays in its pending state, the Asking set is the canonical run).
+const askBidRef: { value: unknown } = { value: null };
+const askBidSpy = vi.fn(() => (askBidRef.value ? Promise.resolve(askBidRef.value) : new Promise(() => {})));
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -181,6 +188,10 @@ vi.mock('@/lib/api', async () => {
       deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
       engines: { ...actual.api.engines, timeline: (...a: unknown[]) => timelineSpy(...(a as [])) },
       market: { ...actual.api.market, overview: async () => overviewRef.value },
+      analysis: {
+        ...actual.api.analysis,
+        pricing: { ...actual.api.analysis.pricing, askingVsBid: () => askBidSpy() },
+      },
     },
   };
 });
@@ -209,6 +220,9 @@ beforeEach(() => {
   nav.replace.mockClear();
   mockReasons = {};
   overviewRef.value = {};
+  askBidRef.value = null;
+  askBidSpy.mockClear();
+  nav.params = new URLSearchParams('tab=overview');
   outputsRef.value = OUTPUTS;
   mockDealRef.deal = {
     id: 'deal-uuid-1', keys: 132, deal_type: 'acquisition', return_profile: 'value-add',
@@ -249,8 +263,11 @@ describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
 
     expect(screen.getByText('Total Capitalization')).toBeInTheDocument();
     expect(screen.getByText('Renovation')).toBeInTheDocument();
-    expect(screen.getByText('Levered IRR')).toBeInTheDocument();
-    expect(screen.getByText('Unlevered IRR')).toBeInTheDocument(); // R-052
+    // R-061 — the Returns section (now on Overview) also shows a Levered IRR
+    // hero tile, so scope the KPI-label checks to the KPI strip.
+    const kpiStrip = within(screen.getByTestId('overview-kpis'));
+    expect(kpiStrip.getByText('Levered IRR')).toBeInTheDocument();
+    expect(kpiStrip.getByText('Unlevered IRR')).toBeInTheDocument(); // R-052
     expect(screen.getByText('14.2%')).toBeInTheDocument();         // returns.unlevered_irr
     // KPI labels also appear elsewhere → assert at least one match.
     expect(screen.getAllByText('Purchase Price').length).toBeGreaterThan(0);
@@ -370,7 +387,8 @@ describe('OverviewTab — milestone timeline (GET /engines/timeline)', () => {
     expect(await screen.findByText('Transaction Timeline')).toBeInTheDocument();
     // A milestone from the endpoint + its "N-year hold" caption.
     expect(screen.getByText('Hotel Purchase')).toBeInTheDocument();
-    expect(screen.getByText(/5-year hold/)).toBeInTheDocument();
+    // R-061 — the Returns section's IRR tile also says "…over the 5-year hold".
+    expect(within(screen.getByTestId('overview-section-transaction-timeline')).getByText(/5-year hold/)).toBeInTheDocument();
   });
 });
 
@@ -1276,5 +1294,141 @@ describe('OverviewTab — R-050 Target Stabilized Yield on Cost', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.getByTestId('yoc-target')).toHaveTextContent('—');
     expect(screen.getByTestId('yoc-status')).toHaveTextContent('No target set');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tester round R-061 (Returns folded into Overview) · R-051 (Asking vs Bidding)
+// ─────────────────────────────────────────────────────────────────────────
+
+const ASK_BID_BASE = {
+  deal_id: 'deal-uuid-1',
+  target_irr: 0.15,
+  model_purchase_price: 34_000_000,
+  model_price_source: 'deal_row',
+  om_asking_price: null,
+  asking_price_source: 'model_purchase_price',
+  asking_price_label: 'Deal record purchase price',
+  asking_is_model_price: true,
+  asking: {
+    purchase_price: 34_000_000, price_per_key: 257_576, total_capitalization: 43_000_000, equity: 17_000_000,
+    renovation: 4_620_000, levered_irr: 0.198, unlevered_irr: 0.142, equity_multiple: 2.1,
+  },
+  bidding: {
+    purchase_price: 39_500_000, price_per_key: 299_242, total_capitalization: 48_500_000, equity: 22_500_000,
+    renovation: 4_620_000, levered_irr: 0.1502, unlevered_irr: 0.121, equity_multiple: 1.8,
+  },
+  bid_status: 'converged',
+  bid_message: null,
+  bid_vs_asking: 5_500_000,
+  rooms: 132,
+};
+
+describe('OverviewTab — R-061 the Returns section lives on Overview', () => {
+  it('renders the former Returns tab content as a section at the foot of Overview', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const section = screen.getByTestId('overview-returns');
+    expect(section.id).toBe('overview-returns');
+    // The three views keep their names; Summary is open by default.
+    for (const v of ['Returns Summary', 'Sensitivities', 'Pricing']) {
+      expect(within(section).getByText(v)).toBeInTheDocument();
+    }
+    expect(within(section).getByText('Equity Multiple')).toBeInTheDocument();
+    expect(within(section).getByText('Exit Assumptions')).toBeInTheDocument();
+    expect(within(section).getByText('Return Bridge')).toBeInTheDocument();
+    // It sits after every deal-type section.
+    expect(precedes(screen.getByTestId('overview-section-transaction-timeline'), section)).toBe(true);
+  });
+
+  it('opens the requested view and scrolls to it on ?sub=sensitivities (a redirected ?tab=returns link)', () => {
+    const spy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    try {
+      nav.params = new URLSearchParams('tab=overview&sub=sensitivities');
+      render(<OverviewTab projectId="deal-uuid-1" />);
+      const section = screen.getByTestId('overview-returns');
+      expect(within(section).getByText('Live Assumptions')).toBeInTheDocument();
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it('does not scroll to Returns on a plain Overview visit', () => {
+    const spy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    try {
+      render(<OverviewTab projectId="deal-uuid-1" />);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it('shows a reasoned placeholder (no numbers) when the returns engine has not run', () => {
+    outputsRef.value = withReturns({ levered_irr: undefined });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('overview-returns-unavailable')).toHaveTextContent(/Returns engine unavailable/);
+  });
+});
+
+describe('OverviewTab — R-051 Asking vs Bidding price', () => {
+  it('labels two comparable sets; with no Target LIRR the Bidding set says "Set Target LIRR to solve" and shows no numbers', async () => {
+    askBidRef.value = {
+      ...ASK_BID_BASE, target_irr: null, bid_status: 'no_target', bid_message: 'Set Target LIRR to solve',
+      bidding: { purchase_price: null, price_per_key: null, total_capitalization: null, equity: null, renovation: null, levered_irr: null, unlevered_irr: null, equity_multiple: null },
+      bid_vs_asking: null,
+    };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(within(screen.getByTestId('overview-asking-set')).getByText('Asking price')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-bidding-set')).getByText('Bidding price')).toBeInTheDocument();
+    const pending = screen.getByTestId('overview-bid-pending');
+    expect(pending).toHaveTextContent('Set Target LIRR to solve');
+    expect(pending.textContent).not.toMatch(/\$|%/);
+    expect(screen.queryByTestId('overview-kpis-bid')).toBeNull();
+    // The Asking set is the canonical run.
+    expect(within(screen.getByTestId('overview-kpi-purchase-price')).getByText('$34.00M')).toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByTestId('overview-asking-set')).getByText(/Deal record purchase price/)).toBeInTheDocument());
+  });
+
+  it('renders the solved bid on the same tile labels as the Asking set', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, target_irr: 0.15 };
+    askBidRef.value = ASK_BID_BASE;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const bid = await screen.findByTestId('overview-kpis-bid');
+    const askLabels = Array.from(screen.getByTestId('overview-kpis').children).map((t) => t.querySelector('[data-kpi-label]')?.textContent);
+    const bidLabels = Array.from(bid.children).map((t) => t.querySelector('[data-kpi-label]')?.textContent);
+    expect(bidLabels).toEqual(askLabels);
+    expect(within(screen.getByTestId('overview-bid-kpi-purchase-price')).getByText('$39.50M')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-bid-kpi-total-capitalization')).getByText('$48.50M')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-bid-kpi-levered-irr')).getByText('15.0%')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-bid-kpi-unlevered-irr')).getByText('12.1%')).toBeInTheDocument();
+    // Price-invariant: renovation reads the same in both sets.
+    expect(within(screen.getByTestId('overview-bid-kpi-renovation')).getByText('$4.62M')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-bidding-set')).getByText(/Solved backward to the 15\.0% Target LIRR/)).toBeInTheDocument();
+  });
+
+  it('re-prices the Asking set at the OM asking price when it differs from the modeled price', async () => {
+    askBidRef.value = {
+      ...ASK_BID_BASE,
+      om_asking_price: 36_000_000,
+      asking_price_source: 'om_asking_price',
+      asking_price_label: 'OM asking price',
+      asking_is_model_price: false,
+      asking: { ...ASK_BID_BASE.asking, purchase_price: 36_000_000, total_capitalization: 45_000_000, levered_irr: 0.181 },
+    };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    await waitFor(() => expect(within(screen.getByTestId('overview-kpi-purchase-price')).getByText('$36.00M')).toBeInTheDocument());
+    expect(within(screen.getByTestId('overview-kpi-levered-irr')).getByText('18.1%')).toBeInTheDocument();
+    expect(within(screen.getByTestId('overview-asking-set')).getByText(/OM asking price · re-priced from the modeled \$34\.00M/)).toBeInTheDocument();
+  });
+
+  it('a development deal keeps its single KPI set and never asks for a bid', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, deal_type: 'development' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('overview-price-sets')).toBeNull();
+    expect(askBidSpy).not.toHaveBeenCalled();
   });
 });

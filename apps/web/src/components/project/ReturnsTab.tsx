@@ -1,15 +1,20 @@
 'use client';
+/**
+ * Returns — R-061: no longer a tab. This module renders the "Returns" section
+ * at the foot of Overview (`OverviewTab` mounts {@link ReturnsSection}); the
+ * former `?tab=returns[&sub=…]` deep links redirect to
+ * `?tab=overview&sub=…` (see `lib/returnsSection.ts`) and this section
+ * scrolls itself into view. Every element of the old tab is retained here:
+ * the hero + secondary KPIs, Exit Assumptions, Return Bridge, the Live
+ * Assumptions sandbox (with its override banner), the sensitivity grids and
+ * the Pricing view (Max Price Solver + max-price grid).
+ */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { TrendingUp } from 'lucide-react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { useToast } from '@/components/ui/Toast';
-import EngineHeader from './EngineHeader';
-import EngineRightRail from './EngineRightRail';
-import EngineRunHistory from './EngineRunHistory';
 import NoiWarningStrip from './NoiWarningStrip';
+import { RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, type ReturnsViewId } from '@/lib/returnsSection';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
@@ -35,7 +40,6 @@ interface SensitivityMatrix {
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
-import { IntroCard } from '@/components/help/IntroCard';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
 import {
@@ -48,17 +52,13 @@ import {
   radius,
 } from '@/components/design';
 
-// FON-68 — MVP Returns is three sub-tabs. Scenario management lives on
+// FON-68 — MVP Returns is three views. Scenario management lives on
 // Scenario Analysis; comps live on Market → Transaction Comps.
-// FON-59 #4 — the sub-tab *id* is the URL slug (`?tab=returns&sub=…`); the
-// label is display only.
-const SUB_TABS = [
-  { id: 'returns-summary', label: 'Returns Summary' },
-  { id: 'sensitivities', label: 'Sensitivities' },
-  { id: 'pricing', label: 'Pricing' },
-] as const;
-type SubTab = (typeof SUB_TABS)[number]['id'];
-const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
+// FON-59 #4 — the view *id* is the URL slug (`?sub=…`, now on
+// `?tab=overview` — R-061); the label is display only.
+const SUB_TABS = RETURNS_VIEWS;
+type SubTab = ReturnsViewId;
+const SUB_TAB_IDS = RETURNS_VIEW_IDS;
 
 type EngineOutputs = ReturnType<typeof useEngineOutputs>['outputs'];
 
@@ -76,72 +76,70 @@ const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(
 const fmtM = (v: number | null | undefined) => (v == null ? '—' : mm(v));
 const fmtX = (v: number | null | undefined) => (v == null ? '—' : `${v.toFixed(2)}x`);
 
-export default function ReturnsTab() {
+/**
+ * R-061 — the Overview "Returns" section (formerly the Returns tab).
+ *
+ * Owns the DOM anchor (`#overview-returns`) and scrolls itself into view when
+ * the URL asks for one of its views — a redirected `?tab=returns&sub=…`
+ * bookmark, or a cross-tab "View Returns →" link (`?tab=overview&sub=…`).
+ * A view change made INSIDE the section does not re-scroll the page.
+ */
+export function ReturnsSection() {
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
-  const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
+  const searchParams = useSearchParams();
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const internalNav = useRef(false);
+  const requestedSub = searchParams?.get('sub') ?? null;
+  const query = searchParams?.toString() ?? '';
+  useEffect(() => {
+    if (internalNav.current) { internalNav.current = false; return; }
+    if (!isReturnsView(requestedSub)) return;
+    sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   // Has the Returns engine been run for this deal? Used to decide whether to
   // render the placeholder or the live UI.
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const hasWorkerReturns = wReturnsIrr != null;
 
-  if (!hasWorkerReturns) {
-    return (
-      <div className="flex gap-4">
-        <div className="flex-1 min-w-0">
-          <IntroCard
-            dismissKey="returns-intro"
-            title="The Returns Engine"
-            body={
-              <>
-                The headline numbers — IRR, equity multiple, cash-on-cash — and how sensitive
-                they are to your assumptions. This is what investors actually earn over the
-                hold period after debt service.
-              </>
-            }
-          />
-          <EngineHeader
-            name="Returns Engine"
-            desc="Computes IRR, equity multiple, and scenario sensitivities for investment analysis."
-            outputs={['Levered IRR', 'Unlevered IRR', 'Equity Multiple', '+1']}
-            dependsOn="Cash Flow"
-            dealId={dealId}
-            engineName="returns"
-          />
-          <Card className="p-16 text-center">
-            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-              <TrendingUp size={20} className="text-ink-400" />
-            </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">Returns Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              IRR, equity multiple, and sensitivity analysis depend on the
-              <span className="font-medium"> Cash Flow</span> engine. Run that first, or upload an OM
-              and T-12 if you haven&apos;t.
-            </p>
-            <Button
-              variant="primary"
-              size="sm"
-              className="mt-4"
-              onClick={() => toast('Nothing is queued yet — add the missing document in the Data Room and the model runs automatically once extraction finishes', { type: 'info' })}
-            >
-              Run Returns Engine
-            </Button>
-          </Card>
-          <EngineRunHistory dealId={dealId} />
-        </div>
-        <EngineRightRail />
-      </div>
-    );
-  }
-
-  // Output-only tab: every sub-view reads the canonical worker engine
-  // outputs. The Returns tab no longer consumes the page assumptions
-  // provider — its Live Assumptions sliders are a local, ephemeral sandbox
-  // (FON-68 step 3), so nothing here can mutate Investment/Debt's model.
-  return <ReturnsWorkspace outputs={outputs} dealId={dealId} />;
+  return (
+    <section
+      id={RETURNS_SECTION_ID}
+      ref={sectionRef}
+      data-testid="overview-returns"
+      aria-label="Returns"
+      style={{ scrollMarginTop: 16 }}
+    >
+      {hasWorkerReturns ? (
+        // Output-only: every view reads the canonical worker engine outputs.
+        // The Live Assumptions sliders are a local, ephemeral sandbox
+        // (FON-68 step 3), so nothing here can mutate CAPEX / Financing.
+        <ReturnsWorkspace
+          outputs={outputs}
+          dealId={dealId}
+          onInternalNav={() => { internalNav.current = true; }}
+        />
+      ) : (
+        <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: palette.textMuted, lineHeight: 1.5 }}>
+            <TrendingUp size={18} aria-hidden="true" style={{ flexShrink: 0 }} />
+            <span data-testid="overview-returns-unavailable">
+              Returns engine unavailable — IRR, equity multiple, the sensitivity grids and the
+              Pricing solver depend on the Cash Flow engine. Add the OM and T-12 in the Data Room;
+              the model runs automatically once extraction finishes.
+            </span>
+          </div>
+        </SectionCard>
+      )}
+    </section>
+  );
 }
+
+/** Back-compat default export — the section, rendered standalone. */
+export default ReturnsSection;
 
 // ───────────────────────────────────────────────────────────────────
 // Ephemeral Live-Assumptions sandbox — LOCAL state only (FON-68 step 3).
@@ -371,12 +369,24 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
 // content. Rebuilt on the shared design system (@/components/design).
 // ───────────────────────────────────────────────────────────────────
 
-function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId: string }) {
+function ReturnsWorkspace({
+  outputs,
+  dealId,
+  onInternalNav,
+}: {
+  outputs: EngineOutputs;
+  dealId: string;
+  /** Called before a view change made inside the section, so the section
+   *  does not scroll the page to its own top on the resulting URL change. */
+  onInternalNav?: () => void;
+}) {
   const router = useRouter();
-  // `?tab=returns&sub=<slug>` — deep-linkable, back-button correct. The
-  // sandbox lives above this hook and is keyed on the deal, so switching
-  // sub-tabs (a `router.replace`, no remount) never drops an override.
-  const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'returns-summary');
+  // `?tab=overview&sub=<slug>` (R-061; legacy `?tab=returns&sub=` redirects
+  // here) — deep-linkable, back-button correct. The sandbox lives above this
+  // hook and is keyed on the deal, so switching views (a `router.replace`, no
+  // remount) never drops an override.
+  const { sub: tab, setSub: setSubRaw } = useSubTab(SUB_TAB_IDS, 'returns-summary');
+  const setTab = (id: SubTab) => { onInternalNav?.(); setSubRaw(id); };
   const { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase } = useReturnsSandbox(
     outputs,
     dealId,
@@ -401,13 +411,18 @@ function ReturnsWorkspace({ outputs, dealId }: { outputs: EngineOutputs; dealId:
   // sits on Exit Assumptions, which are Investment → Deal Summary rows.
   const goInvestment = () => router.push(`/projects/${dealId}?tab=investment&sub=deal-summary`, { scroll: false });
   const goCashFlow = () => router.push(`/projects/${dealId}?tab=cash-flow&sub=summary`, { scroll: false });
-  // FON-68 — the pricing hurdles live on Overview → Investment Profile.
-  const goProfile = () => router.push(`/projects/${dealId}?tab=overview`, { scroll: false });
+  // FON-68 — the pricing hurdles live on Overview → Investment Profile, which
+  // is on this same page now (R-061): scroll up to it instead of navigating.
+  const goProfile = () => {
+    const el = typeof document !== 'undefined' ? document.getElementById('overview-investment-profile') : null;
+    if (el) el.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    else router.push(`/projects/${dealId}?tab=overview`, { scroll: false });
+  };
 
   return (
     <div style={{ maxWidth: 1320 }}>
-      {/* Title card — canonical "Returns" + subtitle (replaces the old
-          IntroCard + EngineHeader "Returns Engine" chrome). */}
+      {/* Section header — R-061: the former Returns tab's title card, now the
+          heading of Overview's Returns section. */}
       <div
         style={{
           background: palette.cardWhite,

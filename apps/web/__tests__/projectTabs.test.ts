@@ -14,8 +14,32 @@ describe('project tab registry', () => {
     const visible = PROJECT_TABS.filter((t) => !t.adminOnly).map((t) => t.label);
     expect(visible).toEqual([
       'Data Room', 'Overview', 'CAPEX', 'Market Comps', 'P&L', 'Financing',
-      'Partnership', 'Cash Flow', 'Returns', 'Scenario Analysis', 'IC Memo',
+      'Partnership', 'Cash Flow', 'Investment Bridge', 'Scenario Analysis', 'IC Memo',
     ]);
+  });
+
+  it('R-061 — Returns is not a tab any more (it is the Overview Returns section)', () => {
+    expect(PROJECT_TABS.map((t) => t.id)).not.toContain('returns');
+    expect(PROJECT_TABS.map((t) => t.label)).not.toContain('Returns');
+  });
+
+  it('R-073 — Investment Bridge sits immediately before Scenario Analysis', () => {
+    const ids = PROJECT_TABS.map((t) => t.id);
+    expect(ids.indexOf('investment-bridge')).toBe(ids.indexOf('scenarios') - 1);
+    expect(TAB_LABEL.investmentBridge).toBe('Investment Bridge');
+  });
+
+  it('R-061 — the project page redirects ?tab=returns to Overview and no longer renders a Returns tab', () => {
+    const src = readFileSync(path.resolve(__dirname, '../src/app/projects/[id]/page.tsx'), 'utf8');
+    expect(src).toContain('legacyReturnsRedirect');
+    expect(src).not.toMatch(/<ReturnsTab\b/);
+  });
+
+  it('R-061 — no cross-tab link targets the retired Returns tab', () => {
+    for (const f of ['ICMemoTab.tsx', 'DebtTab.tsx', 'OverviewTab.tsx']) {
+      const src = readFileSync(path.resolve(__dirname, `../src/components/project/${f}`), 'utf8');
+      expect(src, f).not.toMatch(/tab=returns|tab: 'returns'|'→ Returns', 'returns'/);
+    }
   });
 
   it('CAPEX is immediately after Overview', () => {

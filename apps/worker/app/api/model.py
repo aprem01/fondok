@@ -617,6 +617,78 @@ async def get_deal_timeline(
     )
 
 
+class InvestmentBridgeComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    value: float
+    # The engine field this figure is read from (``capital.uses[...]``,
+    # ``returns.noi_by_year[i]``, ``returns.inputs.loan_balance_at_exit`` …).
+    source: str
+
+
+class InvestmentBridgeLeg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: Literal["acquisition", "renovation", "operations", "financing", "exit"]
+    label: str
+    # None when the leg is unavailable (``status="unavailable"``) or the deal
+    # has no such item (``status="none"``) — never a fabricated zero.
+    value: float | None
+    status: Literal["ok", "none", "unavailable"]
+    formula: str
+    components: list[InvestmentBridgeComponent]
+    reason: str | None = None
+
+
+class InvestmentBridgeResponse(BaseModel):
+    """R-073 — equity invested → equity returned, attributed by leg."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    available: bool
+    reason: str | None = None
+    equity_invested: float | None
+    equity_invested_source: str
+    equity_returned: float | None
+    equity_returned_source: str
+    equity_profit: float | None
+    hold_years: int | None
+    legs: list[InvestmentBridgeLeg]
+    unavailable: list[str]
+    computed_equity_returned: float | None
+    residual: float | None
+    reconciles: bool
+
+
+@engines_router.get(
+    "/{deal_id}/engines/investment-bridge",
+    response_model=InvestmentBridgeResponse,
+)
+async def get_investment_bridge(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> InvestmentBridgeResponse:
+    """R-073 — the Investment Bridge waterfall, derived from the canonical run.
+
+    Read-only: reads the SAME run-scoped snapshot every deal-wide tab reads
+    (FON-73) and attributes equity invested → equity returned across
+    acquisition, renovation, operations, financing and exit. No engine is
+    re-run and nothing is persisted.
+    """
+    from ..services.investment_bridge import build_investment_bridge
+
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    rows = await get_run_scoped_outputs(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
+    return InvestmentBridgeResponse(deal_id=deal_id, **build_investment_bridge(rows))
+
+
 @engines_router.get(
     "/{deal_id}/engines/run/{run_id}",
     response_model=EngineRunStatusResponse,

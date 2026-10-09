@@ -18,9 +18,18 @@
  *   R-062  Investment → "CAPEX", placed immediately after Overview.
  *   R-063  Market     → "Market Comps".
  *   R-069  Debt       → "Financing".
+ *
+ * Tester round (R-061 / R-073):
+ *   R-061  The Returns tab is gone — its content is the "Returns" section at
+ *          the foot of Overview. `?tab=returns[&sub=…]` deep links redirect to
+ *          `?tab=overview&sub=…` (lib/returnsSection.ts), so no bookmark breaks.
+ *   R-073  "Investment Bridge" (equity invested → equity returned, attributed
+ *          across acquisition, renovation, operations, financing and exit)
+ *          sits immediately before Scenario Analysis, whose lead view is the
+ *          Sensitivity analysis.
  */
 import {
-  FolderOpen, FileText, DollarSign, TrendingUp, BarChart3, Activity,
+  FolderOpen, FileText, DollarSign, BarChart3, Activity, Waypoints,
   Briefcase, MapPinned, FileSearch, GitCompareArrows, History, Users,
 } from 'lucide-react';
 
@@ -44,7 +53,9 @@ export const TAB_LABEL = {
   debt: 'Financing',
   partnership: 'Partnership',
   cashFlow: 'Cash Flow',
+  /** R-061 — no longer a tab; the Overview section's heading. */
   returns: 'Returns',
+  investmentBridge: 'Investment Bridge',
   scenarios: 'Scenario Analysis',
   icMemo: 'IC Memo',
   activity: 'Activity',
@@ -59,7 +70,7 @@ export const PROJECT_TABS: ProjectTab[] = [
   { id: 'debt', label: TAB_LABEL.debt, icon: DollarSign },
   { id: 'partnership', label: TAB_LABEL.partnership, icon: Users },
   { id: 'cash-flow', label: TAB_LABEL.cashFlow, icon: Activity },
-  { id: 'returns', label: TAB_LABEL.returns, icon: TrendingUp },
+  { id: 'investment-bridge', label: TAB_LABEL.investmentBridge, icon: Waypoints },
   { id: 'scenarios', label: TAB_LABEL.scenarios, icon: GitCompareArrows },
   { id: 'ic-memo', label: TAB_LABEL.icMemo, icon: FileSearch },
   { id: 'activity', label: TAB_LABEL.activity, icon: History, adminOnly: true },
