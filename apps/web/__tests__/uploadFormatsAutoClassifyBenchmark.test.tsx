@@ -96,12 +96,12 @@ describe('wizard "Drop everything here" zone (R-026)', () => {
     }
   });
 
-  it('lists staged auto files and lets them clear the documents gate', () => {
+  it('lists staged auto files but keeps the financials gate closed (locked Wave 1 rule)', () => {
     const auto: WizardFile = { file: new File(['x'], 'dataroom.pdf'), category: 'auto', user_doc_type: null };
     const { onCanContinueChange } = renderStep([auto]);
     const list = screen.getByRole('list', { name: 'Files to classify automatically' });
     expect(within(list).getByText('dataroom.pdf')).toBeTruthy();
-    expect(onCanContinueChange).toHaveBeenLastCalledWith(true);
+    expect(onCanContinueChange).toHaveBeenLastCalledWith(false);
   });
 
   it('keeps the gate closed with nothing staged', () => {

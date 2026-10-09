@@ -504,12 +504,12 @@ export function DocumentsStep({
 
   // Wave 1 gate — financials required. ONE upload in the merged
   // Financial Statements bucket (T-12 / full year / monthly / YTD) clears it.
-  // R-026: files in the auto-classify zone also clear it — the analyst who
-  // drops the whole data room in one place should not be blocked on a
-  // category Fondok assigns only after upload. If none of them turns out to
-  // be a financial statement, the Data Room's Financial Statements row
-  // reads "Not uploaded" and the coverage gap chips say so.
-  const canContinue = (filesByCategory.financials?.length ?? 0) > 0 || autoFiles.length > 0;
+  // R-026: files in the auto-classify zone do NOT clear it on their own.
+  // Their category is assigned only after upload, so the wizard cannot
+  // know one of them is a financial — and Prem's locked Wave 1 rule is
+  // "financials required, no shell deals" (2026-06-27). Put the T-12 / P&L
+  // in Financial Statements; drop everything else in the zone.
+  const canContinue = (filesByCategory.financials?.length ?? 0) > 0;
   useEffect(() => {
     onCanContinueChange(canContinue);
   }, [canContinue, onCanContinueChange]);
@@ -758,8 +758,9 @@ export function DocumentsStep({
             >
               <Info size={13} aria-hidden="true" />
               Add at least one financial (T-12 or Annual / YTD / Monthly
-              P&amp;L) — or drop your files in “Drop everything here” — to
-              continue.
+              P&amp;L) to Financial Statements to continue. Files in
+              “Drop everything here” are classified after upload, so they
+              don&apos;t count toward this yet.
             </div>
           )}
         </div>
