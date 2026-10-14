@@ -766,6 +766,11 @@ class PnlBenchmarkBlock(BaseModel):
 
     peer_set_size: int | None = None
     peer_set_avg_keys: int | None = None
+    # FON-97 — the benchmark report's filename (the most recent
+    # PNL_BENCHMARK extraction's document), so the Future P&L's Benchmark
+    # column can name its source document. None when the caller did not
+    # carry the filename (older rows / unit fixtures).
+    source_filename: str | None = None
     # R-067 — the report's cost lines mapped to the model's expense
     # categories (empty when the extraction carried no per-line rows).
     categories: list[PnlBenchmarkCategory] = Field(default_factory=list)
@@ -2956,6 +2961,8 @@ def _aggregate_market_data(
     str_trend_fields: dict[str, Any] = {}
     cbre_fields: dict[str, Any] = {}
     pnl_fields: dict[str, Any] = {}
+    # FON-97 — the first (= most recent) benchmark report's filename.
+    pnl_source_filename: str | None = None
     # Comp-set rows are keyed by their numeric index (1..7).
     compset_rows: dict[int, dict[str, Any]] = {}
     sources: dict[str, list[UUID]] = {}
@@ -2993,6 +3000,10 @@ def _aggregate_market_data(
             sources.setdefault(doc_type, [])
             if doc_id_uuid not in sources[doc_type]:
                 sources[doc_type].append(doc_id_uuid)
+        if doc_type == "PNL_BENCHMARK" and pnl_source_filename is None:
+            fn = row.get("filename")
+            if isinstance(fn, str) and fn.strip():
+                pnl_source_filename = fn.strip()
 
         for f in raw_fields:
             if not isinstance(f, dict):
@@ -3010,7 +3021,7 @@ def _aggregate_market_data(
 
     str_trend = _build_str_trend_block(str_trend_fields, compset_rows)
     cbre = _build_cbre_block(cbre_fields)
-    pnl = _build_pnl_block(pnl_fields)
+    pnl = _build_pnl_block(pnl_fields, source_filename=pnl_source_filename)
 
     return MarketDataResponse(
         deal_id=deal_id,
@@ -3143,10 +3154,13 @@ def _build_cbre_block(flat: dict[str, Any]) -> CbreHorizonsBlock | None:
     )
 
 
-def _build_pnl_block(flat: dict[str, Any]) -> PnlBenchmarkBlock | None:
+def _build_pnl_block(
+    flat: dict[str, Any], *, source_filename: str | None = None
+) -> PnlBenchmarkBlock | None:
     if not flat:
         return None
     return PnlBenchmarkBlock(
+        source_filename=source_filename,
         peer_set_size=_coerce_int(flat.get("pnl_benchmark.peer_set_size")),
         rooms_dept_pct=_coerce_float(flat.get("pnl_benchmark.rooms_dept_pct")),
         fb_dept_margin=_coerce_float(flat.get("pnl_benchmark.fb_dept_margin")),
@@ -3190,12 +3204,26 @@ async def get_market_data(
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    return await load_market_data(session, deal_id=deal_id, tenant_id=tenant_id)
+
+
+async def load_market_data(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> MarketDataResponse:
+    """The ``GET /deals/{id}/market-data`` envelope, for in-process callers.
+
+    FON-97 — the Future P&L export reads the ``pnl_benchmark`` block through
+    this so the workbook's "Benchmark %" column and the web's Benchmark
+    column come from one aggregation. The caller owns the tenant check
+    (``_assert_deal_belongs_to_tenant``); the join still filters on tenant.
+    """
     rows = await session.execute(
         text(
             """
             SELECT er.fields,
                    er.document_id,
-                   d.doc_type
+                   d.doc_type,
+                   d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal

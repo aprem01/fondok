@@ -380,3 +380,29 @@ def test_market_data_block_carries_categories() -> None:
     assert block.categories[0].ratio == pytest.approx(0.035)
     dumped = block.model_dump()
     assert dumped["categories"][0]["ratio_basis"] == "total_revenue"
+
+
+def test_market_data_names_the_benchmark_source_document() -> None:
+    """FON-97 — the block carries the benchmark report's filename (most recent
+    extraction first); rows without one leave it None rather than guessing."""
+    from app.api.documents import _aggregate_market_data
+
+    deal = uuid4()
+    fields = [{"field_name": "pnl_benchmark.peer.total_revenue.total_usd", "value": 1_000_000},
+              {"field_name": "pnl_benchmark.peer.utilities.total_usd", "value": 40_000}]
+    newer, older = uuid4(), uuid4()
+    rows = [
+        {"fields": fields, "doc_type": "PNL_BENCHMARK", "document_id": newer,
+         "filename": "HotStats-2025.pdf"},
+        {"fields": fields, "doc_type": "PNL_BENCHMARK", "document_id": older,
+         "filename": "HotStats-2024.pdf"},
+    ]
+    block = _aggregate_market_data(rows, deal).pnl_benchmark
+    assert block is not None
+    assert block.source_filename == "HotStats-2025.pdf"
+    assert [c.key for c in block.categories] == ["utilities"]
+
+    bare = _aggregate_market_data(
+        [{"fields": fields, "doc_type": "PNL_BENCHMARK", "document_id": newer}], deal
+    ).pnl_benchmark
+    assert bare is not None and bare.source_filename is None

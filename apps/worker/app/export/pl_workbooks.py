@@ -126,6 +126,50 @@ PROJ_LINES: tuple[tuple[str, str, str], ...] = (
     ("expense", "ffe_reserve", "FF&E Reserve"),
 )
 
+#: FON-97 — the Future P&L sheet's read-only "Benchmark %" column header.
+#: The import parser skips any column whose header starts with this word.
+BENCHMARK_HEADER = "Benchmark %"
+
+#: FON-97 — ``services.pnl_benchmark_map`` category key → the ``PROJ_LINES``
+#: path it benchmarks. Same 13 lines the web's Benchmark column wires; a
+#: path missing here has no benchmark and its cell stays blank.
+BENCHMARK_LINE_PATHS: dict[str, str] = {
+    "rooms": "expense.dept_expenses.rooms",
+    "food_beverage": "expense.dept_expenses.food_beverage",
+    "other_operated": "expense.dept_expenses.other_operated",
+    "administrative_general": "expense.undistributed.administrative_general",
+    "information_telecom": "expense.undistributed.information_telecom",
+    "sales_marketing": "expense.undistributed.sales_marketing",
+    "property_operations": "expense.undistributed.property_operations",
+    "utilities": "expense.undistributed.utilities",
+    "gop": "expense.gop",
+    "mgmt_fee": "expense.mgmt_fee",
+    "property_taxes": "expense.fixed_charges.property_taxes",
+    "insurance": "expense.fixed_charges.insurance",
+    "rent": "expense.fixed_charges.rent",
+}
+
+
+def benchmark_column_values(
+    categories: Sequence[Mapping[str, Any] | Any] | None,
+) -> dict[str, float]:
+    """``{"<engine>.<path>": ratio}`` for the workbook's Benchmark % column.
+
+    ``categories`` is the market-data block's ``pnl_benchmark.categories``
+    (dicts or ``PnlBenchmarkCategory`` models). Only categories that carry a
+    ratio contribute — a line the report priced per room but gave no ratio
+    for is left blank, never derived here.
+    """
+    out: dict[str, float] = {}
+    for cat in categories or ():
+        get = cat.get if isinstance(cat, Mapping) else (lambda k, _c=cat: getattr(_c, k, None))
+        key = get("key")
+        ratio = to_number(get("ratio"))
+        path = BENCHMARK_LINE_PATHS.get(str(key)) if key is not None else None
+        if path is not None and ratio is not None:
+            out[path] = ratio
+    return out
+
 
 @dataclass(frozen=True)
 class AssumptionSpec:
@@ -633,11 +677,17 @@ def build_projections_workbook(
     year_headers: Sequence[str],
     values: Mapping[str, float | None],
     assumptions: Sequence[Mapping[str, Any]],
+    benchmark: Mapping[str, float] | None = None,
 ) -> bytes:
     """Render the Future P&L + Assumptions workbook.
 
     ``assumptions`` rows carry ``key, label, value, unit, source, method,
     note_required, current_note`` — already resolved by the caller.
+
+    FON-97 — ``benchmark`` (``benchmark_column_values``) adds a read-only
+    "Benchmark %" column AFTER the year columns: the CBRE / HotStats comp-set
+    ratio for each mapped line, as a fraction on the same basis the web's
+    "% Rev" cell uses. ``None`` (no benchmark on the deal) = no column at all.
     """
     wb = Workbook()
     ws = wb.active
@@ -646,7 +696,10 @@ def build_projections_workbook(
     ws.cell(row=1, column=2, value="Line item (computed — read-only)")
     for i, h in enumerate(year_headers):
         ws.cell(row=1, column=3 + i, value=h)
-    _style_header(ws, 1, 2 + len(year_headers))
+    bm_col = 3 + len(year_headers) if benchmark is not None else None
+    if bm_col is not None:
+        ws.cell(row=1, column=bm_col, value=BENCHMARK_HEADER)
+    _style_header(ws, 1, 2 + len(year_headers) + (1 if bm_col is not None else 0))
     for r_i, (eng, path, label) in enumerate(PROJ_LINES):
         r = 2 + r_i
         ws.cell(row=r, column=1, value=f"{eng}.{path}")
@@ -657,6 +710,12 @@ def build_projections_workbook(
             c.fill = _READONLY_FILL
             if v is not None:
                 c.number_format = "#,##0.####"
+        if bm_col is not None and benchmark is not None:
+            bv = benchmark.get(f"{eng}.{path}")
+            bc = ws.cell(row=r, column=bm_col, value=bv)
+            bc.fill = _READONLY_FILL
+            if bv is not None:
+                bc.number_format = "0.0%"
     if not year_headers:
         ws.cell(row=2 + len(PROJ_LINES) + 1, column=2,
                 value="No model run yet — run the model to populate the projection.")
@@ -664,6 +723,8 @@ def build_projections_workbook(
     ws.column_dimensions["B"].width = 40
     for i in range(len(year_headers)):
         ws.column_dimensions[get_column_letter(3 + i)].width = 16
+    if bm_col is not None:
+        ws.column_dimensions[get_column_letter(bm_col)].width = 14
     ws.freeze_panes = "C2"
 
     wa = wb.create_sheet(ASSUMPTION_SHEET)
@@ -699,6 +760,10 @@ def build_projections_workbook(
             "Values use the units in the Unit column (fractions, not percents: 0.045 = 4.5%).",
             "Future P&L cells are computed by the engines; a change there is reported as "
             "'computed — edit the assumption instead' and is never applied.",
+            "Benchmark % (present only when the deal carries a CBRE / HotStats P&L benchmark) "
+            "is the comp-set ratio for the line on the same basis as the model's % Rev — "
+            "departmental expense over that department's revenue, everything else over total "
+            "revenue. Read-only and ignored on import.",
             "Import shows a preview of changed assumptions (old → new) and any rejected rows. "
             "Nothing changes until you Apply; applied values are saved as analyst overrides, "
             "with your note, through the same save path as the Assumptions panel.",
@@ -841,6 +906,11 @@ def parse_projections_import(
             eng, sub = path.split(".", 1)
             label = wp.cell(row=r, column=2).value
             for i in range(len(headers)):
+                # FON-97 — the Benchmark % column is not a year: never diffed,
+                # never reported, whatever was typed into it.
+                h = headers[i]
+                if isinstance(h, str) and h.strip().lower().startswith("benchmark"):
+                    continue
                 ck = proj_cell_key(eng, sub, i)
                 if ck not in current_values:
                     continue
@@ -872,6 +942,8 @@ def parse_projections_import(
 __all__ = [
     "ASSUMPTIONS",
     "ASSUMPTION_BY_KEY",
+    "BENCHMARK_HEADER",
+    "BENCHMARK_LINE_PATHS",
     "HIST_FORMAT",
     "HIST_LINES",
     "PROJ_FORMAT",
@@ -880,6 +952,7 @@ __all__ = [
     "HistColumn",
     "HistCurrent",
     "WorkbookFormatError",
+    "benchmark_column_values",
     "build_historicals_workbook",
     "build_projections_workbook",
     "hist_cell_id",
