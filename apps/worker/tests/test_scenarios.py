@@ -64,7 +64,16 @@ async def _reset_db() -> None:
 # (header path enabled by conftest) they land on DEFAULT_TENANT_ID. FON-93
 # made the engine-input loader refuse an implicit tenant, so the direct
 # loader calls below name it explicitly.
-_DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001"
+def _default_tenant() -> str:
+    # Read the configured default (a local .env may set it) rather than
+    # hard-coding the Settings default, so the test matches whatever tenant
+    # the header-path requests above actually landed on.
+    from app.config import get_settings
+
+    return str(get_settings().DEFAULT_TENANT_ID)
+
+
+_DEFAULT_TENANT = _default_tenant()
 
 
 async def _create_deal_via_api(client, *, name: str = "Scenario Hotel", **kw) -> str:
