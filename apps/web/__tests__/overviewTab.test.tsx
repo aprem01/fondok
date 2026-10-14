@@ -307,8 +307,9 @@ describe('OverviewTab — value-add section set + benchmark strip', () => {
     expect(screen.getByText('No target')).toBeInTheDocument();
     expect(screen.getByText('Set Target LIRR above')).toBeInTheDocument();
     expect(screen.getByText('Benchmark only — it does not drive the model')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Use profile midpoint (15%)' })).toBeInTheDocument();
-    expect(screen.queryByText('12-18%')).not.toBeInTheDocument();
+    // FON-100 — Value Add is 11–17% (Eshan's bands); midpoint 14%.
+    expect(screen.getByRole('button', { name: 'Use profile midpoint (14%)' })).toBeInTheDocument();
+    expect(screen.queryByText('11-17%')).not.toBeInTheDocument();
     expect(updateSpy).not.toHaveBeenCalled();
   });
 });
@@ -316,9 +317,9 @@ describe('OverviewTab — value-add section set + benchmark strip', () => {
 describe('OverviewTab — FON-68 return targets on the Investment Profile', () => {
   it('"Use profile midpoint" writes the band midpoint explicitly and never re-runs the model', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Use profile midpoint (15%)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use profile midpoint (14%)' }));
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_irr: 0.15 });
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { target_irr: 0.14 });
     expect(engineRunSpy).not.toHaveBeenCalled();
   });
 
@@ -1213,8 +1214,9 @@ describe('OverviewTab — R-049 one Target LIRR control', () => {
     // The preset lives ON the target control (one combobox, one number input).
     const preset = screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` });
     expect(preset).toHaveValue('value-add');
+    // FON-100 — Eshan's four bands, in order.
     expect(within(preset).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Core (8-12%)', 'Value Add (12-18%)', 'Opportunistic (18%+)',
+      'Core (5-10%)', 'Core Plus (7-12%)', 'Value Add (11-17%)', 'Opportunistic (18%+)',
     ]);
     expect(screen.getAllByRole('spinbutton', { name: `${TARGET_LIRR_LABEL} value` })).toHaveLength(1);
   });
@@ -1224,8 +1226,24 @@ describe('OverviewTab — R-049 one Target LIRR control', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     fireEvent.change(screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` }), { target: { value: 'core' } });
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { return_profile: 'core', target_irr: 0.1 });
+    // Core 5–10% → midpoint 7.5%.
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { return_profile: 'core', target_irr: 0.075 });
     expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('FON-100 — Core Plus (7–12%) is a preset too and fills its midpoint (9.5%) only on an explicit pick', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(updateSpy).not.toHaveBeenCalled(); // nothing auto-fills a target
+    fireEvent.change(screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` }), { target: { value: 'core-plus' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { return_profile: 'core-plus', target_irr: 0.095 }));
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('FON-100 — a legacy stored profile id keeps resolving and its band is offered as the explicit action', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, return_profile: 'core' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByRole('combobox', { name: `${TARGET_LIRR_LABEL} preset` })).toHaveValue('core');
+    expect(screen.getByRole('button', { name: 'Use profile midpoint (7.5%)' })).toBeInTheDocument();
   });
 
   it('an open band preset (Opportunistic 18%+) fills its floor', async () => {
@@ -1450,5 +1468,85 @@ describe('OverviewTab — R-051 Asking vs Bidding price', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.queryByTestId('overview-price-sets')).toBeNull();
     expect(askBidSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── FON-98 — stabilization anchor: reopening / re-flag date ──────────────
+describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)', () => {
+  /** OUTPUTS with a published stabilization block. */
+  const withStabBlock = (block: Record<string, unknown>): EngineOutputsResponse => {
+    const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    return {
+      ...OUTPUTS,
+      engines: {
+        ...base.engines,
+        expense: {
+          ...base.engines.expense,
+          outputs: { ...base.engines.expense.outputs, stabilization: { stabilized_noi_before_reserve: 4_300_000, ...block } },
+        },
+      },
+    } as unknown as EngineOutputsResponse;
+  };
+
+  it('names the anchor in use — "Year 3 after reopening (Mar 2027)" — when the worker anchored on the reopening', () => {
+    outputsRef.value = withStabBlock({
+      stabilized_year_index: 5, stabilized_year: 6, source: 'default_year_3_reopening', anchor: 'reopening',
+      default_year: 3, clamped: false, reopening_date: '2027-03-15',
+    });
+    mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Anchor')).toBe('Year 3 after reopening (Mar 2027)');
+    expect(rowValue('Stabilization Year')).toBe('Year 6 — Year 3 after reopening (Mar 2027) (default)');
+    // The editor echoes the anchor the run resolved.
+    expect(screen.getByTestId('reopening-date-field')).toHaveTextContent('Year 3 after reopening (Mar 2027)');
+    expect(screen.getByLabelText('Reopening / re-flag date')).toHaveValue('2027-03-15');
+  });
+
+  it('reads "Year 3 after close" with no reopening date', () => {
+    outputsRef.value = withStabBlock({
+      stabilized_year_index: 2, stabilized_year: 3, source: 'default_year_3', anchor: 'acquisition_close', default_year: 3, clamped: false,
+    });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Anchor')).toBe('Year 3 after close');
+    expect(rowValue('Stabilization Year')).toBe('Year 3 after close (default)');
+    expect(screen.getByLabelText('Reopening / re-flag date')).toHaveValue('');
+  });
+
+  it('a reopening date the worker could not place keeps the close anchor and says why', () => {
+    outputsRef.value = withStabBlock({
+      stabilized_year_index: 2, stabilized_year: 3, source: 'default_year_3', anchor: 'acquisition_close', default_year: 3,
+      clamped: false, reopening_date: '2027-03-15', anchor_fallback_reason: 'no_close_date',
+    });
+    mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Stabilization Anchor')).toBe('Year 3 after close');
+    expect(screen.getByTestId('reopening-date-field')).toHaveTextContent(
+      /could not be placed on the projection because the deal has no acquisition close date/,
+    );
+  });
+
+  it('saving the date PATCHes deals.reopening_date as a plain column (no justification note)', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByLabelText('Reopening / re-flag date');
+    fireEvent.change(input, { target: { value: '2027-03-15' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: '2027-03-15' });
+  });
+
+  it('× clears the date (writes null) so the default returns to Year 3 after close', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear reopening / re-flag date' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: null }));
+  });
+
+  it('re-saving the same date is a no-op (no PATCH)', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByLabelText('Reopening / re-flag date');
+    fireEvent.change(input, { target: { value: '2027-03-15' } });
+    fireEvent.blur(input);
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

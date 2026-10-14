@@ -88,6 +88,13 @@ class DebtEngineInputExt(DebtEngineInput):
     # the stabilized year everywhere, so Debt's stabilized DSCR / debt yield
     # follow it. None = the Year-3-after-close default in stabilization.py.
     stabilization_year: Annotated[int, Field(ge=1)] | None = None
+    # FON-98 — the stabilization anchor inputs, passed through so Debt's
+    # stabilized DSCR / debt yield read the SAME default year the expense
+    # engine publishes: Year 3 after the reopening date when the deal has one
+    # that places on the projection, else Year 3 after close. Both None keeps
+    # legacy callers byte-identical.
+    acquisition_close_date: str | None = None
+    reopening_date: str | None = None
     # FON-72 follow-up — Completion Guarantee covenant status (qualitative; no
     # numeric covenant math). Threaded from ``debt.completion_guarantee`` in the
     # deal's field_overrides. None → the Debt tab's covenant row stays "—".
@@ -1096,6 +1103,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             stabilized_occupancy=payload.stabilized_occupancy,
             noi_by_year=payload.noi_by_year,
             stabilization_year=payload.stabilization_year,
+            acquisition_close_date=payload.acquisition_close_date,
+            reopening_date=payload.reopening_date,
         )
         if (
             stab_idx is not None

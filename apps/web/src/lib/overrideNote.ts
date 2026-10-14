@@ -108,6 +108,10 @@ const DEAL_COLUMN_KEYS: ReadonlySet<string> = new Set([
   'target_moic',
   'name',
   'keys',
+  // FON-98 — the reopening / re-flag date. A deal column (never in
+  // `field_overrides`), and like `stabilization_year` it only re-anchors
+  // which projection year the stabilized figures are read from.
+  'reopening_date',
 ]);
 
 /** Pattern-shaped exemptions (indexed or namespaced keys). */

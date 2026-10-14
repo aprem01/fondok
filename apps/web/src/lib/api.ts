@@ -41,6 +41,11 @@ export interface WorkerDeal {
   /** R-025 — intended operating model (`owner_operated` / `third_party` /
    *  `brand_managed`). Descriptive only. Absent on older workers. */
   operating_model?: string | null;
+  /** FON-98 — ISO date (YYYY-MM-DD) the hotel reopens / re-flags after a
+   *  material repositioning. When set, the stabilization default counts
+   *  Year 3 from the first full operating year after it instead of from the
+   *  acquisition close. NULL = no reopening; absent on older workers. */
+  reopening_date?: string | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;
@@ -503,6 +508,14 @@ export interface NewDealBody {
   proposed_brand?: string | null;
   // R-025 — intended operating model captured in the wizard.
   operating_model?: string | null;
+  return_profile?: string | null;
+  positioning?: string | null;
+  sourcing_channel?: string | null;
+  /** FON-99 — the wizard's parsed Purchase / Indicative Price, whole dollars
+   *  (a range sends its midpoint). `null` when blank or unparseable. */
+  purchase_price?: number | null;
+  /** FON-98 — ISO date of the reopening / re-flag, when the deal has one. */
+  reopening_date?: string | null;
 }
 
 export interface WorkerDocument {
@@ -1822,7 +1835,7 @@ export const api = {
       patch: Partial<Pick<WorkerDeal,
         'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
-        | 'target_irr' | 'target_moic'>> & {
+        | 'target_irr' | 'target_moic' | 'reopening_date'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>

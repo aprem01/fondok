@@ -956,6 +956,44 @@ _OVERRIDE_NON_ENGINE_KEYS: frozenset[str] = frozenset(
 )
 
 
+# ──────────────── Reopening / re-flag date (FON-98) ───────────────────
+#
+# ``deals.reopening_date`` — a deal COLUMN (not a ``field_overrides`` key),
+# parked on ``base`` so the expense and debt builders can hand the
+# stabilization resolver both anchor inputs. Rani + Eshan: the stabilized
+# year defaults to Year 3 of operations; for a material repositioning /
+# re-flag that is counted from the reopening date, else from the acquisition
+# close. Nothing else reads it.
+REOPENING_DATE_KEY = "reopening_date"
+
+
+def _iso_date_or_none(value: Any) -> str | None:
+    """An ISO ``YYYY-MM-DD`` string for a date / ISO-string value, else None."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text_value = str(value).strip()
+    try:
+        return date.fromisoformat(text_value[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _stabilization_anchor_kwargs(base: Mapping[str, Any]) -> dict[str, str | None]:
+    """The two anchor inputs the stabilization resolver takes (FON-98) —
+    passed identically to the expense, debt and returns builders so all three
+    resolve ONE default year."""
+    return {
+        "acquisition_close_date": _iso_date_or_none(
+            base.get("acquisition_close_date")
+        ),
+        "reopening_date": _iso_date_or_none(base.get(REOPENING_DATE_KEY)),
+    }
+
+
 def _coerce_stabilization_year(value: Any) -> int | None:
     """A 1-based model year, or ``None``. Never a guess, never a clamp to 1."""
     if value is None or isinstance(value, bool):
@@ -1223,12 +1261,21 @@ async def _load_engine_inputs(
     underwriting_as_of = _underwriting_as_of_from(as_of_overrides)
 
     try:
+        # FON-98 — ``reopening_date`` is read only when the live schema has
+        # the column (catalog probe, memoised on the session) so an old DB
+        # keeps serving keys / purchase_price instead of losing the whole row.
+        from ..api.deals import _deals_has_column
+
+        has_reopening_col = await _deals_has_column(
+            session, "reopening_date", "fondok_deals_has_reopening_date"
+        )
+        reopening_col = ", reopening_date" if has_reopening_col else ""
         row = (
             await session.execute(
                 text(
                     # tenant-scope predicate required by tenant_middleware
-                    """
-                    SELECT keys, purchase_price, positioning, brand
+                    f"""
+                    SELECT keys, purchase_price, positioning, brand{reopening_col}
                       FROM deals
                      WHERE id = :id AND tenant_id = :tenant
                     """
@@ -1268,6 +1315,15 @@ async def _load_engine_inputs(
         pos = mapping.get("positioning")
         if isinstance(pos, str) and pos.strip():
             subject_chain_scale = pos.strip()
+        # FON-98 — the reopening / re-flag date anchors the stabilization
+        # default (Year 3 from the first full operating year after it). A
+        # deal row value, so it is badged ``deal_row``; absent → the close
+        # anchor, exactly as before.
+        reopening_iso = _iso_date_or_none(mapping.get("reopening_date"))
+        if reopening_iso is not None:
+            base[REOPENING_DATE_KEY] = reopening_iso
+            deals_table_keys.add(REOPENING_DATE_KEY)
+            sources[REOPENING_DATE_KEY] = SOURCE_DEAL_ROW
 
     # Pull Year-1 T-12 expense actuals from the deal's extraction results
     # so the expense engine can ground synthesis on real numbers (Sam QA
@@ -6194,6 +6250,9 @@ def _build_input_for(
             stabilization_year=_coerce_stabilization_year(
                 base.get(STABILIZATION_YEAR_KEY)
             ),
+            # FON-98 — the anchor inputs (reopening date → Year 3 after the
+            # first full operating year after reopening; else after close).
+            **_stabilization_anchor_kwargs(base),
             # E-016 — analyst per-line projection methods. Empty → the
             # engine's default per-line behaviour (byte-identical); ``keys``
             # rides along only when a method needs it (POR / PAR).
@@ -6319,6 +6378,9 @@ def _build_input_for(
             stabilization_year=_coerce_stabilization_year(
                 base.get(STABILIZATION_YEAR_KEY)
             ),
+            # FON-98 — same anchor inputs as the expense engine, so Debt's
+            # stabilized DSCR / debt yield read the same default year.
+            **_stabilization_anchor_kwargs(base),
             completion_guarantee=completion_guarantee,
         )
 
@@ -6394,6 +6456,8 @@ def _build_input_for(
                     occupancy_by_year=_occupancy_by_year(accumulated),
                     stabilized_occupancy=_stabilized_occupancy_assumption(base),
                     noi_by_year=noi_by_year,
+                    # FON-98 — the same anchor the expense / debt engines use.
+                    **_stabilization_anchor_kwargs(base),
                 )
                 stabilized_year = _stab_idx + 1 if _stab_idx is not None else None
         return ReturnsEngineInputExt(

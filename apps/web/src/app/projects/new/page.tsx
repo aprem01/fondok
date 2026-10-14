@@ -23,6 +23,7 @@ import { normalizeLocation, locationSuggestions } from '@/lib/markets';
 import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
 import { OPERATING_MODEL_OPTIONS, isOperatingModelId, operatingModelLabel } from '@/lib/operatingModel';
 import { unsupportedFileMessage } from '@/lib/uploadFormats';
+import { purchasePriceFromText, describeIndicativePrice, indicativePriceHint } from '@/lib/wizardPrice';
 import {
   loadDraft, saveDraft, clearDraft, relativeTime, DRAFT_DEBOUNCE_MS,
   loadDefaultReturnProfile, saveDefaultReturnProfile, type DraftFileRef,
@@ -38,7 +39,8 @@ const steps = [
   { n: 5, label: 'Review' },
 ];
 
-const iconForReturn: Record<string, any> = { core: Target, 'value-add': TrendingUp, opportunistic: Rocket };
+// FON-100 — one icon per return profile id (ids live in lib/mockData).
+const iconForReturn: Record<string, any> = { core: Target, 'core-plus': Star, 'value-add': TrendingUp, opportunistic: Rocket };
 // Every positioningTiers id must map here. A missing id renders <undefined />
 // and crashes the wizard with React #130 — the `?? Sparkles` fallback at the
 // call site is belt-and-suspenders against future tier additions.
@@ -300,6 +302,12 @@ export default function NewProjectPage() {
       const existingBrandValue = data.existingBrand.trim() || null;
       // R-025 — the intended operating model; '' (not chosen) → null.
       const operatingModelValue = isOperatingModelId(data.operatingModel) ? data.operatingModel : null;
+      // FON-99 — the Purchase / Indicative Price, parsed to whole dollars. A
+      // range sends its midpoint (labelled so on Review); text that does not
+      // read as a price sends null — never a guess — and the analyst sets the
+      // price on CAPEX → Deal Summary. Persisted as deals.purchase_price, which
+      // the engine runner badges "Deal record" (SOURCE_DEAL_ROW), not "Seed".
+      const purchasePriceValue = purchasePriceFromText(data.price);
 
       // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
       // narrow today, but we send the wizard's full intent: extra fields are
@@ -317,6 +325,7 @@ export default function NewProjectPage() {
         operating_model: operatingModelValue,
         return_profile: data.returnProfile,
         positioning: data.positioning,
+        purchase_price: purchasePriceValue,
         // Sourcing channel for pipeline analytics. Send the canonical
         // lower-snake-case id (e.g. "capital_partner") not the display
         // label so the worker can use it as an enum.
@@ -641,7 +650,10 @@ function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Hotel Name" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
-          <Field label="Indicative Price" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M" />
+          {/* FON-99 — parsed and sent as deals.purchase_price (see lib/wizardPrice). */}
+          <Field label="Purchase / Indicative Price" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M"
+            help="Seeds the model's purchase price. Accepts $36.4M, 36,400,000 or a range such as $120-140M (the midpoint is stored). Editable later on CAPEX → Deal Summary."
+            hint={indicativePriceHint(data.price)} hintTestId="price-parse-hint" />
         </div>
         <CoachMark
           anchorId="wizard-step1-sourcing"
@@ -682,6 +694,7 @@ function Step2({ data, update, defaultProfile, onSetDefault }: StepProps & {
   // rather than retail-investor primers.
   const example: Record<string, string> = {
     core: 'Stabilized institutional-quality asset in a primary market — risk-adjusted income.',
+    'core-plus': 'Stabilized asset with a light refresh, lease-up or management upgrade to lift income.',
     'value-add': 'Underperforming property with a credible PIP / repositioning thesis.',
     opportunistic: 'Adaptive reuse, ground-up development, or distressed acquisition with execution risk.',
   };
@@ -700,13 +713,17 @@ function Step2({ data, update, defaultProfile, onSetDefault }: StepProps & {
         title="What this picks"
         body={<>
           Return profile sets target LIRR thresholds and the default capital structure.
-          <span className="block mt-1.5"><b>Core</b> 8–12% · <b>Value-Add</b> 12–18% · <b>Opportunistic</b> 18%+.</span>
+          <span className="block mt-1.5">
+            {returnProfiles.map((p, i) => (
+              <span key={p.id}>{i > 0 && ' · '}<b>{p.label}</b> {p.target.replace('-', '–')}</span>
+            ))}.
+          </span>
           You can calibrate leverage and exit cap in the Returns section of the Overview.
         </>}
         side="top"
         learnMoreHref="/methodology#engines"
       >
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {returnProfiles.map(p => {
           const Icon = iconForReturn[p.id] ?? Target;
           const selected = data.returnProfile === p.id;
@@ -1108,7 +1125,10 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
     { label: 'Deal Type', value: dealTypeLabel(data.dealType), step: 1 },
     { label: 'Hotel Name', value: data.hotelName || 'Not specified', step: 1 },
     { label: 'Location', value: data.city || 'Not specified', step: 1 },
-    { label: 'Keys / Indicative Price', value: `${data.keys || '—'} keys / ${data.price || '—'}`, step: 1 },
+    { label: 'Keys', value: `${data.keys || '—'} keys`, step: 1 },
+    // FON-99 — the parsed price, how it was read ("range midpoint"), or the
+    // kept-as-a-note text when it could not be read.
+    { label: 'Purchase / Indicative Price', value: describeIndicativePrice(data.price), step: 1 },
     { label: 'Deal Stage', value: data.stage, step: 1 },
     { label: 'Return Requirements', value: profile ? `${profile.label} (${profile.target})` : '—', step: 2 },
     { label: 'Documents', value: docsSummary, step: 3 },
@@ -1274,9 +1294,11 @@ function SummaryRow({
   );
 }
 
-function Field({ label, value, onChange, onBlur, placeholder, type = 'text', help, listId }: {
+function Field({ label, value, onChange, onBlur, placeholder, type = 'text', help, listId, hint, hintTestId }: {
   label: string; value: string; onChange: (v: string) => void; onBlur?: (v: string) => void;
   placeholder?: string; type?: string; help?: string; listId?: string;
+  /** A live, value-dependent line under the help text (e.g. how a price parsed). */
+  hint?: string | null; hintTestId?: string;
 }) {
   return (
     <div>
@@ -1286,6 +1308,7 @@ function Field({ label, value, onChange, onBlur, placeholder, type = 'text', hel
         list={listId} autoComplete={listId ? 'off' : undefined}
         className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500" />
       {help && <div className="mt-1 text-[11px] text-ink-500 leading-relaxed">{help}</div>}
+      {hint && <div data-testid={hintTestId} className="mt-1 text-[11px] text-ink-700 leading-relaxed">{hint}</div>}
     </div>
   );
 }

@@ -90,12 +90,22 @@ export interface EngineOutputsLike {
 /**
  * Who owns the stabilization year on a published block. FON-59 R-057: the
  * default is Year 3 after acquisition close (`default_year_3`), analyst-
- * overridable. `fondok_derived` is the pre-R-057 label a stale run may still
+ * overridable. FON-98: `default_year_3_reopening` is the same Year-3 rule
+ * counted from the first full operating year after the deal's reopening /
+ * re-flag date. `fondok_derived` is the pre-R-057 label a stale run may still
  * carry; it reads as "not an override" and renders the bare year.
  */
-export type StabilizationSource = 'default_year_3' | 'analyst_override' | 'fondok_derived';
+export type StabilizationSource =
+  | 'default_year_3'
+  | 'default_year_3_reopening'
+  | 'analyst_override'
+  | 'fondok_derived';
 /** Which signal produced the model-detected hint. */
 export type StabilizationSignal = 'occupancy' | 'noi_plateau';
+/** What the default counts from (FON-98). */
+export type StabilizationAnchor = 'acquisition_close' | 'reopening';
+/** FON-98 — why a reopening date the deal carries could not anchor the default. */
+export type StabilizationAnchorFallback = 'no_close_date' | 'reopening_before_projection';
 
 /** `expense.stabilization` as the worker emits it. */
 export interface StabilizedYearBlock {
@@ -103,12 +113,16 @@ export interface StabilizedYearBlock {
   /** 1-based model year — what the analyst reads ("Year 2"). */
   stabilized_year: number;
   source: StabilizationSource;
-  /** What the default counts from (`acquisition_close`). */
-  anchor?: string | null;
+  /** What the default counts from (`acquisition_close` | `reopening`). */
+  anchor?: StabilizationAnchor | string | null;
   /** The configured default year (3), before any clamp to the hold. */
   default_year?: number | null;
   /** True when the default was pulled back to the hold's last year. */
   clamped?: boolean | null;
+  /** FON-98 — the deal's reopening / re-flag date (ISO), when it has one. */
+  reopening_date?: string | null;
+  /** FON-98 — set only when a reopening date exists but could not anchor. */
+  anchor_fallback_reason?: StabilizationAnchorFallback | string | null;
   /** Model-detected hint (occupancy / NOI plateau) — never selects the year. */
   detected_year?: number | null;
   detected_signal?: StabilizationSignal | null;
@@ -180,17 +194,76 @@ export function stabilizationBadge(block: StabilizedYearBlock | null): string | 
     : STABILIZATION_DEFAULT_BADGE;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Mar 2027" for an ISO date, or null when it does not parse. */
+export function fmtMonthYear(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${month} ${m[1]}` : null;
+}
+
+/** True when the block's default is anchored on the reopening date (FON-98). */
+export function isReopeningAnchored(block: StabilizedYearBlock | null): boolean {
+  return !!block && (block.anchor === 'reopening' || block.source === 'default_year_3_reopening');
+}
+
 /**
- * The year as the Overview card states it (FON-59 R-057):
- *   default → "Year 3 after close (default)"
- *   clamped → "Year 2 (default Year 3 is past the 2-year hold)"
- *   override → "Year N (your override)"
+ * FON-98 — which anchor the default stabilization rule counts from, exactly
+ * as the Overview and the Future P&L state it:
+ *   reopening → "Year 3 after reopening (Mar 2027)"
+ *   close     → "Year 3 after close"
+ * On an analyst override the rule still names the default it replaced, so the
+ * reader knows what "default" would have meant. Null without a block.
+ */
+export function stabilizationAnchorLabel(block: StabilizedYearBlock | null): string | null {
+  if (!block) return null;
+  const def = block.default_year ?? 3;
+  if (isReopeningAnchored(block)) {
+    const when = fmtMonthYear(block.reopening_date);
+    return when ? `Year ${def} after reopening (${when})` : `Year ${def} after reopening`;
+  }
+  return `Year ${def} after close`;
+}
+
+/**
+ * FON-98 — when the deal carries a reopening date the worker could NOT use as
+ * the anchor, say why (never silently fall back). Null otherwise.
+ */
+export function stabilizationAnchorFallbackNote(block: StabilizedYearBlock | null): string | null {
+  if (!block || !block.anchor_fallback_reason) return null;
+  const when = fmtMonthYear(block.reopening_date);
+  const date = when ? ` (${when})` : '';
+  switch (block.anchor_fallback_reason) {
+    case 'no_close_date':
+      return `The reopening date${date} could not be placed on the projection because the deal has no acquisition close date — set it on CAPEX, and the default will count from the reopening.`;
+    case 'reopening_before_projection':
+      return `Year 3 after the reopening date${date} falls before the projection starts, so the default counts from the acquisition close instead.`;
+    default:
+      return `The reopening date${date} could not anchor the default (${String(block.anchor_fallback_reason)}); it counts from the acquisition close instead.`;
+  }
+}
+
+/**
+ * The year as the Overview card states it (FON-59 R-057 / FON-98):
+ *   default          → "Year 3 after close (default)"
+ *   reopening anchor → "Year 5 — Year 3 after reopening (Mar 2027) (default)"
+ *   clamped          → "Year 2 (default Year 3 is past the 2-year hold)"
+ *   override         → "Year N (your override)"
  * A stale pre-R-057 block renders the bare "Year N".
  */
 export function stabilizationYearLabel(block: StabilizedYearBlock | null): string | null {
   if (!block) return null;
   const y = block.stabilized_year;
   if (block.source === 'analyst_override') return `Year ${y} (your override)`;
+  if (block.source === 'default_year_3_reopening' || (block.source === 'default_year_3' && isReopeningAnchored(block))) {
+    const def = block.default_year ?? 3;
+    return block.clamped
+      ? `Year ${y} (${stabilizationAnchorLabel(block)} is past the ${y}-year hold)`
+      : `Year ${y} — ${stabilizationAnchorLabel(block)} (default)`;
+  }
   if (block.source === 'default_year_3') {
     const def = block.default_year ?? 3;
     return block.clamped
@@ -216,14 +289,21 @@ export function stabilizationDetectedHint(block: StabilizedYearBlock | null): st
 export function stabilizationSignalNote(block: StabilizedYearBlock | null): string | null {
   if (!block) return null;
   const hint = stabilizationDetectedHint(block);
+  const fallback = stabilizationAnchorFallbackNote(block);
   if (block.source === 'analyst_override') {
-    return hint ? `Analyst-selected. ${hint}` : 'Analyst-selected.';
+    // FON-98 — name the default the override replaced, with its anchor.
+    const anchor = `Default would be ${stabilizationAnchorLabel(block)}.`;
+    return hint ? `Analyst-selected. ${anchor} ${hint}` : `Analyst-selected. ${anchor}`;
   }
-  if (block.source === 'default_year_3') {
+  if (block.source === 'default_year_3' || block.source === 'default_year_3_reopening') {
+    // FON-98 — the anchor in use, exactly: "Year 3 after reopening (Mar 2027)"
+    // or "Year 3 after close".
+    const anchor = stabilizationAnchorLabel(block);
     const base = block.clamped
-      ? `Default is Year ${block.default_year ?? 3} after acquisition close, clamped to the last projected year.`
-      : `Default: Year ${block.default_year ?? 3} after acquisition close.`;
-    return hint ? `${base} ${hint}` : `${base} Confirm or change it.`;
+      ? `Default is ${anchor}, clamped to the last projected year.`
+      : `Default: ${anchor}.`;
+    const withFallback = fallback ? `${base} ${fallback}` : base;
+    return hint ? `${withFallback} ${hint}` : `${withFallback} Confirm or change it.`;
   }
   return 'Derived from the projection. Confirm or change it.';
 }

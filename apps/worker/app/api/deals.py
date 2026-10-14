@@ -16,7 +16,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4, uuid5
 
@@ -186,6 +186,10 @@ class CreateDealBody(BaseModel):
     # Paired with target_irr as the Max Price Solver's hurdles; NULL =
     # not set (the solver never defaults a hurdle the analyst didn't set).
     target_moic: float | None = Field(default=None, ge=0.0, le=20.0)
+    # FON-98 — the reopening / re-flag date of a material repositioning
+    # (ISO ``YYYY-MM-DD``). When set, the stabilization default counts Year 3
+    # from the first full operating year after it; NULL = count from close.
+    reopening_date: date | None = None
 
 
 class UpdateDealBody(BaseModel):
@@ -218,6 +222,9 @@ class UpdateDealBody(BaseModel):
     target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
     # FON-68 — patch the per-deal target MOIC. Pass null to clear it.
     target_moic: float | None = Field(default=None, ge=0.0, le=20.0)
+    # FON-98 — the reopening / re-flag date; null clears it (the
+    # stabilization default returns to Year 3 after acquisition close).
+    reopening_date: date | None = None
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
     # current overrides — clients send the full merged map. Engines pick
@@ -280,6 +287,10 @@ class DealRecord(BaseModel):
     # analyst hasn't set one; the Max Price Solver 422s rather than
     # inventing a hurdle.
     target_moic: float | None = None
+    # FON-98 — reopening / re-flag date (ISO). NULL when the deal has none,
+    # or the live schema predates the column. Anchors the stabilization
+    # default (engines/stabilization.py) when set.
+    reopening_date: date | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → either a scalar (legacy) or
     # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
@@ -647,6 +658,31 @@ def _coerce_dt_optional(value: Any) -> datetime | None:
         return None
 
 
+def _coerce_date_optional(value: Any) -> date | None:
+    """A ``date`` from a DATE column (Postgres) or ISO text (SQLite); None
+    for null / unparseable — a bad stored value renders as "not set", never
+    as a guessed date."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return None
+
+
+def _bind_date(session: AsyncSession, value: date | None) -> date | str | None:
+    """How a ``date`` is bound for the live dialect: asyncpg wants a
+    ``datetime.date`` for a DATE column; SQLite stores ISO text."""
+    if value is None:
+        return None
+    is_sqlite = session.bind is not None and session.bind.dialect.name == "sqlite"
+    return value.isoformat() if is_sqlite else value
+
+
 def _row_to_record(row: dict[str, Any]) -> DealRecord:
     return DealRecord(
         id=UUID(str(row["id"])),
@@ -669,6 +705,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         sourcing_channel=row.get("sourcing_channel"),
         target_irr=_coerce_float(row.get("target_irr")),
         target_moic=_coerce_float(row.get("target_moic")),
+        reopening_date=_coerce_date_optional(row.get("reopening_date")),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
@@ -689,6 +726,7 @@ _DEAL_COLUMNS = (
 
 _PROPOSED_BRAND_CACHE_KEY = "fondok_deals_has_proposed_brand"
 _OPERATING_MODEL_CACHE_KEY = "fondok_deals_has_operating_model"
+_REOPENING_DATE_CACHE_KEY = "fondok_deals_has_reopening_date"
 
 
 async def _deals_has_column(
@@ -737,6 +775,13 @@ async def _deals_has_operating_model(session: AsyncSession) -> bool:
     """R-025 — does the live ``deals`` table carry ``operating_model``?"""
     return await _deals_has_column(
         session, "operating_model", _OPERATING_MODEL_CACHE_KEY
+    )
+
+
+async def _deals_has_reopening_date(session: AsyncSession) -> bool:
+    """FON-98 — does the live ``deals`` table carry ``reopening_date``?"""
+    return await _deals_has_column(
+        session, "reopening_date", _REOPENING_DATE_CACHE_KEY
     )
 
 
@@ -793,8 +838,13 @@ async def _deal_columns(session: AsyncSession) -> str:
     )
     # R-025 — same contract for ``operating_model``.
     if await _deals_has_operating_model(session):
-        return f"{cols}, operating_model"
-    return f"{cols}, NULL AS operating_model"
+        cols = f"{cols}, operating_model"
+    else:
+        cols = f"{cols}, NULL AS operating_model"
+    # FON-98 — same contract for ``reopening_date``.
+    if await _deals_has_reopening_date(session):
+        return f"{cols}, reopening_date"
+    return f"{cols}, NULL AS reopening_date"
 
 
 async def _write_audit(
@@ -973,6 +1023,18 @@ async def create_deal(
             "deals.create: operating_model=%r dropped — column absent on "
             "this schema", body.operating_model,
         )
+    # FON-98 — reopening_date, same old-schema contract.
+    has_reopening_date = await _deals_has_reopening_date(session)
+    reopening_date = body.reopening_date if has_reopening_date else None
+    if has_reopening_date:
+        params["reopening_date"] = _bind_date(session, body.reopening_date)
+        pb_col += ", reopening_date"
+        pb_val += ", :reopening_date"
+    elif body.reopening_date is not None:
+        logger.warning(
+            "deals.create: reopening_date=%s dropped — column absent on "
+            "this schema", body.reopening_date.isoformat(),
+        )
 
     await session.execute(
         text(
@@ -1008,6 +1070,9 @@ async def create_deal(
             "brand": body.brand,
             "proposed_brand": proposed_brand,
             "operating_model": operating_model,
+            "reopening_date": (
+                reopening_date.isoformat() if reopening_date else None
+            ),
         },
     )
     # Wave 3 W3.2 — every deal gets a Base scenario at create time so
@@ -1055,6 +1120,7 @@ async def create_deal(
         sourcing_channel=body.sourcing_channel,
         target_irr=body.target_irr,
         target_moic=body.target_moic,
+        reopening_date=reopening_date,
         created_at=now,
         updated_at=now,
     )
@@ -1232,6 +1298,17 @@ async def update_deal(
             "absent on this schema", deal_id,
         )
         changes.pop("operating_model")
+    if "reopening_date" in changes:
+        if not await _deals_has_reopening_date(session):
+            logger.warning(
+                "deals.update: reopening_date dropped for deal=%s — column "
+                "absent on this schema", deal_id,
+            )
+            changes.pop("reopening_date")
+        elif isinstance(changes["reopening_date"], date):
+            # FON-98 — carry the ISO string through the diff / audit trail;
+            # the SET loop below re-binds it for the live dialect.
+            changes["reopening_date"] = changes["reopening_date"].isoformat()
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
@@ -1318,6 +1395,12 @@ async def update_deal(
             else:
                 set_clauses.append(f"{field} = CAST(:{field} AS JSONB)")
             params[field] = json.dumps(value or {})
+        elif field == "reopening_date":
+            # FON-98 — a DATE column: asyncpg needs a ``date``, SQLite ISO text.
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = _bind_date(
+                session, date.fromisoformat(value) if isinstance(value, str) else value
+            )
         else:
             set_clauses.append(f"{field} = :{field}")
             params[field] = value

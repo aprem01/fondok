@@ -35,27 +35,109 @@ override (the same rule ``engine_runner._is_shadow_override`` applies to every
 scalar assumption). Stabilized NOI here is the operating NOI of that year; the
 exit NOI (the year hold+1 reversion) is a separate concept owned by Returns.
 
-Rani is still confirming whether the anchor is acquisition close or the
-re-flag date. The anchor is this ONE constant; projection Year 1 is the first
-year after close, so "Year 3 after close" is projection index 2.
+FON-98 (Rani + Eshan, 2026-10). The anchor is resolved, not a constant:
+
+* **No reopening date** — Year 3 counted from the **acquisition close**
+  (projection Year 1 is the first operating year after close, so "Year 3
+  after close" is projection index 2). Source ``default_year_3``.
+* **A material repositioning / re-flag** — the deal carries
+  ``deals.reopening_date``; Year 3 is counted from the **first full operating
+  year after reopening**, placed on the projection through the same calendar
+  the revenue engine uses (``projection_start_year``). Source
+  ``default_year_3_reopening``, anchor ``reopening``. A reopening that cannot
+  be placed (no acquisition close date to derive the projection calendar, or a
+  reopening whose Year 3 falls before the projection starts) falls back to the
+  close anchor and SAYS SO (``anchor_fallback_reason``) — it never guesses.
+
+The analyst's ``stabilization_year`` wins over either anchor, exactly as
+before. Goldens carry no reopening date, so they are byte-identical.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .timeline import parse_iso_date
+
 # FON-59 R-057 — the default stabilized year (1-based) and what it counts
-# from. Change the anchor HERE only if Rani lands on the re-flag date.
+# from when the deal has no reopening date (FON-98).
 DEFAULT_STABILIZATION_YEAR = 3
 DEFAULT_STABILIZATION_ANCHOR = "acquisition_close"
+REOPENING_STABILIZATION_ANCHOR = "reopening"
 
 # How the model-detected hint was found.
 StabilizationSignal = Literal["occupancy", "noi_plateau"]
 # Who owns the year on the block.
-StabilizationSource = Literal["default_year_3", "analyst_override"]
-StabilizationAnchor = Literal["acquisition_close"]
+StabilizationSource = Literal[
+    "default_year_3", "default_year_3_reopening", "analyst_override"
+]
+StabilizationAnchor = Literal["acquisition_close", "reopening"]
+# FON-98 — why a reopening date the deal DOES carry was not used as the anchor.
+StabilizationAnchorFallback = Literal[
+    "no_close_date",  # no acquisition close → no projection calendar
+    "reopening_before_projection",  # Year 3 after reopening predates Year 1
+]
+
+
+def _projection_start_year(acquisition_close_date: object) -> int | None:
+    """Calendar year of projection Year 1 — the revenue engine's rule
+    (``revenue.projection_start_year``: the year containing the first
+    operating month, close + 1 month). Imported lazily so this module stays
+    free of the revenue engine's imports."""
+    from .revenue import projection_start_year
+
+    if isinstance(acquisition_close_date, date):
+        acquisition_close_date = acquisition_close_date.isoformat()
+    return projection_start_year(
+        acquisition_close_date if isinstance(acquisition_close_date, str) else None
+    )
+
+
+def first_full_operating_year_after_reopening(reopening: date) -> int:
+    """Calendar year of the first FULL operating year after ``reopening``.
+
+    A hotel reopening on 1 January is open for that whole calendar year; any
+    later reopening makes the following calendar year the first full one.
+    """
+    return reopening.year if (reopening.month, reopening.day) == (1, 1) else reopening.year + 1
+
+
+def reopening_anchor_index(
+    *,
+    acquisition_close_date: object,
+    reopening_date: object,
+    n_years: int,
+) -> tuple[int | None, StabilizationAnchorFallback | None]:
+    """0-based projection index of "Year 3 after reopening", or why not.
+
+    ``(index, None)`` when the reopening places on the projection — the index
+    is clamped to the last projected year (the caller reports ``clamped``).
+    ``(None, reason)`` when the deal carries a reopening date that cannot be
+    used; ``(None, None)`` when there is no reopening date at all.
+    """
+    reopening = parse_iso_date(reopening_date)
+    if reopening is None or n_years <= 0:
+        return None, None
+    start_year = _projection_start_year(acquisition_close_date)
+    if start_year is None:
+        return None, "no_close_date"
+    index = _reopening_stabilized_calendar_year(reopening) - start_year
+    if index < 0:
+        return None, "reopening_before_projection"
+    return min(index, n_years - 1), None
+
+
+def _reopening_stabilized_calendar_year(reopening: date) -> int:
+    """Calendar year of Year ``DEFAULT_STABILIZATION_YEAR`` counted from the
+    first full operating year after ``reopening`` (that year is Year 1)."""
+    return (
+        first_full_operating_year_after_reopening(reopening)
+        + DEFAULT_STABILIZATION_YEAR
+        - 1
+    )
 
 
 def default_stabilized_year_index(n_years: int) -> int | None:
@@ -166,21 +248,32 @@ def resolve_stabilized_year_index(
     stabilized_occupancy: float | None,
     noi_by_year: list[float],
     stabilization_year: int | None = None,
+    acquisition_close_date: str | None = None,
+    reopening_date: str | None = None,
 ) -> int | None:
     """0-based index of THE stabilized year — the debt engine's entry point.
 
     FON-59 R-057: the analyst's ``stabilization_year`` when it names a
-    projected year, else the Year-3-after-close default clamped to the last
-    projected year. ``occupancy_by_year`` / ``stabilized_occupancy`` are kept
-    in the signature so every caller stays source-compatible; they feed only
-    the detected-year hint (:func:`resolve_stabilized_year`), never this index.
-    ``None`` only when ``noi_by_year`` is empty.
+    projected year, else the Year-3 default clamped to the last projected
+    year — counted from the reopening date when the deal has one that places
+    on the projection (FON-98), else from the acquisition close.
+    ``occupancy_by_year`` / ``stabilized_occupancy`` are kept in the signature
+    so every caller stays source-compatible; they feed only the detected-year
+    hint (:func:`resolve_stabilized_year`), never this index. ``None`` only
+    when ``noi_by_year`` is empty.
     """
     del occupancy_by_year, stabilized_occupancy  # hint inputs, not selectors
     n = len(noi_by_year)
     analyst = _analyst_index(stabilization_year, n)
     if analyst is not None:
         return analyst
+    reopening_index, _reason = reopening_anchor_index(
+        acquisition_close_date=acquisition_close_date,
+        reopening_date=reopening_date,
+        n_years=n,
+    )
+    if reopening_index is not None:
+        return reopening_index
     return default_stabilized_year_index(n)
 
 
@@ -199,15 +292,24 @@ class StabilizedYear(BaseModel):
     # 1-based model year the analyst sees ("Year 2").
     stabilized_year_index: Annotated[int, Field(ge=0)]
     stabilized_year: Annotated[int, Field(ge=1)]
-    # Who owns the year. ``default_year_3`` covers both "nobody set one" and
-    # "the analyst re-saved the default unchanged".
+    # Who owns the year. ``default_year_3`` / ``default_year_3_reopening``
+    # cover both "nobody set one" and "the analyst re-saved the default
+    # unchanged".
     source: StabilizationSource
     # The rule the default follows: ``default_year`` years after ``anchor``.
+    # FON-98: ``reopening`` when the deal's reopening date placed on the
+    # projection; ``acquisition_close`` otherwise.
     anchor: StabilizationAnchor = DEFAULT_STABILIZATION_ANCHOR
     default_year: Annotated[int, Field(ge=1)] = DEFAULT_STABILIZATION_YEAR
     # True when the default was pulled back to the last projected year because
-    # the hold is shorter than ``default_year`` (only ever on the default).
+    # the hold ends before ``default_year`` after the anchor (default only).
     clamped: bool = False
+    # FON-98 — the deal's reopening / re-flag date (ISO), echoed so the UI can
+    # say "Year 3 after reopening (Mar 2027)"; None when the deal has none.
+    reopening_date: str | None = None
+    # FON-98 — set ONLY when the deal carries a reopening date that could not
+    # anchor the default (so ``anchor`` fell back to the close). Never a guess.
+    anchor_fallback_reason: StabilizationAnchorFallback | None = None
     # The model-detected hint (occupancy reaches its stabilized assumption,
     # else the NOI plateau) — 1-based, shown beneath the year, never selects it.
     detected_year: Annotated[int, Field(ge=1)] | None = None
@@ -233,13 +335,19 @@ def build_stabilized_year(
     adr_by_year: list[float] | None = None,
     stabilized_occupancy: float | None = None,
     stabilization_year: int | None = None,
+    acquisition_close_date: str | None = None,
+    reopening_date: str | None = None,
 ) -> StabilizedYear | None:
     """Assemble the block for one projection, or ``None`` when no year resolves.
 
     ``stabilization_year`` is the analyst's 1-based model year. Out of range
     (or absent) falls back to the Year-3 default (clamped to the hold); equal
-    to the default it stays ``default_year_3`` — re-confirming is not an
-    override.
+    to the default it stays a default source — re-confirming is not an
+    override. FON-98: with ``reopening_date`` (and the ``acquisition_close_date``
+    that places it on the projection calendar) the default counts Year 3 from
+    the first full operating year after reopening. Both default to None, so a
+    caller that omits them gets the Year-3-after-close block byte-identical to
+    before.
     """
     n = len(total_revenue_by_year)
     detected_index, detected_signal = resolve_stabilized_year(
@@ -247,9 +355,32 @@ def build_stabilized_year(
         stabilized_occupancy=stabilized_occupancy,
         noi_by_year=cash_noi_by_year,
     )
-    default_index = default_stabilized_year_index(n)
-    if default_index is None:
+    close_default_index = default_stabilized_year_index(n)
+    if close_default_index is None:
         return None
+
+    # FON-98 — which anchor the default counts from.
+    reopening_index, fallback_reason = reopening_anchor_index(
+        acquisition_close_date=acquisition_close_date,
+        reopening_date=reopening_date,
+        n_years=n,
+    )
+    reopening = parse_iso_date(reopening_date)
+    if reopening_index is not None and reopening is not None:
+        default_index = reopening_index
+        anchor: StabilizationAnchor = REOPENING_STABILIZATION_ANCHOR
+        default_source: StabilizationSource = "default_year_3_reopening"
+        # Clamped when Year 3 after reopening lands past the last projected
+        # year — the hold ends before the asset stabilizes on this rule.
+        start_year = _projection_start_year(acquisition_close_date) or 0
+        default_clamped = (
+            _reopening_stabilized_calendar_year(reopening) - start_year
+        ) > default_index
+    else:
+        default_index = close_default_index
+        anchor = DEFAULT_STABILIZATION_ANCHOR
+        default_source = "default_year_3"
+        default_clamped = default_index < DEFAULT_STABILIZATION_YEAR - 1
 
     analyst_index = _analyst_index(stabilization_year, n)
     if analyst_index is not None and analyst_index != default_index:
@@ -257,11 +388,8 @@ def build_stabilized_year(
         source: StabilizationSource = "analyst_override"
     else:
         index = default_index
-        source = "default_year_3"
-    clamped = (
-        source == "default_year_3"
-        and index < DEFAULT_STABILIZATION_YEAR - 1
-    )
+        source = default_source
+    clamped = source != "analyst_override" and default_clamped
 
     revenue = total_revenue_by_year[index]
     # A pre-upgrade projection never carried ``noi_institutional``; the block
@@ -282,7 +410,10 @@ def build_stabilized_year(
         stabilized_year_index=index,
         stabilized_year=index + 1,
         source=source,
+        anchor=anchor,
         clamped=clamped,
+        reopening_date=reopening.isoformat() if reopening else None,
+        anchor_fallback_reason=fallback_reason,
         detected_year=(
             detected_index + 1
             if detected_index is not None and 0 <= detected_index < n
@@ -315,7 +446,11 @@ def build_stabilized_year(
 __all__ = [
     "DEFAULT_STABILIZATION_ANCHOR",
     "DEFAULT_STABILIZATION_YEAR",
+    "REOPENING_STABILIZATION_ANCHOR",
     "StabilizationAnchor",
+    "StabilizationAnchorFallback",
+    "first_full_operating_year_after_reopening",
+    "reopening_anchor_index",
     "StabilizationSignal",
     "StabilizationSource",
     "StabilizedYear",

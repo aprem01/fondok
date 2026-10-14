@@ -156,6 +156,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS operating_model TEXT",
     ),
     (
+        # FON-98 — the reopening / re-flag date of a material repositioning.
+        # Nullable; when set, the stabilization default counts Year 3 from the
+        # first full operating year after it instead of from the acquisition
+        # close (engines/stabilization.py). Read by the engine runner only
+        # when the column exists (catalog probe), so an un-migrated DB never
+        # 500s.
+        "deals.add_reopening_date",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS reopening_date DATE",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1292,6 +1302,12 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # R-025 — SQLite mirror of the Postgres operating_model ALTER.
         "deals.add_operating_model_sqlite",
         "ALTER TABLE deals ADD COLUMN operating_model TEXT",
+    ),
+    (
+        # FON-98 — SQLite mirror of the Postgres reopening_date ALTER (ISO
+        # text; SQLite has no DATE affinity).
+        "deals.add_reopening_date_sqlite",
+        "ALTER TABLE deals ADD COLUMN reopening_date TEXT",
     ),
     (
         "documents.create_table",

@@ -216,6 +216,13 @@ class ExpenseEngineInput(BaseModel):
     adr_by_year: list[float] | None = None
     stabilized_occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     stabilization_year: Annotated[int, Field(ge=1)] | None = None
+    # FON-98 — the stabilization anchor inputs. ``reopening_date`` (ISO) is
+    # the deal's reopening / re-flag date; with it the Year-3 default counts
+    # from the first full operating year after reopening, placed on the
+    # projection via ``acquisition_close_date`` (the same calendar anchor the
+    # revenue engine uses). Both None → Year 3 after close, byte-identical.
+    acquisition_close_date: str | None = None
+    reopening_date: str | None = None
     # E-016 — analyst per-line projection methods, keyed by a
     # ``PROJECTION_METHOD_LINES`` name. A line with no entry runs exactly as
     # before (the Kimpton goldens depend on that). ``keys`` is needed only to
@@ -735,6 +742,8 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             adr_by_year=payload.adr_by_year,
             stabilized_occupancy=payload.stabilized_occupancy,
             stabilization_year=payload.stabilization_year,
+            acquisition_close_date=payload.acquisition_close_date,
+            reopening_date=payload.reopening_date,
         )
 
         # E-016 — publish the ACTIVE method per line (default or override).

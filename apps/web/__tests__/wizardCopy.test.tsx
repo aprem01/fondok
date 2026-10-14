@@ -116,7 +116,7 @@ describe('R-013 — required-field legend and optional labels', () => {
     // Unstarred now means optional — no bracketed suffix anywhere on the step.
     expect(screen.getByText('Keys')).toBeInTheDocument();
     expect(screen.getByText('Hotel Name')).toBeInTheDocument();
-    expect(screen.getByText('Indicative Price')).toBeInTheDocument();
+    expect(screen.getByText('Purchase / Indicative Price')).toBeInTheDocument();
     expect(bodyText()).not.toMatch(/\(optional\)/i);
   });
 
@@ -146,7 +146,8 @@ describe('R-016 / R-017 — Return Profile step reads LIRR and the exact calibra
     const text = bodyText();
     expect(text).toContain('LIRR');
     expect(text.replace(/LIRR/g, '')).not.toContain('IRR');
-    expect(screen.getAllByText(/^Target LIRR: /)).toHaveLength(3);
+    // FON-100 — four presets (Core / Core Plus / Value Add / Opportunistic).
+    expect(screen.getAllByText(/^Target LIRR: /)).toHaveLength(4);
     const hint = screen.getByTestId('coach-hint').textContent ?? '';
     expect(hint).toContain('You can calibrate leverage and exit cap in the Returns section of the Overview.');
     expect(hint).not.toMatch(/fine-tune/i);
@@ -303,5 +304,103 @@ describe('R-025 — Operating model is captured on the Brand step and sent as `o
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ operating_model: null });
+  });
+});
+
+// ── FON-99 — Purchase / Indicative Price is parsed and SENT ──────────────
+describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', () => {
+  const priceInput = () => screen.getByPlaceholderText('$120-140M') as HTMLInputElement;
+  const reviewPrice = () => screen.getByText('Purchase / Indicative Price').nextElementSibling?.textContent;
+
+  /** Type the price on Step 1, then drive to Review. */
+  function driveToReviewWithPrice(price: string) {
+    render(<NewProjectPage />);
+    fireEvent.change(priceInput(), { target: { value: price } });
+    fillStep1AndAdvance();
+    clickNext();
+    stageFinancialAndAdvance();
+    clickNext(); // → Review
+  }
+
+  it('labels the field, explains that it seeds the purchase price and is editable on CAPEX → Deal Summary', () => {
+    render(<NewProjectPage />);
+    expect(screen.getByText('Purchase / Indicative Price')).toBeInTheDocument();
+    expect(bodyText()).toMatch(/Seeds the model's purchase price/);
+    expect(bodyText()).toMatch(/Editable later on CAPEX → Deal Summary/);
+    expect(screen.queryByTestId('price-parse-hint')).toBeNull(); // blank → no hint
+  });
+
+  it('"$36.4M" parses to 36,400,000, shows the parsed hint, shows on Review and is submitted', async () => {
+    driveToReviewWithPrice('$36.4M');
+    expect(reviewPrice()).toBe('$36,400,000');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: 36_400_000 });
+  });
+
+  it('the hint under the field reports the parse live', () => {
+    render(<NewProjectPage />);
+    fireEvent.change(priceInput(), { target: { value: '36,400,000' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent('Parsed as $36,400,000');
+    fireEvent.change(priceInput(), { target: { value: '$120-140M' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/midpoint \$130,000,000 .* \(range midpoint\)/);
+    fireEvent.change(priceInput(), { target: { value: 'TBD after NDA' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/Could not read a price/);
+  });
+
+  it('a range "$120-140M" stores the midpoint and Review says "range midpoint"', async () => {
+    driveToReviewWithPrice('$120-140M');
+    expect(reviewPrice()).toBe('$130,000,000 (range midpoint of $120-140M)');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: 130_000_000 });
+  });
+
+  it('unparseable text sends null and keeps the text as a note on Review — never a guessed number', async () => {
+    driveToReviewWithPrice('TBD after NDA');
+    expect(reviewPrice()).toBe('"TBD after NDA" — not read as a price; set it on CAPEX → Deal Summary');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
+  });
+
+  it('blank sends null', async () => {
+    driveToReviewWithPrice('');
+    expect(reviewPrice()).toBe('—');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
+  });
+});
+
+// ── FON-100 — Eshan's target levered IRR presets ─────────────────────────
+describe('FON-100 — Return Profile presets are Core 5–10 / Core Plus 7–12 / Value Add 11–17 / Opportunistic 18%+', () => {
+  it('renders the four cards with their bands and the hint lists the same bands', () => {
+    render(<NewProjectPage />);
+    fillStep1AndAdvance();
+    for (const band of ['Target LIRR: 5-10%', 'Target LIRR: 7-12%', 'Target LIRR: 11-17%', 'Target LIRR: 18%+']) {
+      expect(screen.getByText(band)).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: /^Core Plus/ })).toBeInTheDocument();
+    const hint = screen.getByTestId('coach-hint').textContent ?? '';
+    expect(hint).toContain('Core 5–10%');
+    expect(hint).toContain('Core Plus 7–12%');
+    expect(hint).toContain('Value Add 11–17%');
+    expect(hint).toContain('Opportunistic 18%+');
+    expect(hint).not.toContain('8–12%');
+  });
+
+  it('picking Core Plus submits return_profile "core-plus" and shows its band on Review', async () => {
+    render(<NewProjectPage />);
+    fillStep1AndAdvance();
+    fireEvent.click(screen.getByRole('button', { name: /^Core Plus/ }));
+    expect(screen.getByRole('button', { name: /^Core Plus/ })).toHaveAttribute('aria-pressed', 'true');
+    clickNext();
+    stageFinancialAndAdvance();
+    clickNext(); // → Review
+    expect(screen.getByText('Return Requirements').nextElementSibling?.textContent).toBe('Core Plus (7-12%)');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ return_profile: 'core-plus' });
   });
 });

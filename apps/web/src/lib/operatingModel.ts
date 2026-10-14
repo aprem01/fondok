@@ -42,25 +42,42 @@ export function operatingModelLabel(v: string | null | undefined): string | null
 }
 
 /**
+ * FON-102 — Sam's directional management-fee guidance, by operating model.
+ *
+ * DIRECTIONAL / ILLUSTRATIVE ONLY. This is not an underwriting standard: the
+ * actual fee varies by operator, brand, contract and asset, and the analyst
+ * sets `mgmt_fee_pct` themselves — nothing here changes it. The same text is
+ * printed on /methodology so the product and its documentation cannot drift.
+ */
+export const MGMT_FEE_GUIDANCE_DISCLAIMER =
+  'Directional guidance only — not an underwriting standard; actual fees vary by operator, brand, contract and asset. Nothing here changes the management fee assumption.';
+
+export const MGMT_FEE_GUIDANCE_BY_MODEL: Readonly<Record<OperatingModelId, string>> = {
+  third_party:
+    'Third-party operators typically charge a base fee of roughly 2–4% of total revenue, with a possible incentive fee on top (often a share of GOP or NOI above a hurdle).',
+  brand_managed:
+    'Brand-managed hotels typically carry a base fee of roughly 2–4% of total revenue, a possible incentive fee, and brand-related charges (marketing / programme fees, reservation and loyalty costs) that sit outside the base fee.',
+  owner_operated:
+    'Owner-operated hotels pay no external management fee by definition; analysts may still include an imputed fee to normalise expenses against managed comparables.',
+};
+
+/**
  * The management-fee context line shown beside the Management fee assumption.
  *
- * The only management-fee range documented in this repo is the USALI
- * validation rule `MGMT_FEE_RANGE` (base fee as a share of Total Revenue). It
- * is NOT specific to an operating model, so the hint says so rather than
- * presenting it as a per-operator benchmark. Returns null when no operating
- * model is captured — nothing is shown then.
+ * Reads: the operating model, Sam's directional guidance for that model
+ * (clearly marked directional / illustrative), and the one range the repo
+ * actually validates against — the USALI rule `MGMT_FEE_RANGE` (base fee as a
+ * share of Total Revenue), which applies to every operating model. Returns
+ * null when no operating model is captured — nothing is shown then.
  */
 export function mgmtFeeOperatingModelHint(v: string | null | undefined): string | null {
   const label = operatingModelLabel(v);
-  if (!label) return null;
+  if (!label || !isOperatingModelId(v)) return null;
+  const guidance = MGMT_FEE_GUIDANCE_BY_MODEL[v];
   const rule = rulesById.MGMT_FEE_RANGE;
-  if (!rule || rule.threshold_min == null || rule.threshold_max == null) {
-    return `Operating model: ${label}.`;
-  }
-  const lo = Math.round(rule.threshold_min * 1000) / 10;
-  const hi = Math.round(rule.threshold_max * 1000) / 10;
-  return (
-    `Operating model: ${label}. Validation range for the base fee is ${lo}–${hi}% of ` +
-    'total revenue (USALI check, all operating models) — no operator-specific range is documented.'
-  );
+  const usali =
+    rule && rule.threshold_min != null && rule.threshold_max != null
+      ? ` Validation range for the base fee is ${Math.round(rule.threshold_min * 1000) / 10}–${Math.round(rule.threshold_max * 1000) / 10}% of total revenue (USALI check, all operating models).`
+      : '';
+  return `Operating model: ${label}. ${guidance} ${MGMT_FEE_GUIDANCE_DISCLAIMER}${usali}`;
 }

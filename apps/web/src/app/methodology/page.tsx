@@ -11,6 +11,7 @@ import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import { ShowHintsAgainButton } from '@/components/help/HintOptionsMenu';
 import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
 import { CONCEPTS, CONCEPT_IDS, REGISTRY_VERSION } from '@/lib/ontology/concepts.generated';
+import { OPERATING_MODEL_OPTIONS, MGMT_FEE_GUIDANCE_BY_MODEL, MGMT_FEE_GUIDANCE_DISCLAIMER } from '@/lib/operatingModel';
 
 // Section 8 — rows come from the GENERATED registry module, never literals.
 // Critic cross-field checks (group "synthetic") are computed inputs with no
@@ -186,8 +187,22 @@ export default function MethodologyPage() {
             A method picked without a value holds the line&apos;s own Year-1 ratio, so no benchmark number is introduced. POR and PAR need the key count; without it the line stays on its default and says why. A line nobody has touched runs exactly as before, and the expense engine reports the active method and value for every line (<code className="text-[11.5px]">expense.line_methods</code>). A method change needs a justification note like any other override. The Future P&amp;L Excel export lists every line&apos;s method and value on its Assumptions sheet, and an edited workbook re-imports through the same preview and note rule. Changing a method there without a new value drops the old value, because its units belonged to the old method.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            <strong>Operating model.</strong> The new-deal wizard records whether the hotel is owner-operated, third-party managed or brand-managed. The Overview shows it and the Future P&amp;L shows it next to the management fee. It moves no number: the fee check is the general USALI 2–6% of total revenue range for every operating model.
+            <strong>Operating model.</strong> The new-deal wizard records whether the hotel is owner-operated, third-party managed or brand-managed. The Overview shows it and the Future P&amp;L shows it next to the management fee. It moves no number: the fee check is the general USALI 2–6% of total revenue range for every operating model, and nothing below changes the management fee assumption — the analyst sets it.
           </p>
+          <div className="mt-3 rounded-md border border-border bg-ink-50/40 p-3" data-testid="methodology-mgmt-fee-guidance">
+            <div className="text-[12px] font-semibold text-ink-900 mb-1.5">Management fee — directional guidance by operating model</div>
+            <p className="text-[11.5px] text-ink-500 leading-relaxed mb-2">
+              <em>{MGMT_FEE_GUIDANCE_DISCLAIMER}</em> The same text is shown beside the management fee on the Future P&amp;L.
+            </p>
+            <ul className="list-disc pl-5 space-y-1 text-[12px] text-ink-700 leading-relaxed">
+              {OPERATING_MODEL_OPTIONS.map((o) => (
+                <li key={o.id}>
+                  <span className="font-medium text-ink-900">{o.label}.</span>{' '}
+                  {MGMT_FEE_GUIDANCE_BY_MODEL[o.id]}
+                </li>
+              ))}
+            </ul>
+          </div>
         </Card>
 
         <Card className="p-5 mb-4" data-testid="methodology-future-pl">
@@ -218,7 +233,10 @@ export default function MethodologyPage() {
             &quot;Stabilized&quot; names one projection year, and every stabilized figure on every screen — Stabilized Occupancy, ADR, Revenue, NOI, NOI Margin, Yield on Cost, the IC memo&apos;s scenario summary and Scenario Analysis&apos; comparison row — is read from <em>that</em> year. It is published as a single block by the expense engine, so two surfaces cannot resolve it differently.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            The stabilization year defaults to <strong>Year 3 after acquisition close</strong> (badged &quot;Default — confirm&quot;); on a hold shorter than three years it is the last projected year, and the card says so. The analyst can override it in P&amp;L → Future P&amp;L → Assumptions (badged &quot;Analyst override&quot;; re-saving the default unchanged is not an override), and the same default year drives the Financing tab&apos;s stabilized DSCR and debt yield. The year in which occupancy first reaches the stabilized assumption (or NOI growth settles) is still shown beneath it as a <em>model-detected</em> hint, but it never selects the year — and stabilized NOI (that year&apos;s operating NOI) is a separate figure from the exit NOI the sale is capitalised on.
+            The stabilization year defaults to <strong>Year 3 of operations</strong> (badged &quot;Default — confirm&quot;); on a hold that ends sooner it is the last projected year, and the card says so. The analyst can override it in P&amp;L → Future P&amp;L → Assumptions (badged &quot;Analyst override&quot;; re-saving the default unchanged is not an override), and the same default year drives the Financing tab&apos;s stabilized DSCR and debt yield. The year in which occupancy first reaches the stabilized assumption (or NOI growth settles) is still shown beneath it as a <em>model-detected</em> hint, but it never selects the year — and stabilized NOI (that year&apos;s operating NOI) is a separate figure from the exit NOI the sale is capitalised on.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="methodology-stabilization-anchor">
+            <strong>What Year 3 counts from.</strong> With no reopening date the default counts from the <strong>acquisition close</strong>: projection Year 1 is the first operating year after close, so the default is projection Year 3 and the Overview reads &quot;Year 3 after close&quot;. For a <strong>material repositioning or re-flag</strong> the analyst sets the <strong>reopening / re-flag date</strong> on the Overview&apos;s Investment Profile card (stored on the deal as <code className="text-[11.5px]">reopening_date</code>; a plain deal field, no justification note). The default then counts Year 3 from the <em>first full operating year after reopening</em> — a hotel reopening in March 2027 has 2028 as its first full year, so Year 3 is 2030 — placed on the projection through the same calendar the Future P&amp;L column headers use, and the Overview and Future P&amp;L read &quot;Year 3 after reopening (Mar 2027)&quot; (source <code className="text-[11.5px]">default_year_3_reopening</code>). A reopening date Fondok cannot place — no acquisition close date to derive the calendar, or a reopening whose Year 3 precedes the projection — keeps the close anchor and says why; it never guesses. The analyst&apos;s override wins over either anchor, and the debt engine&apos;s stabilized DSCR and debt yield follow the same resolved year.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             The Stabilization Year is a <strong>reporting</strong> assumption: it selects which projected year the stabilized figures are read from. It moves no cash flow. Setting or changing it leaves the gross sale price, the levered and unlevered IRRs, the equity multiple and the terminal NOI bit-identical — there is a regression test that asserts exactly that. When no year resolves, every stabilized figure renders as a dash with a reason; none of them falls back to another year.
@@ -364,7 +382,7 @@ export default function MethodologyPage() {
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
-              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level. The Property Name is not a deal-row field — see below.
+              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level, the reopening / re-flag date — and the <strong>purchase price</strong>: the wizard&apos;s &quot;Purchase / Indicative Price&quot; field is parsed to whole dollars (&quot;$36.4M&quot;, &quot;36,400,000&quot;; a range such as &quot;$120-140M&quot; stores its <em>midpoint</em> and is labelled &quot;range midpoint&quot; on the Review step) and saved as <code className="text-[11.5px]">purchase_price</code>, which seeds the model&apos;s purchase price with this badge rather than &quot;Seed&quot;. Text that does not read as a price is kept as a note and sends nothing — the model keeps its seed until the analyst sets the price on CAPEX → Deal Summary, where it stays editable. The Property Name is not a deal-row field — see below.
             </BadgeRow>
           </div>
         </Card>
@@ -629,7 +647,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">The return profile is a preset.</span>{' '}
-              The Target LIRR control carries a Core / Value Add / Opportunistic preset. Choosing one stores it as the deal&apos;s <code className="text-[11.5px]">return_profile</code> tag and writes the band&apos;s midpoint (Value Add 12-18% → 15%; an open band such as 18%+ → its floor) as the target — an explicit action, never applied implicitly. The analyst can then edit the number; the tag stays as the preset it started from. While no target is set, &ldquo;Use profile midpoint&rdquo; writes the current preset&apos;s figure.
+              The Target LIRR control carries a preset for each return profile — <strong>Core 5–10%</strong>, <strong>Core Plus 7–12%</strong>, <strong>Value Add 11–17%</strong>, <strong>Opportunistic 18%+</strong> (target levered IRR bands; the same four appear on the wizard&apos;s Return Profile step). Choosing one stores it as the deal&apos;s <code className="text-[11.5px]">return_profile</code> tag and writes the band&apos;s midpoint (Value Add 11–17% → 14%; an open band such as 18%+ → its floor) as the target — an explicit action, never applied implicitly; nothing auto-fills a target. The analyst can then edit the number; the tag stays as the preset it started from. While no target is set, &ldquo;Use profile midpoint&rdquo; writes the current preset&apos;s figure. Deals created under the earlier bands keep their stored profile id and simply read the new band.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Benchmark only.</span>{' '}

@@ -126,11 +126,17 @@ export const integrations = [
 
 export const dealStages: DealStage[] = ['Teaser', 'Under NDA', 'LOI', 'PSA'];
 
+// FON-100 — Eshan's target levered IRR bands. The ids are persisted as the
+// deal's `return_profile` tag, so they never change; legacy deals carrying
+// `core` / `value-add` / `opportunistic` keep resolving. A preset is only ever
+// applied by an explicit analyst action — nothing auto-fills a target.
 export const returnProfiles = [
-  { id: 'core', label: 'Core', target: '8-12%', desc: 'Stabilized institutional cash flow with conservative leverage.' },
-  { id: 'value-add', label: 'Value Add', target: '12-18%', desc: 'Repositioning, PIP, or operating-leverage thesis with moderate execution risk.' },
+  { id: 'core', label: 'Core', target: '5-10%', desc: 'Stabilized institutional cash flow with conservative leverage.' },
+  { id: 'core-plus', label: 'Core Plus', target: '7-12%', desc: 'Stabilized asset with modest operational or capital upside and moderate leverage.' },
+  { id: 'value-add', label: 'Value Add', target: '11-17%', desc: 'Repositioning, PIP, or operating-leverage thesis with moderate execution risk.' },
   { id: 'opportunistic', label: 'Opportunistic', target: '18%+', desc: 'Development, distress, or adaptive reuse with significant execution risk.' },
 ];
+export type ReturnProfileId = 'core' | 'core-plus' | 'value-add' | 'opportunistic';
 
 // Standardized to the STR / CBRE chain-scale ladder Sam's review
 // flagged (institutional positioning ranges from economy through
@@ -664,7 +670,7 @@ export const kimptonAnglerOverview = {
   // positioning) so the deal detail can render the same intent the analyst
   // selected at deal creation. IRR target is sourced from `returnProfiles`.
   investmentProfile: {
-    returnProfile: 'value-add' as 'core' | 'value-add' | 'opportunistic',
+    returnProfile: 'value-add' as ReturnProfileId,
     positioning: 'luxury' as 'default' | 'luxury' | 'upscale' | 'economy',
   },
   acquisition: {

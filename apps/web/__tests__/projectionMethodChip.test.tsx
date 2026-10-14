@@ -239,12 +239,15 @@ describe('R-025 · operating model beside the management fee', () => {
     expect(screen.queryByTestId('mgmt-fee-operating-model')).toBeNull();
   });
 
-  it('names the operating model and only the documented (generic) fee range', () => {
+  it('names the operating model, Sam\'s directional guidance (marked as such) and the USALI validation range (FON-102)', () => {
     OPERATING_MODEL = 'third_party';
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const hint = screen.getByTestId('mgmt-fee-operating-model').textContent ?? '';
     expect(hint).toContain('Third-party operator');
+    expect(hint).toContain('2–4%');
+    expect(hint).toMatch(/incentive fee/);
+    expect(hint).toMatch(/Directional guidance only — not an underwriting standard/);
     expect(hint).toContain('2–6%');
-    expect(hint).toMatch(/no operator-specific range/);
+    expect(hint).not.toMatch(/no operator-specific range/);
   });
 });

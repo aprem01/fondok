@@ -116,6 +116,8 @@ import {
   stabilizationDetectedHint,
   stabilizationSignalNote,
   stabilizationYearLabel,
+  stabilizationAnchorLabel,
+  stabilizationAnchorFallbackNote,
   STABILIZED_NOI_LABEL,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
@@ -588,6 +590,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // FON-59 / R-048 (Sam's decision 4) — the analyst's PROPOSED brand, kept
   // apart from `brand` (the EXISTING flag). Never written by a document.
   const proposedBrand = deal?.proposed_brand?.trim() ?? '';
+  // FON-100 — Core Plus keeps the value-add section set (it carries a light
+  // capital / operational thesis, so Renovation and Stabilization still apply).
   const cfg: Cfg = isDevelopmentLike(dealType) ? 'dev' : (returnProfileId === 'core' ? 'core' : 'va');
   const keys = (deal?.keys && deal.keys > 0) ? deal.keys : undefined;
   const isDev = cfg === 'dev';
@@ -895,12 +899,33 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             },
           )
         : awa('stabYear', 'Stabilization Year', { reason: 'awaiting_analyst' });
+    // FON-98 — which anchor the Year-3 default counts from, exactly as the
+    // worker resolved it: "Year 3 after reopening (Mar 2027)" when the deal's
+    // reopening / re-flag date placed on the projection, else "Year 3 after
+    // close". A reopening date the worker could not use says why. The date
+    // itself is edited on the Investment Profile card above.
+    const stabAnchorRow = (): RowDef =>
+      stab
+        ? lnk(
+            'stabAnchor', 'Stabilization Anchor',
+            stabilizationAnchorLabel(stab) ?? '—',
+            '→ Investment Profile (reopening / re-flag date)', '',
+            {
+              where: stab.anchor === 'reopening'
+                ? `Reopening / re-flag date on the deal record${stab.reopening_date ? ` (${fmtISODate(stab.reopening_date)})` : ''}`
+                : 'Acquisition close date (no reopening / re-flag date on the deal)',
+              sub: stabilizationAnchorFallbackNote(stab)
+                ?? 'Default Year 3 of operations counts from the reopening / re-flag date when the deal has one, else from the acquisition close. Analyst-overridable on Future P&L.',
+            },
+          )
+        : awa('stabAnchor', 'Stabilization Anchor', { reason: 'awaiting_analyst' });
     // The model-detected year, directly beneath — a hint, never the selector.
     // Omitted when the projection yields no detection signal.
     const stabYearRows = (): RowDef[] =>
       stab?.detected_year != null
         ? [
             stabYearRow(),
+            stabAnchorRow(),
             cal('stabDetected', 'Model-detected Year', `Year ${stab.detected_year} — hint only`, {
               formula: stab.detected_signal === 'noi_plateau'
                 ? 'First projected year NOI growth settles to its terminal rate'
@@ -908,7 +933,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               sub: stabilizationDetectedHint(stab) ?? undefined,
             }),
           ]
-        : [stabYearRow()];
+        : [stabYearRow(), stabAnchorRow()];
     const stabOccRow = (): RowDef =>
       lnk('stabOcc', 'Stabilized Occupancy', pctv(stab?.stabilized_occupancy ?? undefined, 1),
         '→ Future P&L', 'pl',
@@ -1463,6 +1488,21 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 />
               </div>
             </div>
+            {/* FON-98 — the reopening / re-flag date (deals.reopening_date).
+                Rani + Eshan: the stabilization default is Year 3 of operations;
+                for a material repositioning / re-flag it counts from the
+                reopening date, else from the acquisition close. A deal column
+                (no justification note); saving re-runs the model so the
+                published stabilization block re-anchors. */}
+            <ReopeningDateField
+              value={deal?.reopening_date ?? null}
+              anchorLabel={stabilizationAnchorLabel(stab)}
+              fallbackNote={stabilizationAnchorFallbackNote(stab)}
+              onSave={(v) => void persist(
+                { reopening_date: v },
+                v ? 'Reopening date saved — re-running the model (stabilization re-anchors)…' : 'Reopening date cleared — re-running the model (Year 3 after close)…',
+              )}
+            />
             {/* FON-68 / R-049 — ONE target control: the return-profile preset
                 fills Target LIRR (explicit action) and the analyst edits the
                 number. Source of truth for the benchmark strip + Returns →
@@ -1739,6 +1779,77 @@ function ProfileSelect({
         {!known && value && <option value={value}>{value}</option>}
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+      <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-98 — Reopening / re-flag date (deals.reopening_date). An analyst input
+// (blue assumption dot). Blank = no reopening → the stabilization default
+// counts Year 3 from the acquisition close; a date → Year 3 from the first
+// full operating year after it. Blur / Enter saves; the × clears (writes null).
+// ─────────────────────────────────────────────────────────────────────────
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function ReopeningDateField({
+  value, anchorLabel, fallbackNote, onSave,
+}: {
+  value: string | null;
+  /** The anchor the latest run resolved ("Year 3 after reopening (Mar 2027)"). */
+  anchorLabel: string | null;
+  /** Why a saved reopening date could not anchor the default, when it could not. */
+  fallbackNote: string | null;
+  onSave: (v: string | null) => void;
+}) {
+  const shown = value && ISO_DATE.test(value) ? value : '';
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => { setDraft(shown); }, [shown]);
+  const commit = () => {
+    const t = draft.trim();
+    if (t === '') { if (shown) onSave(null); return; }
+    if (!ISO_DATE.test(t)) { setDraft(shown); return; }
+    if (t === shown) return;
+    onSave(t);
+  };
+  const hint = fallbackNote
+    ?? (shown
+      ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
+      : 'Optional · material repositioning / re-flag: the stabilization default counts Year 3 from the first full year after this date; blank = Year 3 after close');
+  return (
+    <div data-testid="reopening-date-field" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ ...profileLabel, display: 'flex', alignItems: 'center', gap: 5 }}>
+        <ProvenanceDot state="assumption" size={7} title="Analyst input" />
+        Reopening / re-flag date
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <input
+          type="date"
+          aria-label="Reopening / re-flag date"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') setDraft(shown);
+          }}
+          style={{
+            flex: 1, minWidth: 0, fontSize: 11.5, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
+            background: palette.surfaceTint, border: `1px solid ${palette.disabledBorder}`, borderRadius: 6,
+            padding: '4px 8px',
+          }}
+        />
+        {shown && (
+          <button
+            type="button"
+            aria-label="Clear reopening / re-flag date"
+            title="Clear — the default returns to Year 3 after acquisition close"
+            onClick={() => onSave(null)}
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: palette.textMuted, fontSize: 13, lineHeight: 1, padding: '0 2px', fontFamily: 'inherit' }}
+          >
+            ×
+          </button>
+        )}
+      </div>
       <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
     </div>
   );
