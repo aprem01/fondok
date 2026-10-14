@@ -486,3 +486,88 @@ async def test_projection_apply_method_and_value_stay_coherent() -> None:
     assert fo[m("rooms_dept_expense")]["value"] == "por"
     assert fo[v("rooms_dept_expense")] == {"value": 42.5, "note": "staffing model"}
     assert v("sales_marketing") not in fo
+
+
+# ─────────────────── FON-95 part 2 — penetration targets by year ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_projection_export_carries_by_year_target_rows_for_the_hold() -> None:
+    """One row per metric per model year; the by-year entry is the value (the
+    scalar shorthand is its own key), its note rides along, blank = not set."""
+    from app.api.pl_roundtrip import export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "hold_years": 3,
+        "index_mpi_target_by_year": {"value": [None, 110.0], "note": "Share gain in Year 2"},
+        "index_ari_target": {"value": 100.0, "note": "parity"},
+    })
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wa = _sheet(resp.body, "Assumptions")
+    rows = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    assert [k for k in rows if k.startswith("index_mpi_target_by_year.")] == [
+        "index_mpi_target_by_year.1", "index_mpi_target_by_year.2", "index_mpi_target_by_year.3",
+    ]
+    assert "index_ari_target_by_year.3" in rows and "index_ari_target_by_year.4" not in rows
+    r2 = rows["index_mpi_target_by_year.2"]
+    assert wa.cell(row=r2, column=3).value == 110.0
+    assert wa.cell(row=r2, column=5).value == "analyst_override"
+    assert wa.cell(row=r2, column=7).value == "Yes"
+    assert wa.cell(row=r2, column=8).value == "Share gain in Year 2"
+    # The scalar ARI never leaks into the by-year ARI rows.
+    assert wa.cell(row=rows["index_ari_target_by_year.1"], column=3).value is None
+    assert wa.cell(row=rows["index_ari_target_by_year.1"], column=5).value == "not set"
+
+
+@pytest.mark.asyncio
+async def test_projection_apply_folds_by_year_rows_into_the_list_override() -> None:
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "index_mpi_target_by_year": {"value": [None, 110.0], "note": "old"},
+    })
+    body = ProjApplyBody(changes=[
+        {"key": "index_mpi_target_by_year.3", "new_value": 115, "note": "Post-PIP share gain"},
+        {"key": "index_mpi_target_by_year.2", "new_value": 110, "note": "x"},   # unchanged
+        {"key": "index_ari_target_by_year.1", "new_value": 98, "note": ""},     # note required → skipped
+        {"key": "index_ari_target_by_year.2", "new_value": 0, "note": "zero"},  # not an index → skipped
+    ])
+    async with get_session_factory()() as s:
+        res = await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert [a["key"] for a in res["applied"]] == ["index_mpi_target_by_year.3"]
+    assert sorted(x["reason"] for x in res["skipped"]) == ["non_numeric", "note_required", "unchanged"]
+
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    fo = json.loads(row[0])
+    # Untouched years keep their entry; the list grows to the edited year; one note.
+    assert fo["index_mpi_target_by_year"] == {"value": [None, 110.0, 115.0], "note": "Post-PIP share gain"}
+    assert "index_ari_target_by_year" not in fo
+    assert "index_mpi_target_by_year.3" not in fo  # never a dotted key on the deal
+
+
+@pytest.mark.asyncio
+async def test_projection_by_year_routes_are_tenant_scoped() -> None:
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import, export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={"index_mpi_target_by_year": {"value": [120.0], "note": "n"}})
+    body = ProjApplyBody(changes=[{"key": "index_mpi_target_by_year.1", "new_value": 125, "note": "n"}])
+    async with get_session_factory()() as s:
+        with pytest.raises(HTTPException) as exc:
+            await export_projections(deal_id=deal_id, session=s, auth=_auth(_OTHER))
+        assert exc.value.status_code == 404
+        with pytest.raises(HTTPException) as exc2:
+            await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth(_OTHER))
+        assert exc2.value.status_code == 404
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    assert json.loads(row[0])["index_mpi_target_by_year"] == {"value": [120.0], "note": "n"}

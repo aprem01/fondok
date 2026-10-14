@@ -44,6 +44,9 @@ from ..export.pl_workbooks import (
     ASSUMPTION_BY_KEY,
     ASSUMPTIONS,
     HIST_LINES,
+    assumption_spec,
+    by_year_target_assumptions,
+    split_by_year_target_key,
     HistCell,
     HistColumn,
     HistCurrent,
@@ -393,15 +396,18 @@ async def _projection_state(
 
 async def _assumption_state(
     session: AsyncSession, deal_id: UUID, tenant: str
-) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
-    """``(current values, sources, raw field_overrides)`` for the editable keys.
+) -> tuple[dict[str, Any], dict[str, str], dict[str, Any], tuple[Any, ...]]:
+    """``(current values, sources, raw field_overrides, specs)`` for the editable keys.
 
     Values come from the engine-input loader (the same resolution
     ``GET /deals/{id}/assumption_sources`` serves), so an override already on
     the deal shows as the current value with source ``analyst_override``. A
     key the loader does not carry is left blank — never a UI default.
+    ``specs`` is ``ASSUMPTIONS`` plus the FON-95 by-year penetration target
+    rows for this deal's ``hold_years``.
     """
     from ..services.engine_runner import _load_engine_inputs
+    from ..services.index_methodology import coerce_target_list
     from .deals import _coerce_overrides
 
     base = await _load_engine_inputs(session, str(deal_id), tenant_id=tenant)
@@ -443,7 +449,22 @@ async def _assumption_state(
         )
         for k in values
     }
-    return values, srcs, overrides
+    # FON-95 part 2 — one row per metric per model year. The value is the
+    # by-year entry only (never the scalar shorthand, which is its own key);
+    # blank = no by-year target for that year.
+    try:
+        hold = int(float(base.get("hold_years") or 5))
+    except (TypeError, ValueError):
+        hold = 5
+    by_year_specs = by_year_target_assumptions(hold)
+    for spec in by_year_specs:
+        list_key, year = split_by_year_target_key(spec.key)  # type: ignore[misc]
+        ov = overrides.get(list_key)
+        lst = coerce_target_list(ov.get("value") if isinstance(ov, dict) else ov)
+        v = lst[year - 1] if year - 1 < len(lst) else None
+        values[spec.key] = v
+        srcs[spec.key] = "analyst_override" if v is not None else ""
+    return values, srcs, overrides, ASSUMPTIONS + by_year_specs
 
 
 async def _active_line_methods(
@@ -483,7 +504,12 @@ async def export_projections(
     tenant = str(auth.tenant_id)
     await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant)
     headers, values = await _projection_state(session, deal_id, tenant)
-    cur, srcs, overrides = await _assumption_state(session, deal_id, tenant)
+    cur, srcs, overrides, specs = await _assumption_state(session, deal_id, tenant)
+
+    def _note_for(key: str) -> str | None:
+        by = split_by_year_target_key(key)
+        return _override_note(overrides.get(by[0] if by is not None else key))
+
     rows = [
         {
             "key": spec.key,
@@ -493,9 +519,9 @@ async def export_projections(
             "source": srcs.get(spec.key) or ("not set" if cur.get(spec.key) is None else ""),
             "method": spec.method,
             "note_required": _needs_note(spec.key),
-            "current_note": _override_note(overrides.get(spec.key)),
+            "current_note": _note_for(spec.key),
         }
-        for spec in ASSUMPTIONS
+        for spec in specs
     ]
     data = build_projections_workbook(
         deal_id=str(deal_id),
@@ -532,7 +558,7 @@ async def preview_projections_import(
     await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant)
     data = await _read_upload(file)
     _headers, values = await _projection_state(session, deal_id, tenant)
-    cur, _srcs, _ov = await _assumption_state(session, deal_id, tenant)
+    cur, _srcs, _ov, _specs = await _assumption_state(session, deal_id, tenant)
     try:
         return parse_projections_import(
             data,
@@ -579,16 +605,19 @@ async def apply_projections_import(
 
     tenant = str(auth.tenant_id)
     await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant)
-    cur, _srcs, overrides = await _assumption_state(session, deal_id, tenant)
+    cur, _srcs, overrides, _specs = await _assumption_state(session, deal_id, tenant)
 
     merged: dict[str, Any] = dict(overrides)
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     method_changed_lines: set[str] = set()
     value_changed_lines: dict[str, str] = {}
+    # FON-95 part 2 — by-year target rows fold into their JSON list override.
+    by_year_changes: dict[str, dict[int, float]] = {}
+    by_year_notes: dict[str, str] = {}
     batch_keys = {ch.key for ch in body.changes}
     for ch in body.changes:
-        spec = ASSUMPTION_BY_KEY.get(ch.key)
+        spec = assumption_spec(ch.key)
         if spec is None:
             skipped.append({"key": ch.key, "reason": "unknown_key"})
             continue
@@ -635,6 +664,17 @@ async def apply_projections_import(
         if not note and _needs_note(ch.key):
             skipped.append({"key": ch.key, "reason": "note_required"})
             continue
+        by = split_by_year_target_key(ch.key)
+        if by is not None:
+            list_key, year = by
+            if float(value) <= 0:
+                skipped.append({"key": ch.key, "reason": "non_numeric"})
+                continue
+            by_year_changes.setdefault(list_key, {})[year] = float(value)
+            if note and list_key not in by_year_notes:
+                by_year_notes[list_key] = note
+            applied.append({"key": ch.key, "old_value": now_val, "new_value": value, "note": note})
+            continue
         pm = split_projection_method_key(ch.key)
         if pm is not None:
             mkey = f"projection_methods.{pm[0]}.method"
@@ -662,6 +702,21 @@ async def apply_projections_import(
                 merged[mkey] = {"value": active, "note": note} if note else active
     for line in method_changed_lines - set(value_changed_lines):
         merged.pop(projection_method_key(line, "value"), None)
+
+    # FON-95 part 2 — fold the per-year rows into the list the runner reads
+    # (index y-1 = model year y; untouched years keep their current entry).
+    if by_year_changes:
+        from ..services.index_methodology import coerce_target_list
+
+        for list_key, per_year in by_year_changes.items():
+            existing = overrides.get(list_key)
+            current = coerce_target_list(existing.get("value") if isinstance(existing, dict) else existing)
+            size = max(len(current), max(per_year))
+            new_list: list[float | None] = list(current) + [None] * (size - len(current))
+            for year, v in per_year.items():
+                new_list[year - 1] = v
+            note = by_year_notes.get(list_key, "")
+            merged[list_key] = {"value": new_list, "note": note} if note else new_list
 
     if applied:
         await update_deal(

@@ -38,6 +38,7 @@ import {
   type IndexFigure,
   type IndexMethodId,
   type IndexMethodologyResponse,
+  type IndexYearRow,
 } from '@/lib/api';
 import { applyOverridePatch, NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE, requiresNote } from '@/lib/overrideNote';
 import { sourceLabel } from '@/lib/provenance';
@@ -338,6 +339,260 @@ function AssumptionRow({
   );
 }
 
+// ─────────────────────────── FON-95 part 2 — targets by year ───────────────────────────
+
+export const INDEX_MPI_BY_YEAR_KEY = 'index_mpi_target_by_year';
+export const INDEX_ARI_BY_YEAR_KEY = 'index_ari_target_by_year';
+export const RGI_DERIVED_NOTE = 'RGI is derived — MPI × ARI ÷ 100 — not an input.';
+
+const fmtIdx = (v: number | null | undefined): string =>
+  typeof v === 'number' && Number.isFinite(v) ? v.toFixed(1) : '—';
+
+/** Parse one grid cell: '' → null (not set), else index points (a ratio like 1.10 reads as 110). */
+export function parseIndexPoints(raw: string): number | null | undefined {
+  const t = raw.replace(/[\s,]/g, '');
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n <= 0) return undefined; // invalid
+  return n <= 3 ? n * 100 : n;
+}
+
+/** The two by-year lists a Save writes (index y−1 = model year y); null = clear the key. */
+export function byYearPatch(
+  drafts: { mpi: string[]; ari: string[] },
+): { patch: Record<string, unknown>; invalid: boolean } {
+  let invalid = false;
+  const toList = (xs: string[]): (number | null)[] | null => {
+    const out = xs.map((s) => {
+      const v = parseIndexPoints(s);
+      if (v === undefined) invalid = true;
+      return v ?? null;
+    });
+    return out.some((v) => v != null) ? out : null;
+  };
+  const mpi = toList(drafts.mpi);
+  const ari = toList(drafts.ari);
+  return { patch: { [INDEX_MPI_BY_YEAR_KEY]: mpi, [INDEX_ARI_BY_YEAR_KEY]: ari }, invalid };
+}
+
+function statusText(r: IndexYearRow, metric: 'occupancy' | 'adr'): string {
+  const s = metric === 'occupancy' ? r.occupancy_status : r.adr_status;
+  if (s === 'driven') return 'indexed';
+  if (s === 'benchmark_unavailable') return 'benchmark unavailable';
+  return 'model growth';
+}
+
+function IndexByYearGrid({
+  data,
+  overrides,
+  disabled,
+  onSave,
+  onReset,
+}: {
+  data: IndexMethodologyResponse;
+  overrides: Record<string, unknown>;
+  disabled: boolean;
+  onSave: (patch: Record<string, unknown>, note: string) => void;
+  onReset: () => void;
+}) {
+  const rows = data.by_year ?? [];
+  const applies = !!data.by_year_applies;
+  const [editing, setEditing] = useState(false);
+  const [drafts, setDrafts] = useState<{ mpi: string[]; ari: string[] }>({ mpi: [], ari: [] });
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const needNote = requiresNote(INDEX_MPI_BY_YEAR_KEY) || requiresNote(INDEX_ARI_BY_YEAR_KEY);
+  const overridden = INDEX_MPI_BY_YEAR_KEY in overrides || INDEX_ARI_BY_YEAR_KEY in overrides;
+  if (!rows.length) return null;
+
+  const start = () => {
+    // Only the by-year entries are editable here; an all-years scalar shows as
+    // the placeholder so the analyst sees what applies when a cell is blank.
+    setDrafts({
+      mpi: rows.map((r) => (r.mpi_target.source === 'by_year' && r.mpi_target.value != null ? r.mpi_target.value.toFixed(1) : '')),
+      ari: rows.map((r) => (r.ari_target.source === 'by_year' && r.ari_target.value != null ? r.ari_target.value.toFixed(1) : '')),
+    });
+    setNote('');
+    setError(null);
+    setEditing(true);
+  };
+  const save = () => {
+    const { patch, invalid } = byYearPatch(drafts);
+    if (invalid) {
+      setError('Each target is index points (100 = parity with the benchmark); leave a year blank to use the all-years target.');
+      return;
+    }
+    const writesValue = Object.values(patch).some((v) => v != null);
+    if (writesValue && needNote && !note.trim()) {
+      setError(NOTE_REQUIRED_MESSAGE);
+      return;
+    }
+    onSave(patch, note.trim());
+    setEditing(false);
+  };
+  const setDraft = (metric: 'mpi' | 'ari', k: number, value: string) =>
+    setDrafts((d) => {
+      const next = { mpi: [...d.mpi], ari: [...d.ari] };
+      next[metric][k] = value;
+      return next;
+    });
+  const draftRgi = (k: number): string => {
+    const m = parseIndexPoints(drafts.mpi[k] ?? '') ?? (rows[k].mpi_target.source === 'scalar' ? rows[k].mpi_target.value : null);
+    const a = parseIndexPoints(drafts.ari[k] ?? '') ?? (rows[k].ari_target.source === 'scalar' ? rows[k].ari_target.value : null);
+    return m != null && a != null ? ((m * a) / 100).toFixed(1) : '—';
+  };
+  const yearLabel = (r: IndexYearRow) =>
+    `${r.year === 1 ? 'Base year (Year 1)' : `Year ${r.year}`}${r.calendar_year != null ? ` · ${r.calendar_year}` : ''}`;
+  const targetCell = (t: IndexYearRow['mpi_target']) =>
+    t.value == null ? (
+      <span className="text-ink-400">—</span>
+    ) : (
+      <span className={t.source === 'by_year' ? 'text-brand-700 font-medium' : 'text-ink-900'} title={t.note ?? undefined}>
+        {fmtIdx(t.value)}
+        <span className="ml-1 text-[9.5px] uppercase tracking-wide text-ink-400">{t.source === 'by_year' ? 'yr' : 'all'}</span>
+      </span>
+    );
+
+  return (
+    <div className="space-y-2" data-testid="index-by-year-grid">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Penetration targets by year</div>
+          <div className="text-[11px] text-ink-500 mt-0.5">
+            Each model year&apos;s occupancy = that year&apos;s benchmark occupancy × MPI ÷ 100 and ADR = benchmark ADR × ARI ÷ 100.
+            A by-year target beats the all-years target above; a blank year uses the all-years target where set, else the
+            model&apos;s own growth. {RGI_DERIVED_NOTE}
+          </div>
+        </div>
+        {!editing ? (
+          <div className="flex gap-2 whitespace-nowrap">
+            <button
+              type="button"
+              className="text-brand-700 font-semibold disabled:text-ink-400 disabled:cursor-not-allowed"
+              onClick={start}
+              disabled={disabled || !applies}
+              title={applies ? undefined : data.by_year_disabled_reason ?? undefined}
+              data-testid="index-by-year-edit"
+            >
+              Edit targets
+            </button>
+            {overridden && (
+              <button type="button" className="text-ink-500" onClick={onReset} disabled={disabled} data-testid="index-by-year-reset">
+                Reset targets
+              </button>
+            )}
+          </div>
+        ) : null}
+      </div>
+      {!applies && (
+        <div className="text-[11px] text-warning-700" data-testid="index-by-year-disabled">
+          {data.by_year_disabled_reason ?? 'Targets by year do not feed Projections yet.'}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]" data-testid="index-by-year-table">
+          <thead>
+            <tr className="text-ink-500 text-[10.5px] border-b border-border">
+              <th className="text-left font-medium py-1 pr-3">Model year</th>
+              <th className="text-right font-medium py-1 pr-3">Benchmark occ.</th>
+              <th className="text-right font-medium py-1 pr-3">Benchmark ADR</th>
+              <th className="text-right font-medium py-1 pr-3">MPI target</th>
+              <th className="text-right font-medium py-1 pr-3">ARI target</th>
+              <th className="text-right font-medium py-1 pr-3" title={RGI_DERIVED_NOTE}>
+                RGI (derived)
+              </th>
+              <th className="text-right font-medium py-1 pr-3">Model occ.</th>
+              <th className="text-right font-medium py-1 pr-3">Model ADR</th>
+              <th className="text-left font-medium py-1">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, k) => (
+              <tr key={r.year} className="border-b border-border/40 align-top" data-testid={`index-by-year-row-${r.year}`}>
+                <td className="py-1.5 pr-3 whitespace-nowrap text-ink-900 font-medium">{yearLabel(r)}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceText(r.benchmark_occupancy)}>
+                  <div>{fmtOcc(r.benchmark_occupancy.value)}</div>
+                  <div className="text-[10px] text-ink-400 max-w-[200px] truncate" data-testid={`index-by-year-bench-occ-src-${r.year}`}>
+                    {r.benchmark_occupancy.value == null ? r.benchmark_occupancy.detail ?? 'No source' : figureSourceText(r.benchmark_occupancy)}
+                  </div>
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceText(r.benchmark_adr)}>
+                  <div>{fmtAdr(r.benchmark_adr.value)}</div>
+                  <div className="text-[10px] text-ink-400 max-w-[200px] truncate">
+                    {r.benchmark_adr.value == null ? r.benchmark_adr.detail ?? 'No source' : figureSourceText(r.benchmark_adr)}
+                  </div>
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">
+                  {editing ? (
+                    <input
+                      aria-label={`Year ${r.year} MPI target`}
+                      className="w-16 border border-border rounded px-1 text-right"
+                      placeholder={r.mpi_target.source === 'scalar' && r.mpi_target.value != null ? `all ${fmtIdx(r.mpi_target.value)}` : '—'}
+                      value={drafts.mpi[k] ?? ''}
+                      onChange={(e) => setDraft('mpi', k, e.target.value)}
+                    />
+                  ) : (
+                    targetCell(r.mpi_target)
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">
+                  {editing ? (
+                    <input
+                      aria-label={`Year ${r.year} ARI target`}
+                      className="w-16 border border-border rounded px-1 text-right"
+                      placeholder={r.ari_target.source === 'scalar' && r.ari_target.value != null ? `all ${fmtIdx(r.ari_target.value)}` : '—'}
+                      value={drafts.ari[k] ?? ''}
+                      onChange={(e) => setDraft('ari', k, e.target.value)}
+                    />
+                  ) : (
+                    targetCell(r.ari_target)
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600" title={RGI_DERIVED_NOTE} data-testid={`index-by-year-rgi-${r.year}`}>
+                  {editing ? draftRgi(k) : fmtIdx(r.rgi_derived)}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={r.engine_occupancy != null ? `Last run: ${fmtOcc(r.engine_occupancy)} (after Year-1 displacement)` : undefined}>
+                  {fmtOcc(r.occupancy)}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={r.engine_adr != null ? `Last run: ${fmtAdr(r.engine_adr)}` : undefined}>
+                  {fmtAdr(r.adr)}
+                </td>
+                <td className="py-1.5 text-[11px] text-ink-500" title={r.reason ?? undefined} data-testid={`index-by-year-status-${r.year}`}>
+                  occ {statusText(r, 'occupancy')} · ADR {statusText(r, 'adr')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editing && (
+        <div className="flex flex-col gap-1 items-end">
+          <input
+            aria-label="Targets by year note"
+            className="w-72 border border-border rounded px-1"
+            placeholder={NOTE_PLACEHOLDER}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          {error && (
+            <span className="text-[10.5px] text-danger-700" data-testid="index-by-year-error">
+              {error}
+            </span>
+          )}
+          <div className="flex gap-2">
+            <button type="button" className="text-brand-700 font-semibold" onClick={save} disabled={disabled} data-testid="index-by-year-save">
+              Save targets
+            </button>
+            <button type="button" className="text-ink-500" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IndexMethodologyPanel({ dealId }: { dealId: string }) {
   const { toast } = useToast();
   const { deal, refresh: refreshDeal } = useDeal(dealId);
@@ -486,9 +741,23 @@ export function IndexMethodologyPanel({ dealId }: { dealId: string }) {
       </table>
       <div className="text-[11px] text-ink-500" data-testid="index-feeds-note">
         {feeds
-          ? 'These assumptions feed Projections now: "Use STR rates in the model" is on, so your overrides set Year-1 occupancy / ADR (benchmark × penetration target) and the growth rates.'
+          ? 'These assumptions feed Projections now: "Use STR rates in the model" is on, so your overrides set each year’s occupancy / ADR (benchmark × penetration target) and the growth rates.'
           : 'These assumptions do not feed Projections yet: turn on "Use STR rates in the model" in Market Overview to apply your overrides. Until then Projections stay on their current basis.'}
       </div>
+      <IndexByYearGrid
+        data={data}
+        overrides={overrides}
+        disabled={busy}
+        onSave={(patch, note) => void write(patch, note, feeds, 'Penetration targets by year saved')}
+        onReset={() =>
+          void write(
+            { [INDEX_MPI_BY_YEAR_KEY]: null, [INDEX_ARI_BY_YEAR_KEY]: null },
+            '',
+            feeds,
+            'Penetration targets by year cleared',
+          )
+        }
+      />
     </Card>
   );
 }

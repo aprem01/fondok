@@ -18,6 +18,7 @@ import {
   emptySeries,
   MARKET_FORECAST_NONE_REASON,
   MARKET_FORECAST_UNPLACED_REASON,
+  targetForColumn,
   type IaColumns,
   type StrTrendAPI,
 } from '@/components/project/pl/indexAnalysisModel';
@@ -303,6 +304,80 @@ describe('computePenetration (FON-95)', () => {
     const t = row(rows, 'oppty-target');
     expect(t.cells.every((c) => c.text === '—')).toBe(true);
     expect(t.reason).toMatch(/No MPI \/ ARI penetration target set/);
+  });
+
+  it('FON-95 pt 2 — forecast index cells show the per-year target where set, hold the STR index elsewhere, derive RGI', () => {
+    const all105 = { value: 105, source: 'scalar' as const };
+    const rows = computePenetration({
+      ...base,
+      targets: null,
+      targetsByYear: { mpi: [null, { value: 115, source: 'by_year' }, null], ari: [all105, all105, all105] },
+    });
+    const mpi = row(rows, 'mpi');
+    // Year 1 (2025): no MPI target → the published index held flat, as before.
+    expect(mpi.cells[6].text).toBe('103.2');
+    expect(mpi.cells[6].trace).toMatch(/held flat/);
+    // Year 2 (2026): the by-year target, named as such.
+    expect(mpi.cells[7].text).toBe('115.0');
+    expect(mpi.cells[7].trace).toMatch(/MPI target 115\.0 \(set for Year 2\)/);
+    expect(mpi.cells[7].trace).toMatch(/drives Year 2 occupancy/);
+    // Historical columns never read a target.
+    expect(mpi.cells[5].text).toBe('103.2');
+    expect(mpi.cells[4].text).toBe('—');
+    const ari = row(rows, 'ari');
+    expect(ari.cells[6].text).toBe('105.0');
+    expect(ari.cells[6].trace).toMatch(/all-years target/);
+    // RGI is derived from the two targets — never an input; held flat where only one exists.
+    const rgi = row(rows, 'rgi');
+    expect(rgi.cells[7].value).toBeCloseTo((115 * 105) / 100, 9);
+    expect(rgi.cells[7].text).toBe('120.8');
+    expect(rgi.cells[7].trace).toMatch(/RGI derived = MPI target 115\.0 \(set for Year 2\) × ARI target 105\.0 \(all-years target\) ÷ 100/);
+    expect(rgi.cells[6].text).toBe('97.2');
+    expect(rgi.cells[6].trace).toMatch(/held flat/);
+  });
+
+  it('FON-95 pt 2 — revenue opportunity at target is priced per year against that year’s target', () => {
+    const comp2 = emptySeries(9);
+    comp2.occupancy[5] = comp.occupancy[5]; comp2.adr[5] = comp.adr[5]; comp2.revpar[5] = comp.revpar[5];
+    comp2.occupancy[7] = 0.7; comp2.adr[7] = 310; comp2.revpar[7] = 217;
+    const subj2 = emptySeries(9);
+    subj2.occupancy[5] = 0.64; subj2.adr[5] = 250; subj2.revpar[5] = 160;
+    subj2.occupancy[7] = 0.75; subj2.adr[7] = 280; subj2.revpar[7] = 210;
+    const rows = computePenetration({
+      ...base,
+      subject: subj2,
+      comp: comp2,
+      targets: { mpi: 103.2, ari: 105 },
+      targetsByYear: {
+        mpi: [null, { value: 115, source: 'by_year' }, null],
+        ari: [null, { value: 100, source: 'by_year' }, null],
+      },
+    });
+    const t = row(rows, 'oppty-target');
+    // Year 2: by-year MPI 115 / ARI 100 on the forecast 365-day year.
+    const targetRevpar = 0.7 * 1.15 * 310 * 1.0;
+    expect(t.cells[7].value).toBeCloseTo((targetRevpar - 210) * 132 * 365, 3);
+    expect(t.cells[7].trace).toMatch(/MPI target 115\.0, set for this year/);
+    expect(t.cells[7].trace).toMatch(/ARI target 100\.0, set for this year/);
+    // The historical anchor still prices at the all-years figures.
+    expect(t.cells[5].trace).toMatch(/MPI target 103\.2, all-years/);
+    expect(t.reason).toBeNull();
+    // Without any target at all the reason names both routes.
+    expect(row(computePenetration({ ...base, targets: null, targetsByYear: { mpi: [null], ari: [null] } }), 'oppty-target').reason)
+      .toMatch(/all years, or by year/);
+  });
+
+  it('FON-95 pt 2 — targetForColumn: by-year for a forecast column, else the all-years scalar', () => {
+    const hist = cols2025.columns[5];
+    const y2 = cols2025.columns[7];
+    const byYear = { mpi: [null, { value: 115, source: 'by_year' as const }, null], ari: [null, null, null] };
+    expect(targetForColumn(y2, 'mpi', { mpi: 103.2, ari: null }, byYear)).toEqual({ value: 115, source: 'by_year' });
+    expect(targetForColumn(y2, 'ari', { mpi: 103.2, ari: 105 }, byYear)).toEqual({ value: 105, source: 'scalar' });
+    expect(targetForColumn(hist, 'mpi', { mpi: 103.2, ari: null }, byYear)).toEqual({ value: 103.2, source: 'scalar' });
+    expect(targetForColumn(y2, 'ari', null, byYear)).toBeNull();
+    // The worker's per-year effective scalar keeps its "all-years" label.
+    const scalarYear = { mpi: [null, { value: 110, source: 'scalar' as const }], ari: [null, null] };
+    expect(targetForColumn(y2, 'mpi', null, scalarYear)).toEqual({ value: 110, source: 'scalar' });
   });
 
   it('indices vs the comp set are the STR-published values held flat where the subject is projected; vs market computed', () => {

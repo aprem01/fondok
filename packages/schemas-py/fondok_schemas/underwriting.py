@@ -314,6 +314,55 @@ class InvestmentEngineOutput(BaseModel):
 # ─────────────── Revenue Engine ───────────────
 
 
+IndexDriverStatus = Literal["driven", "no_target", "benchmark_unavailable"]
+IndexTargetSource = Literal["by_year", "scalar"]
+
+
+class IndexDriverYear(BaseModel):
+    """FON-95 part 2 — how ONE model year's occupancy / ADR was (or was not)
+    driven by an Index Analysis penetration target.
+
+    The engine runner builds one per model year when the STR basis is on and
+    the analyst has set a penetration target (``index_mpi_target_by_year`` /
+    ``index_ari_target_by_year``, or the scalar ``index_mpi_target`` /
+    ``index_ari_target`` as the all-years shorthand). Each record carries the
+    benchmark the year was indexed against (value + document + page, or the
+    growth step it was grown by), the target, the derived RGI, and the
+    resulting figure. A year with no benchmark value is flagged
+    ``benchmark_unavailable`` — the engine then keeps its own growth from
+    the last driven year and nothing is invented. The revenue engine echoes
+    the list on its output with ``occupancy`` / ``adr`` filled from the year
+    it actually ran, so the Index Analysis grid and the Future P&L agree.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    calendar_year: int | None = None
+    method: str | None = None
+    benchmark_occupancy: float | None = None
+    benchmark_adr: float | None = None
+    #: One line naming the benchmark basis ("STR comp-set TTM grown 2 years
+    #: at +1.2% market occupancy growth" / "CBRE Horizons 2027 forecast").
+    benchmark_occupancy_source: str | None = None
+    benchmark_adr_source: str | None = None
+    benchmark_doc: str | None = None
+    benchmark_page: int | None = None
+    mpi_target: float | None = None
+    ari_target: float | None = None
+    mpi_target_source: IndexTargetSource | None = None
+    ari_target_source: IndexTargetSource | None = None
+    #: RGI is DERIVED — MPI × ARI ÷ 100 — never an input.
+    rgi_derived: float | None = None
+    #: The resulting occupancy / ADR for the year (filled by the engine from
+    #: the year it ran; the runner pre-fills benchmark × target).
+    occupancy: float | None = None
+    adr: float | None = None
+    occupancy_status: IndexDriverStatus = "no_target"
+    adr_status: IndexDriverStatus = "no_target"
+    reason: str | None = None
+
+
 class RevenueEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -385,6 +434,20 @@ class RevenueEngineInput(BaseModel):
     # guessed year.
     acquisition_close_date: str | None = None
 
+    # FON-95 part 2 — explicit per-year occupancy / ADR drivers. Index ``y - 1``
+    # holds model year ``y``; ``None`` = not driven for that year. A driven
+    # year REPLACES the compounded figure for that year and becomes the anchor
+    # the following undriven years compound from (at ``occupancy_growth`` /
+    # ``adr_growth``), so an analyst's penetration path flows forward without
+    # inventing a figure for a year that has none. ``None`` / empty on both
+    # lists runs the legacy compounding byte-identically (every golden deal).
+    # ``index_drivers_by_year`` is the provenance the runner built for those
+    # drivers (benchmark + target + status per year); the engine echoes it on
+    # its output with the resulting figures filled in.
+    occupancy_by_year_override: list[Annotated[float, Field(gt=0.0, le=1.0)] | None] | None = None
+    adr_by_year_override: list[Annotated[float, Field(gt=0)] | None] | None = None
+    index_drivers_by_year: list[IndexDriverYear] = Field(default_factory=list)
+
     @model_validator(mode="after")
     def _check_segment_mix_sums_to_one(self) -> "RevenueEngineInput":
         if not self.segments:
@@ -445,6 +508,10 @@ class RevenueEngineOutput(BaseModel):
     # Empty by default so legacy callers/tests are unaffected; the UI reads
     # it the same way it reads the assumption ``__sources__`` badge map.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
+    # FON-95 part 2 — the per-year Index Analysis drivers the run was built
+    # on (benchmark, target, derived RGI, resulting occupancy / ADR, status).
+    # Empty when no penetration target drove the run.
+    index_drivers_by_year: list[IndexDriverYear] = Field(default_factory=list)
 
 
 # ─────────────── P&L Engine ───────────────

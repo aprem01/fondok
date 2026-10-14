@@ -102,6 +102,7 @@ from ..engines import (
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from ..engines.stabilization import resolve_stabilized_year_index
 from fondok_schemas.underwriting import (
+    IndexDriverYear,
     PIPDisplacement,
     RevenueEngineInput,
     RevenueSegment,
@@ -1908,6 +1909,18 @@ async def _load_engine_inputs(
                     sources, analyst_override_paths, path, prior, value
                 )
                 continue
+            # FON-95 part 2 — Index Analysis penetration targets BY YEAR (JSON
+            # lists, index y-1 = model year y, null = unset). Routed before the
+            # scalar guard; the STR-basis block below reads them off ``base``
+            # (``index_methodology.build_index_drivers``) — with the toggle off
+            # they sit on base and move nothing.
+            if path in _OVERRIDE_INDEX_BY_YEAR_KEYS and isinstance(value, list):
+                prior = base.get(path)
+                base[path] = value
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior, value
+                )
+                continue
             # FON-63 — a monthly SOFR forward curve (list of annualized rates).
             # Route it before the scalar guard drops it; the debt builder reads
             # base['sofr_curve'].
@@ -2347,6 +2360,7 @@ async def _load_engine_inputs(
         # No override → no read, no change (every golden deal).
         from .index_methodology import (
             apply_index_assumptions,
+            build_index_drivers,
             load_index_rows,
             wants_benchmark,
         )
@@ -2368,6 +2382,28 @@ async def _load_engine_inputs(
             rows=index_rows,
             str_basis_sources=STR_BASIS_SOURCES,
             derived_sources=frozenset({SOURCE_DERIVED_FROM_REVPAR_GROWTH}),
+        ):
+            source_fields.pop(key, None)
+        # FON-95 part 2 — penetration targets BY YEAR drive each model year's
+        # occupancy / ADR (benchmark for that year × target), by-year beating
+        # the scalar; the lists land on ``base`` for the revenue input. No
+        # target → no change (every golden deal).
+        from ..engines.revenue import projection_calendar_years as _cal_years
+
+        try:
+            _hold = int(base.get("hold_years") or 5)
+        except (TypeError, ValueError):
+            _hold = 5
+        for key in build_index_drivers(
+            base,
+            sources,
+            analyst_override_paths,
+            rows=index_rows,
+            str_basis_sources=STR_BASIS_SOURCES,
+            hold_years=_hold,
+            calendar_years=_cal_years(
+                _iso_date_or_none(base.get("acquisition_close_date")), _hold
+            ),
         ):
             source_fields.pop(key, None)
 
@@ -2686,6 +2722,25 @@ _OVERRIDE_CAPEX_LIST_KEYS: frozenset[str] = frozenset({
     "capex_plan.pip.timing_pct_by_year",
     "capex_plan.roi_projects",
 })
+# FON-95 part 2 — Index Analysis penetration targets by model year (lists).
+_OVERRIDE_INDEX_BY_YEAR_KEYS: frozenset[str] = frozenset({
+    "index_mpi_target_by_year",
+    "index_ari_target_by_year",
+})
+
+
+def _coerce_driver_list(raw: Any) -> list[float | None] | None:
+    """``base["index_*_by_year"]`` → the revenue input's per-year override list,
+    or ``None`` when nothing is driven (so the engine runs its legacy path)."""
+    if not isinstance(raw, list) or not any(v is not None for v in raw):
+        return None
+    out: list[float | None] = []
+    for v in raw:
+        try:
+            out.append(float(v) if v is not None else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out
 
 def _parse_segment_override_path(path: str) -> tuple[str, str] | None:
     """Split ``segments.<name>.<field>`` into ``(name, field)``.
@@ -6211,6 +6266,18 @@ def _build_input_for(
                 if base.get("acquisition_close_date") not in (None, "")
                 else None
             ),
+            # FON-95 part 2 — per-year Index Analysis drivers parked by
+            # ``index_methodology.build_index_drivers`` (STR basis on + a
+            # penetration target). Absent → None / [] → legacy compounding.
+            occupancy_by_year_override=_coerce_driver_list(
+                base.get("index_occupancy_by_year")
+            ),
+            adr_by_year_override=_coerce_driver_list(base.get("index_adr_by_year")),
+            index_drivers_by_year=[
+                IndexDriverYear(**d)
+                for d in (base.get("index_drivers_by_year") or [])
+                if isinstance(d, dict)
+            ],
         )
 
     if engine_name == "fb":

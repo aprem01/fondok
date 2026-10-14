@@ -605,8 +605,35 @@ export interface PenetrationInput {
   subjectKeys: number | null;
   /** Comp-set room count — the named roster, which EXCLUDES the subject. */
   compKeys: number | null;
-  /** The analyst's MPI / ARI targets (index points) from Index methodology. */
+  /** The analyst's all-years MPI / ARI targets (index points) from Index methodology. */
   targets: { mpi: number | null; ari: number | null } | null;
+  /** FON-95 part 2 — the effective ANALYST-SET target per MODEL YEAR as the
+   *  worker resolved it (index ordinal − 1; `by_year` beats the analyst's
+   *  all-years `scalar`; null = no target that year). Forecast columns read
+   *  these; historical columns and a missing entry fall back to `targets`. */
+  targetsByYear?: { mpi: (YearTarget | null)[]; ari: (YearTarget | null)[] } | null;
+}
+
+/** One year's effective penetration target and which key it came from. */
+export interface YearTarget {
+  value: number;
+  source: 'by_year' | 'scalar';
+}
+
+/** The MPI / ARI target that applies to one column — the per-year effective
+ *  target for a forecast column that has one, else the all-years scalar. */
+export function targetForColumn(
+  col: IaColumn,
+  metric: 'mpi' | 'ari',
+  targets: PenetrationInput['targets'],
+  byYear: PenetrationInput['targetsByYear'],
+): YearTarget | null {
+  if (col.kind === 'forecast' && col.ordinal != null && byYear) {
+    const t = byYear[metric][col.ordinal - 1];
+    if (t && Number.isFinite(t.value) && t.value > 0) return { value: t.value, source: t.source };
+  }
+  const s = targets?.[metric] ?? null;
+  return s != null && Number.isFinite(s) && s > 0 ? { value: s, source: 'scalar' } : null;
 }
 
 // (current / prior) - 1, returning null when either side is missing/zero.
@@ -681,12 +708,40 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
   const ckv = i.compKeys != null && i.compKeys > 0 ? i.compKeys : null;
   const idx = (k: number) => columns[k];
 
-  // STR-published indices: the TTM anchor column; held flat across the
-  // forecast where the subject is projected (STR publishes no comp-set
-  // forecast). Pre-anchor history is blank — STR anonymizes prior-year comps.
-  // Absent published indices, subject ÷ comp where both exist.
+  // STR-published indices: the TTM anchor column; across the forecast the
+  // analyst's penetration TARGET for that model year where one is set
+  // (FON-95 part 2 — by-year beats the all-years scalar; RGI is derived from
+  // the two), else the published index held flat where the subject is
+  // projected (STR publishes no comp-set forecast). Pre-anchor history is
+  // blank — STR anonymizes prior-year comps. Absent published indices,
+  // subject ÷ comp where both exist.
+  // The index rows read ONLY the per-year effective targets the worker resolved
+  // (analyst-set: by-year, else the analyst's all-years scalar) — never the
+  // document default, which is the published index itself.
+  const forecastTarget = (k: number, metricKey: 'mpi' | 'ari' | 'rgi'): { value: number; trace: string } | null => {
+    const col = idx(k);
+    if (col.kind !== 'forecast' || !i.targetsByYear) return null;
+    const yearLabel = col.ordinal != null ? `Year ${col.ordinal}` : col.label;
+    const describe = (t: YearTarget, m: string) =>
+      `${m} target ${t.value.toFixed(1)} (${t.source === 'by_year' ? `set for ${yearLabel}` : 'all-years target'})`;
+    if (metricKey === 'rgi') {
+      const m = targetForColumn(col, 'mpi', null, i.targetsByYear);
+      const a = targetForColumn(col, 'ari', null, i.targetsByYear);
+      if (!m || !a) return null;
+      return {
+        value: (m.value * a.value) / 100,
+        trace: `RGI derived = ${describe(m, 'MPI')} × ${describe(a, 'ARI')} ÷ 100 — RGI is never an input`,
+      };
+    }
+    const t = targetForColumn(col, metricKey, null, i.targetsByYear);
+    if (!t) return null;
+    return {
+      value: t.value,
+      trace: `Analyst ${describe(t, metricKey.toUpperCase())} — drives ${yearLabel} ${metricKey === 'mpi' ? 'occupancy' : 'ADR'} (benchmark × target ÷ 100) while "Use STR rates in the model" is on`,
+    };
+  };
   const publishedRow = (
-    key: string,
+    key: 'mpi' | 'ari' | 'rgi',
     label: string,
     published: number | null,
     subj: (number | null)[],
@@ -696,6 +751,8 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
     key,
     label,
     cells: Array.from({ length: n }, (_, k) => {
+      const target = forecastTarget(k, key);
+      if (target) return cell(target.value, (v) => v.toFixed(1), target.trace);
       if (published != null) {
         if (k < anchor) return dash;
         if (k === anchor) return cell(published, (v) => v.toFixed(1), `STR-published ${label} for the trailing-twelve-month window (${published.toFixed(1)})`);
@@ -852,12 +909,14 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
       );
     }),
   });
-  const mpiT = i.targets?.mpi ?? null;
-  const ariT = i.targets?.ari ?? null;
-  const noTarget =
-    mpiT == null || ariT == null
-      ? 'No MPI / ARI penetration target set — set both on Index methodology to see the opportunity at target'
-      : null;
+  // At-target opportunity, per column: the target that applies to THAT year
+  // (by-year where set, else the all-years scalar).
+  const anyTarget = columns.some(
+    (c) => targetForColumn(c, 'mpi', i.targets, i.targetsByYear) && targetForColumn(c, 'ari', i.targets, i.targetsByYear),
+  );
+  const noTarget = anyTarget
+    ? null
+    : 'No MPI / ARI penetration target set — set both on Index methodology (all years, or by year) to see the opportunity at target';
   rows.push({
     key: 'oppty-target',
     label: 'Revenue Opportunity at Target',
@@ -866,14 +925,17 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
       const sr = i.subject.revpar[k];
       const co = i.comp.occupancy[k];
       const ca = i.comp.adr[k];
-      if (kv == null || sr == null || co == null || ca == null || mpiT == null || ariT == null) return dash;
+      const mt = targetForColumn(idx(k), 'mpi', i.targets, i.targetsByYear);
+      const at = targetForColumn(idx(k), 'ari', i.targets, i.targetsByYear);
+      if (kv == null || sr == null || co == null || ca == null || !mt || !at) return dash;
       const days = daysForColumn(idx(k));
-      const targetRevpar = co * (mpiT / 100) * ca * (ariT / 100);
+      const targetRevpar = co * (mt.value / 100) * ca * (at.value / 100);
       const v = (targetRevpar - sr) * kv * days;
+      const which = (t: YearTarget) => (t.source === 'by_year' ? ', set for this year' : ', all-years');
       return cell(
         v,
         (x) => `${x < 0 ? '−' : ''}$${Math.round(Math.abs(x)).toLocaleString('en-US')}`,
-        `(target RevPAR ${usd(targetRevpar)} = comp-set occupancy ${pctS(co)} × MPI target ${mpiT.toFixed(1)} ÷ 100 × comp-set ADR ${usd(ca)} × ARI target ${ariT.toFixed(1)} ÷ 100 − subject RevPAR ${usd(sr)}) × ${kv} rooms × ${days} days`,
+        `(target RevPAR ${usd(targetRevpar)} = comp-set occupancy ${pctS(co)} × MPI target ${mt.value.toFixed(1)}${which(mt)} ÷ 100 × comp-set ADR ${usd(ca)} × ARI target ${at.value.toFixed(1)}${which(at)} ÷ 100 − subject RevPAR ${usd(sr)}) × ${kv} rooms × ${days} days`,
       );
     }),
   });
