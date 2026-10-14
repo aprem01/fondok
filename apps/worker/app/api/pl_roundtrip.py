@@ -48,6 +48,7 @@ from ..export.pl_workbooks import (
     HistColumn,
     HistCurrent,
     WorkbookFormatError,
+    benchmark_column_values,
     build_historicals_workbook,
     build_projections_workbook,
     hist_cell_id,
@@ -60,6 +61,7 @@ from ..export.pl_workbooks import (
     to_number,
 )
 from .deals import _assert_deal_belongs_to_tenant
+from .documents import load_market_data
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -497,12 +499,21 @@ async def export_projections(
         }
         for spec in ASSUMPTIONS
     ]
+    # FON-97 — the same market-data block the web's Benchmark column reads;
+    # None (no column) when the deal carries no P&L benchmark.
+    market = await load_market_data(session, deal_id=deal_id, tenant_id=UUID(tenant))
+    benchmark = (
+        benchmark_column_values(market.pnl_benchmark.categories)
+        if market.pnl_benchmark is not None and market.pnl_benchmark.categories
+        else None
+    )
     data = build_projections_workbook(
         deal_id=str(deal_id),
         deal_name=await _deal_name(session, deal_id, tenant),
         year_headers=headers,
         values=values,
         assumptions=rows,
+        benchmark=benchmark,
     )
     await log_audit(
         session,

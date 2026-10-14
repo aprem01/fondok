@@ -102,7 +102,17 @@ import {
   type ProjectionMethodLine,
 } from './MethodChip';
 import { mgmtFeeOperatingModelHint } from '@/lib/operatingModel';
-import BenchmarkComparison from './BenchmarkComparison'; // R-067 — read-only Benchmark column
+import BenchmarkComparison, { type BenchmarkBlock } from './BenchmarkComparison'; // R-067 — read-only Benchmark detail
+// FON-97 — the in-table Benchmark sub-column (Base-year group), context-wired like MethodChip.
+import {
+  BenchmarkCell,
+  BenchmarkColumnContext,
+  BenchmarkHeaderCell,
+  benchmarkColumnCtx,
+  readStoredBenchmarkToggle,
+  storeBenchmarkToggle,
+} from './BenchmarkColumn';
+import { useDealBenchmark } from '@/lib/hooks/useDealBenchmark';
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -625,6 +635,17 @@ export default function ProjectionsSection({
   // default; every ratio is computed from the same engine year values the
   // Amount cells print.
   const [showPct, setShowPct] = useState(true);
+  // FON-97 — the deal's P&L benchmark (one fetch, shared with the detail
+  // panel) and the "Benchmark" header switch. Default ON when a benchmark
+  // exists; the choice is remembered per device (localStorage, try/catch —
+  // storage that is blocked just means the switch resets next visit).
+  const { block: benchmarkBlock } = useDealBenchmark(dealId);
+  const [showBenchmark, setShowBenchmark] = useState<boolean>(() => readStoredBenchmarkToggle() ?? true);
+  const toggleBenchmark = useCallback(() => {
+    const next = !showBenchmark;
+    storeBenchmarkToggle(next);
+    setShowBenchmark(next);
+  }, [showBenchmark]);
 
   // FON-41 #2 — the acquisition close date. This is the deal assumption the
   // TIMELINE engine is built on (``engine_runner`` reads
@@ -912,6 +933,9 @@ export default function ProjectionsSection({
         onInc={() => setProjYearsSel(Math.min(forecastCount, shownForecast + 1))}
         showPct={showPct}
         onTogglePct={() => setShowPct((v) => !v)}
+        benchmarkAvailable={benchmarkBlock != null}
+        showBenchmark={showBenchmark}
+        onToggleBenchmark={toggleBenchmark}
       />
 
       <AssumptionsPanel
@@ -933,6 +957,7 @@ export default function ProjectionsSection({
           exitCapRate={exitCapRate}
           closeDateIso={closeDateIso}
           showPct={showPct}
+          benchmark={showBenchmark ? benchmarkBlock : null}
           basePeriodLabel={basePeriodLabel}
           exitColumn={
             // The Exit Year belongs to the FULL horizon. When the "Show"
@@ -953,7 +978,7 @@ export default function ProjectionsSection({
         </MethodChipContext.Provider>
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
-      <BenchmarkComparison dealId={dealId} modelYear={years[0] ?? null} />
+      <BenchmarkComparison block={benchmarkBlock} modelYear={years[0] ?? null} />
     </Card>
     </CellCommentsProvider>
   );
@@ -1058,8 +1083,18 @@ interface ColumnLayout {
   hasExit: boolean;
   subCols: number;
   showPct: boolean;
+  /** FON-97 — the Base-year group carries one extra "Benchmark" sub-column. */
+  benchmarkCol: boolean;
+  /** Sub-columns in year group ``i`` (the Base year is wider with a benchmark). */
+  spanFor: (i: number) => number;
 }
-const ColumnLayoutContext = createContext<ColumnLayout>({ hasExit: true, subCols: 4, showPct: true });
+const ColumnLayoutContext = createContext<ColumnLayout>({
+  hasExit: true,
+  subCols: 4,
+  showPct: true,
+  benchmarkCol: false,
+  spanFor: () => 4,
+});
 
 /** The deal under the table — what a cell's trace click needs to open the
  *  lineage drawer for the right deal. Empty on a mock / unmounted host, in
@@ -1178,6 +1213,7 @@ function SectionBand({ label, span }: { label: string; span: number }) {
 
 function ProjectionsTable({
   years, exitCapRate, closeDateIso, exitColumn, stabilizedYearIndex, showPct, basePeriodLabel,
+  benchmark = null,
 }: {
   years: ProjYear[];
   exitCapRate: number;
@@ -1189,6 +1225,9 @@ function ProjectionsTable({
   showPct: boolean;
   /** E-014 — the primary statement's period for the base column's basis line. */
   basePeriodLabel: string | null;
+  /** FON-97 — the deal's P&L benchmark to show as a Base-year sub-column;
+   *  null (no benchmark, or the switch is off) = the column does not exist. */
+  benchmark?: BenchmarkBlock | null;
 }) {
   // Hotel Delivery — the deal's acquisition close date, or a dash. It used to
   // be `'9/30/' + years[0].year`, which printed "9/30/1" because `year` is an
@@ -1196,10 +1235,19 @@ function ProjectionsTable({
   const hotelDelivery = fmtIsoDate(closeDateIso);
   const hasExit = exitColumn != null;
   const subCols = showPct ? 4 : 3;
-  const layout = useMemo<ColumnLayout>(() => ({ hasExit, subCols, showPct }), [hasExit, subCols, showPct]);
+  const benchmarkCol = benchmark != null;
+  const spanFor = useCallback(
+    (i: number) => subCols + (i === 0 && benchmarkCol ? 1 : 0),
+    [subCols, benchmarkCol],
+  );
+  const layout = useMemo<ColumnLayout>(
+    () => ({ hasExit, subCols, showPct, benchmarkCol, spanFor }),
+    [hasExit, subCols, showPct, benchmarkCol, spanFor],
+  );
+  const benchmarkCtx = useMemo(() => benchmarkColumnCtx(benchmark), [benchmark]);
   // Total year columns = every modelled year + the Exit Year (hold_years + 1).
   const columnCount = years.length + (hasExit ? 1 : 0);
-  const bandSpan = 2 + columnCount * subCols;
+  const bandSpan = 2 + columnCount * subCols + (benchmarkCol ? 1 : 0);
 
   // The forward statement below Total Revenue only renders when the expense
   // engine emitted its waterfall (real worker runs). Demo / revenue-only
@@ -1251,6 +1299,7 @@ function ProjectionsTable({
 
   return (
     <ColumnLayoutContext.Provider value={layout}>
+    <BenchmarkColumnContext.Provider value={benchmarkCtx}>
     <HScroll unit="year" data-testid="projections-hscroll">
       <table className="w-full text-[11.5px] min-w-[1100px] border-collapse" data-testid="projections-table">
         <thead>
@@ -1271,7 +1320,7 @@ function ProjectionsTable({
             {years.map((y, i) => (
               <th
                 key={`yh-${i}`}
-                colSpan={subCols}
+                colSpan={spanFor(i)}
                 data-year-col
                 data-testid={`projection-col-header-${i}`}
                 title={
@@ -1326,7 +1375,7 @@ function ProjectionsTable({
               return (
                 <th
                   key={`ys-${i}`}
-                  colSpan={subCols}
+                  colSpan={spanFor(i)}
                   data-testid={`projection-col-basis-${i}`}
                   className={cn(
                     'text-center text-[10.5px] font-medium tabular-nums px-2 pb-1 border-l-2 border-ink-300/70',
@@ -1360,7 +1409,7 @@ function ProjectionsTable({
           {/* Sub-column headers */}
           <tr className="border-b border-border text-[9.5px] uppercase tracking-wider text-ink-500">
             {years.map((_, i) => (
-              <SubHeaderGroup key={`sh-${i}`} dim={i === 0} showPct={showPct} />
+              <SubHeaderGroup key={`sh-${i}`} dim={i === 0} showPct={showPct} benchmark={i === 0 && benchmarkCol} />
             ))}
             {hasExit && <SubHeaderGroup key="sh-exit" dim showPct={showPct} />}
           </tr>
@@ -1377,7 +1426,7 @@ function ProjectionsTable({
             {years.map((_, i) => (
               <td
                 key={`hd-${i}`}
-                colSpan={subCols}
+                colSpan={spanFor(i)}
                 className={cn('px-2 py-2 text-center text-[11px] text-ink-400', yearGroupClass(i, true))}
               >
                 —
@@ -1493,7 +1542,7 @@ function ProjectionsTable({
               return (
                 <td
                   key={`rg-${i}`}
-                  colSpan={subCols}
+                  colSpan={spanFor(i)}
                   className={cn(
                     'px-2 py-2 text-center text-[11px] tabular-nums',
                     yearGroupClass(i, true),
@@ -1613,6 +1662,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.rooms`}
                 methodLine="rooms_dept_expense"
+                benchmarkKey="rooms"
               />
               <FullRow
                 label="Food & Beverage"
@@ -1626,6 +1676,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.food_beverage`}
                 methodLine="fb_dept_expense"
+                benchmarkKey="food_beverage"
               />
               <FullRow
                 label="Other Operated Departments"
@@ -1639,6 +1690,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].dept_expenses.other_operated`}
                 methodLine="other_dept_expense"
+                benchmarkKey="other_operated"
               />
               {/* Total Departmental Expense = Σ departmental expense lines
                   (worker dept_expenses.total). */}
@@ -1675,6 +1727,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.administrative_general`}
                 methodLine="administrative_general"
+                benchmarkKey="administrative_general"
               />
               <FullRow
                 label="Information & Telecom Systems"
@@ -1686,6 +1739,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.information_telecom`}
                 methodLine="information_telecom"
+                benchmarkKey="information_telecom"
               />
               <FullRow
                 label="Sales & Marketing"
@@ -1697,6 +1751,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.sales_marketing`}
                 methodLine="sales_marketing"
+                benchmarkKey="sales_marketing"
               />
               <FullRow
                 label="Property Operation & Maintenance"
@@ -1708,6 +1763,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.property_operations`}
                 methodLine="property_operations"
+                benchmarkKey="property_operations"
               />
               <FullRow
                 label="Utilities"
@@ -1719,6 +1775,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].undistributed.utilities`}
                 methodLine="utilities"
+                benchmarkKey="utilities"
               />
               {/* Total Undistributed Expenses = Σ undistributed lines
                   (worker undistributed.total). */}
@@ -1744,6 +1801,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].gop`}
                 rowTestId="row-gop"
+                benchmarkKey="gop"
               />
               {/* Management Fees — % of total revenue (worker mgmt_fee). */}
               <FullRow
@@ -1756,6 +1814,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].mgmt_fee`}
                 rowTestId="row-mgmt-fee"
+                benchmarkKey="mgmt_fee"
               />
               {/* EBITDA = Gross Operating Profit − Management Fees (canonical
                   Projections definition; foots to the two rows above). */}
@@ -1786,7 +1845,7 @@ function ProjectionsTable({
                   return (
                     <td
                       key={`ev-${i}`}
-                      colSpan={subCols}
+                      colSpan={spanFor(i)}
                       title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%) — ${fmtAmount(exitVal, { decimals: 2, prefix: '$' })}`}
                       className={cn('px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums', yearGroupClass(i, true))}
                     >
@@ -1811,6 +1870,7 @@ function ProjectionsTable({
                     {...rowShared}
                     traceEngine="expense"
                     tracePath={(i) => `years[${i}].fixed_charges.property_taxes`}
+                    benchmarkKey="property_taxes"
                   />
                   <FullRow
                     label="Insurance"
@@ -1821,6 +1881,7 @@ function ProjectionsTable({
                     {...rowShared}
                     traceEngine="expense"
                     tracePath={(i) => `years[${i}].fixed_charges.insurance`}
+                    benchmarkKey="insurance"
                   />
                   <FullRow
                     label="Equipment Lease / Rent"
@@ -1831,6 +1892,7 @@ function ProjectionsTable({
                     {...rowShared}
                     traceEngine="expense"
                     tracePath={(i) => `years[${i}].fixed_charges.rent`}
+                    benchmarkKey="rent"
                   />
                   <FullRow
                     label="Other Fixed Charges"
@@ -1914,7 +1976,7 @@ function ProjectionsTable({
               {years.map((_, i) => (
                 <td
                   key={`fnoi-${i}`}
-                  colSpan={subCols}
+                  colSpan={spanFor(i)}
                   className={cn('px-2 py-2 text-center text-[11px] text-ink-400', yearGroupClass(i, true))}
                 >
                   —
@@ -1940,15 +2002,29 @@ function ProjectionsTable({
         PAR = $/available room. POR = $/occupied room. % Rev = share of Total Revenue;
         departmental expense rows (marked <span className="text-[9px] uppercase tracking-wide text-ink-400">dept</span>)
         show the USALI ratio — expense ÷ that department&apos;s own revenue.
+        {benchmarkCol && (
+          <>
+            {' '}
+            <span data-testid="projections-legend-benchmark">
+              Benchmark = the CBRE / HotStats comp-set ratio for the line on the same basis as % Rev, with the
+              model&apos;s Year-1 difference in points (▲ above / ▼ below the benchmark — colour marks direction
+              only, not a verdict). Read-only; a dash means the report did not publish that line.
+            </span>
+          </>
+        )}
+        {' '}
         Click any projected Occupancy, ADR, RevPAR or statement amount to trace it to its inputs.
       </span>
     </div>
+    </BenchmarkColumnContext.Provider>
     </ColumnLayoutContext.Provider>
   );
 }
 
-// Sub-column header group: Amount | % Rev | PAR | POR.
-function SubHeaderGroup({ dim, showPct }: { dim: boolean; showPct: boolean }) {
+// Sub-column header group: Amount | % Rev | [Benchmark] | PAR | POR.
+// FON-97 — `benchmark` is true only for the Base-year group, and the header
+// cell itself renders nothing without a benchmark provider.
+function SubHeaderGroup({ dim, showPct, benchmark = false }: { dim: boolean; showPct: boolean; benchmark?: boolean }) {
   const cls = cn(
     'px-2 py-1.5 text-right font-semibold border-l border-border',
     dim ? 'bg-ink-300/10' : 'bg-brand-50/40',
@@ -1957,6 +2033,7 @@ function SubHeaderGroup({ dim, showPct }: { dim: boolean; showPct: boolean }) {
     <>
       <th className={cn(cls, 'border-l-2 border-ink-300/70')}>Amount</th>
       {showPct && <th className={cls}>% Rev</th>}
+      {benchmark && <BenchmarkHeaderCell className={cls} />}
       <th className={cls}>PAR</th>
       <th className={cls}>POR</th>
     </>
@@ -2259,7 +2336,7 @@ function SimpleRow({
   tracePath?: (i: number) => string;
   columnHeading: (i: number) => string;
 }) {
-  const { subCols } = useContext(ColumnLayoutContext);
+  const { spanFor } = useContext(ColumnLayoutContext);
   const dealId = useContext(DealIdContext);
   const commentFilter = useCommentFilter();
   if (commentFilter && !(traceEngine && tracePath && years.some((_, i) => commentFilter.has(projCommentKey(traceEngine, tracePath(i)))))) {
@@ -2313,7 +2390,7 @@ function SimpleRow({
         return (
           <td
             key={`sr-${i}`}
-            colSpan={subCols}
+            colSpan={spanFor(i)}
             className={cn('px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums', yearGroupClass(i, true))}
           >
             {cell}
@@ -2344,6 +2421,7 @@ function FullRow({
   columnHeading,
   rowTestId,
   methodLine,
+  benchmarkKey,
 }: {
   label: string;
   indexLabel: string;
@@ -2351,6 +2429,9 @@ function FullRow({
   years: ProjYear[];
   /** E-016 — the expense line whose projection method chip sits in the label cell. */
   methodLine?: ProjectionMethodLine;
+  /** FON-97 — the ``pnl_benchmark.categories[].key`` this row benchmarks
+   *  (Base-year Benchmark sub-column). Absent = "—, not published". */
+  benchmarkKey?: string;
   /** Undefined when the engine did not emit the line for that year → a dash. */
   amountOf: (y: ProjYear) => number | undefined;
   /** R-068 — the denominator for the % cell when it is NOT Total Revenue
@@ -2427,6 +2508,7 @@ function FullRow({
             por={amt == null ? null : por(amt, y.occupiedRooms)}
             fmtAmount={fmtAmount}
             tracedAmount={tracedAmount}
+            benchmarkKey={benchmarkKey}
           />
         );
       })}
@@ -2444,6 +2526,7 @@ function SubCells({
   por,
   fmtAmount,
   tracedAmount,
+  benchmarkKey,
 }: {
   columnIndex: number;
   amount: number | undefined;
@@ -2456,8 +2539,10 @@ function SubCells({
   fmtAmount: (v: number, opts?: { decimals?: number; prefix?: string }) => string;
   /** Provenance-wrapped Amount cell content; falls back to plain text. */
   tracedAmount?: ReactNode;
+  /** FON-97 — the row's benchmark category key (Base-year group only). */
+  benchmarkKey?: string;
 }) {
-  const { showPct } = useContext(ColumnLayoutContext);
+  const { showPct, benchmarkCol } = useContext(ColumnLayoutContext);
   const base = 'px-2 py-2 text-right text-[11px] text-ink-900 tabular-nums';
   const tint = columnIndex % 2 === 1 ? 'bg-ink-100/45' : '';
   const td = cn(base, 'border-l border-border', tint);
@@ -2491,6 +2576,16 @@ function SubCells({
             </>
           )}
         </td>
+      )}
+      {/* FON-97 — the Base-year Benchmark cell, on the SAME basis as the % cell
+          above (pct is already departmental for `pctBasis` rows). */}
+      {columnIndex === 0 && benchmarkCol && (
+        <BenchmarkCell
+          benchmarkKey={benchmarkKey}
+          modelPct={pct}
+          rowBasis={pctBasis ? 'department_revenue' : 'total_revenue'}
+          className={td}
+        />
       )}
       <td className={cn(td, 'text-ink-700')} title={par != null && par > 0 ? fmtAmount(par, { decimals: 2, prefix: '$' }) : undefined}>
         {par != null && par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}
@@ -2655,6 +2750,7 @@ function ProjectionPeriodField({
 function ProjectionsControls({
   dealId, years, closeDateIso, holdYears, onSaveHoldYears, running,
   shownForecast, forecastCount, onDec, onInc, showPct, onTogglePct,
+  benchmarkAvailable = false, showBenchmark = true, onToggleBenchmark,
 }: {
   dealId: string;
   years: ProjYear[];
@@ -2670,6 +2766,11 @@ function ProjectionsControls({
   /** R-068 — the "% Rev" sub-column switch (view only). */
   showPct: boolean;
   onTogglePct: () => void;
+  /** FON-97 — the "Benchmark" sub-column switch. Rendered only when the deal
+   *  carries a P&L benchmark; view only, remembered per device. */
+  benchmarkAvailable?: boolean;
+  showBenchmark?: boolean;
+  onToggleBenchmark?: () => void;
 }) {
   // The FIRST column's calendar year, derived by the revenue engine from the
   // acquisition close date. `years[0].year` is the ordinal 1 — showing it here
@@ -2767,6 +2868,28 @@ function ProjectionsControls({
         />
         <span style={ctrlLabel}>Show %</span>
       </label>
+
+      {/* FON-97 — Benchmark: the Base-year "Benchmark" sub-column. Only offered
+          when the deal carries a P&L benchmark (no switch for a column that
+          cannot exist); view only, remembered per device. */}
+      {benchmarkAvailable && (
+        <label
+          style={{ ...group, gap: 5 }}
+          title="Show the CBRE / HotStats comp-set ratio beside each Base-year line, with the model's difference in points. View only; the benchmark never changes the model. Remembered on this device."
+        >
+          <input
+            type="checkbox"
+            role="switch"
+            aria-checked={showBenchmark}
+            checked={showBenchmark}
+            onChange={onToggleBenchmark}
+            aria-label="Show benchmark column"
+            data-testid="projection-show-benchmark"
+            style={{ margin: 0, cursor: 'pointer' }}
+          />
+          <span style={ctrlLabel}>Benchmark</span>
+        </label>
+      )}
 
       {/* What replaced the dead Annual / Monthly toggle: the basis, stated. */}
       <span

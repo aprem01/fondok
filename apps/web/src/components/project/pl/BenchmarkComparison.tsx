@@ -18,13 +18,14 @@
  * the report; anything missing renders "—". With no benchmark uploaded the
  * panel renders nothing at all.
  *
- * Kept as its own component (one import + one JSX line in
- * ProjectionsSection) so it stays separate from the projections table.
+ * FON-97 — the per-row comparison now lives INSIDE the projections table
+ * (``BenchmarkColumn.tsx``: a "Benchmark" sub-column in the Base-year group).
+ * This panel stays as the fuller detail (POR / PAR per line), collapsed by
+ * default under a "Benchmark detail" disclosure. The data is fetched once by
+ * ``useDealBenchmark`` in ProjectionsSection and handed to both.
  */
 
-import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
-import { api, isWorkerConnected } from '@/lib/api';
 import { cn } from '@/lib/format';
 
 export type BenchmarkRatioBasis = 'department_revenue' | 'total_revenue';
@@ -43,6 +44,9 @@ export interface BenchmarkCategory {
 
 export interface BenchmarkBlock {
   peer_set_size: number | null;
+  /** FON-97 — the benchmark report's filename (most recent extraction); null
+   *  when the worker did not record one. */
+  source_filename: string | null;
   categories: BenchmarkCategory[];
 }
 
@@ -105,7 +109,7 @@ const num = (v: unknown): number | null =>
  *  null when the deal has no benchmark (or the worker predates R-067). */
 export function parseBenchmarkBlock(marketData: unknown): BenchmarkBlock | null {
   const block = (marketData as { pnl_benchmark?: unknown } | null)?.pnl_benchmark as
-    | { peer_set_size?: unknown; categories?: unknown }
+    | { peer_set_size?: unknown; categories?: unknown; source_filename?: unknown }
     | null
     | undefined;
   if (!block || !Array.isArray(block.categories)) return null;
@@ -124,7 +128,22 @@ export function parseBenchmarkBlock(marketData: unknown): BenchmarkBlock | null 
     });
   }
   if (categories.length === 0) return null;
-  return { peer_set_size: num(block.peer_set_size), categories };
+  return {
+    peer_set_size: num(block.peer_set_size),
+    source_filename:
+      typeof block.source_filename === 'string' && block.source_filename.trim() !== ''
+        ? block.source_filename
+        : null,
+    categories,
+  };
+}
+
+/** What the benchmark ratio divides by, in the words the table uses. */
+export function benchmarkBasisLabel(category: Pick<BenchmarkCategory, 'key' | 'ratio_basis'>): string {
+  return (
+    MODEL_LINES[category.key]?.basisLabel ??
+    (category.ratio_basis === 'department_revenue' ? 'department revenue' : 'Total revenue')
+  );
 }
 
 /** The model's Year-1 ratio for a benchmark category, on the benchmark's
@@ -150,7 +169,7 @@ const pct = (r: number | null) => (r == null ? '—' : `${(r * 100).toFixed(1)}%
 const usd = (v: number | null) =>
   v == null ? '—' : `$${v.toLocaleString('en-US', { maximumFractionDigits: v < 100 ? 2 : 0 })}`;
 
-const SOURCE_NOTE: Record<string, string> = {
+export const SOURCE_NOTE: Record<string, string> = {
   computed_from_totals: 'Computed from the report’s line total ÷ its revenue total',
   computed_from_par: 'Computed from the report’s line PAR ÷ its revenue PAR',
   reported: 'Ratio as printed in the report',
@@ -183,7 +202,7 @@ export function BenchmarkComparisonTable({
         {block.categories.map((c) => {
           const model = modelRatioFor(c, modelYear);
           const delta = model != null && c.ratio != null ? (model - c.ratio) * 100 : null;
-          const basis = MODEL_LINES[c.key]?.basisLabel ?? (c.ratio_basis === 'department_revenue' ? 'department revenue' : 'Total revenue');
+          const basis = benchmarkBasisLabel(c);
           return (
             <tr key={c.key} className="border-b border-border/60 last:border-0" data-benchmark-key={c.key}>
               <td className="px-3 py-1.5 text-left text-ink-900">
@@ -215,42 +234,46 @@ export function BenchmarkComparisonTable({
   );
 }
 
+/**
+ * The detail panel — collapsed by default (FON-97: the per-row comparison is
+ * in the table's Benchmark column; this keeps POR / PAR and the full
+ * side-by-side for whoever wants it). ``block`` comes from the host's single
+ * ``useDealBenchmark`` read; null renders nothing at all.
+ */
 export default function BenchmarkComparison({
-  dealId,
+  block,
   modelYear,
 }: {
-  dealId: string;
+  block: BenchmarkBlock | null;
   modelYear: BenchmarkModelYear | null;
 }) {
-  const [block, setBlock] = useState<BenchmarkBlock | null>(null);
-  const liveMode = isWorkerConnected() && !!dealId && !/^\d+$/.test(dealId);
-
-  useEffect(() => {
-    const fetchMarketData = api?.market?.data;
-    if (!liveMode || typeof fetchMarketData !== 'function') return;
-    const ctrl = new AbortController();
-    Promise.resolve(fetchMarketData(dealId, ctrl.signal))
-      .then((json) => setBlock(parseBenchmarkBlock(json)))
-      .catch(() => {
-        // No benchmark column on a failed read — never a placeholder.
-      });
-    return () => ctrl.abort();
-  }, [dealId, liveMode]);
-
   if (!block) return null;
   return (
     <Card className="mt-4 p-0 overflow-hidden" aria-label="P&L benchmark comparison">
-      <div className="px-4 py-3 border-b border-border">
-        <div className="text-[13px] font-semibold text-ink-900">Benchmark comparison</div>
-        <p className="text-[11.5px] text-ink-500 mt-0.5 leading-snug">
-          The model’s Year-1 cost ratios beside the uploaded P&amp;L benchmark (CBRE / HotStats
-          comp set{block.peer_set_size != null ? ` · ${block.peer_set_size} hotels` : ''}).
-          Read-only — the benchmark does not change the model.
-        </p>
-      </div>
-      <div className="overflow-x-auto">
-        <BenchmarkComparisonTable block={block} modelYear={modelYear} />
-      </div>
+      <details data-testid="benchmark-detail">
+        <summary
+          className="cursor-pointer select-none px-4 py-3 text-[12.5px] font-semibold text-ink-900 hover:bg-ink-300/5"
+          data-testid="benchmark-detail-summary"
+        >
+          Benchmark detail
+          <span className="ml-2 text-[11px] font-normal text-ink-500">
+            model vs CBRE / HotStats comp set
+            {block.peer_set_size != null ? ` · ${block.peer_set_size} hotels` : ''}
+            {block.source_filename ? ` · ${block.source_filename}` : ''}
+            {' · read-only'}
+          </span>
+        </summary>
+        <div className="px-4 pb-3 border-t border-border">
+          <p className="text-[11.5px] text-ink-500 mt-2 leading-snug">
+            The model’s Year-1 cost ratios beside the uploaded P&amp;L benchmark, with the
+            benchmark’s POR / PAR per line. The same ratios sit in the table’s Benchmark column.
+            Read-only — the benchmark does not change the model.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <BenchmarkComparisonTable block={block} modelYear={modelYear} />
+        </div>
+      </details>
     </Card>
   );
 }

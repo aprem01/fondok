@@ -486,3 +486,162 @@ async def test_projection_apply_method_and_value_stay_coherent() -> None:
     assert fo[m("rooms_dept_expense")]["value"] == "por"
     assert fo[v("rooms_dept_expense")] == {"value": 42.5, "note": "staffing model"}
     assert v("sales_marketing") not in fo
+
+
+# ─────────────────────── FON-97 Benchmark % column ───────────────────────
+
+
+_BENCHMARK_FIELDS = [
+    {"field_name": "pnl_benchmark.peer_set_size", "value": 11},
+    {"field_name": "pnl_benchmark.peer.rooms_revenue.total_usd", "value": 10_000_000},
+    {"field_name": "pnl_benchmark.peer.total_revenue.total_usd", "value": 15_000_000},
+    {"field_name": "pnl_benchmark.peer.rooms_dept_expense.total_usd", "value": 2_500_000},
+    {"field_name": "pnl_benchmark.peer.a_and_g.total_usd", "value": 1_200_000},
+    # POR only — the category exists but publishes no ratio: the cell stays blank.
+    {"field_name": "pnl_benchmark.peer.insurance.por_usd", "value": 6.25},
+]
+
+
+def test_benchmark_column_values_map_only_ratioed_lines() -> None:
+    from app.api.documents import PnlBenchmarkCategory
+    from app.export.pl_workbooks import benchmark_column_values
+    from app.services.pnl_benchmark_map import map_benchmark_to_categories
+
+    flat = {f["field_name"]: f["value"] for f in _BENCHMARK_FIELDS}
+    cats = map_benchmark_to_categories(flat)
+    assert {c["key"] for c in cats} == {"rooms", "administrative_general", "insurance"}
+    bm = benchmark_column_values(cats)
+    assert bm == {
+        "expense.dept_expenses.rooms": pytest.approx(0.25),                   # dept basis
+        "expense.undistributed.administrative_general": pytest.approx(0.08),  # total basis
+    }
+    # Pydantic models (the market-data block) read the same way as dicts.
+    models = [PnlBenchmarkCategory(**c) for c in cats]
+    assert benchmark_column_values(models) == bm
+    assert benchmark_column_values(None) == {}
+
+
+def test_projection_export_benchmark_column_is_read_only_and_after_the_years() -> None:
+    from app.export.pl_workbooks import (
+        BENCHMARK_HEADER, build_projections_workbook, projection_values,
+    )
+
+    outputs = {
+        "revenue": {"years": [{"occupancy": 0.7, "rooms_revenue": 10_000_000.0}] * 2},
+        "expense": {"years": [{"dept_expenses": {"rooms": 2_800_000.0}}] * 2},
+    }
+    n, values = projection_values(outputs)
+    bm = {"expense.dept_expenses.rooms": 0.25}
+    data = build_projections_workbook(
+        deal_id="deal-1", deal_name="X", year_headers=["Base year (Year 1)", "Year 2"],
+        values=values, assumptions=_assumption_rows(), benchmark=bm,
+    )
+    wp = _sheet(data, "Future P&L")
+    # The column sits AFTER every year column, so year indices are untouched.
+    assert wp.cell(row=1, column=3 + n).value == BENCHMARK_HEADER
+    assert wp.max_column == 3 + n
+    rows = {wp.cell(row=r, column=1).value: r for r in range(2, wp.max_row + 1)}
+    rooms = rows["expense.dept_expenses.rooms"]
+    assert wp.cell(row=rooms, column=3 + n).value == 0.25
+    assert wp.cell(row=rooms, column=3 + n).number_format == "0.0%"
+    # A line the benchmark did not publish is blank — never zero-filled.
+    assert wp.cell(row=rows["revenue.occupancy"], column=3 + n).value is None
+    # The year cells are exactly what they were without a benchmark.
+    assert wp.cell(row=rooms, column=3).value == 2_800_000.0
+
+    # No benchmark on the deal → no column at all (not a blank one).
+    plain = build_projections_workbook(
+        deal_id="deal-1", deal_name="X", year_headers=["Base year (Year 1)", "Year 2"],
+        values=values, assumptions=_assumption_rows(),
+    )
+    assert _sheet(plain, "Future P&L").max_column == 2 + n
+
+
+def test_projection_import_ignores_the_benchmark_column() -> None:
+    from app.export.pl_workbooks import build_projections_workbook, projection_values
+
+    outputs = {
+        "revenue": {"years": [{"occupancy": 0.7}] * 2},
+        "expense": {"years": [{"dept_expenses": {"rooms": 2_800_000.0}}] * 2},
+    }
+    n, values = projection_values(outputs)
+    data = build_projections_workbook(
+        deal_id="deal-1", deal_name="X", year_headers=["Base year (Year 1)", "Year 2"],
+        values=values, assumptions=_assumption_rows(),
+        benchmark={"expense.dept_expenses.rooms": 0.25},
+    )
+    wb = load_workbook(io.BytesIO(data))
+    wp = wb["Future P&L"]
+    rows = {wp.cell(row=r, column=1).value: r for r in range(2, wp.max_row + 1)}
+    # An analyst types over the benchmark cell (and even a blank one) …
+    wp.cell(row=rows["expense.dept_expenses.rooms"], column=3 + n).value = 0.99
+    wp.cell(row=rows["revenue.occupancy"], column=3 + n).value = "n/a"
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    p = _parse(buf.getvalue(), values)
+    # … and nothing is diffed, rejected or reported: the column is not a year.
+    assert p["computed_edits"] == []
+    assert p["mapping_errors"] == []
+    assert p["non_numeric"] == []
+    assert p["changes"] == []
+
+
+@pytest.mark.asyncio
+async def test_projection_export_route_feeds_benchmark_from_market_data() -> None:
+    """The export's Benchmark % column comes from the same ``pnl_benchmark``
+    block ``GET /deals/{id}/market-data`` serves — and is absent without one."""
+    from app.api.documents import get_market_data
+    from app.api.pl_roundtrip import export_projections
+    from app.database import get_session_factory
+    from app.export.pl_workbooks import BENCHMARK_HEADER
+
+    deal_id, *_ = await _setup()
+    async with get_session_factory()() as s:
+        before = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wp0 = _sheet(before.body, "Future P&L")
+    assert BENCHMARK_HEADER not in [c.value for c in wp0[1]]
+
+    bench_doc = uuid4()
+    async with get_session_factory()() as s:
+        ts = datetime.now(UTC)
+        await s.execute(
+            text(
+                "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, status, "
+                "uploaded_at) VALUES (:id,:deal,:t,:fn,'PNL_BENCHMARK','EXTRACTED',:ts)"
+            ),
+            {"id": str(bench_doc), "deal": str(deal_id), "t": _TENANT,
+             "fn": "CBRE-Trends-2025-upper-upscale.pdf", "ts": ts},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO extraction_results (id, document_id, deal_id, tenant_id, fields, "
+                "confidence_report, agent_version, created_at) "
+                "VALUES (:id,:doc,:deal,:t,:f,'{}','v1',:ts)"
+            ),
+            {"id": str(uuid4()), "doc": str(bench_doc), "deal": str(deal_id), "t": _TENANT,
+             "f": json.dumps(_BENCHMARK_FIELDS), "ts": ts},
+        )
+        await s.commit()
+
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+        market = await get_market_data(deal_id=deal_id, session=s, tenant_id=UUID(_TENANT))
+    assert market.pnl_benchmark is not None
+    assert market.pnl_benchmark.source_filename == "CBRE-Trends-2025-upper-upscale.pdf"
+    by_key = {c.key: c for c in market.pnl_benchmark.categories}
+
+    wp = _sheet(resp.body, "Future P&L")
+    header = [c.value for c in wp[1]]
+    assert header[-1] == BENCHMARK_HEADER
+    bm_col = len(header)
+    rows = {wp.cell(row=r, column=1).value: r for r in range(2, wp.max_row + 1)}
+    assert wp.cell(row=rows["expense.dept_expenses.rooms"], column=bm_col).value == pytest.approx(
+        by_key["rooms"].ratio
+    )
+    assert wp.cell(
+        row=rows["expense.undistributed.administrative_general"], column=bm_col
+    ).value == pytest.approx(by_key["administrative_general"].ratio)
+    # Insurance was priced POR-only: present in the block with no ratio → blank cell.
+    assert by_key["insurance"].ratio is None
+    assert wp.cell(row=rows["expense.fixed_charges.insurance"], column=bm_col).value is None
