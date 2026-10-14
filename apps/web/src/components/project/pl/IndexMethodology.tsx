@@ -9,19 +9,19 @@
  *   Root cause (both read the SAME revenue engine, nothing is overridden):
  *   Projections' "Base year (Year 1) · <calendar>" column is ``revenue.years[0]``
  *   with its calendar year from ``revenue.projection_calendar_years`` (the
- *   acquisition close date). Index Analysis hard-codes its forecast band to
- *   2025–2033 and places ``revenue.years[i]`` at 2024 + i — so its 2025 column
- *   is ``years[1]``, model Year 2: the Base Year grown one year at the model's
- *   occupancy / ADR growth (seed +0.8% / +4.0%: 83.9% → 84.6%, $245 → $255).
- *   The Base Year itself sits in the 2024 anchor column only when no multi-year
- *   P&L exists; with one, the FY actual takes that column and the Base Year is
- *   not shown at all. A third figure — the STR subject TTM — anchors the comp
- *   set and the MPI / ARI indices, on yet another source and period.
+ *   acquisition close date). Index Analysis used to hard-code its forecast
+ *   band to 2025–2033 and place ``revenue.years[i]`` at 2024 + i, so its 2025
+ *   column was ``years[1]`` — model Year 2. FON-94 derives the Index Analysis
+ *   columns from the same ``projection_calendar_years``: Year 1 sits in the
+ *   first forecast column, so the two tabs now print the same figure for the
+ *   same calendar year. A third figure — the STR subject TTM — anchors the comp
+ *   set and the MPI / ARI indices, on another source and period.
  *
- *   ``ProjectionsReconciliation`` puts the Projections Base Year (value, source,
- *   and every step between source and engine) next to what Index Analysis shows
- *   for that calendar year and the STR TTM, with one line naming the
- *   transformation. No silent difference.
+ *   ``ProjectionsReconciliation`` still puts the Projections Base Year (value,
+ *   source, and every step between source and engine) next to what Index
+ *   Analysis shows for that column and the STR TTM, with one line naming the
+ *   relationship — "the same", or the transformation when a future change
+ *   ever makes them differ again. No silent difference.
  *
  * E-028 (P2) — choose the index methodology and edit the market growth /
  * penetration assumptions before they feed Projections. ``IndexMethodologyPanel``
@@ -65,6 +65,7 @@ const fmtGrowth = (v: number | null | undefined): string =>
 export type IaColumnOrigin =
   | { kind: 'engine'; yearIndex: number }
   | { kind: 'fiscal_year' }
+  | { kind: 'str_annual' }
   | { kind: 'none' };
 
 export interface ReconciliationSource {
@@ -91,8 +92,10 @@ export interface ReconciliationInput {
   y1AdrDisplacement: number | null;
   occupancyGrowth: number | null;
   adrGrowth: number | null;
-  /** The Index Analysis subject column for ``iaColumnYear`` and its origin. */
-  iaColumnYear: number;
+  /** The Index Analysis subject column for ``iaColumnYear`` and its origin.
+   *  The calendar year, or the column's ordinal label ("Year 1") when the
+   *  deal has no acquisition close date. */
+  iaColumnYear: number | string;
   iaOccupancy: number | null;
   iaAdr: number | null;
   iaOrigin: IaColumnOrigin;
@@ -166,6 +169,8 @@ export function buildReconciliation(i: ReconciliationInput): Reconciliation | nu
     iaWhat = `model Year ${k + 1} (revenue.years[${k}]) — the Base Year grown ${k} year${k === 1 ? '' : 's'}${growthClause}`;
   } else if (i.iaOrigin.kind === 'fiscal_year') {
     iaWhat = `the fiscal-year ${i.iaColumnYear} P&L actual from the multi-year baseline`;
+  } else if (i.iaOrigin.kind === 'str_annual') {
+    iaWhat = `the STR Trend annual ${i.iaColumnYear} subject actual`;
   } else {
     iaWhat = 'no subject figure';
   }

@@ -330,7 +330,7 @@ export default function MethodologyPage() {
               &quot;What counts as an override&quot; and &quot;Every override carries a justification&quot; below.
             </BadgeRow>
             <BadgeRow source="str_subject_ttm" name="STR · Subject TTM Actual">
-              The subject property&apos;s OWN trailing-twelve-month occupancy &amp; ADR as reported by STR — an actual, not a forecast. This is what the model seeds the Base Year from when the STR basis is on: the forward forecast&apos;s Month-12 point can land far below the subject&apos;s current performance, which would understate the deal. Because the Base Year is a TTM window, Index Analysis shows N/A for the first forecast year&apos;s growth whenever the last historical column is a full fiscal year — the two are not the same period basis.
+              The subject property&apos;s OWN trailing-twelve-month occupancy &amp; ADR as reported by STR — an actual, not a forecast. This is what the model seeds the Base Year from when the STR basis is on: the forward forecast&apos;s Month-12 point can land far below the subject&apos;s current performance, which would understate the deal. Because the Base Year is a TTM window, Index Analysis shows N/A for the first forecast year&apos;s growth whenever the last historical column is a reported actual (a P&amp;L fiscal year or an STR calendar year) — the two are not the same period basis.
             </BadgeRow>
             <BadgeRow source="str_comp_set" name="STR Comp-Set Rates">
               The comp set&apos;s blended occupancy &amp; ADR shown on the Market Comps tab, applied as the Year-1 input by &quot;Use STR rates in the model&quot; (explicit overrides carrying the note &quot;STR comp-set market rates (Market tab)&quot;). This is the competitive set&apos;s performance, not the subject&apos;s own — the Market Comps tab states the comp-set benchmark and the model&apos;s Base Year as two separate figures and never claims the benchmark is the assumption.
@@ -357,8 +357,28 @@ export default function MethodologyPage() {
               Year-1 ADR = benchmark ADR × ARI target, and the growth rates replace the model&apos;s, each only where you
               set one and never over an explicit override of that input. With the toggle off nothing moves. Index Analysis
               also restates the Projections Base Year (revenue engine Year 1, its source and every step to it) beside its
-              own figures: its forecast columns start at the model&apos;s Year 2, so its first forecast column is the Base
-              Year grown one year, and the STR subject TTM it indexes against is a different source and period.
+              own figures, and the STR subject TTM it indexes against is named as a different source and period.
+            </BadgeRow>
+            <BadgeRow source="index_assumption" name="Index Analysis · Columns &amp; Rows">
+              The Index Analysis year columns follow the acquisition close calendar — the same
+              <code>projection_calendar_years</code> the Future P&amp;L prints: Year 1 is the calendar year of the first
+              operating month after close and sits in the first forecast column, the forecast columns are exactly the
+              model horizon (nothing is carried forward beyond it — no held-flat occupancy or 3% ADR extension), and the
+              six columns before Year 1 are history. With no close date the forecast columns read &quot;Year N&quot; with a
+              one-line note; a year is never guessed. Subject history is the STR Trend annual subject figures
+              (<code>ttm_performance.subject.annual.&lt;YYYY&gt;</code>) where the report carries them, else the P&amp;L
+              fiscal year — a Source row says which per column. The comp set is the STR TTM blend (subject ÷ MPI / ARI /
+              RGI) in the last historical column and has no forecast source, so its forecast cells are &quot;—&quot; with the
+              reason — never the subject&apos;s growth re-scaled. A separate Market row carries market-level actuals
+              (market study / STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the
+              report&apos;s own calendar year (<code>cbre_horizons.year_&lt;n&gt;.calendar_year</code>, pipeline v7) and
+              labelled Market / CBRE Horizons with document and page — a CBRE forecast is a market forecast, not a comp-set
+              forecast. Penetration rows: the STR-published MPI / ARI / RGI (held at the TTM value across the subject
+              projection), the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
+              set, Fair Share of Supply = subject rooms ÷ (comp-set rooms + subject rooms), fair-share occupancy, actual
+              share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at the analyst&apos;s
+              MPI / ARI targets. Every cell shows its formula and inputs on hover; a cell with no reported input is
+              &quot;—&quot;.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.

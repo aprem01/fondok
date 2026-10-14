@@ -28,8 +28,10 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
@@ -168,7 +170,13 @@ DOC_STATUS_FAILED = "FAILED"
 # so the benchmark → expense-category map can recompute departmental ratios.
 # CSV uploads now parse (they previously failed at parse time). Every
 # benchmark extraction cached under v5 must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v6"
+# v7 (2026-10-14): FON-94 — the CBRE Horizons template extractor now emits
+# ``cbre_horizons.year_<n>.calendar_year`` beside each legacy forecast-ordinal
+# row, so the market-data envelope can place Year 1 on the calendar instead of
+# assuming it is "next year". Horizons reports cached under v6 carry no
+# calendar_year row (the envelope falls back to the report's own
+# ``segment_all.<YYYY>`` forecast rows / publication year) and re-run once.
+EXTRACTION_PIPELINE_VERSION = "v7"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -695,6 +703,21 @@ class CompSetEntry(BaseModel):
     revpar_usd: float | None = None
 
 
+class StrSubjectAnnual(BaseModel):
+    """FON-95 — one calendar year of the subject's STR annual history
+    (``ttm_performance.subject.annual.<YYYY>.*``, the "Total Year" rows of
+    the By Measure tab). Index Analysis shows these in its subject history
+    columns ahead of the P&L fiscal-year fallback."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    calendar_year: int
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+    page: int | None = None
+
+
 class StrTrendBlock(BaseModel):
     """Subject + comp set + indices, from a STR_TREND extraction."""
 
@@ -709,18 +732,37 @@ class StrTrendBlock(BaseModel):
     comp_set_size: int | None = None
     total_keys: int | None = None
     compset: list[CompSetEntry] = Field(default_factory=list)
+    #: ``str_trend.report_year`` — the calendar year the TTM window ends in.
+    report_year: int | None = None
+    #: The STR Trend document the block was read from (newest extraction).
+    doc_name: str | None = None
+    #: FON-95 — the subject's STR annual history, oldest year first.
+    subject_annual: list[StrSubjectAnnual] = Field(default_factory=list)
 
 
 class CbreYearProjection(BaseModel):
-    """One forecast year inside a CBRE Horizons extraction."""
+    """One forecast year inside a CBRE Horizons extraction.
+
+    FON-94 — ``year_index`` is the report's 1-indexed FORECAST ordinal
+    (Year 1 = the first forecast year, never a historical actual).
+    ``calendar_year`` is the calendar year that ordinal stands for, read
+    from the extractor's ``cbre_horizons.year_<n>.calendar_year`` row, or
+    recovered from the report's own calendar-keyed ``segment_all.<YYYY>``
+    forecast rows / its publication year. ``None`` when the report gives
+    no way to place the year — the UI then refuses to place it, rather
+    than assuming Year 1 is "next year".
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     year_index: int
+    calendar_year: int | None = None
     occupancy_pct: float | None = None
     adr_usd: float | None = None
     revpar_usd: float | None = None
     revpar_growth_pct: float | None = None
+    #: Report page the row was read from, when the extractor recorded it.
+    page: int | None = None
 
 
 class CbreHorizonsBlock(BaseModel):
@@ -732,6 +774,34 @@ class CbreHorizonsBlock(BaseModel):
     chain_scale: str | None = None
     publication_date: str | None = None
     years: list[CbreYearProjection] = Field(default_factory=list)
+    #: The CBRE Horizons document the block was read from (newest extraction).
+    doc_name: str | None = None
+
+
+class MarketHistoryPoint(BaseModel):
+    """FON-95 — one reported market-level (or chain-scale segment) actual.
+
+    The broader market series Index Analysis shows beside the comp set:
+    ``market_study.trend.<YYYY>.*`` (period ``actual``),
+    ``ttm_performance.segment.<scale>.*`` / ``ttm_performance.market.*`` /
+    ``pnl_benchmark.market.*`` / ``market_study.market.*`` rows. ``segment``
+    is ``None`` for the market-wide figure. ``calendar_year`` is ``None`` for
+    a trailing-twelve-month (``period == "ttm"``) or undated row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    calendar_year: int | None = None
+    period: Literal["annual", "ttm", "undated"] = "annual"
+    segment: str | None = None
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+    doc_type: str | None = None
+    doc_name: str | None = None
+    page: int | None = None
+    #: The field path(s) the point was read from (for the trace).
+    fields: list[str] = Field(default_factory=list)
 
 
 class PnlBenchmarkCategory(BaseModel):
@@ -800,13 +870,17 @@ class MarketDataResponse(BaseModel):
     str_trend: StrTrendBlock | None = None
     cbre_horizons: CbreHorizonsBlock | None = None
     pnl_benchmark: PnlBenchmarkBlock | None = None
+    #: FON-95 — market-level / chain-scale actuals by calendar year, for the
+    #: Index Analysis "Market" row (historical half; CBRE Horizons is the
+    #: forecast half). Empty when no report carries a market-level figure.
+    market_history: list[MarketHistoryPoint] = Field(default_factory=list)
     sources: dict[str, list[UUID]] = Field(
         default_factory=dict,
         description=(
             "Map from doc_type ('STR_TREND' / 'CBRE_HORIZONS' / "
-            "'PNL_BENCHMARK') to the document_ids whose extractions "
-            "fed each block. Lets the UI deep-link from a block back "
-            "to the underlying source PDF."
+            "'PNL_BENCHMARK' / 'MARKET_STUDY') to the document_ids whose "
+            "extractions fed each block. Lets the UI deep-link from a block "
+            "back to the underlying source PDF."
         ),
     )
 
@@ -2946,19 +3020,30 @@ def _aggregate_market_data(
     rows: list[dict[str, Any]], deal_id: UUID
 ) -> MarketDataResponse:
     """Walk extraction_results × documents rows and bucket fields by
-    doc_type into the three external-report blocks.
+    doc_type into the external-report blocks.
 
     Each input row is ``{"fields": <list>, "doc_type": <str>,
-    "document_id": <uuid>}``. Most-recent extraction for each doc_type
-    wins because the caller orders by ``created_at DESC`` and we only
-    set a slot the first time we see it.
+    "document_id": <uuid>}`` plus, when the caller selected it, the
+    document's ``filename`` (carried into each block's ``doc_name`` /
+    ``page`` provenance). Most-recent extraction for each doc_type wins
+    because the caller orders by ``created_at DESC`` and we only set a
+    slot the first time we see it.
+
+    FON-94 / FON-95 — ``CBRE_HORIZONS`` years carry their calendar year,
+    ``STR_TREND`` carries the subject's annual history, and the new
+    ``market_history`` list collects market-level actuals from STR_TREND /
+    PNL_BENCHMARK / MARKET_STUDY rows for the Index Analysis "Market" row.
     """
     str_trend_fields: dict[str, Any] = {}
     cbre_fields: dict[str, Any] = {}
     pnl_fields: dict[str, Any] = {}
+    market_study_fields: dict[str, Any] = {}
+    # Per-field provenance (page + document) keyed like the flat dicts.
+    meta: dict[str, _FieldMeta] = {}
     # Comp-set rows are keyed by their numeric index (1..7).
     compset_rows: dict[int, dict[str, Any]] = {}
     sources: dict[str, list[UUID]] = {}
+    doc_names: dict[str, str] = {}
 
     for row in rows:
         doc_type = (row.get("doc_type") or "").upper()
@@ -2987,12 +3072,18 @@ def _aggregate_market_data(
         # deal and STR_TREND on another).
         if doc_type == "STR":
             doc_type = "STR_TREND"
-        if doc_type not in {"STR_TREND", "CBRE_HORIZONS", "PNL_BENCHMARK"}:
+        if doc_type not in {"STR_TREND", "CBRE_HORIZONS", "PNL_BENCHMARK", "MARKET_STUDY"}:
             continue
         if doc_id_uuid is not None:
             sources.setdefault(doc_type, [])
             if doc_id_uuid not in sources[doc_type]:
                 sources[doc_type].append(doc_id_uuid)
+        filename = row.get("filename")
+        doc_name = (
+            filename.strip() if isinstance(filename, str) and filename.strip() else None
+        )
+        if doc_name and doc_type not in doc_names:
+            doc_names[doc_type] = doc_name
 
         for f in raw_fields:
             if not isinstance(f, dict):
@@ -3001,24 +3092,51 @@ def _aggregate_market_data(
             if not name:
                 continue
             value = f.get("value")
+            page = _coerce_int(f.get("source_page") or f.get("page_number") or f.get("page"))
             if doc_type == "STR_TREND":
                 _bucket_str_trend(name, value, str_trend_fields, compset_rows)
             elif doc_type == "CBRE_HORIZONS":
                 _bucket_cbre(name, value, cbre_fields)
             elif doc_type == "PNL_BENCHMARK":
                 _bucket_pnl(name, value, pnl_fields)
+            else:
+                market_study_fields.setdefault(name.lower(), value)
+            key = f"{doc_type}:{name.lower()}"
+            if key not in meta:
+                meta[key] = _FieldMeta(page=page, doc_name=doc_name, doc_type=doc_type)
 
-    str_trend = _build_str_trend_block(str_trend_fields, compset_rows)
-    cbre = _build_cbre_block(cbre_fields)
+    str_trend = _build_str_trend_block(
+        str_trend_fields, compset_rows, meta=meta, doc_name=doc_names.get("STR_TREND")
+    )
+    cbre = _build_cbre_block(cbre_fields, meta=meta, doc_name=doc_names.get("CBRE_HORIZONS"))
     pnl = _build_pnl_block(pnl_fields)
+    market_history = _build_market_history(
+        str_trend_fields, pnl_fields, market_study_fields, meta=meta
+    )
 
     return MarketDataResponse(
         deal_id=deal_id,
         str_trend=str_trend,
         cbre_horizons=cbre,
         pnl_benchmark=pnl,
+        market_history=market_history,
         sources=sources,
     )
+
+
+@dataclass(frozen=True)
+class _FieldMeta:
+    """Where one bucketed field was read from (newest extraction wins)."""
+
+    page: int | None
+    doc_name: str | None
+    doc_type: str
+
+
+def _meta_of(meta: Mapping[str, _FieldMeta] | None, doc_type: str, lname: str) -> _FieldMeta | None:
+    if not meta:
+        return None
+    return meta.get(f"{doc_type}:{lname}")
 
 
 def _bucket_str_trend(
@@ -3054,9 +3172,48 @@ def _bucket_pnl(name: str, value: Any, flat: dict[str, Any]) -> None:
     flat.setdefault(name.lower(), value)
 
 
+_STR_SUBJECT_ANNUAL_RE = re.compile(
+    r"^ttm_performance\.subject\.annual\.(?P<year>(?:19|20)\d{2})\.(?P<attr>occupancy_pct|adr_usd|revpar_usd)$"
+)
+
+
+def _build_subject_annual(
+    flat: Mapping[str, Any], meta: Mapping[str, _FieldMeta] | None
+) -> list[StrSubjectAnnual]:
+    """FON-95 — ``ttm_performance.subject.annual.<YYYY>.*`` → one row per
+    calendar year, oldest first. A year with no positive metric is dropped."""
+    by_year: dict[int, dict[str, Any]] = {}
+    pages: dict[int, int | None] = {}
+    for lname, value in flat.items():
+        m = _STR_SUBJECT_ANNUAL_RE.match(lname)
+        if not m:
+            continue
+        year = int(m.group("year"))
+        v = _coerce_float(value)
+        if v is None or v <= 0:
+            continue
+        by_year.setdefault(year, {})[m.group("attr")] = v
+        if year not in pages:
+            fm = _meta_of(meta, "STR_TREND", lname)
+            pages[year] = fm.page if fm else None
+    return [
+        StrSubjectAnnual(
+            calendar_year=y,
+            occupancy_pct=by_year[y].get("occupancy_pct"),
+            adr_usd=by_year[y].get("adr_usd"),
+            revpar_usd=by_year[y].get("revpar_usd"),
+            page=pages.get(y),
+        )
+        for y in sorted(by_year)
+    ]
+
+
 def _build_str_trend_block(
     flat: dict[str, Any],
     compset: dict[int, dict[str, Any]],
+    *,
+    meta: Mapping[str, _FieldMeta] | None = None,
+    doc_name: str | None = None,
 ) -> StrTrendBlock | None:
     if not flat and not compset:
         return None
@@ -3098,6 +3255,10 @@ def _build_str_trend_block(
     else:
         derived_size = extracted_size
 
+    report_year = _coerce_int(flat.get("str_trend.report_year"))
+    if report_year is not None and not (1990 <= report_year <= 2100):
+        report_year = None
+
     block = StrTrendBlock(
         subject_occupancy_pct=_coerce_float(flat.get("ttm_performance.subject.occupancy_pct")),
         subject_adr_usd=_coerce_float(flat.get("ttm_performance.subject.adr_usd")),
@@ -3108,13 +3269,71 @@ def _build_str_trend_block(
         comp_set_size=derived_size,
         total_keys=derived_total_keys,
         compset=compset_entries,
+        report_year=report_year,
+        doc_name=doc_name,
+        subject_annual=_build_subject_annual(flat, meta),
     )
     return block
 
 
-def _build_cbre_block(flat: dict[str, Any]) -> CbreHorizonsBlock | None:
+_CBRE_SEGMENT_ALL_RE = re.compile(
+    r"^cbre_horizons\.segment_all\.(?P<year>(?:19|20)\d{2})\.(?P<attr>[a-z_]+)$"
+)
+_CBRE_METRIC_ATTRS = ("occupancy_pct", "adr_usd", "revpar_usd", "revpar_change_pct")
+
+
+def _cbre_as_of_year(pub_date: Any) -> int | None:
+    """The report's publication year — the first forecast year's calendar
+    year under the extractor's contract (rows at/after it are forecast)."""
+    if not isinstance(pub_date, str):
+        return None
+    m = re.search(r"(?:19|20)\d{2}", pub_date)
+    return int(m.group(0)) if m else None
+
+
+def _cbre_forecast_calendar_years(flat: Mapping[str, Any]) -> list[int]:
+    """FON-94 — the calendar years of the All-Hotels FORECAST rows, ascending.
+
+    Read from ``cbre_horizons.segment_all.<YYYY>.period == "forecast"``;
+    when the report tagged no periods, every segment_all year at or after
+    the publication year. ``[]`` when the report carries no segment rows.
+    """
+    years: set[int] = set()
+    periods: dict[int, str] = {}
+    for lname, value in flat.items():
+        m = _CBRE_SEGMENT_ALL_RE.match(lname)
+        if not m:
+            continue
+        year = int(m.group("year"))
+        attr = m.group("attr")
+        if attr == "period":
+            if isinstance(value, str):
+                periods[year] = value.strip().lower()
+            continue
+        if attr in _CBRE_METRIC_ATTRS and _coerce_float(value) is not None:
+            years.add(year)
+    if not years:
+        return []
+    if periods:
+        tagged = sorted(y for y in years if periods.get(y) == "forecast")
+        if tagged:
+            return tagged
+    as_of = _cbre_as_of_year(flat.get("cbre_horizons.publication_date"))
+    if as_of is None:
+        return []
+    return sorted(y for y in years if y >= as_of)
+
+
+def _build_cbre_block(
+    flat: dict[str, Any],
+    *,
+    meta: Mapping[str, _FieldMeta] | None = None,
+    doc_name: str | None = None,
+) -> CbreHorizonsBlock | None:
     if not flat:
         return None
+    forecast_years = _cbre_forecast_calendar_years(flat)
+    as_of = _cbre_as_of_year(flat.get("cbre_horizons.publication_date"))
     years: list[CbreYearProjection] = []
     for n in (1, 2, 3, 4, 5):
         prefix = f"cbre_horizons.year_{n}."
@@ -3122,14 +3341,62 @@ def _build_cbre_block(flat: dict[str, Any]) -> CbreHorizonsBlock | None:
         adr = _coerce_float(flat.get(prefix + "adr_usd"))
         revpar = _coerce_float(flat.get(prefix + "revpar_usd"))
         growth = _coerce_float(flat.get(prefix + "revpar_growth_pct"))
-        if any(v is not None for v in (occ, adr, revpar, growth)):
+        if not any(v is not None for v in (occ, adr, revpar, growth)):
+            continue
+        # FON-94 — calendar placement, best source first: the extractor's
+        # own ``year_<n>.calendar_year`` row; the nth calendar-keyed
+        # forecast row of the same report; the publication year + (n-1).
+        cal = _coerce_int(flat.get(prefix + "calendar_year"))
+        if cal is None and len(forecast_years) >= n:
+            cal = forecast_years[n - 1]
+        if cal is None and as_of is not None:
+            cal = as_of + (n - 1)
+        if cal is not None and not (1990 <= cal <= 2100):
+            cal = None
+        page: int | None = None
+        for attr in ("occupancy_pct", "adr_usd", "revpar_usd", "revpar_growth_pct"):
+            fm = _meta_of(meta, "CBRE_HORIZONS", prefix + attr)
+            if fm and fm.page is not None:
+                page = fm.page
+                break
+        years.append(
+            CbreYearProjection(
+                year_index=n,
+                calendar_year=cal,
+                occupancy_pct=occ,
+                adr_usd=adr,
+                revpar_usd=revpar,
+                revpar_growth_pct=growth,
+                page=page,
+            )
+        )
+    if not years and forecast_years:
+        # An LLM-path extraction that emitted only the calendar-keyed
+        # ``segment_all.<YYYY>`` rows: build the forecast series from them,
+        # Year 1 = the first forecast calendar year (same contract).
+        for n, cal in enumerate(forecast_years[:5], start=1):
+            prefix = f"cbre_horizons.segment_all.{cal}."
+            occ = _coerce_float(flat.get(prefix + "occupancy_pct"))
+            adr = _coerce_float(flat.get(prefix + "adr_usd"))
+            revpar = _coerce_float(flat.get(prefix + "revpar_usd"))
+            growth = _coerce_float(flat.get(prefix + "revpar_change_pct"))
+            if not any(v is not None for v in (occ, adr, revpar, growth)):
+                continue
+            page = None
+            for attr in ("occupancy_pct", "adr_usd", "revpar_usd", "revpar_change_pct"):
+                fm = _meta_of(meta, "CBRE_HORIZONS", prefix + attr)
+                if fm and fm.page is not None:
+                    page = fm.page
+                    break
             years.append(
                 CbreYearProjection(
                     year_index=n,
+                    calendar_year=cal,
                     occupancy_pct=occ,
                     adr_usd=adr,
                     revpar_usd=revpar,
                     revpar_growth_pct=growth,
+                    page=page,
                 )
             )
     submarket = flat.get("cbre_horizons.submarket")
@@ -3140,7 +3407,126 @@ def _build_cbre_block(flat: dict[str, Any]) -> CbreHorizonsBlock | None:
         chain_scale=str(chain_scale) if chain_scale is not None else None,
         publication_date=str(pub_date) if pub_date is not None else None,
         years=years,
+        doc_name=doc_name,
     )
+
+
+# FON-95 — market-level actuals. The same spellings ``services.index_methodology``
+# reads for the market benchmark, plus the market study's calendar-year trend.
+_MH_METRIC = (
+    r"(?P<metric>occupancy|occ|adr|revpar)(?:_(?:pct|usd))?"
+    r"(?:_(?P<period>ttm|(?:19|20)\d{2})(?:_annual)?)?"
+)
+_MH_MARKET_RE = re.compile(
+    r"^(?:pnl_benchmark\.market|ttm_performance\.market|market_study\.market)\." + _MH_METRIC + r"$"
+)
+_MH_SEGMENT_RE = re.compile(r"^ttm_performance\.segment\.(?P<segment>[a-z0-9_]+)\." + _MH_METRIC + r"$")
+_MH_STUDY_TREND_RE = re.compile(
+    r"^market_study\.trend\.(?P<year>(?:19|20)\d{2})\.(?P<attr>occupancy_pct|adr_usd|revpar_usd|period)$"
+)
+
+
+def _build_market_history(
+    str_flat: Mapping[str, Any],
+    pnl_flat: Mapping[str, Any],
+    study_flat: Mapping[str, Any],
+    *,
+    meta: Mapping[str, _FieldMeta] | None = None,
+) -> list[MarketHistoryPoint]:
+    """Collect every market-level / segment actual into calendar-year points.
+
+    A point is keyed by (doc_type, segment, period, year); metrics from the
+    same key merge. Forecast-tagged market-study years are excluded — the
+    Market row's forecast half is CBRE Horizons, never a study's projection.
+    Sorted oldest year first, TTM / undated last.
+    """
+    points: dict[tuple[str, str | None, str, int | None], dict[str, Any]] = {}
+
+    def put(
+        doc_type: str, lname: str, segment: str | None, period: str, year: int | None,
+        metric: str, value: Any,
+    ) -> None:
+        v = _coerce_float(value)
+        if v is None or v <= 0:
+            return
+        key = (doc_type, segment, period, year)
+        slot = points.setdefault(key, {"fields": []})
+        attr = {"occupancy": "occupancy_pct", "occ": "occupancy_pct", "adr": "adr_usd", "revpar": "revpar_usd"}[metric]
+        if attr in slot:
+            return  # newest extraction already filled it
+        slot[attr] = v
+        slot["fields"].append(lname)
+        fm = _meta_of(meta, doc_type, lname)
+        if fm is not None:
+            slot.setdefault("doc_name", fm.doc_name)
+            slot.setdefault("page", fm.page)
+
+    def walk(doc_type: str, flat: Mapping[str, Any]) -> None:
+        for lname, value in flat.items():
+            m = _MH_MARKET_RE.match(lname)
+            seg: str | None = None
+            if not m:
+                m = _MH_SEGMENT_RE.match(lname)
+                if m:
+                    seg = m.group("segment")
+            if not m:
+                continue
+            p = m.group("period")
+            if p == "ttm":
+                put(doc_type, lname, seg, "ttm", None, m.group("metric"), value)
+            elif p:
+                put(doc_type, lname, seg, "annual", int(p), m.group("metric"), value)
+            else:
+                put(doc_type, lname, seg, "undated", None, m.group("metric"), value)
+
+    walk("STR_TREND", str_flat)
+    walk("PNL_BENCHMARK", pnl_flat)
+    walk("MARKET_STUDY", study_flat)
+
+    # Market study trend table — calendar-year actuals only.
+    trend_period: dict[int, str] = {}
+    trend_vals: dict[int, list[tuple[str, str, Any]]] = {}
+    for lname, value in study_flat.items():
+        m = _MH_STUDY_TREND_RE.match(lname)
+        if not m:
+            continue
+        year = int(m.group("year"))
+        attr = m.group("attr")
+        if attr == "period":
+            if isinstance(value, str):
+                trend_period[year] = value.strip().lower()
+            continue
+        trend_vals.setdefault(year, []).append((lname, attr, value))
+    for year, items in trend_vals.items():
+        if trend_period.get(year, "actual").startswith("forecast"):
+            continue
+        for lname, attr, value in items:
+            metric = {"occupancy_pct": "occupancy", "adr_usd": "adr", "revpar_usd": "revpar"}[attr]
+            put("MARKET_STUDY", lname, None, "annual", year, metric, value)
+
+    def order(key: tuple[str, str | None, str, int | None]) -> tuple[int, int, str, str]:
+        doc_type, segment, period, year = key
+        return (0 if period == "annual" else 1, year or 0, segment or "", doc_type)
+
+    out: list[MarketHistoryPoint] = []
+    for key in sorted(points, key=order):
+        doc_type, segment, period, year = key
+        slot = points[key]
+        out.append(
+            MarketHistoryPoint(
+                calendar_year=year,
+                period=period,  # type: ignore[arg-type]
+                segment=segment,
+                occupancy_pct=slot.get("occupancy_pct"),
+                adr_usd=slot.get("adr_usd"),
+                revpar_usd=slot.get("revpar_usd"),
+                doc_type=doc_type,
+                doc_name=slot.get("doc_name"),
+                page=slot.get("page"),
+                fields=list(slot["fields"]),
+            )
+        )
+    return out
 
 
 def _build_pnl_block(flat: dict[str, Any]) -> PnlBenchmarkBlock | None:
@@ -3177,9 +3563,10 @@ async def get_market_data(
     """Aggregate the deal's external-report extractions into one envelope.
 
     Reads ``extraction_results`` joined to ``documents`` filtered to
-    ``doc_type IN ('STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK')``
-    and folds the field rows into three typed blocks plus a sources
-    map for citation deep-links. Every block is optional — when the
+    ``doc_type IN ('STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK',
+    'MARKET_STUDY')`` and folds the field rows into the typed blocks (the
+    market study feeds only ``market_history``) plus a sources map for
+    citation deep-links. Every block is optional — when the
     deal has no extracted document of a given type the block is
     ``null`` so the Market tab can render "awaiting <doc>" cards
     without a 404 path.
@@ -3195,14 +3582,16 @@ async def get_market_data(
             """
             SELECT er.fields,
                    er.document_id,
-                   d.doc_type
+                   d.doc_type,
+                   d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
                AND er.tenant_id = :tenant
                AND d.tenant_id = :tenant
                AND UPPER(COALESCE(d.doc_type, '')) IN (
-                   'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK'
+                   'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK',
+                   'MARKET_STUDY'
                )
              ORDER BY er.created_at DESC
             """

@@ -324,7 +324,10 @@ include:
          For backwards compatibility, the All-Hotels segment may also
          be emitted on the legacy ``cbre_horizons.year_<i>.*`` paths
          where ``i`` is the 1-indexed forecast year (e.g. Year-1 of
-         the forecast, regardless of calendar year).
+         the forecast, regardless of calendar year). When you do, also
+         emit ``cbre_horizons.year_<i>.calendar_year`` — the calendar
+         year that ordinal stands for — so the Index Analysis tab can
+         place the year on the deal's calendar (FON-94).
        * **Long-run averages** (the next-4-quarters anchor block —
          "Occupancy: 67.4%, ADR Change: 2.7%, RevPAR Change: 5.8%"):
            ``cbre_horizons.long_run_avg.occupancy_pct``,
