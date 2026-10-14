@@ -397,6 +397,34 @@ export interface IndexMethod {
   segment?: string | null;
   segments_available: string[];
 }
+/** FON-95 part 2 — one model year's effective MPI / ARI target: the by-year
+ *  entry where set, else the scalar all-years target, else none. */
+export interface IndexTargetAPI {
+  value: number | null;
+  source: 'by_year' | 'scalar' | null;
+  note?: string | null;
+}
+export type IndexDriverStatus = 'driven' | 'no_target' | 'benchmark_unavailable';
+/** FON-95 part 2 — one row of the by-year penetration grid. */
+export interface IndexYearRow {
+  year: number;
+  calendar_year?: number | null;
+  benchmark_occupancy: IndexFigure;
+  benchmark_adr: IndexFigure;
+  mpi_target: IndexTargetAPI;
+  ari_target: IndexTargetAPI;
+  /** MPI × ARI ÷ 100 — derived, never an input. */
+  rgi_derived?: number | null;
+  /** benchmark × target ÷ 100 (before Year-1 displacement); null when not driven. */
+  occupancy?: number | null;
+  adr?: number | null;
+  occupancy_status: IndexDriverStatus;
+  adr_status: IndexDriverStatus;
+  reason?: string | null;
+  /** What the last model run actually ran for this year, when it carried a driver. */
+  engine_occupancy?: number | null;
+  engine_adr?: number | null;
+}
 /** `GET /market/{deal_id}/index-methodology` (apps/worker/app/api/market.py). */
 export interface IndexMethodologyResponse {
   deal_id: string;
@@ -408,6 +436,12 @@ export interface IndexMethodologyResponse {
   subject_period_label?: string | null;
   assumptions: Record<string, IndexFigure>;
   toggle_on: boolean;
+  /** FON-95 part 2 — one row per model year (1..hold); absent on an older worker. */
+  by_year?: IndexYearRow[];
+  hold_years?: number;
+  calendar_known?: boolean;
+  by_year_applies?: boolean;
+  by_year_disabled_reason?: string | null;
 }
 
 /** One named input that fed a modeled value's formula (FON-25/27).

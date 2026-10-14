@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -290,6 +291,73 @@ PROJECTION_METHOD_ASSUMPTIONS: tuple[AssumptionSpec, ...] = tuple(
 )
 ASSUMPTIONS = ASSUMPTIONS + PROJECTION_METHOD_ASSUMPTIONS
 ASSUMPTION_BY_KEY = {a.key: a for a in ASSUMPTIONS}
+
+#: FON-95 part 2 — Index Analysis penetration targets BY MODEL YEAR. One sheet
+#: row per metric per model year (``index_mpi_target_by_year.3`` = the MPI
+#: target for Year 3, index points, 100 = parity with the selected benchmark);
+#: the import folds the rows back into the ``index_*_target_by_year`` JSON
+#: lists the engine runner reads. Blank = no by-year target for that year (the
+#: all-years ``index_mpi_target`` / ``index_ari_target`` applies where set).
+#: The row count follows the deal's ``hold_years``, so these are generated per
+#: export rather than listed in ``ASSUMPTIONS``.
+BY_YEAR_TARGET_LISTS: tuple[tuple[str, str, str], ...] = (
+    ("index_mpi_target_by_year", "Occupancy penetration target (MPI)", "occupancy"),
+    ("index_ari_target_by_year", "ADR penetration target (ARI)", "ADR"),
+)
+BY_YEAR_TARGET_MAX_YEARS = 20
+_BY_YEAR_TARGET_KEY_RE = re.compile(
+    r"^(?P<list>index_(?:mpi|ari)_target_by_year)\.(?P<year>[1-9]\d?)$"
+)
+
+
+def by_year_target_key(list_key: str, year: int) -> str:
+    return f"{list_key}.{year}"
+
+
+def split_by_year_target_key(key: str) -> tuple[str, int] | None:
+    """``index_mpi_target_by_year.3`` → ``("index_mpi_target_by_year", 3)``;
+    ``None`` for any other key (or a year past the model cap)."""
+    m = _BY_YEAR_TARGET_KEY_RE.match(key or "")
+    if not m:
+        return None
+    year = int(m.group("year"))
+    if not 1 <= year <= BY_YEAR_TARGET_MAX_YEARS:
+        return None
+    return m.group("list"), year
+
+
+def by_year_target_spec(list_key: str, year: int) -> AssumptionSpec:
+    label, noun = next(
+        ((lbl, n) for k, lbl, n in BY_YEAR_TARGET_LISTS if k == list_key), (list_key, "")
+    )
+    year_label = "Base year (Year 1)" if year == 1 else f"Year {year}"
+    return AssumptionSpec(
+        by_year_target_key(list_key, year),
+        f"{label} — {year_label}",
+        "index points (100 = parity with the selected benchmark)",
+        f"Index Analysis target by year: {year_label} {noun} = benchmark {noun} for that year × target "
+        f"÷ 100 while \"Use STR rates in the model\" is on; blank = the all-years target applies",
+    )
+
+
+def by_year_target_assumptions(hold_years: int) -> tuple[AssumptionSpec, ...]:
+    """The by-year target rows for a deal projecting ``hold_years`` years."""
+    hold = max(1, min(int(hold_years or 1), BY_YEAR_TARGET_MAX_YEARS))
+    return tuple(
+        by_year_target_spec(list_key, year)
+        for list_key, _label, _noun in BY_YEAR_TARGET_LISTS
+        for year in range(1, hold + 1)
+    )
+
+
+def assumption_spec(key: str) -> AssumptionSpec | None:
+    """The spec behind an Assumptions-sheet key: a fixed ``ASSUMPTIONS`` entry
+    or a by-year penetration target row; ``None`` = not an editable key."""
+    spec = ASSUMPTION_BY_KEY.get(key)
+    if spec is not None:
+        return spec
+    by = split_by_year_target_key(key)
+    return by_year_target_spec(*by) if by is not None else None
 
 
 ASSUMPTION_COLUMNS: tuple[str, ...] = (
@@ -822,7 +890,7 @@ def parse_projections_import(
                 mapping_errors.append({"cell_ref": ref, "key": None, "reason": "missing_key",
                                        "detail": "A value with no Key cannot be mapped."})
             continue
-        spec = ASSUMPTION_BY_KEY.get(key)
+        spec = assumption_spec(key)
         if spec is None:
             mapping_errors.append({
                 "cell_ref": ref, "key": key, "reason": "unknown_key",
@@ -944,6 +1012,13 @@ __all__ = [
     "ASSUMPTION_BY_KEY",
     "BENCHMARK_HEADER",
     "BENCHMARK_LINE_PATHS",
+
+
+    "BY_YEAR_TARGET_LISTS",
+    "assumption_spec",
+    "by_year_target_assumptions",
+    "by_year_target_key",
+    "split_by_year_target_key",
     "HIST_FORMAT",
     "HIST_LINES",
     "PROJ_FORMAT",

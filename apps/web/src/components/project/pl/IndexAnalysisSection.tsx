@@ -67,6 +67,7 @@ import {
   type PenetrationRow,
   type RevenueYear,
   type YearSeries,
+  type YearTarget,
 } from './indexAnalysisModel';
 
 export type { ForecastBoundary } from './indexAnalysisModel';
@@ -420,10 +421,34 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
   })();
 
+  // The all-years MPI / ARI figures (the analyst's or the document default)
+  // feed "Revenue Opportunity at Target" where no per-year target applies.
   const targetOf = (key: string): number | null => {
     const v = methodology?.assumptions?.[key]?.value;
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
   };
+  // FON-95 part 2 — the effective ANALYST-SET target per model year from the
+  // worker's by-year grid (by-year beats scalar; index = ordinal − 1). These
+  // drive the index rows' forecast cells and the per-year opportunity.
+  const targetsByYear = useMemo(() => {
+    const rows = methodology?.by_year ?? [];
+    if (!rows.length) return null;
+    const size = Math.max(...rows.map((r) => r.year));
+    const mpi: (YearTarget | null)[] = Array.from({ length: size }, () => null);
+    const ari: (YearTarget | null)[] = Array.from({ length: size }, () => null);
+    const of = (t: { value: number | null; source: 'by_year' | 'scalar' | null } | undefined): YearTarget | null => {
+      const v = posOrNull(t?.value);
+      return v != null && t?.source ? { value: v, source: t.source } : null;
+    };
+    for (const r of rows) {
+      mpi[r.year - 1] = of(r.mpi_target);
+      ari[r.year - 1] = of(r.ari_target);
+    }
+    return { mpi, ari };
+  }, [methodology]);
+  const hasTargets =
+    !!targetsByYear &&
+    (targetsByYear.mpi.some((v) => v != null) || targetsByYear.ari.some((v) => v != null));
   const penetrationRows = useMemo(
     () =>
       computePenetration({
@@ -439,9 +464,10 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         subjectKeys,
         compKeys,
         targets: { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') },
+        targetsByYear,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology],
+    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology, targetsByYear],
   );
 
   // FON-41 E-027 — reconcile this table to Financials → Projections. Every
@@ -608,7 +634,15 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <PenetrationTable cols={cols} rows={penetrationRows} forecastBand="indices held at STR TTM; shares and variances where both sides are reported" />
+        <PenetrationTable
+          cols={cols}
+          rows={penetrationRows}
+          forecastBand={
+            hasTargets
+              ? 'indices at the analyst’s MPI / ARI targets per year (RGI derived), else held at STR TTM; shares and variances where both sides are reported'
+              : 'indices held at STR TTM; shares and variances where both sides are reported'
+          }
+        />
       </Card>
     </div>
   );

@@ -47,6 +47,7 @@ never a placeholder number.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -61,6 +62,7 @@ from .market_fields import (
     FieldRef,
     FieldRow,
     coerce_float,
+    coerce_int,
     extraction_lane,
     parse_extraction_records,
 )
@@ -86,6 +88,26 @@ KEY_ADR_GROWTH = "index_market_adr_growth"
 KEY_MPI_TARGET = "index_mpi_target"
 KEY_ARI_TARGET = "index_ari_target"
 ASSUMPTION_KEYS: tuple[str, ...] = (KEY_OCC_GROWTH, KEY_ADR_GROWTH, KEY_MPI_TARGET, KEY_ARI_TARGET)
+#: FON-95 part 2 — penetration targets BY MODEL YEAR (JSON lists; index y-1 =
+#: model year y; null = not set for that year). Where set they beat the scalar
+#: ``index_mpi_target`` / ``index_ari_target``, which remain the all-years
+#: shorthand. RGI is derived (MPI × ARI ÷ 100), never an input.
+KEY_MPI_TARGET_BY_YEAR = "index_mpi_target_by_year"
+KEY_ARI_TARGET_BY_YEAR = "index_ari_target_by_year"
+BY_YEAR_TARGET_KEYS: tuple[str, ...] = (KEY_MPI_TARGET_BY_YEAR, KEY_ARI_TARGET_BY_YEAR)
+#: The model-year cap the by-year lists are read to (``hold_years`` ≤ 20).
+MAX_MODEL_YEARS = 20
+
+#: CBRE Horizons rows the market benchmark's forecast years are read from:
+#: ``cbre_horizons.segment_<scope>.<YYYY>.(occupancy_pct|adr_usd|period)`` and
+#: the legacy ``cbre_horizons.year_<n>.(occupancy_pct|adr_usd|calendar_year)``.
+_CBRE_SEGMENT_YEAR_RE = re.compile(
+    r"^cbre_horizons\.segment_(?P<scope>[a-z0-9_]+)\.(?P<year>(?:19|20)\d{2})\."
+    r"(?P<attr>occupancy_pct|adr_usd|period)$"
+)
+_CBRE_LEGACY_YEAR_RE = re.compile(
+    r"^cbre_horizons\.year_(?P<n>\d{1,2})\.(?P<attr>occupancy_pct|adr_usd|calendar_year)$"
+)
 
 #: The source id stamped on an engine key one of these assumptions moved.
 SOURCE_INDEX_ASSUMPTION = "index_assumption"
@@ -577,6 +599,9 @@ def wants_benchmark(base: Mapping[str, Any], analyst_override_paths: set[str]) -
     return any(
         k in analyst_override_paths and coerce_float(base.get(k)) is not None
         for k in (KEY_MPI_TARGET, KEY_ARI_TARGET)
+    ) or any(
+        k in analyst_override_paths and any(v is not None for v in coerce_target_list(base.get(k)))
+        for k in BY_YEAR_TARGET_KEYS
     )
 
 
@@ -642,6 +667,424 @@ def apply_index_assumptions(
     return changed
 
 
+# ───────────────────────────── by-year targets (FON-95 part 2) ─────────────────────────────
+
+
+def coerce_target_list(raw: Any) -> list[float | None]:
+    """``index_*_target_by_year`` → index points per model year (``None`` = unset).
+
+    Accepts a list or a JSON-encoded list. Each entry arrives as index points
+    (110) or a ratio (1.10); zero / negative / unparseable = not set.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[float | None] = []
+    for v in list(raw)[:MAX_MODEL_YEARS]:
+        f = coerce_float(v)
+        out.append(_index_points(f) if f is not None and f > 0 else None)
+    return out
+
+
+TargetSource = Literal["by_year", "scalar"]
+DriverStatus = Literal["driven", "no_target", "benchmark_unavailable"]
+
+
+@dataclass(frozen=True)
+class TargetReading:
+    """One year's effective penetration target and where it came from."""
+
+    value: float | None
+    source: TargetSource | None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class IndexYearReading:
+    year: int
+    calendar_year: int | None
+    benchmark_occupancy: Figure  # fraction
+    benchmark_adr: Figure  # USD
+    mpi_target: TargetReading
+    ari_target: TargetReading
+    #: MPI × ARI ÷ 100 — derived, never an input.
+    rgi_derived: float | None
+    #: benchmark × target ÷ 100 where both exist (before Year-1 displacement).
+    occupancy: float | None
+    adr: float | None
+    occupancy_status: DriverStatus
+    adr_status: DriverStatus
+    reason: str | None
+
+
+@dataclass(frozen=True)
+class IndexByYearReading:
+    method: str
+    method_label: str
+    hold_years: int
+    calendar_known: bool
+    years: list[IndexYearReading]
+
+    @property
+    def any_target(self) -> bool:
+        return any(y.mpi_target.value is not None or y.ari_target.value is not None for y in self.years)
+
+
+def read_targets_by_year(overrides: Mapping[str, Any] | None, hold_years: int) -> tuple[list[TargetReading], list[TargetReading]]:
+    """Effective MPI / ARI target per model year: the by-year entry where set,
+    else the scalar all-years target, else none. Only ANALYST-SET values count —
+    a document default is shown beside the assumption, never applied."""
+    mpi_list = coerce_target_list(override_scalar(overrides, KEY_MPI_TARGET_BY_YEAR))
+    ari_list = coerce_target_list(override_scalar(overrides, KEY_ARI_TARGET_BY_YEAR))
+    mpi_scalar = _index_points(coerce_float(override_scalar(overrides, KEY_MPI_TARGET)))
+    ari_scalar = _index_points(coerce_float(override_scalar(overrides, KEY_ARI_TARGET)))
+    notes = {k: override_note(overrides, k) for k in (*BY_YEAR_TARGET_KEYS, KEY_MPI_TARGET, KEY_ARI_TARGET)}
+
+    def pick(lst: list[float | None], scalar: float | None, list_key: str, scalar_key: str, y: int) -> TargetReading:
+        v = lst[y - 1] if y - 1 < len(lst) else None
+        if v is not None:
+            return TargetReading(value=v, source="by_year", note=notes[list_key])
+        if scalar is not None:
+            return TargetReading(value=scalar, source="scalar", note=notes[scalar_key])
+        return TargetReading(value=None, source=None)
+
+    years = range(1, max(1, hold_years) + 1)
+    return (
+        [pick(mpi_list, mpi_scalar, KEY_MPI_TARGET_BY_YEAR, KEY_MPI_TARGET, y) for y in years],
+        [pick(ari_list, ari_scalar, KEY_ARI_TARGET_BY_YEAR, KEY_ARI_TARGET, y) for y in years],
+    )
+
+
+def _grown_series(
+    level: Figure, growth: Figure, hold_years: int, *, noun: str, method_label: str
+) -> list[Figure]:
+    """A comp-set benchmark by model year: the reported level in Year 1, grown
+    at the market growth assumption after it. No growth assumption → the
+    out-years are ``None`` with the reason (never the model's own growth)."""
+    out: list[Figure] = []
+    period = level.period_label or "TTM"
+    for y in range(1, hold_years + 1):
+        if level.value is None:
+            out.append(Figure.none(level.detail or f"No {method_label} {noun}."))
+            continue
+        if y == 1:
+            out.append(
+                Figure(
+                    value=level.value, source=level.source, inputs=list(level.inputs),
+                    detail=f"{method_label} {period} {noun}" + (f" ({level.detail})" if level.detail else ""),
+                    period_label=period,
+                )
+            )
+            continue
+        if growth.value is None:
+            out.append(
+                Figure.none(
+                    f"No market {noun} growth assumption to carry the {method_label.lower()} past Year 1"
+                    + (f" — {growth.detail}" if growth.detail else "")
+                    + "."
+                )
+            )
+            continue
+        v = level.value * (1.0 + growth.value) ** (y - 1)
+        if noun == "occupancy" and v >= 1.0:
+            out.append(Figure.none(f"Growing the {method_label.lower()} occupancy {y - 1} years at {growth.value:+.2%} passes 100%."))
+            continue
+        growth_basis = (
+            "your override" if growth.source == "override" else (growth.period_label or "document")
+        )
+        out.append(
+            Figure(
+                value=v,
+                source="computed",
+                inputs=[*level.inputs, *growth.inputs],
+                detail=(
+                    f"{method_label} {period} {noun} grown {y - 1} year{'s' if y - 1 != 1 else ''} "
+                    f"at {growth.value:+.2%} market {noun} growth ({growth_basis})"
+                ),
+                period_label=f"Year {y}",
+            )
+        )
+    return out
+
+
+def _cbre_series(
+    rows: Sequence[FieldRow],
+    *,
+    segment: str | None,
+    calendar_years: Sequence[int],
+    hold_years: int,
+    level_occ: Figure,
+    level_adr: Figure,
+    method_label: str,
+) -> tuple[list[Figure], list[Figure]]:
+    """The market benchmark by model year: Year 1 = the reported level (as the
+    scalar path uses), Year 2+ = the CBRE Horizons forecast for that model
+    year's CALENDAR year — the segment table named like the chosen segment
+    when the report carries one, else All Hotels. A year the report does not
+    carry (or that cannot be placed without a close date) is ``None`` with the
+    reason."""
+    tables: dict[str, dict[int, dict[str, FieldRow]]] = {}
+    legacy: dict[int, dict[str, FieldRow]] = {}
+    for r in rows:
+        m = _CBRE_SEGMENT_YEAR_RE.match(r.lname)
+        if m:
+            slot = tables.setdefault(m.group("scope"), {}).setdefault(int(m.group("year")), {})
+            slot.setdefault(m.group("attr"), r)  # newest extraction first
+            continue
+        m = _CBRE_LEGACY_YEAR_RE.match(r.lname)
+        if m:
+            legacy.setdefault(int(m.group("n")), {}).setdefault(m.group("attr"), r)
+    wanted = _slug(segment)
+    scope = wanted if wanted and wanted in tables else "all"
+    table = tables.get(scope) or {}
+    if not table and legacy:
+        for slot in legacy.values():
+            cal = coerce_int(slot["calendar_year"].value) if "calendar_year" in slot else None
+            if cal is not None:
+                table.setdefault(cal, {}).update({k: v for k, v in slot.items() if k != "calendar_year"})
+    scope_label = "All Hotels" if scope == "all" else scope.replace("_", " ")
+    have_cbre = bool(tables or legacy)
+
+    def year_figure(y: int, attr: str, level: Figure, noun: str) -> Figure:
+        if y == 1:
+            if level.value is None:
+                return Figure.none(level.detail or f"No {method_label} {noun}.")
+            return Figure(
+                value=level.value, source=level.source, inputs=list(level.inputs),
+                detail=f"{method_label} {level.period_label or 'reported'} {noun}",
+                period_label=level.period_label,
+            )
+        cal = calendar_years[y - 1] if y - 1 < len(calendar_years) else None
+        if cal is None:
+            return Figure.none(
+                "No acquisition close date — the CBRE Horizons forecast cannot be placed on the "
+                "model calendar (set the acquisition date on CAPEX)."
+            )
+        if not have_cbre:
+            return Figure.none(
+                "No CBRE Hotel Horizons report on this deal — upload one for the market benchmark's forecast years."
+            )
+        row = (table.get(cal) or {}).get(attr)
+        v = coerce_float(row.value) if row is not None else None
+        if noun == "occupancy":
+            v = _occ_fraction(v)
+        elif v is not None and v <= 0:
+            v = None
+        if row is None or v is None:
+            return Figure.none(f"No CBRE Horizons {scope_label} {noun} for {cal} on this deal.")
+        period_row = (table.get(cal) or {}).get("period")
+        period = period_row.value if period_row is not None and isinstance(period_row.value, str) else None
+        kind = "forecast" if (period or "forecast").strip().lower().startswith("forecast") else "actual"
+        return Figure(
+            value=v, source="document", inputs=[FieldRef.of(row)],
+            detail=f"CBRE Horizons {scope_label} {cal} {kind} {noun}", period_label=str(cal),
+        )
+
+    occ = [year_figure(y, "occupancy_pct", level_occ, "occupancy") for y in range(1, hold_years + 1)]
+    adr = [year_figure(y, "adr_usd", level_adr, "ADR") for y in range(1, hold_years + 1)]
+    return occ, adr
+
+
+def resolve_index_by_year(
+    rows: Sequence[FieldRow],
+    overrides: Mapping[str, Any] | None,
+    *,
+    hold_years: int,
+    calendar_years: Sequence[int] | None = None,
+    service_hint: str | None = None,
+) -> IndexByYearReading:
+    """Everything the by-year grid shows — and exactly what the runner drives
+    the revenue engine with when the STR basis is on. Pure.
+
+    Per model year: the selected benchmark's occupancy / ADR for that year
+    (STR / CoStar comp set grown at the market growth assumptions; market
+    benchmark = CBRE Horizons by calendar year), the effective MPI / ARI
+    target (by-year beats scalar), the derived RGI, and the resulting
+    occupancy = benchmark × MPI ÷ 100 / ADR = benchmark × ARI ÷ 100. A year
+    with a target but no benchmark is ``benchmark_unavailable``; a year with no
+    target is ``no_target``. Nothing is invented.
+    """
+    hold = max(1, min(int(hold_years or 1), MAX_MODEL_YEARS))
+    cal = [int(c) for c in (calendar_years or [])]
+    reading = resolve_index_methodology(rows, overrides, service_hint=service_hint)
+    chosen = reading.method(reading.selected)
+    assert chosen is not None
+    occ_growth = reading.assumptions[KEY_OCC_GROWTH]
+    adr_growth = reading.assumptions[KEY_ADR_GROWTH]
+    if not chosen.available:
+        reason = chosen.disabled_reason or f"{chosen.label} is unavailable on this deal."
+        bench_occ = [Figure.none(reason) for _ in range(hold)]
+        bench_adr = [Figure.none(reason) for _ in range(hold)]
+    elif chosen.method == METHOD_MARKET_BENCHMARK:
+        bench_occ, bench_adr = _cbre_series(
+            rows, segment=chosen.segment, calendar_years=cal, hold_years=hold,
+            level_occ=chosen.occupancy, level_adr=chosen.adr, method_label=chosen.label,
+        )
+    else:
+        bench_occ = _grown_series(chosen.occupancy, occ_growth, hold, noun="occupancy", method_label=chosen.label)
+        bench_adr = _grown_series(chosen.adr, adr_growth, hold, noun="ADR", method_label=chosen.label)
+    mpi_t, ari_t = read_targets_by_year(overrides, hold)
+
+    years: list[IndexYearReading] = []
+    for y in range(1, hold + 1):
+        bo, ba = bench_occ[y - 1], bench_adr[y - 1]
+        mt, at = mpi_t[y - 1], ari_t[y - 1]
+        reasons: list[str] = []
+
+        def resolve(target: TargetReading, bench: Figure, normalize, label: str) -> tuple[float | None, DriverStatus]:
+            if target.value is None:
+                return None, "no_target"
+            if bench.value is None:
+                reasons.append(f"{label}: {bench.detail or 'no benchmark value'}")
+                return None, "benchmark_unavailable"
+            v = normalize(bench.value * target.value / 100.0)
+            if v is None:
+                reasons.append(f"{label}: benchmark × target gives an impossible figure.")
+                return None, "benchmark_unavailable"
+            return v, "driven"
+
+        occ_v, occ_s = resolve(mt, bo, _valid_occupancy, "Occupancy")
+        adr_v, adr_s = resolve(at, ba, _valid_adr, "ADR")
+        rgi = (mt.value * at.value / 100.0) if mt.value is not None and at.value is not None else None
+        years.append(
+            IndexYearReading(
+                year=y,
+                calendar_year=cal[y - 1] if y - 1 < len(cal) else None,
+                benchmark_occupancy=bo,
+                benchmark_adr=ba,
+                mpi_target=mt,
+                ari_target=at,
+                rgi_derived=round(rgi, 2) if rgi is not None else None,
+                occupancy=occ_v,
+                adr=adr_v,
+                occupancy_status=occ_s,
+                adr_status=adr_s,
+                reason="; ".join(reasons) or None,
+            )
+        )
+    return IndexByYearReading(
+        method=chosen.method, method_label=chosen.label, hold_years=hold,
+        calendar_known=bool(cal), years=years,
+    )
+
+
+def _doc_of(fig: Figure) -> tuple[str | None, int | None]:
+    for ref in fig.inputs:
+        if ref.doc_name:
+            return ref.doc_name, ref.page
+    return None, None
+
+
+def driver_record(y: IndexYearReading, method: str) -> dict[str, Any]:
+    """One ``IndexDriverYear`` payload (the schema the revenue engine echoes)."""
+    doc, page = _doc_of(y.benchmark_occupancy)
+    if doc is None:
+        doc, page = _doc_of(y.benchmark_adr)
+    return {
+        "year": y.year,
+        "calendar_year": y.calendar_year,
+        "method": method,
+        "benchmark_occupancy": y.benchmark_occupancy.value,
+        "benchmark_adr": y.benchmark_adr.value,
+        "benchmark_occupancy_source": y.benchmark_occupancy.detail,
+        "benchmark_adr_source": y.benchmark_adr.detail,
+        "benchmark_doc": doc,
+        "benchmark_page": page,
+        "mpi_target": y.mpi_target.value,
+        "ari_target": y.ari_target.value,
+        "mpi_target_source": y.mpi_target.source,
+        "ari_target_source": y.ari_target.source,
+        "rgi_derived": y.rgi_derived,
+        "occupancy": y.occupancy,
+        "adr": y.adr,
+        "occupancy_status": y.occupancy_status,
+        "adr_status": y.adr_status,
+        "reason": y.reason,
+    }
+
+
+#: ``base`` keys the runner parks the drivers on for ``_build_input_for('revenue')``.
+BASE_OCC_BY_YEAR = "index_occupancy_by_year"
+BASE_ADR_BY_YEAR = "index_adr_by_year"
+BASE_DRIVERS_BY_YEAR = "index_drivers_by_year"
+
+
+def build_index_drivers(
+    base: dict[str, Any],
+    sources: dict[str, str],
+    analyst_override_paths: set[str],
+    *,
+    rows: Sequence[FieldRow] | None,
+    str_basis_sources: frozenset[str],
+    hold_years: int,
+    calendar_years: Sequence[int] | None,
+) -> list[str]:
+    """Turn the analyst's penetration targets into per-year revenue drivers.
+
+    Called from the runner's STR-basis block ONLY (toggle on), after
+    ``apply_index_assumptions``. Does nothing — and leaves ``base`` untouched —
+    unless the analyst set a target (by-year or scalar) AND the Year-1 rate for
+    that metric sits on an STR basis (the seed landed; an explicit analyst
+    ``starting_*`` override is never overwritten). Parks the per-year lists and
+    the driver records on ``base`` and re-points Year 1 (by-year beats scalar).
+    Returns the engine keys it changed.
+    """
+    overrides: dict[str, Any] = {}
+    for k in (OVERRIDE_METHOD, OVERRIDE_SEGMENT):
+        if base.get(k) is not None:
+            overrides[k] = base[k]
+    for k in (*ASSUMPTION_KEYS, *BY_YEAR_TARGET_KEYS):
+        if k in analyst_override_paths and base.get(k) is not None:
+            overrides[k] = base[k]
+    if not any(k in overrides for k in (KEY_MPI_TARGET, KEY_ARI_TARGET, *BY_YEAR_TARGET_KEYS)):
+        return []
+    if rows is None:
+        return []
+    drivable = str_basis_sources | {SOURCE_INDEX_ASSUMPTION}
+    occ_ok = sources.get("starting_occupancy") in drivable
+    adr_ok = sources.get("starting_adr") in drivable
+    reading = resolve_index_by_year(rows, overrides, hold_years=hold_years, calendar_years=calendar_years)
+    if not reading.any_target or not (occ_ok or adr_ok):
+        return []
+    occ_list: list[float | None] = [None] * reading.hold_years
+    adr_list: list[float | None] = [None] * reading.hold_years
+    records: list[dict[str, Any]] = []
+    changed: list[str] = []
+    for y in reading.years:
+        rec = driver_record(y, reading.method)
+        if y.occupancy is not None and occ_ok:
+            occ_list[y.year - 1] = y.occupancy
+        elif y.occupancy is not None:
+            rec["occupancy"] = None
+            rec["occupancy_status"] = "no_target"
+            rec["reason"] = "Year-1 occupancy is an explicit analyst value, not the STR basis — the target is not applied."
+        if y.adr is not None and adr_ok:
+            adr_list[y.year - 1] = y.adr
+        elif y.adr is not None:
+            rec["adr"] = None
+            rec["adr_status"] = "no_target"
+            rec["reason"] = "Year-1 ADR is an explicit analyst value, not the STR basis — the target is not applied."
+        records.append(rec)
+    if not any(v is not None for v in occ_list) and not any(v is not None for v in adr_list):
+        return []
+    if occ_list[0] is not None:
+        base["starting_occupancy"] = occ_list[0]
+        sources["starting_occupancy"] = SOURCE_INDEX_ASSUMPTION
+        changed.append("starting_occupancy")
+    if adr_list[0] is not None:
+        base["starting_adr"] = adr_list[0]
+        sources["starting_adr"] = SOURCE_INDEX_ASSUMPTION
+        changed.append("starting_adr")
+    base[BASE_OCC_BY_YEAR] = occ_list
+    base[BASE_ADR_BY_YEAR] = adr_list
+    base[BASE_DRIVERS_BY_YEAR] = records
+    return changed
+
+
 # ───────────────────────────── DB read ─────────────────────────────
 
 _INDEX_DOC_TYPES = ("STR", "STR_TREND", "MARKET_STUDY", "CBRE_HORIZONS", "COSTAR")
@@ -703,11 +1146,26 @@ async def load_index_rows(
 
 __all__ = [
     "ASSUMPTION_KEYS",
+    "BASE_ADR_BY_YEAR",
+    "BASE_DRIVERS_BY_YEAR",
+    "BASE_OCC_BY_YEAR",
+    "BY_YEAR_TARGET_KEYS",
     "DEFAULT_METHOD",
+    "IndexByYearReading",
+    "IndexYearReading",
     "KEY_ADR_GROWTH",
     "KEY_ARI_TARGET",
+    "KEY_ARI_TARGET_BY_YEAR",
     "KEY_MPI_TARGET",
+    "KEY_MPI_TARGET_BY_YEAR",
     "KEY_OCC_GROWTH",
+    "MAX_MODEL_YEARS",
+    "TargetReading",
+    "build_index_drivers",
+    "coerce_target_list",
+    "driver_record",
+    "read_targets_by_year",
+    "resolve_index_by_year",
     "METHODS",
     "METHOD_COSTAR_COMP_SET",
     "METHOD_MARKET_BENCHMARK",

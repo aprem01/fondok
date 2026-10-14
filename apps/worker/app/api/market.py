@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date
 from typing import Annotated, Any, Literal
@@ -1181,10 +1182,47 @@ class IndexMethodOut(BaseModel):
     segments_available: list[str] = Field(default_factory=list)
 
 
+class IndexTargetOut(BaseModel):
+    """One model year's effective MPI / ARI target: the by-year entry where
+    set, else the scalar all-years target, else none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: float | None = None
+    source: Literal["by_year", "scalar"] | None = None
+    note: str | None = None
+
+
+class IndexYearOut(BaseModel):
+    """FON-95 part 2 — one row of the by-year penetration grid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: int
+    calendar_year: int | None = None
+    benchmark_occupancy: IndexFigureOut
+    benchmark_adr: IndexFigureOut
+    mpi_target: IndexTargetOut
+    ari_target: IndexTargetOut
+    #: MPI × ARI ÷ 100 — derived, never an input.
+    rgi_derived: float | None = None
+    #: benchmark × target ÷ 100 (before Year-1 displacement); None when not driven.
+    occupancy: float | None = None
+    adr: float | None = None
+    occupancy_status: Literal["driven", "no_target", "benchmark_unavailable"]
+    adr_status: Literal["driven", "no_target", "benchmark_unavailable"]
+    reason: str | None = None
+    #: What the LAST model run actually ran for this year, when the run carried
+    #: an Index Analysis driver for it (``revenue.index_drivers_by_year``).
+    engine_occupancy: float | None = None
+    engine_adr: float | None = None
+
+
 class IndexMethodologyResponse(BaseModel):
     """``GET /market/{deal_id}/index-methodology`` — the method the analyst
     picked (``index_methodology`` override; default ``str_comp_set``), what each
-    method reads, and the four editable assumptions with their sources."""
+    method reads, the four editable assumptions with their sources, and the
+    by-year penetration grid (FON-95 part 2)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1198,10 +1236,56 @@ class IndexMethodologyResponse(BaseModel):
     assumptions: dict[str, IndexFigureOut]
     #: "Use STR rates in the model" — the assumptions feed revenue only when on.
     toggle_on: bool
+    #: FON-95 part 2 — one row per model year (1..hold).
+    by_year: list[IndexYearOut] = Field(default_factory=list)
+    hold_years: int = 0
+    #: False when the model has no acquisition close date (years are ordinals).
+    calendar_known: bool = False
+    #: Whether by-year targets reach the projection right now (the toggle), and
+    #: why not when they do not.
+    by_year_applies: bool = False
+    by_year_disabled_reason: str | None = None
 
 
-def index_methodology_response(deal_id: UUID, reading: Any) -> IndexMethodologyResponse:
-    """Serialize a ``resolve_index_methodology`` reading (pure; unit-tested)."""
+BY_YEAR_TOGGLE_OFF_REASON = (
+    'Targets by year do not feed Projections yet: turn on "Use STR rates in the model" in '
+    "Market Overview. Until then every year stays on its current basis."
+)
+
+
+def index_methodology_response(
+    deal_id: UUID,
+    reading: Any,
+    by_year: Any | None = None,
+    *,
+    engine_drivers: list[Mapping[str, Any]] | None = None,
+) -> IndexMethodologyResponse:
+    """Serialize a ``resolve_index_methodology`` reading (+ the by-year reading)
+    (pure; unit-tested)."""
+    engine_by_year: dict[int, Mapping[str, Any]] = {
+        int(d["year"]): d for d in (engine_drivers or []) if isinstance(d, Mapping) and d.get("year") is not None
+    }
+    rows_out: list[IndexYearOut] = []
+    for y in (by_year.years if by_year is not None else []):
+        eng = engine_by_year.get(y.year)
+        rows_out.append(
+            IndexYearOut(
+                year=y.year,
+                calendar_year=y.calendar_year,
+                benchmark_occupancy=IndexFigureOut.of(y.benchmark_occupancy),
+                benchmark_adr=IndexFigureOut.of(y.benchmark_adr),
+                mpi_target=IndexTargetOut(value=y.mpi_target.value, source=y.mpi_target.source, note=y.mpi_target.note),
+                ari_target=IndexTargetOut(value=y.ari_target.value, source=y.ari_target.source, note=y.ari_target.note),
+                rgi_derived=y.rgi_derived,
+                occupancy=y.occupancy,
+                adr=y.adr,
+                occupancy_status=y.occupancy_status,
+                adr_status=y.adr_status,
+                reason=y.reason,
+                engine_occupancy=_coerce_float(eng.get("occupancy")) if eng else None,
+                engine_adr=_coerce_float(eng.get("adr")) if eng else None,
+            )
+        )
     return IndexMethodologyResponse(
         deal_id=deal_id,
         selected=reading.selected,
@@ -1219,7 +1303,50 @@ def index_methodology_response(deal_id: UUID, reading: Any) -> IndexMethodologyR
         subject_period_label=reading.subject_period_label,
         assumptions={k: IndexFigureOut.of(v) for k, v in reading.assumptions.items()},
         toggle_on=reading.toggle_on,
+        by_year=rows_out,
+        hold_years=by_year.hold_years if by_year is not None else 0,
+        calendar_known=bool(by_year.calendar_known) if by_year is not None else False,
+        by_year_applies=bool(reading.toggle_on),
+        by_year_disabled_reason=None if reading.toggle_on else BY_YEAR_TOGGLE_OFF_REASON,
     )
+
+
+async def _model_horizon(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID, overrides: Mapping[str, Any]
+) -> tuple[int, list[int], list[Mapping[str, Any]]]:
+    """``(hold_years, calendar_years, engine drivers)`` for the by-year grid —
+    the LAST model run's revenue calendar (the same ``projection_calendar_years``
+    Index Analysis columns follow), else the deal's ``hold_years`` /
+    ``acquisition_close_date`` overrides. A year is never guessed: with no
+    close date the calendar is empty and the grid shows ordinals."""
+    from ..engines.revenue import projection_calendar_years
+    from ..services.engine_runner import get_run_scoped_outputs
+    from ..services.index_methodology import MAX_MODEL_YEARS, override_scalar
+
+    def _hold_from_overrides() -> int:
+        try:
+            h = int(float(override_scalar(overrides, "hold_years") or 5))
+        except (TypeError, ValueError):
+            h = 5
+        return max(1, min(h, MAX_MODEL_YEARS))
+
+    try:
+        envelopes = await get_run_scoped_outputs(session, deal_id=str(deal_id), tenant_id=str(tenant_id))
+    except Exception:
+        logger.exception("index_methodology: run outputs read failed")
+        envelopes = {}
+    rev = envelopes.get("revenue") if isinstance(envelopes, dict) else None
+    out = rev.get("outputs") if isinstance(rev, dict) else None
+    years = out.get("years") if isinstance(out, dict) else None
+    drivers = out.get("index_drivers_by_year") if isinstance(out, dict) else None
+    if isinstance(years, list) and years:
+        hold = max(1, min(len(years), MAX_MODEL_YEARS))
+        cal = out.get("projection_calendar_years")
+        cal_years = [int(c) for c in cal if isinstance(c, int)] if isinstance(cal, list) else []
+        return hold, cal_years[:hold], list(drivers) if isinstance(drivers, list) else []
+    hold = _hold_from_overrides()
+    close = override_scalar(overrides, "acquisition_close_date")
+    return hold, projection_calendar_years(str(close) if close else None, hold), []
 
 
 @router.get("/{deal_id}/index-methodology", response_model=IndexMethodologyResponse)
@@ -1228,7 +1355,11 @@ async def index_methodology(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> IndexMethodologyResponse:
-    from ..services.index_methodology import load_index_rows, resolve_index_methodology
+    from ..services.index_methodology import (
+        load_index_rows,
+        resolve_index_by_year,
+        resolve_index_methodology,
+    )
 
     row = (
         await session.execute(
@@ -1246,4 +1377,10 @@ async def index_methodology(
         logger.exception("index_methodology: extraction read failed")
         rows = []
     reading = resolve_index_methodology(rows, overrides, service_hint=m.get("service"))
-    return index_methodology_response(deal_id, reading)
+    hold, calendar_years, engine_drivers = await _model_horizon(
+        session, deal_id=deal_id, tenant_id=tenant_id, overrides=overrides
+    )
+    by_year = resolve_index_by_year(
+        rows, overrides, hold_years=hold, calendar_years=calendar_years, service_hint=m.get("service")
+    )
+    return index_methodology_response(deal_id, reading, by_year, engine_drivers=engine_drivers)

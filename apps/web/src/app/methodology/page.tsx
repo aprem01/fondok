@@ -397,6 +397,23 @@ export default function MethodologyPage() {
               set one and never over an explicit override of that input. With the toggle off nothing moves. Index Analysis
               also restates the Projections Base Year (revenue engine Year 1, its source and every step to it) beside its
               own figures, and the STR subject TTM it indexes against is named as a different source and period.
+              <br />
+              <b>Targets by year (FON-95).</b> The penetration targets can be set per model year
+              (<code>index_mpi_target_by_year</code> / <code>index_ari_target_by_year</code>; a by-year entry beats
+              the all-years target, which remains the shorthand for every year). With the STR basis on, each model
+              year&apos;s occupancy = that year&apos;s benchmark occupancy × MPI target ÷ 100 and ADR = that year&apos;s
+              benchmark ADR × ARI target ÷ 100, where the benchmark series follows the selected method: the STR or
+              CoStar comp set is the reported TTM level in Year 1 grown at the market occupancy / ADR growth
+              assumptions after it; the market benchmark is the reported level in Year 1 and the CBRE Horizons forecast
+              for that model year&apos;s calendar year after it (the segment table named like the chosen segment when the
+              report carries one, else All Hotels). RGI is derived — MPI × ARI ÷ 100 — never an input. A year with a
+              target but no benchmark value (no growth assumption, no CBRE year, no close date to place it) is flagged
+              <code> benchmark_unavailable</code>: the model keeps its own growth from the last driven year and no figure
+              is invented. Every driven year records the benchmark (value, document, page or growth step), the target
+              and the resulting occupancy / ADR on the revenue output (<code>revenue.index_drivers_by_year</code>) and in
+              the lineage of that year&apos;s rooms revenue; the Future P&amp;L Assumptions sheet carries one row per
+              metric per year (<code>index_mpi_target_by_year.3</code>) so the targets round-trip through Excel with the
+              same justification rule.
             </BadgeRow>
             <BadgeRow source="index_assumption" name="Index Analysis · Columns &amp; Rows">
               The Index Analysis year columns follow the acquisition close calendar — the same
@@ -412,12 +429,14 @@ export default function MethodologyPage() {
               (market study / STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the
               report&apos;s own calendar year (<code>cbre_horizons.year_&lt;n&gt;.calendar_year</code>, pipeline v7) and
               labelled Market / CBRE Horizons with document and page — a CBRE forecast is a market forecast, not a comp-set
-              forecast. Penetration rows: the STR-published MPI / ARI / RGI (held at the TTM value across the subject
-              projection), the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
+              forecast. Penetration rows: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
+              forecast columns the analyst&apos;s MPI / ARI target for that model year where one is set (by-year, else the
+              all-years target; RGI derived as MPI × ARI ÷ 100), else the published index held flat — the hover text
+              says which; the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
               set, Fair Share of Supply = subject rooms ÷ (comp-set rooms + subject rooms), fair-share occupancy, actual
-              share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at the analyst&apos;s
-              MPI / ARI targets. Every cell shows its formula and inputs on hover; a cell with no reported input is
-              &quot;—&quot;.
+              share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at Target, the
+              latter computed per year against the target that applies to that year. Every cell shows its formula and
+              inputs on hover; a cell with no reported input is &quot;—&quot;.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.

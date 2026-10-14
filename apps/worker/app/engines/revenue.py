@@ -229,6 +229,28 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # permanently depress the projection.
         baseline_occ = payload.starting_occupancy
         baseline_adr = payload.starting_adr
+        # FON-95 part 2 — explicit per-year drivers (Index Analysis
+        # penetration targets × benchmark). Index y-1 = model year y; None =
+        # the year is not driven. A Year-1 driver replaces the stabilized
+        # baseline; a later driven year becomes the anchor the following
+        # undriven years compound from. Both lists empty → the legacy
+        # expressions below run unchanged (byte-identical goldens).
+        occ_drivers = list(payload.occupancy_by_year_override or [])
+        adr_drivers = list(payload.adr_by_year_override or [])
+
+        def _driver(lst: list[float | None], year: int) -> float | None:
+            return lst[year - 1] if 0 <= year - 1 < len(lst) else None
+
+        if _driver(occ_drivers, 1) is not None:
+            baseline_occ = _driver(occ_drivers, 1)  # type: ignore[assignment]
+        if _driver(adr_drivers, 1) is not None:
+            baseline_adr = _driver(adr_drivers, 1)  # type: ignore[assignment]
+        # (anchor value, anchor year) the undriven out-years compound from.
+        occ_anchor: tuple[float, int] = (baseline_occ, 1)
+        adr_anchor: tuple[float, int] = (baseline_adr, 1)
+        # The drivers' provenance, echoed on the output with the resulting
+        # figures filled in per year.
+        drivers_by_year = {d.year: d.model_copy() for d in payload.index_drivers_by_year}
         resort_fees = payload.starting_resort_fees
         y1_occ_disp = payload.y1_occupancy_displacement_pct
         y1_adr_disp = payload.y1_adr_displacement_pct
@@ -312,11 +334,34 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 # Year 2+ compounds from the stabilized baseline,
                 # not from the displaced Y1, so PIP year doesn't
                 # cascade into permanently depressed out-years.
-                base_occ_y = min(
-                    0.95,
-                    baseline_occ * (1.0 + payload.occupancy_growth) ** (y - 1),
-                )
-                base_adr_y = baseline_adr * (1.0 + payload.adr_growth) ** (y - 1)
+                # FON-95 part 2 — a per-year driver replaces the compounded
+                # figure and re-anchors the years after it; with no drivers
+                # the legacy expression runs verbatim.
+                occ_d = _driver(occ_drivers, y)
+                if occ_d is not None:
+                    base_occ_y = min(0.95, occ_d)
+                    occ_anchor = (base_occ_y, y)
+                elif occ_anchor[1] == 1:
+                    base_occ_y = min(
+                        0.95,
+                        baseline_occ * (1.0 + payload.occupancy_growth) ** (y - 1),
+                    )
+                else:
+                    base_occ_y = min(
+                        0.95,
+                        occ_anchor[0]
+                        * (1.0 + payload.occupancy_growth) ** (y - occ_anchor[1]),
+                    )
+                adr_d = _driver(adr_drivers, y)
+                if adr_d is not None:
+                    base_adr_y = adr_d
+                    adr_anchor = (base_adr_y, y)
+                elif adr_anchor[1] == 1:
+                    base_adr_y = baseline_adr * (1.0 + payload.adr_growth) ** (y - 1)
+                else:
+                    base_adr_y = adr_anchor[0] * (1.0 + payload.adr_growth) ** (
+                        y - adr_anchor[1]
+                    )
                 if pip_v2 is not None and y == 2:
                     occ = base_occ_y * y2_occ_recovery_factor
                     adr = base_adr_y * effective_revpar_index
@@ -424,24 +469,83 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     ),
                 )
             else:
+                rooms_inputs = [
+                    # The engine ASSERTS which assumption each factor is
+                    # anchored to, so the lineage walk never has to infer
+                    # it from the input's name. Years 2+ compound the same
+                    # baseline forward — the key names the anchor, not the
+                    # only input (the note below says what else applies).
+                    ValueInput(
+                        name="occupied_rooms",
+                        value=occupied,
+                        assumption_key="starting_occupancy",
+                    ),
+                    ValueInput(
+                        name="adr", value=adr, assumption_key="starting_adr"
+                    ),
+                ]
+                driver_note = ""
+                drv = drivers_by_year.get(y)
+                if drv is not None and (
+                    _driver(occ_drivers, y) is not None
+                    or _driver(adr_drivers, y) is not None
+                ):
+                    # FON-95 part 2 — the year was indexed: name the benchmark
+                    # and the penetration target so the lineage walk reaches
+                    # the Index Analysis assumption, not just the Year-1 seed.
+                    parts: list[str] = []
+                    if _driver(occ_drivers, y) is not None and drv.benchmark_occupancy is not None:
+                        rooms_inputs.append(
+                            ValueInput(name="benchmark_occupancy", value=drv.benchmark_occupancy)
+                        )
+                        if drv.mpi_target is not None:
+                            rooms_inputs.append(
+                                ValueInput(
+                                    name="mpi_target",
+                                    value=drv.mpi_target,
+                                    assumption_key=(
+                                        "index_mpi_target_by_year"
+                                        if drv.mpi_target_source == "by_year"
+                                        else "index_mpi_target"
+                                    ),
+                                )
+                            )
+                        parts.append(
+                            f"occupancy = benchmark occupancy ({drv.benchmark_occupancy:.4f}"
+                            f"{'; ' + drv.benchmark_occupancy_source if drv.benchmark_occupancy_source else ''}) "
+                            f"× MPI target {drv.mpi_target} ÷ 100"
+                        )
+                    if _driver(adr_drivers, y) is not None and drv.benchmark_adr is not None:
+                        rooms_inputs.append(
+                            ValueInput(name="benchmark_adr", value=drv.benchmark_adr)
+                        )
+                        if drv.ari_target is not None:
+                            rooms_inputs.append(
+                                ValueInput(
+                                    name="ari_target",
+                                    value=drv.ari_target,
+                                    assumption_key=(
+                                        "index_ari_target_by_year"
+                                        if drv.ari_target_source == "by_year"
+                                        else "index_ari_target"
+                                    ),
+                                )
+                            )
+                        parts.append(
+                            f"ADR = benchmark ADR ({drv.benchmark_adr:.2f}"
+                            f"{'; ' + drv.benchmark_adr_source if drv.benchmark_adr_source else ''}) "
+                            f"× ARI target {drv.ari_target} ÷ 100"
+                        )
+                    if parts:
+                        driver_note = (
+                            f" Year {y} is indexed (Index Analysis penetration target): "
+                            + "; ".join(parts)
+                            + "."
+                        )
                 rooms_trace = ValueTrace(
                     value=rooms_revenue,
                     formula="rooms_revenue = occupied_rooms × ADR",
-                    inputs=[
-                        # The engine ASSERTS which assumption each factor is
-                        # anchored to, so the lineage walk never has to infer
-                        # it from the input's name. Years 2+ compound the same
-                        # baseline forward — the key names the anchor, not the
-                        # only input (the note below says what else applies).
-                        ValueInput(
-                            name="occupied_rooms",
-                            value=occupied,
-                            assumption_key="starting_occupancy",
-                        ),
-                        ValueInput(
-                            name="adr", value=adr, assumption_key="starting_adr"
-                        ),
-                    ],
+                    inputs=rooms_inputs,
                     note=(
                         f"occupied_rooms = keys ({keys}) × {DAYS_PER_YEAR} days × "
                         f"occupancy ({occ:.4f}); occupancy and ADR chain back to the "
@@ -455,8 +559,14 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                                 "assumptions also move this value."
                             )
                         )
+                        + driver_note
                     ),
                 )
+            # FON-95 part 2 — echo the driver record with the figures that ran.
+            drv_out = drivers_by_year.get(y)
+            if drv_out is not None:
+                drv_out.occupancy = occ
+                drv_out.adr = adr
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
             if use_resort_fee_buildup:
                 prov[f"years[{idx}].resort_fees"] = ValueTrace(
@@ -623,6 +733,9 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             projection_start_year=start_year,
             projection_calendar_years=calendar_years,
             provenance=apply_states(prov),
+            index_drivers_by_year=[
+                drivers_by_year[k] for k in sorted(drivers_by_year)
+            ],
         )
 
 
