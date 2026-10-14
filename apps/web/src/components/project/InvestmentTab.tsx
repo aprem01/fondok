@@ -30,7 +30,9 @@ import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind } from '@/lib/provenance';
+import { sourceKind, sourceLabel } from '@/lib/provenance';
+import { AssumptionBadge } from '@/components/help/AssumptionBadge';
+import RenovationBudgetSources from './RenovationBudgetSources';
 import {
   KpiTile,
   SectionCard,
@@ -294,6 +296,17 @@ export default function InvestmentTab() {
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
+
+  // FON-101 — "Use this" on the Renovation budget sources disclosure: the
+  // analyst picks a candidate (a PIP / CapEx document's figure or the OM's)
+  // and it is written as the `renovation_budget` override WITH the note the
+  // disclosure prefilled ("Selected <doc> dated <date>") — the same canonical
+  // PATCH + debounced run-all as every other Investment assumption. An
+  // override equal to the latest PIP keeps that document's badge (FON-65).
+  const onUseRenovationCandidate = useCallback(
+    (valueUsd: number, note: string) => onSaveAssumption('renovation_budget', valueUsd, note),
+    [onSaveAssumption],
   );
 
   // FON-44 (R-059) — the Exit NOI BASIS (forward 12-month vs stabilized). A
@@ -693,7 +706,13 @@ export default function InvestmentTab() {
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
               { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : '' },
-              { label: 'Renovation / PIP', value: mm(renoTotal), sub: (has(renoTotal) && has(keys)) ? `${fmtCurrency(renoTotal / keys)} / key` : '' },
+              // FON-101 — the tile names the source the budget is on (OM broker ·
+              // PIP / CapEx document · analyst override) after the per-key figure.
+              { label: 'Renovation / PIP', value: mm(renoTotal),
+                sub: [
+                  (has(renoTotal) && has(keys)) ? `${fmtCurrency(renoTotal / keys)} / key` : '',
+                  renoSource?.source ? sourceLabel(renoSource.source) : '',
+                ].filter(Boolean).join(' · ') },
               { label: 'Required Equity', value: mm(equity), sub: (has(equity) && has(totalUses) && totalUses > 0) ? `${fmtPct(equity / totalUses, 1)} of total uses` : '' },
               { label: 'Gross Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : '' },
             ];
@@ -882,7 +901,18 @@ export default function InvestmentTab() {
               { id: 'renoBudget', label: 'Renovation Budget', kind: 'input', bold: false,
                 state: overridden('renovation_budget') ? 'assumption' : 'assumption',
                 overridden: overridden('renovation_budget'),
-                basis: <RenovationBasisLine basis={renoBasis} onTrace={traceRenovation} />,
+                // FON-101 — the basis line plus the source chip (OM broker / PIP
+                // document / override), clickable through to the document.
+                basis: (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <RenovationBasisLine basis={renoBasis} onTrace={traceRenovation} />
+                    {renoSource?.source && (
+                      <span data-testid="renovation-budget-source-chip">
+                        <AssumptionBadge source={renoSource.source} documentId={renoSource.field?.document_id ?? renoSource.docId} dealId={dealId} />
+                      </span>
+                    )}
+                  </span>
+                ),
                 value: (
                   <AssumptionField value={renoBase} editable={liveMode} format={fmtCurrency}
                     toDraft={(v) => String(Math.round(v))}
@@ -973,6 +1003,8 @@ export default function InvestmentTab() {
 
             const sections: {
               title: string; note: string; rows: RowDef[]; formula?: string;
+              /** FON-101 — rendered after the rows, before the formula strip. */
+              extra?: ReactNode;
             }[] = [
               {
                 title: 'Acquisition', note: 'Investment owns these assumptions', rows: acquisition,
@@ -992,6 +1024,17 @@ export default function InvestmentTab() {
               // operations and never appears there. Naming and copy only.
               {
                 title: 'Initial Renovation / PIP', note: 'Day-one capital, funded at close', rows: renovation,
+                // FON-101 — every candidate for the budget (OM figure, each PIP /
+                // CapEx document with date + status), which one the model is on,
+                // "Use this", and the Future CapEx documents that are reference only.
+                extra: (
+                  <RenovationBudgetSources
+                    dealId={dealId}
+                    live={liveMode}
+                    refreshKey={`${JSON.stringify(invOverrides['renovation_budget'] ?? null)}|${runToken ?? ''}`}
+                    onUse={onUseRenovationCandidate}
+                  />
+                ),
                 formula: 'Already counted once in Sources & Uses, as the Renovation use line — the Hold-Period Capex Plan below is a different bucket, not a duplicate of this one.',
               },
               {
@@ -1016,6 +1059,7 @@ export default function InvestmentTab() {
                       {s.rows.map((r) => (
                         <SectionRow key={r.id} row={r} />
                       ))}
+                      {s.extra}
                       {s.formula && (
                         <div style={{
                           marginTop: 10, background: palette.surfaceTint, border: `1px solid ${palette.border}`,

@@ -307,6 +307,68 @@ export interface AssumptionSourceField {
   doc_type?: string | null;
 }
 
+/**
+ * FON-101 — one figure the model's renovation budget could ground on.
+ * `kind` is the source id the model carries when this candidate is selected.
+ * `value_usd` is null for a PIP / CapEx document whose extraction has no PIP
+ * total — listed with its `reason`, never a placeholder.
+ */
+export interface RenovationBudgetCandidate {
+  id: string;
+  kind: 'analyst_override' | 'pip_document' | 'om_broker';
+  label: string;
+  value_usd: number | null;
+  per_key_usd?: number | null;
+  document_id?: string | null;
+  filename?: string | null;
+  page?: number | null;
+  field_name?: string | null;
+  /** ISO date the precedence rule ordered this candidate on. */
+  date?: string | null;
+  /** `plan_date` (the document's own) · `report_as_of` · `uploaded_at`. */
+  date_basis?: 'plan_date' | 'report_as_of' | 'uploaded_at' | string | null;
+  status?: string | null;
+  status_label?: string | null;
+  prepared_by?: string | null;
+  /** The analyst's justification when `kind === 'analyst_override'`. */
+  note?: string | null;
+  selected: boolean;
+  reason: string;
+  hard_usd?: number | null;
+  soft_usd?: number | null;
+  contingency_usd?: number | null;
+  contingency_pct?: number | null;
+  completion_quarter?: string | null;
+  scope_items?: Array<{ index?: number; name?: string | null; usd?: number | null; category?: string | null; page?: number | null }>;
+}
+
+/** FON-101 — a Future CapEx document: reference only, never in the model. */
+export interface RenovationBudgetReferenceDoc {
+  id: string;
+  document_id: string;
+  filename: string;
+  date?: string | null;
+  date_basis?: string | null;
+  prepared_by?: string | null;
+  total_usd?: number | null;
+  items: Array<{ index?: number; name?: string | null; year?: number | null; usd?: number | null; category?: string | null; timing?: string | null }>;
+  extracted: boolean;
+  pip_total_usd?: number | null;
+  reason: string;
+}
+
+/** `GET /deals/{id}/renovation-budget-candidates` (apps/worker/app/api/deals.py). */
+export interface RenovationBudgetCandidatesResponse {
+  id: string;
+  /** The loader's source id for `renovation_budget` right now. */
+  selected_source: 'analyst_override' | 'pip_document' | 'om_broker' | 'seed' | string | null;
+  selected_value_usd: number | null;
+  keys: number | null;
+  candidates: RenovationBudgetCandidate[];
+  reference_only: RenovationBudgetReferenceDoc[];
+  precedence: string;
+}
+
 /** FON-61 / E-028 — one extraction row an Index Analysis figure was read from. */
 export interface IndexFieldRef {
   field_name: string;
@@ -1794,6 +1856,17 @@ export const api = {
       request<DealProvenanceResponse>(
         'GET',
         `/deals/${id}/provenance`,
+        undefined,
+        { signal },
+      ),
+    /** FON-101 — every figure the renovation budget could ground on (analyst
+     *  override · each PIP / CapEx document with its plan date and status ·
+     *  the OM broker figure), which one the model is on and why, plus the
+     *  Future CapEx documents that are reference only. */
+    renovationBudgetCandidates: (id: string, signal?: AbortSignal) =>
+      request<RenovationBudgetCandidatesResponse>(
+        'GET',
+        `/deals/${id}/renovation-budget-candidates`,
         undefined,
         { signal },
       ),

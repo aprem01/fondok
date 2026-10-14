@@ -176,7 +176,12 @@ DOC_STATUS_FAILED = "FAILED"
 # assuming it is "next year". Horizons reports cached under v6 carry no
 # calendar_year row (the envelope falls back to the report's own
 # ``segment_all.<YYYY>`` forecast rows / publication year) and re-run once.
-EXTRACTION_PIPELINE_VERSION = "v7"
+# v8 (FON-101, 2026-10-14): CAPEX documents gained an extraction contract
+# (``extraction_schemas/capex.md`` + the matching legacy-prompt block) —
+# ``capex_plan.pip.*`` / ``future_capex.*`` — and a critic pass. Every prior
+# CAPEX extraction carries none of those fields, so a cached row must not be
+# served for them.
+EXTRACTION_PIPELINE_VERSION = "v8"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -6218,6 +6223,18 @@ async def _run_extraction_pipeline(
 _TEMPLATE_HANDLED_DOC_TYPES: frozenset[str] = frozenset(
     {"STR", "STR_TREND", "STR_SEGMENTATION", "CBRE_HORIZONS", "PARTNERSHIP"}
 )
+# CAPEX is deliberately NOT in this set (FON-101). It has no deterministic
+# template extractor — the LLM reads ``extraction_schemas/capex.md`` — so a
+# learned same-template sibling mapping is as good here as it is for a P&L
+# workbook. The ``doc_subtype`` an analyst tags a CAPEX file with (``future``
+# / ``historic``) does not change this: sibling reuse copies the SOURCE
+# document's field names (a workbook laid out like a PIP budget yields
+# ``capex_plan.pip.*`` either way), and the engine-input loader gates on the
+# reusing document's OWN stored subtype — a ``future`` document never feeds
+# ``renovation_budget`` whatever namespace its rows carry
+# (``services.renovation_budget.select_pip_candidate``). The only cost of a
+# subtype mismatch is a mislabelled namespace on a reference-only document,
+# which the Data Room shows and the analyst can re-extract with ``force``.
 
 
 def _sibling_reuse_allowed(doc_type: str | None) -> bool:
@@ -6492,6 +6509,15 @@ async def _run_extraction_pipeline_inner(
                 confidence=confidence,
                 extraction_data=extraction_data,
                 storage_key=storage_key,
+            )
+            # FON-101 — CAPEX arithmetic check: the PIP total against the
+            # sum of its scope items. Flags only (value and confidence
+            # untouched); a no-op for every other doc type.
+            fields, confidence = _apply_capex_quality_pass(
+                doc_id=doc_id,
+                doc_type=classified_doc_type or user_provided_doc_type,
+                fields=fields,
+                confidence=confidence,
             )
 
             ext_id = uuid4()
@@ -8770,6 +8796,42 @@ async def _apply_pnl_quality_passes(
             "critic: statement plausibility failed for doc=%s: %s", doc_id, exc
         )
     return fields, confidence
+
+
+def _apply_capex_quality_pass(
+    *,
+    doc_id: str,
+    doc_type: str | None,
+    fields: list[dict[str, Any]],
+    confidence: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """FON-101 — the CAPEX critic pass (``agents/critic.apply_capex_plausibility``).
+
+    When a CAPEX extraction carries both ``capex_plan.pip.total_usd`` and a
+    priced ``capex_plan.pip.scope_items.<n>.usd`` table, a total more than
+    2% away from the items' sum is FLAGGED: the reason lands on the field's
+    ``note`` and under ``plausibility_flags`` / ``requires_human_review`` on
+    the confidence report. Nothing is altered — not the value, not the
+    confidence. A no-op for every other doc type; best-effort throughout.
+    """
+    if not fields or (doc_type or "").strip().upper() != "CAPEX":
+        return fields, confidence
+    try:
+        from ..agents.critic import apply_capex_plausibility
+
+        out_fields, out_conf, flags = apply_capex_plausibility(
+            fields, confidence, doc_type=doc_type
+        )
+        if flags:
+            logger.info(
+                "critic: doc=%s PIP total disagrees with its scope items: %s",
+                doc_id,
+                "; ".join(f.reason for f in flags),
+            )
+        return out_fields, out_conf
+    except Exception as exc:  # never block extraction
+        logger.warning("critic: capex plausibility failed for doc=%s: %s", doc_id, exc)
+        return fields, confidence
 
 
 # ─────────────────────────── critic ───────────────────────────

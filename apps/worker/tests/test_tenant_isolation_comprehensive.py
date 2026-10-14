@@ -135,6 +135,8 @@ ENDPOINT_CASES: list[EndpointCase] = [
     EndpointCase("DELETE", "/deals", "/{deal_id}"),
     EndpointCase("GET", "/deals", "/{deal_id}/status"),
     EndpointCase("GET", "/deals", "/{deal_id}/assumption_sources"),
+    # FON-101 — renovation-budget candidates (OM vs PIP / CapEx documents).
+    EndpointCase("GET", "/deals", "/{deal_id}/renovation-budget-candidates"),
     EndpointCase(
         "POST",
         "/deals",

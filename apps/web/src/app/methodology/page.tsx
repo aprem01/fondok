@@ -259,7 +259,25 @@ export default function MethodologyPage() {
         <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Year-1 PIP displacement</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mb-2">
-            When the capital engine carries a renovation budget &gt; $5,000 per key, Year-1 occupancy is depressed 15% and Year-1 ADR is depressed 8% to reflect rooms out of service and disruption pricing. The thresholds are tunable per deal via field_overrides. Year-2 onwards snap back to the stabilized baseline — a heavy PIP affects only the construction year, not the underwriting trajectory. Only a deal-specific budget displaces — one read off the OM&apos;s broker pro forma (badged &quot;OM Broker&quot;); the Fondok seed budget never does.
+            When the capital engine carries a renovation budget &gt; $5,000 per key, Year-1 occupancy is depressed 15% and Year-1 ADR is depressed 8% to reflect rooms out of service and disruption pricing. The thresholds are tunable per deal via field_overrides. Year-2 onwards snap back to the stabilized baseline — a heavy PIP affects only the construction year, not the underwriting trajectory. Only a deal-specific budget displaces — one read off a PIP / CapEx document (badged &quot;PIP doc&quot;), off the OM&apos;s broker pro forma (badged &quot;OM Broker&quot;), or set by the analyst; the Fondok seed budget never does.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4" data-testid="methodology-renovation-budget-precedence">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Renovation budget — which document the model reads</h4>
+          <Chain
+            steps={[
+              { label: 'Analyst override', desc: 'A budget you set — including one you selected with "Use this" on CAPEX → Renovation budget sources — wins, with its justification note. An override equal to the selected document\'s figure keeps that document\'s badge.' },
+              { label: 'PIP / CapEx document — latest plan date', desc: 'A separate PIP, owner budget, approved capital plan or estimate (document type CAPEX, not tagged Future CapEx) that states a PIP total (capex_plan.pip.total_usd). It is the more detailed source, so it outranks the OM. Among several, the newest plan date (capex_plan.document.plan_date, else the report date, else the upload date) wins — a newer approved capital plan supersedes an older brand PIP.' },
+              { label: 'OM broker pro forma', desc: 'broker_proforma.renovation_budget_usd off the offering memorandum (badged "OM Broker") when no PIP / CapEx document states a budget.' },
+              { label: 'Seed', desc: 'The Fondok default, with a reason (no_document / no_source) — it never displaces Year 1.' },
+            ]}
+          />
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            Every candidate stays visible. CAPEX → Initial Renovation / PIP → <strong>Renovation budget sources</strong> lists the OM figure and each PIP / CapEx document&apos;s figure with its page, plan date, status (brand-issued PIP · owner budget · approved capital plan · estimate) and preparer, marks the one the model is on, and says why each other one is not (superseded by a newer plan, outranked by a PIP, no PIP total extracted). The list is the worker&apos;s (<code className="text-[11.5px]">GET /deals/{'{id}'}/renovation-budget-candidates</code>) and reports the same resolution the engines ran on; nothing is re-derived in the browser. A PIP whose stated total is more than 2% away from the sum of its own scope items is flagged for review at extraction — the value is never altered.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2" data-testid="methodology-future-capex-reference-only">
+            <strong>Future CapEx is reference only.</strong> A document filed under Future CapEx (<code className="text-[11.5px]">doc_subtype = future</code> — a forward hold-period capital plan) is listed separately as &quot;Reference only — not in the model&quot; with its items by year, and is never incorporated into the renovation budget or any other engine input, even when it also prints a PIP total. Re-tag it in the Data Room if it is in fact the day-one PIP.
           </p>
         </Card>
 

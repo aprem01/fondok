@@ -49,6 +49,8 @@ from fondok_schemas.reasons import ReasonCode
 # set with a golden diff, and needs the basis filter first). The registry is
 # used only to DESCRIBE the row the legacy matcher already picked.
 from ..ontology.registry import Resolution, concept_for_path
+# FON-101 — the ``pip_document`` source id (see the SOURCE_* block below).
+from .renovation_budget import SOURCE_PIP_DOCUMENT
 
 # 2026-10 — ONE primary-financial-source key, shared with the Data Room
 # badge (``api.documents._mark_primary_financial``). See the module
@@ -530,6 +532,13 @@ SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
 # the rest tag the FF&E reserve and discretionary-ROI legs.
 SOURCE_PIP_OM = "pip_om"
 SOURCE_PIP_USER = "pip_user"
+# FON-101 — the renovation budget read off a separate PIP / CapEx document
+# (``capex_plan.pip.total_usd`` on a CAPEX extraction whose ``doc_subtype``
+# is not ``future``). Outranks ``om_broker`` for ``renovation_budget``; among
+# several documents the latest plan date wins. The string is owned by
+# ``services.renovation_budget`` (one definition, imported at the top of
+# this module) and listed here next to its siblings for the reader.
+assert SOURCE_PIP_DOCUMENT == "pip_document"
 SOURCE_CAPEX_FFE_DEFAULT = "capex_ffe_default"
 SOURCE_ROI_USER = "roi_user"
 # Wave 3 W3.3 — STR forward-forecast seed. When the analyst opts in via
@@ -1509,6 +1518,46 @@ async def _load_engine_inputs(
         if (prov.resolution.doc_type or "OM").upper() == "OM":
             sources[key] = SOURCE_OM_BROKER
 
+    # FON-101 — a separate PIP / CapEx document outranks the OM's broker
+    # figure for ``renovation_budget`` (Sam, 2026-10-14: it is the more
+    # detailed source). Candidates are every CAPEX extraction carrying
+    # ``capex_plan.pip.total_usd`` whose ``doc_subtype`` is not ``future``
+    # (Future CapEx documents are reference only, never auto-incorporated);
+    # the latest plan date wins (``capex_plan.document.plan_date``, else the
+    # report date, else the upload date). The analyst override still wins
+    # over all of it: the override loop below re-applies it on top, and
+    # ``pre_override_values`` carries the PIP figure as the prior so an
+    # override EQUAL to the selected PIP keeps this label (FON-65 shadow
+    # rule) while one that differs badges ``analyst_override``. Precedence
+    # and parsing live in ``services.renovation_budget``; this block only
+    # applies the pick. Best-effort — a read failure leaves the OM / seed
+    # grounding exactly as it was.
+    try:
+        from .renovation_budget import load_capex_documents, select_pip_candidate
+
+        capex_docs = await load_capex_documents(
+            session, deal_id=deal_id, tenant_id=effective_tenant
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("renovation_budget: CAPEX read failed for deal %s", deal_id)
+        capex_docs = []
+    pip_doc = select_pip_candidate(capex_docs)
+    if pip_doc is not None and pip_doc.pip_total_usd is not None:
+        pip_value = float(pip_doc.pip_total_usd)
+        pre_override_values["renovation_budget"] = pip_value
+        base["renovation_budget"] = pip_value
+        sources["renovation_budget"] = SOURCE_PIP_DOCUMENT
+        pip_as_of, _pip_date_basis = pip_doc.effective_date
+        source_fields["renovation_budget"] = _row_provenance(
+            canonical="renovation_budget",
+            field=pip_doc.pip_total_row or {"field_name": "capex_plan.pip.total_usd"},
+            value=pip_value,
+            doc_type="CAPEX",
+            document_id=pip_doc.document_id,
+            extraction_result_id=pip_doc.extraction_result_id,
+            as_of=pip_as_of,
+        )
+
     om_debt_pre: dict[str, float] = {}
     debt_actuals, debt_prov = await _load_om_debt_actuals(
         session,
@@ -2446,7 +2495,8 @@ _SEED_REASON_DOC_TYPES: dict[str, tuple[str, ...]] = {
     "other_revenue_pct_of_rooms": ("T12", "PNL", "PNL_MONTHLY", "PNL_YTD"),
     "purchase_price": ("OM",),
     "keys": ("OM",),
-    "renovation_budget": ("OM",),
+    # FON-101 — a PIP / CapEx document grounds the renovation budget too.
+    "renovation_budget": ("OM", "CAPEX"),
     "entry_cap_rate": ("OM",),
     "ltv": ("OM",),
     "interest_rate": ("OM",),
@@ -3445,6 +3495,9 @@ _SOURCE_TO_DOC_TYPES: dict[str, tuple[str, ...]] = {
     SOURCE_OM_COMPS: ("OM",),
     SOURCE_OM_BROKER: ("OM",),
     SOURCE_PARTNERSHIP_DOC: ("PARTNERSHIP",),
+    # FON-101 — coarse fallback only; ``source_fields.renovation_budget``
+    # names the exact PIP / CapEx document the loader selected.
+    SOURCE_PIP_DOCUMENT: ("CAPEX",),
 }
 
 

@@ -5959,6 +5959,13 @@
             "scope": null
           }
         ],
+        "CAPEX": [
+          {
+            "path": "capex_plan.pip.total_usd",
+            "basis": "budget",
+            "scope": null
+          }
+        ],
         "*": [
           {
             "path": "renovation_budget_usd",
@@ -8176,6 +8183,16 @@
       "kind": "override",
       "doc_types": [],
       "explanation": "Set by the analyst's Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while \"Use STR rates in the model\" is on.",
+      "reason": null
+    },
+    "pip_document": {
+      "label": "PIP / CapEx document",
+      "badge": "PIP doc",
+      "kind": "grounded",
+      "doc_types": [
+        "CAPEX"
+      ],
+      "explanation": "Renovation budget read from a PIP / CapEx document uploaded to the deal (the stated PIP total). A separate PIP or capital plan is the more detailed source, so it outranks the OM's broker figure; among several, the latest-dated plan wins. Future CapEx documents are reference only and never feed this.",
       "reason": null
     }
   },

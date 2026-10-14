@@ -297,6 +297,8 @@ _DOCUMENT_LABELS: frozenset[str] = frozenset(
         "om_comps",
         "om_broker",
         "pip_om",
+        # FON-101 — the renovation budget read off a PIP / CapEx document.
+        "pip_document",
         "partnership_doc",
         "portfolio_pnl",
         "pnl_benchmark",

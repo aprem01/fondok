@@ -536,6 +536,63 @@ include:
      could be either ownership or a dollar capital contribution, only
      emit the ownership fraction under these paths; leave capital
      dollars to a generic ``partnership.<...>`` path.
+   * **CAPEX (PIP / renovation budget / capital plan / historical
+     capex).** Four shapes arrive under this one doc type; pick the
+     namespace from WHAT THE DOCUMENT IS, never from its filename
+     (full contract: ``extraction_schemas/capex.md``, FON-101):
+       * A day-one PIP / renovation budget (brand-issued PIP priced
+         out, owner budget, approved capital plan, contractor or PCA
+         estimate) → ``capex_plan.pip.*``. Downstream reads
+         ``capex_plan.pip.total_usd`` as a CANDIDATE for the model's
+         renovation budget, so emit it ONLY for this shape and only as
+         the grand total the document itself prints:
+           ``capex_plan.pip.total_usd``, ``capex_plan.pip.per_key_usd``,
+           ``capex_plan.pip.hard_usd``, ``capex_plan.pip.soft_usd``,
+           ``capex_plan.pip.contingency_usd`` (or
+           ``capex_plan.pip.contingency_pct`` as a 0..1 fraction when
+           only a percent is printed),
+           ``capex_plan.pip.completion_quarter``,
+           ``capex_plan.pip.timing.<YYYY>.pct`` / ``.usd`` — the spend
+             schedule by year as printed (never convert one into the
+             other),
+           ``capex_plan.pip.scope_items.<n>.name`` / ``.usd`` /
+             ``.category`` (``guestrooms`` / ``public_space`` /
+             ``fb_outlets`` / ``meeting_space`` / ``exterior`` /
+             ``building_systems`` / ``technology`` / ``ffe`` / ``ose``
+             / ``soft_costs`` / ``contingency`` / ``other``) /
+             ``.brand_required`` (true/false only when the document
+             marks it) — one group per priced scope line, ``<n>``
+             1-indexed in document order. The critic checks the total
+             against the sum of the items and flags a mismatch, so emit
+             the items exactly as printed.
+         And the document's own identity:
+           ``capex_plan.document.plan_date`` — ISO issue / approval /
+             latest-revision date (the document's date, not the
+             upload's),
+           ``capex_plan.document.status`` — exactly one of
+             ``brand_issued_pip`` / ``owner_budget`` /
+             ``approved_capital_plan`` / ``estimate``,
+           ``capex_plan.document.prepared_by``,
+           ``capex_plan.document.brand``,
+           ``capex_plan.document.scope_keys``.
+       * A FORWARD hold-period capital plan (multi-year future spend
+         by year, "5-year capital plan", reserve study) →
+         ``future_capex.items.<n>.name`` / ``.year`` (four-digit
+         integer) / ``.usd`` / ``.category`` / ``.timing``,
+         ``future_capex.total_usd``, ``future_capex.plan_date``,
+         ``future_capex.prepared_by``. Reference only downstream —
+         NEVER emit its total as ``capex_plan.pip.total_usd``.
+       * A historical capex ledger (spend already incurred) →
+         ``historic_capex.items.<n>.*``,
+         ``historic_capex.by_year.<YYYY>.total_usd``,
+         ``historic_capex.total_usd``. Reference only.
+       * An FF&E reserve report → ``ffe_reserve.balance_usd``,
+         ``ffe_reserve.balance_date``,
+         ``ffe_reserve.annual_contribution_usd``,
+         ``ffe_reserve.contribution_pct_of_revenue``. Reference only.
+     When one document carries BOTH a day-one PIP and a separate
+     forward plan, emit both namespaces from their own sections; the
+     forward plan's total must never leak into the PIP total.
 
 2. ``value``        — the extracted scalar (number, string, or bool).
                       Strip thousand-separators; use a decimal between
