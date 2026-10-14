@@ -360,6 +360,20 @@ def _extract_from_tables(
                     legacy_name = f"cbre_horizons.year_{year_idx}.{field_base}"
                     fields.append(_field(legacy_name, value, unit=unit, page=table.page_num))
 
+            # FON-94 — the legacy ordinal's calendar year, once per forecast
+            # row, so the market-data envelope places Year N on the deal's
+            # calendar instead of assuming Year 1 is "next year".
+            if table.scope == "all" and is_forecast:
+                year_idx = forecast_years.index(year) + 1
+                fields.append(
+                    _field(
+                        f"cbre_horizons.year_{year_idx}.calendar_year",
+                        int(year),
+                        unit="year",
+                        page=table.page_num,
+                    )
+                )
+
             # Label the row historical vs forecast off the as-of boundary.
             period = "forecast" if is_forecast else "historical"
             fields.append(

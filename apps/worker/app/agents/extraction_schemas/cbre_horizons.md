@@ -38,7 +38,11 @@ Mark forecast years by setting `period` to `forecast`; actuals get
 For backwards compatibility, the All-Hotels segment may also be
 emitted on the legacy `cbre_horizons.year_<i>.*` paths where `<i>` is
 the 1-indexed forecast year (Year-1 of the forecast, regardless of
-calendar year).
+calendar year). Whenever a legacy row is emitted, also emit
+`cbre_horizons.year_<i>.calendar_year` — the calendar year that
+ordinal stands for (e.g. `2025`) — so Index Analysis can place the
+forecast on the deal's acquisition calendar instead of assuming Year 1
+is "next year" (FON-94).
 
 ## Long-run averages
 The next-4-quarters anchor block — printed near the top as e.g.

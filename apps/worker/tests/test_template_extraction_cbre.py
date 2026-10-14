@@ -255,6 +255,16 @@ async def test_cbre_horizons_year_1_is_first_forecast_not_earliest_historical() 
     # Historical actuals (2022, 2023) must NOT appear on any year_N path.
     assert "cbre_horizons.year_4.adr_usd" not in values
     assert "cbre_horizons.year_5.adr_usd" not in values
+
+    # FON-94 — every legacy ordinal names the calendar year it stands for,
+    # exactly once, and never for a historical actual.
+    assert values["cbre_horizons.year_1.calendar_year"] == 2024
+    assert values["cbre_horizons.year_2.calendar_year"] == 2025
+    assert values["cbre_horizons.year_3.calendar_year"] == 2026
+    assert "cbre_horizons.year_4.calendar_year" not in values
+    cal_rows = [f for f in result.fields if f["field_name"].endswith(".calendar_year")]
+    assert len(cal_rows) == 3
+    assert all(f["unit"] == "year" for f in cal_rows)
     for name, val in values.items():
         if name.startswith("cbre_horizons.year_") and name.endswith(".adr_usd"):
             assert val not in (150.00, 160.00), (
