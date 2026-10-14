@@ -19,7 +19,7 @@
  *     data-integrity bug.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
 
@@ -205,6 +205,17 @@ vi.mock('@/components/project/CapexPlanPanel', () => ({
   DEFAULT_CAPEX_PLAN: {},
 }));
 vi.mock('@/components/project/HistoricalBaselinePanel', () => ({ default: () => null }));
+// FON-101 — the "Renovation budget sources" disclosure has its own test file
+// (renovationBudgetSources.test.tsx) with the worker payload mocked. Here it is
+// a stub that records its props so the tab's wiring (live flag + the "Use this"
+// save path) can be asserted without a network call.
+let sourcesProps: { dealId: string; live: boolean; onUse: (v: number, note: string) => unknown } | null = null;
+vi.mock('@/components/project/RenovationBudgetSources', () => ({
+  default: (props: { dealId: string; live: boolean; onUse: (v: number, note: string) => unknown }) => {
+    sourcesProps = props;
+    return <div data-testid="renovation-budget-sources-stub" />;
+  },
+}));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
@@ -1030,5 +1041,59 @@ describe('compCapRangeHint', () => {
     expect(compCapRangeHint(undefined)).toBeUndefined();
     expect(compCapRangeHint(null)).toBe('Comps range: no comparable cap rates extracted');
     expect(compCapRangeHint({ low_pct: 6, high_pct: 7, median_pct: 6.5, n: 2 })).toBe('Comps range: 6.0%–7.0% (median 6.5%, 2 deals)');
+  });
+});
+
+describe('InvestmentTab — FON-101 renovation budget sources (OM vs PIP / CapEx documents)', () => {
+  it('badges the Renovation Budget row and the KPI tile with the PIP document source when the worker says so', () => {
+    mockSources = { renovation_budget: 'pip_document' };
+    mockFields = {
+      renovation_budget: { field: 'capex_plan.pip.total_usd', page: 4, doc_type: 'CAPEX', filename: 'Approved Capital Plan 2026.xlsx' },
+    };
+    render(<InvestmentTab />);
+    const chip = screen.getByTestId('renovation-budget-source-chip');
+    expect(chip).toHaveTextContent('PIP doc');
+    // The basis line still names the document row the number was read off.
+    expect(screen.getByTestId('renovation-basis')).toHaveTextContent('CapEx document · capex_plan.pip.total_usd p.4');
+    // The KPI tile's sub-line names the source after the per-key figure.
+    expect(screen.getByText(/\/ key · PIP \/ CapEx document$/)).toBeInTheDocument();
+  });
+
+  it('badges "OM" when the OM broker figure is the source, and shows no chip on the seed', () => {
+    mockSources = { renovation_budget: 'om_broker' };
+    render(<InvestmentTab />);
+    expect(screen.getByTestId('renovation-budget-source-chip')).toHaveTextContent('OM');
+    cleanup();
+    mockSources = {};
+    render(<InvestmentTab />);
+    expect(screen.queryByTestId('renovation-budget-source-chip')).toBeNull();
+  });
+
+  it('mounts the sources disclosure live on the Initial Renovation / PIP section', () => {
+    render(<InvestmentTab />);
+    expect(screen.getByTestId('renovation-budget-sources-stub')).toBeInTheDocument();
+    expect(sourcesProps?.dealId).toBe('deal-uuid-1');
+    expect(sourcesProps?.live).toBe(true);
+  });
+
+  it('"Use this" writes renovation_budget as an analyst override WITH the prefilled note and re-runs the model', async () => {
+    render(<InvestmentTab />);
+    await act(async () => {
+      await sourcesProps!.onUse(7_100_000, 'Selected Approved Capital Plan 2026.xlsx dated 2026-04-01 (Approved capital plan)');
+    });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.renovation_budget).toEqual({
+      value: 7_100_000,
+      note: 'Selected Approved Capital Plan 2026.xlsx dated 2026-04-01 (Approved capital plan)',
+    });
+    expect(refreshDealSpy).toHaveBeenCalled();
+  });
+
+  it('refuses a "Use this" without a justification — nothing is written', async () => {
+    render(<InvestmentTab />);
+    await act(async () => { await sourcesProps!.onUse(7_100_000, '   '); });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

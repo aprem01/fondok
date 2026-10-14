@@ -28,6 +28,7 @@ adapted to hotel underwriting instead of credit policy.
 from __future__ import annotations
 
 import logging
+import re
 import statistics
 import time
 from collections.abc import Mapping, Sequence
@@ -1077,13 +1078,151 @@ def apply_statement_plausibility(
     return out_fields, conf, flags
 
 
+# ─────────────────── CAPEX / PIP plausibility (FON-101) ───────────────────
+#
+# A per-DOCUMENT arithmetic check on a CAPEX extraction: when the extractor
+# emitted both a PIP grand total (``capex_plan.pip.total_usd``) and a priced
+# scope-of-work table (``capex_plan.pip.scope_items.<n>.usd``), the total
+# should be the sum of the items (a PIP budget's "Total" line IS that sum,
+# plus or minus a rounding line). A gap wider than 2% means the extractor
+# read a subtotal as the total, dropped a scope line, or double-counted
+# contingency — any of which would mis-ground the model's renovation
+# budget once the analyst selects this document.
+#
+# FLAG, NEVER ALTER. The field keeps its value and its confidence (Sam's
+# rule: a PIP total that disagrees with its own items is a question for the
+# analyst, not a number for software to fix). The reason is written on the
+# total field's ``note`` and under ``plausibility_flags`` /
+# ``requires_human_review`` on the confidence report, so the Data Room's
+# review queue surfaces it. Deterministic, LLM-free, best-effort.
+
+PIP_TOTAL_TOLERANCE = 0.02  #: flag when |total − Σ items| / total > 2%
+
+_PIP_TOTAL_FIELD = "capex_plan.pip.total_usd"
+_PIP_SCOPE_ITEM_RE = re.compile(r"^capex_plan\.pip\.scope_items\.(\d+)\.usd$")
+
+
+class CapexPlausibilityFlag(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    total_usd: float
+    scope_items_sum_usd: float
+    scope_items_count: int
+    delta_pct: float
+    reason: str
+
+
+def _is_capex_doc(doc_type: str | None) -> bool:
+    return (doc_type or "").strip().upper() == "CAPEX"
+
+
+def check_capex_plausibility(
+    fields: Any,
+    *,
+    doc_type: str | None,
+) -> list[CapexPlausibilityFlag]:
+    """Flag a PIP total more than 2% away from the sum of its scope items.
+
+    Returns one flag at most (there is one PIP total per document); an empty
+    list when the document is not CAPEX, when either side is missing, or
+    when the two agree within tolerance. Analyst-reviewed totals
+    (``accepted`` / ``edited`` / ``verified``) are never flagged.
+    """
+    if not fields or not _is_capex_doc(doc_type):
+        return []
+    total: float | None = None
+    total_reviewed: str | None = None
+    items: list[float] = []
+    for f in fields:
+        if not isinstance(f, Mapping):
+            continue
+        name = str(f.get("field_name") or "").strip()
+        value = f.get("value")
+        if name == _PIP_TOTAL_FIELD:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                total = float(value)
+                reviewed = f.get("reviewed")
+                total_reviewed = reviewed if isinstance(reviewed, str) else None
+            continue
+        if _PIP_SCOPE_ITEM_RE.match(name):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                items.append(float(value))
+    if total is None or total <= 0 or not items:
+        return []
+    if total_reviewed in _ANALYST_REVIEWED:
+        return []
+    items_sum = float(sum(items))
+    delta_pct = abs(total - items_sum) / total
+    if delta_pct <= PIP_TOTAL_TOLERANCE:
+        return []
+    direction = "above" if total > items_sum else "below"
+    reason = (
+        f"PIP total ${total:,.0f} is {delta_pct:.1%} {direction} the sum of its "
+        f"{len(items)} scope items (${items_sum:,.0f}); the total may be a "
+        f"subtotal, a scope line may be missing, or contingency may be "
+        f"double-counted — review before selecting this budget"
+    )
+    return [
+        CapexPlausibilityFlag(
+            field_name=_PIP_TOTAL_FIELD,
+            total_usd=total,
+            scope_items_sum_usd=items_sum,
+            scope_items_count=len(items),
+            delta_pct=delta_pct,
+            reason=reason,
+        )
+    ]
+
+
+def apply_capex_plausibility(
+    fields: Sequence[Mapping[str, Any]],
+    confidence: Mapping[str, Any] | None,
+    *,
+    doc_type: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[CapexPlausibilityFlag]]:
+    """Run :func:`check_capex_plausibility` and record the result.
+
+    The flagged total keeps its VALUE and its CONFIDENCE — only the reason
+    is written to its ``note`` and the confidence report gets it under
+    ``plausibility_flags`` with ``requires_human_review`` set. Returns new
+    objects; inputs are not mutated.
+    """
+    out_fields = [dict(f) for f in fields if isinstance(f, Mapping)]
+    conf: dict[str, Any] = dict(confidence or {})
+    flags = check_capex_plausibility(out_fields, doc_type=doc_type)
+    if not flags:
+        return out_fields, conf, []
+    by_name = {f.get("field_name"): f for f in out_fields}
+    for flag in flags:
+        fd = by_name.get(flag.field_name)
+        if fd is None:
+            continue
+        prior = fd.get("note")
+        fd["note"] = f"{prior} {flag.reason}" if isinstance(prior, str) and prior else flag.reason
+    existing = list(conf.get("plausibility_flags") or [])
+    existing.extend(f.model_dump() for f in flags)
+    conf["plausibility_flags"] = existing
+    conf["requires_human_review"] = True
+    logger.info(
+        "critic: capex plausibility flagged %d field(s): %s",
+        len(flags),
+        "; ".join(f.reason for f in flags),
+    )
+    return out_fields, conf, flags
+
+
 __all__ = [
+    "PIP_TOTAL_TOLERANCE",
     "PLAUSIBILITY_CONFIDENCE_CAP",
     "PLAUSIBILITY_FLOOR_RATIO",
+    "CapexPlausibilityFlag",
     "CriticInput",
     "CriticOutput",
     "StatementPlausibilityFlag",
+    "apply_capex_plausibility",
     "apply_statement_plausibility",
+    "check_capex_plausibility",
     "check_statement_plausibility",
     "run_critic",
     "validate_grounding",

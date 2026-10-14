@@ -397,6 +397,76 @@ class AssumptionSourcesResponse(BaseModel):
     reasons: dict[str, str] = Field(default_factory=dict)
 
 
+class RenovationBudgetCandidate(BaseModel):
+    """One figure the model's renovation budget could ground on (FON-101).
+
+    ``kind`` is the source id the model would carry if this candidate were
+    selected: ``analyst_override`` / ``pip_document`` / ``om_broker``.
+    Exactly one candidate has ``selected = True`` unless the model is on
+    the seed (then none). ``value_usd`` is ``None`` for a PIP / CapEx
+    document whose extraction carries no PIP total — listed with the
+    reason, never a placeholder.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    kind: Literal["analyst_override", "pip_document", "om_broker"]
+    label: str
+    value_usd: float | None = None
+    per_key_usd: float | None = None
+    document_id: str | None = None
+    filename: str | None = None
+    page: int | None = None
+    field_name: str | None = None
+    #: ISO date the precedence rule ordered this candidate on.
+    date: str | None = None
+    #: ``plan_date`` (the document's own) / ``report_as_of`` / ``uploaded_at``.
+    date_basis: str | None = None
+    status: str | None = None
+    status_label: str | None = None
+    prepared_by: str | None = None
+    note: str | None = None
+    selected: bool = False
+    reason: str
+
+
+class RenovationBudgetReferenceDoc(BaseModel):
+    """A Future CapEx document — reference only, never in the model."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    document_id: str
+    filename: str
+    date: str | None = None
+    date_basis: str | None = None
+    prepared_by: str | None = None
+    total_usd: float | None = None
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    extracted: bool = False
+    pip_total_usd: float | None = None
+    reason: str
+
+
+class RenovationBudgetCandidatesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    #: The loader's source id for ``renovation_budget`` right now
+    #: (``analyst_override`` / ``pip_document`` / ``om_broker`` / ``seed``).
+    selected_source: str | None = None
+    #: The renovation budget the model is running on.
+    selected_value_usd: float | None = None
+    keys: int | None = None
+    candidates: list[RenovationBudgetCandidate] = Field(default_factory=list)
+    reference_only: list[RenovationBudgetReferenceDoc] = Field(default_factory=list)
+    precedence: str = (
+        "analyst override > latest-dated PIP / CapEx document > OM broker pro forma > seed; "
+        "Future CapEx documents are reference only"
+    )
+
+
 class DealProvenanceResponse(BaseModel):
     """Per-value provenance & calculation rationale (FON-25 / FON-27).
 
@@ -1961,6 +2031,104 @@ async def get_assumption_sources(
         source_documents=source_documents,
         source_fields=source_fields,
         reasons=assumption_reasons,
+    )
+
+
+@router.get(
+    "/{deal_id}/renovation-budget-candidates",
+    response_model=RenovationBudgetCandidatesResponse,
+)
+async def get_renovation_budget_candidates(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> RenovationBudgetCandidatesResponse:
+    """FON-101 — every figure the renovation budget could ground on, which
+    one the model is on, and why.
+
+    Candidates: the analyst override (when set), each PIP / CapEx document
+    (``doc_subtype != 'future'``) with its extracted PIP total, plan date
+    and status, and the OM's broker figure. Precedence is analyst override
+    > latest-dated PIP / CapEx document > OM > seed. Future CapEx documents
+    are listed separately under ``reference_only`` with their items — never
+    in the model. The selection REPORTS ``_load_engine_inputs`` (the same
+    resolution the model runs on); nothing is re-derived here.
+    """
+    row = (
+        await session.execute(
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    from ..services.engine_runner import (
+        _load_deal_overrides_raw,
+        _load_engine_inputs,
+        _normalize_override_shape,
+    )
+    from ..services.renovation_budget import (
+        build_candidates,
+        load_capex_documents,
+        load_om_renovation_budget,
+    )
+
+    base = await _load_engine_inputs(session, str(deal_id), tenant_id=str(tenant_id))
+    sources = base.get("__sources__") or {}
+    source_fields = base.get("__source_fields__") or {}
+    selected_source = sources.get("renovation_budget")
+    selected_field = source_fields.get("renovation_budget") if isinstance(source_fields, dict) else None
+    selected_document_id = (
+        selected_field.get("document_id") if isinstance(selected_field, dict) else None
+    )
+    selected_value = base.get("renovation_budget")
+    keys_raw = base.get("keys")
+    try:
+        keys = int(keys_raw) if keys_raw is not None else None
+    except (TypeError, ValueError):
+        keys = None
+
+    raw_overrides = await _load_deal_overrides_raw(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    override_scalar = _normalize_override_shape(raw_overrides).get("renovation_budget")
+    override_value: float | None
+    try:
+        override_value = (
+            float(override_scalar)
+            if isinstance(override_scalar, (int, float, str)) and not isinstance(override_scalar, bool)
+            else None
+        )
+    except (TypeError, ValueError):
+        override_value = None
+    override_note = _override_note(raw_overrides.get("renovation_budget"))
+
+    docs = await load_capex_documents(session, deal_id=str(deal_id), tenant_id=str(tenant_id))
+    om = await load_om_renovation_budget(session, deal_id=str(deal_id), tenant_id=str(tenant_id))
+    candidates, reference_only = build_candidates(
+        docs,
+        om=om,
+        override_value=override_value,
+        override_note=override_note,
+        selected_source=selected_source,
+        selected_document_id=selected_document_id,
+        keys=keys,
+    )
+    return RenovationBudgetCandidatesResponse(
+        id=deal_id,
+        selected_source=selected_source,
+        selected_value_usd=(
+            float(selected_value)
+            if isinstance(selected_value, (int, float)) and not isinstance(selected_value, bool)
+            else None
+        ),
+        keys=keys,
+        candidates=[RenovationBudgetCandidate(**c) for c in candidates],
+        reference_only=[RenovationBudgetReferenceDoc(**r) for r in reference_only],
     )
 
 

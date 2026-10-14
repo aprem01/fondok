@@ -19,7 +19,18 @@ extraction_schemas/
   pnl_benchmark.md   ← CBRE Benchmarker / HotStats USALI 11th ...
   market_study.md    ← CoStar submarket / market study: inventory, pipeline,
                         supply & demand trend (Market tab growth tiles)
+  capex.md           ← PIP / renovation budget (`capex_plan.pip.*`, a candidate
+                        for the model's renovation budget — FON-101), forward
+                        capital plan (`future_capex.*`, reference only),
+                        historical capex ledger, FF&E reserve report
 ```
+
+The loader maps a Router ``doc_type`` to ``<doc_type_lowercase>.md`` by
+filename, so ``CAPEX`` → ``capex.md`` with no registration step. The
+``doc_subtype`` an analyst tags a CAPEX file with (``future`` / ``historic``,
+FON-41) is NOT visible to the extractor — the schema tells the LLM to pick the
+namespace from the document's content, and the engine-input loader gates on
+the stored subtype separately (a ``future`` document never feeds the model).
 
 Schemas are loaded by `apps/worker/app/agents/extraction_schemas/loader.py`
 and assembled into the Extractor's system prompt by

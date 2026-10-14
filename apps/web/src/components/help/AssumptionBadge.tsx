@@ -275,6 +275,10 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
       'Set by your Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while “Use STR rates in the model” is on.',
     Icon: Pencil,
   },
+  // FON-101 — the renovation budget read off a separate PIP / CapEx document
+  // (the stated PIP total). Outranks the OM's broker figure; the latest-dated
+  // plan wins among several. Tooltip copy comes from the registry.
+  pip_document: { tone: TONE.grounded, Icon: FileText },
 };
 
 const SOURCE_META: Record<AssumptionSource, SourceMeta> = Object.fromEntries(

@@ -92,6 +92,8 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import { sourceLabel } from '@/lib/provenance';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning } from '@/lib/mockData';
 import {
   KpiTile,
@@ -348,6 +350,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const returnsTrace = useTraceGraph('returns');
   const debtTrace = useTraceGraph('debt');
   const expenseTrace = useTraceGraph('expense');
+  // FON-101 — where the renovation budget came from (OM broker · PIP / CapEx
+  // document · analyst override), off the deal's provenance map; the
+  // Renovation KPI tile names it after the per-key figure.
+  const renoSource = useSource('renovation_budget');
   const traceGet = useCallback(
     (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string) => {
       const g = engine === 'capital' ? capitalTrace
@@ -1177,13 +1183,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     return [
       { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
-      { label: 'Renovation', value: mm(renoBudget), sub: hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : undefined },
+      { label: 'Renovation', value: mm(renoBudget),
+        sub: [
+          hasReno && has(keys) ? `${fmtCurrency((renoBudget as number) / keys)} / key` : '',
+          hasReno && renoSource?.source ? sourceLabel(renoSource.source) : '',
+        ].filter(Boolean).join(' · ') || undefined },
       stabNoiTile,
       leveredTile,
       unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel]);
+  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
 
   // ─── R-051 — Asking vs Bidding price ───────────────────────────────────
   // One read-only worker call prices the deal at the seller's asking price and
