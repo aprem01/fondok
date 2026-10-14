@@ -21,9 +21,20 @@ Clerk ``org:admin`` / ``org:member`` prefix. See
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
+
+# FON-93 — the tenant the current request resolved to, as a string UUID.
+# Set by :func:`app.auth.get_current_auth` on every path (jwt / header /
+# default) and read by :func:`app.database.get_session` when
+# ``settings.DB_SET_TENANT_GUC`` is on, so each transaction can publish
+# ``app.tenant_id`` to Postgres for row-level security. ``None`` outside a
+# request (schedulers, scripts, tests that bypass the dependency).
+current_tenant_id: ContextVar[str | None] = ContextVar(
+    "fondok_current_tenant_id", default=None
+)
 
 # Sources the worker recognizes. ``Literal`` is not enforced by the
 # dataclass — Python dataclasses don't validate — but it keeps mypy
@@ -113,4 +124,4 @@ def normalize_clerk_role(raw: str | None) -> str:
     return stripped.lower()
 
 
-__all__ = ["AuthContext", "AuthSource", "Role", "normalize_clerk_role"]
+__all__ = ["AuthContext", "AuthSource", "Role", "current_tenant_id", "normalize_clerk_role"]

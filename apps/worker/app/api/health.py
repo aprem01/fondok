@@ -148,6 +148,14 @@ async def health(
             "jwt_required": not bool(
                 getattr(get_settings(), "ALLOW_TENANT_HEADER_WITHOUT_JWT", False)
             ),
+            # FON-93 — should read true on prod once the registry is seeded.
+            "registered_tenant_required": bool(
+                getattr(get_settings(), "REQUIRE_REGISTERED_TENANT", False)
+            ),
+            # FON-93 — true once RLS is applied and the app role is in use.
+            "rls_tenant_guc": bool(
+                getattr(get_settings(), "DB_SET_TENANT_GUC", False)
+            ),
         },
         "degraded_reasons": degraded_reasons,
     }

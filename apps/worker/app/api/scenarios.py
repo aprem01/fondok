@@ -342,6 +342,7 @@ async def load_scenario_overrides(
     session: AsyncSession,
     *,
     scenario_id: str | UUID,
+    tenant_id: str | UUID,
 ) -> dict[str, Any]:
     """Read the scenario's overrides as a ``{field_path: value}`` dict.
 
@@ -359,8 +360,12 @@ async def load_scenario_overrides(
     try:
         row = (
             await session.execute(
-                text("SELECT overrides FROM scenarios WHERE id = :id"),
-                {"id": str(scenario_id)},
+                # tenant-scope predicate required by tenant_middleware
+                text(
+                    "SELECT overrides FROM scenarios "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {"id": str(scenario_id), "tenant": str(tenant_id)},
             )
         ).first()
     except Exception:

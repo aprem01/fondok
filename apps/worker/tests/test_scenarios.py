@@ -60,6 +60,13 @@ async def _reset_db() -> None:
     yield
 
 
+# Deals created through ``_create_deal_via_api`` carry no X-Tenant-Id, so
+# (header path enabled by conftest) they land on DEFAULT_TENANT_ID. FON-93
+# made the engine-input loader refuse an implicit tenant, so the direct
+# loader calls below name it explicitly.
+_DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001"
+
+
 async def _create_deal_via_api(client, *, name: str = "Scenario Hotel", **kw) -> str:
     body = {"name": name, "city": "Denver", "keys": 120}
     body.update(kw)
@@ -346,7 +353,7 @@ async def test_run_scenario_applies_overrides_to_engine() -> None:
         factory = get_session_factory()
         async with factory() as session:
             base = await _load_engine_inputs(
-                session, deal_id, scenario_id=sid
+                session, deal_id, scenario_id=sid, tenant_id=_DEFAULT_TENANT
             )
         assert base["starting_occupancy"] == 0.55
         assert base["exit_cap_rate"] == 0.090
@@ -624,7 +631,7 @@ async def test_pip_displacement_override_routes_correctly() -> None:
         await session.commit()
 
         base = await _load_engine_inputs(
-            session, deal_id, scenario_id=scenario_id
+            session, deal_id, scenario_id=scenario_id, tenant_id=tenant_id
         )
 
     pip = base.get("pip_displacement_overrides") or {}
@@ -685,7 +692,7 @@ async def test_segment_override_in_scenario() -> None:
         await session.commit()
 
         base = await _load_engine_inputs(
-            session, deal_id, scenario_id=scenario_id
+            session, deal_id, scenario_id=scenario_id, tenant_id=tenant_id
         )
 
     seg = base.get("segments_overrides") or {}
@@ -745,7 +752,7 @@ async def test_capex_override_in_scenario() -> None:
         await session.commit()
 
         base = await _load_engine_inputs(
-            session, deal_id, scenario_id=scenario_id
+            session, deal_id, scenario_id=scenario_id, tenant_id=tenant_id
         )
 
     capex = base.get("capex_plan_overrides") or {}
@@ -956,7 +963,9 @@ async def test_revpar_growth_override_moves_stabilized_noi() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, deal_id, scenario_id=sid)
+        base = await _load_engine_inputs(
+            session, deal_id, scenario_id=sid, tenant_id=_DEFAULT_TENANT
+        )
     occ_g = base["occupancy_growth"]
     assert base["revpar_growth"] == 0.025
     assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
@@ -999,7 +1008,9 @@ async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        base = await _load_engine_inputs(session, deal_id, scenario_id=sid)
+        base = await _load_engine_inputs(
+            session, deal_id, scenario_id=sid, tenant_id=_DEFAULT_TENANT
+        )
     assert base["adr_growth"] == seed_adr_growth
     # FON-63 / FON-65 — ``adr_growth`` was overridden to the value it already
     # had, so it is a SHADOW override: it still suppresses the RevPAR

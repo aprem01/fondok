@@ -1171,14 +1171,14 @@ async def _load_engine_inputs(
     source_fields: dict[str, SourceField] = {}
     reasons: dict[str, dict[str, Any]] = {}
     # Resolve tenant_id up-front so every helper below can scope its
-    # SELECT — production callers always pass one; test / demo callers
-    # (Kimpton fixture) fall back to the seed tenant.
+    # SELECT. FON-93: the tenant is REQUIRED. The old fallback to
+    # DEFAULT_TENANT_ID let a caller that forgot the tenant quietly read
+    # the shared catch-all tenant's rows (and miss its own); every
+    # production caller threads ``Depends(get_tenant_id)`` here, so a
+    # ``None`` is a programming error — fail loud.
     if tenant_id is None:
-        from ..config import get_settings as _get_settings
-
-        effective_tenant = str(_get_settings().DEFAULT_TENANT_ID)
-    else:
-        effective_tenant = str(tenant_id)
+        raise ValueError("_load_engine_inputs: tenant_id is required")
+    effective_tenant = str(tenant_id)
     try:
         # Only try DB lookup when the id is a valid UUID. The Kimpton
         # demo card uses an int-string id which is intentionally
@@ -1214,7 +1214,9 @@ async def _load_engine_inputs(
         )
         if scenario_id:
             as_of_overrides.update(
-                await _load_scenario_overrides(session, scenario_id=scenario_id)
+                await _load_scenario_overrides(
+                    session, scenario_id=scenario_id, tenant_id=effective_tenant
+                )
             )
     except Exception:  # noqa: BLE001
         as_of_overrides = {}
@@ -1712,7 +1714,7 @@ async def _load_engine_inputs(
             # overrides on conflicts (same precedence model as the
             # below ``persisted_overrides`` merge).
             scenario_overrides_pre = await _load_scenario_overrides(
-                session, scenario_id=scenario_id
+                session, scenario_id=scenario_id, tenant_id=effective_tenant
             )
             pre_load_seg_overrides_raw = {
                 **pre_load_seg_overrides_raw,
@@ -1786,7 +1788,7 @@ async def _load_engine_inputs(
         # deal's persisted overrides; scenario values win on conflict
         # so the analyst can flex any base assumption inside a what-if.
         scenario_overrides = await _load_scenario_overrides(
-            session, scenario_id=scenario_id
+            session, scenario_id=scenario_id, tenant_id=effective_tenant
         )
         if scenario_overrides:
             persisted_overrides = {**persisted_overrides, **scenario_overrides}
@@ -4023,6 +4025,7 @@ async def _load_scenario_overrides(
     session: AsyncSession,
     *,
     scenario_id: str,
+    tenant_id: str,
 ) -> dict[str, Any]:
     """Read a scenario's overrides as a flat ``{field_path: value}`` map.
 
@@ -4042,8 +4045,12 @@ async def _load_scenario_overrides(
     try:
         row = (
             await session.execute(
-                text("SELECT overrides FROM scenarios WHERE id = :id"),
-                {"id": scenario_id},
+                # tenant-scope predicate required by tenant_middleware
+                text(
+                    "SELECT overrides FROM scenarios "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {"id": scenario_id, "tenant": str(tenant_id)},
             )
         ).first()
     except Exception:

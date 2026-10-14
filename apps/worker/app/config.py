@@ -332,6 +332,32 @@ class Settings(BaseSettings):
     # sets it), and scripts run from a trusted shell — never on Railway.
     ALLOW_TENANT_HEADER_WITHOUT_JWT: bool = Field(default=False)
 
+    # ── FON-93: institution workspace isolation ───────────────────────
+    # Tenant registry enforcement. When True, a verified JWT whose org is
+    # not a row in ``tenants`` with status ``active`` is refused with 403
+    # ``tenant_not_registered`` — an analyst who self-creates a Clerk org
+    # (or an org that only arrived via the webhook as ``pending_review``)
+    # gets no data plane until an internal admin registers it. OFF by
+    # default so production behaviour is unchanged until the registry is
+    # seeded (``scripts/register_tenant.py``) and Prem flips it on Railway.
+    REQUIRE_REGISTERED_TENANT: bool = Field(default=False)
+
+    # Postgres row-level security readiness. When True, every request
+    # session runs ``set_config('app.tenant_id', <caller tenant>, true)``
+    # at the start of each transaction so the RLS policies in
+    # ``migrations/rls/001_enable_rls.sql`` can see the caller. OFF by
+    # default; a no-op on SQLite. Flip only after the policies are applied
+    # and the worker connects as the non-owner app role — see
+    # ``docs/WORKSPACE_ISOLATION.md`` for the rollout order.
+    DB_SET_TENANT_GUC: bool = Field(default=False)
+
+    # Clerk → worker webhook (``POST /webhooks/clerk``). The Svix signing
+    # secret from the Clerk dashboard (``whsec_…``). Unset: the endpoint
+    # refuses every delivery with 503 — it never accepts an unsigned body.
+    CLERK_WEBHOOK_SECRET: SecretStr | None = Field(default=None)
+    # Replay window for the Svix timestamp check, in seconds.
+    CLERK_WEBHOOK_TOLERANCE_S: int = Field(default=300, gt=0)
+
     # ── Signed document links (FON-41 / R-040) ───────────────────────
     # "Open document in new tab" is a top-level browser navigation, and a
     # navigation never carries the Clerk ``Authorization`` header — so once

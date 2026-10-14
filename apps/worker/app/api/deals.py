@@ -66,13 +66,18 @@ def _coerce_tenant_id(raw: str) -> UUID | None:
     (tenant-scoped), the /admin/cost aggregation was misleading, and
     cross-tenant isolation was effectively unenforced.
 
+    FON-93 (2026-10-14): this is the **header-path** coercer only — the
+    ``X-Tenant-Id`` surface that ``ALLOW_TENANT_HEADER_WITHOUT_JWT`` opens
+    for local dev, tests and trusted scripts. The JWT path uses
+    :func:`coerce_org_tenant_id`, which accepts nothing but a Clerk
+    organization id. ``user_…`` / ``acc_…`` prefixes used to hash to a
+    tenant too; nothing legitimate ever sent them and a personal-account
+    id must never become a workspace, so they are rejected now.
+
     Accepted formats (in priority order):
-      1. Already a valid UUID string → parsed as-is.
-      2. Clerk-style ``org_...`` (or ``user_...``) prefix → hashed
-         to a deterministic UUIDv5 via ``_CLERK_ORG_UUID_NAMESPACE``.
-         Same Clerk org id always produces the same UUID, so cached
-         extractions + audit trails stay linked to the tenant across
-         requests without any DB lookup.
+      1. Already a valid UUID string → parsed as-is (tests seed tenants
+         with literal UUIDs).
+      2. Clerk-style ``org_...`` → :func:`coerce_org_tenant_id`.
       3. Anything else → ``None`` (caller falls back to default).
     """
     if not raw:
@@ -84,9 +89,27 @@ def _coerce_tenant_id(raw: str) -> UUID | None:
         return UUID(stripped)
     except ValueError:
         pass
-    if stripped.startswith(("org_", "user_", "acc_")):
-        return uuid5(_CLERK_ORG_UUID_NAMESPACE, stripped)
-    return None
+    return coerce_org_tenant_id(stripped)
+
+
+def coerce_org_tenant_id(org_id: str | None) -> UUID | None:
+    """Map a Clerk organization id (``org_…``) to its tenant UUID.
+
+    Deterministic UUIDv5 under ``_CLERK_ORG_UUID_NAMESPACE`` — the same
+    Clerk org always produces the same UUID, so cached extractions, audit
+    trails and the ``tenants`` registry stay linked to the org across
+    requests without a DB lookup.
+
+    This is the ONLY coercion the verified-JWT path performs (FON-93). A
+    raw UUID, a ``user_…`` id or anything else → ``None``; the caller
+    refuses the request rather than guessing.
+    """
+    if not org_id:
+        return None
+    stripped = org_id.strip()
+    if not stripped.startswith("org_") or len(stripped) <= len("org_"):
+        return None
+    return uuid5(_CLERK_ORG_UUID_NAMESPACE, stripped)
 
 
 async def get_tenant_id(
@@ -2515,10 +2538,14 @@ async def _load_deal_payload(
         # think about loading inputs. Routes already 404 on missing
         # deals, but we double-check here so the agent layer never
         # silently materializes a fixture for a deleted deal.
-        # Fall back to the seed tenant when a caller (test fixture, demo
-        # streaming path) omits tenant_id — production callers always
-        # pass it through from Depends(get_tenant_id).
-        effective_tenant = tenant_id or str(get_settings().DEFAULT_TENANT_ID)
+        # FON-93: a DB-backed load MUST name its tenant. The old fallback
+        # to DEFAULT_TENANT_ID meant a caller that forgot the tenant read
+        # (and stamped the memo with) the shared catch-all tenant.
+        if not tenant_id:
+            raise ValueError(
+                "_load_deal_payload: tenant_id is required when a session is supplied"
+            )
+        effective_tenant = str(tenant_id)
         deal_row = (
             await session.execute(
                 # tenant-scope predicate required by tenant_middleware
@@ -2587,7 +2614,7 @@ async def _load_deal_payload(
         # extractions / engine runs. If any layer is sparse the Analyst
         # sees None / empty for that layer rather than a fixture lie.
         return AnalystInput(
-            tenant_id=settings.DEFAULT_TENANT_ID,
+            tenant_id=str(tenant_id),
             deal_id=deal_id,
             deal_data=real_payload_fields["deal_data"],
             normalized_spread=real_payload_fields["normalized_spread"],
@@ -2596,8 +2623,11 @@ async def _load_deal_payload(
             source_documents=docs,
         )
 
+    # Fixture path (no session): the only remaining DEFAULT_TENANT_ID use —
+    # the seed-data demo / streaming smoke flow has no caller tenant. A
+    # caller that does name a tenant is honoured.
     return AnalystInput(
-        tenant_id=settings.DEFAULT_TENANT_ID,
+        tenant_id=str(tenant_id) if tenant_id else settings.DEFAULT_TENANT_ID,
         deal_id=deal_id,
         deal_data=deal,
         normalized_spread=None,

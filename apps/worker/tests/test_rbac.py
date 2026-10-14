@@ -7,7 +7,9 @@ Covers the two-role model:
 * header-only + default paths → treated as admin-equivalent
   (backwards-compat escape hatch).
 * malformed / expired JWTs → 401.
-* personal Clerk user (no org) → 403 on admin, 200 on member endpoints.
+* personal Clerk user (no org) → 409 ``no_active_organization`` everywhere,
+  even with an ``X-Tenant-Id`` header (FON-93: the header is not a tenant
+  source on the JWT path).
 
 The Clerk JWKS fetch is patched out — we mint our own RS256 key,
 publish the corresponding JWK via the module-level cache, and sign
@@ -299,13 +301,13 @@ async def test_expired_jwt_returns_401(_rsa_key) -> None:
 
 
 @pytest.mark.asyncio
-async def test_personal_clerk_user_passes_member_endpoint(_rsa_key) -> None:
-    """A JWT with no org_id (personal account) → 200 on a member endpoint.
+async def test_personal_jwt_with_tenant_header_is_409_not_served(_rsa_key) -> None:
+    """FON-93: a verified JWT with no org_id + an arbitrary ``X-Tenant-Id``
+    must 409 — the header is NOT a tenant source once a JWT is present.
 
-    Uses ``GET /deals`` — the everyday-analyst surface — which is
-    protected by the tenant dep but not by ``require_role``. A personal
-    Clerk user gets their tenant resolved from ``X-Tenant-Id`` as
-    fallback, and the endpoint responds normally.
+    Before 2026-10-14 this exact request returned 200 with the named
+    tenant's deal list: any signed-in Clerk user (personal account, no
+    org) could read any institution's workspace by naming its UUID.
     """
     from httpx import ASGITransport, AsyncClient
 
@@ -322,14 +324,98 @@ async def test_personal_clerk_user_passes_member_endpoint(_rsa_key) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
+        for header in (
+            "55555555-5555-5555-5555-555555555555",  # raw tenant UUID
+            "org_SOMEONE_ELSES_ORG",  # a Clerk org id
+        ):
+            r = await client.get(
+                "/deals",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Tenant-Id": header,
+                },
+            )
+            assert r.status_code == 409, (header, r.text)
+            assert r.json()["detail"] == "no_active_organization"
+
+
+@pytest.mark.asyncio
+async def test_org_jwt_ignores_tenant_header(_rsa_key) -> None:
+    """FON-93: with an org JWT, ``X-Tenant-Id`` naming ANOTHER tenant is
+    ignored — the request is scoped to the JWT's org, never the header."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.deals import coerce_org_tenant_id
+    from app.main import app
+
+    await _ensure_schema()
+    own_org = "org_OWN_WORKSPACE"
+    own_tenant = coerce_org_tenant_id(own_org)
+    assert own_tenant is not None
+    own_deal = await _seed_deal(str(own_tenant))
+    other_tenant = "77777777-7777-7777-7777-777777777777"
+    other_deal = await _seed_deal(other_tenant)
+
+    token = _sign(
+        _rsa_key, {"sub": "user_member_x", "org_id": own_org, "org_role": "org:member"}
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         r = await client.get(
             "/deals",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Tenant-Id": "55555555-5555-5555-5555-555555555555",
-            },
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": other_tenant},
         )
-    assert r.status_code == 200, r.text
+        assert r.status_code == 200, r.text
+        ids = {d["id"] for d in r.json()}
+        assert own_deal in ids
+        assert other_deal not in ids
+        # And the other tenant's deal is a 404, not a 200, even when named.
+        r2 = await client.get(
+            f"/deals/{other_deal}",
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": other_tenant},
+        )
+        assert r2.status_code == 404, r2.text
+
+
+@pytest.mark.asyncio
+async def test_jwt_path_rejects_non_org_identifiers(_rsa_key) -> None:
+    """FON-93: ``org_id`` claims that are not Clerk org ids never become a
+    tenant. ``user_…`` / ``acc_…`` / raw UUIDs used to hash to one."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    await _ensure_schema()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for bogus in ("user_abc", "acc_abc", "55555555-5555-5555-5555-555555555555", "org_"):
+            token = _sign(_rsa_key, {"sub": "user_x", "org_id": bogus, "org_role": "org:admin"})
+            r = await client.get("/deals", headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 409, (bogus, r.text)
+
+
+def test_coerce_org_tenant_id_is_org_only() -> None:
+    """Unit: the JWT-path coercer accepts ``org_…`` and nothing else; the
+    header-path coercer still takes a literal UUID but no ``user_``/``acc_``."""
+    from uuid import UUID
+
+    from app.api.deals import _coerce_tenant_id, coerce_org_tenant_id
+
+    org = coerce_org_tenant_id("org_2abcDEF")
+    assert isinstance(org, UUID)
+    assert coerce_org_tenant_id("org_2abcDEF") == org  # deterministic
+    assert coerce_org_tenant_id(" org_2abcDEF ") == org  # whitespace-tolerant
+    for bad in (None, "", "org_", "user_123", "acc_123", "55555555-5555-5555-5555-555555555555"):
+        assert coerce_org_tenant_id(bad) is None, bad
+
+    assert _coerce_tenant_id("55555555-5555-5555-5555-555555555555") == UUID(
+        "55555555-5555-5555-5555-555555555555"
+    )
+    assert _coerce_tenant_id("org_2abcDEF") == org
+    assert _coerce_tenant_id("user_123") is None
+    assert _coerce_tenant_id("acc_123") is None
 
 
 @pytest.mark.asyncio
@@ -359,11 +445,14 @@ async def test_authed_no_org_no_header_returns_409(_rsa_key) -> None:
 
 
 @pytest.mark.asyncio
-async def test_personal_clerk_user_403_on_admin_endpoint(_rsa_key) -> None:
-    """A personal-account JWT (no org_role) → 403 on /admin/cost.
+async def test_personal_clerk_user_409_on_admin_endpoint(_rsa_key) -> None:
+    """A personal-account JWT (no org) → 409 on /admin/cost, header or not.
 
-    role normalizes to ``"unknown"``; ``source="jwt"`` means the strict
-    path applies, so the role gate refuses.
+    FON-93: tenant resolution runs before the role gate and a token with
+    no active organization has no tenant, so the request never reaches
+    ``require_role`` — the header it carries is ignored. (Before FON-93
+    this was a 403 from the role gate, i.e. the header had been accepted
+    as the tenant.)
     """
     from httpx import ASGITransport, AsyncClient
 
@@ -384,7 +473,8 @@ async def test_personal_clerk_user_403_on_admin_endpoint(_rsa_key) -> None:
                 "X-Tenant-Id": "66666666-6666-6666-6666-666666666666",
             },
         )
-    assert r.status_code == 403, r.text
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == "no_active_organization"
 
 
 @pytest.mark.asyncio
