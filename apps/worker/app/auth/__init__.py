@@ -34,7 +34,7 @@ from fastapi import Depends, Header, HTTPException, status
 
 from ..config import get_settings
 from .clerk_jwt import verify_clerk_jwt
-from .context import AuthContext, normalize_clerk_role
+from .context import AuthContext, current_tenant_id, normalize_clerk_role
 
 logger = logging.getLogger(__name__)
 
@@ -69,21 +69,29 @@ async def get_current_auth(
     1. ``Authorization: Bearer <jwt>``  — verify + extract → ``source="jwt"``.
        On verification failure we raise **401** so the browser knows to
        refresh the token, rather than silently degrading to the header
-       path (which would mask a bad token as a permission problem).
+       path (which would mask a bad token as a permission problem). The
+       tenant is the token's ``org_id`` and nothing else (FON-93): no
+       ``org_id`` → **409** ``no_active_organization`` even when an
+       ``X-Tenant-Id`` header is present; with
+       ``REQUIRE_REGISTERED_TENANT`` on, an org missing from the
+       ``tenants`` registry (or not ``active``) → **403**
+       ``tenant_not_registered``.
     2. ``X-Tenant-Id: <uuid|org_...>`` — coerce → ``source="header"``,
-       ``role="unknown"``. This is the backwards-compat path server-side
-       callers rely on.
+       ``role="unknown"``. Only reachable when
+       ``ALLOW_TENANT_HEADER_WITHOUT_JWT`` is on (local dev / tests);
+       otherwise **401**.
     3. Neither  — ``settings.DEFAULT_TENANT_ID`` → ``source="default"``,
-       ``role="unknown"``. Keeps the unauthenticated demo persona working.
+       ``role="unknown"``. Same flag gate as path 2.
 
-    401 is only raised for path 1's *failed* verification. Path 1 with
-    no bearer token at all falls straight through to path 2 → path 3.
+    Every path publishes the resolved tenant to
+    :data:`app.auth.context.current_tenant_id` so the DB session can set
+    the RLS GUC when ``DB_SET_TENANT_GUC`` is on.
     """
     # Local import to keep the ``deals`` module the single source of
     # truth for _coerce_tenant_id / _CLERK_ORG_UUID_NAMESPACE. Prevents
     # a circular import at module-load time (deals imports auth for
     # the dependency).
-    from ..api.deals import _coerce_tenant_id
+    from ..api.deals import _coerce_tenant_id, coerce_org_tenant_id
 
     settings = get_settings()
 
@@ -104,43 +112,66 @@ async def get_current_auth(
         email = claims.get("email")
         role = normalize_clerk_role(org_role_raw)
 
-        # Tenant resolution: prefer the JWT's org_id (canonical). If
-        # the token is a personal-account token (no org_id), fall
-        # back to X-Tenant-Id, then to the default tenant. This lets
-        # a solo Clerk user still hit the app.
-        tenant_id: UUID | None = None
-        if org_id:
-            tenant_id = _coerce_tenant_id(org_id)
-        if tenant_id is None and x_tenant_id:
-            tenant_id = _coerce_tenant_id(x_tenant_id)
-        if tenant_id is None:
-            # FON-20: an authenticated user with NO resolvable org must
-            # NOT silently fall to the shared DEFAULT_TENANT_ID. Doing so
-            # scatters their data onto a catch-all tenant and — worse —
-            # makes their own org-scoped documents 404 ("document not
-            # found on deal") the instant the active org isn't set in the
-            # session (a race: the frontend mirrors the org into the JWT /
-            # X-Tenant-Id only after Clerk resolves it). Fail loud with a
-            # machine-readable code so the client establishes an active
-            # organization and retries with org_id, instead of silently
-            # reading/writing the wrong tenant.
+        # Tenant resolution — FON-93: the JWT's ``org_id`` is the ONLY
+        # tenant source on this path. Before 2026-10-14 a personal-account
+        # token (no org_id) fell back to ``X-Tenant-Id``, so any signed-in
+        # Clerk user could name an arbitrary tenant in a header and be
+        # served it. The header is ignored here entirely; a token with no
+        # active organization gets the FON-20 409 regardless of headers.
+        if not org_id:
             logger.warning(
                 "get_current_auth: verified JWT (sub=%s) carried no org_id "
-                "and no X-Tenant-Id — refusing DEFAULT_TENANT_ID fallback "
-                "(FON-20). Client must set an active organization.",
+                "(x_tenant_id=%s) — refusing; the header is not a tenant "
+                "source on the JWT path (FON-93). Client must set an "
+                "active organization.",
                 user_id,
+                "present" if x_tenant_id else "absent",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="no_active_organization",
+            )
+        tenant_id = coerce_org_tenant_id(str(org_id))
+        if tenant_id is None:
+            # An ``org_id`` claim that is not a Clerk organization id
+            # (``org_…``). Nothing legitimate produces this; refuse rather
+            # than guess a tenant from it.
+            logger.warning(
+                "get_current_auth: verified JWT (sub=%s) carried a malformed "
+                "org_id=%r — refusing",
+                user_id,
+                org_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="no_active_organization",
             )
 
+        # FON-93 — tenant registry. Off by default (prod unchanged); when
+        # on, an org nobody registered — or one that is suspended / still
+        # ``pending_review`` from the Clerk webhook — has no data plane.
+        if settings.REQUIRE_REGISTERED_TENANT:
+            from ..tenants import is_registered
+
+            if not await is_registered(tenant_id):
+                logger.warning(
+                    "get_current_auth: org %s (tenant %s) is not a registered, "
+                    "active tenant — refusing (REQUIRE_REGISTERED_TENANT)",
+                    org_id,
+                    tenant_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="tenant_not_registered",
+                )
+
+        current_tenant_id.set(str(tenant_id))
         return AuthContext(
             tenant_id=tenant_id,
             user_id=str(user_id) if user_id else None,
             role=role,
             source="jwt",
-            org_id=str(org_id) if org_id else None,
+            org_id=str(org_id),
             email=str(email) if email else None,
         )
 
@@ -172,6 +203,7 @@ async def get_current_auth(
     if x_tenant_id:
         coerced = _coerce_tenant_id(x_tenant_id)
         if coerced is not None:
+            current_tenant_id.set(str(coerced))
             return AuthContext(
                 tenant_id=coerced,
                 user_id=None,
@@ -185,6 +217,7 @@ async def get_current_auth(
         )
 
     # Default tenant fallback.
+    current_tenant_id.set(str(settings.DEFAULT_TENANT_ID))
     return AuthContext(
         tenant_id=UUID(settings.DEFAULT_TENANT_ID),
         user_id=None,
@@ -257,7 +290,8 @@ async def get_current_actor_id(
 
 __all__ = [
     "AuthContext",
-    "get_current_auth",
+    "current_tenant_id",
     "get_current_actor_id",
+    "get_current_auth",
     "require_role",
 ]

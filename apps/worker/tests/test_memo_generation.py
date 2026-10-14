@@ -594,6 +594,29 @@ async def test_load_deal_payload_falls_back_to_fixture_without_session() -> None
         assert d.doc_type == "reference"
 
 
+@pytest.mark.asyncio
+async def test_load_deal_payload_requires_tenant_with_session() -> None:
+    """FON-93: a DB-backed load without a tenant is a programming error —
+    it must raise, never fall back to DEFAULT_TENANT_ID."""
+    from app.api.deals import _load_deal_payload
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            await _load_deal_payload(str(uuid4()), session=session)
+
+
+@pytest.mark.asyncio
+async def test_load_deal_payload_stamps_callers_tenant() -> None:
+    """FON-93: the AnalystInput carries the caller's tenant, not the default."""
+    from app.api.deals import _load_deal_payload
+
+    other = "33333333-3333-3333-3333-333333333333"  # deliberately not DEFAULT_TENANT_ID
+    payload = await _load_deal_payload("kimpton-angler-2026", tenant_id=other)
+    assert payload.tenant_id == other
+
+
 # ─────────────────── 7. Real numeric inputs replace fixture spread ───────────────────
 
 

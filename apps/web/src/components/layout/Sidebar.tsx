@@ -136,17 +136,29 @@ export default function Sidebar({
           The typeof guard defends against a Clerk bundle that loaded but
           where the component export came back undefined (dev-key against
           a prod origin can produce this) — without it, React throws #130
-          and the whole app tree crashes. */}
+          and the whole app tree crashes.
+
+          FON-93 (institution workspace isolation): a workspace is an
+          institution the Fondok team registered, never something an
+          analyst mints for themselves. So the switcher (a) hides the
+          personal account — the worker 409s a session with no active
+          org anyway — and (b) hides Clerk's "Create organization" action.
+          Clerk has no prop to disable creation, so the button is removed
+          via its appearance element id; the Clerk dashboard toggle
+          ("Allow users to create organizations" → off) is what makes the
+          API refuse too — see docs/WORKSPACE_ISOLATION.md §5. Switching
+          between organizations the user already belongs to is unchanged. */}
       {isClerkConfigured && typeof OrganizationSwitcher === 'function' ? (
         <div className="px-3 pb-2">
           <div className="px-2 py-1">
             <OrganizationSwitcher
-              hidePersonal={false}
-              afterCreateOrganizationUrl="/dashboard"
+              hidePersonal
               afterSelectOrganizationUrl="/dashboard"
               appearance={{
                 elements: {
                   rootBox: 'w-full',
+                  organizationSwitcherPopoverActionButton__createOrganization:
+                    'hidden',
                   organizationSwitcherTrigger:
                     'w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors text-left',
                   organizationPreviewMainIdentifier:

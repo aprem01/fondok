@@ -56,6 +56,9 @@ logger = logging.getLogger(__name__)
 #
 # Tables intentionally NOT in this set:
 #   * ``model_calls``           — ``tenant_id`` is nullable (system jobs)
+#   * ``tenants``               — the registry itself (keyed by tenant id,
+#                                 read by the auth layer before a tenant
+#                                 is known)
 #   * ``catalog_*``             — global reference data
 #   * Postgres system catalogs  — ``pg_*`` / ``information_schema.*``
 _TENANT_SCOPED_TABLES: frozenset[str] = frozenset(
@@ -73,6 +76,19 @@ _TENANT_SCOPED_TABLES: frozenset[str] = frozenset(
         "due_diligence_questions",
         "broker_questions",
         "broker_qa_pairs",
+        # FON-93 (2026-10-14) — every remaining NOT NULL tenant_id table.
+        # Previously unlisted, so an unscoped read on any of them was
+        # invisible to this listener. ``tests/test_tenant_listener_strict.py``
+        # drives the whole deal-scoped endpoint surface in ``raise`` mode
+        # against this list.
+        "scenarios",
+        "cell_comments",
+        "lineage_records",
+        "portfolio_library",
+        "saved_pipeline_views",
+        "pipeline_digest_schedules",
+        "pending_batches",
+        "template_mappings",
     }
 )
 

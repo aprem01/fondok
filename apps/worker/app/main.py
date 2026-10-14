@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .alerting import init_sentry
 from .api import admin_cost as admin_cost_router
+from .api import admin_tenants as admin_tenants_router
 from .api import analysis as analysis_router
 from .api import audit as audit_router
 from .api import cell_comments as cell_comments_router
@@ -31,6 +32,7 @@ from .api import pl_roundtrip as pl_roundtrip_router
 from .api import portfolio_library as portfolio_library_router
 from .api import scenarios as scenarios_router
 from .api import settings as settings_router
+from .api import webhooks as webhooks_router
 from .config import get_settings
 from .database import dispose_engine, get_engine
 from .migrations import run_startup_migrations
@@ -288,6 +290,18 @@ def create_app() -> FastAPI:
         admin_cost_router.router,
         prefix="/admin",
         tags=["admin-cost"],
+    )
+    # FON-93 — tenant registry administration (internal tenants only
+    # for writes; see app/api/admin_tenants.py).
+    app.include_router(
+        admin_tenants_router.router,
+        prefix="/admin",
+        tags=["admin-tenants"],
+    )
+    # FON-93 — Clerk → worker webhook. Deliberately NO tenant dependency:
+    # Clerk authenticates with the Svix signature, not a session JWT.
+    app.include_router(
+        webhooks_router.router, prefix="/webhooks", tags=["webhooks"]
     )
     # Wave 4 W4.3 — Activity Feed (per-deal stream) + Compliance Explorer
     # (tenant-wide). Per-deal mounts under /deals so it shares the same

@@ -13,6 +13,10 @@ too.
 Safety knobs:
 * --dry-run     — prints counts, changes nothing (default: on)
 * --clerk-org   — the Clerk org id whose data to migrate (required)
+* --from-tenant — the SOURCE tenant UUID (default: the all-zeros catch-all).
+                  FON-93: pass an old single-member org's UUIDv5 to fold
+                  its rows into a shared institution org (e.g. Sam/Eshan/
+                  Rani → "Fondok Internal"); see docs/WORKSPACE_ISOLATION.md §6
 * --created-after / --created-before — restrict by row timestamp
                   (recommended: set --created-after to the date your
                    Clerk org went live so pre-Clerk seed rows stay put)
@@ -50,21 +54,32 @@ DEFAULT_TENANT = UUID("00000000-0000-0000-0000-000000000000")
 
 # Every tenant-scoped table the schema knows about. If you add a
 # tenant_id column somewhere new, add it here too — the script will
-# refuse to migrate silently.
+# refuse to migrate silently. (FON-93 completed the list: it used to miss
+# nine tables, so a "full" migration left memo edits, critic reports,
+# lineage and comments behind on the old tenant.)
 TENANT_SCOPED_TABLES = [
     "deals",
     "documents",
+    "template_mappings",
     "extraction_results",
+    "document_chunks",
+    "audit_log",
+    "memo_edits",
+    "verification_reports",
+    "critic_findings",
+    "critic_reports",
+    "engine_outputs",
+    "due_diligence_questions",
     "broker_questions",
     "broker_qa_pairs",
     "scenarios",
-    "engine_outputs",
-    "model_calls",
-    "audit_log",
-    "pending_batches",
     "portfolio_library",
     "saved_pipeline_views",
     "pipeline_digest_schedules",
+    "pending_batches",
+    "lineage_records",
+    "cell_comments",
+    "model_calls",
 ]
 
 
@@ -105,6 +120,11 @@ async def _reassign(engine, table: str, from_tenant: UUID, to_tenant: UUID, sinc
 async def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--clerk-org", required=True, help="Clerk org id like 'org_3Cy8foYI...'")
+    p.add_argument(
+        "--from-tenant",
+        default=str(DEFAULT_TENANT),
+        help="Source tenant UUID to move rows FROM (default: the all-zeros catch-all tenant)",
+    )
     p.add_argument("--created-after", default=None, help="ISO date, e.g. 2026-06-01")
     p.add_argument("--created-before", default=None, help="ISO date, e.g. 2026-07-01")
     p.add_argument("--tables", default=",".join(TENANT_SCOPED_TABLES), help="Comma-separated table list")
@@ -116,6 +136,15 @@ async def main() -> int:
         print(f"ERROR: could not coerce {args.clerk_org!r} to UUID. Is it the right Clerk id?", file=sys.stderr)
         return 2
 
+    try:
+        source_uuid = UUID(args.from_tenant)
+    except ValueError:
+        print(f"ERROR: --from-tenant {args.from_tenant!r} is not a UUID", file=sys.stderr)
+        return 2
+    if source_uuid == target_uuid:
+        print("ERROR: source and target tenant are the same — nothing to do", file=sys.stderr)
+        return 2
+
     tables = [t.strip() for t in args.tables.split(",") if t.strip()]
 
     print("=" * 70)
@@ -123,7 +152,10 @@ async def main() -> int:
     print("=" * 70)
     print(f"  Clerk org      : {args.clerk_org}")
     print(f"  Target tenant  : {target_uuid}  (UUIDv5 of clerk_org)")
-    print(f"  Source tenant  : {DEFAULT_TENANT}  (catch-all default)")
+    print(
+        f"  Source tenant  : {source_uuid}  "
+        f"({'catch-all default' if source_uuid == DEFAULT_TENANT else 'explicit --from-tenant'})"
+    )
     print(f"  Created >=     : {args.created_after or '(no lower bound)'}")
     print(f"  Created <      : {args.created_before or '(no upper bound)'}")
     print(f"  Mode           : {'COMMIT' if args.commit else 'DRY-RUN (no changes)'}")
@@ -140,9 +172,9 @@ async def main() -> int:
 
     total_default = 0
     total_would_move = 0
-    print(f"\n{'table':30s}  {'default_tenant':>15s}  {'target_tenant':>15s}")
+    print(f"\n{'table':30s}  {'source_tenant':>15s}  {'target_tenant':>15s}")
     for table in tables:
-        n_default = await _count(engine, table, DEFAULT_TENANT, args.created_after, args.created_before)
+        n_default = await _count(engine, table, source_uuid, args.created_after, args.created_before)
         n_target = await _count(engine, table, target_uuid, args.created_after, args.created_before)
         if n_default < 0:
             continue
@@ -150,7 +182,7 @@ async def main() -> int:
         total_would_move += n_default
         print(f"  {table:30s}  {n_default:>15,}  {n_target:>15,}")
 
-    print(f"\nRows on default tenant within window : {total_default:,}")
+    print(f"\nRows on source tenant within window  : {total_default:,}")
     print(f"Would move to {target_uuid} : {total_would_move:,}")
 
     if not args.commit:
@@ -162,7 +194,7 @@ async def main() -> int:
     moved = 0
     for table in tables:
         try:
-            n = await _reassign(engine, table, DEFAULT_TENANT, target_uuid, args.created_after, args.created_before)
+            n = await _reassign(engine, table, source_uuid, target_uuid, args.created_after, args.created_before)
         except Exception as exc:  # noqa: BLE001
             print(f"  {table:30s}  ERROR — {type(exc).__name__}: {exc}")
             continue

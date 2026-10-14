@@ -82,11 +82,10 @@ def test_namespace_is_stable_across_process_restarts() -> None:
     assert _coerce_tenant_id(clerk_id) == expected
 
 
-def test_user_prefix_also_maps() -> None:
-    """Some Clerk deployments use ``user_...`` when no org is active;
-    handle it the same way so those users still get consistent
-    tenants.
+def test_user_prefix_is_rejected() -> None:
+    """FON-93: a ``user_…`` (personal account) id is NOT a tenant. It used
+    to hash to one, which let a session with no active organization be
+    scoped to a workspace nobody provisioned. Same for ``acc_…``.
     """
-    a = _coerce_tenant_id("user_ABCDEFGHIJKL")
-    assert a is not None
-    assert isinstance(a, UUID)
+    assert _coerce_tenant_id("user_ABCDEFGHIJKL") is None
+    assert _coerce_tenant_id("acc_ABCDEFGHIJKL") is None

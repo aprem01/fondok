@@ -1211,6 +1211,33 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON cell_comments (tenant_id, deal_id, cell_key)
         """,
     ),
+    # ─────────────── FON-93 — tenant registry (workspace isolation) ───────
+    # ``id`` is the UUIDv5 the worker derives from the Clerk org id — the
+    # same value every tenant-scoped table stores in ``tenant_id`` — so a
+    # registry lookup is a primary-key hit with no join. Additive and
+    # idempotent; ``app.tenants`` degrades to "not registered" when the
+    # table is absent, so an older DB never 500s.
+    (
+        "tenants.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS tenants (
+            id              UUID PRIMARY KEY,
+            clerk_org_id    TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            kind            TEXT NOT NULL CHECK (kind IN ('internal', 'external')),
+            status          TEXT NOT NULL
+                            CHECK (status IN ('active', 'suspended', 'pending_review')),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "tenants.idx_clerk_org_id",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_clerk_org_id
+        ON tenants (clerk_org_id)
+        """,
+    ),
 ]
 
 
@@ -2049,6 +2076,28 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_cell_comments_deal_cell
         ON cell_comments (tenant_id, deal_id, cell_key)
+        """,
+    ),
+    # FON-93 — SQLite mirror of the Postgres tenant registry.
+    (
+        "tenants.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS tenants (
+            id              TEXT PRIMARY KEY,
+            clerk_org_id    TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            kind            TEXT NOT NULL CHECK (kind IN ('internal', 'external')),
+            status          TEXT NOT NULL
+                            CHECK (status IN ('active', 'suspended', 'pending_review')),
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "tenants.idx_clerk_org_id",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_clerk_org_id
+        ON tenants (clerk_org_id)
         """,
     ),
 ]

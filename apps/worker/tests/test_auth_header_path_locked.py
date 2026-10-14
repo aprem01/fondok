@@ -100,7 +100,13 @@ async def test_public_routes_stay_public(monkeypatch: pytest.MonkeyPatch) -> Non
     async with await _client() as c:
         r = await c.get("/health")
     assert r.status_code == 200
-    assert r.json()["auth"] == {"header_tenant_path_enabled": False, "jwt_required": True}
+    assert r.json()["auth"] == {
+        "header_tenant_path_enabled": False,
+        "jwt_required": True,
+        # FON-93 posture flags — both default off until Prem flips them.
+        "registered_tenant_required": False,
+        "rls_tenant_guc": False,
+    }
 
 
 async def test_opt_in_restores_the_header_path_for_dev_and_tests(monkeypatch: pytest.MonkeyPatch) -> None:
