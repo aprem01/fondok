@@ -400,7 +400,10 @@ export default function MethodologyPage() {
               <br />
               <b>Targets by year (FON-95).</b> The penetration targets can be set per model year
               (<code>index_mpi_target_by_year</code> / <code>index_ari_target_by_year</code>; a by-year entry beats
-              the all-years target, which remains the shorthand for every year). With the STR basis on, each model
+              the all-years target). The all-years target drives <b>Year 1 only</b>: Years 2+ are indexed only where a
+              by-year target is set for that year or the analyst overrides that metric&apos;s market growth; otherwise the
+              year follows the model&apos;s own growth and is flagged <code>scalar_year1_only</code>, so an existing deal
+              never changes because a report&apos;s default growth appeared. With the STR basis on, each indexed model
               year&apos;s occupancy = that year&apos;s benchmark occupancy × MPI target ÷ 100 and ADR = that year&apos;s
               benchmark ADR × ARI target ÷ 100, where the benchmark series follows the selected method: the STR or
               CoStar comp set is the reported TTM level in Year 1 grown at the market occupancy / ADR growth

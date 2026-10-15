@@ -379,6 +379,7 @@ function statusText(r: IndexYearRow, metric: 'occupancy' | 'adr'): string {
   const s = metric === 'occupancy' ? r.occupancy_status : r.adr_status;
   if (s === 'driven') return 'indexed';
   if (s === 'benchmark_unavailable') return 'benchmark unavailable';
+  if (s === 'scalar_year1_only') return 'all-years target: Year 1 only';
   return 'model growth';
 }
 

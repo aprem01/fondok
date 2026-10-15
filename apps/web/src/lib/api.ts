@@ -404,7 +404,7 @@ export interface IndexTargetAPI {
   source: 'by_year' | 'scalar' | null;
   note?: string | null;
 }
-export type IndexDriverStatus = 'driven' | 'no_target' | 'benchmark_unavailable';
+export type IndexDriverStatus = 'driven' | 'no_target' | 'benchmark_unavailable' | 'scalar_year1_only';
 /** FON-95 part 2 — one row of the by-year penetration grid. */
 export interface IndexYearRow {
   year: number;
