@@ -169,6 +169,15 @@ class ExpenseEngineInput(BaseModel):
     # undistributed category grows at ``expense_growth`` exactly as today,
     # so existing deals are byte-identical.
     other_expense_growth: Annotated[float, Field(ge=-0.5, le=0.5)] | None = None
+    # Sam #9 — opt-in INCENTIVE management fee, distinct from the base fee
+    # above (``mgmt_fee_pct`` × total revenue). A fraction of GOP after the
+    # base fee: each year's incentive fee = max(0, GOP − base fee) × this
+    # rate, deducted between the base fee and NOI. ``None`` (the default) =
+    # no incentive fee: the engine emits ``incentive_mgmt_fee = None`` and
+    # every NOI is byte-identical to before. No hurdle / owner's-priority
+    # return is modelled — the fee is a straight share of GOP after the base
+    # fee.
+    incentive_mgmt_fee_pct_of_gop: Annotated[float, Field(ge=0.0, le=0.5)] | None = None
     overrides: dict[str, float] = Field(default_factory=dict)
     grow_opex_independently: bool = Field(
         default=False,
@@ -239,6 +248,10 @@ class ExpenseYear(BaseModel):
     dept_expenses: DepartmentalExpenses
     undistributed: UndistributedExpenses
     mgmt_fee: Annotated[float, Field(ge=0)]
+    # Sam #9 — the incentive management fee for the year, deducted after the
+    # base ``mgmt_fee`` and before NOI. ``None`` when the deal carries no
+    # ``incentive_mgmt_fee_pct_of_gop`` (no incentive fee modelled).
+    incentive_mgmt_fee: Annotated[float, Field(ge=0)] | None = None
     ffe_reserve: Annotated[float, Field(ge=0)]
     fixed_charges: FixedCharges
     gop: float
@@ -626,6 +639,48 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 other_fixed=fixed_lines["other_fixed"],
                 total=fixed_total,
             )
+            # Sam #9 — the incentive management fee (opt-in). A share of GOP
+            # after the base fee, never negative: a year whose GOP does not
+            # cover the base fee earns the operator no incentive. Unset →
+            # ``None`` and nothing below changes (``incentive_deduction`` 0.0
+            # is never added, so NOI keeps its exact float arithmetic).
+            idx = len(years)
+            incentive_pct = payload.incentive_mgmt_fee_pct_of_gop
+            incentive_fee: float | None = None
+            if incentive_pct is not None:
+                incentive_base = max(0.0, gop - mgmt_fee)
+                incentive_fee = incentive_base * incentive_pct
+                prov[f"years[{idx}].incentive_mgmt_fee"] = ValueTrace(
+                    value=incentive_fee,
+                    formula=(
+                        "incentive_mgmt_fee = max(0, gop − management_fee) "
+                        "× incentive_mgmt_fee_pct_of_gop"
+                    ),
+                    inputs=[
+                        ValueInput(name="gop", value=gop, traces_to=f"years[{idx}].gop"),
+                        ValueInput(
+                            name="management_fee",
+                            value=mgmt_fee,
+                            assumption_key=(
+                                "mgmt_fee"
+                                if use_actuals and "mgmt_fee" in actuals
+                                else "mgmt_fee_pct"
+                            ),
+                        ),
+                        ValueInput(
+                            name="incentive_mgmt_fee_pct_of_gop",
+                            value=incentive_pct,
+                            assumption_key="incentive_mgmt_fee_pct_of_gop",
+                        ),
+                    ],
+                    assumption_key="incentive_mgmt_fee_pct_of_gop",
+                    note=(
+                        "Incentive management fee — a share of GOP after the base "
+                        "management fee, floored at zero when GOP does not cover the "
+                        "base fee. No owner's-priority hurdle is modelled."
+                    ),
+                )
+
             # `noi` keeps its legacy meaning (after FF&E reserves) so
             # the returns engine cap-rate math is unchanged.
             noi = gop - mgmt_fee - ffe - fixed_total
@@ -633,10 +688,14 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # Management Fee minus Fixed Charges, BEFORE the FF&E
             # reserve. This is what UI consumers should label "NOI".
             noi_institutional = gop - mgmt_fee - fixed_total
+            if incentive_fee is not None:
+                # Deducted only when set, so an unset deal's NOI is the exact
+                # same float expression as before (byte-identical goldens).
+                noi -= incentive_fee
+                noi_institutional -= incentive_fee
 
             # ─── Provenance for the two P&L waterfall values analysts most
             # want to explain: GOP and NOI (FON-25) ───
-            idx = len(years)
             # Which upstream value each of these two really came from. The
             # engine's revenue payload is the F&B engine's output (see
             # ``ExpenseEngineInput.revenue: FBRevenueOutput``), so the honest
@@ -698,6 +757,27 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     "fixed, so it names no single assumption."
                 ),
             )
+            if incentive_fee is not None:
+                # Sam #9 — name the incentive fee in the NOI trace only when it
+                # is modelled; an unset deal's trace is unchanged.
+                noi_trace = prov[f"years[{idx}].noi"]
+                prov[f"years[{idx}].noi"] = noi_trace.model_copy(
+                    update={
+                        "formula": (
+                            "noi = gop − management_fee − incentive_management_fee "
+                            "− ffe_reserve − fixed_charges"
+                        ),
+                        "inputs": [
+                            *noi_trace.inputs[:2],
+                            ValueInput(
+                                name="incentive_management_fee",
+                                value=incentive_fee,
+                                traces_to=f"years[{idx}].incentive_mgmt_fee",
+                            ),
+                            *noi_trace.inputs[2:],
+                        ],
+                    }
+                )
 
             years.append(
                 ExpenseYear(
@@ -711,6 +791,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     ),
                     undistributed=undist,
                     mgmt_fee=mgmt_fee,
+                    incentive_mgmt_fee=incentive_fee,
                     ffe_reserve=ffe,
                     fixed_charges=fixed,
                     gop=gop,

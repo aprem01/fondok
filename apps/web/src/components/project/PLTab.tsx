@@ -75,6 +75,8 @@ interface ExpenseYearWorker {
     total: number;
   };
   mgmt_fee: number;
+  // Sam #9 — opt-in incentive management fee; null / absent = none modelled.
+  incentive_mgmt_fee?: number | null;
   ffe_reserve: number;
   fixed_charges: { property_taxes: number; insurance: number; rent: number; other_fixed: number; total: number };
   gop: number;
@@ -206,6 +208,10 @@ function buildStatementFromWorker(
   );
   const ffe = pad(ey.map(y => toThousands(safe(y.ffe_reserve))), 0);
   const mgmt = pad(ey.map(y => toThousands(safe(y.mgmt_fee))), 0);
+  // Sam #9 — shown only when the run modelled an incentive fee; it sits
+  // inside the institutional NOI like the base fee.
+  const showIncentiveFee = ey.some(y => typeof y.incentive_mgmt_fee === 'number');
+  const incentiveFee = pad(ey.map(y => toThousands(safe(y.incentive_mgmt_fee ?? undefined))), 0);
   // Prefer institutional NOI (GOP - mgmt fee - fixed charges, BEFORE
   // FF&E reserve) when present; fall back to legacy `noi` (after FF&E)
   // for older engine_outputs rows. The PLTab waterfall surfaces FF&E
@@ -254,6 +260,12 @@ function buildStatementFromWorker(
     { label: 'Gross Operating Profit (GOP)', values: gop, cagr: cagrCalc(gop[0], gop[4]), kind: 'subtotal' },
 
     { label: 'Management Fee', values: mgmt, cagr: cagrCalc(mgmt[0], mgmt[4]), kind: 'detail' },
+    ...(showIncentiveFee ? [{
+      label: 'Incentive Management Fee',
+      values: incentiveFee,
+      cagr: cagrCalc(incentiveFee[0], incentiveFee[4]),
+      kind: 'detail' as const,
+    }] : []),
 
     { label: 'FIXED CHARGES', values: [], kind: 'group' },
     { label: 'Insurance', values: insurance, cagr: cagrCalc(insurance[0], insurance[4]), kind: 'detail' },

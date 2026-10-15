@@ -157,6 +157,9 @@ interface ExpenseYearWorker {
     total: number;
   };
   mgmt_fee?: number;
+  // Sam #9 — the opt-in incentive management fee (share of GOP after the base
+  // fee). null / absent = no incentive fee modelled on this run.
+  incentive_mgmt_fee?: number | null;
   ffe_reserve?: number;
   fixed_charges?: {
     property_taxes: number;
@@ -213,6 +216,8 @@ interface ProjYear {
   undistUtilities?: number;
   undistTotal?: number;
   mgmtFee?: number;
+  /** Sam #9 — undefined when the run modelled no incentive fee. */
+  incentiveMgmtFee?: number;
   fixedPropertyTaxes?: number;
   fixedInsurance?: number;
   fixedRent?: number;
@@ -795,6 +800,9 @@ export default function ProjectionsSection({
     // SUBTOTALS + FIXED CHARGES + NOI + FCF
     plain('Gross Operating Profit (GOP)', years.map(y => y.gop));
     plain('Management Fee', years.map(y => y.mgmtFee));
+    if (years.some(y => y.incentiveMgmtFee != null)) {
+      plain('Incentive Management Fee', years.map(y => y.incentiveMgmtFee));
+    }
     if (years.some(y => y.fixedTotal != null)) {
       plain('Property Taxes', years.map(y => y.fixedPropertyTaxes));
       plain('Insurance', years.map(y => y.fixedInsurance));
@@ -1079,6 +1087,7 @@ function buildFromWorker(
       undistUtilities: e?.undistributed?.utilities,
       undistTotal: e?.undistributed?.total,
       mgmtFee: e?.mgmt_fee,
+      incentiveMgmtFee: e?.incentive_mgmt_fee ?? undefined,
       fixedPropertyTaxes: e?.fixed_charges?.property_taxes,
       fixedInsurance: e?.fixed_charges?.insurance,
       fixedRent: e?.fixed_charges?.rent,
@@ -1284,6 +1293,8 @@ function ProjectionsTable({
   // gate the xlsx export uses.
   const hasExpenseDetail = years.some((y) => y.deptTotalExpense != null);
   const hasFixedDetail = years.some((y) => y.fixedTotal != null);
+  // Sam #9 — the incentive fee row exists only when the run modelled one.
+  const hasIncentiveFee = years.some((y) => y.incentiveMgmtFee != null);
   // FON-59 #1 / FON-67 #2 — name the NOI basis honestly: a pre-upgrade run
   // with no `noi_institutional` is an after-reserve number.
   const noiLabel = noiBeforeReserveLabel(years.some((y) => y.noiBasisConfirmed));
@@ -1845,14 +1856,31 @@ function ProjectionsTable({
                 rowTestId="row-mgmt-fee"
                 benchmarkKey="mgmt_fee"
               />
-              {/* EBITDA = Gross Operating Profit − Management Fees (canonical
-                  Projections definition; foots to the two rows above). */}
+              {/* Sam #9 — Incentive management fee: a share of GOP after the
+                  base fee (worker incentive_mgmt_fee), deducted before NOI.
+                  Shown only when the run modelled one. */}
+              {hasIncentiveFee && (
+                <FullRow
+                  label="Incentive management fee"
+                  indexLabel=""
+                  unit="$"
+                  years={years}
+                  amountOf={(y) => y.incentiveMgmtFee}
+                  {...rowShared}
+                  traceEngine="expense"
+                  tracePath={(i) => `years[${i}].incentive_mgmt_fee`}
+                  rowTestId="row-incentive-mgmt-fee"
+                />
+              )}
+              {/* EBITDA = Gross Operating Profit − Management Fees (base, plus
+                  the incentive fee when modelled) — canonical Projections
+                  definition; foots to the rows above. */}
               <FullRow
                 label="EBITDA"
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => (y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee)}
+                amountOf={(y) => (y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee - (y.incentiveMgmtFee ?? 0))}
                 {...rowShared}
                 bold
                 rowTestId="row-ebitda"
@@ -1869,7 +1897,7 @@ function ProjectionsTable({
                   $
                 </td>
                 {years.map((y, i) => {
-                  const ebitda = (y.gop ?? 0) - (y.mgmtFee ?? 0);
+                  const ebitda = (y.gop ?? 0) - (y.mgmtFee ?? 0) - (y.incentiveMgmtFee ?? 0);
                   const exitVal = exitCapRate > 0 ? ebitda / exitCapRate : 0;
                   return (
                     <td
@@ -2965,7 +2993,8 @@ function AssumptionField({
   label, value, unit, prefix, suffix, onCommit, disabled, overrideKey,
 }: {
   label: string;
-  value: number;
+  /** null = not set (an opt-in assumption): the input renders blank. */
+  value: number | null;
   unit: 'pct' | 'dollar';
   prefix?: string;
   suffix?: string;
@@ -2974,8 +3003,9 @@ function AssumptionField({
   /** FON-74 — the `field_overrides` key; drives whether Save needs a reason. */
   overrideKey: string;
 }) {
-  const display = unit === 'pct' ? value * 100 : value;
-  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10));
+  const display = value == null ? null : unit === 'pct' ? value * 100 : value;
+  const fmt = (n: number | null) =>
+    n == null ? '' : Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
   const [draft, setDraft] = useState<string>(fmt(display));
   // FON-74 — a real change parks here until the analyst justifies it. null =
   // nothing pending; a number = the engine value waiting on a reason.
@@ -2985,7 +3015,10 @@ function AssumptionField({
   useEffect(() => { setDraft(fmt(display)); }, [display]);
   const revert = () => { setDraft(fmt(display)); setPending(null); setNote(''); };
   const commit = () => {
-    const n = Number(draft.replace(/[$,%\s]/g, ''));
+    const cleaned = draft.replace(/[$,%\s]/g, '');
+    // A blank field is never read as 0 — clearing is not an edit here.
+    if (cleaned === '') { revert(); return; }
+    const n = Number(cleaned);
     if (!Number.isFinite(n)) { revert(); return; }
     const eng = unit === 'pct' ? n / 100 : n;
     // FON-63 — one comparison for every editor (no change → no re-run, no override).
@@ -3016,6 +3049,7 @@ function AssumptionField({
           disabled={disabled}
           aria-label={label}
           data-testid={`assumption-panel-input-${overrideKey}`}
+          placeholder={value == null ? '—' : undefined}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -3274,6 +3308,9 @@ function AssumptionsPanel({
             <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)} />
             {/* R-025 — the operating model beside the fee it informs. Context
                 only: the engine's fee math does not read it. */}
+            {/* Sam #9 — the opt-in incentive fee beside the base fee. Blank =
+                none modelled (the engine then emits no incentive fee). */}
+            <AssumptionField label="Incentive fee" unit="pct" suffix="% of GOP after base" overrideKey="incentive_mgmt_fee_pct_of_gop" value={ovValue(overrides, 'incentive_mgmt_fee_pct_of_gop')} disabled={running} onCommit={(v, note) => onApply('incentive_mgmt_fee_pct_of_gop', v, note)} />
             {mgmtFeeOperatingModelHint(operatingModel) && (
               <p data-testid="mgmt-fee-operating-model" style={{ fontSize: 11, color: '#6b6f76', lineHeight: 1.45, margin: 0 }}>
                 {mgmtFeeOperatingModelHint(operatingModel)}

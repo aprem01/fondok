@@ -6403,6 +6403,32 @@ def _coerce_other_expense_growth(value: Any) -> float | None:
     return max(-0.5, min(0.5, v))
 
 
+#: Sam #9 — the opt-in incentive management fee rate (fraction of GOP after
+#: the base fee). The ``field_overrides`` key the Future P&L Assumptions panel
+#: and the Excel round-trip write; routed through the generic scalar override
+#: branch onto ``base`` and read by the expense input builder below.
+INCENTIVE_MGMT_FEE_KEY = "incentive_mgmt_fee_pct_of_gop"
+
+
+def _coerce_incentive_mgmt_fee_pct(value: Any) -> float | None:
+    """Incentive management fee as a fraction of GOP after the base fee.
+
+    ``None`` when unset (or unparseable) → the expense engine models no
+    incentive fee and every NOI is byte-identical to before. Clamped to
+    [0, 0.5], the engine field's bounds, so a stray value cannot trip the
+    schema validator and crash a run.
+    """
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v != v:  # NaN
+        return None
+    return max(0.0, min(0.5, v))
+
+
 def _build_input_for(
     engine_name: str,
     deal_id: str,
@@ -6529,6 +6555,11 @@ def _build_input_for(
             # instead of ``expense_growth``. None → unchanged behavior.
             other_expense_growth=_coerce_other_expense_growth(
                 base.get("other_expense_growth")
+            ),
+            # Sam #9 — opt-in incentive management fee (fraction of GOP after
+            # the base fee). Absent → None → no incentive fee, byte-identical.
+            incentive_mgmt_fee_pct_of_gop=_coerce_incentive_mgmt_fee_pct(
+                base.get(INCENTIVE_MGMT_FEE_KEY)
             ),
             grow_opex_independently=base["grow_opex_independently"],
             # Benchmark overrides populated by `_load_engine_inputs`

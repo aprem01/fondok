@@ -92,6 +92,8 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'resort_fee_per_night',
     'resort_fee_capture_y1',
     'mgmt_fee_pct',
+    // Sam #9 — the opt-in incentive management fee moves NOI: a number.
+    'incentive_mgmt_fee_pct_of_gop',
     'purchase_price',
     'exit_cap_rate',
     'hold_years',

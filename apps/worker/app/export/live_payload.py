@@ -206,6 +206,9 @@ def _build_proforma_and_cf(
     total_rev: dict[int, float] = {}
     opex: dict[int, float] = {}
     mgmt: dict[int, float] = {}
+    # Sam #9 — the opt-in incentive management fee; empty when the run
+    # modelled none, and then no row is emitted.
+    incentive: dict[int, float] = {}
     ffe: dict[int, float] = {}
     noi: dict[int, float] = {}
     noi_before_reserve: dict[int, float] = {}
@@ -239,6 +242,9 @@ def _build_proforma_and_cf(
         total_rev[n] = k(_num(r.get("total_revenue")))
         opex[n] = k((_num(dept) or 0.0) + (_num(undist) or 0.0) + (_num(fixed) or 0.0))
         mgmt[n] = k(_num(e.get("mgmt_fee")))
+        incentive_usd = _num(e.get("incentive_mgmt_fee"))
+        if incentive_usd is not None:
+            incentive[n] = k(incentive_usd)
         ffe[n] = k(_num(e.get("ffe_reserve")))
         noi[n] = k(noi_usd)
         noi_before_reserve[n] = k(noi_inst_usd if noi_inst_usd is not None else noi_usd)
@@ -264,6 +270,9 @@ def _build_proforma_and_cf(
         row("Total Revenue", total_rev, cagr=_num(revenue.get("total_revenue_cagr")), bold=True),
         row("Operating Expenses", opex),
         row("Management Fee", mgmt),
+        # Sam #9 — deducted between the base fee and NOI, so the workbook
+        # still foots when an incentive fee is modelled; absent otherwise.
+        *([row("Incentive Management Fee", incentive)] if incentive else []),
         # FON-54 #8 — BOTH bases, in waterfall order, so the workbook foots:
         # Total Revenue less Operating Expenses less the Management Fee = NOI
         # (before FF&E reserve); less the FF&E Reserve = Cash NOI. The headline KPI
