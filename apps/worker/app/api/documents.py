@@ -3355,6 +3355,7 @@ async def search_deal_chunks(
     deal_id: UUID,
     q: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     k: int = 10,
 ) -> SearchResponse:
     """Search across every chunked document on a deal.
@@ -3374,12 +3375,18 @@ async def search_deal_chunks(
     if not q or not q.strip():
         return SearchResponse(deal_id=deal_id, query=q or "", hits=[])
 
+    # Security (2026-10-15): this route had no auth dependency — any caller
+    # holding a deal UUID could full-text search that deal's documents. It now
+    # resolves the caller's tenant, 404s a deal the tenant does not own, and
+    # scopes the chunk query by tenant.
+    await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant_id)
     k = max(1, min(k, 50))
     hits = await search_chunks(
         session,
         deal_id=str(deal_id),
         query=q.strip(),
         k=k,
+        tenant_id=str(tenant_id),
     )
     return SearchResponse(
         deal_id=deal_id,
@@ -5358,6 +5365,7 @@ async def reprocess_document(
     doc_id: UUID,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    caller_tenant: Annotated[UUID, Depends(get_tenant_id)],
 ) -> ExtractionStartResponse:
     """Re-run parse + extract for a doc that previously hit PARSE_FAILED
     or FAILED. Pulls the body back from raw storage by content_hash and
@@ -5377,11 +5385,11 @@ async def reprocess_document(
                 SELECT id, deal_id, tenant_id, filename, content_hash,
                        storage_key, status, uploaded_at /*status_changed_at*/
                   FROM documents
-                 WHERE id = :id AND deal_id = :deal_id
+                 WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant
                 """,
                 )
             ),
-            {"id": str(doc_id), "deal_id": str(deal_id)},
+            {"id": str(doc_id), "deal_id": str(deal_id), "tenant": str(caller_tenant)},
         )
     ).first()
     if row is None:
@@ -6443,6 +6451,7 @@ async def extract_document(
     doc_id: UUID,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    caller_tenant: Annotated[UUID, Depends(get_tenant_id)],
     force: Annotated[
         bool,
         Query(
@@ -6475,11 +6484,11 @@ async def extract_document(
                     """
                 SELECT id, deal_id, tenant_id, status, uploaded_at /*status_changed_at*/
                   FROM documents
-                 WHERE id = :id AND deal_id = :deal_id
+                 WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant
                 """,
                 )
             ),
-            {"id": str(doc_id), "deal_id": str(deal_id)},
+            {"id": str(doc_id), "deal_id": str(deal_id), "tenant": str(caller_tenant)},
         )
     ).first()
     if row is None:

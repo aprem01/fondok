@@ -189,8 +189,12 @@ async def search_chunks(
     deal_id: str,
     query: str,
     k: int = 10,
+    tenant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search a deal's chunks for the query string.
+
+    ``tenant_id`` adds ``AND tenant_id = :tenant`` to both chunk queries; the
+    route resolves it from the caller and has already 404'd a foreign deal.
 
     Strategy:
         * Always do Postgres FTS using ``plainto_tsquery('english', :q)``
@@ -210,22 +214,25 @@ async def search_chunks(
     if not q:
         return []
 
+    tenant_sql = " AND tenant_id = :tenant" if tenant_id else ""
+    tenant_params: dict[str, Any] = {"tenant": tenant_id} if tenant_id else {}
+
     # Pure-FTS baseline. Always works.
     fts_rows = (
         await session.execute(
             text(
-                """
+                f"""
                 SELECT id, document_id, chunk_index, chunk_text,
                        source_page,
                        ts_rank_cd(fts, plainto_tsquery('english', :q)) AS score
                   FROM document_chunks
-                 WHERE deal_id = :deal
+                 WHERE deal_id = :deal{tenant_sql}
                    AND fts @@ plainto_tsquery('english', :q)
                  ORDER BY score DESC
                  LIMIT :k
                 """
             ),
-            {"deal": deal_id, "q": q, "k": k * 3},
+            {"deal": deal_id, "q": q, "k": k * 3, **tenant_params},
         )
     ).fetchall()
 
@@ -253,17 +260,17 @@ async def search_chunks(
             vec_rows = (
                 await session.execute(
                     text(
-                        """
+                        f"""
                         SELECT id, document_id, chunk_index, chunk_text,
                                source_page,
                                1 - (embedding <=> CAST(:vec AS vector)) AS score
                           FROM document_chunks
-                         WHERE deal_id = :deal AND embedding IS NOT NULL
+                         WHERE deal_id = :deal{tenant_sql} AND embedding IS NOT NULL
                          ORDER BY embedding <=> CAST(:vec AS vector) ASC
                          LIMIT :k
                         """
                     ),
-                    {"deal": deal_id, "vec": vec_literal, "k": k * 3},
+                    {"deal": deal_id, "vec": vec_literal, "k": k * 3, **tenant_params},
                 )
             ).fetchall()
             for r in vec_rows:
