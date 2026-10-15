@@ -12,16 +12,18 @@
  *     `useHistoricals` rebuilds the column from the live store, so the
  *     corrected value is on screen.
  *
- *  2. DERIVED TOTALS ARE REPORTED WITH THE NUMBERS. Total Revenue in a
- *     historical column is a client-side sum, so "+$5 on Rooms Revenue"
- *     reads "Rooms Revenue +$5 → Total Revenue +$5 (calculated)" with the
- *     exact before → after (the compact cell cannot show a $5 move), and
- *     both cells light up.
+ *  2. DERIVED TOTALS ARE REPORTED WITH THE NUMBERS. When the statement
+ *     states no Total Revenue, the cell is a client-side sum, so "+$5 on
+ *     Rooms Revenue" reads "Rooms Revenue +$5 → Total Revenue +$5
+ *     (calculated)" with the exact before → after (the compact cell cannot
+ *     show a $5 move), and both cells light up.
  *
- *  3. STATED LINES ARE NOT FAKED. GOP / NOI are the statement's own lines —
- *     the worker does not re-foot them — so the note says so, the model
- *     re-run is kicked, and the footing check shows the resulting
- *     difference ("Lines sum to $X · stated total $Y · difference $Z").
+ *  3. STATED LINES ARE NOT FAKED. GOP / NOI — and, FON-90, a Total Revenue
+ *     the statement states itself — are the statement's own lines; the
+ *     worker does not re-foot them. The note says so (naming the stated
+ *     total), the model re-run is kicked, and the footing check shows the
+ *     resulting difference ("Lines sum to $X · stated total $Y · difference
+ *     $Z"). The stated Total Revenue cell does NOT light up or move.
  *
  * Reads exclusively from mocked hooks / api — no prototype numbers.
  */
@@ -112,9 +114,13 @@ const EX_2023 = extraction('d2023', [
   field('gop', 6_000_000, 0.95),
   field('noi', 4_000_000, 0.95),
 ]);
+/** The same statement WITHOUT its own Total Revenue line (FON-90 fallback). */
+const EX_2023_NO_TOTAL = extraction('d2023', EX_2023.fields.filter((f) => f.field_name !== 'total_revenue'));
+/** Which statement the deal starts with — swapped per describe. */
+let INITIAL_EXTRACTION: ExtractionResult = EX_2023;
 /** What the worker returns after an edit — THAT field replaced, nothing else re-footed. */
-const afterEdit = (name: string, value: number): ExtractionResult =>
-  extraction('d2023', EX_2023.fields.map((f) =>
+const afterEdit = (name: string, value: number, from: ExtractionResult = EX_2023): ExtractionResult =>
+  extraction('d2023', from.fields.map((f) =>
     f.field_name === name ? { ...f, value, confidence: 1.0, reviewed: 'edited' } : f,
   ));
 
@@ -126,7 +132,7 @@ vi.mock('@/lib/hooks/useDocuments', async () => {
   const ReactMod = await import('react');
   return {
     useDocuments: () => {
-      const [extractions, setExtractions] = ReactMod.useState<Record<string, ExtractionResult | undefined>>({ d2023: EX_2023 });
+      const [extractions, setExtractions] = ReactMod.useState<Record<string, ExtractionResult | undefined>>({ d2023: INITIAL_EXTRACTION });
       return {
         documents: [DOC_2023],
         settled: true,
@@ -165,6 +171,7 @@ async function correctAtSource(rowLabel: string, value: string) {
 
 beforeEach(() => {
   LIVE_AFTER_REFRESH = {};
+  INITIAL_EXTRACTION = EX_2023;
   reviewFieldSpy.mockClear();
   refreshSpy.mockClear();
   runSpy.mockClear();
@@ -174,7 +181,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Historicals worksheet — a $5 Rooms Revenue correction flows through (E-012)', () => {
-  it('saves the edit at source, refetches THAT statement, and reports Rooms Revenue +$5 → Total Revenue +$5 with exact figures', async () => {
+  it('saves the edit at source, refetches THAT statement, and reports Rooms Revenue +$5; the stated Total Revenue does not re-sum (FON-90)', async () => {
     LIVE_AFTER_REFRESH = { d2023: afterEdit('rooms_revenue', 11_000_005) };
     render(<GroundedWorksheet dealId={DEAL_ID} />);
 
@@ -188,18 +195,23 @@ describe('Historicals worksheet — a $5 Rooms Revenue correction flows through 
     expect(refreshSpy).toHaveBeenCalledWith('d2023');
 
     const note = await screen.findByTestId('worksheet-propagation');
-    // Contract 2 — the edited line and the derived total, with exact figures.
+    // The edited line, with exact figures.
     expect(note.textContent).toContain('Saved · FY2023');
     expect(note.textContent).toContain('Rooms Revenue +$5 ($11,000,000 → $11,000,005)');
-    expect(note.textContent).toContain('→ Total Revenue +$5 ($13,000,000 → $13,000,005) (calculated)');
-    // Contract 3 — stated lines are not faked; the model re-run is kicked.
+    // Contract 3 — the statement states its own Total Revenue ($13.0M): the
+    // cell IS that figure, so it does not re-sum, and the note says so by
+    // name — never "no derived total re-sums from this line".
+    expect(screen.getByTestId('worksheet-propagation-stated-total').textContent)
+      .toContain('Total Revenue is the statement’s own stated total ($13,000,000) — it does not re-sum from this edit; the footing check shows the difference');
+    expect(note.textContent).not.toContain('→ Total Revenue');
+    expect(note.textContent).not.toContain('no derived total in this column re-sums from this line');
     expect(note.textContent).toContain('GOP and NOI are the statement’s own stated lines — they do not re-foot from this edit');
     expect(note.textContent).toContain('model re-run');
     await waitFor(() => expect(runSpy).toHaveBeenCalled());
 
-    // Both moved cells light up; a stated line does not.
+    // Only the edited cell lights up; the stated total and GOP do not.
     expect(rowOf('Rooms Revenue').querySelector('td[data-changed="true"]')).not.toBeNull();
-    expect(rowOf('Total Revenue').querySelector('td[data-changed="true"]')).not.toBeNull();
+    expect(rowOf('Total Revenue').querySelector('td[data-changed="true"]')).toBeNull();
     expect(rowOf('Gross Operating Profit (GOP)').querySelector('td[data-changed="true"]')).toBeNull();
   });
 
@@ -219,7 +231,7 @@ describe('Historicals worksheet — a $5 Rooms Revenue correction flows through 
     expect(within(revenueRow).getByText('calculated')).toBeInTheDocument();
   });
 
-  it('a large correction is visible in the refreshed cell itself (the grid rebuilt from the refetched extraction)', async () => {
+  it('a large correction is visible in the refreshed cell itself; the stated Total Revenue stays what the statement says and the footing shows the gap', async () => {
     LIVE_AFTER_REFRESH = { d2023: afterEdit('rooms_revenue', 11_500_000) };
     render(<GroundedWorksheet dealId={DEAL_ID} />);
     expect(within(rowOf('Rooms Revenue')).getByRole('button', { name: GREEN_CELL }).textContent).toBe('$11.0M');
@@ -230,9 +242,39 @@ describe('Historicals worksheet — a $5 Rooms Revenue correction flows through 
     await waitFor(() => {
       expect(within(rowOf('Rooms Revenue')).getByRole('button', { name: GREEN_CELL }).textContent).toBe('$11.5M');
     });
-    expect(rowOf('Total Revenue').textContent).toContain('$13.5M');
+    // FON-90 — the statement still says $13.0M; the cell is not re-summed to $13.5M.
+    expect(rowOf('Total Revenue').textContent).toContain('$13.0M');
+    expect(rowOf('Total Revenue').textContent).not.toContain('$13.5M');
     expect((await screen.findByTestId('worksheet-propagation')).textContent)
-      .toContain('Rooms Revenue +$500,000 ($11,000,000 → $11,500,000) → Total Revenue +$500,000 ($13,000,000 → $13,500,000) (calculated)');
+      .toContain('Rooms Revenue +$500,000 ($11,000,000 → $11,500,000)');
+    expect(within(screen.getByTestId('footing-revenue')).getByText('Δ +$500,000')).toBeInTheDocument();
+  });
+});
+
+describe('Historicals worksheet — the same correction when the statement states NO Total Revenue (FON-90 fallback)', () => {
+  beforeEach(() => { INITIAL_EXTRACTION = EX_2023_NO_TOTAL; });
+
+  it('the derived Total Revenue re-sums, is reported "(calculated)" with exact figures, and both cells light up', async () => {
+    LIVE_AFTER_REFRESH = { d2023: afterEdit('rooms_revenue', 11_000_005, EX_2023_NO_TOTAL) };
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    // No stated total → the cell is the sum of the lines and says so.
+    expect(within(rowOf('Total Revenue')).getByTestId('total-rev-calculated')).toBeInTheDocument();
+    expect(within(screen.getByTestId('footing-revenue')).queryByText('✓ foots')).toBeNull();
+
+    await correctAtSource('Rooms Revenue', '11000005');
+
+    const note = await screen.findByTestId('worksheet-propagation');
+    expect(note.textContent).toContain('Rooms Revenue +$5 ($11,000,000 → $11,000,005)');
+    expect(note.textContent).toContain('→ Total Revenue +$5 ($13,000,000 → $13,000,005) (calculated)');
+    expect(screen.queryByTestId('worksheet-propagation-stated-total')).toBeNull();
+    expect(rowOf('Rooms Revenue').querySelector('td[data-changed="true"]')).not.toBeNull();
+    expect(rowOf('Total Revenue').querySelector('td[data-changed="true"]')).not.toBeNull();
+  });
+
+  it('the panel says Total Revenue re-sums here when there is no stated total', () => {
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    fireEvent.click(within(rowOf('Rooms Revenue')).getByRole('button', { name: GREEN_CELL }));
+    expect(screen.getByText(/Totals this column derives \(Total Revenue, Total Fees & Fixed\) re-sum here at once/)).toBeInTheDocument();
   });
 });
 
@@ -255,11 +297,11 @@ describe('Historicals worksheet — a correction to a line with no derived total
     expect(within(screen.getByTestId('footing-gop')).getByText('Δ −$5')).toBeInTheDocument();
   });
 
-  it('the panel says up front which totals re-sum here and which are stated', () => {
+  it('the panel says up front which totals re-sum here and which are stated — naming the stated Total Revenue (FON-90)', () => {
     render(<GroundedWorksheet dealId={DEAL_ID} />);
     fireEvent.click(within(rowOf('Rooms Revenue')).getByRole('button', { name: GREEN_CELL }));
-    expect(screen.getByText(/Totals this column derives \(Total Revenue, Total Fees & Fixed\) re-sum here at once/)).toBeInTheDocument();
-    expect(screen.getByText(/the statement’s own stated lines \(GOP, NOI\) do not/)).toBeInTheDocument();
+    expect(screen.getByText(/Total Fees & Fixed re-sums here at once; Total Revenue is the statement’s own stated total \(\$13,000,000\) and, like GOP and NOI, does not re-foot from this edit/)).toBeInTheDocument();
+    expect(screen.queryByText(/Totals this column derives \(Total Revenue, Total Fees & Fixed\)/)).toBeNull();
   });
 });
 

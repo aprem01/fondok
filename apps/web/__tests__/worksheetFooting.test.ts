@@ -3,12 +3,14 @@
  * did a correct-at-source edit change in it?
  *
  * Built on the facts in lib/worksheetFooting: Total Revenue in a historical
- * column is a client-side SUM (rooms + F&B + misc); GOP / NOI are the
- * statement's own stated lines; the worker never re-foots a statement.
+ * column is the statement's OWN stated total when it publishes one (FON-90)
+ * and the client-side SUM (rooms + F&B + misc) only when it does not; the
+ * footing always compares the SUM against the stated total; GOP / NOI are
+ * the statement's own stated lines; the worker never re-foots a statement.
  */
 import { describe, it, expect } from 'vitest';
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
-import { histValue } from '@/lib/reviewState';
+import { histDerivedTotalRevenue, histStatedTotalRevenue, histValue } from '@/lib/reviewState';
 import {
   diffHistColumn, footGop, footRevenue, footingSentence, fmtSignedCurrency,
 } from '@/lib/worksheetFooting';
@@ -75,14 +77,47 @@ describe('footGop — Total Revenue − departmental − undistributed vs the st
   });
 });
 
+describe('histValue(total_rev) — the stated total first, the sum of the lines only without one (FON-90)', () => {
+  it('shows the statement’s stated total when the lines do not reproduce it (the tester deals: $13.48M stated, $12.3M of lines)', () => {
+    const h = hy({ rooms: 10_000_000, fb: 1_800_000, misc: 500_000, total_revenue_stated: 13_480_000 });
+    expect(histValue('total_rev', h)).toBe(13_480_000);
+    expect(histStatedTotalRevenue(h)).toBe(13_480_000);
+    expect(histDerivedTotalRevenue(h)).toBe(12_300_000);
+    // The footing keeps comparing the SUM against the stated total — never the cell against itself.
+    expect(footRevenue(h)).toMatchObject({ ok: true, footing: { lines: 12_300_000, stated: 13_480_000, difference: -1_180_000, foots: false } });
+  });
+
+  it('falls back to the sum of the lines when the statement states no total', () => {
+    const h = hy({ rooms: 10_000_000, fb: 1_800_000, misc: 500_000, total_revenue_stated: null });
+    expect(histValue('total_rev', h)).toBe(12_300_000);
+    expect(histStatedTotalRevenue(h)).toBeNull();
+    expect(footRevenue(h)).toEqual({ ok: false, reason: 'no_stated_total' });
+  });
+
+  it('a stated total of 0 is a stated total, not "none"', () => {
+    expect(histValue('total_rev', hy({ total_revenue_stated: 0 }))).toBe(0);
+  });
+});
+
 describe('diffHistColumn — what a correct-at-source edit changed', () => {
   const ROW_IDS = ['rooms_rev', 'fb_rev', 'other_rev', 'total_rev', 'rooms_dept', 'gop', 'mgmt', 'taxes', 'insurance', 'fixed_total', 'noi'];
   // The same client-side read the worksheet makes (lib/reviewState histValue).
   const snapshot = (h: HistYear) => Object.fromEntries(ROW_IDS.map((id) => [id, histValue(id, h)]));
 
-  it('+$5 on Rooms Revenue moves Rooms Revenue and the derived Total Revenue by $5 — and nothing stated', () => {
+  it('+$5 on Rooms Revenue moves Rooms Revenue only when the statement states its total — the stated Total Revenue does not re-sum (FON-90)', () => {
     const before = snapshot(hy());
     const changes = diffHistColumn(before, hy({ rooms: 11_000_005 }), ROW_IDS);
+    expect(changes.map((c) => [c.rowId, c.delta])).toEqual([['rooms_rev', 5]]);
+    // The stated total is what the cell shows, before and after.
+    expect(histValue('total_rev', hy({ rooms: 11_000_005 }))).toBe(13_000_000);
+    // …and the footing carries the $5 the stated total did not absorb.
+    expect(footRevenue(hy({ rooms: 11_000_005 }))).toMatchObject({ ok: true, footing: { lines: 13_000_005, stated: 13_000_000, difference: 5, foots: false } });
+  });
+
+  it('+$5 on Rooms Revenue moves the derived Total Revenue by $5 when the statement states no total', () => {
+    const noStated = (over: Partial<HistYear> = {}) => hy({ total_revenue_stated: null, ...over });
+    const before = snapshot(noStated());
+    const changes = diffHistColumn(before, noStated({ rooms: 11_000_005 }), ROW_IDS);
     expect(changes.map((c) => [c.rowId, c.delta])).toEqual([
       ['rooms_rev', 5],
       ['total_rev', 5],

@@ -1914,7 +1914,7 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "worksheet": {
         "row": "total_rev",
         "hist_key": null,
-        "meta_key": null,
+        "meta_key": "total_rev",
         "review_key": null,
         "override_key": null,
         "y1_src": null,

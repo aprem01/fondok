@@ -194,7 +194,7 @@
     { "id": "rooms_rev", "label": "Rooms Revenue", "kind": "input", "y1Src": "fb", "y1Read": ["rooms_revenue"], "reviewKey": "rooms_revenue", "metaKey": "rooms" },
     { "id": "fb_rev", "label": "Food & Beverage Revenue", "kind": "input", "y1Src": "fb", "y1Read": ["fb_revenue"], "reviewKey": "fb_revenue", "metaKey": "fb" },
     { "id": "other_rev", "label": "Other Revenue", "kind": "input", "y1Src": "fb", "y1Read": ["other_revenue"], "reviewKey": "other_revenue", "metaKey": "misc" },
-    { "id": "total_rev", "label": "Total Revenue", "kind": "subtotal" },
+    { "id": "total_rev", "label": "Total Revenue", "kind": "subtotal", "metaKey": "total_rev" },
     { "id": "s_dept", "label": "Departmental Expenses", "kind": "section" },
     { "id": "rooms_dept", "label": "Rooms", "kind": "input", "overrideKey": "rooms_dept_expense", "y1Read": ["dept_expenses", "rooms"], "metaKey": "rooms_dept" },
     { "id": "fb_dept", "label": "Food & Beverage", "kind": "input", "overrideKey": "fb_dept_expense", "y1Read": ["dept_expenses", "food_beverage"], "metaKey": "fb_dept" },
