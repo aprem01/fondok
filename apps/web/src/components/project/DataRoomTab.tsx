@@ -308,7 +308,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // re-fire as the polling loop re-emits the same EXTRACTED record.
   const extractionToastedRef = useRef<Set<string>>(new Set());
 
-  const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction } =
+  const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction, settled: docsSettled } =
     useDocuments(rawId);
 
   // FON-41 — the SAME historical columns + review state the Financials
@@ -867,9 +867,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
 
   useEffect(() => {
     if (!liveMode) return;
+    // The baseline must be taken from the LOADED document list. Before the
+    // first fetch settles ``docs`` is empty, so a baseline of 0 made every
+    // visit to an already-extracted deal look like "N documents just finished
+    // extracting" and fired a full 8-engine run on page load (seen on both
+    // tester deals 2026-10-15). Wait for the list, then record the count.
+    if (!docsSettled) return;
     if (!autoRunRef.current.initialized) {
-      // First render — record the current count as baseline so we don't
-      // auto-fire on a page refresh against an already-extracted deal.
+      // First settled render — record the current count as baseline so we
+      // don't auto-fire on a page refresh against an already-extracted deal.
       autoRunRef.current.initialized = true;
       autoRunRef.current.lastSeen = extractedDocCount;
       return;
@@ -881,7 +887,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       autoRunRef.current.run();
     }, 2500);
     return () => clearTimeout(t);
-  }, [extractedDocCount, fullRunRunning, fullRunDisabled, liveMode]);
+  }, [extractedDocCount, fullRunRunning, fullRunDisabled, liveMode, docsSettled]);
 
   const onPickFiles = () => fileInputRef.current?.click();
 

@@ -32,6 +32,20 @@ const ENGINE_ORDER: EngineName[] = [
 
 export type EngineRunMode = 'single' | 'all';
 
+
+/** Latest ``completed_at`` across persisted engine rows, or null when none is dated. */
+export function latestCompletedAt(rows: EngineOutputResponse[] | null | undefined): Date | null {
+  let best: Date | null = null;
+  for (const r of rows ?? []) {
+    const raw = (r as { completed_at?: string | null }).completed_at;
+    if (!raw) continue;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) continue;
+    if (!best || d > best) best = d;
+  }
+  return best;
+}
+
 export default function EngineHeader({
   name,
   desc,
@@ -142,8 +156,16 @@ export default function EngineHeader({
   // tab's seeded "Model complete" badge otherwise.
   const summary = isWired ? wired.summary : '';
 
-  // Track how long we've been running for the "Last run" relative text.
-  const lastRunAtRef = useRef<Date | null>(initialComplete ? new Date(Date.now() - 3 * 60_000) : null);
+  // "Last run" relative text. The time comes from the persisted rows'
+  // ``completed_at`` (the caller's ``lastRunRows`` or the rows this header saw
+  // finish in-session) — never from a placeholder. A seeded "complete" badge
+  // with no dated row shows no "Last run" line at all, because inventing
+  // "3 mins ago" for a run we have no record of is a fabricated figure.
+  const lastRunAtRef = useRef<Date | null>(null);
+  const persistedLastRunAt = latestCompletedAt(lastRunRows ?? sessionLastRunRows);
+  if (persistedLastRunAt && (!lastRunAtRef.current || persistedLastRunAt > lastRunAtRef.current)) {
+    lastRunAtRef.current = persistedLastRunAt;
+  }
   useEffect(() => {
     if (wired.complete) lastRunAtRef.current = new Date();
   }, [wired.complete]);
@@ -151,7 +173,7 @@ export default function EngineHeader({
     () => (lastRunAtRef.current ? formatRelative(lastRunAtRef.current) : null),
     // Re-evaluate on every render — relative timestamps drift.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wired.complete, runId],
+    [wired.complete, runId, persistedLastRunAt?.getTime()],
   );
 
   const handleRun = () => {
