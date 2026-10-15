@@ -46,6 +46,13 @@ export interface WorkerDeal {
    *  Year 3 from the first full operating year after it instead of from the
    *  acquisition close. NULL = no reopening; absent on older workers. */
   reopening_date?: string | null;
+  /** Sam #6 — STR's market identifier; set only when the market was picked
+   *  from the loaded STR market list (`/reference/str-markets`). NULL for a
+   *  typed market. Absent on older workers. */
+  str_market_id?: string | null;
+  /** Sam #6 — the deal's market and submarket (names). `city` is separate. */
+  market?: string | null;
+  submarket?: string | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;
@@ -655,6 +662,21 @@ export interface NewDealBody {
   purchase_price?: number | null;
   /** FON-98 — ISO date of the reopening / re-flag, when the deal has one. */
   reopening_date?: string | null;
+  /** Sam #6 — market / submarket; `str_market_id` only for a picked STR market. */
+  str_market_id?: string | null;
+  market?: string | null;
+  submarket?: string | null;
+}
+
+/** Sam #6 — one row of STR's market / submarket definition list
+ *  (`GET /reference/str-markets`). Empty until STR's file is loaded. */
+export interface StrMarketRecord {
+  str_market_id: string;
+  market_name: string;
+  submarket_id: string | null;
+  submarket_name: string | null;
+  state: string | null;
+  country: string | null;
 }
 
 export interface WorkerDocument {
@@ -2035,7 +2057,8 @@ export const api = {
       patch: Partial<Pick<WorkerDeal,
         'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
-        | 'target_irr' | 'target_moic' | 'reopening_date'>> & {
+        | 'target_irr' | 'target_moic' | 'reopening_date'
+        | 'str_market_id' | 'market' | 'submarket'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>
@@ -2583,6 +2606,27 @@ export const api = {
         `/deals/${dealId}/str-forecast/scenarios`,
         body,
       ),
+  },
+  /** Sam #6 — shared reference data (auth required, not tenant-scoped). */
+  reference: {
+    /** STR's market / submarket definition list. `[]` until STR's file is
+     *  loaded (`apps/worker/scripts/load_str_markets.py`). */
+    strMarkets: (
+      params: { q?: string; str_market_id?: string; limit?: number } = {},
+      signal?: AbortSignal,
+    ) => {
+      const qs = new URLSearchParams();
+      if (params.q && params.q.trim()) qs.set('q', params.q.trim());
+      if (params.str_market_id) qs.set('str_market_id', params.str_market_id);
+      if (params.limit != null) qs.set('limit', String(params.limit));
+      const tail = qs.toString();
+      return request<StrMarketRecord[]>(
+        'GET',
+        `/reference/str-markets${tail ? `?${tail}` : ''}`,
+        undefined,
+        { signal },
+      );
+    },
   },
   /** Market intelligence — submarket overview, comp set, transaction comps. */
   market: {

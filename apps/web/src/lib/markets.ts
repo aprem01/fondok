@@ -1,5 +1,6 @@
 /**
- * FON-41 / R-012 — City / Submarket normalization for the create-deal wizard.
+ * FON-41 / R-012 — City normalization for the create-deal wizard; Sam #6 —
+ * Market / Submarket suggestions (bottom of the file).
  *
  * `US_HOTEL_MARKETS` is a NAME-ONLY list used for autocomplete and for
  * folding spelling variants ("washington dc", "Washington,DC") onto one
@@ -114,7 +115,7 @@ export function locationKey(raw: string): string {
 }
 
 /**
- * Normalize a typed City / Submarket for saving.
+ * Normalize a typed City (or a fallback Market name) for saving.
  *
  * - Tidies whitespace and comma spacing.
  * - If the result matches a `US_HOTEL_MARKETS` name / alias, or an `extra`
@@ -154,5 +155,111 @@ export function locationSuggestions(tenantCities: readonly (string | null | unde
     if (typeof c === 'string' && c.trim()) push(normalizeLocation(c));
   }
   for (const m of US_HOTEL_MARKETS) push(m.name);
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sam #6 — Market / Submarket (separate from City).
+//
+// When STR's market / submarket definition list is loaded on the worker
+// (`GET /reference/str-markets` returns rows), the Market field suggests
+// STR's own market names and a pick carries STR's market id; Submarket
+// suggests STR's submarkets. Until then the Market field falls back to the
+// name-only `US_HOTEL_MARKETS` list above (no STR id — never invented), and
+// Submarket has no suggestions. Typed values are always allowed and are
+// stored with `str_market_id` null.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Mirrors `StrMarketRecord` in lib/api.ts (kept structural so this module
+ *  stays free of the API client). */
+export interface StrMarketRow {
+  str_market_id: string;
+  market_name: string;
+  submarket_id: string | null;
+  submarket_name: string | null;
+  state: string | null;
+  country: string | null;
+}
+
+export interface MarketOption {
+  /** The value written to `deals.market`. */
+  name: string;
+  /** STR's market id — only for an option from the loaded STR list. */
+  strMarketId: string | null;
+  /** Secondary text shown beside the option. */
+  detail: string;
+}
+
+/** What the Market suggestions are, in words the analyst sees. */
+export const MARKET_SOURCE_LABEL = {
+  reference: 'Suggestions: STR market list',
+  fallback: 'Suggestions: STR market names (name only — no STR id until STR’s market list is loaded)',
+} as const;
+
+/**
+ * Market suggestions. From the STR reference rows when there are any (one
+ * option per STR market id), else the static name-only list (`strMarketId`
+ * null).
+ */
+export function marketOptions(refRows: readonly StrMarketRow[]): MarketOption[] {
+  if (refRows.length > 0) {
+    const seen = new Set<string>();
+    const out: MarketOption[] = [];
+    for (const r of refRows) {
+      if (seen.has(r.str_market_id)) continue;
+      seen.add(r.str_market_id);
+      const where = [r.state, r.country].filter(Boolean).join(', ');
+      out.push({
+        name: r.market_name,
+        strMarketId: r.str_market_id,
+        detail: `STR id ${r.str_market_id}${where ? ` · ${where}` : ''}`,
+      });
+    }
+    return out;
+  }
+  return US_HOTEL_MARKETS.map((m) => ({ name: m.name, strMarketId: null, detail: 'STR market name · no STR id' }));
+}
+
+/**
+ * Resolve a typed / picked Market against the STR rows: an exact name match
+ * (case- and punctuation-insensitive) to exactly ONE STR market id carries
+ * that id and STR's spelling; anything else keeps the analyst's text (folded
+ * onto a known spelling when no STR list is loaded) with no id. Two STR
+ * markets sharing the name → no id (ambiguous — never guessed).
+ */
+export function resolveMarket(
+  typed: string,
+  refRows: readonly StrMarketRow[],
+): { market: string; strMarketId: string | null } {
+  const tidy = tidyLocation(typed);
+  if (!tidy) return { market: '', strMarketId: null };
+  const key = locationKey(tidy);
+  const ids = new Map<string, string>();
+  for (const r of refRows) {
+    if (locationKey(r.market_name) === key) ids.set(r.str_market_id, r.market_name);
+  }
+  if (ids.size === 1) {
+    const [[id, name]] = Array.from(ids.entries());
+    return { market: name, strMarketId: id };
+  }
+  return { market: refRows.length > 0 ? tidy : normalizeLocation(tidy), strMarketId: null };
+}
+
+/**
+ * Submarket suggestions — ONLY from STR's reference rows (there is no
+ * fallback list: Fondok has no submarket names of its own). Narrowed to the
+ * picked STR market when there is one.
+ */
+export function submarketOptions(refRows: readonly StrMarketRow[], strMarketId: string | null): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of refRows) {
+    if (!r.submarket_name) continue;
+    if (strMarketId && r.str_market_id !== strMarketId) continue;
+    const k = locationKey(r.submarket_name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r.submarket_name);
+  }
   return out;
 }

@@ -19,7 +19,8 @@ import { DocumentsChecklist } from '@/components/project/wizard/DocumentsCheckli
 import { CoachMark } from '@/components/help/CoachMark';
 import { useNow } from '@/lib/hooks/useNow';
 import { formatElapsed } from '@/lib/progress';
-import { normalizeLocation, locationSuggestions } from '@/lib/markets';
+import { normalizeLocation, locationSuggestions, tidyLocation } from '@/lib/markets';
+import { useStrMarkets, type StrMarketSuggestions } from '@/lib/hooks/useStrMarkets';
 import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
 import { OPERATING_MODEL_OPTIONS, isOperatingModelId, operatingModelLabel } from '@/lib/operatingModel';
 import { unsupportedFileMessage } from '@/lib/uploadFormats';
@@ -60,6 +61,9 @@ type WizardFields = Omit<WizardData, 'docs'>;
 // saved default (R-015) when one exists.
 const INITIAL_FIELDS: WizardFields = {
   dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
+  // Sam #6 — Market / Submarket (separate from City). `strMarketId` is STR's
+  // market id, set only by picking a market from STR's loaded list ('' = none).
+  market: '', submarket: '', strMarketId: '',
   dealType: 'acquisition',
   returnProfile: 'value-add',
   // FON-59 / R-048 — `brand` is the picker state = the analyst's PROPOSED
@@ -223,7 +227,7 @@ export default function NewProjectPage() {
     setDefaultProfile(id);
   };
 
-  // ─── R-012 — City / Submarket suggestions ───────────────────────────────
+  // ─── R-012 — City suggestions ───────────────────────────────────────────
   // Distinct cities already used on this tenant's deals, then the static
   // US market list. A failed / absent list just means market names only.
   const [tenantCities, setTenantCities] = useState<string[]>([]);
@@ -243,6 +247,8 @@ export default function NewProjectPage() {
   }, []);
   const citySuggestions = useMemo(() => locationSuggestions(tenantCities), [tenantCities]);
   const normalizeCity = (v: string) => normalizeLocation(v, tenantCities);
+  // Sam #6 — Market / Submarket suggestions (STR's list when loaded).
+  const strMarkets = useStrMarkets(data.market, data.strMarketId || null, data.submarket);
   const setDocs = useCallback(
     (docs: WizardFile[]) => setData(d => ({ ...d, docs })),
     [],
@@ -308,6 +314,15 @@ export default function NewProjectPage() {
       // price on CAPEX → Deal Summary. Persisted as deals.purchase_price, which
       // the engine runner badges "Deal record" (SOURCE_DEAL_ROW), not "Seed".
       const purchasePriceValue = purchasePriceFromText(data.price);
+      // Sam #6 — a market carries STR's id only when it resolves to exactly
+      // one market in STR's loaded list; typed text is stored without one.
+      let marketPick: { market: string; strMarketId: string | null } = {
+        market: tidyLocation(data.market),
+        strMarketId: data.strMarketId || null,
+      };
+      if (marketPick.market && !marketPick.strMarketId) {
+        marketPick = await strMarkets.resolve(data.market);
+      }
 
       // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
       // narrow today, but we send the wizard's full intent: extra fields are
@@ -317,6 +332,9 @@ export default function NewProjectPage() {
         name: data.dealName.trim(),
         // R-012 — trim / comma-space / fold onto a known market spelling.
         city: normalizeCity(data.city) || null,
+        market: marketPick.market || null,
+        str_market_id: marketPick.market ? marketPick.strMarketId : null,
+        submarket: tidyLocation(data.submarket) || null,
         keys: keysInt,
         service: null,
         deal_type: data.dealType,
@@ -476,7 +494,7 @@ export default function NewProjectPage() {
       {/* Step body */}
       <Card className="p-7">
         {step === 1 && (
-          <Step1 data={data} update={update} citySuggestions={citySuggestions} normalizeCity={normalizeCity} />
+          <Step1 data={data} update={update} citySuggestions={citySuggestions} normalizeCity={normalizeCity} strMarkets={strMarkets} />
         )}
         {step === 2 && (
           <Step2 data={data} update={update} defaultProfile={defaultProfile} onSetDefault={setDefaultReturnProfile} />
@@ -572,6 +590,7 @@ export default function NewProjectPage() {
 
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
+  market: string; submarket: string; strMarketId: string;
   dealType: string;
   returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; operatingModel: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
@@ -583,10 +602,18 @@ type WizardData = {
 const DEAL_TYPES = DEAL_TYPE_OPTIONS;
 type StepProps = { data: WizardData; update: (patch: Partial<WizardData>) => void };
 
-function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
+function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: StepProps & {
   citySuggestions: string[];
   normalizeCity: (v: string) => string;
+  strMarkets: StrMarketSuggestions;
 }) {
+  const marketHint = data.strMarketId
+    ? `STR market · STR id ${data.strMarketId}`
+    : data.market.trim()
+      ? (strMarkets.referenceLoaded
+        ? 'Typed — not in STR’s market list, saved without an STR id'
+        : 'Saved as typed, without an STR id (STR’s market list is not loaded yet)')
+      : null;
   return (
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Create New Deal</h2>
@@ -627,9 +654,11 @@ function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
         <Field label="Deal Name *" value={data.dealName} onChange={v => update({ dealName: v })} placeholder="Chicago Downtown Acquisition" />
         {/* R-012 — suggestions from this tenant's deals + US hotel markets;
             the typed value is tidied / folded onto a known spelling on blur
-            (and again on save). Free text is always allowed. */}
+            (and again on save). Free text is always allowed. Sam #6 — City
+            is its own optional field now; Market and Submarket follow. */}
         <Field
-          label="City / Submarket *"
+          label="City"
+          help="The property's city. Optional."
           value={data.city}
           onChange={v => update({ city: v })}
           onBlur={v => {
@@ -641,6 +670,51 @@ function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
         />
         <datalist id="wizard-city-suggestions" data-testid="city-suggestions">
           {citySuggestions.map(c => <option key={c} value={c} />)}
+        </datalist>
+        {/* Sam #6 — Market and Submarket, two fields. Market suggests STR's
+            market list when it is loaded (a pick stores STR's market id),
+            else the name-only STR market names; Submarket suggests only from
+            STR's list. Typing is always allowed (stored with no STR id). */}
+        <div className="grid grid-cols-2 gap-4">
+          <Field
+            label="Market"
+            value={data.market}
+            onChange={v => update({ market: v, strMarketId: '' })}
+            onBlur={v => {
+              void strMarkets.resolve(v).then((r) => {
+                if (r.market !== v || (r.strMarketId ?? '') !== data.strMarketId) {
+                  update({ market: r.market, strMarketId: r.strMarketId ?? '' });
+                }
+              });
+            }}
+            placeholder="STR market, e.g. Chicago, IL"
+            listId="wizard-market-suggestions"
+            help={strMarkets.marketSourceLabel}
+            hint={marketHint}
+            hintTestId="market-str-id"
+          />
+          <Field
+            label="Submarket"
+            value={data.submarket}
+            onChange={v => update({ submarket: v })}
+            onBlur={v => {
+              const t = tidyLocation(v);
+              if (t !== v) update({ submarket: t });
+            }}
+            placeholder="Submarket"
+            listId="wizard-submarket-suggestions"
+            help={strMarkets.referenceLoaded
+              ? `Suggestions: STR submarkets${data.strMarketId ? ' of the selected market' : ''}. Typing is allowed.`
+              : 'No suggestions until STR’s submarket list is loaded — type it if you know it.'}
+          />
+        </div>
+        <datalist id="wizard-market-suggestions" data-testid="market-suggestions">
+          {strMarkets.marketOptions.map(o => (
+            <option key={`${o.strMarketId ?? 'name'}:${o.name}`} value={o.name}>{o.detail}</option>
+          ))}
+        </datalist>
+        <datalist id="wizard-submarket-suggestions" data-testid="submarket-suggestions">
+          {strMarkets.submarketOptions.map(n => <option key={n} value={n} />)}
         </datalist>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Keys" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
@@ -1135,7 +1209,9 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
     { label: 'Deal Name', value: data.dealName || 'Untitled', step: 1 },
     { label: 'Deal Type', value: dealTypeLabel(data.dealType), step: 1 },
     { label: 'Hotel Name', value: data.hotelName || 'Not specified', step: 1 },
-    { label: 'Location', value: data.city || 'Not specified', step: 1 },
+    { label: 'City', value: data.city || 'Not specified', step: 1 },
+    { label: 'Market', value: data.market.trim() ? `${data.market.trim()}${data.strMarketId ? ` (STR id ${data.strMarketId})` : ''}` : 'Not specified', step: 1 },
+    { label: 'Submarket', value: data.submarket.trim() || 'Not specified', step: 1 },
     { label: 'Keys', value: `${data.keys || '—'} keys`, step: 1 },
     // FON-99 — the parsed price, how it was read ("range midpoint"), or the
     // kept-as-a-note text when it could not be read.

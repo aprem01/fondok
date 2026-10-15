@@ -60,6 +60,9 @@ logger = logging.getLogger(__name__)
 #                                 read by the auth layer before a tenant
 #                                 is known)
 #   * ``catalog_*``             — global reference data
+#   * ``str_markets``           — STR's market / submarket definition list
+#                                 (vendor reference data, no tenant_id;
+#                                 see app/migrations.py)
 #   * Postgres system catalogs  — ``pg_*`` / ``information_schema.*``
 _TENANT_SCOPED_TABLES: frozenset[str] = frozenset(
     {

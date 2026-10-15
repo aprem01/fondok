@@ -30,6 +30,7 @@ from .api import ontology as ontology_router
 from .api import pipeline_filters as pipeline_filters_router
 from .api import pl_roundtrip as pl_roundtrip_router
 from .api import portfolio_library as portfolio_library_router
+from .api import reference as reference_router
 from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .api import webhooks as webhooks_router
@@ -291,6 +292,11 @@ def create_app() -> FastAPI:
         observability_router.router,
         prefix="/observability",
         tags=["observability"],
+    )
+    # Sam #6 — STR market / submarket reference list (auth required; the
+    # data is shared reference data, not tenant-scoped — see api/reference.py).
+    app.include_router(
+        reference_router.router, prefix="/reference", tags=["reference"]
     )
     # Phase 1.1 — the validated concept registry, public read (no tenant
     # data). Mirrors /health: no ``Depends(get_tenant_id)``.

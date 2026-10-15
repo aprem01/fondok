@@ -166,6 +166,26 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS reopening_date DATE",
     ),
     (
+        # Sam #6 — the deal's STR market / submarket, beside ``city`` (which
+        # is unchanged). ``market`` / ``submarket`` are the names the analyst
+        # chose or typed; ``str_market_id`` is STR's own market identifier,
+        # set ONLY when the market was picked from the loaded ``str_markets``
+        # reference table (NULL for a typed market). All nullable, additive;
+        # ``api/deals.py`` probes the catalog before reading / writing them,
+        # so an un-migrated DB reads NULL instead of 500ing. No engine and
+        # no document extraction reads or writes these columns.
+        "deals.add_str_market_id",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS str_market_id TEXT",
+    ),
+    (
+        "deals.add_market",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS market TEXT",
+    ),
+    (
+        "deals.add_submarket",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS submarket TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1221,6 +1241,39 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON cell_comments (tenant_id, deal_id, cell_key)
         """,
     ),
+    # Sam #6 — STR's market / submarket definition list, loaded from STR's
+    # file by ``scripts/load_str_markets.py`` (nothing else writes it).
+    #
+    # NOT tenant-scoped, deliberately: it is vendor reference data that is
+    # identical for every workspace (like the ``catalog_*`` tables), it holds
+    # no customer data and no deal data, it carries no ``tenant_id``, and the
+    # only route that reads it (``GET /reference/str-markets``) is read-only
+    # and still requires an authenticated caller. A deal's choice lives on
+    # the tenant-scoped ``deals`` row (``str_market_id`` / ``market`` /
+    # ``submarket``), never here. ``id`` is ``<str_market_id>|<submarket_id>``
+    # (empty after the bar for a market-level row) so a reload is idempotent.
+    (
+        "str_markets.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS str_markets (
+            id              TEXT PRIMARY KEY,
+            str_market_id   TEXT NOT NULL,
+            market_name     TEXT NOT NULL,
+            submarket_id    TEXT,
+            submarket_name  TEXT,
+            state           TEXT,
+            country         TEXT,
+            loaded_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "str_markets.idx_market",
+        """
+        CREATE INDEX IF NOT EXISTS idx_str_markets_market
+        ON str_markets (str_market_id)
+        """,
+    ),
     # ─────────────── FON-93 — tenant registry (workspace isolation) ───────
     # ``id`` is the UUIDv5 the worker derives from the Clerk org id — the
     # same value every tenant-scoped table stores in ``tenant_id`` — so a
@@ -1345,6 +1398,19 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # text; SQLite has no DATE affinity).
         "deals.add_reopening_date_sqlite",
         "ALTER TABLE deals ADD COLUMN reopening_date TEXT",
+    ),
+    (
+        # Sam #6 — SQLite mirror of the Postgres market / submarket ALTERs.
+        "deals.add_str_market_id_sqlite",
+        "ALTER TABLE deals ADD COLUMN str_market_id TEXT",
+    ),
+    (
+        "deals.add_market_sqlite",
+        "ALTER TABLE deals ADD COLUMN market TEXT",
+    ),
+    (
+        "deals.add_submarket_sqlite",
+        "ALTER TABLE deals ADD COLUMN submarket TEXT",
     ),
     (
         "documents.create_table",
@@ -2091,6 +2157,30 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_cell_comments_deal_cell
         ON cell_comments (tenant_id, deal_id, cell_key)
+        """,
+    ),
+    # Sam #6 — SQLite mirror of the Postgres STR reference table (see the
+    # Postgres entry for why it is deliberately not tenant-scoped).
+    (
+        "str_markets.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS str_markets (
+            id              TEXT PRIMARY KEY,
+            str_market_id   TEXT NOT NULL,
+            market_name     TEXT NOT NULL,
+            submarket_id    TEXT,
+            submarket_name  TEXT,
+            state           TEXT,
+            country         TEXT,
+            loaded_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
+    (
+        "str_markets.idx_market",
+        """
+        CREATE INDEX IF NOT EXISTS idx_str_markets_market
+        ON str_markets (str_market_id)
         """,
     ),
     # FON-93 — SQLite mirror of the Postgres tenant registry.
