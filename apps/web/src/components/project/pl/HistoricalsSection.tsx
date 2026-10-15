@@ -93,11 +93,14 @@ export interface HistYear {
   mgmt_fee?: number | null;
   property_tax?: number | null;
   insurance?: number | null;
-  /** E-012 — the statement's OWN Total Revenue line, when it publishes one.
-   *  The worksheet's Total Revenue cell is a client-side SUM of the lines
-   *  (``histValue('total_rev')``); this is what the statement SAYS the total
-   *  is, kept apart so the footing check can compare the two. Never rendered
-   *  as the cell value and never flaggable (no ``meta`` is recorded for it). */
+  /** E-012 / FON-90 — the statement's OWN Total Revenue line, when it
+   *  publishes one. The worksheet's Total Revenue cell shows THIS figure when
+   *  present (sourced to the statement field via ``meta.total_rev``) and the
+   *  client-side SUM of the lines only when it is null; the footing check
+   *  always compares the SUM against this. Kept apart from the lines so the
+   *  two can disagree visibly (the tester deals: stated $13.48M, lines
+   *  $12.3M). Its meta never adds a "to review" count — see
+   *  ``reviewState.buildReviewState``. */
   total_revenue_stated?: number | null;
   /** The statement this column was built from (absent for OM-embedded years).
    *  Lets a Data Room deep-link (?doc=<id>) pin the column without scanning
@@ -659,10 +662,15 @@ export function buildHistYear(
   // those paths are on the ``noi`` concept in the registry
   // (DRIFT_NOTES.md §3.4).
   const noi = pick('noi');
-  // E-012 — the statement's own stated Total Revenue, for the footing check.
-  // Read with ``findField`` directly (not ``pick``) so no review meta is
-  // recorded: the Total Revenue cell stays a computed, unflaggable sum.
-  const totalRevStated = num(findField(fields, pnlAliases('total_revenue')));
+  // E-012 / FON-90 — the statement's own stated Total Revenue. The Total
+  // Revenue cell shows it when present, so its source meta is recorded under
+  // ``total_rev`` (the worksheet row's ``metaKey``) for the SOURCE panel; the
+  // footing check compares the SUM of the lines against it.
+  const totalRevField = findField(fields, pnlAliases('total_revenue'));
+  const totalRevStated = num(totalRevField);
+  if (totalRevField && totalRevStated != null && typeof totalRevField.confidence === 'number') {
+    meta['total_rev'] = { confidence: totalRevField.confidence, field: totalRevField.field_name, docId };
+  }
 
   // Need at least one of {rooms, occupancy, adr} to render anything.
   if (rooms == null && occ == null && adr == null) return null;

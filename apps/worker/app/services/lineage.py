@@ -103,6 +103,11 @@ logger = logging.getLogger(__name__)
 # prefix alone — so they are built here and nowhere else.
 
 
+# FON-87 — the revenue-year leaves the Future P&L grid opens the lineage
+# drawer on directly (``engine:revenue.years[i].<leaf>``).
+_CELL_PATH_LEAVES: tuple[str, ...] = ("occupancy", "adr", "revpar")
+
+
 def _kpi_node(name: str) -> str:
     return f"kpi:{name}"
 
@@ -771,6 +776,8 @@ async def build_lineage(
     # ── 3. roots → engine traces → assumptions → evidence ────────────
     roots = await ctx.build_roots()
     await ctx.drain()
+    # 3b. the Future P&L rate cells the drawer opens by node id (FON-87).
+    await ctx.expand_cell_paths()
 
     # ── 4. the IC memo's citations ───────────────────────────────────
     await ctx.attach_memo()
@@ -1140,6 +1147,32 @@ class _WalkContext:
                 continue
             self._expanded.add((engine, path))
             await self._expand(engine, path)
+
+    async def expand_cell_paths(self) -> None:
+        """FON-87 — make the Future P&L rate cells addressable nodes.
+
+        ``ProjectionsSection.lineageRequestFor`` opens the drawer on
+        ``engine:revenue.years[i].occupancy`` / ``.adr`` / ``.revpar`` — the
+        node id, not a KPI root. The revenue engine traces all three, and
+        occupancy / ADR are reached from the KPI roots through rooms revenue
+        (``occupied_rooms`` → ``occupancy``; ``adr``). RevPAR is not: no
+        downstream engine consumes it, so no walk from a root ever creates
+        its node and the drawer read "No trace available" for a value the
+        run DID trace. Ensure each traced cell has its node and walk it the
+        same way (inputs → assumptions → evidence). Nothing is added for a
+        path the engine did not trace — an untraced cell stays untraced.
+        These are not KPI roots: ``record_unreached`` and the leaf contract
+        keep reading ``roots`` alone.
+        """
+        traces = self.provenance.get("revenue") or {}
+        years = (self.outputs.get("revenue") or {}).get("years")
+        count = len(years) if isinstance(years, list) else 0
+        for idx in range(count):
+            for leaf in _CELL_PATH_LEAVES:
+                path = f"years[{idx}].{leaf}"
+                if path in traces:
+                    self._ensure_engine_node("revenue", path)
+        await self.drain()
 
     async def _expand(self, engine: str, path: str) -> None:
         trace = (self.provenance.get(engine) or {}).get(path)

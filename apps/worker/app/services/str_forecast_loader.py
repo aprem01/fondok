@@ -32,7 +32,85 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fondok_schemas.str_forecast import STRMonth
 
+from .market_fields import extraction_lane
+
 logger = logging.getLogger(__name__)
+
+# FON-86 — the STR-family extraction rows for a deal, newest first. The SQL
+# narrows by the analyst's tag (an index-friendly pre-filter); the LANE each
+# extraction ran in (``market_fields.extraction_lane`` — the ``dt:`` stamp in
+# ``agent_version``, the router's ``ai_proposed_doc_type``, the field
+# namespaces) decides which rows the forecast may read. The tester deals'
+# CoStar market reports carry the ``STR_TREND`` tag while their extraction
+# ran in the MARKET_STUDY lane; selecting by tag let a market report's
+# ``market_study.*`` rows stand in for the subject's STR history. The Market
+# overview (``api.market._partition_by_lane``) applies the same rule.
+_STR_ROWS_SQL = """
+    SELECT er.fields,
+           er.created_at,
+           er.agent_version,
+           d.doc_type,
+           d.ai_proposed_doc_type
+      FROM extraction_results er
+      JOIN documents d ON d.id = er.document_id
+     WHERE er.deal_id = :deal
+       {tenant_predicate}
+       AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
+     ORDER BY er.created_at DESC
+"""
+
+
+def str_lane_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the extraction rows that ran in the STR lane.
+
+    Pure — exposed so the lane rule can be tested without a session. Each
+    row carries ``fields`` (JSON text or list), ``doc_type``,
+    ``agent_version`` and ``ai_proposed_doc_type``; a row in the
+    MARKET_STUDY lane (or any lane the helper cannot place) is dropped.
+    Field names are read once here and cached on the row (``_fields``) so
+    the callers below do not parse the JSON twice.
+    """
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        fields = _parse_fields(row.get("fields"))
+        lane = extraction_lane(
+            doc_type=row.get("doc_type"),
+            agent_version=row.get("agent_version"),
+            ai_proposed_doc_type=row.get("ai_proposed_doc_type"),
+            field_names=(
+                f.get("field_name")
+                for f in fields
+                if isinstance(f, dict) and isinstance(f.get("field_name"), str)
+            ),
+        )
+        if lane != "STR":
+            continue
+        kept = dict(row)
+        kept["_fields"] = fields
+        out.append(kept)
+    return out
+
+
+async def _load_str_lane_rows(
+    session: AsyncSession, *, deal_id: str, tenant_id: str | None, what: str
+) -> list[dict[str, Any]]:
+    """STR-lane extraction rows for ``deal_id`` (newest first); ``[]`` on a
+    query failure, which is logged with ``what`` naming the caller."""
+    if tenant_id is None:
+        sql = _STR_ROWS_SQL.format(tenant_predicate="")
+        params: dict[str, Any] = {"deal": deal_id}
+    else:
+        sql = _STR_ROWS_SQL.format(
+            tenant_predicate="AND er.tenant_id = :tenant\n       AND d.tenant_id = :tenant"
+        )
+        params = {"deal": deal_id, "tenant": tenant_id}
+    try:
+        rows = await session.execute(text(sql), params)
+        materialized = [dict(r._mapping) for r in rows.fetchall()]
+    except Exception:
+        logger.exception("str_forecast: failed to query STR_TREND %s", what)
+        return []
+    return str_lane_rows(materialized)
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -201,42 +279,20 @@ async def load_str_history_for_deal(
     Returns a list of ``STRMonth`` records (possibly empty) sorted
     ASC by period. The forecast engine handles the sort itself but
     we sort here too for caller debuggability.
-    """
-    if tenant_id is None:
-        sql = """
-            SELECT er.fields, er.created_at
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
-             ORDER BY er.created_at DESC
-        """
-        params = {"deal": deal_id}
-    else:
-        sql = """
-            SELECT er.fields, er.created_at
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND er.tenant_id = :tenant
-               AND d.tenant_id = :tenant
-               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
-             ORDER BY er.created_at DESC
-        """
-        params = {"deal": deal_id, "tenant": tenant_id}
 
-    try:
-        rows = await session.execute(text(sql), params)
-        materialized = [dict(r._mapping) for r in rows.fetchall()]
-    except Exception:
-        logger.exception("str_forecast: failed to query STR_TREND extractions")
-        return []
+    FON-86 — only extractions that ran in the STR lane are read (see
+    ``str_lane_rows``); a market study filed under the STR tag contributes
+    nothing here.
+    """
+    materialized = await _load_str_lane_rows(
+        session, deal_id=deal_id, tenant_id=tenant_id, what="extractions"
+    )
 
     monthly: dict[str, dict[str, Any]] = {}
     compset: dict[int, dict[str, Any]] = {}
     indices: dict[str, Any] = {}
     for row in materialized:
-        fields = _parse_fields(row.get("fields"))
+        fields = row["_fields"]
         for f in fields:
             name = (f.get("field_name") or "").strip()
             if not name:
@@ -259,42 +315,17 @@ async def load_str_subject_ttm(
     the headline the Market tab displays), not a downstream forecast point that
     can land far below it (a −19% IRR foot-gun). Occupancy is published on a
     0-100 scale; we return it as a 0-1 fraction to match ``starting_occupancy``.
-    Newest STR_TREND extraction wins.
+    Newest STR-lane extraction wins (FON-86 — a market study filed under the
+    STR tag is never the subject's TTM).
     """
-    if tenant_id is None:
-        sql = """
-            SELECT er.fields, er.created_at
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
-             ORDER BY er.created_at DESC
-        """
-        params = {"deal": deal_id}
-    else:
-        sql = """
-            SELECT er.fields, er.created_at
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND er.tenant_id = :tenant
-               AND d.tenant_id = :tenant
-               AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
-             ORDER BY er.created_at DESC
-        """
-        params = {"deal": deal_id, "tenant": tenant_id}
-
-    try:
-        rows = await session.execute(text(sql), params)
-        materialized = [dict(r._mapping) for r in rows.fetchall()]
-    except Exception:
-        logger.exception("str_forecast: failed to query STR_TREND subject TTM")
-        return None
+    materialized = await _load_str_lane_rows(
+        session, deal_id=deal_id, tenant_id=tenant_id, what="subject TTM"
+    )
 
     for row in materialized:  # newest extraction first
         occ: float | None = None
         adr: float | None = None
-        for f in _parse_fields(row.get("fields")):
+        for f in row["_fields"]:
             name = (f.get("field_name") or "").strip().lower()
             if name == "ttm_performance.subject.occupancy_pct":
                 occ = _coerce_float(f.get("value"))
@@ -308,4 +339,6 @@ async def load_str_subject_ttm(
 
 __all__ = [
     "load_str_history_for_deal",
+    "load_str_subject_ttm",
+    "str_lane_rows",
 ]

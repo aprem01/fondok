@@ -77,6 +77,7 @@ from ..services.financial_source_rank import (
 from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
+from ..services.market_fields import extraction_lane
 from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
@@ -3039,9 +3040,22 @@ def _aggregate_market_data(
     Each input row is ``{"fields": <list>, "doc_type": <str>,
     "document_id": <uuid>}`` plus, when the caller selected it, the
     document's ``filename`` (carried into each block's ``doc_name`` /
-    ``page`` provenance). Most-recent extraction for each doc_type wins
-    because the caller orders by ``created_at DESC`` and we only set a
-    slot the first time we see it.
+    ``page`` provenance) and the extraction's ``agent_version`` / the
+    document's ``ai_proposed_doc_type``. Most-recent extraction for each
+    doc_type wins because the caller orders by ``created_at DESC`` and we
+    only set a slot the first time we see it.
+
+    FON-86 — an STR / STR_TREND / MARKET_STUDY tag is routed by the LANE the
+    extraction ran in (``services.market_fields.extraction_lane``: the
+    ``dt:`` stamp in ``agent_version``, the router's proposal, the field
+    namespaces), not by the analyst's tag alone. The tester deals' CoStar
+    market reports carry the ``STR_TREND`` tag while their extraction ran
+    in the MARKET_STUDY lane (``market_study.*`` / ``pnl_benchmark.market.*``
+    fields); before this they were bucketed as an STR trend and fed Index
+    Analysis as the subject's own history. They land in ``market_history``
+    (and ``sources["MARKET_STUDY"]``) now, with every field's doc / page
+    provenance intact. CBRE_HORIZONS and PNL_BENCHMARK keep their tags —
+    the lane helper only arbitrates the STR ↔ market-study family.
 
     FON-94 / FON-95 — ``CBRE_HORIZONS`` years carry their calendar year,
     ``STR_TREND`` carries the subject's annual history, and the new
@@ -3083,9 +3097,11 @@ def _aggregate_market_data(
         # row classified before the router canonicalization fix still
         # contributes its comp-set + per-property keys to the STR
         # block (Sam QA 2026-06-30 — same file emitted STR on one
-        # deal and STR_TREND on another).
-        if doc_type == "STR":
-            doc_type = "STR_TREND"
+        # deal and STR_TREND on another). FON-86 — within that family
+        # the extraction LANE decides: a market report filed under the
+        # STR tag is a market study here, never an STR trend.
+        if doc_type in _LANE_ARBITRATED_TAGS:
+            doc_type = _market_doc_type_for_lane(doc_type, row, raw_fields)
         if doc_type not in {"STR_TREND", "CBRE_HORIZONS", "PNL_BENCHMARK", "MARKET_STUDY"}:
             continue
         if doc_id_uuid is not None:
@@ -3147,6 +3163,37 @@ class _FieldMeta:
     page: int | None
     doc_name: str | None
     doc_type: str
+
+
+# FON-86 — the document tags whose reader is decided by the extraction lane
+# rather than the tag (the same family ``api.market._MARKET_DOC_TYPES`` routes
+# for the Market overview blocks).
+_LANE_ARBITRATED_TAGS: frozenset[str] = frozenset({"STR", "STR_TREND", "MARKET_STUDY"})
+
+
+def _market_doc_type_for_lane(
+    tag: str, row: Mapping[str, Any], raw_fields: list[Any]
+) -> str:
+    """The market-data bucket for an STR / STR_TREND / MARKET_STUDY-tagged row.
+
+    ``"MARKET_STUDY"`` when ``extraction_lane`` says the extraction ran in the
+    market-study lane (``agent_version`` ``dt:MARKET_STUDY``, the router's
+    ``ai_proposed_doc_type``, or ``market_study.*`` / ``pnl_benchmark.market.*``
+    field names); ``"STR_TREND"`` otherwise. Rows that carry no
+    ``agent_version`` (legacy callers, mock rows) fall back to the tag — the
+    legacy bare ``STR`` label still folds into ``STR_TREND``.
+    """
+    lane = extraction_lane(
+        doc_type=tag,
+        agent_version=row.get("agent_version"),
+        ai_proposed_doc_type=row.get("ai_proposed_doc_type"),
+        field_names=(
+            f.get("field_name")
+            for f in raw_fields
+            if isinstance(f, dict) and isinstance(f.get("field_name"), str)
+        ),
+    )
+    return "MARKET_STUDY" if lane == "MARKET_STUDY" else "STR_TREND"
 
 
 def _meta_of(meta: Mapping[str, _FieldMeta] | None, doc_type: str, lname: str) -> _FieldMeta | None:
@@ -3585,7 +3632,9 @@ async def get_market_data(
     ``doc_type IN ('STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK',
     'MARKET_STUDY')`` and folds the field rows into the typed blocks (the
     market study feeds only ``market_history``) plus a sources map for
-    citation deep-links. Every block is optional — when the
+    citation deep-links. Within the STR ↔ market-study family the lane the
+    extraction ran in decides the block (FON-86), so a market report tagged
+    STR never reads as the subject's STR trend. Every block is optional — when the
     deal has no extracted document of a given type the block is
     ``null`` so the Market tab can render "awaiting <doc>" cards
     without a 404 path.
@@ -3614,7 +3663,9 @@ async def load_market_data(
             """
             SELECT er.fields,
                    er.document_id,
+                   er.agent_version,
                    d.doc_type,
+                   d.ai_proposed_doc_type,
                    d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id

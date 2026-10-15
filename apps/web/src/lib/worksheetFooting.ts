@@ -10,11 +10,15 @@
  *     documents.py) replaces ONE extracted field's value and recomputes the
  *     confidence report. It does NOT recompute the statement's other lines:
  *     a stated GOP / NOI / Total Revenue stays exactly what was extracted.
- *   • In a historical column the worksheet's Total Revenue cell is a
- *     CLIENT-SIDE SUM of the extracted lines (``histValue('total_rev')`` =
- *     rooms + F&B + misc), as is Total Fees & Fixed (``fixed_expenses`` =
- *     mgmt fee + property tax + insurance at column-build time). GOP and NOI
- *     are the statement's own stated lines (``HIST_KEY_BY_ROW``).
+ *   • In a historical column the worksheet's Total Revenue cell is the
+ *     statement's OWN stated total when it publishes one (FON-90) and the
+ *     CLIENT-SIDE SUM of the extracted lines (rooms + F&B + misc) only when
+ *     it does not. The footing below always compares that SUM
+ *     (``histDerivedTotalRevenue``) against the stated total — never the
+ *     cell against itself. Total Fees & Fixed stays a client-side sum
+ *     (``fixed_expenses`` = mgmt fee + property tax + insurance at
+ *     column-build time). GOP and NOI are the statement's own stated lines
+ *     (``HIST_KEY_BY_ROW``).
  *   • There is no worker footing / variance output for historical
  *     statements (``footing`` exists only as a cash-flow-statement concept),
  *     so every number here is computed in the browser and labelled
@@ -22,7 +26,7 @@
  */
 
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
-import { histValue } from '@/lib/reviewState';
+import { histDerivedTotalRevenue, histValue } from '@/lib/reviewState';
 import { fmtCurrency } from '@/lib/format';
 
 /** Sub-dollar differences are rounding, not a footing failure. */
@@ -60,7 +64,7 @@ function build(id: Footing['id'], statedLabel: string, lines: number, stated: nu
 export function footRevenue(h: HistYear): FootingResult {
   const stated = nOrNull(h.total_revenue_stated);
   if (stated == null) return { ok: false, reason: 'no_stated_total' };
-  const lines = histValue('total_rev', h);
+  const lines = histDerivedTotalRevenue(h);
   if (lines == null) return { ok: false, reason: 'lines_missing' };
   return build('total_rev', 'total', lines, stated);
 }
@@ -69,7 +73,9 @@ export function footRevenue(h: HistYear): FootingResult {
 export function footGop(h: HistYear): FootingResult {
   const stated = nOrNull(h.gop);
   if (stated == null) return { ok: false, reason: 'no_stated_total' };
-  const totalRev = histValue('total_rev', h);
+  // The lines-side of the check: the SUM of the revenue lines, so a stated
+  // total that the lines do not reproduce surfaces here as well as above.
+  const totalRev = histDerivedTotalRevenue(h);
   const parts = [h.rooms_dept_expense, h.fb_dept_expense, h.other_dept_expense, h.undistributed].map(nOrNull);
   if (totalRev == null || parts.some((p) => p == null)) return { ok: false, reason: 'lines_missing' };
   const lines = totalRev - (parts as number[]).reduce((a, b) => a + b, 0);
@@ -105,8 +111,9 @@ export interface CellChange {
 /**
  * Every worksheet row whose historical value moved between two snapshots of
  * the same column — the edited line itself AND every client-derived total
- * that re-summed from it (Total Revenue, Total Fees & Fixed). Stated lines
- * (GOP, NOI) only appear here when the edit was to that line.
+ * that re-summed from it (Total Fees & Fixed; Total Revenue only when the
+ * statement states no total of its own). Stated lines (GOP, NOI, a stated
+ * Total Revenue) only appear here when the edit was to that line.
  */
 export function diffHistColumn(
   before: Readonly<Record<string, number | null>>,

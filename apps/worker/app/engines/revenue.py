@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
+    IndexDriverYear,
     PIPDisplacement,
     RevenueEngineInput,
     RevenueEngineOutput,
@@ -207,6 +208,233 @@ def _y2_occupancy_recovery_factor(
     return ramp_total / 12.0
 
 
+# ─────────────── FON-87 — occupancy / ADR trace builder ───────────────
+
+# Relative tolerance under which "benchmark × target ÷ 100" is accepted as
+# the formula for an index-driven value. The driver arrives already computed
+# (``services.index_methodology``) and may have been unit-normalized on the
+# way; when the product does not reproduce it the trace names the driver
+# value itself as the input instead of asserting arithmetic that is not there.
+_DRIVER_RECONCILE_RTOL = 1e-9
+
+
+def _index_driver_term(
+    metric: str,
+    *,
+    year: int,
+    driver_value: float,
+    driver: IndexDriverYear | None,
+) -> tuple[str, list[ValueInput], str]:
+    """(formula term, inputs, note) for a year an Index Analysis driver set.
+
+    The benchmark and the penetration target are named as inputs — the target
+    with the assumption key the lineage walk links (``index_mpi_target`` /
+    ``index_mpi_target_by_year``, likewise ARI) — and the note carries the
+    benchmark's basis line plus its document and page when the driver record
+    has them. With no driver record (an explicit per-year value and nothing
+    else), the value itself is the input and the note says so.
+    """
+    if metric == "occupancy":
+        bench = driver.benchmark_occupancy if driver is not None else None
+        bench_source = driver.benchmark_occupancy_source if driver is not None else None
+        target = driver.mpi_target if driver is not None else None
+        target_source = driver.mpi_target_source if driver is not None else None
+        bench_name, target_name, target_label = "benchmark_occupancy", "mpi_target", "MPI"
+        key_scalar, key_by_year = "index_mpi_target", "index_mpi_target_by_year"
+        bench_text = f"{bench:.4f}" if bench is not None else None
+    else:
+        bench = driver.benchmark_adr if driver is not None else None
+        bench_source = driver.benchmark_adr_source if driver is not None else None
+        target = driver.ari_target if driver is not None else None
+        target_source = driver.ari_target_source if driver is not None else None
+        bench_name, target_name, target_label = "benchmark_adr", "ari_target", "ARI"
+        key_scalar, key_by_year = "index_ari_target", "index_ari_target_by_year"
+        bench_text = f"{bench:.2f}" if bench is not None else None
+
+    where = ""
+    if driver is not None and (driver.benchmark_doc or driver.benchmark_page is not None):
+        where = " — " + ", ".join(
+            part
+            for part in (
+                driver.benchmark_doc,
+                f"p.{driver.benchmark_page}" if driver.benchmark_page is not None else None,
+            )
+            if part
+        )
+    basis = f"; {bench_source}" if bench_source else ""
+
+    reconciles = (
+        bench is not None
+        and target is not None
+        and abs(bench * target / 100.0 - driver_value)
+        <= _DRIVER_RECONCILE_RTOL * max(1.0, abs(driver_value))
+    )
+    if reconciles:
+        inputs = [
+            ValueInput(name=bench_name, value=bench),  # type: ignore[arg-type]
+            ValueInput(
+                name=target_name,
+                value=target,  # type: ignore[arg-type]
+                assumption_key=key_by_year if target_source == "by_year" else key_scalar,
+            ),
+        ]
+        term = f"{bench_name} × {target_name} ÷ 100"
+        note = (
+            f"Year {year} {metric} is indexed (Index Analysis penetration target): "
+            f"benchmark {bench_text}{basis}{where} × {target_label} target {target} ÷ 100."
+        )
+    else:
+        inputs = [ValueInput(name=f"index_driver_{metric}", value=driver_value)]
+        term = f"index_driver_{metric}"
+        if driver is not None and bench is not None and target is not None:
+            note = (
+                f"Year {year} {metric} is indexed (Index Analysis penetration target): "
+                f"the driver value {driver_value:.6g} was built from benchmark "
+                f"{bench_text}{basis}{where} and {target_label} target {target}; the "
+                "product does not reproduce it to the last digit (unit "
+                "normalization upstream), so the driver value is the input named."
+            )
+        else:
+            note = (
+                f"Year {year} {metric} is set by an explicit per-year driver "
+                f"({driver_value:.6g}); no Index Analysis benchmark record accompanies it."
+            )
+    return term, inputs, note
+
+
+def _rate_trace(
+    *,
+    metric: str,
+    year: int,
+    value: float,
+    starting_key: str,
+    starting_value: float,
+    driver_value: float | None,
+    y1_driver_value: float | None,
+    driver: IndexDriverYear | None,
+    y1_driver: IndexDriverYear | None,
+    anchor: tuple[float, int],
+    growth_key: str,
+    growth: float,
+    cap: float | None,
+    y1_displacement_key: str,
+    y1_displacement: float,
+    pip: PIPDisplacement | None,
+    pip_y1_factor: tuple[str, float],
+    pip_out_year_factor: tuple[str, float] | None,
+) -> ValueTrace:
+    """The trace for one year's occupancy or ADR — the exact branch
+    :meth:`RevenueEngine.run` took for it, named.
+
+    * Year 1: the starting assumption (or the Year-1 index driver) × the
+      Year-1 displacement — the legacy ``(1 − y1_*_displacement_pct)`` or the
+      structured PIP factor — where one applied.
+    * Year 2+, driven: the index driver (occupancy capped at 0.95).
+    * Year 2+, undriven: the anchor (the starting assumption / Year-1 driver
+      when the anchor is Year 1, otherwise the last driven year's own trace)
+      compounded at the growth assumption for the years since; occupancy
+      capped at 0.95; the PIP recovery / uplift factor where one applied.
+    """
+    inputs: list[ValueInput] = []
+    notes: list[str] = []
+
+    def _year_one_base() -> str:
+        if y1_driver_value is not None:
+            term, drv_inputs, note = _index_driver_term(
+                metric, year=1, driver_value=y1_driver_value, driver=y1_driver
+            )
+            inputs.extend(drv_inputs)
+            notes.append(note)
+            return term
+        inputs.append(
+            ValueInput(name=starting_key, value=starting_value, assumption_key=starting_key)
+        )
+        return starting_key
+
+    if year == 1:
+        base = _year_one_base()
+        if pip is not None:
+            name, factor = pip_y1_factor
+            inputs.append(ValueInput(name=name, value=factor))
+            formula = f"{metric} = {base} × {name}"
+            notes.append(
+                f"Year 1 structured PIP displacement (closure strategy "
+                f"{pip.closure_strategy}{', brand ' + pip.brand if pip.brand else ''}): "
+                f"{name} = {factor:.6g}."
+            )
+        elif y1_displacement:
+            inputs.append(
+                ValueInput(
+                    name=y1_displacement_key,
+                    value=y1_displacement,
+                    assumption_key=y1_displacement_key,
+                )
+            )
+            formula = f"{metric} = {base} × (1 − {y1_displacement_key})"
+            notes.append(
+                f"Year 1 renovation displacement of {y1_displacement:.2%} applied."
+            )
+        else:
+            formula = f"{metric} = {base}"
+            notes.append("No Year-1 displacement applied.")
+    elif driver_value is not None:
+        term, drv_inputs, note = _index_driver_term(
+            metric, year=year, driver_value=driver_value, driver=driver
+        )
+        inputs.extend(drv_inputs)
+        notes.append(note)
+        formula = f"{metric} = min({cap}, {term})" if cap is not None else f"{metric} = {term}"
+        notes.append(f"Year {year} re-anchors the undriven years that follow it.")
+    else:
+        anchor_value, anchor_year = anchor
+        if anchor_year == 1:
+            base = _year_one_base()
+            notes.append(
+                f"Year {year} compounds the un-displaced Year-1 baseline "
+                f"({anchor_value:.6g}) forward — a Year-1 displacement never "
+                "cascades into the out-years."
+            )
+        else:
+            inputs.append(
+                ValueInput(
+                    name=f"anchor_{metric}",
+                    value=anchor_value,
+                    # The anchor IS the driven year's own figure on the
+                    # legacy path; under a structured PIP the Year-2 figure
+                    # carries a recovery / uplift factor the anchor does not,
+                    # so the pointer is only asserted when the two are equal.
+                    traces_to=(
+                        f"years[{anchor_year - 1}].{metric}" if pip is None else None
+                    ),
+                )
+            )
+            base = f"anchor_{metric}"
+            notes.append(
+                f"Anchored on Year {anchor_year}, the last year an Index Analysis "
+                f"driver set ({anchor_value:.6g})."
+            )
+        inputs.append(ValueInput(name=growth_key, value=growth, assumption_key=growth_key))
+        inputs.append(ValueInput(name="years_compounded", value=float(year - anchor_year)))
+        grown = f"{base} × (1 + {growth_key}) ^ years_compounded"
+        formula = f"{metric} = min({cap}, {grown})" if cap is not None else f"{metric} = {grown}"
+        if pip_out_year_factor is not None:
+            name, factor = pip_out_year_factor
+            inputs.append(ValueInput(name=name, value=factor))
+            formula = f"{formula} × {name}"
+            notes.append(
+                f"Structured PIP ({pip.closure_strategy if pip is not None else 'n/a'}): "
+                f"{name} = {factor:.6g} applied."
+            )
+    if pip_out_year_factor is not None and driver_value is not None and year >= 2:
+        # A driven out-year under a structured PIP still carries the factor.
+        name, factor = pip_out_year_factor
+        inputs.append(ValueInput(name=name, value=factor))
+        formula = f"{formula} × {name}"
+        notes.append(f"Structured PIP: {name} = {factor:.6g} applied.")
+
+    return ValueTrace(value=value, formula=formula, inputs=inputs, note=" ".join(notes))
+
+
 class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
     """Project total revenue across rooms, F&B and other operated departments."""
 
@@ -337,6 +565,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 # FON-95 part 2 — a per-year driver replaces the compounded
                 # figure and re-anchors the years after it; with no drivers
                 # the legacy expression runs verbatim.
+                # FON-87 — the anchors this year compounds FROM, captured
+                # before a driver re-anchors them, so the trace names them.
+                occ_anchor_from = occ_anchor
+                adr_anchor_from = adr_anchor
                 occ_d = _driver(occ_drivers, y)
                 if occ_d is not None:
                     base_occ_y = min(0.95, occ_d)
@@ -475,13 +707,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     # it from the input's name. Years 2+ compound the same
                     # baseline forward — the key names the anchor, not the
                     # only input (the note below says what else applies).
+                    # FON-87 — each factor also points at its own trace
+                    # (``years[i].occupied_rooms`` / ``years[i].adr``), so
+                    # the lineage walk reaches the rate lines the Future
+                    # P&L drawer asks for, not only the Year-1 assumption.
                     ValueInput(
                         name="occupied_rooms",
                         value=occupied,
                         assumption_key="starting_occupancy",
+                        traces_to=f"years[{idx}].occupied_rooms",
                     ),
                     ValueInput(
-                        name="adr", value=adr, assumption_key="starting_adr"
+                        name="adr",
+                        value=adr,
+                        assumption_key="starting_adr",
+                        traces_to=f"years[{idx}].adr",
                     ),
                 ]
                 driver_note = ""
@@ -693,6 +933,112 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         traces_to=f"years[{idx}].other_revenue",
                     ),
                 ],
+            )
+
+            # ─── FON-87 — the rate lines behind rooms revenue ───
+            # ``years[i].occupancy`` / ``.adr`` / ``.revpar`` are the paths the
+            # Future P&L lineage drawer requests for its Occupancy / Average
+            # Rate / RevPAR cells; with no trace it said "No trace available".
+            # Each trace names the anchor the year was built from (the
+            # starting assumption, the Index Analysis driver — benchmark ×
+            # target, with the benchmark's document and page — or the prior
+            # anchored year), the growth compounded onto it and the Year-1
+            # displacement where one applied. Values are the figures above;
+            # nothing here moves a number.
+            if y == 1:
+                occ_anchor_from = (baseline_occ, 1)
+                adr_anchor_from = (baseline_adr, 1)
+            prov[f"years[{idx}].occupancy"] = _rate_trace(
+                metric="occupancy",
+                year=y,
+                value=occ,
+                starting_key="starting_occupancy",
+                starting_value=payload.starting_occupancy,
+                driver_value=_driver(occ_drivers, y),
+                y1_driver_value=_driver(occ_drivers, 1),
+                driver=drivers_by_year.get(y),
+                y1_driver=drivers_by_year.get(1),
+                anchor=occ_anchor_from,
+                growth_key="occupancy_growth",
+                growth=payload.occupancy_growth,
+                cap=0.95,
+                y1_displacement_key="y1_occupancy_displacement_pct",
+                y1_displacement=y1_occ_disp,
+                pip=pip_v2,
+                pip_y1_factor=("y1_revenue_factor", y1_revenue_factor),
+                pip_out_year_factor=(
+                    ("y2_occupancy_recovery_factor", y2_occ_recovery_factor)
+                    if pip_v2 is not None and y == 2
+                    else None
+                ),
+            )
+            prov[f"years[{idx}].adr"] = _rate_trace(
+                metric="adr",
+                year=y,
+                value=adr,
+                starting_key="starting_adr",
+                starting_value=payload.starting_adr,
+                driver_value=_driver(adr_drivers, y),
+                y1_driver_value=_driver(adr_drivers, 1),
+                driver=drivers_by_year.get(y),
+                y1_driver=drivers_by_year.get(1),
+                anchor=adr_anchor_from,
+                growth_key="adr_growth",
+                growth=payload.adr_growth,
+                cap=None,
+                y1_displacement_key="y1_adr_displacement_pct",
+                y1_displacement=y1_adr_disp,
+                pip=pip_v2,
+                pip_y1_factor=("y1_adr_drag", y1_adr_drag),
+                pip_out_year_factor=(
+                    ("revpar_index_post_reno", effective_revpar_index)
+                    if pip_v2 is not None and y >= 2
+                    else None
+                ),
+            )
+            prov[f"years[{idx}].occupied_rooms"] = ValueTrace(
+                value=occupied,
+                formula="occupied_rooms = keys × days × occupancy",
+                inputs=[
+                    ValueInput(name="keys", value=float(keys), assumption_key="keys"),
+                    ValueInput(name="days", value=float(DAYS_PER_YEAR)),
+                    ValueInput(
+                        name="occupancy",
+                        value=occ,
+                        traces_to=f"years[{idx}].occupancy",
+                    ),
+                ],
+                note=f"rooms_available = keys ({keys}) × {DAYS_PER_YEAR} days.",
+            )
+            prov[f"years[{idx}].revpar"] = ValueTrace(
+                value=revpar,
+                formula="revpar = rooms_revenue ÷ rooms_available",
+                inputs=[
+                    ValueInput(
+                        name="rooms_revenue",
+                        value=rooms_revenue,
+                        traces_to=f"years[{idx}].rooms_revenue",
+                    ),
+                    ValueInput(
+                        name="rooms_available",
+                        value=float(rooms_available),
+                        assumption_key="keys",
+                    ),
+                ],
+                note=(
+                    f"rooms_available = keys ({keys}) × {DAYS_PER_YEAR} days."
+                    + (
+                        ""
+                        if use_segments
+                        else " On the single-line path this equals occupancy × ADR."
+                    )
+                    + (
+                        " Rooms revenue is net of channel cost across the demand "
+                        "segments, so RevPAR is a NET figure here."
+                        if use_segments
+                        else ""
+                    )
+                ),
             )
 
             years.append(

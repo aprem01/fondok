@@ -86,18 +86,34 @@ const nOrNull = (x: unknown): number | null =>
  * ``bindings.worksheet.hist_key`` (``HIST_KEY_BY_ROW``), not a hand-written
  * switch. Fixed-charge parts (Part B — mgmt fee / property tax / insurance)
  * are extracted individually and are optional on HistYear, so older payloads
- * still render. ``total_rev`` is the ONE row whose historical value is a SUM
- * of other fields rather than a single extracted line; it carries no
- * ``hist_key`` in the registry and stays computed here.
+ * still render. ``total_rev`` is the ONE row that carries no ``hist_key`` in
+ * the registry: FON-90 — it reads the statement's OWN stated Total Revenue
+ * (``total_revenue_stated``) when the statement publishes one, and only
+ * falls back to the client-side SUM of the lines when it does not. The
+ * tester deals' statements state $13.48M while rooms + F&B + other sum to
+ * $12.3M (the reconciler-added ``operating_revenue.misc_revenue`` is not in
+ * the sum); showing the sum as "Total Revenue" misstated the statement.
  */
 export function histValue(rowId: string, h: HistYear): number | null {
   if (rowId === 'total_rev') {
-    const parts = [h.rooms, h.fb, h.misc].map(nOrNull).filter((x): x is number => x != null);
-    return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
+    return histStatedTotalRevenue(h) ?? histDerivedTotalRevenue(h);
   }
   const key = HIST_KEY_BY_ROW[rowId];
   if (!key) return null;
   return nOrNull((h as unknown as Record<string, unknown>)[key]);
+}
+
+/** The statement's own stated Total Revenue line, or null when it has none. */
+export function histStatedTotalRevenue(h: HistYear): number | null {
+  return nOrNull(h.total_revenue_stated);
+}
+
+/** Σ of the extracted revenue lines (rooms + F&B + misc) — the client-side
+ *  sum the footing check compares against the stated total, and the Total
+ *  Revenue cell's value only when the statement states no total. */
+export function histDerivedTotalRevenue(h: HistYear): number | null {
+  const parts = [h.rooms, h.fb, h.misc].map(nOrNull).filter((x): x is number => x != null);
+  return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
 }
 
 /**
@@ -139,6 +155,11 @@ export function buildReviewState(
     if (!year.meta) continue;
     for (const row of rows) {
       if (!row.metaKey) continue;
+      // FON-90 — the stated Total Revenue carries meta so its cell can open
+      // the SOURCE panel at the statement's field, but it is a total: it is
+      // reviewed through the lines that foot to it (the footing row shows
+      // any difference), so it never adds a "to review" count of its own.
+      if (row.id === 'total_rev') continue;
       const meta = year.meta[row.metaKey];
       if (!meta?.docId || !docIds.has(meta.docId)) continue;
       if (histValue(row.id, year) == null) continue;

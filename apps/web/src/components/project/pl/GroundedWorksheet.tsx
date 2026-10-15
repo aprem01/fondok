@@ -139,6 +139,10 @@ const ROWS: RowDef[] = [
   { ...ws('rooms_rev'), label: 'Rooms Revenue', kind: 'input' },
   { ...ws('fb_rev'), label: 'Food & Beverage Revenue', kind: 'input' },
   { ...ws('other_rev'), label: 'Other Revenue', kind: 'input' },
+  // FON-90 — in a historical column this row shows the statement's OWN stated
+  // total when it publishes one (``HistYear.total_revenue_stated``, sourced
+  // via ``meta.total_rev``) and the sum of the lines, labelled "calculated",
+  // only when it does not. The Model column stays the engine sum.
   { ...ws('total_rev'), label: 'Total Revenue', kind: 'subtotal',
     compute: (v) => v.rooms_rev + v.fb_rev + v.other_rev },
 
@@ -328,6 +332,9 @@ interface InspectTarget {
    *  source" save can snapshot the column and report what it changed. */
   rowId?: string;
   year?: string;
+  /** FON-90 — the column's stated Total Revenue, when its statement publishes
+   *  one; the panel's propagation copy says Total Revenue will not re-sum. */
+  statedTotalRevenue?: number | null;
 }
 
 /** E-012 — a "correct at source" save awaiting its refreshed column. */
@@ -547,10 +554,12 @@ export default function GroundedWorksheet({
   // E-012 — what the worker does with an edit (documents.py
   // `review_extraction_field`): it replaces THAT field's value and recomputes
   // the confidence report. It does not re-foot the statement — a stated GOP /
-  // NOI / Total Revenue stays what was extracted. In this grid Total Revenue
-  // and Total Fees & Fixed are client-side sums of the lines, so they move
-  // with the edit; GOP and NOI are the statement's own stated lines, so they
-  // do not. The note this schedules says exactly that, with the numbers.
+  // NOI / Total Revenue stays what was extracted. In this grid Total Fees &
+  // Fixed is a client-side sum of the lines, so it moves with the edit; GOP
+  // and NOI are the statement's own stated lines, so they do not; Total
+  // Revenue is the stated total when the statement has one (FON-90 — it does
+  // not re-sum; the footing check shows the difference) and the sum of the
+  // lines otherwise (it moves). The note this schedules says exactly that.
   const editExtraction = useCallback(
     async (
       docId: string,
@@ -1368,9 +1377,21 @@ function WorksheetCell({
   const histMeta = historical && row.metaKey ? histYear?.meta?.[row.metaKey] : undefined;
   const effReview = review;
 
+  // FON-90 — a historical Total Revenue cell is the statement's OWN stated
+  // total when it publishes one: extracted, sourced to that field. Only when
+  // the statement states no total is the cell the client-side sum of the
+  // lines, kept "calculated" and labelled so.
+  const statedTotalRev: number | null =
+    historical && row.id === 'total_rev'
+      && typeof histYear?.total_revenue_stated === 'number' && Number.isFinite(histYear.total_revenue_stated)
+      ? histYear.total_revenue_stated
+      : null;
+  const derivedTotalRev = historical && row.id === 'total_rev' && statedTotalRev == null;
+
   // Provenance kind for the dot.
   let kind: InspectTarget['kind'];
-  if (row.kind === 'computed' || row.kind === 'subtotal') kind = 'computed';
+  if (statedTotalRev != null) kind = 'grounded';
+  else if (row.kind === 'computed' || row.kind === 'subtotal') kind = 'computed';
   else if (historical) kind = 'grounded';
   else if (overridden) kind = 'override';
   else {
@@ -1404,11 +1425,15 @@ function WorksheetCell({
       overrideKey: !historical ? row.overrideKey : undefined,
       reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? histMeta?.field),
       docIds: effReview ? [effReview.docId, ...docIds.filter((id) => id !== effReview.docId)] : docIds,
-      formula: row.kind === 'computed' || row.kind === 'subtotal' ? formulaFor(row.id) : undefined,
+      formula: kind === 'computed' ? formulaFor(row.id) : undefined,
       review: effReview,
       fmt: row.fmt,
       rowId: row.id,
       year: historical ? histYear?.year : undefined,
+      statedTotalRevenue: historical
+        ? (typeof histYear?.total_revenue_stated === 'number' && Number.isFinite(histYear.total_revenue_stated)
+          ? histYear.total_revenue_stated : null)
+        : undefined,
       // FON-41 #4 — the panel names the document AND the period it covers.
       // A full year is named by the column's own resolved label ("FY2019");
       // the dated bases spell their end out ("T-12 ending Mar 31, 2025").
@@ -1550,6 +1575,17 @@ function WorksheetCell({
         ) : (
           <span className={cn('tabular-nums', (row.kind === 'computed' || row.kind === 'subtotal') ? 'font-semibold text-ink-900' : 'text-ink-700')}>
             {fmtRowValue(value, row.fmt)}
+            {derivedTotalRev && (
+              // FON-90 — no stated total on this statement: the cell is the
+              // sum of the lines, and says so.
+              <span
+                className="ml-1 align-middle text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-ink-100 text-ink-500 font-normal"
+                title="This statement publishes no Total Revenue line, so this is the sum of the extracted revenue lines — computed here in the browser."
+                data-testid="total-rev-calculated"
+              >
+                calculated
+              </span>
+            )}
           </span>
         )}
       </span>
@@ -1582,6 +1618,15 @@ function PropagationNote({
   // GOP and NOI are stated lines; the note only needs to say so when the edit
   // was to a line they are built from, not to GOP / NOI themselves.
   const statedNote = p.rowId !== 'gop' && p.rowId !== 'noi';
+  // FON-90 — when the statement states its own Total Revenue, the Total
+  // Revenue cell IS that figure: a revenue-line edit does not re-sum it, and
+  // the footing check carries the difference. Said explicitly, so "no derived
+  // total re-sums" is never the message for a Rooms Revenue edit.
+  const statedTotalRev =
+    col && typeof col.total_revenue_stated === 'number' && Number.isFinite(col.total_revenue_stated)
+      ? col.total_revenue_stated : null;
+  const feedsTotalRev = p.rowId === 'rooms_rev' || p.rowId === 'fb_rev' || p.rowId === 'other_rev';
+  const totalRevIsStated = feedsTotalRev && statedTotalRev != null;
   const runNote =
     runStatus === 'running' || runStatus === 'queued' ? 'model re-running…'
     : runStatus === 'complete' ? 'model re-run complete — the Model column reads the corrected line'
@@ -1606,8 +1651,13 @@ function PropagationNote({
             ))}
             <span className="text-amber-800/80"> (calculated)</span>
           </>
-        ) : (
+        ) : totalRevIsStated ? null : (
           <span className="text-amber-800/80"> · no derived total in this column re-sums from this line</span>
+        )}
+        {totalRevIsStated && (
+          <span className="text-amber-800/80" data-testid="worksheet-propagation-stated-total">
+            {` · Total Revenue is the statement’s own stated total (${fmtCurrency(statedTotalRev as number)}) — it does not re-sum from this edit; the footing check shows the difference`}
+          </span>
         )}
         {statedNote && (
           <span className="text-amber-800/80">
@@ -2059,8 +2109,18 @@ function SourcePanel({
               )}
               <p className="text-[11px] text-ink-500 leading-relaxed">
                 Updates the extracted value read from {field.docName} and re-grounds the model.
-                Totals this column derives (Total Revenue, Total Fees &amp; Fixed) re-sum here at once;
-                the statement’s own stated lines (GOP, NOI) do not — the footing check under the grid shows the difference.
+                {target.statedTotalRevenue != null ? (
+                  <>
+                    {' '}Total Fees &amp; Fixed re-sums here at once; Total Revenue is the statement’s own stated total
+                    ({fmtCurrency(target.statedTotalRevenue)}) and, like GOP and NOI, does not re-foot from this edit —
+                    the footing check under the grid shows the difference.
+                  </>
+                ) : (
+                  <>
+                    {' '}Totals this column derives (Total Revenue, Total Fees &amp; Fixed) re-sum here at once;
+                    the statement’s own stated lines (GOP, NOI) do not — the footing check under the grid shows the difference.
+                  </>
+                )}
                 The original source document will not be changed.
               </p>
             </div>

@@ -637,7 +637,7 @@ concepts:
       actuals_attr: total_revenue
       scorer_key: total_revenue
       recognizer: total_revenue
-      worksheet: {row: total_rev, hist_key: null, meta_key: null}
+      worksheet: {row: total_rev, hist_key: null, meta_key: total_rev}
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.operating_revenue.total_revenue

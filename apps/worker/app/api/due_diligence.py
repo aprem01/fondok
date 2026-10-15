@@ -714,7 +714,9 @@ async def _summarize_market_data(
                 """
                 SELECT er.fields,
                        er.document_id,
-                       d.doc_type
+                       er.agent_version,
+                       d.doc_type,
+                       d.ai_proposed_doc_type
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
