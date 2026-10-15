@@ -446,6 +446,18 @@ export interface IndexTargetAPI {
   value: number | null;
   source: 'by_year' | 'scalar' | null;
   note?: string | null;
+  /** A stored target for this year that is IGNORED (outside 25–250 index
+   *  points / 0.25–2.5 ratio — a legacy value), and why. Never applied. */
+  problem?: string | null;
+}
+/** One model year of the STR comp set as the `str_comp_set` method indexes
+ *  against it: TTM level in Year 1, grown at the market growth ASSUMPTION
+ *  after it; `value` null + `detail` = the reason. */
+export interface IndexCompSetYear {
+  year: number;
+  calendar_year?: number | null;
+  occupancy: IndexFigure;
+  adr: IndexFigure;
 }
 export type IndexDriverStatus = 'driven' | 'no_target' | 'benchmark_unavailable' | 'scalar_year1_only';
 /** FON-95 part 2 — one row of the by-year penetration grid. */
@@ -485,6 +497,9 @@ export interface IndexMethodologyResponse {
   calendar_known?: boolean;
   by_year_applies?: boolean;
   by_year_disabled_reason?: string | null;
+  /** The STR comp set by model year (TTM grown at market growth — an
+   *  assumption), whichever method is selected; absent on an older worker. */
+  comp_set_by_year?: IndexCompSetYear[];
 }
 
 /** One named input that fed a modeled value's formula (FON-25/27).

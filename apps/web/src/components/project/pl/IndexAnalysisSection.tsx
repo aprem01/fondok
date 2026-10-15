@@ -17,8 +17,11 @@
  *    (``ttm_performance.subject.annual.<YYYY>``), then the multi-year P&L
  *    fiscal year. Subject forecast → revenue engine ``years[ordinal − 1]``.
  *  • Comp set → STR TTM blend (subject ÷ MPI / ARI / RGI) in the last
- *    historical column; no comp-set forecast source exists, so the forecast
- *    half is "—" with the reason — never the subject's growth re-scaled.
+ *    historical column; the forecast half is the worker's ``comp_set_by_year``
+ *    — the TTM level grown at the market occupancy / ADR growth assumption
+ *    (document default or analyst override), the same series the STR comp-set
+ *    index method runs on, labelled as an assumption. With no growth value the
+ *    out-years stay "—" with the reason — never the subject's growth re-scaled.
  *  • Market → market-level actuals (market study / STR market rows) by
  *    calendar year; forecast = CBRE Horizons placed by ITS calendar year,
  *    labelled Market / CBRE Horizons with document + page.
@@ -33,6 +36,7 @@ import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, type IndexMethodologyResponse } from '@/lib/api';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { toIndexPoints } from '@/lib/indexTarget';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { useSource } from '@/lib/hooks/useDealProvenance';
@@ -47,8 +51,10 @@ import {
   buildCompSeries,
   buildMarketSeries,
   buildSubjectSeries,
+  COMP_FORECAST_GROWN_LABEL,
   computePenetration,
   daysForColumn,
+  emptySeries,
   deriveIndexColumns,
   fmtDollar,
   fmtInt,
@@ -64,6 +70,7 @@ import {
   type ForecastBoundary,
   type IaColumns,
   type MarketDataAPIResponse,
+  type PenetrationBenchmark,
   type PenetrationRow,
   type RevenueYear,
   type YearSeries,
@@ -73,7 +80,7 @@ import {
 export type { ForecastBoundary } from './indexAnalysisModel';
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR/CoStar comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero.';
+  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are that TTM level grown at the market occupancy / ADR growth assumption (the document default or your override on Index methodology) — an assumption, not an STR figure — and stay blank with the reason when no growth value exists. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero.';
 
 /**
  * FON-41 E-027 — where an Index Analysis SUBJECT column's numbers come from.
@@ -405,7 +412,10 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     () => buildSubjectSeries(cols, outputs, historicalBaseline, str),
     [cols, outputs, historicalBaseline, str],
   );
-  const comp = useMemo(() => buildCompSeries(cols, str), [cols, str]);
+  const comp = useMemo(
+    () => buildCompSeries(cols, str, methodology?.comp_set_by_year ?? null),
+    [cols, str, methodology],
+  );
   const market = useMemo(() => buildMarketSeries(cols, marketData), [cols, marketData]);
 
   // Comp-set "keys" row = total comp-set room count (the named roster, which
@@ -428,8 +438,8 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   // with no analyst target the row is "—" and its reason says so.
   const targetOf = (key: string): number | null => {
     const fig = methodology?.assumptions?.[key];
-    const v = fig?.value;
-    return fig?.source === 'override' && typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+    // Same units as the worker (ratio 1.10 = 110 points; out of range = none).
+    return fig?.source === 'override' ? toIndexPoints(fig.value) : null;
   };
   // FON-95 part 2 — the effective ANALYST-SET target per model year from the
   // worker's by-year grid (by-year beats scalar; index = ordinal − 1). These
@@ -441,7 +451,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     const mpi: (YearTarget | null)[] = Array.from({ length: size }, () => null);
     const ari: (YearTarget | null)[] = Array.from({ length: size }, () => null);
     const of = (t: { value: number | null; source: 'by_year' | 'scalar' | null } | undefined): YearTarget | null => {
-      const v = posOrNull(t?.value);
+      const v = toIndexPoints(t?.value ?? null);
       return v != null && t?.source ? { value: v, source: t.source } : null;
     };
     for (const r of rows) {
@@ -460,7 +470,65 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   // is held flat and a one-line note says the targets are set but not applied.
   const byYearApplies = !!methodology?.by_year_applies;
   const appliedTargetsByYear = byYearApplies ? targetsByYear : null;
-  const targetsNotApplied = hasTargets && !byYearApplies;
+  const scalarTargets = { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') };
+  const anyTargetSet = hasTargets || scalarTargets.mpi != null || scalarTargets.ari != null;
+  const targetsNotApplied = anyTargetSet && !byYearApplies;
+  // Revenue Opportunity at Target is gated EXACTLY like the index rows: a
+  // target the model does not run on prices no opportunity.
+  const appliedScalarTargets = byYearApplies ? scalarTargets : null;
+  const targetGateReason = targetsNotApplied
+    ? `Targets set but not applied — ${methodology?.by_year_disabled_reason ?? 'turn on “Use STR rates in the model” in Market Overview.'}`
+    : null;
+
+  // Sam #3 — the penetration rows follow the SELECTED benchmark (Index
+  // methodology). The STR comp set keeps the published indices; another
+  // method indexes the subject against that benchmark: its TTM level in the
+  // anchor column and the worker's by-year benchmark in the forecast columns.
+  const benchmark = useMemo((): PenetrationBenchmark | null => {
+    if (!methodology) return null;
+    const m = methodology.methods.find((x) => x.method === methodology.selected);
+    if (!m || m.method === 'str_comp_set') return null;
+    const series = emptySeries(cols.columns.length);
+    const details: (string | null)[] = cols.columns.map(() => null);
+    const byYear = new Map((methodology.by_year ?? []).map((r) => [r.year, r]));
+    const put = (i: number, occRaw: number | null | undefined, adrRaw: number | null | undefined, detail: string | null) => {
+      const o = occFraction(occRaw ?? null);
+      const a = posOrNull(adrRaw ?? null);
+      series.occupancy[i] = o;
+      series.adr[i] = a;
+      series.revpar[i] = o != null && a != null ? o * a : null;
+      details[i] = detail;
+    };
+    const anchor = cols.firstForecastIndex - 1;
+    if (m.available && anchor >= 0) {
+      put(anchor, m.occupancy.value, m.adr.value, m.occupancy.detail ?? m.occupancy.period_label ?? null);
+    }
+    cols.columns.forEach((c, i) => {
+      if (c.kind !== 'forecast' || c.ordinal == null) return;
+      const r = byYear.get(c.ordinal);
+      if (r) put(i, r.benchmark_occupancy.value, r.benchmark_adr.value, r.benchmark_occupancy.detail ?? null);
+    });
+    const subjOcc = occFraction(methodology.subject_occupancy?.value ?? null);
+    const subjAdr = posOrNull(methodology.subject_adr?.value ?? null);
+    const bOcc = m.available ? occFraction(m.occupancy.value) : null;
+    const bAdr = m.available ? posOrNull(m.adr.value) : null;
+    const mpi = subjOcc != null && bOcc != null ? (subjOcc / bOcc) * 100 : null;
+    const ari = subjAdr != null && bAdr != null ? (subjAdr / bAdr) * 100 : null;
+    return {
+      method: m.method,
+      label: m.label,
+      series,
+      details,
+      current: {
+        mpi,
+        ari,
+        trace:
+          mpi != null || ari != null
+            ? `subject STR TTM ÷ ${m.label} (${methodology.subject_period_label ?? 'TTM'}) × 100 — the current penetration against the selected benchmark`
+            : null,
+      },
+    };
+  }, [methodology, cols]);
   const penetrationRows = useMemo(
     () =>
       computePenetration({
@@ -475,11 +543,13 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         },
         subjectKeys,
         compKeys,
-        targets: { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') },
+        targets: appliedScalarTargets,
         targetsByYear: appliedTargetsByYear,
+        targetGateReason,
+        benchmark,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology, appliedTargetsByYear],
+    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology, appliedTargetsByYear, benchmark, targetGateReason],
   );
 
   // FON-41 E-027 — reconcile this table to Financials → Projections. Every
@@ -560,11 +630,20 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     ? `Market / ${market.forecastProvenance}`
     : 'no market forecast source';
   const subjectBand = 'Fondok underwriting (revenue engine)';
-  const compBand = 'no comp-set forecast source';
+  const compBand = comp.forecastFilled ? COMP_FORECAST_GROWN_LABEL : 'no comp-set forecast source';
+  // The table is the STR comp set (comp = subject ÷ STR index) — never titled
+  // as a CoStar market table.
+  const compTitle = 'STR Competitive Set';
 
-  // FON-61 (61.3) — the comp set's own boundary: its anchor is the STR TTM
-  // blend and its forecast is blank, so there is never a growth step to refuse.
-  const compBoundary: ForecastBoundary = { comparable: true };
+  // FON-61 (61.3) — the comp set's own boundary: Year 1 is the STR TTM level
+  // itself (the Year-1 benchmark), so there is no growth step between the
+  // anchor and Year 1 to report; later years grow at the market assumption.
+  const compBoundary: ForecastBoundary = comp.forecastFilled
+    ? {
+        comparable: false,
+        note: 'Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level itself (the Year-1 benchmark the index method uses), so there is no growth step from the TTM column. Later years grow at the market growth assumption.',
+      }
+    : { comparable: true };
   const marketBoundary: ForecastBoundary =
     market.forecastProvenance && cols.firstForecastIndex > 0 && market.sources[cols.firstForecastIndex - 1]?.kind === 'market_actual'
       ? {
@@ -574,9 +653,12 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         }
       : { comparable: true };
 
+  const compCaption = comp.forecastFilled
+    ? 'the comp-set forecast is the STR TTM level grown at the market growth assumption (labelled as an assumption, with its source on hover).'
+    : 'the comp set has no growth value to carry it forward, so its forecast is blank with the reason on hover.';
   const forecastCaption = market.forecastProvenance
-    ? `Market forecast columns are the uploaded ${market.forecastProvenance} projection, placed by the report’s own calendar years; the subject forecast is the underwriting projection; the comp set has no forecast source and is not carried forward.`
-    : `No CBRE Horizons report is on this deal, so the Market and comp-set forecast columns are blank with the reason on hover; the subject rows are the underwriting projection.`;
+    ? `Market forecast columns are the uploaded ${market.forecastProvenance} projection, placed by the report’s own calendar years; the subject forecast is the underwriting projection; ${compCaption}`
+    : `No CBRE Horizons report is on this deal, so the Market forecast columns are blank with the reason on hover; the subject rows are the underwriting projection; ${compCaption}`;
 
   return (
     <div className="space-y-5">
@@ -621,7 +703,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
 
       <Card className="p-0 overflow-hidden">
         <IndexTable
-          title="CoStar Market — Competitive Set"
+          title={compTitle}
           cols={cols}
           keys={compKeys}
           series={comp.series}
@@ -650,9 +732,11 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
           cols={cols}
           rows={penetrationRows}
           forecastBand={
-            hasTargets && byYearApplies
-              ? 'indices at the analyst’s MPI / ARI targets per year (RGI derived), else held at STR TTM; shares and variances where both sides are reported'
-              : 'indices held at STR TTM; shares and variances where both sides are reported'
+            benchmark
+              ? `indices against ${benchmark.label} (the selected benchmark)${hasTargets && byYearApplies ? ', at the analyst’s MPI / ARI targets where set (RGI derived)' : ''}; shares and variances against the STR comp set`
+              : hasTargets && byYearApplies
+                ? 'indices at the analyst’s MPI / ARI targets per year (RGI derived), else held at STR TTM; shares and variances where both sides are reported'
+                : 'indices held at STR TTM; shares and variances where both sides are reported'
           }
         />
         {targetsNotApplied && (

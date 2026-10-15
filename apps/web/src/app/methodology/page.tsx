@@ -435,6 +435,15 @@ export default function MethodologyPage() {
               the lineage of that year&apos;s rooms revenue; the Future P&amp;L Assumptions sheet carries one row per
               metric per year (<code>index_mpi_target_by_year.3</code>) so the targets round-trip through Excel with the
               same justification rule.
+              <br />
+              <b>Target units (Sam #3).</b> A target is index points 25–250 (100 = parity with the benchmark) or a
+              ratio 0.25–2.5 (1.0 = parity) — the two bands do not overlap, so a value names its own unit: 1.10 is 110
+              points everywhere (the panel, the by-year grid, the penetration table, the at-target opportunity and the
+              model), never 1.1. The range is checked on every write <i>and every read</i>: a legacy stored target outside
+              both bands (e.g. 5, written before the check existed) is ignored by the model and the grid — it never moves
+              Year-1 occupancy or ADR — and the panel shows &quot;—&quot; with &quot;Stored target 5 is outside 25–250
+              index points … re-enter it&quot;; a by-year entry out of range falls back to the all-years target and is
+              named the same way.
             </BadgeRow>
             <BadgeRow source="index_assumption" name="Index Analysis · Columns &amp; Rows">
               The Index Analysis year columns follow the acquisition close calendar — the same
@@ -444,23 +453,34 @@ export default function MethodologyPage() {
               six columns before Year 1 are history. With no close date the forecast columns read &quot;Year N&quot; with a
               one-line note; a year is never guessed. Subject history is the STR Trend annual subject figures
               (<code>ttm_performance.subject.annual.&lt;YYYY&gt;</code>) where the report carries them, else the P&amp;L
-              fiscal year — a Source row says which per column. The comp set is the STR TTM blend (subject ÷ MPI / ARI /
-              RGI) in the last historical column and has no forecast source, so its forecast cells are &quot;—&quot; with the
-              reason — never the subject&apos;s growth re-scaled. A separate Market row carries market-level actuals
+              fiscal year — a Source row says which per column. The comp-set table (titled <b>STR Competitive Set</b> —
+              it is STR data, never labelled a CoStar market table) is the STR TTM blend (subject ÷ MPI / ARI / RGI) in
+              the last historical column. Its forecast columns are the same series the STR comp-set index method runs
+              on: the TTM level as the Year-1 benchmark, grown at the market occupancy / ADR growth assumption after it
+              (the document default or your override), banded &quot;comp set grown at market growth (assumption)&quot;
+              with the growth source on hover. STR publishes no comp-set forecast, so this is an assumption, never an STR
+              figure; with no growth value the out-years stay &quot;—&quot; with the reason, and the subject&apos;s growth
+              is never re-scaled into them. The by-year fair share, variances and Revenue Opportunity at Par fill from it. A separate Market row carries market-level actuals
               (market study / STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the
               report&apos;s own calendar year (<code>cbre_horizons.year_&lt;n&gt;.calendar_year</code>, pipeline v7) and
               labelled Market / CBRE Horizons with document and page — a CBRE forecast is a market forecast, not a comp-set
               forecast. A calendar shorter than the horizon is not extended: a model year the engine did not place reads
-              &quot;Year N&quot; with no calendar year. Penetration rows: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
+              &quot;Year N&quot; with no calendar year. Penetration rows follow the benchmark selected on Index methodology. With the STR comp set: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
               forecast columns the analyst&apos;s MPI / ARI target for that model year where one is set (by-year, else the
               all-years target; RGI derived as MPI × ARI ÷ 100) while &quot;Use STR rates in the model&quot; is on — so the
               index rows only print a target the Subject rows actually run on — else the published index held flat, with
               a one-line note when targets are set but not applied; the hover text
-              says which; the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
+              says which. With the market benchmark (or the CoStar comp set) selected, the index rows read &quot;vs
+              &lt;benchmark&gt;&quot;: the anchor column is the subject STR TTM ÷ that benchmark × 100 and each forecast
+              column is the subject ÷ that year&apos;s benchmark (the same by-year benchmark the model indexes against), or
+              the analyst&apos;s target where one applies — never the STR-published indices, which are against the comp set; the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
               set, Fair Share of Supply = subject rooms ÷ (comp-set rooms + subject rooms), fair-share occupancy, actual
               share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at Target, the
-              latter computed per year against the analyst-set target that applies to that year (a document default —
-              the published index itself — is not a target, so with none set the row is &quot;—&quot; and says so). Every cell shows its formula and
+              latter computed per year against the analyst-set target that applies to that year and priced on the selected
+              benchmark (target RevPAR = benchmark occupancy × MPI ÷ 100 × benchmark ADR × ARI ÷ 100). It is gated exactly
+              like the index rows: only while &quot;Use STR rates in the model&quot; is on, otherwise &quot;—&quot; with
+              &quot;Targets set but not applied&quot;. A document default — the published index itself — is not a target,
+              so with none set the row is &quot;—&quot; and says so. Every cell shows its formula and
               inputs on hover; a cell with no reported input is &quot;—&quot;.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">

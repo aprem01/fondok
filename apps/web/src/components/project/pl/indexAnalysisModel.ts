@@ -14,8 +14,9 @@
  * themselves report — never a guessed year.
  */
 
-import type { EngineOutputsResponse, HistoricalBaselineResponse } from '@/lib/api';
+import type { EngineOutputsResponse, HistoricalBaselineResponse, IndexCompSetYear, IndexFigure } from '@/lib/api';
 import { getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { toIndexPoints } from '@/lib/indexTarget';
 
 // ─────────────────────────── market-data envelope (worker) ───────────────────────────
 // Mirrors apps/worker/app/api/documents.py MarketDataResponse.
@@ -227,7 +228,7 @@ export interface YearSeries {
 /** Where one column's figures came from — the short label goes in the
  *  Source row, the detail on hover. */
 export interface CellSource {
-  kind: 'str_annual' | 'pnl_fiscal_year' | 'engine' | 'str_ttm' | 'market_actual' | 'cbre_forecast';
+  kind: 'str_annual' | 'pnl_fiscal_year' | 'engine' | 'str_ttm' | 'market_actual' | 'cbre_forecast' | 'comp_grown';
   label: string;
   detail: string;
   /** Engine rows only — ``revenue.years[yearIndex]``. */
@@ -257,10 +258,11 @@ export function indexRatio(idx: number | null | undefined): number | null {
   return idx > 3 ? idx / 100 : idx;
 }
 
-// Same normalization, expressed in index points (109.8) for display.
+// An index or penetration target in index points (109.8), read EXACTLY as the
+// worker reads it (``validate_index_target``): a ratio 0.25–2.5 × 100, points
+// 25–250 as is, anything else null — see ``@/lib/indexTarget``.
 export function indexPoints(idx: number | null | undefined): number | null {
-  const r = indexRatio(idx);
-  return r == null ? null : r * 100;
+  return toIndexPoints(idx);
 }
 
 // Normalize an occupancy figure to a 0..1 fraction (sources vary between 0.72
@@ -402,14 +404,32 @@ export interface CompSeriesResult {
   sources: (CellSource | null)[];
   /** The column the STR TTM blend sits in, or −1. */
   anchorIndex: number;
-  /** Why every forecast cell is "—". */
-  forecastReason: string;
+  /** Why the forecast cells are "—" (all, or the ones still blank). Null when
+   *  every forecast column is filled. */
+  forecastReason: string | null;
+  /** True when at least one forecast column carries the comp set grown at the
+   *  market growth assumption. */
+  forecastFilled: boolean;
 }
 
 /** Why the comp-set forecast columns are blank — not a number re-scaled off
  *  the subject's growth (FON-95). */
 export const COMP_FORECAST_NONE_REASON =
   'No comp-set forecast source: STR publishes the comp set for the trailing twelve months only, and CBRE Horizons forecasts the market, not this comp set. The comp set is not carried forward at the subject’s growth.';
+
+/** The comp-set forecast band when it is filled (Sam #3): the STR TTM level
+ *  grown at the market occupancy / ADR growth assumption — an ASSUMPTION, the
+ *  same series the ``str_comp_set`` index method runs on. */
+export const COMP_FORECAST_GROWN_LABEL = 'comp set grown at market growth (assumption)';
+
+const figureDocs = (f: IndexFigure | null | undefined): string => {
+  const docs: string[] = [];
+  for (const r of f?.inputs ?? []) {
+    const d = r.doc_name ? `${r.doc_name}${r.page ? `, p.${r.page}` : ''}` : null;
+    if (d && !docs.includes(d)) docs.push(d);
+  }
+  return docs.length ? ` — ${docs.join('; ')}` : '';
+};
 
 /**
  * The STR/CoStar comp set. The TTM report anonymizes per-property comp
@@ -419,7 +439,14 @@ export const COMP_FORECAST_NONE_REASON =
  * on the last historical column (the TTM window's anchor). Every other cell
  * is "—": STR publishes no prior-year comp set and no comp-set forecast.
  */
-export function buildCompSeries(cols: IaColumns, str: StrTrendAPI | null | undefined): CompSeriesResult {
+export function buildCompSeries(
+  cols: IaColumns,
+  str: StrTrendAPI | null | undefined,
+  /** The worker's STR comp set by model year (``comp_set_by_year``): TTM level
+   *  in Year 1, grown at the market growth assumption after it; a year with no
+   *  growth value is null with the reason. Absent on an older worker. */
+  compByYear?: IndexCompSetYear[] | null,
+): CompSeriesResult {
   const { columns, firstForecastIndex } = cols;
   const series = emptySeries(columns.length);
   const sources: (CellSource | null)[] = columns.map(() => null);
@@ -450,7 +477,43 @@ export function buildCompSeries(cols: IaColumns, str: StrTrendAPI | null | undef
       };
     }
   }
-  return { series, sources, anchorIndex, forecastReason: COMP_FORECAST_NONE_REASON };
+  // Forecast — the comp set grown at the market growth assumption, by model
+  // year, exactly as the worker's ``str_comp_set`` benchmark series.
+  const byYear = new Map<number, IndexCompSetYear>();
+  for (const r of compByYear ?? []) if (finiteInt(r?.year) != null) byYear.set(r.year, r);
+  let filled = 0;
+  let firstBlankReason: string | null = null;
+  columns.forEach((col, i) => {
+    if (col.kind !== 'forecast' || col.ordinal == null) return;
+    const r = byYear.get(col.ordinal);
+    const occ = occFraction(r?.occupancy?.value ?? null);
+    const adr = posOrNull(r?.adr?.value ?? null);
+    if (occ == null && adr == null) {
+      firstBlankReason ??= r?.occupancy?.detail ?? r?.adr?.detail ?? null;
+      return;
+    }
+    series.occupancy[i] = occ;
+    series.adr[i] = adr;
+    series.revpar[i] = occ != null && adr != null ? occ * adr : null;
+    const parts = [
+      r?.occupancy?.detail ? `Occupancy: ${r.occupancy.detail}${figureDocs(r.occupancy)}` : null,
+      r?.adr?.detail ? `ADR: ${r.adr.detail}${figureDocs(r.adr)}` : null,
+    ].filter(Boolean);
+    sources[i] = {
+      kind: 'comp_grown',
+      label: col.ordinal === 1 ? 'STR TTM (Y1)' : 'Grown (assumption)',
+      detail: `STR comp set ${col.ordinal === 1 ? 'TTM level as the Year-1 benchmark' : 'grown at the market growth assumption'} — the same series the STR comp-set index method runs on. ${parts.join(' · ')}`,
+    };
+    filled++;
+  });
+  const forecastCount = columns.length - firstForecastIndex;
+  const forecastReason =
+    filled === 0
+      ? firstBlankReason ?? COMP_FORECAST_NONE_REASON
+      : filled < forecastCount
+        ? firstBlankReason
+        : null;
+  return { series, sources, anchorIndex, forecastReason, forecastFilled: filled > 0 };
 }
 
 export function strPeriodLabel(str: StrTrendAPI | null | undefined): string | null {
@@ -619,6 +682,28 @@ export interface PenetrationInput {
    *  all-years `scalar`; null = no target that year). Forecast columns read
    *  these; historical columns and a missing entry fall back to `targets`. */
   targetsByYear?: { mpi: (YearTarget | null)[]; ari: (YearTarget | null)[] } | null;
+  /** Why no target is applied even though one is set (e.g. "Use STR rates in
+   *  the model" is off) — the at-target opportunity is gated exactly like the
+   *  index rows, and says so. */
+  targetGateReason?: string | null;
+  /** The benchmark the analyst SELECTED on Index methodology. With the STR
+   *  comp set (or none) the index rows are the STR-published indices against
+   *  the comp set; with another method they index the subject against THAT
+   *  benchmark (per column), and the at-target opportunity prices the target
+   *  against it — the target is a penetration of the selected benchmark. */
+  benchmark?: PenetrationBenchmark | null;
+}
+
+export interface PenetrationBenchmark {
+  method: string;
+  label: string;
+  /** Benchmark occupancy (0..1) / ADR / RevPAR per column; null = none. */
+  series: YearSeries;
+  /** Where each column's benchmark came from — on hover. */
+  details: (string | null)[];
+  /** The current (TTM) penetration against this benchmark the worker computed
+   *  (subject STR TTM ÷ benchmark × 100) — the anchor column. */
+  current: { mpi: number | null; ari: number | null; trace: string | null };
 }
 
 /** One year's effective penetration target and which key it came from. */
@@ -635,12 +720,15 @@ export function targetForColumn(
   targets: PenetrationInput['targets'],
   byYear: PenetrationInput['targetsByYear'],
 ): YearTarget | null {
+  // Every target is read through the worker's units (``@/lib/indexTarget``): a
+  // ratio (1.10) is 110 points, an out-of-range value is not a target at all.
   if (col.kind === 'forecast' && col.ordinal != null && byYear) {
     const t = byYear[metric][col.ordinal - 1];
-    if (t && Number.isFinite(t.value) && t.value > 0) return { value: t.value, source: t.source };
+    const pts = t ? toIndexPoints(t.value) : null;
+    if (t && pts != null) return { value: pts, source: t.source };
   }
-  const s = targets?.[metric] ?? null;
-  return s != null && Number.isFinite(s) && s > 0 ? { value: s, source: 'scalar' } : null;
+  const s = toIndexPoints(targets?.[metric] ?? null);
+  return s != null ? { value: s, source: 'scalar' } : null;
 }
 
 // (current / prior) - 1, returning null when either side is missing/zero.
@@ -781,10 +869,50 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
     }),
   });
 
+  // Sam #3 — the index rows follow the SELECTED benchmark. With a benchmark
+  // other than the STR comp set, the STR-published MPI / ARI (which are
+  // against the comp set) would index the subject against the wrong thing.
+  const bench = i.benchmark && i.benchmark.method !== 'str_comp_set' ? i.benchmark : null;
+  const benchmarkRow = (
+    key: 'mpi' | 'ari' | 'rgi',
+    label: string,
+    subj: (number | null)[],
+    benchSeries: (number | null)[],
+    current: number | null,
+    metric: string,
+    b: PenetrationBenchmark,
+  ): PenetrationRow => ({
+    key,
+    label: `${label} vs ${b.label}`,
+    reason: `Indexed against the selected benchmark (${b.label}) — Index methodology`,
+    cells: Array.from({ length: n }, (_, k) => {
+      const target = forecastTarget(k, key);
+      if (target) return cell(target.value, (v) => v.toFixed(1), target.trace);
+      if (k < anchor) return dash;
+      if (k === anchor && current != null) {
+        return cell(current, (v) => v.toFixed(1), b.current.trace ?? `current ${label} against ${b.label}`);
+      }
+      const v = pctIndex(subj[k], benchSeries[k]);
+      return cell(
+        v,
+        (x) => x.toFixed(1),
+        `subject ${metric} ${subj[k]} ÷ ${b.label} ${metric} ${benchSeries[k]} × 100${b.details[k] ? ` (${b.details[k]})` : ''}`,
+      );
+    }),
+  });
+  const rgiCurrent = (b: PenetrationBenchmark): number | null =>
+    b.current.mpi != null && b.current.ari != null ? (b.current.mpi * b.current.ari) / 100 : null;
+
   const rows: PenetrationRow[] = [
-    publishedRow('mpi', 'Occupancy Index (MPI)', i.indices?.mpi ?? null, i.subject.occupancy, i.comp.occupancy, 'occupancy'),
-    publishedRow('ari', 'ADR Index (ARI)', i.indices?.ari ?? null, i.subject.adr, i.comp.adr, 'ADR'),
-    publishedRow('rgi', 'RevPAR Index (RGI)', i.indices?.rgi ?? null, i.subject.revpar, i.comp.revpar, 'RevPAR'),
+    bench
+      ? benchmarkRow('mpi', 'Occupancy Index (MPI)', i.subject.occupancy, bench.series.occupancy, bench.current.mpi, 'occupancy', bench)
+      : publishedRow('mpi', 'Occupancy Index (MPI)', i.indices?.mpi ?? null, i.subject.occupancy, i.comp.occupancy, 'occupancy'),
+    bench
+      ? benchmarkRow('ari', 'ADR Index (ARI)', i.subject.adr, bench.series.adr, bench.current.ari, 'ADR', bench)
+      : publishedRow('ari', 'ADR Index (ARI)', i.indices?.ari ?? null, i.subject.adr, i.comp.adr, 'ADR'),
+    bench
+      ? benchmarkRow('rgi', 'RevPAR Index (RGI)', i.subject.revpar, bench.series.revpar, rgiCurrent(bench), 'RevPAR', bench)
+      : publishedRow('rgi', 'RevPAR Index (RGI)', i.indices?.rgi ?? null, i.subject.revpar, i.comp.revpar, 'RevPAR'),
     vsMarketRow('mpi-market', 'Occupancy Index vs Market', i.subject.occupancy, i.market.occupancy, pctS, 'occupancy'),
     vsMarketRow('ari-market', 'ADR Index vs Market', i.subject.adr, i.market.adr, usd, 'ADR'),
     vsMarketRow('rgi-market', 'RevPAR Index vs Market', i.subject.revpar, i.market.revpar, usd, 'RevPAR'),
@@ -923,15 +1051,21 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
   );
   const noTarget = anyTarget
     ? null
-    : 'No MPI / ARI penetration target set — set both on Index methodology (all years, or by year) to see the opportunity at target';
+    : i.targetGateReason ??
+      'No MPI / ARI penetration target set — set both on Index methodology (all years, or by year) to see the opportunity at target';
+  // The target is a penetration of the SELECTED benchmark, so the at-target
+  // RevPAR is priced on that benchmark (the comp set when it is the STR comp set).
+  const tOcc = bench ? bench.series.occupancy : i.comp.occupancy;
+  const tAdr = bench ? bench.series.adr : i.comp.adr;
+  const tName = bench ? bench.label : 'comp-set';
   rows.push({
     key: 'oppty-target',
     label: 'Revenue Opportunity at Target',
     reason: noTarget ?? (kv == null ? 'Subject room count unknown' : null),
     cells: Array.from({ length: n }, (_, k) => {
       const sr = i.subject.revpar[k];
-      const co = i.comp.occupancy[k];
-      const ca = i.comp.adr[k];
+      const co = tOcc[k];
+      const ca = tAdr[k];
       const mt = targetForColumn(idx(k), 'mpi', i.targets, i.targetsByYear);
       const at = targetForColumn(idx(k), 'ari', i.targets, i.targetsByYear);
       if (kv == null || sr == null || co == null || ca == null || !mt || !at) return dash;
@@ -942,7 +1076,7 @@ export function computePenetration(i: PenetrationInput): PenetrationRow[] {
       return cell(
         v,
         (x) => `${x < 0 ? '−' : ''}$${Math.round(Math.abs(x)).toLocaleString('en-US')}`,
-        `(target RevPAR ${usd(targetRevpar)} = comp-set occupancy ${pctS(co)} × MPI target ${mt.value.toFixed(1)}${which(mt)} ÷ 100 × comp-set ADR ${usd(ca)} × ARI target ${at.value.toFixed(1)}${which(at)} ÷ 100 − subject RevPAR ${usd(sr)}) × ${kv} rooms × ${days} days`,
+        `(target RevPAR ${usd(targetRevpar)} = ${tName} occupancy ${pctS(co)} × MPI target ${mt.value.toFixed(1)}${which(mt)} ÷ 100 × ${tName} ADR ${usd(ca)} × ARI target ${at.value.toFixed(1)}${which(at)} ÷ 100 − subject RevPAR ${usd(sr)}) × ${kv} rooms × ${days} days`,
       );
     }),
   });
