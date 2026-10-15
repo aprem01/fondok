@@ -85,10 +85,23 @@ class Tenant:
 
 # ─────────────────────────── cache ───────────────────────────
 
-_CACHE_TTL_S = 30.0
-# ``{tenant_id: (fetched_at_monotonic, Tenant | None)}`` — ``None`` caches a
-# miss too, so an unregistered org hammering the API is one query per TTL.
+# A registry HIT lives this long. Writes on THIS replica clear the cache;
+# a suspension written on another replica lands here within this window.
+_CACHE_TTL_S = 10.0
+# A registry MISS (no row) lives only this long, so an org an admin has
+# just registered — on any replica — is served within ~2 s instead of
+# being refused for a full hit TTL. Still bounds an unregistered org
+# hammering the API to one query per 2 s.
+_MISS_TTL_S = 2.0
+# ``{tenant_id: (fetched_at_monotonic, Tenant | None)}`` — ``None`` is a
+# cached miss. A lookup FAILURE is never cached (see ``get_tenant``).
 _CACHE: dict[UUID, tuple[float, Tenant | None]] = {}
+
+
+class TenantRegistryUnavailable(RuntimeError):
+    """The ``tenants`` table could not be read (connection error, table
+    missing, timeout). Distinct from "no row": the caller must not treat it
+    as "not registered"."""
 
 
 def reset_tenant_cache() -> None:
@@ -117,18 +130,28 @@ def _row_to_tenant(row: Any) -> Tenant:
 _SELECT_COLUMNS = "id, clerk_org_id, name, kind, status, created_at"
 
 
-async def get_tenant(tenant_id: UUID | str, *, use_cache: bool = True) -> Tenant | None:
+async def get_tenant(
+    tenant_id: UUID | str, *, use_cache: bool = True, raise_on_error: bool = False
+) -> Tenant | None:
     """Return the registry row for ``tenant_id`` or ``None``.
 
-    Never raises: a DB without the ``tenants`` table (worker older than
-    the migration, or the migration failed) logs once at WARNING and
-    returns ``None``.
+    A lookup FAILURE (connection error, no ``tenants`` table because the
+    worker predates the migration) is never cached. By default it logs at
+    WARNING and returns ``None`` — the informational callers
+    (``/settings/tenant``, the admin list) degrade to "no registry row".
+    With ``raise_on_error=True`` it raises :class:`TenantRegistryUnavailable`
+    instead, which is what the enforcement path needs: an outage must read
+    as 503, never as "not registered".
+
+    Hits are cached ``_CACHE_TTL_S``; misses only ``_MISS_TTL_S``.
     """
     tid = UUID(str(tenant_id))
     if use_cache:
         hit = _CACHE.get(tid)
-        if hit is not None and (time.monotonic() - hit[0]) < _CACHE_TTL_S:
-            return hit[1]
+        if hit is not None:
+            ttl = _CACHE_TTL_S if hit[1] is not None else _MISS_TTL_S
+            if (time.monotonic() - hit[0]) < ttl:
+                return hit[1]
     tenant: Tenant | None = None
     try:
         async with get_engine().connect() as conn:
@@ -142,14 +165,21 @@ async def get_tenant(tenant_id: UUID | str, *, use_cache: bool = True) -> Tenant
             tenant = _row_to_tenant(row)
     except Exception as exc:
         logger.warning("tenants: lookup failed for %s (%s)", tid, exc)
+        if raise_on_error:
+            raise TenantRegistryUnavailable(f"{type(exc).__name__}: {exc}") from exc
         return None
     _CACHE[tid] = (time.monotonic(), tenant)
     return tenant
 
 
 async def is_registered(tenant_id: UUID | str) -> bool:
-    """True when the tenant exists and is ``active``."""
-    tenant = await get_tenant(tenant_id)
+    """True when the tenant exists and is ``active``.
+
+    Raises :class:`TenantRegistryUnavailable` when the registry cannot be
+    read — the auth dependency maps that to 503 ``tenant_registry_unavailable``
+    rather than a (cached, wrong) 403.
+    """
+    tenant = await get_tenant(tenant_id, raise_on_error=True)
     return tenant is not None and tenant.is_serving
 
 
@@ -239,15 +269,60 @@ async def upsert_tenant(
     return stored
 
 
+async def update_tenant(
+    tenant_id: UUID,
+    *,
+    name: str | None = None,
+    status: str | None = None,
+) -> Tenant | None:
+    """Change ``name`` and/or ``status`` on an EXISTING row; never inserts.
+
+    The Clerk webhook's ``organization.updated`` (name refresh) and
+    ``organization.deleted`` (→ ``suspended``) path. ``kind`` is never
+    touched here, and ``status`` may only move to a non-serving value —
+    an org is re-activated only by an internal admin through
+    :func:`upsert_tenant`. Returns ``None`` when there is no row for the
+    tenant (an org nobody registered or parked), so the caller can
+    acknowledge the delivery without creating a row.
+    """
+    if status is not None and status not in STATUSES:
+        raise ValueError(f"status must be one of {sorted(STATUSES)}, got {status!r}")
+    if status == SERVING_STATUS:
+        raise ValueError("update_tenant never re-activates — use upsert_tenant from an admin path")
+    sets: list[str] = []
+    params: dict[str, Any] = {"id": str(tenant_id)}
+    if name is not None and name.strip():
+        sets.append("name = :name")
+        params["name"] = name.strip()
+    if status is not None:
+        sets.append("status = :status")
+        params["status"] = status
+    if not sets:
+        return await get_tenant(tenant_id, use_cache=False)
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            text(f"UPDATE tenants SET {', '.join(sets)} WHERE id = :id"),
+            params,
+        )
+        touched = int(result.rowcount or 0)
+    reset_tenant_cache()
+    if touched == 0:
+        return None
+    return await get_tenant(tenant_id, use_cache=False)
+
+
 __all__ = [
     "KINDS",
     "SERVING_STATUS",
     "STATUSES",
     "Tenant",
+    "TenantRegistryUnavailable",
     "get_tenant",
     "is_internal",
     "is_registered",
     "list_tenants",
     "reset_tenant_cache",
+    "update_tenant",
     "upsert_tenant",
 ]

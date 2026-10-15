@@ -1209,8 +1209,11 @@ class IndexYearOut(BaseModel):
     #: benchmark × target ÷ 100 (before Year-1 displacement); None when not driven.
     occupancy: float | None = None
     adr: float | None = None
-    occupancy_status: Literal["driven", "no_target", "benchmark_unavailable"]
-    adr_status: Literal["driven", "no_target", "benchmark_unavailable"]
+    #: ``scalar_year1_only`` — Year 2+ with only the all-years target and no
+    #: analyst market-growth override for the metric: not driven; the model's
+    #: own growth carries the year (set a by-year target or a growth override).
+    occupancy_status: Literal["driven", "no_target", "benchmark_unavailable", "scalar_year1_only"]
+    adr_status: Literal["driven", "no_target", "benchmark_unavailable", "scalar_year1_only"]
     reason: str | None = None
     #: What the LAST model run actually ran for this year, when the run carried
     #: an Index Analysis driver for it (``revenue.index_drivers_by_year``).

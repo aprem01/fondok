@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
+from ..auth.context import current_tenant_id
 from ..database import get_session, get_session_factory
 from ..engines.timeline import TimelineEvent, build_timeline, parse_iso_date
 from ..services.engine_runner import (
@@ -225,6 +226,10 @@ async def _background_run_all(
     """Background-task wrapper that opens its own session and runs the
     full chain. We open a fresh session here because the request-scoped
     session would already be closed by the time the task fires."""
+    # FON-93: the task runs outside the request's auth dependency, so the
+    # RLS GUC hook (``database._tenant_guc_after_begin``) needs the tenant
+    # published here from the argument.
+    current_tenant_id.set(str(tenant_id))
     factory = get_session_factory()
     async with factory() as session:
         try:
@@ -249,6 +254,7 @@ async def _background_run_one(
     run_id: str,
     overrides: dict[str, Any] | None,
 ) -> None:
+    current_tenant_id.set(str(tenant_id))  # FON-93 — see _background_run_all
     factory = get_session_factory()
     async with factory() as session:
         try:

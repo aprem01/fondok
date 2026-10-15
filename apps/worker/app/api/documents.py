@@ -56,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
+from ..auth.context import current_tenant_id
 from ..database import get_session, get_session_factory
 from ..engines.historical_baseline import (
     HistoricalYear,
@@ -2572,6 +2573,9 @@ async def _run_parse_and_extract(
     document is still queryable, just unusable for extraction until
     re-uploaded or re-parsed manually.
     """
+    # FON-93: off the request loop there is no auth dependency to publish
+    # the tenant for the RLS GUC hook — do it from the argument.
+    current_tenant_id.set(str(tenant_id))
     factory = get_session_factory()
     extraction_data_to_persist: dict[str, Any] | None = None
     page_count_to_persist: int | None = None
@@ -6280,6 +6284,7 @@ async def _run_extraction_pipeline_inner(
     are unchanged, and the row's ``agent_version`` is whatever that path
     produced (never a cache clone).
     """
+    current_tenant_id.set(str(tenant_id))  # FON-93 — see _run_parse_and_extract
     factory = get_session_factory()
     async with factory() as session:
         try:
@@ -7587,6 +7592,9 @@ async def _run_graph_extraction(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
     """Drive Router → Extractor against a single uploaded document.
 
+    FON-93: publishes ``tenant_id`` to ``current_tenant_id`` first — the
+    pre-router doc_type persist below opens its own factory session.
+
     Reads the parsed page text cached on the document row's
     ``extraction_data`` JSONB and feeds it to the Extractor as actual
     content (NOT a URI — the agent has no fetcher). Returns the
@@ -7607,6 +7615,8 @@ async def _run_graph_extraction(
         ExtractorInput,
         run_extractor,
     )
+
+    current_tenant_id.set(str(tenant_id))
 
     # Reconstruct page text from parser cache.
     pages = (extraction_data or {}).get("pages") or []

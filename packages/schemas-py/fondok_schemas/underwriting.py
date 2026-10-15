@@ -314,7 +314,7 @@ class InvestmentEngineOutput(BaseModel):
 # ─────────────── Revenue Engine ───────────────
 
 
-IndexDriverStatus = Literal["driven", "no_target", "benchmark_unavailable"]
+IndexDriverStatus = Literal["driven", "no_target", "benchmark_unavailable", "scalar_year1_only"]
 IndexTargetSource = Literal["by_year", "scalar"]
 
 
@@ -325,14 +325,18 @@ class IndexDriverYear(BaseModel):
     The engine runner builds one per model year when the STR basis is on and
     the analyst has set a penetration target (``index_mpi_target_by_year`` /
     ``index_ari_target_by_year``, or the scalar ``index_mpi_target`` /
-    ``index_ari_target`` as the all-years shorthand). Each record carries the
-    benchmark the year was indexed against (value + document + page, or the
-    growth step it was grown by), the target, the derived RGI, and the
-    resulting figure. A year with no benchmark value is flagged
-    ``benchmark_unavailable`` — the engine then keeps its own growth from
-    the last driven year and nothing is invented. The revenue engine echoes
-    the list on its output with ``occupancy`` / ``adr`` filled from the year
-    it actually ran, so the Index Analysis grid and the Future P&L agree.
+    ``index_ari_target``). Each record carries the benchmark the year was
+    indexed against (value + document + page, or the growth step it was grown
+    by), the target, the derived RGI, and the resulting figure. A year with
+    no benchmark value is flagged ``benchmark_unavailable`` — the engine then
+    keeps its own growth from the last driven year and nothing is invented.
+    The scalar target drives Year 1 only: a Year 2+ with only the scalar
+    target and no analyst market-growth override for that metric is
+    ``scalar_year1_only`` (not driven; the model's own growth carries it), so
+    a deal that set a scalar target before by-year targets existed keeps its
+    numbers. The revenue engine echoes the list on its output with
+    ``occupancy`` / ``adr`` filled from the year it actually ran, so the
+    Index Analysis grid and the Future P&L agree.
     """
 
     model_config = ConfigDict(extra="forbid")

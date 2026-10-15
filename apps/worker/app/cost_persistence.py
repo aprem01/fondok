@@ -37,6 +37,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .auth.context import current_tenant_id
 from .budget import _price_for
 from .database import get_session_factory
 
@@ -202,6 +203,10 @@ async def persist_model_calls_standalone(
     """
     if not calls:
         return 0
+    if tenant_id:
+        # FON-93: fired after the agent returns, outside any request
+        # dependency — publish the tenant for the RLS GUC hook ourselves.
+        current_tenant_id.set(str(tenant_id))
     try:
         factory = get_session_factory()
     except Exception as exc:  # noqa: BLE001

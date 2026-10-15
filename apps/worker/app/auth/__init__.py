@@ -151,9 +151,28 @@ async def get_current_auth(
         # on, an org nobody registered — or one that is suspended / still
         # ``pending_review`` from the Clerk webhook — has no data plane.
         if settings.REQUIRE_REGISTERED_TENANT:
-            from ..tenants import is_registered
+            from ..tenants import TenantRegistryUnavailable, is_registered
 
-            if not await is_registered(tenant_id):
+            try:
+                registered = await is_registered(tenant_id)
+            except TenantRegistryUnavailable as exc:
+                # The registry could not be READ. That is an outage, not a
+                # verdict: answer 503 (retryable, never cached) rather than
+                # the 403 that would tell a paying institution it has no
+                # workspace — and would be cached as a miss.
+                logger.error(
+                    "get_current_auth: tenant registry unavailable while "
+                    "checking org %s (tenant %s): %s — answering 503",
+                    org_id,
+                    tenant_id,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="tenant_registry_unavailable",
+                    headers={"Retry-After": "2"},
+                ) from exc
+            if not registered:
                 logger.warning(
                     "get_current_auth: org %s (tenant %s) is not a registered, "
                     "active tenant — refusing (REQUIRE_REGISTERED_TENANT)",

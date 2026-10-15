@@ -54,8 +54,8 @@ default, on only in `tests/conftest.py` and a developer's local `.env`.
 
 | Setting (Railway → `fondok-worker`) | Default | What it turns on |
 | --- | --- | --- |
-| `REQUIRE_REGISTERED_TENANT` | `False` | A JWT whose org is not an `active` row in `tenants` gets `403 tenant_not_registered`. |
-| `DB_SET_TENANT_GUC` | `False` | Every request transaction runs `set_config('app.tenant_id', <caller>, true)` so Postgres RLS policies can see the caller. No-op on SQLite. |
+| `REQUIRE_REGISTERED_TENANT` | `False` | A JWT whose org is not an `active` row in `tenants` gets `403 tenant_not_registered`. If the registry itself cannot be read (DB down, table missing) the request gets `503 tenant_registry_unavailable` + `Retry-After: 2` — an outage is never reported as "not registered", and is never cached. |
+| `DB_SET_TENANT_GUC` | `False` | Every transaction of every worker session — request-scoped **and** background (extraction pipeline, Run Model task, cost persistence, batch poller, digest scheduler) — runs `set_config('app.tenant_id', <tenant>, true)` so Postgres RLS policies can see the caller. No-op on SQLite. |
 | `CLERK_WEBHOOK_SECRET` | unset | Enables `POST /webhooks/clerk`. Unset → every delivery is refused with 503 (never accepted unsigned). |
 
 `/health` → `auth` reports all of these:
@@ -74,10 +74,20 @@ default, on only in `tests/conftest.py` and a developer's local `.env`.
 * `scripts/register_tenant.py` — the same upsert from a trusted shell.
   Needed exactly once: the first `internal` tenant cannot be created over
   HTTP because nobody is internal yet.
-* `POST /webhooks/clerk` — on `organization.created`, inserts
-  `kind=external, status=pending_review`. Never downgrades an existing row.
-  Svix signature verified with `CLERK_WEBHOOK_SECRET`; 5-minute replay
-  window (`CLERK_WEBHOOK_TOLERANCE_S`).
+* `POST /webhooks/clerk` — Svix signature verified with
+  `CLERK_WEBHOOK_SECRET`; 5-minute replay window
+  (`CLERK_WEBHOOK_TOLERANCE_S`). Three events are acted on; everything
+  else is acknowledged (200) and ignored:
+  * `organization.created` → inserts `kind=external, status=pending_review`.
+    Never downgrades an existing row (a replay for an approved org leaves
+    it `active`; a replay for a deleted org leaves it `suspended`).
+  * `organization.updated` → refreshes `name` only. `kind` and `status`
+    are the registry's (an admin's) to set — a rename in Clerk never
+    approves, suspends or re-activates. Unknown org → `{"ignored": …,
+    "reason": "not_registered"}`, no row created.
+  * `organization.deleted` → `status=suspended`, `kind` and `name` kept,
+    row kept (the UUID still explains every historical `tenant_id`).
+    Nothing in the webhook path can ever set `status=active`.
 
 The registry row's `id` **is** the tenant UUID already stored on every
 existing row for that org, so registering an org that has been using the
@@ -85,10 +95,23 @@ product attaches its history with no data movement.
 
 ### Lookups
 
-`app/tenants.py` caches rows for 30 s in-process. Writes clear the cache.
-On a DB that predates the migration the lookup degrades to "not
-registered" and logs — the worker never 500s; it only refuses once
-`REQUIRE_REGISTERED_TENANT` is on, which is the operator's explicit choice.
+`app/tenants.py` caches in-process: a **hit** for 10 s, a **miss** (no
+row) for 2 s. Writes on the same replica clear the cache; a registration
+or suspension written on another replica lands within those windows. A
+lookup **failure** (connection error, `tenants` table missing) is never
+cached:
+
+* the informational callers (`GET /settings/tenant`, the admin list)
+  degrade to "no registry row" and log;
+* the enforcement path (`REQUIRE_REGISTERED_TENANT=1`) answers
+  `503 tenant_registry_unavailable` with `Retry-After: 2`. Before
+  2026-10-14 an outage read as `403 tenant_not_registered` and was cached
+  for the hit TTL — a paying institution would have been told it had no
+  workspace until the cache lapsed.
+
+With enforcement off the worker never refuses on the registry's account;
+turning it on is the operator's explicit choice, and from then on a
+registry outage is a (retryable) outage for JWT traffic.
 
 ## 5. Rollout order (Prem, by hand)
 
@@ -115,8 +138,8 @@ Do these in order; each step is independently reversible.
 5. **Migrate Sam / Eshan / Rani's existing deals into Fondok Internal**
    (§6) so nothing they rely on disappears when enforcement turns on.
 6. **Clerk dashboard → Webhooks:** add an endpoint
-   `https://<worker>/webhooks/clerk` subscribed to `organization.created`
-   (optionally `organization.updated`). Copy its signing secret
+   `https://<worker>/webhooks/clerk` subscribed to `organization.created`,
+   `organization.updated` and `organization.deleted`. Copy its signing secret
    (`whsec_…`) into Railway as `CLERK_WEBHOOK_SECRET`. Redeploy. Send the
    dashboard's test event; expect `200 {"ok": true, ...}`.
 7. **Flip `REQUIRE_REGISTERED_TENANT=1`** on Railway. Verify:
@@ -140,23 +163,39 @@ For each old org (one per person):
 cd apps/worker
 # 1. find the old tenant UUID
 uv run python -c "from app.api.deals import coerce_org_tenant_id as c; print(c('org_<OLD>'))"
-# 2. dry run: counts per table that would move (default is dry-run)
+# 2. dry run: the per-table PLAN (rows on source / target, window column) — default is dry-run
 uv run python scripts/reassign_default_tenant_rows.py \
     --from-tenant <old uuid> --clerk-org org_<FondokInternal>
-# 3. apply
+# 3. apply — the same plan is printed first, then each table is moved
 uv run python scripts/reassign_default_tenant_rows.py \
     --from-tenant <old uuid> --clerk-org org_<FondokInternal> --commit
 ```
 
 `--from-tenant` and the complete table list (22 tables — it used to miss
-nine) were added to the script in FON-93. Each table is moved in its own
-transaction; a failure on one table prints and continues, so re-run until
-every row reads `moved 0`.
+nine) were added to the script in FON-93.
+
+**The run is fail-closed (2026-10-14).** The count pass runs first and
+prints a plan for every table. If **any** table cannot be counted
+(unknown table, missing column, no timestamp mapping) the script exits 3,
+refuses `--commit`, and moves nothing. Before this the failing table was
+printed as `SKIPPED` and the rest moved — with `--created-after` set,
+`documents` (which has `uploaded_at`, not `created_at`) was the table
+skipped, so the folded deals opened with an empty Data Room.
+
+`--created-after` / `--created-before` filter each table on **its own**
+timestamp column (`TABLE_TIMESTAMP_COLUMNS` in the script: `documents` →
+`uploaded_at`, `engine_outputs` → `started_at`, `pending_batches` →
+`submitted_at`, everything else `created_at`).
+`tests/test_reassign_tenant_rows_script.py` checks the map against the
+migrations' DDL, so adding a tenant-scoped table without mapping it fails
+the suite. Each table is still moved in its own transaction; a write-time
+failure (below) is reported with exit 1 and the rows it names stay on the
+source tenant — re-run until every table reads `moved 0`.
 
 `audit_log` has an append-only trigger (`audit_log_no_update_delete`), so
-its `UPDATE` will print an ERROR and be skipped. Either leave history
-under the old tenant (the Activity Feed for those deals starts fresh in
-Fondok Internal) or, as the owner role inside one transaction,
+its `UPDATE` counts fine but prints an ERROR at write time. Either leave
+history under the old tenant (the Activity Feed for those deals starts
+fresh in Fondok Internal) or, as the owner role inside one transaction,
 `ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_update_delete`, run the
 script's `UPDATE audit_log …` for that tenant, re-enable the trigger — a
 product call, not a technical one. Document whichever you choose in the
@@ -179,14 +218,23 @@ Defense-in-depth below the application: even a query that forgets its
   SECURITY`, and a policy
   `USING (tenant_id = current_setting('app.tenant_id', true)::uuid)` with
   the same `WITH CHECK`. Idempotent; **not** run at startup.
-* `app/database.py::get_session` — when `DB_SET_TENANT_GUC` is on and the
-  DSN is Postgres, attaches an `after_begin` hook that runs
-  `set_config('app.tenant_id', <tenant>, true)` at the start of **every**
-  transaction. The hook (not a one-shot statement) is deliberate: a route
-  that commits mid-request autobegins a new transaction, and the GUC must
-  be re-published or RLS would return zero rows for the rest of the request.
-  The tenant comes from the `current_tenant_id` ContextVar set by
-  `get_current_auth` on every path.
+* `app/database.py` — an `after_begin` listener registered **once, on the
+  Session class** (`TenantSession`, the sync session behind every
+  `AsyncSession` the factory builds). When `DB_SET_TENANT_GUC` is on and
+  the DSN is Postgres it runs `set_config('app.tenant_id', <tenant>, true)`
+  at the start of **every** transaction of **every** session — the
+  request dependency `get_session` and every `get_session_factory()()`
+  session alike. Until 2026-10-14 the hook was attached per session inside
+  `get_session` only, so the background pipelines (document parse /
+  extraction, the Run Model task, `persist_model_calls_standalone`, the
+  batch poller, the digest scheduler) would have published nothing and read
+  zero rows under RLS. The hook (not a one-shot statement) is deliberate: a
+  route that commits mid-request autobegins a new transaction, and the GUC
+  must be re-published or RLS would return zero rows for the rest of the
+  request. The flag is read on every call, so flipping it needs no restart
+  ordering. The tenant comes from the `current_tenant_id` ContextVar, set
+  by `get_current_auth` on every request path and by each background
+  entrypoint from its `tenant_id` argument.
 
 ### Why a non-owner role
 
@@ -206,12 +254,21 @@ changes.
 
 ### Background jobs
 
+Per-deal background work (document parse / extraction, the Run Model
+task, cost persistence) now sets `current_tenant_id` from its `tenant_id`
+argument before opening its session, so under RLS it reads and writes as
+that tenant.
+
 The digest scheduler (`services/digest_scheduler.py`) and the Anthropic
-batch poller (`agents/analyst_batch.py`) scan **all** tenants with no
-request context, so under RLS as `fondok_app` they would see nothing. Two
-options, pick one before step 7.4: (a) run them under the owner DSN, or
-(b) have them `set_config` per tenant as they iterate (they already carry
-`tenant_id` on every row they touch).
+batch poller (`agents/analyst_batch.py`) set the tenant **per row inside
+their loop** (and end the scan's transaction first, so each row's
+statements start a fresh transaction under that row's tenant). Their
+initial scan, however, is cross-tenant (`SELECT … FROM
+pipeline_digest_schedules WHERE next_run_at <= now` / open
+`pending_batches`) and under RLS as `fondok_app` would return nothing.
+Before step 7.4 either (a) run the worker's background loops under the
+owner DSN, or (b) replace the scan with a per-tenant iteration over the
+registry (`list_tenants()`), publishing each tenant before its scan.
 
 ### Order
 
