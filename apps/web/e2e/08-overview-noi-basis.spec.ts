@@ -54,9 +54,10 @@ test.describe('Overview — NOI basis is always stated', () => {
     await expect(
       page.getByText('Run-Rate / Entry NOI (before FF&E reserve)'),
     ).toBeVisible();
-    await expect(
-      page.getByText('Forward 12-Month Cash NOI (after FF&E reserve)'),
-    ).toBeVisible();
+    // FON-41 R-059 — the exit figure is labelled by its basis: "Exit NOI (<period>)"
+    // when the run states the period, else the bare EXIT_NOI_LABEL. Either way it
+    // names Cash NOI after the FF&E reserve, never a bare "NOI".
+    await expect(page.getByText(/^Exit NOI\b/).first()).toBeVisible();
   });
 
   test('no row is labelled a bare, unqualified "NOI"', async ({ page }) => {
@@ -106,7 +107,8 @@ test.describe('Overview — a Stabilization block with no published year', () =>
     await expect(banner).toBeVisible();
     await expect(banner).toContainText(/re-run the model/i);
     // It must name where the Re-run lives, or it is not an instruction.
-    await expect(banner).toContainText(/investment/i);
+    // (The tab is "CAPEX" since the FON-41 tab renames; its id is still `investment`.)
+    await expect(banner).toContainText(/capex/i);
     // And it must not promise a number it does not have.
     await expect(banner).toContainText(/will not stand another projection year/i);
   });

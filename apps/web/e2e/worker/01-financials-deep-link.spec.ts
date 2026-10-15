@@ -21,19 +21,19 @@ test.describe('Financials sub-tab deep links', () => {
     await stubWorker(page);
   });
 
-  test('?tab=pl&sub=projections opens Projections, not Historicals', async ({ page }) => {
+  test('?tab=pl&sub=projections opens the Future P&L, not the Historical P&L', async ({ page }) => {
     await gotoDeal(page, '?tab=pl&sub=projections');
 
-    const projections = page.getByRole('tab', { name: 'Projections' });
-    const historicals = page.getByRole('tab', { name: 'Historicals' });
+    const projections = page.getByRole('tab', { name: 'Future P&L' });
+    const historicals = page.getByRole('tab', { name: 'Historical P&L' });
     await expect(projections).toHaveAttribute('aria-selected', 'true');
     await expect(historicals).toHaveAttribute('aria-selected', 'false');
   });
 
-  test('?tab=pl with no sub falls back to Historicals', async ({ page }) => {
+  test('?tab=pl with no sub falls back to the Historical P&L', async ({ page }) => {
     await gotoDeal(page, '?tab=pl');
 
-    await expect(page.getByRole('tab', { name: 'Historicals' })).toHaveAttribute(
+    await expect(page.getByRole('tab', { name: 'Historical P&L' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -42,7 +42,7 @@ test.describe('Financials sub-tab deep links', () => {
   test('clicking a sub-tab writes it back into the URL', async ({ page }) => {
     await gotoDeal(page, '?tab=pl');
 
-    await page.getByRole('tab', { name: 'Projections' }).click();
+    await page.getByRole('tab', { name: 'Future P&L' }).click();
     await expect(page).toHaveURL(/[?&]sub=projections\b/);
     await expect(page).toHaveURL(/[?&]tab=pl\b/);
   });
