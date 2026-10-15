@@ -641,3 +641,374 @@ async def test_auth_dependency_sets_tenant_contextvar(_rsa_key) -> None:
 
     await get_current_auth(authorization=None, x_tenant_id="12121212-1212-1212-1212-121212121212")
     assert current_tenant_id.get() == "12121212-1212-1212-1212-121212121212"
+
+
+# ─────────────────────── registry outage ≠ "not registered" (review 2026-10-14) ───────────────────────
+
+
+class _BrokenEngine:
+    """Stands in for ``get_engine()`` while the registry DB is "down"."""
+
+    def connect(self):
+        raise ConnectionError("registry db unreachable")
+
+
+@pytest.mark.asyncio
+async def test_registry_outage_is_503_not_403_and_is_never_cached(_rsa_key, monkeypatch) -> None:
+    import app.tenants as tenants
+    from app.api.deals import coerce_org_tenant_id
+    from app.tenants import TenantRegistryUnavailable, get_tenant, is_registered
+
+    _enable_enforcement(monkeypatch)
+    await _register(CUSTOMER_ORG, "Harbor Point", "external", status="active")
+    tid = coerce_org_tenant_id(CUSTOMER_ORG)
+    tenants.reset_tenant_cache()
+
+    real_engine = tenants.get_engine
+    monkeypatch.setattr(tenants, "get_engine", lambda: _BrokenEngine())
+    # The module API: enforcement raises, the informational lookup degrades.
+    with pytest.raises(TenantRegistryUnavailable):
+        await is_registered(tid)
+    assert await get_tenant(tid) is None
+    assert tid not in tenants._CACHE  # a failure is never cached as a miss
+
+    async with await _client() as c:
+        r = await c.get("/deals", headers=_bearer(_member_token(_rsa_key, CUSTOMER_ORG)))
+        assert r.status_code == 503, r.text
+        assert r.json()["detail"] == "tenant_registry_unavailable"
+        assert r.headers.get("retry-after") == "2"
+        # /settings/tenant (informational) still answers, with no registry row.
+        s = await c.get("/settings/tenant", headers=_bearer(_member_token(_rsa_key, CUSTOMER_ORG)))
+        assert s.status_code == 503  # the auth dependency runs first under enforcement
+
+        # DB back: the very next request is served — nothing stale to wait out.
+        monkeypatch.setattr(tenants, "get_engine", real_engine)
+        r = await c.get("/deals", headers=_bearer(_member_token(_rsa_key, CUSTOMER_ORG)))
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_registry_misses_expire_in_two_seconds_hits_in_ten(monkeypatch) -> None:
+    """A registration or suspension written on ANOTHER replica (no local
+    cache clear) lands here promptly: misses live 2 s, hits 10 s."""
+    from sqlalchemy import text
+
+    import app.tenants as tenants
+    from app.api.deals import coerce_org_tenant_id
+    from app.database import get_engine
+    from app.tenants import get_tenant, is_registered
+
+    assert tenants._MISS_TTL_S == pytest.approx(2.0) and tenants._CACHE_TTL_S == pytest.approx(10.0)
+    tid = coerce_org_tenant_id("org_OtherReplicaRegistered")
+    assert tid is not None
+    t0 = 1_000.0
+    clock = {"now": t0}
+    monkeypatch.setattr(tenants.time, "monotonic", lambda: clock["now"])
+
+    assert await is_registered(tid) is False  # cached miss at t0
+    # Another replica registers the org — direct SQL, so THIS process's
+    # cache is not cleared.
+    async with get_engine().begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO tenants (id, clerk_org_id, name, kind, status, created_at) "
+                "VALUES (:id, 'org_OtherReplicaRegistered', 'Other', 'external', 'active', :now)"
+            ),
+            {"id": str(tid), "now": "2026-10-14T00:00:00+00:00"},
+        )
+    clock["now"] = t0 + 1.5
+    assert await is_registered(tid) is False  # still inside the miss TTL
+    clock["now"] = t0 + 2.1
+    assert await is_registered(tid) is True  # miss expired → re-read → served
+
+    # Another replica suspends it: served until the hit TTL lapses, then refused.
+    async with get_engine().begin() as conn:
+        await conn.execute(text("UPDATE tenants SET status = 'suspended' WHERE id = :id"), {"id": str(tid)})
+    clock["now"] = t0 + 2.1 + 9.0
+    assert await is_registered(tid) is True
+    clock["now"] = t0 + 2.1 + 10.5
+    assert await is_registered(tid) is False
+    assert (await get_tenant(tid, use_cache=False)).status == "suspended"
+
+
+# ─────────────────────── webhook: organization.updated / .deleted ───────────────────────
+
+
+def _org_event(event_type: str, org: str, **data: Any) -> bytes:
+    return json.dumps({"type": event_type, "data": {"id": org, **data}}).encode()
+
+
+@pytest.mark.asyncio
+async def test_webhook_updated_refreshes_name_only_and_deleted_suspends_keeping_kind(monkeypatch) -> None:
+    from app.api.deals import coerce_org_tenant_id
+    from app.config import get_settings
+    from app.tenants import get_tenant, is_registered, update_tenant
+
+    monkeypatch.setenv("CLERK_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    get_settings.cache_clear()
+    await _register(INTERNAL_ORG, "Fondok Internal", "internal", status="active")
+    tid = coerce_org_tenant_id(INTERNAL_ORG)
+
+    async with await _client() as c:
+        # organization.updated → name refresh; kind and status untouched.
+        body = _org_event("organization.updated", INTERNAL_ORG, name="Fondok Internal (renamed)", slug="fondok")
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="u1"))
+        assert r.status_code == 200, r.text
+        t = r.json()["tenant"]
+        assert t["name"] == "Fondok Internal (renamed)" and t["kind"] == "internal" and t["status"] == "active"
+        # A rename with no usable name changes nothing.
+        body = _org_event("organization.updated", INTERNAL_ORG)
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="u2"))
+        assert r.status_code == 200 and r.json()["tenant"]["name"] == "Fondok Internal (renamed)"
+        # Unknown org → acknowledged, nothing inserted.
+        body = _org_event("organization.updated", STRANGER_ORG, name="Nope")
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="u3"))
+        assert r.status_code == 200 and r.json() == {"ok": True, "ignored": "organization.updated", "reason": "not_registered"}
+        assert await get_tenant(coerce_org_tenant_id(STRANGER_ORG)) is None
+
+        # organization.deleted → suspended, kind + name kept, row kept.
+        body = _org_event("organization.deleted", INTERNAL_ORG, deleted=True)
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="d1"))
+        assert r.status_code == 200, r.text
+        t = r.json()["tenant"]
+        assert t["status"] == "suspended" and t["kind"] == "internal" and t["name"] == "Fondok Internal (renamed)"
+        assert await is_registered(tid) is False
+        # A replayed organization.created never re-activates it …
+        body = _org_created(INTERNAL_ORG, "Fondok Internal")
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="c1"))
+        assert r.status_code == 200 and r.json()["tenant"]["status"] == "suspended"
+        # … nor does an organization.updated.
+        body = _org_event("organization.updated", INTERNAL_ORG, name="Back?")
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="u4"))
+        assert r.status_code == 200 and r.json()["tenant"]["status"] == "suspended"
+        # Deleting an org nobody registered is acknowledged without a row.
+        body = _org_event("organization.deleted", STRANGER_ORG, deleted=True)
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="d2"))
+        assert r.status_code == 200 and r.json()["reason"] == "not_registered"
+        # A handled event without an org id is a 400, still signed.
+        body = json.dumps({"type": "organization.deleted", "data": {"deleted": True}}).encode()
+        r = await c.post("/webhooks/clerk", content=body, headers=_svix_headers(body, msg_id="d3"))
+        assert r.status_code == 400
+        # Unsigned deliveries of the new events are refused like the old one.
+        body = _org_event("organization.deleted", INTERNAL_ORG, deleted=True)
+        r = await c.post("/webhooks/clerk", content=body, headers={"content-type": "application/json"})
+        assert r.status_code == 401
+
+    # The module API never re-activates either.
+    with pytest.raises(ValueError):
+        await update_tenant(tid, status="active")
+    with pytest.raises(ValueError):
+        await update_tenant(tid, status="weird")
+
+
+# ─────────────────────── RLS GUC: factory-level listener ───────────────────────
+
+
+def test_tenant_guc_listener_is_registered_on_the_session_class() -> None:
+    from sqlalchemy import event
+
+    from app.database import TenantSession, _tenant_guc_after_begin, get_session_factory, tenant_guc_hook_registered
+
+    assert tenant_guc_hook_registered() is True
+    assert event.contains(TenantSession, "after_begin", _tenant_guc_after_begin)
+    # Every factory session is a TenantSession underneath.
+    assert get_session_factory().kw.get("sync_session_class") is TenantSession
+
+
+@pytest.mark.asyncio
+async def test_factory_sessions_publish_the_guc_when_the_flag_is_on(monkeypatch) -> None:
+    """A session from ``get_session_factory()()`` (the background pipelines'
+    path, NOT the request dependency) fires the hook on every transaction
+    with the contextvar tenant. The Postgres statement itself is stubbed —
+    SQLite has no ``set_config`` — the Postgres test below runs it for real."""
+    from sqlalchemy import text
+
+    import app.database as database
+    from app.auth.context import current_tenant_id
+    from app.database import get_session_factory
+
+    published: list[str | None] = []
+
+    def _spy(session, transaction, connection) -> None:
+        published.append(current_tenant_id.get())
+
+    monkeypatch.setattr(database, "_tenant_guc_is_active", lambda: True)
+    monkeypatch.setattr(database, "_publish_tenant_guc", _spy)
+    token = current_tenant_id.set("33333333-3333-3333-3333-333333333333")
+    try:
+        async with get_session_factory()() as session:
+            await session.execute(text("SELECT 1"))
+            await session.commit()
+            # Autobegin after the commit → the hook fires again (mid-request commit).
+            await session.execute(text("SELECT 1"))
+    finally:
+        current_tenant_id.reset(token)
+    assert published == ["33333333-3333-3333-3333-333333333333"] * 2
+
+
+@pytest.mark.asyncio
+async def test_factory_sessions_do_not_publish_on_sqlite_even_with_the_flag_on(monkeypatch) -> None:
+    from sqlalchemy import text
+
+    import app.database as database
+    from app.auth.context import current_tenant_id
+    from app.config import get_settings
+    from app.database import get_session_factory
+
+    monkeypatch.setenv("DB_SET_TENANT_GUC", "1")
+    get_settings.cache_clear()
+    calls: list[Any] = []
+    monkeypatch.setattr(database, "_publish_tenant_guc", lambda *a: calls.append(a))
+    token = current_tenant_id.set("33333333-3333-3333-3333-333333333333")
+    try:
+        async with get_session_factory()() as session:
+            assert (await session.execute(text("SELECT 1"))).scalar_one() == 1
+    finally:
+        current_tenant_id.reset(token)
+    assert calls == []  # the listener is registered but no-ops on SQLite
+
+
+@pytest.mark.asyncio
+async def test_factory_sessions_publish_the_guc_on_postgres(monkeypatch) -> None:
+    """Real Postgres: ``current_setting('app.tenant_id')`` sees the tenant
+    inside a factory session's transaction. Opt-in via
+    ``FONDOK_TEST_POSTGRES_URL`` (no Postgres in the default suite)."""
+    url = os.environ.get("FONDOK_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("FONDOK_TEST_POSTGRES_URL not set — Postgres GUC check skipped")
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    import app.database as database
+    from app.auth.context import current_tenant_id
+    from app.database import TenantSession
+
+    engine = create_async_engine(url.replace("postgresql://", "postgresql+asyncpg://"))
+    factory = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession, sync_session_class=TenantSession)
+    monkeypatch.setattr(database, "_tenant_guc_is_active", lambda: True)
+    tenant = "44444444-4444-4444-4444-444444444444"
+    token = current_tenant_id.set(tenant)
+    try:
+        async with factory() as session:
+            seen = (await session.execute(text("SELECT current_setting('app.tenant_id', true)"))).scalar_one()
+            assert seen == tenant
+            await session.commit()
+            seen = (await session.execute(text("SELECT current_setting('app.tenant_id', true)"))).scalar_one()
+            assert seen == tenant  # re-published after the commit
+    finally:
+        current_tenant_id.reset(token)
+        await engine.dispose()
+
+
+# ─────────────────────── background entrypoints publish their tenant ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_background_run_model_and_cost_persistence_publish_the_tenant(monkeypatch) -> None:
+    from app.api import model as model_api
+    from app.auth.context import current_tenant_id
+    from app import cost_persistence
+
+    seen: dict[str, str | None] = {}
+
+    async def _fake_run_all(session, **kw):
+        seen["run_all"] = current_tenant_id.get()
+
+    async def _fake_run_one(session, **kw):
+        seen["run_one"] = current_tenant_id.get()
+
+    async def _fake_persist(session, **kw):
+        seen["persist"] = current_tenant_id.get()
+        return 0
+
+    monkeypatch.setattr(model_api, "run_all_engines", _fake_run_all)
+    monkeypatch.setattr(model_api, "run_single_engine", _fake_run_one)
+    monkeypatch.setattr(cost_persistence, "persist_model_calls", _fake_persist)
+    token = current_tenant_id.set(None)
+    try:
+        await model_api._background_run_all("deal-1", "55555555-5555-5555-5555-555555555555", "run-1", None)
+        await model_api._background_run_one("deal-1", "66666666-6666-6666-6666-666666666666", "revenue", "run-2", None)
+        await cost_persistence.persist_model_calls_standalone(
+            deal_id="deal-1", tenant_id="77777777-7777-7777-7777-777777777777", calls=[object()]
+        )
+    finally:
+        current_tenant_id.reset(token)
+    assert seen == {
+        "run_all": "55555555-5555-5555-5555-555555555555",
+        "run_one": "66666666-6666-6666-6666-666666666666",
+        "persist": "77777777-7777-7777-7777-777777777777",
+    }
+
+
+@pytest.mark.asyncio
+async def test_digest_scheduler_and_batch_poller_publish_each_tenant_in_turn(monkeypatch) -> None:
+    from app.agents import analyst_batch
+    from app.agents.analyst_batch import PendingBatchRow
+    from app.auth.context import current_tenant_id
+    from app.services import digest_scheduler
+
+    # ── digest scheduler: one schedule per tenant, tenant set before each payload build.
+    seen_digest: list[str | None] = []
+
+    async def _due(session, *, now):
+        return [
+            {"id": "s1", "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "cadence": "daily", "hour_utc": 13},
+            {"id": "s2", "tenant_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "cadence": "daily", "hour_utc": 13},
+        ]
+
+    async def _payload(session, *, tenant_id, schedule, now):
+        seen_digest.append(current_tenant_id.get())
+        return {}
+
+    async def _mark(session, **kw):
+        return None
+
+    monkeypatch.setattr(digest_scheduler, "_fetch_due_schedules", _due)
+    monkeypatch.setattr(digest_scheduler, "build_digest_payload", _payload)
+    monkeypatch.setattr(digest_scheduler, "dispatch_digest", lambda schedule, payload: None)
+    monkeypatch.setattr(digest_scheduler, "_mark_dispatched", _mark)
+    token = current_tenant_id.set(None)
+    try:
+        assert await digest_scheduler.tick_once() == 2
+        assert current_tenant_id.get() is None  # restored after the tick
+    finally:
+        current_tenant_id.reset(token)
+    assert seen_digest == ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]
+
+    # ── batch poller: the tenant is set per open batch before any statement for it.
+    from datetime import UTC, datetime
+
+    seen_batch: list[tuple[str, str | None, str | None]] = []
+    when = datetime.now(UTC)
+    rows = [
+        PendingBatchRow(id="r1", batch_id="b1", deal_id="d1", tenant_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+                        agent_name="analyst", status="queued", submitted_at=when),
+        PendingBatchRow(id="r2", batch_id="b2", deal_id="d2", tenant_id="dddddddd-dddd-dddd-dddd-dddddddddddd",
+                        agent_name="analyst", status="in_progress", submitted_at=when),
+    ]
+
+    async def _open(session):
+        return rows
+
+    async def _status(session, **kw):
+        seen_batch.append(("status", current_tenant_id.get(), kw.get("tenant_id")))
+
+    class _Client:
+        def retrieve(self, batch_id):
+            seen_batch.append(("retrieve", current_tenant_id.get(), batch_id))
+            return {"processing_status": "in_progress"}
+
+    monkeypatch.setattr(analyst_batch, "_list_open_batches", _open)
+    monkeypatch.setattr(analyst_batch, "_update_pending_status", _status)
+    token = current_tenant_id.set(None)
+    try:
+        tally = await analyst_batch.poll_pending_batches(client=_Client())
+        assert current_tenant_id.get() is None
+    finally:
+        current_tenant_id.reset(token)
+    assert tally["checked"] == 2 and tally["pending"] == 2
+    assert seen_batch == [
+        ("retrieve", "cccccccc-cccc-cccc-cccc-cccccccccccc", "b1"),
+        ("status", "cccccccc-cccc-cccc-cccc-cccccccccccc", "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        ("retrieve", "dddddddd-dddd-dddd-dddd-dddddddddddd", "b2"),
+    ]

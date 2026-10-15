@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from .config import get_settings
 
@@ -48,6 +48,18 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+class TenantSession(Session):
+    """The sync ``Session`` behind every ``AsyncSession`` the factory builds.
+
+    A subclass only so the FON-93 ``after_begin`` listener below is scoped
+    to Fondok's sessions rather than every SQLAlchemy ``Session`` in the
+    process. Every session that comes out of :func:`get_session_factory` —
+    the request dependency AND the background pipelines that call
+    ``get_session_factory()()`` directly — is one of these, so the tenant
+    GUC is published for all of them.
+    """
+
+
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Lazily build the session factory bound to the engine."""
     global _session_factory
@@ -56,6 +68,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
             bind=get_engine(),
             expire_on_commit=False,
             class_=AsyncSession,
+            sync_session_class=TenantSession,
         )
     return _session_factory
 
@@ -80,19 +93,14 @@ def _tenant_guc_is_active() -> bool:
 
 
 def _publish_tenant_guc(session: Any, transaction: Any, connection: Any) -> None:
-    """``after_begin`` hook — runs at the start of EVERY transaction.
-
-    Attaching to ``after_begin`` (not a one-shot statement in
-    ``get_session``) is what makes this robust to ``session.commit()``
-    mid-request: the next statement autobegins a new transaction, the
-    hook fires again, and the GUC is re-published. Without it, every
-    statement after the first commit would run with no tenant set and —
-    under FORCE ROW LEVEL SECURITY — see zero rows.
+    """Publish the request's tenant to ``app.tenant_id`` on ``connection``.
 
     Reads the tenant from :data:`app.auth.context.current_tenant_id`. A
-    request that resolved no tenant (schedulers, scripts) publishes
-    nothing; RLS then denies every tenant-scoped row, which is the
-    intended fail-closed posture for an unidentified caller.
+    caller that resolved no tenant (a script, a scheduler tick before it
+    picked a tenant) publishes nothing; RLS then denies every
+    tenant-scoped row, which is the intended fail-closed posture for an
+    unidentified caller. Pure apart from the one statement — the flag /
+    dialect gate lives in :func:`_tenant_guc_after_begin`.
     """
     from .auth.context import current_tenant_id
 
@@ -102,17 +110,51 @@ def _publish_tenant_guc(session: Any, transaction: Any, connection: Any) -> None
     connection.execute(TENANT_GUC_SQL, {"tenant": tenant})
 
 
+def _tenant_guc_after_begin(session: Any, transaction: Any, connection: Any) -> None:
+    """``after_begin`` listener on :class:`TenantSession` — EVERY transaction
+    of EVERY factory session.
+
+    Registered once at import, at the Session-class level. Until 2026-10-14
+    it was attached per session inside :func:`get_session` only, so the
+    extraction pipeline, the background Run Model task, cost persistence,
+    the batch poller and the digest scheduler — all of which open sessions
+    with ``get_session_factory()()`` — never published the GUC and would
+    have read zero rows under RLS.
+
+    ``after_begin`` (not a one-shot statement when the session opens) is
+    what makes this robust to ``session.commit()`` mid-request: the next
+    statement autobegins a new transaction, the listener fires again, and
+    the GUC is re-published. Without it every statement after the first
+    commit would run with no tenant set and — under FORCE ROW LEVEL
+    SECURITY — see zero rows.
+
+    The flag is checked on every call (a cached settings read) so the
+    default-off posture costs nothing to flip: no re-registration, no
+    restart ordering. On SQLite it is always a no-op.
+    """
+    if not _tenant_guc_is_active():
+        return
+    _publish_tenant_guc(session, transaction, connection)
+
+
+event.listen(TenantSession, "after_begin", _tenant_guc_after_begin)
+
+
+def tenant_guc_hook_registered() -> bool:
+    """True when the class-level listener is in place (health / tests)."""
+    return event.contains(TenantSession, "after_begin", _tenant_guc_after_begin)
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding an ``AsyncSession`` with rollback-on-error.
 
     With ``settings.DB_SET_TENANT_GUC`` on (and a Postgres DSN) the
     session publishes the caller's tenant to ``app.tenant_id`` at the
-    start of each transaction — see :func:`_publish_tenant_guc`.
+    start of each transaction — see :func:`_tenant_guc_after_begin`. The
+    listener is on the Session class, so nothing is attached here.
     """
     factory = get_session_factory()
     async with factory() as session:
-        if _tenant_guc_is_active():
-            event.listen(session.sync_session, "after_begin", _publish_tenant_guc)
         try:
             yield session
         except Exception:

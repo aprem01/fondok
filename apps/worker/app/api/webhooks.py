@@ -1,11 +1,18 @@
 """Inbound webhooks — FON-93 Clerk organization events.
 
-``POST /webhooks/clerk`` receives Clerk's Svix-signed deliveries. The one
-event we act on is ``organization.created``: the new org is written to
-the ``tenants`` registry as ``kind=external`` / ``status=pending_review``
-so it shows up on ``GET /admin/tenants`` for an internal admin to
-approve — and, with ``REQUIRE_REGISTERED_TENANT`` on, has no data plane
-until then. Every other event type is acknowledged and ignored.
+``POST /webhooks/clerk`` receives Clerk's Svix-signed deliveries. Three
+events are acted on (``HANDLED_EVENTS``):
+
+* ``organization.created`` — the new org is written to the ``tenants``
+  registry as ``kind=external`` / ``status=pending_review`` so it shows up
+  on ``GET /admin/tenants`` for an internal admin to approve — and, with
+  ``REQUIRE_REGISTERED_TENANT`` on, has no data plane until then.
+* ``organization.updated`` — name refresh on an existing row only.
+* ``organization.deleted`` — existing row → ``status=suspended``; ``kind``
+  and ``name`` kept so the UUID still explains historical rows.
+
+The webhook never downgrades ``kind`` and never sets ``status=active``.
+Every other event type is acknowledged and ignored.
 
 Signature verification (Svix, no SDK — stdlib HMAC)
 ---------------------------------------------------
@@ -33,11 +40,19 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 
 from ..config import get_settings
-from ..tenants import upsert_tenant
+from ..tenants import update_tenant, upsert_tenant
 from .deals import coerce_org_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+#: Event types the endpoint acts on; everything else is acknowledged (200)
+#: and ignored so Svix does not retry it. ``created`` parks a new org as
+#: ``pending_review``; ``updated`` refreshes the name; ``deleted`` suspends.
+#: Nothing here can ever set ``status=active`` — only an internal admin can.
+HANDLED_EVENTS: frozenset[str] = frozenset(
+    {"organization.created", "organization.updated", "organization.deleted"}
+)
 
 
 def _secret_bytes(raw: str) -> bytes:
@@ -131,7 +146,7 @@ async def clerk_webhook(request: Request) -> dict[str, Any]:
     event_type = str(event.get("type") or "")
     data = event.get("data") or {}
 
-    if event_type != "organization.created":
+    if event_type not in HANDLED_EVENTS:
         return {"ok": True, "ignored": event_type or None}
 
     org_id = str(data.get("id") or "")
@@ -139,21 +154,55 @@ async def clerk_webhook(request: Request) -> dict[str, Any]:
     if tenant_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="organization.created without a Clerk org id",
+            detail=f"{event_type} without a Clerk org id",
         )
-    name = str(data.get("name") or data.get("slug") or org_id)
-    stored = await upsert_tenant(
-        tenant_id=tenant_id,
-        clerk_org_id=org_id,
-        name=name,
-        kind="external",
-        status="pending_review",
-        # A replayed delivery for an org an admin already approved must
-        # not knock it back to pending_review.
-        preserve_existing=True,
-    )
+
+    if event_type == "organization.created":
+        name = str(data.get("name") or data.get("slug") or org_id)
+        stored = await upsert_tenant(
+            tenant_id=tenant_id,
+            clerk_org_id=org_id,
+            name=name,
+            kind="external",
+            status="pending_review",
+            # A replayed delivery for an org an admin already approved must
+            # not knock it back to pending_review.
+            preserve_existing=True,
+        )
+        logger.info(
+            "webhooks/clerk: organization.created org=%s tenant=%s → %s/%s",
+            org_id,
+            tenant_id,
+            stored.kind,
+            stored.status,
+        )
+        return {"ok": True, "tenant": stored.as_dict()}
+
+    if event_type == "organization.updated":
+        # Name refresh only. kind and status are the registry's (an admin's)
+        # to set: a rename in Clerk never approves, suspends or re-activates.
+        name = str(data.get("name") or data.get("slug") or "").strip()
+        stored = await update_tenant(tenant_id, name=name or None)
+        if stored is None:
+            # Nobody registered or parked this org; nothing to rename.
+            return {"ok": True, "ignored": event_type, "reason": "not_registered"}
+        logger.info(
+            "webhooks/clerk: organization.updated org=%s tenant=%s name=%r",
+            org_id,
+            tenant_id,
+            stored.name,
+        )
+        return {"ok": True, "tenant": stored.as_dict()}
+
+    # organization.deleted — the org is gone in Clerk, so no JWT can name it
+    # again; the row stays (kind, name and the UUID that every historical
+    # row carries) as ``suspended`` so the audit trail still explains the
+    # tenant id. Never deletes the row, never touches kind.
+    stored = await update_tenant(tenant_id, status="suspended")
+    if stored is None:
+        return {"ok": True, "ignored": event_type, "reason": "not_registered"}
     logger.info(
-        "webhooks/clerk: organization.created org=%s tenant=%s → %s/%s",
+        "webhooks/clerk: organization.deleted org=%s tenant=%s → %s/%s",
         org_id,
         tenant_id,
         stored.kind,
@@ -162,4 +211,4 @@ async def clerk_webhook(request: Request) -> dict[str, Any]:
     return {"ok": True, "tenant": stored.as_dict()}
 
 
-__all__ = ["router", "verify_svix_signature"]
+__all__ = ["HANDLED_EVENTS", "router", "verify_svix_signature"]

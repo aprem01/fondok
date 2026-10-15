@@ -19,9 +19,23 @@ Safety knobs:
                   Rani → "Fondok Internal"); see docs/WORKSPACE_ISOLATION.md §6
 * --created-after / --created-before — restrict by row timestamp
                   (recommended: set --created-after to the date your
-                   Clerk org went live so pre-Clerk seed rows stay put)
+                   Clerk org went live so pre-Clerk seed rows stay put).
+                  The timestamp column differs per table — ``documents``
+                  has ``uploaded_at``, ``engine_outputs`` ``started_at``,
+                  ``pending_batches`` ``submitted_at`` — see
+                  ``TABLE_TIMESTAMP_COLUMNS``. Before 2026-10-14 the script
+                  filtered every table on ``created_at``, so with a window
+                  set the ``documents`` count errored and the table was
+                  SKIPPED while deals / extractions / audit rows moved: the
+                  folded deals opened with an empty Data Room.
 * --tables      — comma-separated list; default is all tenant-scoped
                   tables discovered at import time
+
+Fail-closed: the count pass runs first and prints a per-table plan. If ANY
+table errors (unknown table, missing column, no timestamp mapping) the run
+stops with exit code 3 and ``--commit`` is refused — fix the list, or pass
+``--tables`` without the offending table on purpose. A partial move is
+exactly the bug this guards against.
 
 Usage:
     # dry run first — always
@@ -82,39 +96,87 @@ TENANT_SCOPED_TABLES = [
     "model_calls",
 ]
 
+# The row-timestamp column ``--created-after`` / ``--created-before`` filter
+# on, per table. Most tables carry ``created_at``; the exceptions are listed
+# explicitly. ``tests/test_reassign_tenant_rows_script.py`` checks every
+# entry against the migrations (SQLite schema + Postgres DDL) so this map
+# cannot drift from the real columns.
+TABLE_TIMESTAMP_COLUMNS: dict[str, str] = {
+    **{t: "created_at" for t in TENANT_SCOPED_TABLES},
+    "documents": "uploaded_at",
+    "engine_outputs": "started_at",
+    "pending_batches": "submitted_at",
+}
+
+
+def timestamp_column(table: str) -> str:
+    """The timestamp column the window filters ``table`` on.
+
+    Raises ``KeyError`` for a table the map does not know: a table passed
+    via ``--tables`` that is not in ``TENANT_SCOPED_TABLES`` must be added
+    to ``TABLE_TIMESTAMP_COLUMNS`` (with its real column) before it can be
+    windowed. The count pass turns that into a refused run.
+    """
+    return TABLE_TIMESTAMP_COLUMNS[table]
+
+
+def _window_sql(table: str, since: str | None, until: str | None, params: dict) -> list[str]:
+    """``WHERE`` fragments for the timestamp window, binding into ``params``."""
+    where: list[str] = []
+    if since or until:
+        col = timestamp_column(table)
+        if since:
+            where.append(f"{col} >= :since")
+            params["since"] = since
+        if until:
+            where.append(f"{col} < :until")
+            params["until"] = until
+    return where
+
 
 async def _count(engine, table: str, tenant: UUID, since: str | None, until: str | None) -> int:
-    where = ["tenant_id = :tenant"]
+    """Rows on ``tenant`` within the window. Raises on any DB / map error —
+    the caller turns that into a refused run, never a skipped table."""
     params: dict = {"tenant": str(tenant)}
-    if since:
-        where.append("created_at >= :since")
-        params["since"] = since
-    if until:
-        where.append("created_at < :until")
-        params["until"] = until
+    where = ["tenant_id = :tenant", *_window_sql(table, since, until, params)]
     sql = f"SELECT COUNT(*) FROM {table} WHERE {' AND '.join(where)}"
     async with engine.begin() as conn:
-        try:
-            row = (await conn.execute(text(sql), params)).scalar_one()
-        except Exception as exc:  # noqa: BLE001
-            print(f"  {table:30s}  SKIPPED — {type(exc).__name__}: {exc}")
-            return -1
+        row = (await conn.execute(text(sql), params)).scalar_one()
     return int(row or 0)
 
 
 async def _reassign(engine, table: str, from_tenant: UUID, to_tenant: UUID, since: str | None, until: str | None) -> int:
-    where = ["tenant_id = :from_tenant"]
     params: dict = {"from_tenant": str(from_tenant), "to_tenant": str(to_tenant)}
-    if since:
-        where.append("created_at >= :since")
-        params["since"] = since
-    if until:
-        where.append("created_at < :until")
-        params["until"] = until
+    where = ["tenant_id = :from_tenant", *_window_sql(table, since, until, params)]
     sql = f"UPDATE {table} SET tenant_id = :to_tenant WHERE {' AND '.join(where)}"
     async with engine.begin() as conn:
         result = await conn.execute(text(sql), params)
         return int(result.rowcount or 0)
+
+
+async def plan_counts(
+    engine,
+    tables: list[str],
+    *,
+    source: UUID,
+    target: UUID,
+    since: str | None,
+    until: str | None,
+) -> tuple[list[tuple[str, int, int]], list[tuple[str, str]]]:
+    """The count pass: ``(table, rows_on_source, rows_on_target)`` per table
+    that counted, plus ``(table, error)`` for every table that could not be
+    counted. Any entry in the second list means the run must not commit."""
+    plan: list[tuple[str, int, int]] = []
+    errors: list[tuple[str, str]] = []
+    for table in tables:
+        try:
+            n_source = await _count(engine, table, source, since, until)
+            n_target = await _count(engine, table, target, since, until)
+        except Exception as exc:  # noqa: BLE001
+            errors.append((table, f"{type(exc).__name__}: {exc}"))
+            continue
+        plan.append((table, n_source, n_target))
+    return plan, errors
 
 
 async def main() -> int:
@@ -170,20 +232,39 @@ async def main() -> int:
     # driver we actually ship.
     engine = create_async_engine(settings.async_database_url, echo=False)
 
-    total_default = 0
-    total_would_move = 0
-    print(f"\n{'table':30s}  {'source_tenant':>15s}  {'target_tenant':>15s}")
-    for table in tables:
-        n_default = await _count(engine, table, source_uuid, args.created_after, args.created_before)
-        n_target = await _count(engine, table, target_uuid, args.created_after, args.created_before)
-        if n_default < 0:
-            continue
-        total_default += n_default
-        total_would_move += n_default
-        print(f"  {table:30s}  {n_default:>15,}  {n_target:>15,}")
+    windowed = bool(args.created_after or args.created_before)
+    plan, errors = await plan_counts(
+        engine,
+        tables,
+        source=source_uuid,
+        target=target_uuid,
+        since=args.created_after,
+        until=args.created_before,
+    )
 
-    print(f"\nRows on source tenant within window  : {total_default:,}")
+    print(f"\n=== PLAN ({'window applied per table' if windowed else 'no window'}) ===")
+    print(f"{'table':30s}  {'window column':>14s}  {'source_tenant':>15s}  {'target_tenant':>15s}")
+    total_would_move = 0
+    for table, n_source, n_target in plan:
+        col = TABLE_TIMESTAMP_COLUMNS.get(table, "?") if windowed else "-"
+        print(f"  {table:30s}  {col:>14s}  {n_source:>15,}  {n_target:>15,}")
+        total_would_move += n_source
+    for table, err in errors:
+        print(f"  {table:30s}  ERROR — {err}")
+
+    print(f"\nRows on source tenant within window  : {total_would_move:,}")
     print(f"Would move to {target_uuid} : {total_would_move:,}")
+
+    if errors:
+        print(
+            f"\nERROR: {len(errors)} table(s) could not be counted — refusing to "
+            f"{'commit' if args.commit else 'plan'}. A partial move leaves a deal "
+            "without its documents / extractions. Fix the table list (or pass "
+            "--tables without the failing table(s) on purpose) and re-run.",
+            file=sys.stderr,
+        )
+        await engine.dispose()
+        return 3
 
     if not args.commit:
         print("\nDry-run only. Re-run with --commit to apply.")
@@ -192,18 +273,28 @@ async def main() -> int:
 
     print("\n=== APPLYING ===")
     moved = 0
-    for table in tables:
+    failed: list[str] = []
+    for table, _n_source, _n_target in plan:
         try:
             n = await _reassign(engine, table, source_uuid, target_uuid, args.created_after, args.created_before)
         except Exception as exc:  # noqa: BLE001
+            # Each table is its own transaction. The count pass passed, so
+            # this is a write-time refusal (audit_log's append-only trigger).
             print(f"  {table:30s}  ERROR — {type(exc).__name__}: {exc}")
+            failed.append(table)
             continue
         print(f"  {table:30s}  moved {n:,}")
         moved += n
     print(f"\nTotal rows moved: {moved:,}")
+    if failed:
+        print(
+            f"\nWARNING: {len(failed)} table(s) failed at write time: {', '.join(failed)}. "
+            "Their rows are still on the source tenant — see docs/WORKSPACE_ISOLATION.md §6.",
+            file=sys.stderr,
+        )
 
     await engine.dispose()
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

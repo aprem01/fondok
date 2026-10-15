@@ -297,7 +297,8 @@ ASSUMPTION_BY_KEY = {a.key: a for a in ASSUMPTIONS}
 #: target for Year 3, index points, 100 = parity with the selected benchmark);
 #: the import folds the rows back into the ``index_*_target_by_year`` JSON
 #: lists the engine runner reads. Blank = no by-year target for that year (the
-#: all-years ``index_mpi_target`` / ``index_ari_target`` applies where set).
+#: all-years ``index_mpi_target`` / ``index_ari_target`` shows where set, but
+#: drives Year 1 only unless the analyst overrode that metric's market growth).
 #: The row count follows the deal's ``hold_years``, so these are generated per
 #: export rather than listed in ``ASSUMPTIONS``.
 BY_YEAR_TARGET_LISTS: tuple[tuple[str, str, str], ...] = (
@@ -336,7 +337,8 @@ def by_year_target_spec(list_key: str, year: int) -> AssumptionSpec:
         f"{label} — {year_label}",
         "index points (100 = parity with the selected benchmark)",
         f"Index Analysis target by year: {year_label} {noun} = benchmark {noun} for that year × target "
-        f"÷ 100 while \"Use STR rates in the model\" is on; blank = the all-years target applies",
+        f"÷ 100 while \"Use STR rates in the model\" is on; blank = the all-years target "
+        f"(drives Year 1 only unless a market {noun} growth override is set)",
     )
 
 

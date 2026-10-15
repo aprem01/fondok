@@ -31,6 +31,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth.context import current_tenant_id
 from ..config import get_settings
 from ..database import get_session_factory
 from .pipeline_digest import (
@@ -157,43 +158,59 @@ async def tick_once(now: datetime | None = None) -> int:
     """
     now = (now or datetime.now(UTC)).astimezone(UTC)
     factory = get_session_factory()
+    tenant_token = current_tenant_id.set(current_tenant_id.get())
+    try:
+        async with factory() as session:
+            return await _tick_with_session(session, now=now)
+    finally:
+        # Never leak the last schedule's tenant into the loop's next tick.
+        current_tenant_id.reset(tenant_token)
+
+
+async def _tick_with_session(session: AsyncSession, *, now: datetime) -> int:
     dispatched = 0
-    async with factory() as session:
-        due = await _fetch_due_schedules(session, now=now)
-        for schedule in due:
-            tenant_id = schedule.get("tenant_id")
-            schedule_id = schedule.get("id")
-            try:
-                payload = await build_digest_payload(
-                    session,
-                    tenant_id=tenant_id,
-                    schedule=schedule,
-                    now=now,
-                )
-                dispatch_digest(schedule, payload)
-            except Exception as ex:  # noqa: BLE001 — never crash the loop
-                logger.exception(
-                    "digest_scheduler: dispatch failed for %s: %s",
-                    schedule_id,
-                    ex,
-                )
-            try:
-                await _mark_dispatched(
-                    session,
-                    schedule_id=str(schedule_id),
-                    tenant_id=str(tenant_id),
-                    cadence=schedule.get("cadence", "daily"),
-                    hour_utc=int(schedule.get("hour_utc") or 13),
-                    weekday=schedule.get("weekday"),
-                    now=now,
-                )
-            except Exception as ex:  # noqa: BLE001
-                logger.exception(
-                    "digest_scheduler: mark_dispatched failed for %s: %s",
-                    schedule_id,
-                    ex,
-                )
-            dispatched += 1
+    # Cross-tenant scan: under RLS this needs the owner DSN (see
+    # docs/WORKSPACE_ISOLATION.md §7 "Background jobs").
+    due = await _fetch_due_schedules(session, now=now)
+    # End the scan's transaction so each schedule below starts its own and
+    # the ``after_begin`` hook publishes THAT schedule's tenant.
+    await session.commit()
+    for schedule in due:
+        tenant_id = schedule.get("tenant_id")
+        schedule_id = schedule.get("id")
+        # FON-93: every statement for this schedule runs as its tenant.
+        current_tenant_id.set(str(tenant_id) if tenant_id else None)
+        try:
+            payload = await build_digest_payload(
+                session,
+                tenant_id=tenant_id,
+                schedule=schedule,
+                now=now,
+            )
+            dispatch_digest(schedule, payload)
+        except Exception as ex:  # noqa: BLE001 — never crash the loop
+            logger.exception(
+                "digest_scheduler: dispatch failed for %s: %s",
+                schedule_id,
+                ex,
+            )
+        try:
+            await _mark_dispatched(
+                session,
+                schedule_id=str(schedule_id),
+                tenant_id=str(tenant_id),
+                cadence=schedule.get("cadence", "daily"),
+                hour_utc=int(schedule.get("hour_utc") or 13),
+                weekday=schedule.get("weekday"),
+                now=now,
+            )
+        except Exception as ex:  # noqa: BLE001
+            logger.exception(
+                "digest_scheduler: mark_dispatched failed for %s: %s",
+                schedule_id,
+                ex,
+            )
+        dispatched += 1
     return dispatched
 
 

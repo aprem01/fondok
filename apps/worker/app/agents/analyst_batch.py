@@ -77,6 +77,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth.context import current_tenant_id
 from ..config import get_settings
 from ..database import get_session_factory
 from .analyst import (
@@ -452,6 +453,9 @@ async def run_analyst_batch(
     # session if provided (tests), otherwise open a fresh one.
     owns_session = session is None
     if session is None:
+        # FON-93: our own session, outside the request dependency — publish
+        # the tenant for the RLS GUC hook from the payload.
+        current_tenant_id.set(str(payload.tenant_id))
         session_factory = get_session_factory()
         session = session_factory()
     try:
@@ -507,13 +511,21 @@ async def poll_pending_batches(
         session = session_factory()
 
     tally = {"checked": 0, "completed": 0, "failed": 0, "expired": 0, "pending": 0}
+    tenant_token = current_tenant_id.set(current_tenant_id.get())
     try:
+        # Cross-tenant scan: under RLS this needs the owner DSN (see
+        # docs/WORKSPACE_ISOLATION.md §7 "Background jobs").
         open_rows = await _list_open_batches(session)
         if not open_rows:
             return tally
+        # End the scan's transaction so each row below starts its own and
+        # the ``after_begin`` hook publishes THAT row's tenant.
+        await session.commit()
 
         batch_client = client or BatchClient()
         for row in open_rows:
+            # FON-93: every statement for this batch runs as its tenant.
+            current_tenant_id.set(str(row.tenant_id))
             tally["checked"] += 1
             try:
                 status_response = batch_client.retrieve(row.batch_id)
@@ -599,6 +611,7 @@ async def poll_pending_batches(
                 )
                 tally["failed"] += 1
     finally:
+        current_tenant_id.reset(tenant_token)
         if owns_session:
             await session.close()
 

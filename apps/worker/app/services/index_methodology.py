@@ -691,7 +691,10 @@ def coerce_target_list(raw: Any) -> list[float | None]:
 
 
 TargetSource = Literal["by_year", "scalar"]
-DriverStatus = Literal["driven", "no_target", "benchmark_unavailable"]
+#: ``scalar_year1_only`` — Year 2+ with only the all-years (scalar) target and
+#: no analyst growth override for that metric: the target drives Year 1 only
+#: and the model's own growth carries the year (the pre-FON-95-part-2 shape).
+DriverStatus = Literal["driven", "no_target", "benchmark_unavailable", "scalar_year1_only"]
 
 
 @dataclass(frozen=True)
@@ -928,6 +931,15 @@ def resolve_index_by_year(
         bench_occ = _grown_series(chosen.occupancy, occ_growth, hold, noun="occupancy", method_label=chosen.label)
         bench_adr = _grown_series(chosen.adr, adr_growth, hold, noun="ADR", method_label=chosen.label)
     mpi_t, ari_t = read_targets_by_year(overrides, hold)
+    # Out-year gate: the all-years (scalar) target drives Year 1 only unless
+    # the analyst asked for the out-years — a by-year target for that year, or
+    # a market growth OVERRIDE for that metric (the document default is shown
+    # beside the assumption, never applied). Without the gate a deal that had
+    # a scalar target and the STR toggle on before by-year targets shipped
+    # would have been re-based in Years 2+ with no analyst action.
+    occ_growth_overridden = occ_growth.source == "override"
+    adr_growth_overridden = adr_growth.source == "override"
+    grown_method = chosen.method != METHOD_MARKET_BENCHMARK
 
     years: list[IndexYearReading] = []
     for y in range(1, hold + 1):
@@ -935,9 +947,14 @@ def resolve_index_by_year(
         mt, at = mpi_t[y - 1], ari_t[y - 1]
         reasons: list[str] = []
 
-        def resolve(target: TargetReading, bench: Figure, normalize, label: str) -> tuple[float | None, DriverStatus]:
+        def resolve(
+            target: TargetReading, bench: Figure, normalize, label: str, *, growth_overridden: bool, noun: str
+        ) -> tuple[float | None, DriverStatus]:
             if target.value is None:
                 return None, "no_target"
+            if y > 1 and target.source == "scalar" and not growth_overridden:
+                reasons.append(scalar_year1_only_reason(y, label, noun, grown_method=grown_method))
+                return None, "scalar_year1_only"
             if bench.value is None:
                 reasons.append(f"{label}: {bench.detail or 'no benchmark value'}")
                 return None, "benchmark_unavailable"
@@ -947,8 +964,10 @@ def resolve_index_by_year(
                 return None, "benchmark_unavailable"
             return v, "driven"
 
-        occ_v, occ_s = resolve(mt, bo, _valid_occupancy, "Occupancy")
-        adr_v, adr_s = resolve(at, ba, _valid_adr, "ADR")
+        occ_v, occ_s = resolve(
+            mt, bo, _valid_occupancy, "Occupancy", growth_overridden=occ_growth_overridden, noun="occupancy"
+        )
+        adr_v, adr_s = resolve(at, ba, _valid_adr, "ADR", growth_overridden=adr_growth_overridden, noun="ADR")
         rgi = (mt.value * at.value / 100.0) if mt.value is not None and at.value is not None else None
         years.append(
             IndexYearReading(
@@ -969,6 +988,17 @@ def resolve_index_by_year(
     return IndexByYearReading(
         method=chosen.method, method_label=chosen.label, hold_years=hold,
         calendar_known=bool(cal), years=years,
+    )
+
+
+def scalar_year1_only_reason(year: int, label: str, noun: str, *, grown_method: bool) -> str:
+    """Why an out-year with only the all-years target is not driven."""
+    how = f"set a Year-{year} {label.upper() if label == 'ADR' else label.lower()} target"
+    if grown_method:
+        how += f" or a market {noun} growth override"
+    return (
+        f"{label}: the all-years target drives Year 1 only; Year {year} follows the model's own "
+        f"{noun} growth — {how} to index this year."
     )
 
 
