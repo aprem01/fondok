@@ -8417,7 +8417,7 @@ export const SOURCES: Record<SourceId, SourceDef> = {
     "doc_types": [
       "CAPEX"
     ],
-    "explanation": "Renovation budget read from a PIP / CapEx document uploaded to the deal (the stated PIP total). A separate PIP or capital plan is the more detailed source, so it outranks the OM's broker figure; among several, the latest-dated plan wins. Future CapEx documents are reference only and never feed this.",
+    "explanation": "Renovation budget read from a PIP / CapEx document uploaded to the deal (the stated PIP total). A separate PIP or capital plan is the more detailed source, so it outranks the OM's broker figure; among several, the latest-dated plan wins. Only a document laned PIP / Renovation budget (or left untagged) can feed this; Historic and Future CapEx documents are reference only.",
     "reason": null
   }
 };

@@ -1133,21 +1133,26 @@ def check_capex_plausibility(
         return []
     total: float | None = None
     total_reviewed: str | None = None
+    # The SAME coercion the engine-input loader applies to these rows
+    # (``services.renovation_budget.coerce_usd``): a total the extractor
+    # emitted as "$1,200,000" grounds the model, so it must be checked too.
+    from ..services.renovation_budget import coerce_usd
+
     items: list[float] = []
     for f in fields:
         if not isinstance(f, Mapping):
             continue
         name = str(f.get("field_name") or "").strip()
-        value = f.get("value")
+        value = coerce_usd(f.get("value"))
         if name == _PIP_TOTAL_FIELD:
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                total = float(value)
+            if value is not None:
+                total = value
                 reviewed = f.get("reviewed")
                 total_reviewed = reviewed if isinstance(reviewed, str) else None
             continue
         if _PIP_SCOPE_ITEM_RE.match(name):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                items.append(float(value))
+            if value is not None:
+                items.append(value)
     if total is None or total <= 0 or not items:
         return []
     if total_reviewed in _ANALYST_REVIEWED:

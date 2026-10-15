@@ -103,6 +103,101 @@ def test_target_lists_coerce_points_ratios_json_and_blanks() -> None:
     assert coerce_target_list("[110, null]") == [110.0, None]
     assert coerce_target_list("not json") == []
     assert coerce_target_list(110) == []
+    # Out-of-range entries read as UNSET, never as points: "5" used to become
+    # MPI 5 → occupancy 3.8% marked ``driven``.
+    assert coerce_target_list([5, 12, 300, 0.2, 2.6, 24.9]) == [None] * 6
+    assert coerce_target_list([25, 250, 0.25, 2.5]) == [25.0, 250.0, 25.0, 250.0]
+
+
+def test_index_target_validator_bands_and_reasons() -> None:
+    from app.services.index_methodology import (
+        INDEX_POINTS_RANGE,
+        INDEX_RATIO_RANGE,
+        target_list_problems,
+        validate_index_target,
+    )
+
+    assert INDEX_POINTS_RANGE == (25.0, 250.0) and INDEX_RATIO_RANGE == (0.25, 2.5)
+    assert validate_index_target(110) == (110.0, None)
+    assert validate_index_target("1.10") == (pytest.approx(110.0), None)
+    assert validate_index_target("103.2") == (103.2, None)
+    for bad in (5, 12, 300, 0.2, 2.6, 24.99, 250.01, 0, -3):
+        pts, why = validate_index_target(bad)
+        assert pts is None and why and "25–250" in why and "0.25–2.5" in why, bad
+    assert validate_index_target("x") == (None, "not a number")
+    assert validate_index_target(None) == (None, "not a number")
+
+    assert target_list_problems([None, 110, "", 1.05]) == []
+    assert target_list_problems(None) == []
+    problems = target_list_problems([None, 5, 110, "abc"])
+    assert len(problems) == 2
+    assert problems[0].startswith("Year 2: 5 is outside")
+    assert problems[1] == "Year 4: not a number"
+    assert target_list_problems(110) == [
+        "must be a list with one entry per model year (null = unset)"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_patch_refuses_out_of_range_penetration_targets_and_keeps_valid_ones() -> None:
+    """``update_deal`` is the PATCH path every override takes: a scalar or
+    by-year penetration target outside both bands is a 422
+    ``override_out_of_range`` and NOTHING is written; in-range values (points
+    or ratios) and cleared entries pass."""
+    from fastapi import HTTPException
+
+    from app.api.deals import UpdateDealBody, update_deal
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as s:
+        deal_id, tenant_id = await _str_deal(s, overrides={})
+
+    async def patch(fo: dict):
+        async with get_session_factory()() as s:
+            return await update_deal(
+                deal_id=UUID(deal_id), body=UpdateDealBody(field_overrides=fo),
+                session=s, tenant_id=UUID(tenant_id),
+            )
+
+    async def stored() -> dict:
+        async with get_session_factory()() as s:
+            row = (await s.execute(
+                text("SELECT field_overrides FROM deals WHERE id = :id"), {"id": deal_id},
+            )).first()
+        return json.loads(row[0]) if isinstance(row[0], str) else dict(row[0] or {})
+
+    # Scalar "5" — neither 5 points nor a 5× ratio.
+    with pytest.raises(HTTPException) as exc:
+        await patch({KEY_MPI_TARGET: {"value": 5, "note": "typo"}})
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "override_out_of_range"
+    assert exc.value.detail["keys"] == [KEY_MPI_TARGET]
+    assert "25–250" in exc.value.detail["problems"][KEY_MPI_TARGET]
+    assert await stored() == {}
+
+    # By-year list with one bad year — named by year; a good key beside it is
+    # refused too (the PATCH is all-or-nothing).
+    with pytest.raises(HTTPException) as exc2:
+        await patch({
+            KEY_MPI_TARGET_BY_YEAR: {"value": [None, 5, 110], "note": "n"},
+            KEY_ARI_TARGET: {"value": 1.05, "note": "fine"},
+        })
+    assert exc2.value.detail["keys"] == [KEY_MPI_TARGET_BY_YEAR]
+    assert exc2.value.detail["problems"][KEY_MPI_TARGET_BY_YEAR].startswith("Year 2: 5 is outside")
+    assert await stored() == {}
+
+    # In range: points, a ratio, blanks and nulls in the list.
+    ok = {
+        KEY_MPI_TARGET: {"value": 110, "note": "share gain"},
+        KEY_ARI_TARGET: {"value": 1.05, "note": "rate premium"},
+        KEY_MPI_TARGET_BY_YEAR: {"value": [None, 115, "", 1.2], "note": "Y2: a · Y4: b"},
+    }
+    await patch(ok)
+    assert await stored() == ok
+
+    # Clearing a key (it leaves the blob) is a revert, never a range problem.
+    await patch({KEY_ARI_TARGET: {"value": 1.05, "note": "rate premium"}})
+    assert set(await stored()) == {KEY_ARI_TARGET}
 
 
 def test_by_year_beats_scalar_and_only_analyst_set_values_count() -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Mapping
 from typing import Annotated, Any
 from uuid import UUID
@@ -491,6 +492,50 @@ def _needs_note(key: str) -> bool:
     return _override_needs_note(key, _OVERRIDE_NON_ENGINE_KEYS)
 
 
+# ───────────────────── by-year target notes (FON-95 part 2) ─────────────────────
+#
+# An ``index_*_target_by_year`` override is ONE list with ONE note, but the
+# Excel apply edits it a year at a time, each row with its own justification.
+# The note therefore carries every year's reason as ``Y<n>: …`` segments
+# joined by " · ". A segment that does not start with ``Y<n>:`` is a legacy
+# whole-list note and is kept in front, so no justification is ever lost.
+
+_YEAR_NOTE_SEP = " · "
+_YEAR_NOTE_RE = re.compile(r"^Y(\d{1,2}):\s*(.*)$", re.DOTALL)
+
+
+def split_by_year_notes(note: str | None) -> tuple[str | None, dict[int, str]]:
+    """``"old · Y2: a · Y3: b"`` → ``("old", {2: "a", 3: "b"})``."""
+    general: list[str] = []
+    by_year: dict[int, str] = {}
+    for seg in (note or "").split(_YEAR_NOTE_SEP):
+        seg = seg.strip()
+        if not seg:
+            continue
+        m = _YEAR_NOTE_RE.match(seg)
+        if m:
+            by_year[int(m.group(1))] = m.group(2).strip()
+        else:
+            general.append(seg)
+    return (_YEAR_NOTE_SEP.join(general) or None), by_year
+
+
+def merge_by_year_notes(existing: str | None, new_by_year: Mapping[int, str]) -> str:
+    """Fold this apply's per-year notes into the list's existing note.
+
+    Years edited now replace their own segment; every other year's segment
+    — and any legacy whole-list note — survives untouched. The result is
+    ``"<legacy> · Y2: … · Y3: …"`` in year order ("" when there is nothing).
+    """
+    general, by_year = split_by_year_notes(existing)
+    for year, text_ in new_by_year.items():
+        cleaned = (text_ or "").strip()
+        if cleaned:
+            by_year[int(year)] = cleaned
+    segments = ([general] if general else []) + [f"Y{y}: {by_year[y]}" for y in sorted(by_year)]
+    return _YEAR_NOTE_SEP.join(segments)
+
+
 # ─────────────────────────── projection routes ───────────────────────────
 
 
@@ -526,13 +571,21 @@ async def export_projections(
         for spec in specs
     ]
     # FON-97 — the same market-data block the web's Benchmark column reads;
-    # None (no column) when the deal carries no P&L benchmark.
-    market = await load_market_data(session, deal_id=deal_id, tenant_id=UUID(tenant))
-    benchmark = (
-        benchmark_column_values(market.pnl_benchmark.categories)
-        if market.pnl_benchmark is not None and market.pnl_benchmark.categories
-        else None
-    )
+    # None (no column) when the deal carries no P&L benchmark. The column is
+    # a convenience, so a market-data aggregation failure drops the column
+    # and logs — it never fails the export of the analyst's own projections.
+    benchmark = None
+    try:
+        market = await load_market_data(session, deal_id=deal_id, tenant_id=UUID(tenant))
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "export_projections: market data unavailable for deal %s — "
+            "Benchmark column omitted",
+            deal_id,
+        )
+    else:
+        if market.pnl_benchmark is not None and market.pnl_benchmark.categories:
+            benchmark = benchmark_column_values(market.pnl_benchmark.categories)
     data = build_projections_workbook(
         deal_id=str(deal_id),
         deal_name=await _deal_name(session, deal_id, tenant),
@@ -623,9 +676,10 @@ async def apply_projections_import(
     skipped: list[dict[str, Any]] = []
     method_changed_lines: set[str] = set()
     value_changed_lines: dict[str, str] = {}
-    # FON-95 part 2 — by-year target rows fold into their JSON list override.
+    # FON-95 part 2 — by-year target rows fold into their JSON list override;
+    # each edited year keeps its own note (``merge_by_year_notes``).
     by_year_changes: dict[str, dict[int, float]] = {}
-    by_year_notes: dict[str, str] = {}
+    by_year_notes: dict[str, dict[int, str]] = {}
     batch_keys = {ch.key for ch in body.changes}
     for ch in body.changes:
         spec = assumption_spec(ch.key)
@@ -678,12 +732,20 @@ async def apply_projections_import(
         by = split_by_year_target_key(ch.key)
         if by is not None:
             list_key, year = by
+            from ..services.index_methodology import validate_index_target
+
             if float(value) <= 0:
                 skipped.append({"key": ch.key, "reason": "non_numeric"})
                 continue
+            points, why = validate_index_target(value)
+            if points is None:
+                # "5" is neither 5 index points nor a 5.0× ratio — refuse
+                # it with the reason rather than drive occupancy to 3.8%.
+                skipped.append({"key": ch.key, "reason": "out_of_range", "detail": why})
+                continue
             by_year_changes.setdefault(list_key, {})[year] = float(value)
-            if note and list_key not in by_year_notes:
-                by_year_notes[list_key] = note
+            if note:
+                by_year_notes.setdefault(list_key, {})[year] = note
             applied.append({"key": ch.key, "old_value": now_val, "new_value": value, "note": note})
             continue
         pm = split_projection_method_key(ch.key)
@@ -715,9 +777,10 @@ async def apply_projections_import(
         merged.pop(projection_method_key(line, "value"), None)
 
     # FON-95 part 2 — fold the per-year rows into the list the runner reads
-    # (index y-1 = model year y; untouched years keep their current entry).
+    # (index y-1 = model year y; untouched years keep their current entry
+    # AND their note — see ``merge_by_year_notes``).
     if by_year_changes:
-        from ..services.index_methodology import coerce_target_list
+        from ..services.index_methodology import coerce_target_list, override_note
 
         for list_key, per_year in by_year_changes.items():
             existing = overrides.get(list_key)
@@ -726,7 +789,9 @@ async def apply_projections_import(
             new_list: list[float | None] = list(current) + [None] * (size - len(current))
             for year, v in per_year.items():
                 new_list[year - 1] = v
-            note = by_year_notes.get(list_key, "")
+            note = merge_by_year_notes(
+                override_note(overrides, list_key), by_year_notes.get(list_key, {})
+            )
             merged[list_key] = {"value": new_list, "note": note} if note else new_list
 
     if applied:

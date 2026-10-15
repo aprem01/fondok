@@ -145,9 +145,10 @@ const DOC_TYPE_LABEL: Record<string, string> = {
 // drops its REQ badge. Wave 1 expanded the DocType enum to cover every
 // category — Surveys is the only one marked optional.
 const REQUIRED_CHECKLIST: { label: string; match: string[]; subtype?: string }[] = [
-  // FON-41 decision 5 — same labels + order as the wizard slots. Historic and
-  // Future CapEx both match CAPEX, split by doc_subtype (R-036; unstated →
-  // Historic).
+  // FON-41 decision 5 — same labels + order as the wizard slots. Historic
+  // CapEx, Future CapEx and PIP / Renovation Budget all match CAPEX, split
+  // by doc_subtype (R-036 + the PIP lane; unstated → PIP, because the
+  // loader treats an untagged CAPEX file like ``pip``).
   { label: 'Offering Memorandum',           match: ['OM'] },
   { label: 'Hotel Program',                 match: ['ROOM_MIX'] },
   // FON-18: a single "Financial Statements" requirement satisfied by ANY
@@ -162,6 +163,7 @@ const REQUIRED_CHECKLIST: { label: string; match: string[]; subtype?: string }[]
   { label: 'Insurance Records',             match: ['INSURANCE'] },
   { label: 'Property Taxes',                match: ['PROPERTY_TAX'] },
   { label: 'Future CapEx',                  match: ['CAPEX'], subtype: 'future' },
+  { label: 'PIP / Renovation Budget',       match: ['CAPEX'], subtype: 'pip' },
   { label: 'Other Property Info',           match: ['PROPERTY_INFO'] },
   { label: 'Leases & Agreements',           match: ['LEASES', 'CONTRACT'] },
   { label: 'Due Diligence',                 match: ['SURVEYS'] },
@@ -576,7 +578,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     extractedPeriodYear?: number | null;
     /** FON-22 — the primary financial source of truth for this deal. */
     primaryFinancialSource?: boolean;
-    /** FON-41 / R-036 — CAPEX ``future`` / ``historic`` (null = unstated). */
+    /** FON-41 / R-036 — CAPEX lane ``pip`` / ``historic`` / ``future``
+     *  (null = unstated → treated as ``pip``). */
     docSubtype?: string | null;
   };
 
@@ -665,8 +668,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // flips to "complete" the moment any uploaded doc carries one of its
   // mapped tokens.
   // FON-41 / R-036 — each doc also contributes ``TYPE:subtype`` (its
-  // effective subtype) so Historic vs Future CapEx rows can tell CAPEX
-  // files apart.
+  // effective subtype) so the PIP / Historic / Future CapEx rows can tell
+  // CAPEX files apart.
   const uploadedDocTypes = useMemo(() => {
     const keys = new Set<string>();
     if (liveMode) {
@@ -699,10 +702,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     for (const d of docs) {
       const raw = (d.type ?? '').toUpperCase().trim();
       if (!raw || raw === '—') continue;
-      // FON-41 / R-036 — CapEx counts split by subtype.
+      // FON-41 / R-036 — CapEx counts split by lane (PIP / Historic / Future).
       const sub = effectiveDocSubtype(raw, d.docSubtype);
       const label = sub
-        ? `${sub === 'future' ? 'Future' : 'Historic'} ${DOC_TYPE_LABEL[raw] ?? raw}`
+        ? `${sub === 'future' ? 'Future' : sub === 'pip' ? 'PIP' : 'Historic'} ${DOC_TYPE_LABEL[raw] ?? raw}`
         : DOC_TYPE_LABEL[raw] ?? raw
         .toLowerCase()
         .split('_')

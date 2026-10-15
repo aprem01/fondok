@@ -342,9 +342,15 @@ export interface RenovationBudgetCandidate {
   scope_items?: Array<{ index?: number; name?: string | null; usd?: number | null; category?: string | null; page?: number | null }>;
 }
 
-/** FON-101 — a Future CapEx document: reference only, never in the model. */
+/** FON-101 — a Future or Historic CapEx document: reference only, never in
+ *  the model. Each lane exposes only its own namespace (`future_capex.*` /
+ *  `historic_capex.*`); a PIP total the extractor also found rides along as
+ *  `pip_total_usd` with a re-tag hint in `reason`. */
 export interface RenovationBudgetReferenceDoc {
   id: string;
+  /** Which reference-only lane the document is filed under. */
+  lane?: 'future' | 'historic' | string;
+  lane_label?: string;
   document_id: string;
   filename: string;
   date?: string | null;
@@ -352,6 +358,8 @@ export interface RenovationBudgetReferenceDoc {
   prepared_by?: string | null;
   total_usd?: number | null;
   items: Array<{ index?: number; name?: string | null; year?: number | null; usd?: number | null; category?: string | null; timing?: string | null }>;
+  /** Historic CapEx only — `historic_capex.by_year.<YYYY>.total_usd` as printed. */
+  by_year?: Record<string, number>;
   extracted: boolean;
   pip_total_usd?: number | null;
   reason: string;
@@ -670,10 +678,11 @@ export interface WorkerDocument {
   year_mismatch?: boolean;
   extracted_period_year?: number | null;
   /** FON-41 / R-036 — subcategory inside ``doc_type``. Only CAPEX carries
-   *  one: ``future`` (PIP budget / forward capital plan) or ``historic``.
-   *  ``null`` / absent = not stated (pre-FON-41 uploads, legacy bulk drop,
-   *  or a worker whose schema lacks the column) — the Data Room files those
-   *  under Historic CapEx. */
+   *  one — its lane: ``pip`` (PIP / renovation budget — feeds the model),
+   *  ``historic`` or ``future`` (both reference only). ``null`` / absent =
+   *  not stated (pre-FON-41 uploads, legacy bulk drop, or a worker whose
+   *  schema lacks the column) — classifier-assigned, so the loader treats it
+   *  like ``pip`` and the Data Room files it under PIP / Renovation Budget. */
   doc_subtype?: DocSubtype | null;
 }
 
@@ -710,14 +719,17 @@ export type WizardCategory =
   | 'historical_pnl'
   | 'str'
   // FON-41 decision 5 — wizard-only display slots over existing doc types:
-  // 'comp_set' uploads as STR_TREND; 'future_capex' uploads as CAPEX with
-  // doc_subtype 'future' (FON-41 / R-036), 'capex' as CAPEX + 'historic'.
+  // 'comp_set' uploads as STR_TREND; the three CapEx slots all upload as
+  // CAPEX and differ only by doc_subtype (FON-41 / R-036 + the PIP lane):
+  // 'pip_capex' → 'pip' (feeds the model), 'capex' → 'historic',
+  // 'future_capex' → 'future' (both reference only).
   | 'comp_set'
   | 'insurance'
   | 'property_tax'
   | 'room_mix'
   | 'capex'
   | 'future_capex'
+  | 'pip_capex'
   | 'property_info'
   | 'leases'
   | 'surveys'
@@ -1991,7 +2003,8 @@ export const api = {
      *  ``fiscal_year``; both are sent as positionally-aligned form
      *  arrays so the worker can map ``files[i] → user_doc_types[i] →
      *  fiscal_years[i] → user_doc_subtypes[i]`` (FON-41: CAPEX files carry
-     *  ``future`` / ``historic`` from their wizard slot). */
+     *  ``pip`` / ``future`` / ``historic`` from their wizard slot or the
+     *  row's lane pick). */
     upload: (dealId: string, files: File[] | WizardFile[]) => {
       const fd = new FormData();
       const isWizard = files.length > 0 && 'file' in (files[0] as object);

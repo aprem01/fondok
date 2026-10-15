@@ -5,16 +5,32 @@ PIP / CapEx document that states a renovation budget, the PIP / CapEx
 document wins — it is the more detailed source. Both values stay visible
 with their sources; the analyst can override the selection; dates decide
 between several PIP / CapEx documents (a newer approved capital plan
-supersedes an older PIP). Future CapEx documents (``documents.doc_subtype
-= 'future'`` — the Data Room's "Future CapEx" lane, FON-41) are reference
-only and are never read into the model.
+supersedes an older PIP).
+
+CAPEX lanes (``documents.doc_subtype``, FON-41 / R-036 + the PIP lane):
+
+* ``pip`` — "PIP / Renovation budget": the day-one PIP, owner budget,
+  approved capital plan or estimate. FEEDS the model.
+* ``NULL`` — untagged (bulk drop, legacy upload, a worker without the
+  column): the classifier decides, so it MAY ground the model exactly like
+  ``pip`` — a CAPEX file nobody laned is not silently refused.
+* ``future`` — "Future CapEx": forward hold-period capital plan. Reference
+  only; the loader reads nothing but ``future_capex.*`` off it.
+* ``historic`` — "Historic CapEx": spend already incurred. Reference only;
+  the loader reads nothing but ``historic_capex.*`` off it.
+
+A ``future`` or ``historic`` document never grounds ``renovation_budget``
+even when the extractor labelled its rows ``capex_plan.pip.*`` — the lane
+the analyst filed it under wins over the LLM's namespace. Conversely a
+brand PIP dropped in Future CapEx is listed as reference only WITH its
+stated PIP total and a re-tag hint, never quietly ignored.
 
 Precedence, highest first::
 
     analyst override  (``field_overrides.renovation_budget``)
     > the CAPEX document with the latest plan date
         (``capex_plan.document.plan_date``, else ``documents.report_as_of``,
-         else ``documents.uploaded_at``), ``doc_subtype != 'future'``,
+         else ``documents.uploaded_at``), ``doc_subtype IN ('pip', NULL)``,
          carrying ``capex_plan.pip.total_usd`` > 0
     > the OM's ``broker_proforma.renovation_budget_usd``
     > the seed
@@ -48,10 +64,26 @@ logger = logging.getLogger(__name__)
 
 #: The extracted path the loader reads as the PIP / CapEx document's budget.
 PIP_TOTAL_PATH = "capex_plan.pip.total_usd"
-#: ``documents.doc_subtype`` that marks a Future CapEx document (FON-41 /
-#: R-036 stores ``future``; the Data Room / wizard call the lane "Future
-#: CapEx" and its wizard slot id is ``future_capex``). Reference only.
+#: ``documents.doc_subtype`` values — the CAPEX lanes. The contract the
+#: upload / reclassify endpoints enforce is ``api.documents
+#: .DOC_SUBTYPES_BY_DOC_TYPE``; these are the loader's reading of it.
+#: ``pip`` is the "PIP / Renovation budget" lane (wizard slot
+#: ``pip_capex``) — the only tagged lane that feeds the model.
+PIP_CAPEX_SUBTYPE = "pip"
+#: "Future CapEx" (FON-41 / R-036; wizard slot ``future_capex``). Reference only.
 FUTURE_CAPEX_SUBTYPE = "future"
+#: "Historic CapEx" (wizard slot ``capex``). Reference only.
+HISTORIC_CAPEX_SUBTYPE = "historic"
+#: Lanes whose documents never ground ``renovation_budget``, whatever
+#: namespace the extractor put their rows under.
+REFERENCE_ONLY_CAPEX_SUBTYPES: frozenset[str] = frozenset(
+    {FUTURE_CAPEX_SUBTYPE, HISTORIC_CAPEX_SUBTYPE}
+)
+#: The one namespace the loader reads off each reference-only lane.
+REFERENCE_ONLY_NAMESPACES: dict[str, str] = {
+    FUTURE_CAPEX_SUBTYPE: "future_capex",
+    HISTORIC_CAPEX_SUBTYPE: "historic_capex",
+}
 
 #: Source id stamped on ``renovation_budget`` when a PIP / CapEx document
 #: grounds it. Registered in ``ontology/concepts.yaml`` (``sources``) and
@@ -60,6 +92,8 @@ SOURCE_PIP_DOCUMENT = "pip_document"
 
 _SCOPE_ITEM_RE = re.compile(r"^capex_plan\.pip\.scope_items\.(\d+)\.(name|usd|category|brand_required)$")
 _FUTURE_ITEM_RE = re.compile(r"^future_capex\.items\.(\d+)\.(name|year|usd|category|timing)$")
+_HISTORIC_ITEM_RE = re.compile(r"^historic_capex\.items\.(\d+)\.(name|year|usd|category|timing)$")
+_HISTORIC_BY_YEAR_RE = re.compile(r"^historic_capex\.by_year\.(\d{4})\.total_usd$")
 _TIMING_RE = re.compile(r"^capex_plan\.pip\.timing\.(\d{4})\.(pct|usd)$")
 
 _SCALARS: dict[str, str] = {
@@ -78,7 +112,17 @@ _SCALARS: dict[str, str] = {
     "future_capex.total_usd": "future_total_usd",
     "future_capex.plan_date": "future_plan_date",
     "future_capex.prepared_by": "future_prepared_by",
+    "historic_capex.total_usd": "historic_total_usd",
 }
+
+#: ``_SCALARS`` attributes that hold a number (the rest hold text).
+_NUMERIC_SCALARS: frozenset[str] = frozenset(
+    {
+        "pip_per_key_usd", "pip_hard_usd", "pip_soft_usd",
+        "pip_contingency_usd", "pip_contingency_pct", "scope_keys",
+        "future_total_usd", "historic_total_usd",
+    }
+)
 
 _DOC_COLUMNS_CACHE_KEY = "fondok_documents_columns_fon101"
 
@@ -116,10 +160,36 @@ class CapexDocument:
     future_total_usd: float | None = None
     future_plan_date: str | None = None
     future_prepared_by: str | None = None
+    # ``historic_capex.*``
+    historic_items: list[dict[str, Any]] = field(default_factory=list)
+    historic_total_usd: float | None = None
+    historic_by_year: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def lane(self) -> str | None:
+        """The stored ``doc_subtype``, normalised (``None`` = untagged)."""
+        s = (self.doc_subtype or "").strip().lower()
+        return s or None
 
     @property
     def is_future(self) -> bool:
-        return (self.doc_subtype or "").strip().lower() == FUTURE_CAPEX_SUBTYPE
+        return self.lane == FUTURE_CAPEX_SUBTYPE
+
+    @property
+    def is_historic(self) -> bool:
+        return self.lane == HISTORIC_CAPEX_SUBTYPE
+
+    @property
+    def is_reference_only(self) -> bool:
+        """Filed under Future or Historic CapEx — never grounds the model."""
+        return self.lane in REFERENCE_ONLY_CAPEX_SUBTYPES
+
+    @property
+    def may_ground_model(self) -> bool:
+        """``pip`` or untagged (classifier-assigned). An unknown subtype
+        string is treated as untagged — the upload contract never stores
+        one, and refusing a document over a stray tag would hide a PIP."""
+        return not self.is_reference_only
 
     @property
     def has_pip_total(self) -> bool:
@@ -188,17 +258,29 @@ def _iso_date(value: Any) -> str | None:
     return None
 
 
-def _num(value: Any) -> float | None:
+def coerce_usd(value: Any) -> float | None:
+    """An extracted dollar amount → float. Accepts a number or a numeric
+    string as the extractor sometimes emits it (``"$1,200,000"``,
+    ``"1200000"``); bool / blank / prose → ``None``. The ONE coercion every
+    CAPEX reader uses (``agents.critic.check_capex_plausibility`` imports
+    it), so the critic and the loader can never disagree about whether a
+    row carries a number."""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
+        cleaned = value.replace(",", "").replace("$", "").strip()
+        if not cleaned:
+            return None
         try:
-            return float(value.replace(",", "").replace("$", "").strip())
+            return float(cleaned)
         except ValueError:
             return None
     return None
+
+
+_num = coerce_usd
 
 
 def _text(value: Any) -> str | None:
@@ -225,6 +307,7 @@ def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:
         return doc
     scope: dict[int, dict[str, Any]] = {}
     future: dict[int, dict[str, Any]] = {}
+    historic: dict[int, dict[str, Any]] = {}
     for row in fields:
         if not isinstance(row, Mapping):
             continue
@@ -242,11 +325,7 @@ def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:
         if attr is not None:
             if getattr(doc, attr) is not None:
                 continue
-            if attr in {
-                "pip_per_key_usd", "pip_hard_usd", "pip_soft_usd",
-                "pip_contingency_usd", "pip_contingency_pct", "scope_keys",
-                "future_total_usd",
-            }:
+            if attr in _NUMERIC_SCALARS:
                 setattr(doc, attr, _num(value))
             else:
                 setattr(doc, attr, _text(value))
@@ -262,9 +341,10 @@ def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:
             else:
                 item[key] = _text(value)
             continue
-        m = _FUTURE_ITEM_RE.match(name)
+        m = _FUTURE_ITEM_RE.match(name) or _HISTORIC_ITEM_RE.match(name)
         if m:
-            item = future.setdefault(int(m.group(1)), {"page": _page(row)})
+            bucket = future if name.startswith("future_capex.") else historic
+            item = bucket.setdefault(int(m.group(1)), {"page": _page(row)})
             key = m.group(2)
             if key == "usd":
                 item["usd"] = _num(value)
@@ -273,6 +353,12 @@ def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:
                 item["year"] = int(year) if year is not None else None
             else:
                 item[key] = _text(value)
+            continue
+        m = _HISTORIC_BY_YEAR_RE.match(name)
+        if m:
+            amount = _num(value)
+            if amount is not None and m.group(1) not in doc.historic_by_year:
+                doc.historic_by_year[m.group(1)] = amount
             continue
         m = _TIMING_RE.match(name)
         if m:
@@ -284,6 +370,9 @@ def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:
     ]
     doc.future_items = [
         {"index": idx, **future[idx]} for idx in sorted(future)
+    ]
+    doc.historic_items = [
+        {"index": idx, **historic[idx]} for idx in sorted(historic)
     ]
     return doc
 
@@ -407,10 +496,12 @@ async def load_capex_documents(
 
 
 def eligible_pip_documents(docs: list[CapexDocument]) -> list[CapexDocument]:
-    """The documents that may ground the model: not Future CapEx, with a
-    positive extracted PIP total. Newest effective date first."""
+    """The documents that may ground the model: laned ``pip`` or untagged
+    (``doc_subtype`` NULL), with a positive extracted PIP total. Future and
+    Historic CapEx are reference only and never appear here, whatever
+    namespace their rows carry. Newest effective date first."""
     return sorted(
-        (d for d in docs if not d.is_future and d.has_pip_total),
+        (d for d in docs if d.may_ground_model and d.has_pip_total),
         key=lambda d: d.sort_key,
         reverse=True,
     )
@@ -421,8 +512,8 @@ def select_pip_candidate(docs: list[CapexDocument]) -> CapexDocument | None:
     on, or ``None`` when no eligible document exists.
 
     Latest ``effective_date`` wins (plan date > report date > upload date);
-    the upload date breaks a tie. A ``future`` document never qualifies,
-    whatever its rows say.
+    the upload date breaks a tie. A ``future`` or ``historic`` document
+    never qualifies, whatever its rows say.
     """
     eligible = eligible_pip_documents(docs)
     return eligible[0] if eligible else None
@@ -592,7 +683,7 @@ def build_candidates(
         )
 
     for d in docs:
-        if d.is_future:
+        if d.is_reference_only:
             continue
         iso, basis = d.effective_date
         selected = selected_source == SOURCE_PIP_DOCUMENT and d.document_id == selected_document_id
@@ -695,45 +786,85 @@ def build_candidates(
 
     reference_only: list[dict[str, Any]] = []
     for d in docs:
-        if not d.is_future:
+        if not d.is_reference_only:
             continue
-        iso, basis = d.effective_date
-        reference_only.append(
-            {
-                "id": f"document:{d.document_id}",
-                "document_id": d.document_id,
-                "filename": d.filename,
-                "date": _iso_date(d.future_plan_date) or iso,
-                "date_basis": "plan_date" if _iso_date(d.future_plan_date) else basis,
-                "prepared_by": d.future_prepared_by or d.prepared_by,
-                "total_usd": d.future_total_usd,
-                "items": d.future_items,
-                "extracted": d.extracted,
-                # A Future CapEx document that ALSO carries a PIP total is
-                # still reference only — say so, with the figure, so the
-                # analyst can re-tag the document if it was filed wrong.
-                "pip_total_usd": d.pip_total_usd,
-                "reason": (
-                    "Future CapEx — reference only, never incorporated in the model."
-                    + (
-                        " It states a PIP total; re-tag it as Historic / PIP in the Data Room to make it a candidate."
-                        if d.has_pip_total
-                        else ""
-                    )
-                ),
-            }
-        )
+        reference_only.append(reference_only_entry(d))
     return candidates, reference_only
+
+
+RETAG_HINT = (
+    " It states a PIP total; re-tag it as PIP / Renovation budget in the "
+    "Data Room to make it a candidate."
+)
+
+
+def reference_only_entry(d: CapexDocument) -> dict[str, Any]:
+    """The analyst-facing row for a Future / Historic CapEx document.
+
+    Each lane exposes ONLY its own namespace — ``future_capex.*`` for
+    Future CapEx, ``historic_capex.*`` for Historic CapEx. A PIP total the
+    extractor also found is reported under ``pip_total_usd`` with a re-tag
+    hint so a mis-laned brand PIP is visible, never silently dropped — but
+    it is never the lane's ``total_usd``.
+    """
+    iso, basis = d.effective_date
+    if d.is_future:
+        plan_iso = _iso_date(d.future_plan_date)
+        return {
+            "id": f"document:{d.document_id}",
+            "lane": FUTURE_CAPEX_SUBTYPE,
+            "lane_label": "Future CapEx",
+            "document_id": d.document_id,
+            "filename": d.filename,
+            "date": plan_iso or iso,
+            "date_basis": "plan_date" if plan_iso else basis,
+            "prepared_by": d.future_prepared_by or d.prepared_by,
+            "total_usd": d.future_total_usd,
+            "items": d.future_items,
+            "by_year": {},
+            "extracted": d.extracted,
+            "pip_total_usd": d.pip_total_usd,
+            "reason": (
+                "Future CapEx — reference only, never incorporated in the model."
+                + (RETAG_HINT if d.has_pip_total else "")
+            ),
+        }
+    return {
+        "id": f"document:{d.document_id}",
+        "lane": HISTORIC_CAPEX_SUBTYPE,
+        "lane_label": "Historic CapEx",
+        "document_id": d.document_id,
+        "filename": d.filename,
+        "date": iso,
+        "date_basis": basis,
+        "prepared_by": None,
+        "total_usd": d.historic_total_usd,
+        "items": d.historic_items,
+        "by_year": dict(sorted(d.historic_by_year.items())),
+        "extracted": d.extracted,
+        "pip_total_usd": d.pip_total_usd,
+        "reason": (
+            "Historic CapEx — reference only, never incorporated in the model."
+            + (RETAG_HINT if d.has_pip_total else "")
+        ),
+    }
 
 
 __all__ = [
     "FUTURE_CAPEX_SUBTYPE",
+    "HISTORIC_CAPEX_SUBTYPE",
+    "PIP_CAPEX_SUBTYPE",
     "PIP_TOTAL_PATH",
+    "REFERENCE_ONLY_CAPEX_SUBTYPES",
+    "REFERENCE_ONLY_NAMESPACES",
+    "RETAG_HINT",
     "SOURCE_PIP_DOCUMENT",
     "CapexDocument",
     "OmRenovationBudget",
     "build_candidates",
+    "coerce_usd",
     "eligible_pip_documents",
+    "reference_only_entry",
     "load_capex_documents",
     "load_om_renovation_budget",
     "parse_capex_fields",

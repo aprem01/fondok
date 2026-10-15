@@ -106,6 +106,9 @@ const EXPECTED_SLOTS: [string, string][] = [
   ['insurance', 'Insurance Records'],
   ['property_tax', 'Property Taxes'],
   ['future_capex', 'Future CapEx'],
+  // The PIP lane — the one CapEx slot that feeds the model (Historic and
+  // Future CapEx are reference only).
+  ['pip_capex', 'PIP / Renovation Budget'],
   ['property_info', 'Other Property Info'],
   ['leases', 'Leases & Agreements'],
   ['surveys', 'Due Diligence'],
@@ -136,7 +139,15 @@ describe('wizard upload slots — order and labels', () => {
     const byId = Object.fromEntries(WIZARD_CATEGORIES.map((c) => [c.id, c]));
     expect(byId.room_mix.description).toMatch(/floor plans, design documents, and program summaries/);
     expect(byId.comp_set.description).toMatch(/CoStar submarket, pipeline, and sales reports plus comp-set definitions/);
-    expect(byId.future_capex.description).toMatch(/PIP budgets and rebranding \/ repositioning capital plans/);
+    // The PIP lane is the one CapEx slot that feeds the model; Historic and
+    // Future CapEx say they are reference only and point at it.
+    expect(byId.pip_capex.description).toMatch(/Property Improvement Plan/);
+    expect(byId.pip_capex.description).toMatch(/Feeds the model/);
+    expect(byId.future_capex.description).toMatch(/Forward hold-period capital plans/);
+    expect(byId.future_capex.description).toMatch(/Reference only/);
+    expect(byId.future_capex.description).toMatch(/PIP \/ Renovation Budget/);
+    expect(byId.capex.description).toMatch(/Reference only/);
+    expect(byId.capex.description).toMatch(/PIP \/ Renovation Budget/);
     expect(byId.surveys.description).toMatch(/Property condition reports \(PCRs\), legal memos, surveys, and reviews/);
     // R-038 — agreements first, in order; floor plans gone from this slot.
     const info = byId.property_info.description;
@@ -158,12 +169,46 @@ describe('wizard upload slots — order and labels', () => {
   });
 });
 
+describe('wizard CapEx slots — per-file lane select', () => {
+  it.each([
+    ['Future CapEx', 'future_capex', 'future'],
+    ['Historic CapEx', 'capex', 'historic'],
+    ['PIP / Renovation Budget', 'pip_capex', 'pip'],
+  ])('%s rows default to the slot pin (%s → %s) and re-lane through doc_subtype', (label, category, pin) => {
+    const file = new File(['x'], 'capex-doc.pdf', { type: 'application/pdf' });
+    const staged: WizardFile[] = [{ file, category: category as WizardFile['category'], user_doc_type: 'CAPEX' }];
+    const onChange = renderStep(staged);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${label.replace(/[/]/g, '\\/')} \\(`) }));
+    const select = screen.getByLabelText('Set CapEx lane for capex-doc.pdf') as HTMLSelectElement;
+    expect(select.value).toBe(pin);
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      'PIP / Renovation budget',
+      'Historic',
+      'Future',
+    ]);
+    const next = pin === 'pip' ? 'historic' : 'pip';
+    fireEvent.change(select, { target: { value: next } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const updated = onChange.mock.calls[0][0] as WizardFile[];
+    expect(updated[0].doc_subtype).toBe(next);
+    expect(updated[0].category).toBe(category); // the file stays in its slot
+  });
+
+  it('non-CapEx slots show no lane select', () => {
+    const file = new File(['x'], 'coi.pdf', { type: 'application/pdf' });
+    renderStep([{ file, category: 'insurance', user_doc_type: 'INSURANCE' }]);
+    fireEvent.click(screen.getByRole('button', { name: /^Insurance Records \(/ }));
+    expect(screen.queryByLabelText('Set CapEx lane for coi.pdf')).toBeNull();
+  });
+});
+
 describe('wizard upload slots — doc types sent', () => {
   it.each([
     ['Hotel Program', 'room_mix', 'ROOM_MIX'],
     ['Comp Set / Market Reports', 'comp_set', 'STR_TREND'],
     ['Historic CapEx', 'capex', 'CAPEX'],
     ['Future CapEx', 'future_capex', 'CAPEX'],
+    ['PIP / Renovation Budget', 'pip_capex', 'CAPEX'],
     ['Other Property Info', 'property_info', 'PROPERTY_INFO'],
     ['Due Diligence', 'surveys', 'SURVEYS'],
   ])('%s stages files as %s → %s', (label, category, docType) => {

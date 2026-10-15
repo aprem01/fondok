@@ -41,6 +41,7 @@ import {
   Trash2,
   TrendingUp,
   UploadCloud,
+  Wrench,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/format';
@@ -49,6 +50,13 @@ import type {
   WizardFile,
   WizardUserDocType,
 } from '@/lib/api';
+import {
+  DOC_SUBTYPES_BY_DOC_TYPE,
+  DOC_SUBTYPE_HELP,
+  DOC_SUBTYPE_LABEL,
+  WIZARD_CATEGORY_DOC_SUBTYPE,
+  type DocSubtype,
+} from '@/lib/docSubtype';
 import { YearCoverageHint } from './YearCoverageHint';
 import { CoachMark } from '@/components/help/CoachMark';
 import {
@@ -105,6 +113,11 @@ type WizardCategorySpec = {
   };
   /** Optional default doc-type when picker is not shown (e.g. INSURANCE). */
   defaultDocType?: WizardUserDocType | null;
+  /** CapEx slots only — show the per-file lane select (PIP / Renovation
+   *  budget · Historic · Future) so a file dropped in the wrong CapEx slot
+   *  can be re-laned without moving it. The slot's pin
+   *  (``WIZARD_CATEGORY_DOC_SUBTYPE``) is the row's default. */
+  lanePicker?: boolean;
   /** Empty-state copy. */
   emptyState: string;
   /** Hint text on the drop zone. */
@@ -118,11 +131,14 @@ type WizardCategorySpec = {
 
 // FON-41 / Sam's decision 5 (R-027, R-031, R-034..R-038) — slot order and
 // labels follow the IC diligence reading order. This is a DISPLAY taxonomy
-// over the existing DocType enum: two slots share a doc type with a sibling
-// (Comp Set / Market Reports → STR_TREND, Future CapEx → CAPEX). Historic vs
-// Future CapEx travel as ``user_doc_subtypes[]`` (FON-41 / R-036 — see
-// ``WIZARD_CATEGORY_DOC_SUBTYPE`` in lib/api), so the Data Room can list them
-// apart. The Router still lanes CoStar / market files to MARKET_STUDY on
+// over the existing DocType enum: several slots share a doc type with a
+// sibling (Comp Set / Market Reports → STR_TREND; Historic CapEx, Future
+// CapEx and PIP / Renovation Budget → CAPEX). The three CapEx lanes travel as
+// ``user_doc_subtypes[]`` (FON-41 / R-036 + the PIP lane — see
+// ``WIZARD_CATEGORY_DOC_SUBTYPE`` in lib/docSubtype), so the Data Room can
+// list them apart and the worker's loader knows which one feeds the model
+// (only PIP / Renovation Budget — Historic and Future are reference only).
+// The Router still lanes CoStar / market files to MARKET_STUDY on
 // extraction.
 export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
@@ -306,9 +322,10 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     multiFile: true,
     Icon: Hammer,
     description:
-      'Capital-expenditure history and FF&E reserve reports. Feeds the capital engine with what has already been spent on the asset.',
+      'Capital-expenditure history and FF&E reserve reports — what has already been spent on the asset. Reference only: listed beside the model, never read into it. The day-one PIP goes in PIP / Renovation Budget.',
     exampleChip: 'e.g. 3-year CapEx schedule, FF&E reserve report',
     defaultDocType: 'CAPEX',
+    lanePicker: true,
     emptyState:
       'No CapEx history yet. Most IC reviewers expect a multi-year schedule.',
     dropHint: 'Multiple files welcome · PDF / Excel.',
@@ -353,7 +370,9 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
   {
     // R-037 — forward-looking capital gets its own slot. It uploads as
     // CAPEX like Historic CapEx, tagged doc_subtype ``future`` (R-036);
-    // the Historic CapEx slot tags ``historic``.
+    // the Historic CapEx slot tags ``historic``. Reference only — the
+    // day-one PIP has its own slot below (``pip_capex`` → ``pip``), which
+    // is the one lane the model's renovation budget reads.
     id: 'future_capex',
     label: 'Future CapEx',
     sidebarLabel: 'Future CapEx',
@@ -361,14 +380,38 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     multiFile: true,
     Icon: CalendarClock,
     description:
-      'PIP budgets and rebranding / repositioning capital plans. Feeds the capital engine and the PIP-displacement model.',
-    exampleChip: 'e.g. PIP budget, rebranding capital plan, repositioning budget',
+      'Forward hold-period capital plans — multi-year schedules of future spend after the renovation. Reference only: listed beside the model, never read into it. The day-one PIP goes in PIP / Renovation Budget.',
+    exampleChip: 'e.g. 5-year capital plan, reserve study, ongoing capital schedule',
     defaultDocType: 'CAPEX',
+    lanePicker: true,
     emptyState:
-      'No forward capital plan yet. Most IC reviewers expect the PIP budget when a brand change or renovation is planned.',
+      'No forward capital plan yet. Most IC reviewers expect one when the hold carries scheduled capital after the renovation.',
     dropHint: 'Multiple files welcome · PDF / Excel.',
     skipWarning:
       'Future CapEx is recommended for IC. You can add it later from the Data Room.',
+    showYearTagging: false,
+  },
+  {
+    // The PIP lane — the ONLY CapEx slot that feeds the model. Uploads as
+    // CAPEX tagged doc_subtype ``pip``; the worker's loader reads
+    // ``capex_plan.pip.total_usd`` off it as the renovation-budget candidate
+    // that outranks the OM (FON-101) and trips Year-1 PIP displacement.
+    id: 'pip_capex',
+    label: 'PIP / Renovation Budget',
+    sidebarLabel: 'PIP / Renovation Budget',
+    requiredForIc: true,
+    multiFile: true,
+    Icon: Wrench,
+    description:
+      'The day-one PIP: brand-issued Property Improvement Plan, owner renovation budget, approved capital plan or contractor estimate. Feeds the model — its stated total becomes the renovation budget (outranking the OM) and drives Year-1 PIP displacement.',
+    exampleChip: 'e.g. brand PIP priced out, renovation budget, approved capital plan, rebranding / repositioning budget',
+    defaultDocType: 'CAPEX',
+    lanePicker: true,
+    emptyState:
+      'No PIP / renovation budget yet. Most IC reviewers expect the PIP when a brand change or renovation is planned; without one the model reads the OM’s broker figure.',
+    dropHint: 'Multiple files welcome · PDF / Excel.',
+    skipWarning:
+      'The PIP / renovation budget is recommended for IC. You can add it later from the Data Room.',
     showYearTagging: false,
   },
   {
@@ -1146,6 +1189,25 @@ function FileRow({
             ))}
           </select>
         </>
+      )}
+      {spec.lanePicker && (file.user_doc_type ?? '').toUpperCase() === 'CAPEX' && (
+        // FON-41 / R-036 + the PIP lane — which CapEx lane this file goes
+        // up under. Defaults to the slot's pin; a change rides the upload
+        // as ``user_doc_subtypes[i]`` (lib/docSubtype.wizardDocSubtype).
+        <select
+          value={file.doc_subtype ?? WIZARD_CATEGORY_DOC_SUBTYPE[spec.id] ?? ''}
+          onChange={(e) =>
+            onUpdate(file, { doc_subtype: (e.target.value as DocSubtype) || null })
+          }
+          aria-label={`Set CapEx lane for ${file.file.name}`}
+          className="px-2 py-1 text-[12px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+        >
+          {DOC_SUBTYPES_BY_DOC_TYPE.CAPEX.map((o) => (
+            <option key={o} value={o} title={DOC_SUBTYPE_HELP[o]}>
+              {DOC_SUBTYPE_LABEL[o]}
+            </option>
+          ))}
+        </select>
       )}
       <button
         type="button"
