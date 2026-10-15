@@ -21,12 +21,13 @@ import { api, isWorkerConnected } from '@/lib/api';
 import type { AskAnswerResult } from '@/lib/api';
 import { Citation as CitationChip } from '@/components/citations/Citation';
 import { cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 
 // Per-tab context — the "what page am I on" guidance + a few suggested
 // questions/actions that are actually answerable from the deal.
 const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: string[] }> = {
   '': {
-    title: 'Data Room',
+    title: TAB_LABEL.dataRoom,
     guide: "The deal's document hub. Upload the OM, T-12, STR report, and broker pro forma — extraction runs automatically and feeds every downstream tab.",
     suggestions: [
       'Which documents are still missing for a complete underwrite?',
@@ -35,7 +36,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   overview: {
-    title: 'Overview',
+    title: TAB_LABEL.overview,
     guide: 'The high-level snapshot — key facts, returns summary, and the capital stack. Numbers with a dotted underline trace back to their source.',
     suggestions: [
       'What are the headline returns on this deal?',
@@ -44,7 +45,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   market: {
-    title: 'Market Comps',
+    title: TAB_LABEL.market,
     guide: "STR/CoStar data — the subject's occupancy, ADR, and RevPAR vs its competitive set. Toggle 'Use STR rates in the model' to seed the forecast from live performance.",
     suggestions: [
       "How does the subject's RevPAR compare to its comp set?",
@@ -53,7 +54,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   pl: {
-    title: 'P&L',
+    title: TAB_LABEL.pl,
     guide: 'The USALI operating statement — historicals from your T-12 and the forward projections. Click any cell for its source and confidence.',
     suggestions: [
       'What is the broker NOI vs the T-12 actual NOI?',
@@ -62,7 +63,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   investment: {
-    title: 'CAPEX',
+    title: TAB_LABEL.investment,
     guide: 'Sources & uses and the acquisition basis — purchase price, renovation, closing costs, and how the deal is capitalized.',
     suggestions: [
       "What's the total capitalization and the price per key?",
@@ -71,7 +72,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   debt: {
-    title: 'Financing',
+    title: TAB_LABEL.debt,
     guide: 'Senior loan terms and debt-service coverage — LTV, rate, amortization, DSCR, and debt yield.',
     suggestions: [
       'What is the Year-1 DSCR and debt yield?',
@@ -80,7 +81,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   partnership: {
-    title: 'Partnership',
+    title: TAB_LABEL.partnership,
     guide: 'The JV waterfall — preferred return, promote tiers, and the GP/LP returns split.',
     suggestions: [
       'How is the promote structured?',
@@ -89,7 +90,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   'cash-flow': {
-    title: 'Cash Flow',
+    title: TAB_LABEL.cashFlow,
     guide: 'The levered cash-flow build — NOI, debt service, and cash flow to equity across the hold.',
     suggestions: [
       "What's the Year-1 cash-on-cash?",
@@ -98,7 +99,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   returns: {
-    title: 'Returns',
+    title: TAB_LABEL.returns,
     guide: 'The return summary with live assumption sliders — flex exit cap, RevPAR growth, hold, LTV and rate to watch IRR, multiple, and exit value move.',
     suggestions: [
       "What's the levered vs unlevered IRR?",
@@ -107,7 +108,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   scenarios: {
-    title: 'Scenario Analysis',
+    title: TAB_LABEL.scenarios,
     guide: 'Sensitivity grids — pick a sensitivity to see how IRR or equity multiple move across two assumptions. The base case is outlined.',
     suggestions: [
       'How sensitive is the deal to the exit cap rate?',
@@ -116,7 +117,7 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
     ],
   },
   'ic-memo': {
-    title: 'IC Memo',
+    title: TAB_LABEL.icMemo,
     guide: "The IC-ready one-pager — deal summary, Fondok's recommendation, thesis, highlights, and risks. Configure the detail below, then export the PDF.",
     suggestions: [
       'Why does Fondok recommend proceeding?',

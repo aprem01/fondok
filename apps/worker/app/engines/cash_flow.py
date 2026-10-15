@@ -168,7 +168,7 @@ class CashFlowStatementEngine(
                 label="Acquisition Uses at Close",
                 values=acq,
                 kind="linked",
-                note="Investment → Sources & Uses (total uses funded at close).",
+                note="CAPEX → Sources & Uses (total uses funded at close).",
             )
         )
         if dc > 0:
@@ -198,7 +198,7 @@ class CashFlowStatementEngine(
                 label="NOI (before FF&E reserve)",
                 values=noi_row,
                 kind="linked",
-                note="Financials → Projections (NOI before FF&E reserve).",
+                note="P&L → Future P&L (NOI before FF&E reserve).",
             )
         )
         unlev_lines.append(
@@ -206,7 +206,7 @@ class CashFlowStatementEngine(
                 label="FF&E Reserve",
                 values=ffe_row,
                 kind="linked",
-                note="Investment → recurring FF&E reserve (a real cash outflow).",
+                note="P&L → recurring FF&E reserve (a real cash outflow).",
             )
         )
 
@@ -217,13 +217,13 @@ class CashFlowStatementEngine(
         unlev_lines.append(
             CashFlowStatementLine(
                 label="Gross Sale Proceeds", values=gross, kind="linked",
-                note="Investment → Exit (forward NOI ÷ exit cap).",
+                note="CAPEX → Exit / Reversion (forward NOI ÷ exit cap).",
             )
         )
         unlev_lines.append(
             CashFlowStatementLine(
                 label="Selling & Disposition Costs", values=disp, kind="linked",
-                note="Investment → brokerage selling costs + transfer tax.",
+                note="CAPEX → brokerage selling costs + transfer tax.",
             )
         )
 
@@ -264,7 +264,7 @@ class CashFlowStatementEngine(
         lev_lines.append(
             CashFlowStatementLine(
                 label="Debt Proceeds", values=proceeds, kind="linked",
-                note="Debt → senior loan funded at close.",
+                note="Financing → senior loan funded at close.",
             )
         )
         if payload.key_money > 0:
@@ -296,13 +296,13 @@ class CashFlowStatementEngine(
         lev_lines.append(
             CashFlowStatementLine(
                 label="Interest Expense", values=interest, kind="linked",
-                note="Debt → amortization schedule.",
+                note="Financing → amortization schedule.",
             )
         )
         lev_lines.append(
             CashFlowStatementLine(
                 label="Principal Amortization", values=principal, kind="linked",
-                note="Debt → amortization schedule.",
+                note="Financing → amortization schedule.",
             )
         )
         if any(v is not None for v in junior):
@@ -310,7 +310,7 @@ class CashFlowStatementEngine(
                 CashFlowStatementLine(
                     label="Refinance / Junior Debt Service", values=junior,
                     kind="linked",
-                    note="Debt → phased refinance / junior-tranche debt service.",
+                    note="Financing → phased refinance / junior-tranche debt service.",
                 )
             )
 
@@ -357,21 +357,21 @@ class CashFlowStatementEngine(
                         CashFlowStatementLine(
                             label="Refinance Proceeds", values=proceeds_row,
                             kind="linked",
-                            note="Debt → refinance new loan proceeds.",
+                            note="Financing → refinance new loan proceeds.",
                         )
                     )
                     lev_lines.append(
                         CashFlowStatementLine(
                             label="Existing Debt Payoff", values=payoff_row,
                             kind="linked",
-                            note="Debt → existing senior balance repaid at refinance.",
+                            note="Financing → existing senior balance repaid at refinance.",
                         )
                     )
                     lev_lines.append(
                         CashFlowStatementLine(
                             label="Refinance Fees", values=fees_row,
                             kind="linked",
-                            note="Debt → refinance financing costs.",
+                            note="Financing → refinance financing costs.",
                         )
                     )
                     lev_lines.append(
@@ -391,7 +391,7 @@ class CashFlowStatementEngine(
                         CashFlowStatementLine(
                             label="Net Refinance Cash-Out", values=refi,
                             kind="linked",
-                            note="Debt → refinance proceeds returned to equity.",
+                            note="Financing → refinance proceeds returned to equity.",
                         )
                     )
 
@@ -404,7 +404,7 @@ class CashFlowStatementEngine(
         lev_lines.append(
             CashFlowStatementLine(
                 label="Exit Debt Payoff", values=payoff, kind="linked",
-                note="Debt → loan balance repaid at disposition.",
+                note="Financing → loan balance repaid at disposition.",
             )
         )
 

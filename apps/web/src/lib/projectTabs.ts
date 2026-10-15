@@ -61,6 +61,14 @@ export const TAB_LABEL = {
   activity: 'Activity',
 } as const;
 
+/** The P&L tab's two sub-tab names, keyed by their (stable) `?fin=` / `sub=`
+ *  ids. Sam #5 — the retired names "Historicals" / "Projections" must not
+ *  appear in user-facing copy; cross-links read these instead. */
+export const PL_SUB_LABEL = {
+  historicals: 'Historical P&L',
+  projections: 'Future P&L',
+} as const;
+
 export const PROJECT_TABS: ProjectTab[] = [
   { id: '', label: TAB_LABEL.dataRoom, icon: FolderOpen },
   { id: 'overview', label: TAB_LABEL.overview, icon: FileText },

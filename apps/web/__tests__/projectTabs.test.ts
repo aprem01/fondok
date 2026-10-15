@@ -64,7 +64,7 @@ describe('project tab registry', () => {
 
   it('the project page renders this registry (no second, divergent list)', () => {
     const src = readFileSync(path.resolve(__dirname, '../src/app/projects/[id]/page.tsx'), 'utf8');
-    expect(src).toContain("import { PROJECT_TABS } from '@/lib/projectTabs'");
+    expect(src).toMatch(/import \{ PROJECT_TABS(?:, TAB_LABEL)? \} from '@\/lib\/projectTabs'/);
     expect(src).not.toMatch(/label: 'Investment'/);
   });
 });

@@ -191,7 +191,7 @@ beforeEach(() => {
   vi.mocked(api.deals.update).mockClear();
 });
 
-const STR_FLAG = { value: true, note: 'STR market rates enabled from the Market tab' };
+const STR_FLAG = { value: true, note: 'STR market rates enabled from the Market Comps tab' };
 
 // FON-61 (D4) — Market → Financials propagation is EXPLICIT: "Use STR rates"
 // writes starting_occupancy / starting_adr = the comp-set values the card
@@ -213,7 +213,7 @@ describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 over
 
     const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, { value: unknown; note: string }> }];
     const ov = body.field_overrides;
-    expect(ov.revenue_seed_from_str_forecast).toEqual({ value: true, note: 'STR market rates enabled from the Market tab' });
+    expect(ov.revenue_seed_from_str_forecast).toEqual({ value: true, note: 'STR market rates enabled from the Market Comps tab' });
     expect(STR_MARKET_OVERRIDE_NOTE).toBe('STR comp-set market rates (Market tab)');
     expect(ov.starting_occupancy.note).toBe('STR comp-set market rates (Market tab)');
     expect(ov.starting_occupancy.value).toBeCloseTo(0.692, 9);
@@ -443,14 +443,14 @@ describe('MarketTab — Market Overview awaiting-data em dashes', () => {
 // FON-61 §3 — "View Projections →" from Market used to open Financials →
 // Historicals because it carried only `?tab=pl`. Both STR cards now name the
 // sub-tab (`?tab=pl&sub=projections`).
-describe('MarketTab — "View Projections →" deep-links to Financials → Projections', () => {
+describe('MarketTab — "View Future P&L →" deep-links to P&L → Future P&L', () => {
   it('the active STR card links to ?tab=pl&sub=projections', async () => {
     mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
     mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
     render(<MarketTab projectId="deal-uuid-1" />);
 
     const card = await screen.findByTestId('str-card-active');
-    const link = within(card).getByRole('link', { name: 'View Projections →' });
+    const link = within(card).getByRole('link', { name: 'View Future P&L →' });
     expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 
@@ -464,7 +464,7 @@ describe('MarketTab — "View Projections →" deep-links to Financials → Proj
     render(<MarketTab projectId="deal-uuid-1" />);
 
     const card = await screen.findByTestId('str-card-unavailable');
-    const link = within(card).getByRole('link', { name: 'View Projections →' });
+    const link = within(card).getByRole('link', { name: 'View Future P&L →' });
     expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 });
@@ -748,7 +748,7 @@ describe('MarketTab — Include as Comp (FON-60 §1)', () => {
     mockOverrides = {
       'market.selected_comps': {
         value: ['Z Ocean Hotel|Aug 2024|18020000'],
-        note: 'Transaction comps included in the Market tab summary',
+        note: 'Transaction comps included in the Market Comps tab summary',
       },
     };
     render(<MarketTab projectId="deal-uuid-1" />);
@@ -782,7 +782,7 @@ describe('MarketTab — the commentary does not conclude from an uncurated set (
     mockOverrides = {
       'market.selected_comps': {
         value: ['The Betsy Hotel|Jun 2025|25010000', 'Z Ocean Hotel|Aug 2024|18020000'],
-        note: 'Transaction comps included in the Market tab summary',
+        note: 'Transaction comps included in the Market Comps tab summary',
       },
     };
     mockOutputs = {
@@ -803,7 +803,7 @@ describe('MarketTab — a "median" of one observation is not a median (FON-60 §
     mockOverrides = {
       'market.selected_comps': {
         value: ['The Betsy Hotel|Jun 2025|25010000'],
-        note: 'Transaction comps included in the Market tab summary',
+        note: 'Transaction comps included in the Market Comps tab summary',
       },
     };
     render(<MarketTab projectId="deal-uuid-1" />);
@@ -825,7 +825,7 @@ describe('MarketTab — a "median" of one observation is not a median (FON-60 §
     mockOverrides = {
       'market.selected_comps': {
         value: [],
-        note: 'Transaction comps included in the Market tab summary',
+        note: 'Transaction comps included in the Market Comps tab summary',
       },
     };
     render(<MarketTab projectId="deal-uuid-1" />);

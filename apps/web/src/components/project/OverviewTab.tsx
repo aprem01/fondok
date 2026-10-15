@@ -86,6 +86,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { fmtCurrency, fmtPct, fmtMillions } from '@/lib/format';
+import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -879,12 +880,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const capitalizationRows = (): RowDef[] => [
       lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Financing (senior loan)', 'debt'),
       lnk('ltv', 'LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
-      cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: 'Debt module', kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
+      cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
       lnk('bench', 'Benchmark', '—', '→ Financing (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
       cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),
       lnk('finCosts', 'Financing Costs', money(financingCosts), '→ Financing (senior origination fee)', 'debt'),
-      cal('equity', isDev ? 'Equity Contribution' : 'Equity', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Uses − Loan', inputs: [{ name: 'Total Uses', from: 'Calculated', kind: 'calc' }, { name: 'Loan', from: 'Debt module', kind: 'linked' }] }),
+      cal('equity', isDev ? 'Equity Contribution' : 'Equity', money(equity), { bold: true, trace: { engine: 'capital', path: 'equity_amount' }, formula: 'Total Uses − Loan', inputs: [{ name: 'Total Uses', from: 'Calculated', kind: 'calc' }, { name: 'Loan', from: TAB_LABEL.debt, kind: 'linked' }] }),
       awa('refi', isDev ? 'Permanent Financing' : 'Planned Refinancing'),
     ];
 
@@ -1105,7 +1106,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         { kind: 'rows', title: 'Land / Site Acquisition', rows: landRows() },
         { kind: 'rows', title: 'Development Budget', action: { label: 'View development details →', tab: 'investment' }, rows: devBudgetRows() },
         { kind: 'rows', title: 'Construction Financing', action: { label: 'View Financing details →', tab: 'debt' }, rows: constFinRows() },
-        { kind: 'rows', title: 'Opening & Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: openingRows() },
+        { kind: 'rows', title: 'Opening & Stabilization', action: { label: `View ${PL_SUB_LABEL.projections} →`, tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: openingRows() },
         { kind: 'rows', title: 'Exit', rows: exitRows() },
         { kind: 'timeline', title: 'Development Timeline' },
       ];
@@ -1127,7 +1128,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'rows', title: 'Entry Valuation', rows: entryRows() },
       { kind: 'rows', title: 'Renovation / CapEx', action: { label: 'View renovation details →', tab: 'investment' }, rows: renovationRows() },
       { kind: 'rows', title: 'Capitalization', action: { label: 'View Financing details →', tab: 'debt' }, rows: capitalizationRows() },
-      { kind: 'rows', title: 'Stabilization', action: { label: 'View Projections →', tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: stabilizationRows() },
+      { kind: 'rows', title: 'Stabilization', action: { label: `View ${PL_SUB_LABEL.projections} →`, tab: 'pl', sub: 'projections' }, banner: stabilizationBanner(), rows: stabilizationRows() },
       { kind: 'rows', title: 'Exit', rows: exitRows() },
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];

@@ -8350,7 +8350,7 @@ export const SOURCES: Record<SourceId, SourceDef> = {
       "STR",
       "STR_TREND"
     ],
-    "explanation": "The STR comp-set blended rates the Market tab displays, applied to the model by the analyst — the competitive set’s performance, not the subject’s own.",
+    "explanation": "The STR comp-set blended rates the Market Comps tab displays, applied to the model by the analyst — the competitive set’s performance, not the subject’s own.",
     "reason": null
   },
   "str_forecast_unavailable": {

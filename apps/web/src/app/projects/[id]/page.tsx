@@ -23,7 +23,7 @@ import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isWorkerConnected } from '@/lib/api';
-import { PROJECT_TABS } from '@/lib/projectTabs';
+import { PROJECT_TABS, TAB_LABEL } from '@/lib/projectTabs';
 import { legacyReturnsRedirect } from '@/lib/returnsSection';
 import DataRoomTab from '@/components/project/DataRoomTab';
 import OverviewTab from '@/components/project/OverviewTab';
@@ -303,7 +303,7 @@ export default function ProjectDetailPage() {
   const varianceFlagCount = 0;
 
   const activeTab = searchParams.get('tab') || '';
-  const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? 'Data Room';
+  const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? TAB_LABEL.dataRoom;
 
   // R-061 — the Returns tab moved into Overview. A legacy `?tab=returns[&sub=…]`
   // link / bookmark is rewritten to `?tab=overview&sub=…`; Overview's Returns
@@ -711,8 +711,8 @@ export default function ProjectDetailPage() {
           + New scenario live inside the Scenario Comparison section of the
           Scenario Analysis tab (design/canonical/Scenarios Tab.dc.html:119-139),
           which is also the only place the SOURCE OF TRUTH badge renders. Model
-          tabs (Overview, Financials, Investment, Debt, Partnership, Cash Flow,
-          Returns, Market, …) always show the Base Case, per FON-57 / FON-59. */}
+          tabs (Overview, CAPEX, Market Comps, P&L, Financing, Partnership, Cash Flow,
+          Overview → Returns, …) always show the Base Case, per FON-57 / FON-59. */}
 
       {/* Tab content — wrapped in ProvenanceProvider (input assumptions →
           <Sourced>) and ValueTraceProvider (computed outputs → <Traced>) so
@@ -739,40 +739,41 @@ export default function ProjectDetailPage() {
                 are traceable — hover one (or tab to it) to see where it came from. A{' '}
                 <span className="underline decoration-dotted decoration-2 decoration-emerald-500 text-emerald-700 font-medium">green</span> underline means it&apos;s grounded in your uploaded documents,{' '}
                 <span className="underline decoration-dotted decoration-2 decoration-amber-500 text-amber-700 font-medium">amber</span> a seed / benchmark default, and{' '}
-                <span className="underline decoration-dotted decoration-2 decoration-sky-500 text-sky-700 font-medium">blue</span> a computed value (the tooltip shows the formula + every input). The full list is in Analysis → Sources.
+                <span className="underline decoration-dotted decoration-2 decoration-sky-500 text-sky-700 font-medium">blue</span> a computed value (the tooltip shows the formula + every input). The full list is in the{' '}
+                <Link href={`/projects/${rawId}?tab=analysis&sub=sources`} className="font-medium text-brand-700 hover:underline">Sources ledger</Link>.
               </>
             }
           />
         )}
         {activeTab === '' && (
-          <ErrorBoundary tabName="Data Room"><DataRoomTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.dataRoom}><DataRoomTab projectId={id} /></ErrorBoundary>
         )}
         {activeTab === 'validation' && (
           <ErrorBoundary tabName="Validation"><ValidationTab dealId={String(id)} /></ErrorBoundary>
         )}
         {activeTab === 'overview' && (
-          <ErrorBoundary tabName="Overview"><OverviewTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.overview}><OverviewTab projectId={id} /></ErrorBoundary>
         )}
         {activeTab === 'investment' && (
-          <ErrorBoundary tabName="Investment"><InvestmentTab /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.investment}><InvestmentTab /></ErrorBoundary>
         )}
         {activeTab === 'pl' && (
-          <ErrorBoundary tabName="P&L"><PLTab /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.pl}><PLTab /></ErrorBoundary>
         )}
         {activeTab === 'debt' && (
-          <ErrorBoundary tabName="Debt"><DebtTab /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.debt}><DebtTab /></ErrorBoundary>
         )}
         {activeTab === 'cash-flow' && (
-          <ErrorBoundary tabName="Cash Flow"><CashFlowTab /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.cashFlow}><CashFlowTab /></ErrorBoundary>
         )}
         {activeTab === 'investment-bridge' && (
-          <ErrorBoundary tabName="Investment Bridge"><InvestmentBridgeTab dealId={rawId} /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.investmentBridge}><InvestmentBridgeTab dealId={rawId} /></ErrorBoundary>
         )}
         {activeTab === 'partnership' && (
-          <ErrorBoundary tabName="Partnership"><PartnershipTab /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.partnership}><PartnershipTab /></ErrorBoundary>
         )}
         {activeTab === 'market' && (
-          <ErrorBoundary tabName="Market"><MarketTab projectId={id} /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.market}><MarketTab projectId={id} /></ErrorBoundary>
         )}
         {activeTab === 'forecasting' && (
           <ErrorBoundary tabName="Forecasting"><ForecastingTab projectId={id} /></ErrorBoundary>
@@ -783,7 +784,7 @@ export default function ProjectDetailPage() {
         {/* FON-53 — Scenario Analysis: the sensitivity experience (moved off
             Overview) up top, named-scenario comparison kept below. */}
         {activeTab === 'scenarios' && (
-          <ErrorBoundary tabName="Scenario Analysis">
+          <ErrorBoundary tabName={TAB_LABEL.scenarios}>
             <div className="space-y-6">
               <ScenarioAnalysisTab dealId={String(id)} />
               {/* Canonical (Scenarios Tab.dc.html) always shows the Scenario
@@ -809,7 +810,7 @@ export default function ProjectDetailPage() {
           </ErrorBoundary>
         )}
         {activeTab === 'activity' && (
-          <ErrorBoundary tabName="Activity">
+          <ErrorBoundary tabName={TAB_LABEL.activity}>
             <ActivityFeed dealId={String(id)} />
           </ErrorBoundary>
         )}
@@ -817,7 +818,7 @@ export default function ProjectDetailPage() {
             recommendation) with Configure → Preview → Export/Share folded in,
             consolidating the former Analysis + Export tabs. */}
         {activeTab === 'ic-memo' && (
-          <ErrorBoundary tabName="IC Memo"><ICMemoTab project={project} /></ErrorBoundary>
+          <ErrorBoundary tabName={TAB_LABEL.icMemo}><ICMemoTab project={project} /></ErrorBoundary>
         )}
       </div>
       <ErrorBoundary tabName="Atlas">

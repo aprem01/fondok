@@ -146,7 +146,7 @@ describe('Scenario Analysis — inline override table', () => {
     expect(screen.getByText('6.50%')).toBeTruthy();
     // Change in basis points, Source tab from the shared catalog.
     expect(screen.getByText('+100 bps')).toBeTruthy();
-    expect(screen.getByText('Investment →')).toBeTruthy();
+    expect(screen.getByText('CAPEX →')).toBeTruthy();
   });
 });
 

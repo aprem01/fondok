@@ -23,6 +23,7 @@ import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './Capex
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { noiBeforeReserve } from '@/lib/engines/noi';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -1036,7 +1037,7 @@ export default function InvestmentTab() {
               extra?: ReactNode;
             }[] = [
               {
-                title: 'Acquisition', note: 'Investment owns these assumptions', rows: acquisition,
+                title: 'Acquisition', note: `${TAB_LABEL.investment} owns these assumptions`, rows: acquisition,
                 formula: (has(entryNoi) && has(entryCap) && has(purchase))
                   ? `Entry NOI ${fmtCurrency(entryNoi)} ÷ Entry Cap ${fmtPct(entryCap, 2)} → Purchase Price ${fmtCurrency(purchase)}`
                   : undefined,
@@ -1686,7 +1687,7 @@ function AssumptionField({
         textDecoration: 'underline dotted', cursor: 'pointer',
       }}
         onClick={() => ed.start()}
-        title="Click to change — Investment owns this assumption">
+        title={`Click to change — ${TAB_LABEL.investment} owns this assumption`}>
         {display}
       </span>
     );
@@ -1779,7 +1780,7 @@ function CloseDateField({
       <span
         style={{ color: prov.blue, fontWeight: 500, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline dotted', cursor: 'pointer' }}
         onClick={() => ed.start()}
-        title="Click to change — Investment owns this assumption">
+        title={`Click to change — ${TAB_LABEL.investment} owns this assumption`}>
         {iso ? display : <span style={{ color: palette.textFaint, fontWeight: 400 }}>Set date</span>}
       </span>
     );

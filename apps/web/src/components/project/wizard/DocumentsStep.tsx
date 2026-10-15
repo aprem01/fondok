@@ -240,7 +240,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     multiFile: true,
     Icon: ClipboardCheck,
     description:
-      'STR exports. Trend reports power the comp-set drift detector and feed the Market tab; Star benchmarks anchor RGI / ARI / MPI. Unsure of the report type? Leave it on "Not sure" — the Data Room shows the type Fondok detected.',
+      'STR exports. Trend reports power the comp-set drift detector and feed the Market Comps tab; Star benchmarks anchor RGI / ARI / MPI. Unsure of the report type? Leave it on "Not sure" — the Data Room shows the type Fondok detected.',
     exampleChip: 'e.g. STR Trend (TTM), monthly STAR, STR Star daily snapshot',
     picker: {
       label: 'Report type',

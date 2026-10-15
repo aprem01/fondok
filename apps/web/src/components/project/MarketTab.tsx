@@ -57,6 +57,7 @@ import {
   StatementTable,
 } from '@/components/design';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
+import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 
 // ─── worker payload shapes ──────────────────────────────────────────────────
 // Real STR/CoStar market data served by /deals/{id}/market-data
@@ -207,7 +208,7 @@ const idxPoints = (idx: number | null): number | null =>
 // engine input. The default is ABSENT = all selected, so no existing deal's
 // Market tab changes the day this ships.
 export const SELECTED_COMPS_KEY = 'market.selected_comps';
-export const SELECTED_COMPS_NOTE = 'Transaction comps included in the Market tab summary';
+export const SELECTED_COMPS_NOTE = `Transaction comps included in the ${TAB_LABEL.market} tab summary`;
 
 /** Stable per-row identity: the three fields that identify a sale. */
 export function compKey(c: TransactionCompEntry): string {
@@ -991,7 +992,7 @@ function SubjectVsCompSet({
                 </span>
               )}
               <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
-                <span style={secBtn}>View Projections →</span>
+                <span style={secBtn}>View {PL_SUB_LABEL.projections} →</span>
               </Link>
               <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
                 Revert to T-12 actuals
@@ -1026,7 +1027,7 @@ function SubjectVsCompSet({
                 </span>
               )}
               <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
-                <span style={secBtn}>View Projections →</span>
+                <span style={secBtn}>View {PL_SUB_LABEL.projections} →</span>
               </Link>
               <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
                 Clear STR request
@@ -1919,7 +1920,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
         if (isStrMarketOverride(next[key])) delete next[key];
       }
     } else {
-      next['revenue_seed_from_str_forecast'] = { value: true, note: 'STR market rates enabled from the Market tab' };
+      next['revenue_seed_from_str_forecast'] = { value: true, note: `STR market rates enabled from the ${TAB_LABEL.market} tab` };
       if (derivedComp?.occ != null && derivedComp?.adr != null) {
         next['starting_occupancy'] = {
           value: Math.round(derivedComp.occ * 10) / 10 / 100,

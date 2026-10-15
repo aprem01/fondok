@@ -307,7 +307,7 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     ],
                     note=(
                         "Financing cost funded at close, kept apart from property "
-                        "uses. The percentage is the Debt tab's senior origination "
+                        "uses. The percentage is the Financing tab's senior origination "
                         "fee — edit it there."
                     ),
                 )

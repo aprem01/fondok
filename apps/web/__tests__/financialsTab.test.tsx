@@ -306,7 +306,7 @@ describe('Financials · Projections — Year-1 basis chip is driven by worker so
       revenue_seed_from_str_forecast: 'str_forecast',
     };
     mockFieldOverrides = {
-      revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market tab' },
+      revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market Comps tab' },
       starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
       starting_adr: { value: 295, note: STR_MARKET_OVERRIDE_NOTE },
       mgmt_fee_pct: { value: 0.03, note: 'Analyst' }, // unrelated — must survive

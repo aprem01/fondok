@@ -267,7 +267,7 @@ export default function MethodologyPage() {
             The reversion capitalises the <strong>forward 12-month Cash NOI</strong> — the after-FF&amp;E-reserve basis — at the exit cap rate. That forward figure is the last modelled hold year&apos;s Cash NOI grown at the RevPAR growth rate; it is an extrapolation, not an operating year projected through the expense waterfall, and the Exit Year column says so by showing its formula and nothing else. An analyst can switch the exit basis (<code>exit_noi_basis</code>) to <strong>stabilized</strong>: the stabilized year&apos;s Cash NOI (the analyst&apos;s stabilization year, else the derived one) grown at the same rate to the exit year, or the exit year&apos;s own NOI when stabilization falls after the exit. Returns names the basis it ran on — e.g. &quot;Forward 12-month NOI (Year 6)&quot; or &quot;Stabilized NOI (Year 3, grown to Year 5)&quot; — and a <code>terminal_noi_override</code> still beats either basis.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            This matters because the entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI <em>after</em> it. Both are defensible conventions and Fondok keeps both, but it names each one wherever it prints it — the Overview&apos;s Exit row reads &quot;Exit NOI (forward 12-month, after FF&amp;E reserve)&quot; and the Projections row &quot;Forward 12-Month Cash NOI (after FF&amp;E reserve)&quot;, never a bare &quot;NOI&quot;. Modelling a real year hold+1 through the waterfall instead would move the gross sale price, both IRRs and the equity multiple on every persisted deal; that is a deliberate post-MVP decision, not an oversight.
+            This matters because the entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI <em>after</em> it. Both are defensible conventions and Fondok keeps both, but it names each one wherever it prints it — the Overview&apos;s Exit row reads &quot;Exit NOI (forward 12-month, after FF&amp;E reserve)&quot; and the Future P&amp;L row &quot;Forward 12-Month Cash NOI (after FF&amp;E reserve)&quot;, never a bare &quot;NOI&quot;. Modelling a real year hold+1 through the waterfall instead would move the gross sale price, both IRRs and the equity multiple on every persisted deal; that is a deliberate post-MVP decision, not an oversight.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="exit-noi-basis-methodology">
             <strong>Exit NOI basis.</strong> Forward 12-month NOI is the default. An analyst can switch the basis to <strong>Stabilized NOI</strong> on CAPEX → Exit / Reversion: the reversion then capitalises the stabilized year&apos;s NOI grown to exit instead. An analyst-entered terminal NOI override beats both bases. Wherever the Exit NOI is printed, its label names the basis and the period it was taken on, as the run reports them (<code className="text-[11.5px]">returns.exit_noi_period_label</code>).
@@ -405,18 +405,18 @@ export default function MethodologyPage() {
               An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly takes direct control.
             </BadgeRow>
             <BadgeRow source="index_assumption" name="Index Analysis Assumption">
-              Index Analysis indexes the subject against one of three benchmarks, chosen on Market → Index Analysis: the
+              Index Analysis indexes the subject against one of three benchmarks, chosen on Market Comps → Index Analysis: the
               <b> STR competitive set</b> (the default — subject STR TTM ÷ the published MPI / ARI, the same blend Market
               Overview shows), a <b>market / chain-scale benchmark</b> (the market-wide or chain-scale segment occupancy
               &amp; ADR in the deal&apos;s CoStar / STR market reports), or a <b>CoStar Property Analytics comp set</b>
               (only when that export has been extracted — otherwise the option is disabled and says why). Each benchmark
               figure names its document and page. Four assumptions ride on the choice — market occupancy growth, market ADR
               growth, and the MPI / ARI penetration targets — each showing its document source, the documents a computed
-              default used, or &quot;Your override&quot;. They feed Projections only while &quot;Use STR rates in the
+              default used, or &quot;Your override&quot;. They feed the Future P&amp;L only while &quot;Use STR rates in the
               model&quot; is on and the STR seed has landed: then Year-1 occupancy = benchmark occupancy × MPI target,
               Year-1 ADR = benchmark ADR × ARI target, and the growth rates replace the model&apos;s, each only where you
               set one and never over an explicit override of that input. With the toggle off nothing moves. Index Analysis
-              also restates the Projections Base Year (revenue engine Year 1, its source and every step to it) beside its
+              also restates the Future P&amp;L Base Year (revenue engine Year 1, its source and every step to it) beside its
               own figures, and the STR subject TTM it indexes against is named as a different source and period.
               <br />
               <b>Targets by year (FON-95).</b> The penetration targets can be set per model year
@@ -487,7 +487,7 @@ export default function MethodologyPage() {
               inputs on hover; a cell with no reported input is &quot;—&quot;.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
-              Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
+              Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Financing and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
               Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level, the reopening / re-flag date — and the <strong>purchase price</strong>: the wizard&apos;s &quot;Purchase / Indicative Price&quot; field is parsed to whole dollars (&quot;$36.4M&quot;, &quot;36,400,000&quot;; a range such as &quot;$120-140M&quot; stores its <em>midpoint</em> and is labelled &quot;range midpoint&quot; on the Review step) and saved as <code className="text-[11.5px]">purchase_price</code>, which seeds the model&apos;s purchase price with this badge rather than &quot;Seed&quot;. A bare figure under $1,000,000 with no unit (&quot;36400&quot;, &quot;1,200&quot;) and a two-year period (&quot;2024-2025&quot;) are not read as prices — the hint asks for M / MM or the full dollars. Text that does not read as a price is kept as a note and sends nothing — the model keeps its seed until the analyst sets the price on CAPEX → Deal Summary, where it stays editable. The Property Name is not a deal-row field — see below.
@@ -534,7 +534,7 @@ export default function MethodologyPage() {
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-2">
             <span className="font-semibold text-ink-900">What is exempt, and why.</span> The requirement follows
             one rule — a note is needed when the key routes into engine input. Edits that change no modelled
-            number need none: the Historicals worksheet&apos;s row layout (
+            number need none: the Historical P&amp;L worksheet&apos;s row layout (
             <code className="text-[11.5px]">worksheet_layout</code>, presentation only), the{' '}
             <span className="font-semibold text-ink-900">Stabilization Year</span> (it selects which projection
             year the stabilized figures are read from and moves no return), the{' '}
@@ -573,7 +573,7 @@ export default function MethodologyPage() {
         <Card className="p-5 mb-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Which statement is the Year-1 basis</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the Data Room badges as <span className="font-semibold text-ink-900">Primary source</span>. The engines and the badge now share one ranking — full-year statements before partial ones, the most recent period first, and a T-12 ahead of a calendar-year P&amp;L of the same year. A T-12 whose extraction carries no period label is still treated as a trailing-twelve, and when it carries no date at all it is taken as the current period, because an analyst uploads a T-12 as the latest statement. Older annual P&amp;Ls never blend into Year-1: a line is only corroborated across statements that describe the same period (two uploads of the same T-12, or a summary and a detailed P&amp;L of one year), so every Year-1 number traces to a single row of the primary statement. The earlier years still feed the Historicals grid and the variance checks.
+            Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the Data Room badges as <span className="font-semibold text-ink-900">Primary source</span>. The engines and the badge now share one ranking — full-year statements before partial ones, the most recent period first, and a T-12 ahead of a calendar-year P&amp;L of the same year. A T-12 whose extraction carries no period label is still treated as a trailing-twelve, and when it carries no date at all it is taken as the current period, because an analyst uploads a T-12 as the latest statement. Older annual P&amp;Ls never blend into Year-1: a line is only corroborated across statements that describe the same period (two uploads of the same T-12, or a summary and a detailed P&amp;L of one year), so every Year-1 number traces to a single row of the primary statement. The earlier years still feed the Historical P&amp;L grid and the variance checks.
           </p>
         </Card>
 
@@ -617,7 +617,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">One review state, Data Room ↔ P&amp;L.</span>{' '}
-              An extracted historical value is &quot;to review&quot; when its extraction confidence is below 85% and it hasn&apos;t been accepted or corrected — and only if it has a cell in P&amp;L → Historical P&amp;L (a value with nowhere to land is never counted). The Data Room&apos;s per-statement &quot;N to review&quot; badge is exactly the number of red cells in that statement&apos;s column; the global count is their sum. Every red cell is pinned to its own column&apos;s statement, so its SOURCE panel names — and its Accept / Edit acts on — that document, never another year&apos;s. Clicking a badge opens Historicals with that statement&apos;s column pinned and the first flagged cell in view; accepting or correcting a value clears the cell and both counts at once. Two statements that resolve to the same period keep separate columns (&quot;2023&quot;, &quot;2023 (2)&quot;) and the coverage strip says so.
+              An extracted historical value is &quot;to review&quot; when its extraction confidence is below 85% and it hasn&apos;t been accepted or corrected — and only if it has a cell in P&amp;L → Historical P&amp;L (a value with nowhere to land is never counted). The Data Room&apos;s per-statement &quot;N to review&quot; badge is exactly the number of red cells in that statement&apos;s column; the global count is their sum. Every red cell is pinned to its own column&apos;s statement, so its SOURCE panel names — and its Accept / Edit acts on — that document, never another year&apos;s. Clicking a badge opens the Historical P&amp;L with that statement&apos;s column pinned and the first flagged cell in view; accepting or correcting a value clears the cell and both counts at once. Two statements that resolve to the same period keep separate columns (&quot;2023&quot;, &quot;2023 (2)&quot;) and the coverage strip says so.
             </li>
           </ul>
         </Card>
@@ -632,7 +632,7 @@ export default function MethodologyPage() {
         <Card className="p-5">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">The full ledger</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
-            Analysis → Sources lists every modeled assumption, its value, and its origin in one table — filter to the ungrounded set to see exactly what&apos;s still riding on a default, and export the whole ledger to CSV so every figure in the IC memo is defensible.
+            The Sources ledger (linked from every traced figure&apos;s tooltip) lists every modeled assumption, its value, and its origin in one table — filter to the ungrounded set to see exactly what&apos;s still riding on a default, and export the whole ledger to CSV so every figure in the IC memo is defensible.
           </p>
         </Card>
       </Section>
@@ -688,7 +688,7 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">Senior origination fee.</span>{' '}
-              The senior loan&apos;s origination fee is a <span className="font-medium">Fondok seed of 1.50% of the senior loan</span> — a platform default, not a figure read from a term sheet or an OM, and it carries the Seed badge <AssumptionBadge source="seed" /> until you change it. It is editable on Debt, and Debt is its only owner: the capital engine charges the resolved tranche fee as the Sources &amp; Uses line <span className="font-medium">Senior Loan Origination Fee</span>, and Overview → Capitalization&apos;s <span className="font-medium">Financing Costs</span> reads that same number. Change it on Debt and Sources &amp; Uses, Total Uses, required equity and LTC all move; set it to 0% and the line disappears. One assumption, one number, three labels retired.
+              The senior loan&apos;s origination fee is a <span className="font-medium">Fondok seed of 1.50% of the senior loan</span> — a platform default, not a figure read from a term sheet or an OM, and it carries the Seed badge <AssumptionBadge source="seed" /> until you change it. It is editable on Financing, and Financing is its only owner: the capital engine charges the resolved tranche fee as the Sources &amp; Uses line <span className="font-medium">Senior Loan Origination Fee</span>, and Overview → Capitalization&apos;s <span className="font-medium">Financing Costs</span> reads that same number. Change it on Financing and Sources &amp; Uses, Total Uses, required equity and LTC all move; set it to 0% and the line disappears. One assumption, one number, three labels retired.
             </li>
             <li>
               <span className="font-semibold text-ink-900">Exit fee.</span>{' '}
