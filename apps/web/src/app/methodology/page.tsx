@@ -673,6 +673,10 @@ export default function MethodologyPage() {
               Exit cap rate, RevPAR growth, hold period, LTV and interest rate. The worker applies those keys and ignores everything else in the request, so a sandbox call cannot reach an unrelated engine input.
             </li>
             <li>
+              <span className="font-semibold text-ink-900">The sliders start where the run started.</span>{' '}
+              Each slider&apos;s base is the value the returns engine recorded for the canonical run (<code className="text-[11.5px]">returns.inputs.assumptions</code>), never a client-side default. A run that did not record one of the five keys shows <em>Awaiting model run</em> in place of the sliders, naming the missing key. The same rule holds for every Returns figure: a headline tile, Return Bridge row or sensitivity cell the engine did not produce reads &ldquo;—&rdquo; with the missing engine field named — never 0.
+            </li>
+            <li>
               <span className="font-semibold text-ink-900">It runs the whole chain, in memory.</span>{' '}
               <code className="text-[11.5px]">POST /deals/{'{id}'}/engines/returns/preview</code> re-runs revenue → F&amp;B → expense → capital → debt → returns on a copy of the deal&apos;s canonical inputs. Nothing is written: no <code className="text-[11.5px]">engine_outputs</code> row, no run id, no advance of the canonical run, and no change to the deal&apos;s <code className="text-[11.5px]">field_overrides</code>. CAPEX and Financing keep showing the canonical case throughout — that is the point, not a bug.
             </li>

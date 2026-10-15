@@ -23,7 +23,8 @@ import { useDeal } from '@/lib/hooks/useDeal';
 // Sensitivity grid shapes (relocated here when the client-side lib/engines model
 // was retired — the worker sensitivity engine is now the only source).
 interface SensitivityCell {
-  value: number;
+  /** Null when the engine returned no cell for this (row, col) — rendered '—'. */
+  value: number | null;
   rowVal: number;
   colVal: number;
   isBase: boolean;
@@ -75,6 +76,14 @@ const money = (v: number) =>
 const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
 const fmtM = (v: number | null | undefined) => (v == null ? '—' : mm(v));
 const fmtX = (v: number | null | undefined) => (v == null ? '—' : `${v.toFixed(2)}x`);
+const fmtP = (v: number | null | undefined, decimals = 2) => (v == null ? '—' : fmtPct(v, decimals));
+
+/**
+ * Standing rule (no invented data): a figure the engine did not produce reads
+ * "—" with the missing engine field named — never a 0, never a default. The
+ * string doubles as the tile's sub-label and its tooltip.
+ */
+const awaitingRun = (field: string) => `Awaiting model run — ${field} is not on this run`;
 
 /**
  * R-061 — the Overview "Returns" section (formerly the Returns tab).
@@ -241,32 +250,59 @@ function writePersistedSandbox(dealId: string, values: SandboxValues | null): vo
   }
 }
 
+// The returns engine's ``inputs.assumptions`` key behind each slider.
+const SANDBOX_ENGINE_KEY: Record<SandboxKey, string> = {
+  exitCapRate: 'exit_cap_rate',
+  revparGrowth: 'revpar_growth',
+  holdYears: 'hold_years',
+  ltv: 'ltv',
+  interestRate: 'interest_rate',
+};
+
+interface SandboxBase {
+  /** The canonical slider base, or null when the run did not record every key. */
+  values: SandboxValues | null;
+  /** Fully-qualified engine fields (`returns.inputs.assumptions.<key>`) the run
+   *  did not record — named in the placeholder so the gap is actionable. */
+  missing: string[];
+}
+
 // Read the canonical slider base case straight off the returns engine's
 // persisted ``inputs.assumptions`` blob — the SAME canonical run the headline
 // reads — so the sandbox starts on the deal's real numbers with no dependency
-// on the page assumptions provider.
-function readSandboxBase(outputs: EngineOutputs): SandboxValues {
+// on the page assumptions provider. There is deliberately NO client-side
+// default: a run that did not record one of the five keys has no base for the
+// sandbox, and the sliders are replaced by an "Awaiting model run" notice
+// (standing rule — a default would be a number nobody underwrote).
+function readSandboxBase(outputs: EngineOutputs): SandboxBase {
   const rIn = ((outputs?.engines?.returns?.inputs as Record<string, unknown> | undefined)
     ?.assumptions ?? {}) as Record<string, unknown>;
-  const n = (v: unknown, fallback: number) =>
-    typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-  return {
-    exitCapRate: n(rIn.exit_cap_rate, 0.07),
-    revparGrowth: n(rIn.revpar_growth, 0.03),
-    holdYears: Math.round(n(rIn.hold_years, 5)),
-    ltv: n(rIn.ltv, 0.65),
-    interestRate: n(rIn.interest_rate, 0.068),
-  };
+  const values = {} as SandboxValues;
+  const missing: string[] = [];
+  for (const f of SANDBOX_FIELDS) {
+    const engineKey = SANDBOX_ENGINE_KEY[f.key];
+    const v = rIn[engineKey];
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      values[f.key] = f.key === 'holdYears' ? Math.round(v) : v;
+    } else {
+      missing.push(`returns.inputs.assumptions.${engineKey}`);
+    }
+  }
+  return missing.length === 0 ? { values, missing } : { values: null, missing };
 }
 
-function sandboxDiffers(a: SandboxValues, b: SandboxValues): boolean {
+function sandboxDiffers(a: SandboxValues | null, b: SandboxValues | null): boolean {
+  if (a == null || b == null) return a !== b;
   return (Object.keys(a) as SandboxKey[]).some((k) => Math.abs(a[k] - b[k]) > 1e-9);
 }
 
 interface SandboxState {
-  sandbox: SandboxValues;
-  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues>>;
-  base: SandboxValues;
+  /** Null when the canonical run did not record a complete slider base. */
+  sandbox: SandboxValues | null;
+  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues | null>>;
+  base: SandboxValues | null;
+  /** Engine fields the run did not record (empty when `base` is non-null). */
+  baseMissing: string[];
   dirty: boolean;
   preview: ReturnsPreviewResponse | null;
   previewing: boolean;
@@ -274,8 +310,8 @@ interface SandboxState {
 }
 
 function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState {
-  const base = useMemo(() => readSandboxBase(outputs), [outputs]);
-  const [sandbox, setSandbox] = useState<SandboxValues>(base);
+  const { values: base, missing: baseMissing } = useMemo(() => readSandboxBase(outputs), [outputs]);
+  const [sandbox, setSandbox] = useState<SandboxValues | null>(base);
   const prevBaseRef = useRef(base);
   // Restore this deal's persisted sandbox — AFTER mount, because
   // sessionStorage does not exist during SSR and reading it in the state
@@ -285,6 +321,8 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
   useEffect(() => {
     if (restoredForRef.current === dealId) return;
     restoredForRef.current = dealId;
+    // No base on this run → no sandbox, whatever an older run left behind.
+    if (base == null) { setSandbox(null); return; }
     const saved = readPersistedSandbox(dealId);
     setSandbox(saved ?? base);
   }, [dealId, base]);
@@ -297,7 +335,11 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
       // A genuinely new canonical base — a re-run landed. The stale sandbox is
       // no longer "an override of THIS run", so it is cleared from storage too.
       setSandbox((cur) => {
-        if (sandboxDiffers(cur, prev)) return cur;
+        if (base == null) {
+          writePersistedSandbox(dealId, null);
+          return null;
+        }
+        if (cur != null && prev != null && sandboxDiffers(cur, prev)) return cur;
         writePersistedSandbox(dealId, null);
         return base;
       });
@@ -305,7 +347,7 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
     prevBaseRef.current = base;
   }, [base, dealId]);
 
-  const dirty = sandboxDiffers(sandbox, base);
+  const dirty = base != null && sandbox != null && sandboxDiffers(sandbox, base);
 
   // Persist (or clear) whenever the sandbox settles. Writing only after the
   // restore has run keeps a first paint from stamping the base over a saved
@@ -320,7 +362,7 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
   // Debounced, non-persisting preview call. Clears when the sandbox is back on
   // the base case. Aborts in-flight requests as the slider moves.
   useEffect(() => {
-    if (!dirty) {
+    if (!dirty || sandbox == null) {
       setPreview(null);
       setPreviewing(false);
       return;
@@ -360,7 +402,7 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
     writePersistedSandbox(dealId, null);
     setSandbox(base);
   };
-  return { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase };
+  return { sandbox, setSandbox, base, baseMissing, dirty, preview, previewing, resetToBase };
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -387,10 +429,8 @@ function ReturnsWorkspace({
   // remount) never drops an override.
   const { sub: tab, setSub: setSubRaw } = useSubTab(SUB_TAB_IDS, 'returns-summary');
   const setTab = (id: SubTab) => { onInternalNav?.(); setSubRaw(id); };
-  const { sandbox, setSandbox, base, dirty, preview, previewing, resetToBase } = useReturnsSandbox(
-    outputs,
-    dealId,
-  );
+  const { sandbox, setSandbox, base, baseMissing, dirty, preview, previewing, resetToBase } =
+    useReturnsSandbox(outputs, dealId);
 
   const subTabCaption =
     tab === 'returns-summary'
@@ -402,10 +442,13 @@ function ReturnsWorkspace({
   // One fields list for the banner and the sliders, with the RevPAR range read
   // off the live sensitivity matrix so the two can never disagree.
   const fields = useMemo(() => sandboxFieldsFor(outputs), [outputs]);
-  const overrideSummary = fields
-    .filter((f) => Math.abs(sandbox[f.key] - base[f.key]) > 1e-9)
-    .map((f) => `${f.label} ${f.fmt(base[f.key])} → ${f.fmt(sandbox[f.key])}`)
-    .join(' · ');
+  const overrideSummary =
+    base != null && sandbox != null
+      ? fields
+          .filter((f) => Math.abs(sandbox[f.key] - base[f.key]) > 1e-9)
+          .map((f) => `${f.label} ${f.fmt(base[f.key])} → ${f.fmt(sandbox[f.key])}`)
+          .join(' · ')
+      : '';
 
   // FON-59 #4 — name the sub-tab that holds the value. "Edit in Investment →"
   // sits on Exit Assumptions, which are Investment → Deal Summary rows.
@@ -522,6 +565,7 @@ function ReturnsWorkspace({
           fields={fields}
           sandbox={sandbox}
           setSandbox={setSandbox}
+          baseMissing={baseMissing}
           dirty={dirty}
           preview={preview}
           previewing={previewing}
@@ -702,7 +746,8 @@ function ReturnsSummary({
               path="levered_irr"
               flashKey={irr}
               sub={holdYears != null ? `Equity IRR over the ${holdYears}-year hold` : 'Equity IRR after debt service'}
-              value={fmtPct(irr ?? 0, 2)}
+              value={fmtP(irr)}
+              unavailable={irr == null ? awaitingRun('returns.levered_irr') : undefined}
             />
           </CoachMark>
           <ReturnsKpi
@@ -713,7 +758,8 @@ function ReturnsSummary({
             path="equity_multiple"
             flashKey={mult}
             sub={initialEquity != null ? `MOIC on ${mm(initialEquity)} invested` : 'MOIC — total distributions ÷ equity'}
-            value={`${(mult ?? 0).toFixed(2)}x`}
+            value={fmtX(mult)}
+            unavailable={mult == null ? awaitingRun('returns.equity_multiple') : undefined}
           />
           <ReturnsKpi
             variant="navy"
@@ -727,7 +773,8 @@ function ReturnsSummary({
                 ? `Years 1–${holdYears} average — year 1 alone is ${fmtPct(yearOneCoc, 2)}`
                 : 'Hold-average annual cash yield'
             }
-            value={fmtPct(avgCoc ?? 0, 2)}
+            value={fmtP(avgCoc)}
+            unavailable={avgCoc == null ? awaitingRun('returns.avg_coc') : undefined}
           />
           <ReturnsKpi
             variant="navy"
@@ -735,7 +782,14 @@ function ReturnsSummary({
             sandbox={sandboxOn}
             flashKey={yieldOnCost}
             sub="Stabilized NOI ÷ total cost basis"
-            value={yieldOnCost != null ? fmtPct(yieldOnCost, 2) : '—'}
+            value={fmtP(yieldOnCost)}
+            unavailable={
+              yieldOnCost != null
+                ? undefined
+                : stabilizedNoi == null
+                  ? awaitingRun('returns.noi_by_year')
+                  : awaitingRun('capital.total_capital')
+            }
           />
         </div>
       </div>
@@ -756,6 +810,7 @@ function ReturnsSummary({
                 : 'Gross sale — forward NOI ÷ exit cap'
           }
           value={fmtM(exitValue)}
+          unavailable={exitValue == null ? awaitingRun('returns.gross_sale_price') : undefined}
         />
         <ReturnsKpi
           label="Equity Profit"
@@ -763,6 +818,7 @@ function ReturnsSummary({
           flashKey={equityProfit}
           sub="Cash returned less equity invested"
           value={fmtM(equityProfit)}
+          unavailable={equityProfit == null ? awaitingRun('returns.cash_flows') : undefined}
         />
         <ReturnsKpi
           label="Initial Equity Invested"
@@ -770,6 +826,7 @@ function ReturnsSummary({
           flashKey={initialEquity}
           sub="Funded in full at close"
           value={fmtM(initialEquity)}
+          unavailable={initialEquity == null ? awaitingRun('returns.cash_flows') : undefined}
         />
       </div>
 
@@ -794,6 +851,7 @@ function ReturnsKpi({
   path,
   variant = 'white',
   sandbox = false,
+  unavailable,
 }: {
   label: string;
   value: ReactNode;
@@ -805,18 +863,30 @@ function ReturnsKpi({
   /** Renders the "Sandbox" chip: this tile is showing the Live-Assumptions
    *  preview, not the canonical run. */
   sandbox?: boolean;
+  /** Set when the engine did not produce this figure: the tile reads "—",
+   *  the reason (naming the missing engine field) becomes the sub-label and
+   *  the tooltip, and no provenance popover is offered for a number that is
+   *  not there. */
+  unavailable?: string;
 }) {
   const flash = useFlash(flashKey ?? value);
+  const shown: ReactNode = unavailable ? (
+    <span title={unavailable} data-unavailable="true">
+      —
+    </span>
+  ) : (
+    value
+  );
   // Provenance points at the canonical run, so it is suppressed on a sandbox
   // tile — a trace popover explaining a number the tile is not showing is
-  // worse than none.
+  // worse than none. Likewise on an unavailable tile.
   const traced =
-    engine && path && !sandbox ? (
+    engine && path && !sandbox && !unavailable ? (
       <Traced engine={engine} path={path}>
-        {value}
+        {shown}
       </Traced>
     ) : (
-      value
+      shown
     );
   const body = sandbox ? (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -832,7 +902,7 @@ function ReturnsKpi({
       style={{ height: '100%' }}
       variant={variant}
       label={label}
-      sub={sub}
+      sub={unavailable ?? sub}
       value={body}
     />
   );
@@ -1048,11 +1118,16 @@ function ReturnBridgeCard({
   const initialEquity = flows[0]; // negative outflow at close
   const equity = -initialEquity;
   const totalToEquity = flows.slice(1).reduce((a, b) => a + b, 0);
-  const netExit = netProceeds ?? 0;
+  // A run without ``net_proceeds`` cannot split the series into its operating
+  // and exit legs — those rows read "—" (never a $0 exit that silently folds
+  // the sale into operating cash flow). Initial equity and the total still
+  // come straight off the series.
+  const netExit: number | null = typeof netProceeds === 'number' ? netProceeds : null;
+  const NET_EXIT_MISSING = awaitingRun('returns.net_proceeds');
   const refi = refiYear != null && refiCashOut != null && refiCashOut > 0 ? refiCashOut : 0;
   // Net operating cash flow to equity (after debt, before refi/exit) — the leg
   // that operating + debt service must net to.
-  const operatingNet = totalToEquity - netExit - refi;
+  const operatingNet: number | null = netExit != null ? totalToEquity - netExit - refi : null;
 
   // Debt service Σ(Interest + Principal) over the hold. Prefer the reconciled
   // cash_flow levered statement; else reconstruct it exactly from the returns
@@ -1076,53 +1151,87 @@ function ReturnBridgeCard({
     'Principal Amortization',
     'Refinance / Junior Debt Service',
   ]);
-  let debtService: number | undefined;
+  let debtService: number | null = null;
   if (dsFromStatement != null) {
     debtService = Math.abs(dsFromStatement);
-  } else if (Array.isArray(noiByYear) && noiByYear.length > 0) {
+  } else if (operatingNet != null && Array.isArray(noiByYear) && noiByYear.length > 0) {
     debtService = noiByYear.reduce((a, b) => a + b, 0) - operatingNet;
   }
-  const operatingGross = debtService != null ? operatingNet + debtService : operatingNet;
+  const operatingGross: number | null =
+    operatingNet == null ? null : debtService != null ? operatingNet + debtService : operatingNet;
 
   interface Bar {
     label: string;
-    value: number;
+    /** Null only when `awaiting` is set. */
+    value: number | null;
     bold?: boolean;
-    /** No refi on this deal — list the row (design always shows it) but as '—'. */
-    awaiting?: boolean;
+    /** The row is listed (the design always shows it) but reads '—'; the
+     *  string names why and is the row's tooltip. */
+    awaiting?: string;
   }
   const items: Bar[] = [
     { label: 'Initial equity', value: initialEquity },
-    { label: 'Operating cash flow', value: operatingGross },
+    {
+      label: 'Operating cash flow',
+      value: operatingGross,
+      awaiting: operatingGross == null ? NET_EXIT_MISSING : undefined,
+    },
+    {
+      label: 'Debt service',
+      value: debtService != null ? -debtService : null,
+      awaiting:
+        debtService != null
+          ? undefined
+          : operatingNet == null
+            ? NET_EXIT_MISSING
+            : 'Awaiting model run — neither the cash_flow levered statement nor returns.noi_by_year is on this run',
+    },
+    {
+      label: 'Refinance proceeds',
+      value: refi,
+      awaiting:
+        refi > 0
+          ? undefined
+          : refiYear == null
+            ? 'No refinance modelled on this deal (debt.refi_year is not set)'
+            : `The year-${refiYear} refinance returns no cash out to equity`,
+    },
+    { label: 'Net exit proceeds', value: netExit, awaiting: netExit == null ? NET_EXIT_MISSING : undefined },
+    { label: 'Total cash flow to equity', value: totalToEquity, bold: true },
   ];
-  if (debtService != null) items.push({ label: 'Debt service', value: -debtService });
-  items.push({ label: 'Refinance proceeds', value: refi, awaiting: refi === 0 });
-  items.push({ label: 'Net exit proceeds', value: netExit });
-  items.push({ label: 'Total cash flow to equity', value: totalToEquity, bold: true });
 
-  const maxAbs = Math.max(1, ...items.filter((b) => !b.awaiting).map((b) => Math.abs(b.value)));
+  const maxAbs = Math.max(
+    1,
+    ...items.filter((b) => !b.awaiting && b.value != null).map((b) => Math.abs(b.value as number)),
+  );
 
   return (
     <SectionCard title="Return Bridge" note={note}>
       <div style={{ marginTop: 2 }}>
         {items.map((b) => {
-          const abs = Math.abs(b.value);
+          const v = b.awaiting || b.value == null ? 0 : b.value;
+          const abs = Math.abs(v);
           const width = b.awaiting ? '0%' : `${(abs / maxAbs) * 50}%`;
-          const left = b.value < 0 ? `${50 - (abs / maxAbs) * 50}%` : '50%';
+          const left = v < 0 ? `${50 - (abs / maxAbs) * 50}%` : '50%';
           const barBg = b.bold
             ? palette.inkNavy
-            : b.value < 0
+            : v < 0
               ? 'oklch(70% 0.10 40)'
               : 'oklch(60% 0.10 155)';
           const valueColor = b.awaiting
             ? palette.textFaint
             : b.bold
               ? prov.black
-              : b.value < 0
+              : v < 0
                 ? prov.amber
                 : prov.gray;
           return (
-            <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '5px 0' }}>
+            <div
+              key={b.label}
+              title={b.awaiting}
+              data-awaiting={b.awaiting ? 'true' : undefined}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '5px 0' }}
+            >
               <span
                 style={{
                   width: 150,
@@ -1161,16 +1270,26 @@ function ReturnBridgeCard({
                   flexShrink: 0,
                 }}
               >
-                {b.awaiting ? '—' : mm(b.value)}
+                {b.awaiting || b.value == null ? '—' : mm(b.value)}
               </span>
             </div>
           );
         })}
       </div>
       <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 10, lineHeight: 1.5 }}>
-        Deal-level returns · before GP/LP allocation. Reconciles to the Cash Flow series:{' '}
-        {mm(operatingNet)} operating {refi > 0 ? `+ ${mm(refi)} refinance ` : ''}+ {mm(netExit)} exit ={' '}
-        {mm(totalToEquity)} returned on {mm(equity)} invested.
+        {operatingNet != null && netExit != null ? (
+          <>
+            Deal-level returns · before GP/LP allocation. Reconciles to the Cash Flow series:{' '}
+            {mm(operatingNet)} operating {refi > 0 ? `+ ${mm(refi)} refinance ` : ''}+ {mm(netExit)} exit ={' '}
+            {mm(totalToEquity)} returned on {mm(equity)} invested.
+          </>
+        ) : (
+          <span title={NET_EXIT_MISSING}>
+            Deal-level returns · before GP/LP allocation. {mm(totalToEquity)} returned on {mm(equity)}{' '}
+            invested, per the Cash Flow series. The operating / exit split is awaiting a model run —
+            returns.net_proceeds is not on this run.
+          </span>
+        )}
       </div>
     </SectionCard>
   );
@@ -1194,6 +1313,7 @@ function Sensitivities({
   fields,
   sandbox,
   setSandbox,
+  baseMissing,
   dirty,
   preview,
   previewing,
@@ -1202,8 +1322,11 @@ function Sensitivities({
   outputs: EngineOutputs;
   /** Slider definitions with the RevPAR range read off the live matrix axis. */
   fields: SandboxField[];
-  sandbox: SandboxValues;
-  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues>>;
+  /** Null when the canonical run did not record a complete slider base. */
+  sandbox: SandboxValues | null;
+  setSandbox: React.Dispatch<React.SetStateAction<SandboxValues | null>>;
+  /** The `returns.inputs.assumptions.*` keys the run did not record. */
+  baseMissing: string[];
   dirty: boolean;
   preview: ReturnsPreviewResponse | null;
   previewing: boolean;
@@ -1255,29 +1378,60 @@ function Sensitivities({
         title="Live Assumptions"
         note="Temporary overrides for testing — the source of truth stays in CAPEX and Financing"
       >
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))',
-            gap: '14px 32px',
-            marginTop: 4,
-          }}
-        >
-          {fields.map((f) => (
-            <Slider
-              key={f.key}
-              label={f.label}
-              min={f.min}
-              max={f.max}
-              step={f.step}
-              value={sandbox[f.key]}
-              onChange={(v) =>
-                setSandbox((s) => ({ ...s, [f.key]: f.key === 'holdYears' ? Math.round(v) : v }))
-              }
-              format={f.fmt}
-            />
-          ))}
-        </div>
+        {sandbox == null ? (
+          // Standing rule — the sliders start from the assumptions the returns
+          // engine recorded for the canonical run. A run that did not record
+          // one of the five keys gets no default substituted; it gets told.
+          <div
+            data-testid="returns-sandbox-unavailable"
+            title={`Not recorded on this run: ${baseMissing.join(', ')}`}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginTop: 4,
+              fontSize: 12.5,
+              color: palette.textMuted,
+              lineHeight: 1.5,
+            }}
+          >
+            <TrendingUp size={16} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>
+              Awaiting model run — the Live Assumptions sliders start from the assumptions the
+              returns engine recorded for the canonical run, and this run did not record{' '}
+              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}>
+                {baseMissing.join(', ')}
+              </span>
+              . Re-run the model to enable the sandbox; no default is substituted.
+            </span>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))',
+              gap: '14px 32px',
+              marginTop: 4,
+            }}
+          >
+            {fields.map((f) => (
+              <Slider
+                key={f.key}
+                label={f.label}
+                min={f.min}
+                max={f.max}
+                step={f.step}
+                value={sandbox[f.key]}
+                onChange={(v) =>
+                  setSandbox((s) =>
+                    s == null ? s : { ...s, [f.key]: f.key === 'holdYears' ? Math.round(v) : v },
+                  )
+                }
+                format={f.fmt}
+              />
+            ))}
+          </div>
+        )}
         <div
           style={{
             display: 'flex',
@@ -1292,7 +1446,7 @@ function Sensitivities({
           <span style={{ fontSize: 11.5, color: palette.textSecondary, fontVariantNumeric: 'tabular-nums' }}>
             {dirty ? (previewing ? 'Recomputing sandbox…' : 'Sandbox result:') : 'Base case:'}
             <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>
-              IRR {fmtPct(sIrr ?? 0, 2)}
+              IRR {fmtP(sIrr)}
             </span>
             ·
             <span style={{ margin: '0 6px', fontWeight: 600, color: palette.ink }}>EM {fmtX(sMult)}</span>·
@@ -1375,7 +1529,7 @@ function matrixFromWorkerObj(out: WorkerMatrixRaw): SensitivityMatrix | null {
         (c) => Math.abs(c.row_value - out.rows[i]) < 1e-9 && Math.abs(c.col_value - out.cols[j]) < 1e-9,
       );
       const cell: SensitivityCell = {
-        value: found?.value ?? 0,
+        value: typeof found?.value === 'number' && Number.isFinite(found.value) ? found.value : null,
         rowVal: out.rows[i],
         colVal: out.cols[j],
         isBase: !!found?.is_base,
@@ -1440,8 +1594,9 @@ function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: 
   // a nonsense value like 3500000000.0%); everything else is a rate/percent.
   const formatHeader = (v: number, key: string) =>
     key === 'Hold' ? `${v}y` : key === 'Loan Amount' ? `$${(v / 1e6).toFixed(1)}M` : `${(v * 100).toFixed(1)}%`;
-  const formatCell = (v: number) =>
-    matrix.unit === 'multiple' ? `${v.toFixed(2)}x` : `${(v * 100).toFixed(1)}%`;
+  const formatCell = (v: number | null) =>
+    v == null ? '—' : matrix.unit === 'multiple' ? `${v.toFixed(2)}x` : `${(v * 100).toFixed(1)}%`;
+  const MISSING_CELL = 'no cell returned by the sensitivity engine for this combination';
   const footnote = SENSITIVITY_FOOTNOTE[title];
 
   const navyHead: React.CSSProperties = {
@@ -1491,7 +1646,7 @@ function SensitivityCard({ matrix, title }: { matrix: SensitivityMatrix; title: 
                   title={`${formatHeader(matrix.rows[ri], matrix.rowLabel)} · ${formatHeader(
                     cell.colVal,
                     matrix.colLabel,
-                  )}${cell.isBase ? ' — base case' : ''}`}
+                  )}${cell.isBase ? ' — base case' : ''}${cell.value == null ? ` — ${MISSING_CELL}` : ''}`}
                   style={{
                     padding: '7px 12px',
                     borderBottom: `1px solid ${palette.hairlineRow}`,

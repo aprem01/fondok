@@ -1,4 +1,13 @@
-// Seed data — single source of truth for the demo. Replace with API calls in Phase 3.
+// Reference catalogs for the web app — brands, return profiles, positioning
+// tiers, deal stages, sourcing channels, document types — plus the legacy demo
+// workspace / project list that the mock-id (numeric) routes still read.
+//
+// Standing rule (no invented data): this file carries NO numeric deal, market
+// or analysis fixtures. Every displayed figure traces to an engine output or an
+// extracted document field; a figure the engine did not produce renders as "—"
+// with the missing field named. The former Kimpton Angler / Miami Beach number
+// sets (overview, documents, market, analysis, scenarios, critic findings) were
+// removed 2026-10-14 — nothing imported them, and nothing may again.
 
 export const workspace = {
   name: 'Brookfield Real Estate',
@@ -11,14 +20,6 @@ export const currentUser = {
   role: 'Senior Analyst',
   initials: 'EM',
   email: 'eshan@brookfield.com',
-};
-
-export const dashboardStats = {
-  activeProjects: 4,
-  totalProjects: 4,
-  documentsProcessed: 16,
-  totalDealVolume: 461_900_000,
-  avgTimeToIC: null as null | string,
 };
 
 export type ProjectStatus = 'Draft' | 'In Review' | 'IC Ready' | 'Archived';
@@ -207,7 +208,7 @@ export const engines = [
 //
 // Brand names use the canonical catalog form (e.g., "Hampton by Hilton") with the
 // shorter mockData aliases retained as substring-matchable prefixes for legacy deal
-// records that store just the short brand (e.g., kimptonAnglerOverview.general.brand = "Kimpton").
+// records that store just the short brand (e.g., an extracted brand of "Kimpton").
 export type ChainScale = 'Luxury' | 'Upper Upscale' | 'Upscale' | 'Upper Midscale' | 'Midscale' | 'Economy';
 export type Brand = {
   name: string;
@@ -660,189 +661,14 @@ export function brandChain(name: string | null | undefined): string | null {
 }
 
 // Project 7 — Kimpton Angler — Deep data for the IC Ready demo deal
-export const kimptonAnglerOverview = {
-  general: {
-    name: 'Kimpton Angler Hotel', location: 'Miami Beach, FL', type: 'Lifestyle Boutique',
-    brand: 'Kimpton', keys: 132, yearBuilt: 2015, gba: 142_000,
-    meetingSpace: '4,200 SF', parking: 88, fbOutlets: 2,
-  },
-  // Investment Profile — mirrors the new wizard fields (return_profile /
-  // positioning) so the deal detail can render the same intent the analyst
-  // selected at deal creation. IRR target is sourced from `returnProfiles`.
-  investmentProfile: {
-    returnProfile: 'value-add' as ReturnProfileId,
-    positioning: 'luxury' as 'default' | 'luxury' | 'upscale' | 'economy',
-  },
-  acquisition: {
-    purchasePrice: 36_400_000, pricePerKey: 275_758, entryCapRate: 0.0681,
-    closingCosts: 728_736, workingCapital: 500_000,
-  },
-  reversion: {
-    exitCapRate: 0.0700, exitYear: 5, terminalNOI: 5_120_000,
-    grossSalePrice: 73_142_000, sellingCosts: 1_462_840,
-  },
-  returns: {
-    leveredIRR: 0.2301, unleveredIRR: 0.1684, equityMultiple: 2.37,
-    yearOneCoC: 0.158, hold: 5,
-  },
-  investment: {
-    renovationBudget: 5_280_000, hardCostsPerKey: 30_000, softCosts: 528_000,
-    contingency: 528_000, totalCapital: 43_309_906,
-  },
-  financing: {
-    loanAmount: 23_660_000, ltv: 0.65, interestRate: 0.0680, dscr: 2.92,
-    annualDebtService: 1_608_880, term: 5, amortization: 30,
-  },
-  refi: {
-    refiYear: 4, refiLTV: 0.60, refiRate: 0.06, refiTerm: 5, refiAmortization: 30,
-  },
-  sources: [
-    { label: 'Senior Debt', amount: 23_683_922, pct: 0.547 },
-    { label: 'Equity', amount: 19_625_984, pct: 0.453 },
-    { label: 'Total Sources', amount: 43_309_906, pct: 1.0, total: true },
-  ],
-  uses: [
-    { label: 'Purchase Price', amount: 36_436_802 },
-    { label: 'Closing Costs', amount: 728_736 },
-    { label: 'Renovation', amount: 5_280_000 },
-    { label: 'Working Capital', amount: 500_000 },
-    { label: 'Loan Costs', amount: 364_368 },
-    { label: 'Total Uses', amount: 43_309_906, total: true },
-  ],
-  proforma: [
-    { label: 'Room Revenue', y1: 11_120, y2: 11_676, y3: 12_260, y4: 12_873, y5: 13_517, cagr: 0.05 },
-    { label: 'F&B Revenue', y1: 3_240, y2: 3_402, y3: 3_572, y4: 3_751, y5: 3_938, cagr: 0.05 },
-    { label: 'Other Revenue', y1: 720, y2: 756, y3: 794, y4: 833, y5: 875, cagr: 0.05 },
-    { label: 'Total Revenue', y1: 15_080, y2: 15_834, y3: 16_626, y4: 17_457, y5: 18_330, cagr: 0.05, bold: true },
-    { label: 'Operating Expenses', y1: 9_320, y2: 9_660, y3: 10_010, y4: 10_372, y5: 10_745 },
-    { label: 'Management Fee', y1: 452, y2: 475, y3: 499, y4: 524, y5: 550 },
-    { label: 'FF&E Reserve', y1: 603, y2: 633, y3: 665, y4: 698, y5: 733 },
-    { label: 'Net Operating Income', y1: 4_705, y2: 5_066, y3: 5_452, y4: 5_863, y5: 6_302, cagr: 0.075, bold: true },
-    { label: 'Debt Service', y1: 1_610, y2: 1_610, y3: 1_610, y4: 1_610, y5: 1_610 },
-    { label: 'Cash Flow After Debt', y1: 3_095, y2: 3_456, y3: 3_842, y4: 4_253, y5: 4_692, bold: true },
-  ],
-};
-
-// Sample documents for project 7
-export const kimptonDocuments = [
-  { name: 'Offering_Memorandum_Final.pdf', type: 'OM', status: 'Extracted', size: '4.2 MB', date: 'Apr 19, 2026', fields: 87, confidence: 94, populates: ['Investment', 'P&L'] },
-  { name: 'T12_FinancialStatement.xlsx', type: 'T12', status: 'Extracted', size: '2.1 MB', date: 'Apr 19, 2026', fields: 143, confidence: 96, populates: ['P&L', 'Cash Flow'] },
-  { name: 'STR_MarketReport_Q1.pdf', type: 'STR', status: 'Extracted', size: '1.8 MB', date: 'Apr 19, 2026', fields: 56, confidence: 91, populates: ['Market'] },
-  { name: 'Monthly_PL_2024_2025.xlsx', type: 'P&L', status: 'Extracted', size: '892 KB', date: 'Apr 20, 2026', fields: 312, confidence: 98, populates: ['P&L'] },
-  { name: 'PIP_Estimate_2026.pdf', type: 'OM', status: 'Processing', size: '3.4 MB', date: 'Apr 21, 2026', fields: 0, confidence: 0, populates: [] },
-  { name: 'Lender_Term_Sheet.pdf', type: 'Contract', status: 'Pending', size: '1.1 MB', date: 'Apr 21, 2026', fields: 0, confidence: 0, populates: [] },
-  { name: 'STR_Comp_Set_Detail.pdf', type: 'STR', status: 'Extracted', size: '2.6 MB', date: 'Apr 22, 2026', fields: 78, confidence: 89, populates: ['Market'] },
-  { name: 'Property_Survey_2024.pdf', type: 'Market Study', status: 'Extracted', size: '5.7 MB', date: 'Apr 22, 2026', fields: 34, confidence: 86, populates: ['Investment'] },
-];
-
-// Market tab — Miami Beach
-export const miamiMarket = {
-  submarket: 'Miami Beach / South Beach, FL',
-  asOf: 'Dec 2025',
-  kpis: {
-    inventory: { rooms: 18_450, hotels: 142, yoy: 1.8 },
-    occupancy: { value: 76.2, deltaPts: 2.4 },
-    adr: { value: 312.45, yoy: 6.2 },
-    revpar: { value: 238.09, yoy: 8.8 },
-    demandGrowth: 4.8,
-    supplyGrowth: 1.2,
-  },
-  historical: [
-    { year: '2021', occ: 58.4, adr: 248, revpar: 144 },
-    { year: '2022', occ: 68.1, adr: 271, revpar: 184 },
-    { year: '2023', occ: 71.5, adr: 287, revpar: 205 },
-    { year: '2024', occ: 73.8, adr: 294, revpar: 217 },
-    { year: '2025', occ: 76.2, adr: 312, revpar: 238 },
-  ],
-  monthly: [
-    { m: 'Jan', occ: 82.1, revpar: 312 }, { m: 'Feb', occ: 85.4, revpar: 348 },
-    { m: 'Mar', occ: 87.2, revpar: 362 }, { m: 'Apr', occ: 78.5, revpar: 268 },
-    { m: 'May', occ: 71.2, revpar: 218 }, { m: 'Jun', occ: 68.4, revpar: 198 },
-    { m: 'Jul', occ: 70.1, revpar: 205 }, { m: 'Aug', occ: 67.8, revpar: 192 },
-    { m: 'Sep', occ: 64.2, revpar: 178 }, { m: 'Oct', occ: 73.5, revpar: 232 },
-    { m: 'Nov', occ: 79.4, revpar: 278 }, { m: 'Dec', occ: 86.1, revpar: 348 },
-  ],
-  index: [
-    { m: 'Jan', RGI: 1.10, ARI: 1.06, MPI: 1.04 },
-    { m: 'Feb', RGI: 1.12, ARI: 1.08, MPI: 1.05 },
-    { m: 'Mar', RGI: 1.14, ARI: 1.09, MPI: 1.05 },
-    { m: 'Apr', RGI: 1.13, ARI: 1.08, MPI: 1.04 },
-    { m: 'May', RGI: 1.11, ARI: 1.07, MPI: 1.03 },
-    { m: 'Jun', RGI: 1.10, ARI: 1.07, MPI: 1.03 },
-    { m: 'Jul', RGI: 1.11, ARI: 1.07, MPI: 1.04 },
-    { m: 'Aug', RGI: 1.12, ARI: 1.08, MPI: 1.04 },
-    { m: 'Sep', RGI: 1.12, ARI: 1.08, MPI: 1.04 },
-    { m: 'Oct', RGI: 1.13, ARI: 1.09, MPI: 1.04 },
-    { m: 'Nov', RGI: 1.14, ARI: 1.09, MPI: 1.04 },
-    { m: 'Dec', RGI: 1.12, ARI: 1.08, MPI: 1.04 },
-  ],
-  segmentation: [
-    { name: 'Transient', pct: 52, deltaPts: 3.2 },
-    { name: 'Group', pct: 22, deltaPts: 1.8 },
-    { name: 'Contract', pct: 26, deltaPts: 1.4 },
-  ],
-  pipeline: [
-    { property: '1 Hotel South Beach Expansion', rooms: 85, status: 'Construction', opening: 'Q3 2026' },
-    { property: 'Aman Miami Beach', rooms: 56, status: 'Construction', opening: 'Q1 2027' },
-    { property: 'Edition Residences', rooms: 125, status: 'Planning', opening: 'Q4 2027' },
-    { property: 'Rosewood Miami Beach', rooms: 148, status: 'Planning', opening: 'Q2 2028' },
-  ],
-  demandGenerators: [
-    { name: 'Miami Beach Convention Center', type: 'Convention', volume: '1.2M attendees' },
-    { name: 'Art Basel', type: 'Events', volume: '83,000 annually' },
-    { name: 'South Beach Entertainment District', type: 'Tourism/Nightlife', volume: '15M annually' },
-    { name: 'Miami International Airport', type: 'Transport', volume: '52M passengers' },
-    { name: 'Cruise Port of Miami', type: 'Transport', volume: '7.5M passengers' },
-  ],
-  sales: [
-    { name: 'The Setai Miami Beach', keys: 130, date: 'Aug 2025', price: '$245M', perKey: '$1.9M', cap: '4.8%', buyer: 'Ashkenazy Acquisition' },
-    { name: 'Nautilus by Arlo', keys: 250, date: 'May 2025', price: '$98M', perKey: '$392k', cap: '6.2%', buyer: 'Private' },
-    { name: 'Loews Miami Beach', keys: 790, date: 'Mar 2025', price: '$520M', perKey: '$658k', cap: '5.4%', buyer: 'Institutional' },
-    { name: 'W South Beach', keys: 408, date: 'Feb 2025', price: '$425M', perKey: '$1.04M', cap: '5.1%', buyer: 'PE Fund' },
-    { name: 'SLS South Beach', keys: 140, date: 'Dec 2024', price: '$95M', perKey: '$679k', cap: '6.0%', buyer: 'REIT' },
-    { name: 'Cadillac Hotel & Beach Club', keys: 357, date: 'Nov 2024', price: '$130M', perKey: '$364k', cap: '6.8%', buyer: 'Institutional' },
-  ],
-  salesTotals: { ttmVolume: '$1.50B', txns: 6, avgPerKey: '$885,733', avgCap: '6.1%' },
-};
-
-// Analysis tab — Kimpton Angler
-export const kimptonAnalysis = {
-  summary: [
-    'Kimpton Angler is a compelling value-add acquisition in the South Beach submarket at $36.4M ($276K/key) — a 22% discount to recent comparable lifestyle-tier transactions. The basis provides meaningful downside protection and supports a 24.5% levered IRR over a 5-year hold.',
-    'The Brickell-adjacent location captures both leisure and corporate demand, and Kimpton brand affiliation commands a 14% ADR premium versus independent boutique competitors. STR data shows the asset trailing the comp set on RGI by 4 points, suggesting near-term yield management upside.',
-    'We recommend proceeding to LOI at the current ask. PIP requirement of $5.3M ($40K/key) is in line with brand standards refresh and is captured in Year 1 capital plan. Senior debt sized at 65% LTC delivers 1.57x DSCR with comfortable covenant headroom.',
-  ],
-  risks: [
-    { name: 'Overall Risk Score', tier: 'Low Risk', score: 24 },
-    { name: 'RevPAR Volatility', tier: 'Low Risk', score: 32 },
-    { name: 'Market Supply Risk', tier: 'Medium Risk', score: 38 },
-    { name: 'Operator Risk', tier: 'Low Risk', score: 18 },
-    { name: 'Capital Needs', tier: 'Low Risk', score: 28 },
-  ],
-  insights: [
-    { title: 'Prime South Beach Location', body: 'Walking distance to ocean and Lincoln Road; positioned for both leisure compression weekends and corporate weekday demand from Brickell.' },
-    { title: 'Lifestyle Brand Premium', body: 'Kimpton affiliation delivers a 14% ADR premium versus independent boutique competitors with comparable amenity packages.' },
-    { title: 'Seasonal Concentration', body: 'Q1 RevPAR runs 80% above Q3 trough — strong seasonal hedging in revenue model is critical for stable distributions.' },
-    { title: 'Attractive Basis', body: '$276K/key represents a 22% discount to replacement cost and 18% discount to last-trade lifestyle-tier comp set.' },
-  ],
-  scenarios: [
-    { name: 'Base Case', probability: 55, irr: 23.01, coc: 15.8, multiple: 2.37, exitValue: 73_142_000 },
-    { name: 'Upside Case', probability: 25, irr: 31.20, coc: 19.6, multiple: 2.94, exitValue: 84_500_000 },
-    { name: 'Downside Case', probability: 20, irr: 14.80, coc: 11.4, multiple: 1.78, exitValue: 58_200_000 },
-  ],
-};
-
-export const dealScenarios = [
-  { name: 'Downside', irr: 14.8, unleveredIrr: 9.2, multiple: 1.78, avgCoC: 11.4 },
-  { name: 'Base Case', irr: 23.01, unleveredIrr: 16.84, multiple: 2.37, avgCoC: 15.8, base: true },
-  { name: 'Upside', irr: 31.20, unleveredIrr: 22.10, multiple: 2.94, avgCoC: 19.6 },
-];
-
-// ─────────────────── Critic findings — Kimpton Angler ───────────────────
+// ─────────────────── Critic finding shape ───────────────────
 // The Critic agent reads the broker proforma + T-12 + market context and
 // surfaces cross-field issues that a per-field variance pass would miss.
 // Each finding grounds in a USALI rule_id (or a MULTI_FIELD_* rule from
 // the cross-field rule additions). Severity ordered CRITICAL → WARN → INFO.
+// TYPES ONLY — the live findings come from GET /deals/{id}/critic
+// (AnalysisTab maps the worker JSON onto this shape). The names keep their
+// historical "Kimpton" prefix for import stability.
 export type KimptonCriticSeverity = 'CRITICAL' | 'WARN' | 'INFO';
 
 export interface KimptonCriticFinding {
@@ -857,72 +683,3 @@ export interface KimptonCriticFinding {
   citedDocumentName?: string;
   impactEstimateUsd?: number;
 }
-
-export const kimptonCriticFindings: KimptonCriticFinding[] = [
-  {
-    id: 'critic-kimpton-1',
-    ruleId: 'MULTI_FIELD_INSURANCE_COASTAL_RISK',
-    title: 'Coastal insurance held flat in a Florida property',
-    narrative:
-      'Property is on Miami Beach, where wind/flood reinsurance has driven insurance per key up 30-60% at most renewals over the past 24 months. Broker assumes $1,851/key vs comp set average of $2,800/key (only +1.5% YoY). Underwrite to a 30-50% lift; the gap would lift insurance expense by approximately $244K and shave roughly 17 bps off NOI margin.',
-    severity: 'CRITICAL',
-    citedFields: ['insurance', 'fixed_charges'],
-    citedPages: [22, 24],
-    citedDocumentId: 'kimpton-angler-om-2026',
-    citedDocumentName: 'Offering_Memorandum_Final.pdf',
-    impactEstimateUsd: 244_000,
-  },
-  {
-    id: 'critic-kimpton-2',
-    ruleId: 'MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE',
-    title: 'NOI margin expansion without OpEx ratio movement',
-    narrative:
-      'Broker projects NOI growth of 13.4% ($3.78M → $4.28M) while OpEx ratio holds at 65.4% (T-12 actual 65.6%, delta 0.2pp). Margin expansion of this size requires an explicit revenue or labor source — the proforma does not show ADR uplift sufficient to support it. Confirm the assumption stack with the asset-management plan before locking the underwrite.',
-    severity: 'WARN',
-    citedFields: ['noi', 'opex_ratio', 'total_revenue'],
-    citedPages: [38, 41],
-    citedDocumentId: 'kimpton-angler-om-2026',
-    citedDocumentName: 'Offering_Memorandum_Final.pdf',
-    impactEstimateUsd: 503_000,
-  },
-  {
-    id: 'critic-kimpton-3',
-    ruleId: 'MULTI_FIELD_FNB_MARGIN_AGGRESSIVE',
-    title: 'F&B margin aggressive for a lifestyle-tier select-service profile',
-    narrative:
-      'Broker projects F&B departmental margin of 27.5% on $740K of F&B revenue. Lifestyle Kimpton properties at this scale typically run F&B at 10-15% margin — the on-site bar/cafe operation does not have the banquet base to support full-service economics. Reset F&B margin to 12-14% in the underwrite.',
-    severity: 'WARN',
-    citedFields: ['fb_revenue', 'dept_expenses.food_beverage'],
-    citedPages: [34],
-    citedDocumentId: 'kimpton-angler-t12-2026q1',
-    citedDocumentName: 'T12_FinancialStatement.xlsx',
-    impactEstimateUsd: 96_000,
-  },
-  {
-    id: 'critic-kimpton-4',
-    ruleId: 'MULTI_FIELD_SEASONAL_PATTERN_MISSING',
-    title: 'Q1 seasonal swing under-modeled vs Miami Beach historical pattern',
-    narrative:
-      'Miami Beach Q1 RevPAR historically runs 60-90% above Q3 trough on the comp set. Proforma shows a Q1-Q3 swing of only 18%, smoothing the seasonal curve. This overstates Q3 distributable cash and understates Q1 compression revenue — both feed an unrealistically stable DSCR profile. Re-spread monthly RevPAR before locking the debt sizing assumption.',
-    severity: 'WARN',
-    citedFields: ['revpar', 'occupancy'],
-    citedPages: [11, 13],
-    citedDocumentId: 'kimpton-angler-om-2026',
-    citedDocumentName: 'Offering_Memorandum_Final.pdf',
-  },
-  {
-    id: 'critic-kimpton-5',
-    ruleId: 'MULTI_FIELD_PIP_TIMING_INCONSISTENT',
-    title: 'Year-1 $5.3M PIP scheduled but Year-1 NOI only dips 2.1%',
-    narrative:
-      'Broker has a $5.3M PIP scheduled in Year 1 ($40K/key, brand-standard refresh) but Year-1 NOI dips only 2.1%. A soft-good plus FF&E refresh of this size typically takes out 30-50 rooms for 6-10 weeks per phase, costing 4-7% of stabilized NOI in displacement. Either the PIP is being phased off-peak with smaller blocks (model the displacement explicitly) or the timing is unrealistic.',
-    severity: 'WARN',
-    citedFields: ['noi', 'capex'],
-    citedPages: [42, 43],
-    citedDocumentId: 'kimpton-angler-om-2026',
-    citedDocumentName: 'Offering_Memorandum_Final.pdf',
-    impactEstimateUsd: 265_000,
-  },
-];
-
-export const kimptonCriticSummary = `Fondok identified 5 cross-field issues across the broker proforma (1 CRITICAL, 4 WARN). The coastal-insurance flat-hold is the highest-leverage finding — it understates Year-1 fixed charges by ~$244K and would compress DSCR by ~12 bps if remediated. The NOI-without-OpEx-pressure and PIP-timing flags are companion concerns that compound at the cash-on-cash line. Recommend re-pricing the deal at 30% insurance lift + 12% F&B margin before LOI.`;

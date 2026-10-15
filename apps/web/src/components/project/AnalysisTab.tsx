@@ -26,10 +26,9 @@ import { useSearchParams, useRouter, useParams } from 'next/navigation';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import {
-  type KimptonCriticFinding,
-  type KimptonCriticSeverity,
-} from '@/lib/mockData';
+// Type-only import — the critic finding SHAPE (no fixture data) shared with
+// the worker JSON mapper below.
+import type { KimptonCriticFinding, KimptonCriticSeverity } from '@/lib/mockData';
 import { fmtCurrency, cn } from '@/lib/format';
 import { Citation } from '@/components/citations/Citation';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -214,7 +213,20 @@ export default function AnalysisTab() {
           </div>
           <div className="flex items-center gap-2">
             <CacheHitBadge />
-            <Badge tone="green">✓ Analysis Complete</Badge>
+            {/* Standing rule — no pre-filled state. The badge reads the live
+                memo: "complete" only once an IC memo run has produced the
+                summary, otherwise it says what is still awaited. */}
+            {liveSummary.paragraphs && liveSummary.paragraphs.length > 0 ? (
+              <Badge tone="green">✓ Analysis Complete</Badge>
+            ) : (
+              <span
+                className="inline-flex"
+                title="The AI summary is produced by the IC memo run (GET /deals/{id}/memo). Nothing on this view is pre-filled."
+                data-testid="analysis-awaiting-memo"
+              >
+                <Badge tone="gray">Awaiting IC memo</Badge>
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1 border-b border-border -mb-5 px-0 -mx-1">
