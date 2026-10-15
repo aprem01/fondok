@@ -244,6 +244,41 @@ def _index_points(v: float | None) -> float | None:
     return validate_index_target(v)[0]
 
 
+#: The display labels a stored-target problem names.
+_TARGET_LABELS: dict[str, str] = {
+    "index_mpi_target": "all-years MPI target",
+    "index_ari_target": "all-years ARI target",
+    "index_mpi_target_by_year": "MPI target",
+    "index_ari_target_by_year": "ARI target",
+}
+
+
+def stored_target_problem(raw: Any, key: str, *, year: int | None = None) -> str | None:
+    """Why a STORED penetration target is ignored at read time, or ``None``
+    when it is valid (or unset).
+
+    The range check gates new writes (PATCH / Excel apply), but a legacy row
+    written before it can still carry ``5`` or ``1000``. Every read that feeds
+    the engine or the by-year grid goes through ``validate_index_target``; an
+    out-of-range value is IGNORED — never applied — and this line is surfaced
+    so the analyst knows to re-enter it.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if validate_index_target(raw)[0] is not None:
+        return None
+    lo_p, hi_p = INDEX_POINTS_RANGE
+    lo_r, hi_r = INDEX_RATIO_RANGE
+    f = coerce_float(raw)
+    shown = f"{f:g}" if f is not None else repr(raw)
+    label = _TARGET_LABELS.get(key, "target")
+    where = f"Year-{year} " if year is not None else ""
+    return (
+        f"Stored {where}{label} {shown} is outside {lo_p:g}–{hi_p:g} index points "
+        f"(or {lo_r:g}–{hi_r:g} as a ratio) — re-enter it. It is ignored, not applied."
+    )
+
+
 def _growth_fraction(v: Any) -> float | None:
     f = coerce_float(v)
     if f is None:
@@ -615,10 +650,17 @@ def resolve_index_methodology(
             # The panel must print the SAME number the by-year grid and the
             # model run on: a target typed as a ratio (1.10) is 110 index
             # points everywhere (``read_targets_by_year`` / ``validate_index_target``).
-            # A legacy out-of-range value stays as stored so the row still
-            # says "Your override" rather than silently showing the default.
+            # A legacy out-of-range value (stored before the range gate) is
+            # IGNORED everywhere it is read — the model never runs on it — so
+            # the row shows no value and says why, never a number nothing applies.
             pts = _index_points(v)
-            v = pts if pts is not None else v
+            if pts is None:
+                assumptions[key] = Figure.none(
+                    stored_target_problem(override_scalar(overrides, key), key)
+                    or "Stored target is outside the accepted range — re-enter it."
+                )
+                continue
+            v = pts
         assumptions[key] = Figure(value=v, source="override", detail=override_note(overrides, key))
     return IndexMethodologyReading(
         selected=selected,
@@ -638,7 +680,7 @@ def resolve_index_methodology(
 def wants_benchmark(base: Mapping[str, Any], analyst_override_paths: set[str]) -> bool:
     """Does applying the analyst's assumptions need the benchmark rows read?"""
     return any(
-        k in analyst_override_paths and coerce_float(base.get(k)) is not None
+        k in analyst_override_paths and _index_points(coerce_float(base.get(k))) is not None
         for k in (KEY_MPI_TARGET, KEY_ARI_TARGET)
     ) or any(
         k in analyst_override_paths and any(v is not None for v in coerce_target_list(base.get(k)))
@@ -678,8 +720,11 @@ def apply_index_assumptions(
         sources[engine_key] = SOURCE_INDEX_ASSUMPTION
         changed.append(engine_key)
 
-    mpi_t = analyst_set(KEY_MPI_TARGET)
-    ari_t = analyst_set(KEY_ARI_TARGET)
+    # Read through the same range check the writes use: a legacy stored target
+    # outside 25–250 points / 0.25–2.5 ratio is ignored, never applied
+    # (``stored_target_problem`` names it on the panel and the by-year grid).
+    mpi_t = _index_points(analyst_set(KEY_MPI_TARGET))
+    ari_t = _index_points(analyst_set(KEY_ARI_TARGET))
     if (mpi_t is None and ari_t is None) or rows is None:
         return changed
     method, _ = selected_method({OVERRIDE_METHOD: base.get(OVERRIDE_METHOD)})
@@ -698,8 +743,7 @@ def apply_index_assumptions(
             continue
         if sources.get(engine_key) not in str_basis_sources:
             continue  # an explicit analyst value, or the seed did not land
-        ratio = target / 100.0 if target > 3 else target
-        value = normalize(bench * ratio)
+        value = normalize(bench * target / 100.0)  # target is index points
         if value is None:
             continue
         base[engine_key] = value
@@ -770,6 +814,8 @@ class TargetReading:
     value: float | None
     source: TargetSource | None
     note: str | None = None
+    #: A stored target for this year that was IGNORED (out of range), and why.
+    problem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -797,6 +843,13 @@ class IndexByYearReading:
     hold_years: int
     calendar_known: bool
     years: list[IndexYearReading]
+    #: The STR competitive set by model year — the SAME ``_grown_series`` the
+    #: ``str_comp_set`` method indexes against (TTM level in Year 1, grown at
+    #: the market growth assumption after it; ``None`` with the reason where
+    #: no growth value exists). Computed whichever method is selected, so the
+    #: Index Analysis comp-set table can fill its forecast columns.
+    comp_set_occupancy: list[Figure] = field(default_factory=list)
+    comp_set_adr: list[Figure] = field(default_factory=list)
 
     @property
     def any_target(self) -> bool:
@@ -807,19 +860,43 @@ def read_targets_by_year(overrides: Mapping[str, Any] | None, hold_years: int) -
     """Effective MPI / ARI target per model year: the by-year entry where set,
     else the scalar all-years target, else none. Only ANALYST-SET values count —
     a document default is shown beside the assumption, never applied."""
-    mpi_list = coerce_target_list(override_scalar(overrides, KEY_MPI_TARGET_BY_YEAR))
-    ari_list = coerce_target_list(override_scalar(overrides, KEY_ARI_TARGET_BY_YEAR))
-    mpi_scalar = _index_points(coerce_float(override_scalar(overrides, KEY_MPI_TARGET)))
-    ari_scalar = _index_points(coerce_float(override_scalar(overrides, KEY_ARI_TARGET)))
+    mpi_raw = override_scalar(overrides, KEY_MPI_TARGET_BY_YEAR)
+    ari_raw = override_scalar(overrides, KEY_ARI_TARGET_BY_YEAR)
+    mpi_list = coerce_target_list(mpi_raw)
+    ari_list = coerce_target_list(ari_raw)
+    entries = {
+        KEY_MPI_TARGET_BY_YEAR: _target_list_entries(mpi_raw) or [],
+        KEY_ARI_TARGET_BY_YEAR: _target_list_entries(ari_raw) or [],
+    }
+    mpi_scalar_raw = override_scalar(overrides, KEY_MPI_TARGET)
+    ari_scalar_raw = override_scalar(overrides, KEY_ARI_TARGET)
+    mpi_scalar = _index_points(coerce_float(mpi_scalar_raw))
+    ari_scalar = _index_points(coerce_float(ari_scalar_raw))
+    scalar_problem = {
+        KEY_MPI_TARGET: stored_target_problem(mpi_scalar_raw, KEY_MPI_TARGET),
+        KEY_ARI_TARGET: stored_target_problem(ari_scalar_raw, KEY_ARI_TARGET),
+    }
     notes = {k: override_note(overrides, k) for k in (*BY_YEAR_TARGET_KEYS, KEY_MPI_TARGET, KEY_ARI_TARGET)}
 
     def pick(lst: list[float | None], scalar: float | None, list_key: str, scalar_key: str, y: int) -> TargetReading:
         v = lst[y - 1] if y - 1 < len(lst) else None
         if v is not None:
             return TargetReading(value=v, source="by_year", note=notes[list_key])
+        # An out-of-range stored entry for this year, or an out-of-range
+        # all-years target, is ignored (never applied) and named.
+        raw_entries = entries[list_key]
+        problems = [
+            p
+            for p in (
+                stored_target_problem(raw_entries[y - 1], list_key, year=y) if y - 1 < len(raw_entries) else None,
+                scalar_problem[scalar_key],
+            )
+            if p
+        ]
+        problem = " ".join(problems) or None
         if scalar is not None:
-            return TargetReading(value=scalar, source="scalar", note=notes[scalar_key])
-        return TargetReading(value=None, source=None)
+            return TargetReading(value=scalar, source="scalar", note=notes[scalar_key], problem=problem)
+        return TargetReading(value=None, source=None, problem=problem)
 
     years = range(1, max(1, hold_years) + 1)
     return (
@@ -1016,6 +1093,8 @@ def resolve_index_by_year(
         def resolve(
             target: TargetReading, bench: Figure, normalize, label: str, *, growth_overridden: bool, noun: str
         ) -> tuple[float | None, DriverStatus]:
+            if target.problem:
+                reasons.append(f"{label}: {target.problem}")
             if target.value is None:
                 return None, "no_target"
             if y > 1 and target.source == "scalar" and not growth_overridden:
@@ -1051,9 +1130,20 @@ def resolve_index_by_year(
                 reason="; ".join(reasons) or None,
             )
         )
+    str_method = reading.method(METHOD_STR_COMP_SET)
+    if chosen.method == METHOD_STR_COMP_SET:
+        comp_occ, comp_adr = bench_occ, bench_adr
+    elif str_method is not None and str_method.available:
+        comp_occ = _grown_series(str_method.occupancy, occ_growth, hold, noun="occupancy", method_label=str_method.label)
+        comp_adr = _grown_series(str_method.adr, adr_growth, hold, noun="ADR", method_label=str_method.label)
+    else:
+        why = (str_method.disabled_reason if str_method is not None else None) or "No STR competitive set on this deal."
+        comp_occ = [Figure.none(why) for _ in range(hold)]
+        comp_adr = [Figure.none(why) for _ in range(hold)]
     return IndexByYearReading(
         method=chosen.method, method_label=chosen.label, hold_years=hold,
         calendar_known=bool(cal), years=years,
+        comp_set_occupancy=comp_occ, comp_set_adr=comp_adr,
     )
 
 

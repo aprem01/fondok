@@ -41,6 +41,7 @@ import {
   type IndexYearRow,
 } from '@/lib/api';
 import { applyOverridePatch, NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE, requiresNote } from '@/lib/overrideNote';
+import { INDEX_POINTS_RANGE, INDEX_RATIO_RANGE, toIndexPoints, validateIndexTarget } from '@/lib/indexTarget';
 import { sourceLabel } from '@/lib/provenance';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -244,9 +245,16 @@ export function figureSourceText(f: IndexFigure | undefined | null): string {
   return f.detail ?? 'No source';
 }
 
-function fmtAssumption(v: number | null | undefined, unit: 'growth' | 'index'): string {
+/** The accepted target units, for the refusal message. */
+export const INDEX_TARGET_UNITS = `index points ${INDEX_POINTS_RANGE[0]}–${INDEX_POINTS_RANGE[1]} (100 = parity with the benchmark) or a ratio ${INDEX_RATIO_RANGE[0]}–${INDEX_RATIO_RANGE[1]}`;
+
+export function fmtAssumption(v: number | null | undefined, unit: 'growth' | 'index'): string {
   if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
-  return unit === 'growth' ? `${(v * 100).toFixed(2)}%` : v.toFixed(1);
+  if (unit === 'growth') return `${(v * 100).toFixed(2)}%`;
+  // A target is always shown in index points, read exactly as the worker
+  // reads it: a ratio (1.10) is 110.0, an out-of-range value is not a target.
+  const pts = toIndexPoints(v);
+  return pts == null ? '—' : pts.toFixed(1);
 }
 
 function AssumptionRow({
@@ -271,11 +279,14 @@ function AssumptionRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const needNote = requiresNote(overrideKey);
   const start = () => {
     const v = figure?.value;
-    setDraft(typeof v === 'number' ? (unit === 'growth' ? (v * 100).toFixed(2) : v.toFixed(1)) : '');
+    const shown = unit === 'growth' ? (typeof v === 'number' ? (v * 100).toFixed(2) : '') : fmtAssumption(v, unit);
+    setDraft(shown === '—' ? '' : shown);
     setNote('');
+    setError(null);
     setEditing(true);
   };
   const save = () => {
@@ -290,7 +301,10 @@ function AssumptionRow({
       // Same reading as the by-year grid: a ratio (1.10) is 110 index points,
       // so the panel, the grid and the model never disagree on the unit.
       const pts = parseIndexPoints(draft.replace(/%/g, ''));
-      if (pts == null) return;
+      if (pts == null) {
+        setError(`Enter ${INDEX_TARGET_UNITS}.`);
+        return;
+      }
       value = pts;
     }
     onSave(overrideKey, value, note.trim());
@@ -324,6 +338,11 @@ function AssumptionRow({
               onChange={(e) => setNote(e.target.value)}
             />
             {needNote && !note.trim() && <span className="text-[10.5px] text-ink-400">{NOTE_REQUIRED_MESSAGE}</span>}
+            {error && (
+              <span className="text-[10.5px] text-danger-700" data-testid={`index-assumption-error-${overrideKey}`}>
+                {error}
+              </span>
+            )}
             <div className="flex gap-2">
               <button type="button" className="text-brand-700 font-semibold" onClick={save} disabled={disabled}>
                 Save
@@ -356,16 +375,19 @@ export const INDEX_MPI_BY_YEAR_KEY = 'index_mpi_target_by_year';
 export const INDEX_ARI_BY_YEAR_KEY = 'index_ari_target_by_year';
 export const RGI_DERIVED_NOTE = 'RGI is derived — MPI × ARI ÷ 100 — not an input.';
 
-const fmtIdx = (v: number | null | undefined): string =>
-  typeof v === 'number' && Number.isFinite(v) ? v.toFixed(1) : '—';
+const fmtIdx = (v: number | null | undefined): string => {
+  const pts = toIndexPoints(v ?? null);
+  return pts == null ? '—' : pts.toFixed(1);
+};
 
-/** Parse one grid cell: '' → null (not set), else index points (a ratio like 1.10 reads as 110). */
+/** Parse one grid cell: '' → null (not set), else index points read exactly as
+ *  the worker reads them (``@/lib/indexTarget``): a ratio 0.25–2.5 (1.10 → 110)
+ *  or points 25–250; anything else (5, 12, 300) → undefined (refused). */
 export function parseIndexPoints(raw: string): number | null | undefined {
   const t = raw.replace(/[\s,]/g, '');
   if (!t) return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n <= 0) return undefined; // invalid
-  return n <= 3 ? n * 100 : n;
+  const { points } = validateIndexTarget(t);
+  return points == null ? undefined : points;
 }
 
 /** The two by-year lists a Save writes (index y−1 = model year y); null = clear the key. */
@@ -416,6 +438,11 @@ function IndexByYearGrid({
   const needNote = requiresNote(INDEX_MPI_BY_YEAR_KEY) || requiresNote(INDEX_ARI_BY_YEAR_KEY);
   const overridden = INDEX_MPI_BY_YEAR_KEY in overrides || INDEX_ARI_BY_YEAR_KEY in overrides;
   if (!rows.length) return null;
+  // Stored targets the worker IGNORED (out of range — legacy values written
+  // before the range gate): named once each, never applied.
+  const targetProblems = Array.from(
+    new Set(rows.flatMap((r) => [r.mpi_target.problem, r.ari_target.problem]).filter((p): p is string => !!p)),
+  );
 
   const start = () => {
     // Only the by-year entries are editable here; an all-years scalar shows as
@@ -431,7 +458,7 @@ function IndexByYearGrid({
   const save = () => {
     const { patch, invalid } = byYearPatch(drafts);
     if (invalid) {
-      setError('Each target is index points (100 = parity with the benchmark); leave a year blank to use the all-years target.');
+      setError(`Each target is ${INDEX_TARGET_UNITS}; leave a year blank to use the all-years target.`);
       return;
     }
     const writesValue = Object.values(patch).some((v) => v != null);
@@ -457,7 +484,13 @@ function IndexByYearGrid({
     `${r.year === 1 ? 'Base year (Year 1)' : `Year ${r.year}`}${r.calendar_year != null ? ` · ${r.calendar_year}` : ''}`;
   const targetCell = (t: IndexYearRow['mpi_target']) =>
     t.value == null ? (
-      <span className="text-ink-400">—</span>
+      t.problem ? (
+        <span className="text-warning-700" title={t.problem} data-testid="index-by-year-target-problem">
+          — ignored
+        </span>
+      ) : (
+        <span className="text-ink-400">—</span>
+      )
     ) : (
       <span className={t.source === 'by_year' ? 'text-brand-700 font-medium' : 'text-ink-900'} title={t.note ?? undefined}>
         {fmtIdx(t.value)}
@@ -496,6 +529,13 @@ function IndexByYearGrid({
           </div>
         ) : null}
       </div>
+      {targetProblems.length > 0 && (
+        <div className="text-[11px] text-warning-700" data-testid="index-by-year-problems">
+          {targetProblems.map((p) => (
+            <div key={p}>{p}</div>
+          ))}
+        </div>
+      )}
       {!applies && (
         <div className="text-[11px] text-warning-700" data-testid="index-by-year-disabled">
           {data.by_year_disabled_reason ?? 'Targets by year do not feed Projections yet.'}

@@ -686,7 +686,7 @@ async def test_endpoint_carries_the_by_year_grid_on_the_deal_calendar_and_is_ten
     assert [r["calendar_year"] for r in payload["by_year"]] == [2025, 2026, 2027]
     assert payload["by_year_applies"] is False and "Use STR rates" in payload["by_year_disabled_reason"]
     y2 = payload["by_year"][1]
-    assert y2["mpi_target"] == {"value": 115.0, "source": "by_year", "note": "Year-2 share gain after the PIP"}
+    assert y2["mpi_target"] == {"value": 115.0, "source": "by_year", "note": "Year-2 share gain after the PIP", "problem": None}
     assert y2["ari_target"]["source"] == "scalar" and y2["rgi_derived"] == pytest.approx(115.0)
     assert y2["occupancy"] == pytest.approx(_COMP_OCC_DB * 1.012 * 1.15) and y2["occupancy_status"] == "driven"
     assert y2["adr_status"] == "scalar_year1_only" and "drives Year 1 only" in y2["reason"]

@@ -331,7 +331,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
     // …and says why, in one line, above the tables.
     expect(screen.getByText(/No CBRE Horizons report is on this deal/)).toBeInTheDocument();
     // The comp-set forecast is "—", NOT the subject's growth re-scaled.
-    const comp = tableOf('CoStar Market — Competitive Set');
+    const comp = tableOf('STR Competitive Set');
     expect(rowCells('ADR', comp)[FIRST_FORECAST]).toHaveTextContent('—');
     expect(rowCells('ADR', comp)[FIRST_FORECAST + 1]).toHaveTextContent('—');
     // The TTM blend still anchors the last historical column: 288 ÷ 0.942 = $306.
@@ -345,7 +345,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
     expect(band.closest('table')).toBe(tableOf('Market'));
     // The comp set is never labelled with the CBRE forecast.
     expect(screen.getByText(/Forecast — no comp-set forecast source/)).toBeInTheDocument();
-    const comp = tableOf('CoStar Market — Competitive Set');
+    const comp = tableOf('STR Competitive Set');
     expect(rowCells('ADR', comp)[FIRST_FORECAST]).toHaveTextContent('—');
     // The Market row carries the CBRE figures in 2025 / 2026 and nothing after.
     const market = tableOf('Market');
@@ -475,7 +475,11 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
   it('revenue opportunity is signed at par, and also shown at the analyst’s MPI / ARI targets', async () => {
     // Both targets ANALYST-SET (source 'override'); the fixture's MPI default
     // is the document's published index, which is not a target (see below).
+    // "Use STR rates in the model" on — the at-target row is gated exactly
+    // like the index rows (see the toggle-off test below).
     mockIndexMethodology = methodology({
+      toggle_on: true,
+      by_year_applies: true,
       assumptions: {
         ...methodology().assumptions,
         index_mpi_target: figure(103.2, 'override', [], 'Hold share'),
@@ -517,7 +521,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
   it('a document-default index is NOT an analyst target: with only the ARI override set, the at-target row is "—" with the reason', async () => {
     // The fixture: index_mpi_target = 103.2 from the STR document (the
     // published MPI itself), index_ari_target = 105 analyst override.
-    mockIndexMethodology = methodology();
+    mockIndexMethodology = methodology({ toggle_on: true, by_year_applies: true });
     render(<IndexAnalysisSection dealId={DEAL} />);
     await screen.findByText('Penetration Index');
     const row = screen.getByTestId('index-penetration-oppty-target');
@@ -795,7 +799,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
     fireEvent.change(within(grid).getByLabelText('Targets by year note'), { target: { value: 'n' } });
     fireEvent.click(within(grid).getByTestId('index-by-year-save'));
     expect(updateDeal).not.toHaveBeenCalled();
-    expect(within(grid).getByTestId('index-by-year-error')).toHaveTextContent(/index points \(100 = parity/);
+    expect(within(grid).getByTestId('index-by-year-error')).toHaveTextContent(/index points 25–250 \(100 = parity/);
     fireEvent.change(within(grid).getByLabelText('Year 1 ARI target'), { target: { value: '1.05' } });
     fireEvent.click(within(grid).getByTestId('index-by-year-save'));
     await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
@@ -927,5 +931,138 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
     expect(body.field_overrides.index_market_adr_growth.value).toBeCloseTo(0.035);
     expect(body.field_overrides.index_market_adr_growth.note).toBe('CBRE Q3 outlook');
     expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/feed Projections now/);
+  });
+});
+
+// ─────────────── Sam #3 — index targets, comp-set forecast, selected benchmark ───────────────
+
+const LEGACY_REASON =
+  'Stored all-years MPI target 5 is outside 25–250 index points (or 0.25–2.5 as a ratio) — re-enter it. It is ignored, not applied.';
+
+describe('Index Analysis — Sam #3', () => {
+  it('Revenue Opportunity at Target is gated on by_year_applies like the index rows', async () => {
+    mockIndexMethodology = methodology({
+      toggle_on: false,
+      by_year_applies: false,
+      by_year_disabled_reason: BY_YEAR_OFF_REASON,
+      assumptions: { ...methodology().assumptions, index_mpi_target: figure(103.2, 'override', [], 'Hold share') },
+    });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    await screen.findByText('Penetration Index');
+    const row = screen.getByTestId('index-penetration-oppty-target');
+    expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
+    expect(within(row).getByText('Revenue Opportunity at Target').getAttribute('title')).toMatch(
+      /Targets set but not applied — Targets by year do not feed Projections yet/,
+    );
+  });
+
+  it('a target stored as a ratio (1.032 / 1.05) reads as index points in the panel and prices the opportunity like 103.2 / 105', async () => {
+    mockIndexMethodology = methodology({
+      toggle_on: true,
+      by_year_applies: true,
+      assumptions: {
+        ...methodology().assumptions,
+        index_mpi_target: figure(1.032, 'override', [], 'ratio'),
+        index_ari_target: figure(1.05, 'override', [], 'ratio'),
+      },
+    });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    const panelRow = await screen.findByTestId('index-assumption-index_mpi_target');
+    expect(panelRow).toHaveTextContent('103.2');
+    expect(screen.getByTestId('index-assumption-index_ari_target')).toHaveTextContent('105.0');
+    const target = Array.from(screen.getByTestId('index-penetration-oppty-target').querySelectorAll('td')).slice(1)[5];
+    // Same as the 103.2 / 105 points case — not 100× off.
+    expect(target).toHaveTextContent(/^\$3,3\d\d,\d{3}$/);
+    expect(within(target).getByText(/^\$/).getAttribute('title')).toMatch(/MPI target 103\.2/);
+  });
+
+  it('a legacy out-of-range stored target shows no value, the reason, and never reaches the penetration rows', async () => {
+    const rows = byYearRows().map((r) => ({
+      ...r,
+      mpi_target: { value: null, source: null, note: null, problem: LEGACY_REASON },
+      reason: `Occupancy: ${LEGACY_REASON}`,
+    }));
+    mockIndexMethodology = methodology({
+      toggle_on: true,
+      by_year_applies: true,
+      by_year: rows,
+      hold_years: 3,
+      assumptions: { ...methodology().assumptions, index_mpi_target: figure(null, null, [], LEGACY_REASON) },
+    });
+    mockOverrides = { index_mpi_target: { value: 5, note: 'old' } };
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    const row = await screen.findByTestId('index-assumption-index_mpi_target');
+    expect(within(row).getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('index-assumption-source-index_mpi_target')).toHaveTextContent(/5 is outside 25–250.*re-enter it/);
+    expect(screen.getByTestId('index-by-year-problems')).toHaveTextContent(/re-enter it/);
+    expect(screen.getAllByTestId('index-by-year-target-problem').length).toBe(3);
+    const mpi = Array.from(screen.getByTestId('index-penetration-mpi').querySelectorAll('td')).slice(1);
+    expect(mpi[FIRST_FORECAST]).toHaveTextContent('103.2'); // the published index, not "5"
+  });
+
+  it('fills the comp-set forecast from the worker’s grown series, labelled as an assumption, and the by-year rows follow', async () => {
+    const compByYear = [
+      {
+        year: 1,
+        calendar_year: 2025,
+        occupancy: figure(0.694, 'computed', [STR_REF], 'STR competitive set TTM to 2025-05 occupancy'),
+        adr: figure(305.7, 'computed', [STR_REF], 'STR competitive set TTM to 2025-05 ADR'),
+      },
+      {
+        year: 2,
+        calendar_year: 2026,
+        occupancy: figure(0.694 * 1.005, 'computed', [STR_REF], 'STR competitive set TTM to 2025-05 occupancy grown 1 year at +0.50% market occupancy growth (your override)'),
+        adr: figure(305.7 * 1.031, 'computed', [STR_REF, MKT_REF], 'STR competitive set TTM to 2025-05 ADR grown 1 year at +3.10% market ADR growth (2026)'),
+      },
+      {
+        year: 3,
+        calendar_year: 2027,
+        occupancy: figure(null, null, [], 'No market occupancy growth assumption to carry the str competitive set past Year 1.'),
+        adr: figure(null, null, [], 'No market ADR growth assumption to carry the str competitive set past Year 1.'),
+      },
+    ];
+    mockIndexMethodology = methodology({ comp_set_by_year: compByYear });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    expect(await screen.findByText(/Forecast — comp set grown at market growth \(assumption\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Forecast — no comp-set forecast source/)).toBeNull();
+    const comp = tableOf('STR Competitive Set');
+    expect(rowCells('ADR', comp)[FIRST_FORECAST]).toHaveTextContent('$306');
+    expect(rowCells('ADR', comp)[FIRST_FORECAST + 1]).toHaveTextContent('$315');
+    expect(rowCells('ADR', comp)[FIRST_FORECAST + 2]).toHaveTextContent('—');
+    expect(rowCells('Source', comp)[FIRST_FORECAST + 1]).toHaveTextContent('Grown (assumption)');
+    const src = within(rowCells('Source', comp)[FIRST_FORECAST + 1]).getByText('Grown (assumption)');
+    expect(src.getAttribute('title')).toMatch(/Submarket Report\.pdf, p\.6/);
+    // The by-year rows now fill: variances, fair share, opportunity at par.
+    const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
+    expect(at('index-penetration-adr-var')[FIRST_FORECAST + 1]).toHaveTextContent('−$16'); // 299.52 − 315.18
+    expect(at('index-penetration-fair-share-occ')[FIRST_FORECAST + 1].textContent).not.toBe('—');
+    expect(at('index-penetration-oppty-par')[FIRST_FORECAST + 1].textContent).not.toBe('—');
+    expect(at('index-penetration-adr-var')[FIRST_FORECAST + 2]).toHaveTextContent('—');
+  });
+
+  it('the penetration rows follow the selected benchmark (market), not the STR-published indices', async () => {
+    const rows = byYearRows().map((r, i) => ({
+      ...r,
+      benchmark_occupancy: figure(i === 0 ? 0.712 : null, i === 0 ? 'document' : null, [MKT_REF], i === 0 ? 'Market benchmark' : 'No CBRE'),
+      benchmark_adr: figure(i === 0 ? 231 : null, i === 0 ? 'document' : null, [MKT_REF]),
+    }));
+    mockIndexMethodology = methodology({ selected: 'market_benchmark', selected_source: 'override', by_year: rows, hold_years: 3 });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    await screen.findByText('Penetration Index');
+    expect(screen.getByText('Occupancy Index (MPI) vs Market / chain-scale benchmark')).toBeInTheDocument();
+    const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
+    const mpi = at('index-penetration-mpi');
+    // Anchor: subject STR TTM 71.6% ÷ market 71.2% × 100 — not the published 103.2.
+    expect(mpi[FIRST_FORECAST - 1]).toHaveTextContent('100.6');
+    expect(mpi[FIRST_FORECAST]).toHaveTextContent('100.6'); // engine Y1 71.6% ÷ 71.2%
+    expect(mpi[FIRST_FORECAST + 1]).toHaveTextContent('—'); // no market benchmark that year
+    expect(at('index-penetration-ari')[FIRST_FORECAST]).toHaveTextContent('124.7'); // 288 ÷ 231
+    expect(screen.queryByText('Occupancy Index (MPI)')).toBeNull();
+  });
+
+  it('the comp table is titled as the STR comp set, never "CoStar Market"', async () => {
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    expect(await screen.findByText('STR Competitive Set')).toBeInTheDocument();
+    expect(screen.queryByText(/CoStar Market — Competitive Set/)).toBeNull();
   });
 });

@@ -1191,6 +1191,24 @@ class IndexTargetOut(BaseModel):
     value: float | None = None
     source: Literal["by_year", "scalar"] | None = None
     note: str | None = None
+    #: A stored target for this year that is IGNORED (outside 25–250 index
+    #: points / 0.25–2.5 ratio — a legacy value written before the range
+    #: gate), and why. The model never runs on it.
+    problem: str | None = None
+
+
+class IndexCompSetYearOut(BaseModel):
+    """One model year of the STR competitive set as the ``str_comp_set``
+    method indexes against it: the TTM level in Year 1, grown at the market
+    growth assumption after it (an ASSUMPTION, labelled as one — STR publishes
+    no comp-set forecast). ``value`` None + ``detail`` = the reason."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: int
+    calendar_year: int | None = None
+    occupancy: IndexFigureOut
+    adr: IndexFigureOut
 
 
 class IndexYearOut(BaseModel):
@@ -1248,6 +1266,10 @@ class IndexMethodologyResponse(BaseModel):
     #: why not when they do not.
     by_year_applies: bool = False
     by_year_disabled_reason: str | None = None
+    #: The STR comp set by model year (TTM grown at market growth — an
+    #: assumption), whichever method is selected; feeds the Index Analysis
+    #: comp-set table's forecast columns.
+    comp_set_by_year: list[IndexCompSetYearOut] = Field(default_factory=list)
 
 
 BY_YEAR_TOGGLE_OFF_REASON = (
@@ -1277,8 +1299,14 @@ def index_methodology_response(
                 calendar_year=y.calendar_year,
                 benchmark_occupancy=IndexFigureOut.of(y.benchmark_occupancy),
                 benchmark_adr=IndexFigureOut.of(y.benchmark_adr),
-                mpi_target=IndexTargetOut(value=y.mpi_target.value, source=y.mpi_target.source, note=y.mpi_target.note),
-                ari_target=IndexTargetOut(value=y.ari_target.value, source=y.ari_target.source, note=y.ari_target.note),
+                mpi_target=IndexTargetOut(
+                    value=y.mpi_target.value, source=y.mpi_target.source, note=y.mpi_target.note,
+                    problem=y.mpi_target.problem,
+                ),
+                ari_target=IndexTargetOut(
+                    value=y.ari_target.value, source=y.ari_target.source, note=y.ari_target.note,
+                    problem=y.ari_target.problem,
+                ),
                 rgi_derived=y.rgi_derived,
                 occupancy=y.occupancy,
                 adr=y.adr,
@@ -1289,6 +1317,19 @@ def index_methodology_response(
                 engine_adr=_coerce_float(eng.get("adr")) if eng else None,
             )
         )
+    comp_out: list[IndexCompSetYearOut] = []
+    if by_year is not None:
+        cal_by_year = {y.year: y.calendar_year for y in by_year.years}
+        for k, (occ, adr) in enumerate(
+            zip(getattr(by_year, "comp_set_occupancy", []) or [], getattr(by_year, "comp_set_adr", []) or [], strict=False),
+            start=1,
+        ):
+            comp_out.append(
+                IndexCompSetYearOut(
+                    year=k, calendar_year=cal_by_year.get(k),
+                    occupancy=IndexFigureOut.of(occ), adr=IndexFigureOut.of(adr),
+                )
+            )
     return IndexMethodologyResponse(
         deal_id=deal_id,
         selected=reading.selected,
@@ -1311,6 +1352,7 @@ def index_methodology_response(
         calendar_known=bool(by_year.calendar_known) if by_year is not None else False,
         by_year_applies=bool(reading.toggle_on),
         by_year_disabled_reason=None if reading.toggle_on else BY_YEAR_TOGGLE_OFF_REASON,
+        comp_set_by_year=comp_out,
     )
 
 
