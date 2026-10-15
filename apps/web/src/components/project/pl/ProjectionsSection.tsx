@@ -68,6 +68,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
+import { PL_SUB_LABEL } from '@/lib/projectTabs';
 import {
   CASH_NOI_LABEL,
   noiBeforeReserveLabel,
@@ -822,9 +823,9 @@ export default function ProjectionsSection({
     ]);
 
     await downloadXlsx(`projections-${dealId || 'deal'}`, [
-      { name: 'Projections', rows },
+      { name: PL_SUB_LABEL.projections, rows },
     ]);
-    toast('Projections exported', { type: 'success' });
+    toast(`${PL_SUB_LABEL.projections} exported`, { type: 'success' });
   };
 
   // The "Show" control trims the columns RENDERED (base year + N forecast
@@ -844,7 +845,7 @@ export default function ProjectionsSection({
             Preliminary Hotel Underwriting
           </div>
           <h3 className="text-[15px] font-semibold text-ink-900 mt-0.5">
-            Proforma Projections
+            {PL_SUB_LABEL.projections}
           </h3>
         </div>
         <div className="flex items-center gap-2">

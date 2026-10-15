@@ -42,6 +42,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { useCurrentRole } from '@/lib/auth';
 import { cn, fmtDate } from '@/lib/format';
+import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 import { humanizeFieldName } from '@/lib/fieldLabels';
 import { ProvenanceDot, SectionCard, palette, radius } from '@/components/design';
 import { CoachMark } from '@/components/help/CoachMark';
@@ -1050,11 +1051,11 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               {flaggedFinancialCount} financial value{flaggedFinancialCount === 1 ? '' : 's'} need your review
             </div>
             <div className="text-[12px] text-warn-700/80">
-              Fix them in place on the Historicals worksheet — flagged cells show the source document + line.
+              Fix them in place on {TAB_LABEL.pl} → {PL_SUB_LABEL.historicals} — flagged cells show the source document + line.
             </div>
           </div>
           <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-warn-700 flex-shrink-0">
-            Open Historicals <ArrowRight size={14} />
+            Open {PL_SUB_LABEL.historicals} <ArrowRight size={14} />
           </span>
         </button>
       )}

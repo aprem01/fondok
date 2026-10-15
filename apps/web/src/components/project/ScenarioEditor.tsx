@@ -26,6 +26,7 @@ import {
   type ScenarioRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { isNoOpEdit, type FieldUnit } from '@/lib/fieldValue';
 import { NO_OP_EDIT_MESSAGE } from '@/components/design';
 
@@ -72,23 +73,23 @@ export interface AssumptionMeta {
   dec?: number;
 }
 export const ASSUMPTION_CATALOG: AssumptionMeta[] = [
-  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
+  { path: 'starting_occupancy', label: 'Year-1 Occupancy', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'starting_adr', label: 'Year-1 ADR', unit: 'usd', group: 'Revenue', source: 'financials', sourceLabel: TAB_LABEL.pl },
   // FON-69 — a RevPAR-growth override derives adr_growth (occupancy path
   // held) so operating NOI moves; the label says what the lever does.
-  { path: 'revpar_growth', label: 'RevPAR growth (drives ADR; occupancy path held)', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: 'P&L' },
-  { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition', source: 'investment', sourceLabel: 'Investment' },
-  { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit', source: 'investment', sourceLabel: 'Investment', dec: 2 },
-  { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit', source: 'investment', sourceLabel: 'Investment' },
-  { path: 'ltv', label: 'LTV', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
-  { path: 'interest_rate', label: 'Interest Rate', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: 'Debt', dec: 2 },
-  { path: 'amortization_years', label: 'Amortization (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
-  { path: 'term_years', label: 'Loan Term (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: 'Debt' },
+  { path: 'revpar_growth', label: 'RevPAR growth (drives ADR; occupancy path held)', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'adr_growth', label: 'ADR Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'occupancy_growth', label: 'Occupancy Growth', unit: 'pct', group: 'Revenue', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'expense_growth', label: 'Expense Growth', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'mgmt_fee_pct', label: 'Management Fee', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'ffe_reserve_pct', label: 'FF&E Reserve', unit: 'pct', group: 'Expenses', source: 'financials', sourceLabel: TAB_LABEL.pl },
+  { path: 'purchase_price', label: 'Purchase Price', unit: 'usd', group: 'Acquisition', source: 'investment', sourceLabel: TAB_LABEL.investment },
+  { path: 'exit_cap_rate', label: 'Exit Cap Rate', unit: 'pct', group: 'Exit', source: 'investment', sourceLabel: TAB_LABEL.investment, dec: 2 },
+  { path: 'hold_years', label: 'Hold Period', unit: 'years', group: 'Exit', source: 'investment', sourceLabel: TAB_LABEL.investment },
+  { path: 'ltv', label: 'LTV', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: TAB_LABEL.debt },
+  { path: 'interest_rate', label: 'Interest Rate', unit: 'pct', group: 'Debt', source: 'debt', sourceLabel: TAB_LABEL.debt, dec: 2 },
+  { path: 'amortization_years', label: 'Amortization (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: TAB_LABEL.debt },
+  { path: 'term_years', label: 'Loan Term (yrs)', unit: 'years', group: 'Debt', source: 'debt', sourceLabel: TAB_LABEL.debt },
   { path: 'pref_rate', label: 'Preferred Return', unit: 'pct', group: 'Partnership', source: 'partnership', sourceLabel: 'Partnership' },
 ];
 export const CATALOG_BY_PATH = new Map(ASSUMPTION_CATALOG.map((a) => [a.path, a]));

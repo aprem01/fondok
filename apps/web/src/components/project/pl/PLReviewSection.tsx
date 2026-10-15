@@ -22,6 +22,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
+import { PL_SUB_LABEL } from '@/lib/projectTabs';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api';
 import type { ExtractionField, WorkerDocument } from '@/lib/api';
@@ -188,7 +189,7 @@ export default function PLReviewSection({
           <CheckCircle2 size={34} className="text-success-700 mx-auto mb-3" />
           <div className="text-[14px] font-semibold text-ink-900">Financial data verified</div>
           <p className="text-[12.5px] text-ink-600 mt-1">
-            Every extracted value cleared review. Head to Historicals / Projections to model.
+            Every extracted value cleared review. Head to the {PL_SUB_LABEL.historicals} / {PL_SUB_LABEL.projections} to model.
           </p>
         </Card>
       ) : current ? (

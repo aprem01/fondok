@@ -51,6 +51,7 @@ import {
   type ScenarioRecord,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { ProvenanceDot } from '@/components/design';
@@ -582,7 +583,7 @@ function FocusChip({
       </button>
       {isBase ? (
         <span
-          title="The canonical underwriting — edited in P&L, Investment, Debt and Partnership"
+          title={`The canonical underwriting — edited in ${TAB_LABEL.pl}, ${TAB_LABEL.investment}, ${TAB_LABEL.debt} and ${TAB_LABEL.partnership}`}
           style={{
             fontSize: 9,
             fontWeight: 700,

@@ -11,6 +11,7 @@ import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -122,7 +123,7 @@ function OutputOnlyBanner({ onNavigate }: { onNavigate: (tab: string, sub: strin
         Output only
       </span>
       <span>
-        No assumptions are entered here — values flow from Financials, CAPEX and Financing.
+        No assumptions are entered here — values flow from {TAB_LABEL.pl}, {TAB_LABEL.investment} and {TAB_LABEL.debt}.
         GP/LP allocation happens in Partnership.
       </span>
       <span className="flex gap-3 ml-auto">
@@ -243,7 +244,7 @@ export default function CashFlowTab() {
             <>
               The operating model converted into property and equity cash flow.
               <span className="font-semibold"> Levered</span> = after debt; <span className="font-semibold">unlevered</span> = before debt.
-              Values flow from Financials, CAPEX and Financing — nothing is entered directly here.
+              Values flow from {TAB_LABEL.pl}, {TAB_LABEL.investment} and {TAB_LABEL.debt} — nothing is entered directly here.
             </>
           }
         />

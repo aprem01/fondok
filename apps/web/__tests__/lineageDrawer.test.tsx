@@ -309,7 +309,7 @@ describe('LineageDrawer — the endpoint is absent (404)', () => {
     // Today's hover content — untouched.
     expect(screen.getByText('T-12 actual')).toBeInTheDocument();
     expect(screen.getByText('View source document →')).toBeInTheDocument();
-    expect(screen.getByText('Full trace in Analysis → Sources')).toBeInTheDocument();
+    expect(screen.getByText('Full trace in the Sources ledger →')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Trace to source →'));
 

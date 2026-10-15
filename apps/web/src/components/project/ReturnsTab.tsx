@@ -18,6 +18,7 @@ import { RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, typ
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { api, isWorkerConnected, type ReturnsPreviewResponse, type ValueState } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
 // Sensitivity grid shapes (relocated here when the client-side lib/engines model
@@ -978,7 +979,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
     {
       label: 'Hold Period',
       value: holdYears != null ? `${holdYears} years` : '—',
-      source: 'Investment',
+      source: TAB_LABEL.investment,
       state: 'linked',
       color: prov.green,
       weight: 400,
@@ -996,7 +997,7 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
     {
       label: 'Exit Cap Rate',
       value: exitCap != null ? fmtPct(exitCap, 2) : '—',
-      source: 'Investment',
+      source: TAB_LABEL.investment,
       state: 'linked',
       color: prov.green,
       weight: 400,

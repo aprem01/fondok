@@ -576,7 +576,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
     const line = await screen.findByTestId('index-reconciliation-line');
     const text = line.textContent ?? '';
     // Projections' own Base Year, its calendar year and its source document.
-    expect(text).toMatch(/Projections use 2025 Base year \(Year 1\) 83\.9% \/ \$245\.00/);
+    expect(text).toMatch(/Future P&L uses 2025 Base year \(Year 1\) 83\.9% \/ \$245\.00/);
     expect(text).toMatch(/T-12 actual to 2025-03 — T12 Mar 2025\.xlsx, p\.1/);
     // FON-94: Index Analysis shows the same figure in the same calendar column.
     expect(text).toMatch(/Index Analysis shows the same 83\.9% \/ \$245\.00 in its 2025 column/);
@@ -730,7 +730,7 @@ function byYearRows(opts: { mpiYear2?: number; ariScalar?: number } = {}) {
   });
 }
 const BY_YEAR_OFF_REASON =
-  'Targets by year do not feed Projections yet: turn on "Use STR rates in the model" in Market Overview. Until then every year stays on its current basis.';
+  'Targets by year do not feed the Future P&L yet: turn on "Use STR rates in the model" in Market Overview. Until then every year stays on its current basis.';
 
 describe('Index Analysis — penetration targets by year (FON-95 part 2)', () => {
   it('renders one row per model year with the benchmark + source, the derived RGI and the status; disabled with the reason when the toggle is off', async () => {
@@ -905,7 +905,7 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
       /enter your own/,
     );
     // Toggle off → the panel says the assumptions do not feed Projections yet.
-    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/do not feed Projections yet/);
+    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/do not feed the Future P&L yet/);
   });
 
   it('an assumption edit needs a note and is written with it', async () => {
@@ -926,6 +926,6 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
     };
     expect(body.field_overrides.index_market_adr_growth.value).toBeCloseTo(0.035);
     expect(body.field_overrides.index_market_adr_growth.note).toBe('CBRE Q3 outlook');
-    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/feed Projections now/);
+    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/feed the Future P&L now/);
   });
 });

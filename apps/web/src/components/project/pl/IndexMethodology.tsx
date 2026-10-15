@@ -44,6 +44,7 @@ import { applyOverridePatch, NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE, requiresNo
 import { sourceLabel } from '@/lib/provenance';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
+import { PL_SUB_LABEL } from '@/lib/projectTabs';
 
 // ─────────────────────────── shared formatting ───────────────────────────
 
@@ -137,7 +138,7 @@ const near = (a: number | null, b: number | null, tol: number) =>
 export function buildReconciliation(i: ReconciliationInput): Reconciliation | null {
   if (!i.baseYear) return null;
   const cal = i.baseCalendarYear;
-  const projectionsLabel = `Projections — Base year (Year 1)${cal != null ? ` · ${cal}` : ''}`;
+  const projectionsLabel = `${PL_SUB_LABEL.projections} — Base year (Year 1)${cal != null ? ` · ${cal}` : ''}`;
   const projectionsSource = describeSource(i.occSource);
 
   // Every step between the source and revenue.years[0].
@@ -182,7 +183,7 @@ export function buildReconciliation(i: ReconciliationInput): Reconciliation | nu
 
   const matches =
     near(occFrac(i.iaOccupancy), occFrac(i.baseYear.occupancy), 0.0005) && near(i.iaAdr, i.baseYear.adr, 0.5);
-  const base = `Projections use ${cal != null ? `${cal} ` : ''}Base year (Year 1) ${pair(i.baseYear.occupancy, i.baseYear.adr)} from the ${projectionsSource}`;
+  const base = `${PL_SUB_LABEL.projections} uses ${cal != null ? `${cal} ` : ''}Base year (Year 1) ${pair(i.baseYear.occupancy, i.baseYear.adr)} from the ${projectionsSource}`;
   const ia = matches
     ? `Index Analysis shows the same ${pair(i.iaOccupancy, i.iaAdr)} in its ${i.iaColumnYear} column`
     : `Index Analysis's ${i.iaColumnYear} column shows ${pair(i.iaOccupancy, i.iaAdr)}, which is ${iaWhat}`;
@@ -198,7 +199,7 @@ export function ProjectionsReconciliation({ rec }: { rec: Reconciliation | null 
   return (
     <Card className="p-4" data-testid="index-projections-reconciliation">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500 mb-2">
-        Reconciliation to Projections
+        Reconciliation to {PL_SUB_LABEL.projections}
       </div>
       <p className="text-[12.5px] text-ink-900 leading-relaxed" data-testid="index-reconciliation-line">
         {rec.line}
@@ -498,7 +499,7 @@ function IndexByYearGrid({
       </div>
       {!applies && (
         <div className="text-[11px] text-warning-700" data-testid="index-by-year-disabled">
-          {data.by_year_disabled_reason ?? 'Targets by year do not feed Projections yet.'}
+          {data.by_year_disabled_reason ?? `Targets by year do not feed the ${PL_SUB_LABEL.projections} yet.`}
         </div>
       )}
       <div className="overflow-x-auto">
@@ -753,8 +754,8 @@ export function IndexMethodologyPanel({ dealId }: { dealId: string }) {
       </table>
       <div className="text-[11px] text-ink-500" data-testid="index-feeds-note">
         {feeds
-          ? 'These assumptions feed Projections now: "Use STR rates in the model" is on, so your overrides set each year’s occupancy / ADR (benchmark × penetration target) and the growth rates.'
-          : 'These assumptions do not feed Projections yet: turn on "Use STR rates in the model" in Market Overview to apply your overrides. Until then Projections stay on their current basis.'}
+          ? `These assumptions feed the ${PL_SUB_LABEL.projections} now: "Use STR rates in the model" is on, so your overrides set each year’s occupancy / ADR (benchmark × penetration target) and the growth rates.`
+          : `These assumptions do not feed the ${PL_SUB_LABEL.projections} yet: turn on "Use STR rates in the model" in Market Overview to apply your overrides. Until then the ${PL_SUB_LABEL.projections} stays on its current basis.`}
       </div>
       <IndexByYearGrid
         data={data}

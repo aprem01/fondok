@@ -655,10 +655,10 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(screen.queryByText('NOI')).toBeNull();
   });
 
-  it('the Stabilization section\'s "View Projections →" routes to ?tab=pl&sub=projections', () => {
+  it('the Stabilization section\'s "View Future P&L →" routes to ?tab=pl&sub=projections', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
-    fireEvent.click(screen.getByText('View Projections →'));
+    fireEvent.click(screen.getByText('View Future P&L →'));
     expect(nav.push).toHaveBeenCalledWith('/projects/deal-uuid-1?tab=pl&sub=projections');
   });
 

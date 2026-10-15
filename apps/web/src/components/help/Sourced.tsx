@@ -128,9 +128,12 @@ export function Sourced({
             </span>
           )}
           {dealId && (
-            <span className="block mt-1.5 text-[10px] text-ink-400">
-              Full trace in Analysis → Sources
-            </span>
+            <a
+              href={`/projects/${dealId}?tab=analysis&sub=sources`}
+              className="block mt-1.5 text-[10px] text-ink-400 hover:text-brand-700 hover:underline"
+            >
+              Full trace in the Sources ledger →
+            </a>
           )}
         </span>
       )}

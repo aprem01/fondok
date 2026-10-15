@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Circle, X, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/format';
+import { TAB_LABEL } from '@/lib/projectTabs';
 import { hintsEnabled } from './useHintsEnabled';
 
 const DISMISS_KEY = 'fondok:gettingstarted:dismissed';
@@ -60,7 +61,7 @@ const STEPS: Step[] = [
     id: 'project-card',
     selector: '[data-tour="project-card"]',
     title: 'Open a deal workspace',
-    description: 'Click any deal card to enter Data Room, Validation, Overview, Returns, and IC memo.',
+    description: `Click any deal card to open its workspace: ${TAB_LABEL.dataRoom}, ${TAB_LABEL.overview} (with ${TAB_LABEL.returns}), ${TAB_LABEL.investment}, ${TAB_LABEL.pl}, ${TAB_LABEL.debt} and on through ${TAB_LABEL.icMemo}.`,
   },
   {
     id: 'methodology',

@@ -26,6 +26,7 @@ import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { useSubTab } from '@/lib/hooks/useSubTab';
+import { PL_SUB_LABEL } from '@/lib/projectTabs';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 import { GLOSSARY } from '@/lib/glossary';
@@ -50,8 +51,8 @@ import { useDocuments } from '@/lib/hooks/useDocuments';
 // named for what they are: the Historical P&L and the Future P&L. The ids
 // (and every deep link) are unchanged.
 const subTabs = [
-  { id: 'historicals', label: 'Historical P&L' },
-  { id: 'projections', label: 'Future P&L' },
+  { id: 'historicals', label: PL_SUB_LABEL.historicals },
+  { id: 'projections', label: PL_SUB_LABEL.projections },
 ] as const;
 type SubTab = typeof subTabs[number]['id'];
 const subTabIds = subTabs.map((t) => t.id) as readonly SubTab[];
@@ -1729,7 +1730,7 @@ function HistoricalsPlaceholder() {
       <SectionCardHeader
         Icon={History}
         iconTone="slate"
-        title="Multi-Year Historicals"
+        title={`Multi-Year ${PL_SUB_LABEL.historicals}`}
         subtitle="Amount / % Rev / PAR / POR per year"
         right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
       />

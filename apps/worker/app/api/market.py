@@ -1251,7 +1251,7 @@ class IndexMethodologyResponse(BaseModel):
 
 
 BY_YEAR_TOGGLE_OFF_REASON = (
-    'Targets by year do not feed Projections yet: turn on "Use STR rates in the model" in '
+    'Targets by year do not feed the Future P&L yet: turn on "Use STR rates in the model" in '
     "Market Overview. Until then every year stays on its current basis."
 )
 

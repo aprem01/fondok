@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
+import { PL_SUB_LABEL } from '@/lib/projectTabs';
 import {
   api, isWorkerConnected, workerUrl, ExtractionField, WorkerDocument,
 } from '@/lib/api';
@@ -932,7 +933,7 @@ export default function HistoricalsSection({
   }, [dealId, liveMode, deal?.keys]);
 
   const onNotes = () => {
-    toast('Historicals notes — coming with the next deploy', { type: 'info' });
+    toast(`${PL_SUB_LABEL.historicals} notes — coming with the next deploy`, { type: 'info' });
   };
 
   const onExport = async () => {
@@ -973,7 +974,7 @@ export default function HistoricalsSection({
     fmtRow('Fixed Expenses', y => y.fixed_expenses);
     fmtRow('NOI', y => y.noi);
     await downloadXlsx(`historicals-${dealId || 'deal'}`, [
-      { name: 'Historicals', rows: [headers, ...rows] },
+      { name: PL_SUB_LABEL.historicals, rows: [headers, ...rows] },
     ]);
   };
 
@@ -994,7 +995,7 @@ export default function HistoricalsSection({
               Preliminary Hotel Underwriting
             </div>
             <h3 className="text-[15px] font-semibold text-ink-900 leading-tight mt-0.5">
-              Proforma Historicals
+              {PL_SUB_LABEL.historicals}
             </h3>
           </div>
         </div>
