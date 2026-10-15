@@ -125,6 +125,7 @@ import {
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
 import { ReturnsSection } from './ReturnsTab';
+import { MarketSubmarketField, type MarketSubmarketPatch } from './MarketSubmarketField';
 import {
   api,
   isWorkerConnected,
@@ -451,6 +452,24 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       } catch (err) {
         const detail = err instanceof WorkerError ? err.body : String(err);
         toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [dealId, liveMode, toast, refreshDeal],
+  );
+
+  // ─── Sam #6 — Market / Submarket (descriptive deal columns; no re-run) ───
+  const persistMarket = useCallback(
+    async (patch: MarketSubmarketPatch): Promise<boolean> => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return false; }
+      try {
+        await api.deals.update(dealId, patch);
+        toast('Market saved — descriptive only; the model is unchanged', { type: 'success' });
+        void refreshDeal?.();
+        return true;
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+        return false;
       }
     },
     [dealId, liveMode, toast, refreshDeal],
@@ -1512,6 +1531,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 />
               </div>
             </div>
+            {/* Sam #6 — Market / Submarket (deals.market / deals.submarket, and
+                deals.str_market_id when picked from STR's loaded list). Shown
+                and correctable after creation; feeds no engine (no re-run). */}
+            <MarketSubmarketField
+              market={deal?.market}
+              submarket={deal?.submarket}
+              strMarketId={deal?.str_market_id}
+              onSave={persistMarket}
+            />
             {/* FON-98 — the reopening / re-flag date (deals.reopening_date).
                 Rani + Eshan: the stabilization default is Year 3 of operations;
                 for a material repositioning / re-flag it counts from the

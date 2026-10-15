@@ -110,11 +110,16 @@ describe('R-013 — required-field legend and optional labels', () => {
     // The starred labels are untouched.
     expect(screen.getByText('Deal Type *')).toBeInTheDocument();
     expect(screen.getByText('Deal Name *')).toBeInTheDocument();
-    expect(screen.getByText('City / Submarket *')).toBeInTheDocument();
     expect(screen.getByText('How far along are you in the acquisition process? *')).toBeInTheDocument();
     expect(screen.getByText('Sourcing channel *')).toBeInTheDocument();
     // Unstarred now means optional — no bracketed suffix anywhere on the step.
     expect(screen.getByText('Keys')).toBeInTheDocument();
+    // Sam #6 — City is optional (no star: nothing validates it), and Market /
+    // Submarket are their own two fields; the old "City / Submarket *" is gone.
+    expect(screen.getByText('City')).toBeInTheDocument();
+    expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.getByText('Submarket')).toBeInTheDocument();
+    expect(screen.queryByText('City / Submarket *')).toBeNull();
     expect(screen.getByText('Hotel Name')).toBeInTheDocument();
     expect(screen.getByText('Purchase / Indicative Price')).toBeInTheDocument();
     expect(bodyText()).not.toMatch(/\(optional\)/i);

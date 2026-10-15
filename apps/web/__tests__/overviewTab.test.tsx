@@ -188,6 +188,8 @@ vi.mock('@/lib/api', async () => {
       deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
       engines: { ...actual.api.engines, timeline: (...a: unknown[]) => timelineSpy(...(a as [])) },
       market: { ...actual.api.market, overview: async () => overviewRef.value },
+      // Sam #6 — STR's market list is not loaded (the state until STR's file arrives).
+      reference: { strMarkets: async () => [] },
       analysis: {
         ...actual.api.analysis,
         pricing: { ...actual.api.analysis.pricing, askingVsBid: () => askBidSpy() },
@@ -1566,5 +1568,37 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.blur(input);
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── Sam #6 — Market / Submarket, editable after creation ─────────────────
+describe('OverviewTab — Sam #6 Market / Submarket', () => {
+  it('shows "—" for a deal with none and saves a typed market with no STR id (no re-run)', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const field = screen.getByTestId('market-submarket-field');
+    expect(within(field).getByTestId('market-value')).toHaveTextContent('—');
+    expect(within(field).getByTestId('submarket-value')).toHaveTextContent('—');
+    fireEvent.click(within(field).getByRole('button', { name: 'Edit market and submarket' }));
+    // STR's list is not loaded → name-only fallback, labelled so.
+    await waitFor(() =>
+      expect(within(field).getByTestId('market-source-line')).toHaveTextContent('no STR id until STR’s market list is loaded'),
+    );
+    fireEvent.change(within(field).getByLabelText('Market'), { target: { value: '  Typed   Market ' } });
+    fireEvent.change(within(field).getByLabelText('Submarket'), { target: { value: 'Riverfront' } });
+    fireEvent.click(within(field).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      market: 'Typed Market', str_market_id: null, submarket: 'Riverfront',
+    });
+    expect(engineRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('renders a saved market with its STR id', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, market: 'Test Market One', submarket: 'Test Sub', str_market_id: 'TEST-M1' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const field = screen.getByTestId('market-submarket-field');
+    expect(within(field).getByTestId('market-value')).toHaveTextContent('Test Market One');
+    expect(within(field).getByTestId('submarket-value')).toHaveTextContent('Test Sub');
+    expect(within(field).getByTestId('market-source-line')).toHaveTextContent('STR id TEST-M1');
   });
 });

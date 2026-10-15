@@ -213,6 +213,13 @@ class CreateDealBody(BaseModel):
     # (ISO ``YYYY-MM-DD``). When set, the stabilization default counts Year 3
     # from the first full operating year after it; NULL = count from close.
     reopening_date: date | None = None
+    # Sam #6 — the deal's STR market / submarket (``city`` is unchanged).
+    # ``str_market_id`` is STR's identifier and is accepted ONLY when it is
+    # in the loaded ``str_markets`` reference list (422 otherwise — an id is
+    # never invented); a typed market is stored with ``str_market_id`` NULL.
+    str_market_id: str | None = Field(default=None, max_length=64)
+    market: str | None = Field(default=None, max_length=200)
+    submarket: str | None = Field(default=None, max_length=200)
 
 
 class UpdateDealBody(BaseModel):
@@ -248,6 +255,12 @@ class UpdateDealBody(BaseModel):
     # FON-98 — the reopening / re-flag date; null clears it (the
     # stabilization default returns to Year 3 after acquisition close).
     reopening_date: date | None = None
+    # Sam #6 — STR market / submarket; null clears. Changing ``market``
+    # without sending ``str_market_id`` clears the id (a typed market has
+    # none), so a stale STR id can never sit under a different market name.
+    str_market_id: str | None = Field(default=None, max_length=64)
+    market: str | None = Field(default=None, max_length=200)
+    submarket: str | None = Field(default=None, max_length=200)
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
     # current overrides — clients send the full merged map. Engines pick
@@ -314,6 +327,13 @@ class DealRecord(BaseModel):
     # or the live schema predates the column. Anchors the stabilization
     # default (engines/stabilization.py) when set.
     reopening_date: date | None = None
+    # Sam #6 — STR market / submarket. ``str_market_id`` is STR's own market
+    # identifier, set only when the market was picked from the loaded
+    # reference list; NULL for a typed market, a deal with no market, or a
+    # schema that predates the columns.
+    str_market_id: str | None = None
+    market: str | None = None
+    submarket: str | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → either a scalar (legacy) or
     # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
@@ -810,6 +830,9 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         target_irr=_coerce_float(row.get("target_irr")),
         target_moic=_coerce_float(row.get("target_moic")),
         reopening_date=_coerce_date_optional(row.get("reopening_date")),
+        str_market_id=row.get("str_market_id"),
+        market=row.get("market"),
+        submarket=row.get("submarket"),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
@@ -831,6 +854,9 @@ _DEAL_COLUMNS = (
 _PROPOSED_BRAND_CACHE_KEY = "fondok_deals_has_proposed_brand"
 _OPERATING_MODEL_CACHE_KEY = "fondok_deals_has_operating_model"
 _REOPENING_DATE_CACHE_KEY = "fondok_deals_has_reopening_date"
+#: Sam #6 — the three market columns, each probed on its own (they are three
+#: separate migrations, so one can exist without the others).
+_MARKET_COLUMNS: tuple[str, ...] = ("str_market_id", "market", "submarket")
 
 
 async def _deals_has_column(
@@ -947,8 +973,66 @@ async def _deal_columns(session: AsyncSession) -> str:
         cols = f"{cols}, NULL AS operating_model"
     # FON-98 — same contract for ``reopening_date``.
     if await _deals_has_reopening_date(session):
-        return f"{cols}, reopening_date"
-    return f"{cols}, NULL AS reopening_date"
+        cols = f"{cols}, reopening_date"
+    else:
+        cols = f"{cols}, NULL AS reopening_date"
+    # Sam #6 — same contract for the market columns.
+    for col in _MARKET_COLUMNS:
+        if await _deals_has_market_column(session, col):
+            cols = f"{cols}, {col}"
+        else:
+            cols = f"{cols}, NULL AS {col}"
+    return cols
+
+
+async def _deals_has_market_column(session: AsyncSession, column: str) -> bool:
+    """Sam #6 — does the live ``deals`` table carry ``column`` (one of
+    ``_MARKET_COLUMNS``)?"""
+    return await _deals_has_column(session, column, f"fondok_deals_has_{column}")
+
+
+def _clean_text(value: Any) -> str | None:
+    """Trim; blank → None."""
+    if value is None:
+        return None
+    t = " ".join(str(value).split())
+    return t or None
+
+
+async def _resolve_market_fields(
+    session: AsyncSession,
+    *,
+    str_market_id: str | None,
+    market: str | None,
+) -> tuple[str | None, str | None]:
+    """Sam #6 — validate an STR market id against the loaded reference list.
+
+    Returns ``(str_market_id, market)``. An id that is not in
+    ``str_markets`` (including when nothing is loaded) is refused with 422 —
+    Fondok never stores an STR identifier it cannot trace to STR's file. A
+    known id with no market name takes STR's name for it.
+    """
+    from ..services.str_markets import get_str_market
+
+    mid = _clean_text(str_market_id)
+    name = _clean_text(market)
+    if mid is None:
+        return None, name
+    ref = await get_str_market(session, mid)
+    if ref is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "unknown_str_market_id",
+                "str_market_id": mid,
+                "message": (
+                    "That STR market id is not in the loaded STR market list. "
+                    "Pick the market from the suggestions, or type it and save "
+                    "it without an id."
+                ),
+            },
+        )
+    return mid, name or ref.market_name
 
 
 async def _write_audit(
@@ -1139,6 +1223,27 @@ async def create_deal(
             "deals.create: reopening_date=%s dropped — column absent on "
             "this schema", body.reopening_date.isoformat(),
         )
+    # Sam #6 — market / submarket / STR market id, same old-schema contract.
+    mkt_id, mkt_name = await _resolve_market_fields(
+        session, str_market_id=body.str_market_id, market=body.market,
+    )
+    market_values: dict[str, str | None] = {
+        "str_market_id": mkt_id,
+        "market": mkt_name,
+        "submarket": _clean_text(body.submarket),
+    }
+    for col in _MARKET_COLUMNS:
+        if await _deals_has_market_column(session, col):
+            params[col] = market_values[col]
+            pb_col += f", {col}"
+            pb_val += f", :{col}"
+        else:
+            if market_values[col] is not None:
+                logger.warning(
+                    "deals.create: %s=%r dropped — column absent on this schema",
+                    col, market_values[col],
+                )
+            market_values[col] = None
 
     await session.execute(
         text(
@@ -1177,6 +1282,7 @@ async def create_deal(
             "reopening_date": (
                 reopening_date.isoformat() if reopening_date else None
             ),
+            **market_values,
         },
     )
     # Wave 3 W3.2 — every deal gets a Base scenario at create time so
@@ -1225,6 +1331,9 @@ async def create_deal(
         target_irr=body.target_irr,
         target_moic=body.target_moic,
         reopening_date=reopening_date,
+        str_market_id=market_values["str_market_id"],
+        market=market_values["market"],
+        submarket=market_values["submarket"],
         created_at=now,
         updated_at=now,
     )
@@ -1413,6 +1522,31 @@ async def update_deal(
             # FON-98 — carry the ISO string through the diff / audit trail;
             # the SET loop below re-binds it for the live dialect.
             changes["reopening_date"] = changes["reopening_date"].isoformat()
+    # Sam #6 — market / submarket / STR market id.
+    if "submarket" in changes:
+        changes["submarket"] = _clean_text(changes["submarket"])
+    if "market" in changes or "str_market_id" in changes:
+        if "market" in changes and "str_market_id" not in changes:
+            # A market change without an id is a typed market: never leave
+            # the previous market's STR id under the new name.
+            changes["str_market_id"] = None
+        mid, name = await _resolve_market_fields(
+            session,
+            str_market_id=changes.get("str_market_id"),
+            market=changes.get("market"),
+        )
+        changes["str_market_id"] = mid
+        # Picking an STR market (id sent, no name) also writes STR's name for
+        # it; clearing only the id leaves the market name as it is.
+        if "market" in changes or mid is not None:
+            changes["market"] = name
+    for col in _MARKET_COLUMNS:
+        if col in changes and not await _deals_has_market_column(session, col):
+            logger.warning(
+                "deals.update: %s dropped for deal=%s — column absent on "
+                "this schema", col, deal_id,
+            )
+            changes.pop(col)
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
