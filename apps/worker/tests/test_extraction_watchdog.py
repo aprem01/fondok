@@ -297,9 +297,19 @@ async def test_watchdog_runs_each_row_under_its_own_tenant(db_env, monkeypatch) 
     assert await _audit_actions(factory, tenant_id=tenant_id, doc_id=theirs) == []
 
 
-async def test_watchdog_start_is_a_noop_when_disabled() -> None:
-    assert watchdog.start_watchdog() is False
-    await watchdog.stop_watchdog()
+async def test_watchdog_start_is_a_noop_when_disabled(monkeypatch) -> None:
+    # Another test module may already have populated the settings cache with
+    # the default (enabled); pin the flag for THIS test and clear the cache so
+    # the result does not depend on module ordering.
+    from app.config import get_settings
+
+    monkeypatch.setenv("EXTRACTION_WATCHDOG_ENABLED", "False")
+    get_settings.cache_clear()
+    try:
+        assert watchdog.start_watchdog() is False
+        await watchdog.stop_watchdog()
+    finally:
+        get_settings.cache_clear()
 
 
 # ─────────────────────────── pipeline failure paths ───────────────────────────
