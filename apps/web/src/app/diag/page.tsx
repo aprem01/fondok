@@ -9,7 +9,7 @@
 
 import { notFound } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { api, isWorkerConnected, workerUrl } from '@/lib/api';
+import { api, isWorkerConnected, workerUrl, type AgentCostsResponse } from '@/lib/api';
 
 const DIAG_ENABLED = process.env.NEXT_PUBLIC_SHOW_DIAG === 'true';
 
@@ -24,24 +24,10 @@ interface Diag {
   loading: boolean;
 }
 
-interface AgentCostEntry {
-  agent_id?: string;
-  agent_name?: string;
-  model?: string;
-  total_cost_usd?: number;
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_read_tokens?: number;
-  ts?: string;
-  [key: string]: unknown;
-}
-
-interface AgentCostsResponse {
-  samples?: number;
-  window?: string;
-  total_cost_usd?: number;
-  by_agent?: AgentCostEntry[];
-}
+// What the "Recent model calls" section shows on a 401 (a page file may only
+// export the page itself, so this stays module-local).
+const DIAG_COSTS_SIGN_IN_MESSAGE =
+  'sign in to see this — /observability/agent-costs needs a signed-in session (HTTP 401) and shows your workspace’s calls only';
 
 type SmokeStep = 'idle' | 'creating' | 'uploading' | 'extracting' | 'polling' | 'done' | 'error';
 
@@ -99,20 +85,18 @@ function DiagPageInner() {
       if (cancelled) return;
       setDiag((d) => ({ ...d, health, healthError, dealsCount, dealsError, loading: false }));
 
-      // Best-effort fetch of recent agent calls. Endpoint is optional; gracefully degrade.
-      const base = workerUrl();
-      if (base) {
-        try {
-          const res = await fetch(`${base}/observability/agent-costs?days=1`);
-          if (res.ok) {
-            const json = (await res.json()) as AgentCostsResponse;
-            if (!cancelled) setCosts(json);
-          } else {
-            if (!cancelled) setCostsError(`HTTP ${res.status}`);
-          }
-        } catch (e) {
-          if (!cancelled) setCostsError(e instanceof Error ? e.message : String(e));
-        }
+      // Best-effort read of recent agent calls, through the AUTHED client —
+      // the endpoint needs a signed-in session and scopes to the caller's
+      // tenant, so a raw fetch 401s in production (review finding). A 401
+      // is shown as "sign in to see this", never a bare HTTP code.
+      try {
+        const json = await api.observability.agentCosts(1);
+        if (!cancelled) setCosts(json);
+      } catch (e) {
+        if (cancelled) return;
+        const status = (e as { status?: unknown } | null)?.status;
+        if (status === 401) setCostsError(DIAG_COSTS_SIGN_IN_MESSAGE);
+        else setCostsError(`observability endpoint not reachable: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (isWorkerConnected()) {
@@ -230,7 +214,7 @@ function DiagPageInner() {
 
       <Section title="Recent model calls (last 24h)">
         {costsError ? (
-          <div style={{ color: '#999' }}>observability endpoint not reachable: {costsError}</div>
+          <div style={{ color: '#999' }} data-testid="diag-costs-error">{costsError}</div>
         ) : !costs ? (
           <div>loading…</div>
         ) : (

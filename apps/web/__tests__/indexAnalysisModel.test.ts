@@ -37,6 +37,17 @@ describe('deriveIndexColumns (FON-94)', () => {
     // are the close calendar, not the documents'.
   });
 
+  it('a calendar shorter than the horizon is not extrapolated — the unlabeled years are "Year N" with no calendar year', () => {
+    const c = deriveIndexColumns({ calendarYears: [2025, 2026], forecastCount: 4, documentYears: [] });
+    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026', 'Year 3', 'Year 4']);
+    const forecast = c.columns.filter((x) => x.kind === 'forecast');
+    expect(forecast.map((x) => x.calendarYear)).toEqual([2025, 2026, null, null]);
+    expect(forecast.map((x) => x.ordinal)).toEqual([1, 2, 3, 4]);
+    expect(c.hasCalendar).toBe(true);
+    // Forecast columns always use the model's flat year, labelled or not.
+    expect(daysForColumn(forecast[3])).toBe(365);
+  });
+
   it('a December close moves Year 1 to the next calendar year — the columns follow', () => {
     const c = deriveIndexColumns({ calendarYears: [2026, 2027], forecastCount: 2, documentYears: [] });
     expect(labels(c)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027']);

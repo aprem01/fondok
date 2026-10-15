@@ -35,69 +35,8 @@ import { Citation } from '@/components/citations/Citation';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
+import { CacheHitBadge } from './CacheHitBadge';
 import type { VarianceFlag } from '@/lib/varianceData';
-
-// Cache-hit badge: hits the worker's /observability/cache-stats once on
-// mount. Worker URL is optional — when NEXT_PUBLIC_WORKER_URL is unset
-// the badge silently renders as "—" so dev preview deploys still work.
-type CacheStats = {
-  cache_hit_rate: number;
-  samples: number;
-  totals: {
-    input_tokens: number;
-    cache_read_tokens: number;
-    cache_creation_tokens: number;
-    output_tokens: number;
-    estimated_cost_usd: number;
-  };
-};
-
-function CacheHitBadge() {
-  const [stats, setStats] = useState<CacheStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_WORKER_URL;
-    if (!base) {
-      setError('worker url not configured');
-      return;
-    }
-    const controller = new AbortController();
-    fetch(`${base.replace(/\/$/, '')}/observability/cache-stats?n=100`, {
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: CacheStats) => setStats(data))
-      .catch((e) => {
-        if (e?.name !== 'AbortError') setError(String(e?.message || e));
-      });
-    return () => controller.abort();
-  }, []);
-
-  if (error || !stats || stats.samples === 0) {
-    return (
-      <span title={error || 'no cache data yet'} className="inline-flex">
-        <Badge tone="gray">Cache hit: —</Badge>
-      </span>
-    );
-  }
-  const pct = Math.round(stats.cache_hit_rate * 1000) / 10;
-  const totals = stats.totals;
-  const tooltip =
-    `Last ${stats.samples} model calls\n` +
-    `Cache reads: ${totals.cache_read_tokens.toLocaleString()} tokens\n` +
-    `Cache writes: ${totals.cache_creation_tokens.toLocaleString()} tokens\n` +
-    `Plain input: ${totals.input_tokens.toLocaleString()} tokens\n` +
-    `Output: ${totals.output_tokens.toLocaleString()} tokens\n` +
-    `Estimated spend: $${totals.estimated_cost_usd.toFixed(4)}`;
-  return (
-    <span title={tooltip} className="inline-flex">
-      <Badge tone={pct >= 80 ? 'green' : pct >= 30 ? 'amber' : 'gray'}>
-        Cache hit: {pct.toFixed(1)}%
-      </Badge>
-    </span>
-  );
-}
 
 type SubTab = 'summary' | 'memo' | 'ask' | 'risks' | 'variance' | 'sources' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 

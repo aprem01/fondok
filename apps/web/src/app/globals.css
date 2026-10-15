@@ -186,3 +186,13 @@ select {
   }
   .card-interactive:hover { transform: none; }
 }
+
+/* FON-93 — a workspace is an institution Fondok registers; analysts never
+   create one. Clerk's OrganizationSwitcher has no prop to drop its "Create
+   organization" action, so it is hidden by its stable element class as well
+   as through the `appearance.elements` object in Sidebar.tsx (the review
+   found a bare `hidden` class could lose the cascade to Clerk's runtime
+   styles). The Clerk dashboard toggle makes the API refuse too. */
+.cl-organizationSwitcherPopoverActionButton__createOrganization {
+  display: none !important;
+}

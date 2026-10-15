@@ -245,6 +245,10 @@ describe('shortReason', () => {
     expect(shortReason(new FakeWorkerError('x', 404, RAW_BODY))).toBe(
       'the document is no longer on this deal',
     );
+    // 409 = the worker's no_active_organization: a user with no workspace.
+    expect(shortReason(new FakeWorkerError('x', 409, RAW_BODY))).toBe(
+      'no workspace is assigned to your account — ask Fondok to add you to your institution’s workspace',
+    );
     expect(shortReason(new FakeWorkerError('x', 0, 'worker not connected'))).toBe(
       'worker not connected',
     );

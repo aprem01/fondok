@@ -100,7 +100,10 @@ export function shortReason(err: unknown): string {
       case 404:
         return 'the document is no longer on this deal';
       case 409:
-        return 'no active organization is selected';
+        // The worker's ``no_active_organization``: the session carries no
+        // org claim. Under ``hidePersonal`` that means the user has no
+        // workspace — the Sidebar says the same thing (lib/auth).
+        return 'no workspace is assigned to your account — ask Fondok to add you to your institution’s workspace';
       case 410:
         return 'the stored file is gone — re-upload it';
       case 503:

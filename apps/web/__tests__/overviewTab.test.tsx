@@ -1534,6 +1534,24 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: '2027-03-15' });
   });
 
+  it('Enter saves ONCE: it leaves the field and the blur that follows is the single PATCH (no second save + toast)', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByLabelText('Reopening / re-flag date') as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: '2027-03-15' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    // Enter blurred the input (jsdom dispatches the blur → React onBlur → commit).
+    expect(document.activeElement).not.toBe(input);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: '2027-03-15' });
+    // A stray blur while the PATCH is in flight (the deal has not refreshed
+    // yet, so the prop still reads blank) must not send the same edit again.
+    fireEvent.blur(input);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('× clears the date (writes null) so the default returns to Year 3 after close', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
     render(<OverviewTab projectId="deal-uuid-1" />);

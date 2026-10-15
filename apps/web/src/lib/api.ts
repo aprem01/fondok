@@ -1485,6 +1485,40 @@ export interface AdminCostByDeal {
   calls: number;
   cost_usd: number;
 }
+/** `GET /observability/cache-stats?n=N` — the caller's tenant only. */
+export interface CacheStatsResponse {
+  cache_hit_rate: number;
+  samples: number;
+  totals: {
+    input_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    output_tokens: number;
+    estimated_cost_usd: number;
+  };
+}
+
+/** One agent's row in `GET /observability/agent-costs`. */
+export interface AgentCostEntry {
+  agent_id?: string;
+  agent_name?: string;
+  model?: string;
+  total_cost_usd?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  ts?: string;
+  [key: string]: unknown;
+}
+
+/** `GET /observability/agent-costs?days=N` — the caller's tenant only. */
+export interface AgentCostsResponse {
+  samples?: number;
+  window?: string;
+  total_cost_usd?: number;
+  by_agent?: AgentCostEntry[];
+}
+
 export interface AdminCostResponse {
   tenant_id: string;
   generated_at: string;
@@ -1827,6 +1861,18 @@ export const api = {
      *  ``org:admin`` role on the worker side (gated via require_role). */
     cost: (signal?: AbortSignal) =>
       request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
+  },
+  /** ``/observability/*`` (apps/worker/app/api/observability.py). Both
+   *  endpoints require a signed-in session (``get_current_auth``) and scope
+   *  to the CALLER's tenant, so they MUST go through ``request`` for the
+   *  Bearer token — a raw ``fetch`` 401s in production (review finding). */
+  observability: {
+    /** Cache hit rate over the caller's last ``n`` model calls. */
+    cacheStats: (n = 100, signal?: AbortSignal) =>
+      request<CacheStatsResponse>('GET', `/observability/cache-stats?n=${Math.trunc(n)}`, undefined, { signal }),
+    /** Per-agent token spend + cache hit rate over the caller's last ``days``. */
+    agentCosts: (days = 7, signal?: AbortSignal) =>
+      request<AgentCostsResponse>('GET', `/observability/agent-costs?days=${Math.trunc(days)}`, undefined, { signal }),
   },
   deals: {
     list: (signal?: AbortSignal) =>

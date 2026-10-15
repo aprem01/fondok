@@ -473,7 +473,14 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
   });
 
   it('revenue opportunity is signed at par, and also shown at the analyst’s MPI / ARI targets', async () => {
-    mockIndexMethodology = methodology();
+    // Both targets ANALYST-SET (source 'override'); the fixture's MPI default
+    // is the document's published index, which is not a target (see below).
+    mockIndexMethodology = methodology({
+      assumptions: {
+        ...methodology().assumptions,
+        index_mpi_target: figure(103.2, 'override', [], 'Hold share'),
+      },
+    });
     render(<IndexAnalysisSection dealId={DEAL} />);
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
@@ -505,6 +512,20 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     const row = screen.getByTestId('index-penetration-oppty-target');
     expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
     expect(within(row).getByText('Revenue Opportunity at Target').getAttribute('title')).toMatch(/No MPI \/ ARI penetration target set/);
+  });
+
+  it('a document-default index is NOT an analyst target: with only the ARI override set, the at-target row is "—" with the reason', async () => {
+    // The fixture: index_mpi_target = 103.2 from the STR document (the
+    // published MPI itself), index_ari_target = 105 analyst override.
+    mockIndexMethodology = methodology();
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    await screen.findByText('Penetration Index');
+    const row = screen.getByTestId('index-penetration-oppty-target');
+    expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
+    expect(within(row).getByText('Revenue Opportunity at Target').getAttribute('title')).toMatch(/No MPI \/ ARI penetration target set/);
+    // At par is unaffected — it needs no target.
+    const par = Array.from(screen.getByTestId('index-penetration-oppty-par').querySelectorAll('td')).slice(1);
+    expect(par[5]).toHaveTextContent(/^\$2,5\d\d,\d{3}$/);
   });
 });
 
@@ -802,8 +823,32 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
     expect(rgi[FIRST_FORECAST + 1]).toHaveTextContent('120.8');
     expect(within(rgi[FIRST_FORECAST + 1]).getByText('120.8').getAttribute('title')).toMatch(/RGI derived/);
     expect(rgi[FIRST_FORECAST]).toHaveTextContent('97.2');
-    // The band says so.
+    // The band says so, and there is no "not applied" note.
     expect(screen.getByText(/indices at the analyst’s MPI \/ ARI targets per year \(RGI derived\)/)).toBeTruthy();
+    expect(screen.queryByTestId('index-penetration-targets-not-applied')).toBeNull();
+  });
+
+  it('with the STR toggle OFF (by_year_applies false) the index rows hold the published index flat — the targets the Subject rows do not run on are not printed — and a note says so', async () => {
+    mockIndexMethodology = methodology({
+      toggle_on: false,
+      by_year: byYearRows({ mpiYear2: 115, ariScalar: 105 }), hold_years: 3, calendar_known: true,
+      by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
+    });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    await screen.findByText('Penetration Index');
+    const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
+    const mpi = at('index-penetration-mpi');
+    expect(mpi[FIRST_FORECAST + 1]).toHaveTextContent('103.2'); // NOT the 115 by-year target
+    expect(within(mpi[FIRST_FORECAST + 1]).getByText('103.2').getAttribute('title')).toMatch(/held flat/);
+    const ari = at('index-penetration-ari');
+    expect(ari[FIRST_FORECAST]).toHaveTextContent('94.2'); // NOT the 105 all-years target
+    const rgi = at('index-penetration-rgi');
+    expect(rgi[FIRST_FORECAST + 1]).toHaveTextContent('97.2');
+    expect(screen.getByTestId('index-penetration-targets-not-applied')).toHaveTextContent(
+      'Targets set but not applied — turn on ‘Use STR rates in the model’',
+    );
+    expect(screen.getByText(/indices held at STR TTM; shares and variances/)).toBeTruthy();
+    expect(screen.queryByText(/indices at the analyst’s MPI \/ ARI targets per year/)).toBeNull();
   });
 
   it('without by-year rows (older worker) the table is exactly as before', async () => {

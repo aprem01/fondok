@@ -652,7 +652,7 @@ function Step1({ data, update, citySuggestions, normalizeCity }: StepProps & {
           <Field label="Hotel Name" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
           {/* FON-99 — parsed and sent as deals.purchase_price (see lib/wizardPrice). */}
           <Field label="Purchase / Indicative Price" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M"
-            help="Seeds the model's purchase price. Accepts $36.4M, 36,400,000 or a range such as $120-140M (the midpoint is stored). Editable later on CAPEX → Deal Summary."
+            help="Seeds the model's purchase price. Accepts $36.4M, 36.4MM, 36,400,000 or a range such as $120-140M (the midpoint is stored); a bare figure under $1M needs M / MM or the full dollars. Editable later on CAPEX → Deal Summary."
             hint={indicativePriceHint(data.price)} hintTestId="price-parse-hint" />
         </div>
         <CoachMark

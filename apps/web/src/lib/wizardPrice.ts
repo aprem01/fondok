@@ -16,16 +16,33 @@
  * number is shown — the analyst is never shown a midpoint as if it were the
  * quoted price. Text that does not read as a price is NOT guessed at: the
  * payload carries `null`, the raw text stays on Review as a note, and the
- * analyst sets the price on CAPEX → Deal Summary. A bare number under 1,000
- * with no unit ("36") is ambiguous (dollars? millions?) and is treated as
- * unparseable for the same reason.
+ * analyst sets the price on CAPEX → Deal Summary.
+ *
+ * A bare number with NO unit below $1,000,000 ("36", "36.4", "36400",
+ * "1,200") is ambiguous — dollars? thousands? millions? — and a hotel never
+ * trades for that little, so it is unparseable rather than persisted as
+ * $36,400 (review finding). Likewise "2024-2025" / "2024–2025" is a period,
+ * not a price range: a four-digit YYYY-YYYY pattern is refused outright
+ * rather than stored as a $2,025 midpoint.
  */
 
 export type ParsedPrice =
   | { kind: 'empty' }
   | { kind: 'single'; value: number; display: string }
   | { kind: 'range'; low: number; high: number; value: number; display: string; lowDisplay: string; highDisplay: string }
-  | { kind: 'unparseable'; raw: string };
+  | {
+      kind: 'unparseable';
+      raw: string;
+      /** Why, when the text LOOKED numeric: a unit-less figure too small for
+       *  a hotel price, or a YYYY-YYYY period. Absent for free text. */
+      why?: 'too_small' | 'year_range';
+    };
+
+/** A unit-less figure below this is not a hotel purchase price. */
+export const MIN_UNITLESS_DOLLARS = 1_000_000;
+
+// "2024-2025", "2024 – 2025", "2024—2025": a period, never a price range.
+const YEAR_RANGE = /^\d{4}\s*(?:-|–|—|\bto\b)\s*\d{4}$/i;
 
 const UNIT: Record<string, number> = {
   k: 1e3,
@@ -58,11 +75,13 @@ function parseAmount(text: string): Amount | null {
   return { value: n, unit };
 }
 
-function dollars(a: Amount, inheritedUnit: string | null): number | null {
+/** Whole dollars, or `'too_small'` for a unit-less figure under $1M. */
+function dollars(a: Amount, inheritedUnit: string | null): number | 'too_small' {
   const unit = a.unit ?? inheritedUnit;
   const scaled = unit ? a.value * UNIT[unit] : a.value;
-  // A unit-less number below $1,000 is ambiguous — refuse rather than guess.
-  if (!unit && scaled < 1000) return null;
+  // A unit-less number below $1,000,000 is ambiguous ("36400" — thousands?
+  // dollars?) and too small for a hotel — refuse rather than guess.
+  if (!unit && scaled < MIN_UNITLESS_DOLLARS) return 'too_small';
   return Math.round(scaled);
 }
 
@@ -75,6 +94,9 @@ export function parseIndicativePrice(raw: string): ParsedPrice {
   const text = raw.trim();
   if (!text) return { kind: 'empty' };
 
+  // "2024-2025" is a period (two four-digit years), not a price range.
+  if (YEAR_RANGE.test(text)) return { kind: 'unparseable', raw: text, why: 'year_range' };
+
   // Range: "A - B", "A – B", "A — B", "A to B". The low side inherits the high
   // side's unit when it has none ("$120-140M" → 120M–140M).
   const range = /^(.+?)\s*(?:-|–|—|\bto\b)\s*(.+)$/i.exec(text);
@@ -84,24 +106,26 @@ export function parseIndicativePrice(raw: string): ParsedPrice {
     if (lo && hi) {
       const hiDollars = dollars(hi, lo.unit);
       const loDollars = dollars(lo, hi.unit);
-      if (loDollars != null && hiDollars != null) {
-        const low = Math.min(loDollars, hiDollars);
-        const high = Math.max(loDollars, hiDollars);
-        const value = Math.round((low + high) / 2);
-        return {
-          kind: 'range', low, high, value,
-          display: fmtWholeDollars(value),
-          lowDisplay: fmtWholeDollars(low),
-          highDisplay: fmtWholeDollars(high),
-        };
+      if (loDollars === 'too_small' || hiDollars === 'too_small') {
+        return { kind: 'unparseable', raw: text, why: 'too_small' };
       }
+      const low = Math.min(loDollars, hiDollars);
+      const high = Math.max(loDollars, hiDollars);
+      const value = Math.round((low + high) / 2);
+      return {
+        kind: 'range', low, high, value,
+        display: fmtWholeDollars(value),
+        lowDisplay: fmtWholeDollars(low),
+        highDisplay: fmtWholeDollars(high),
+      };
     }
     return { kind: 'unparseable', raw: text };
   }
 
   const single = parseAmount(text);
-  const value = single ? dollars(single, null) : null;
-  if (value == null) return { kind: 'unparseable', raw: text };
+  if (!single) return { kind: 'unparseable', raw: text };
+  const value = dollars(single, null);
+  if (value === 'too_small') return { kind: 'unparseable', raw: text, why: 'too_small' };
   return { kind: 'single', value, display: fmtWholeDollars(value) };
 }
 
@@ -136,7 +160,14 @@ export function indicativePriceHint(raw: string): string | null {
       return `Parsed as ${p.display} — seeds the model's purchase price.`;
     case 'range':
       return `Range ${p.lowDisplay}–${p.highDisplay} → the midpoint ${p.display} is stored as the purchase price (range midpoint). Edit it later on CAPEX → Deal Summary.`;
-    case 'unparseable':
-      return 'Could not read a price from this text. The deal is created without one (the text is kept as a note on Review) — set the purchase price on CAPEX → Deal Summary.';
+    case 'unparseable': {
+      const lead =
+        p.why === 'too_small'
+          ? 'Could not read a price from this text: a figure under $1,000,000 with no unit is too small for a hotel price. Add M / MM ("36.4M") or type the full dollars ("36,400,000").'
+          : p.why === 'year_range'
+            ? 'Could not read a price from this text: two four-digit years read as a period, not a price range. Write the price with M / MM ("$120-140M") or in full dollars.'
+            : 'Could not read a price from this text. Write it with M / MM ("$36.4M", "36.4MM") or in full dollars ("36,400,000").';
+      return `${lead} The deal is created without one (the text is kept as a note on Review) — set the purchase price on CAPEX → Deal Summary.`;
+    }
   }
 }

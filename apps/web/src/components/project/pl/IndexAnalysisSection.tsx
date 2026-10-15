@@ -421,11 +421,15 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
   })();
 
-  // The all-years MPI / ARI figures (the analyst's or the document default)
-  // feed "Revenue Opportunity at Target" where no per-year target applies.
+  // The ANALYST's all-years MPI / ARI targets (source 'override') feed
+  // "Revenue Opportunity at Target" where no per-year target applies. A
+  // document default ('document' / 'computed') is the published index itself
+  // — restating it as a "target" would price an opportunity nobody set — so
+  // with no analyst target the row is "—" and its reason says so.
   const targetOf = (key: string): number | null => {
-    const v = methodology?.assumptions?.[key]?.value;
-    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+    const fig = methodology?.assumptions?.[key];
+    const v = fig?.value;
+    return fig?.source === 'override' && typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
   };
   // FON-95 part 2 — the effective ANALYST-SET target per model year from the
   // worker's by-year grid (by-year beats scalar; index = ordinal − 1). These
@@ -449,6 +453,14 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   const hasTargets =
     !!targetsByYear &&
     (targetsByYear.mpi.some((v) => v != null) || targetsByYear.ari.some((v) => v != null));
+  // The index rows print a by-year target ONLY while the worker says the grid
+  // drives the model (``by_year_applies`` — "Use STR rates in the model" on);
+  // otherwise the Subject rows do not reflect the targets, so printing them
+  // would show a penetration the model never runs. Then the published index
+  // is held flat and a one-line note says the targets are set but not applied.
+  const byYearApplies = !!methodology?.by_year_applies;
+  const appliedTargetsByYear = byYearApplies ? targetsByYear : null;
+  const targetsNotApplied = hasTargets && !byYearApplies;
   const penetrationRows = useMemo(
     () =>
       computePenetration({
@@ -464,10 +476,10 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         subjectKeys,
         compKeys,
         targets: { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') },
-        targetsByYear,
+        targetsByYear: appliedTargetsByYear,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology, targetsByYear],
+    [cols, subject, comp, market, str, subjectKeys, compKeys, methodology, appliedTargetsByYear],
   );
 
   // FON-41 E-027 — reconcile this table to Financials → Projections. Every
@@ -638,11 +650,19 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
           cols={cols}
           rows={penetrationRows}
           forecastBand={
-            hasTargets
+            hasTargets && byYearApplies
               ? 'indices at the analyst’s MPI / ARI targets per year (RGI derived), else held at STR TTM; shares and variances where both sides are reported'
               : 'indices held at STR TTM; shares and variances where both sides are reported'
           }
         />
+        {targetsNotApplied && (
+          <div
+            className="px-4 py-2 text-[11px] text-ink-500 italic border-t border-border"
+            data-testid="index-penetration-targets-not-applied"
+          >
+            Targets set but not applied — turn on &lsquo;Use STR rates in the model&rsquo;
+          </div>
+        )}
       </Card>
     </div>
   );

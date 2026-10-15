@@ -147,8 +147,36 @@ export default function Sidebar({
           via its appearance element id; the Clerk dashboard toggle
           ("Allow users to create organizations" → off) is what makes the
           API refuse too — see docs/WORKSPACE_ISOLATION.md §5. Switching
-          between organizations the user already belongs to is unchanged. */}
-      {isClerkConfigured && typeof OrganizationSwitcher === 'function' ? (
+          between organizations the user already belongs to is unchanged.
+
+          Review finding: a bare `'hidden'` class can lose the cascade to
+          Clerk's own runtime (emotion) styles for that button, so the rule
+          is given TWO ways — the appearance `elements` object below (a CSS
+          object Clerk merges into its own emotion styles, so it rides their
+          cascade, with `!important` for good measure) and the
+          `.cl-organizationSwitcherPopoverActionButton__createOrganization`
+          global rule in globals.css (`display: none !important`).
+
+          A signed-in user with NO organization has no workspace at all
+          under `hidePersonal` (every worker call 409s
+          `no_active_organization`): say so plainly instead of a "Personal"
+          pill over a dead-end switcher. Nothing here invents an org. */}
+      {isClerkConfigured && workspace.status === 'none' ? (
+        <div className="px-3 pb-2" data-testid="no-workspace-notice">
+          <div
+            role="status"
+            className="px-2.5 py-2 rounded-md border border-warn-500/30 bg-warn-50 text-warn-700 leading-snug"
+          >
+            <div className="flex items-center gap-2 text-[12.5px] font-semibold">
+              <Building2 size={14} className="flex-shrink-0" />
+              No workspace assigned
+            </div>
+            <div className="text-[11px] mt-1">
+              Ask Fondok to add you to your institution&apos;s workspace. Until then no deals or documents can load.
+            </div>
+          </div>
+        </div>
+      ) : isClerkConfigured && typeof OrganizationSwitcher === 'function' ? (
         <div className="px-3 pb-2">
           <div className="px-2 py-1">
             <OrganizationSwitcher
@@ -157,8 +185,9 @@ export default function Sidebar({
               appearance={{
                 elements: {
                   rootBox: 'w-full',
-                  organizationSwitcherPopoverActionButton__createOrganization:
-                    'hidden',
+                  organizationSwitcherPopoverActionButton__createOrganization: {
+                    display: 'none !important',
+                  },
                   organizationSwitcherTrigger:
                     'w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors text-left',
                   organizationPreviewMainIdentifier:

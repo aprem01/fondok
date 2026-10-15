@@ -62,6 +62,39 @@ describe('parseIndicativePrice — never a guess', () => {
       expect(purchasePriceFromText(text)).toBeNull();
       expect(describeIndicativePrice(text)).toBe(`"${text}" — not read as a price; set it on CAPEX → Deal Summary`);
       expect(indicativePriceHint(text)).toMatch(/Could not read a price/);
+      expect(indicativePriceHint(text)).toMatch(/M \/ MM/);
+    },
+  );
+
+  // Review finding: "36400" used to persist as $36,400 and "1,200" as $1,200 —
+  // a hotel never trades for that. Unit-less below $1M is refused, with a hint
+  // that names the fix (add M / MM or type the full dollars).
+  it.each(['36400', '$36400', '1,200', '999,999', '36400 - 38000', '$500,000'])(
+    '%s (unit-less, under $1M) is unparseable → null, hint says to add M / MM or full dollars',
+    (text) => {
+      const p = parseIndicativePrice(text);
+      expect(p.kind).toBe('unparseable');
+      if (p.kind === 'unparseable') expect(p.why).toBe('too_small');
+      expect(purchasePriceFromText(text)).toBeNull();
+      expect(describeIndicativePrice(text)).toBe(`"${text}" — not read as a price; set it on CAPEX → Deal Summary`);
+      expect(indicativePriceHint(text)).toMatch(/too small for a hotel price/);
+      expect(indicativePriceHint(text)).toMatch(/Add M \/ MM \("36\.4M"\) or type the full dollars \("36,400,000"\)/);
+    },
+  );
+
+  it.each(['1,000,000', '1000000', '$1,000,000'])('%s (exactly $1M, unit-less) still parses', (text) => {
+    expect(purchasePriceFromText(text)).toBe(1_000_000);
+  });
+
+  // "2024-2025" is a period: it used to parse as a range with a $2,025 midpoint.
+  it.each(['2024-2025', '2024–2025', '2024 — 2025', '2024 to 2025'])(
+    '%s (YYYY-YYYY) is a period, not a price range → unparseable',
+    (text) => {
+      const p = parseIndicativePrice(text);
+      expect(p.kind).toBe('unparseable');
+      if (p.kind === 'unparseable') expect(p.why).toBe('year_range');
+      expect(purchasePriceFromText(text)).toBeNull();
+      expect(indicativePriceHint(text)).toMatch(/two four-digit years read as a period/);
     },
   );
 

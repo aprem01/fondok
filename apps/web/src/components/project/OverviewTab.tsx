@@ -1813,13 +1813,21 @@ function ReopeningDateField({
 }) {
   const shown = value && ISO_DATE.test(value) ? value : '';
   const [draft, setDraft] = useState(shown);
-  useEffect(() => { setDraft(shown); }, [shown]);
+  // One edit = one save. Enter blurs the input (the TargetField pattern) so
+  // the single resulting blur commits; ``pending`` remembers what was sent
+  // until the saved value comes back through ``value``, so a blur that lands
+  // while the PATCH is in flight cannot send the same edit twice.
+  const pending = useRef<string | null>(null);
+  useEffect(() => { setDraft(shown); pending.current = null; }, [shown]);
   const commit = () => {
     const t = draft.trim();
-    if (t === '') { if (shown) onSave(null); return; }
-    if (!ISO_DATE.test(t)) { setDraft(shown); return; }
-    if (t === shown) return;
-    onSave(t);
+    const next: string | null = t === '' ? null : t;
+    if (next == null && !shown) return;
+    if (next != null && !ISO_DATE.test(next)) { setDraft(shown); return; }
+    if (next === (shown || null)) return;
+    if (pending.current === (next ?? '')) return;
+    pending.current = next ?? '';
+    onSave(next);
   };
   const hint = fallbackNote
     ?? (shown
@@ -1839,7 +1847,8 @@ function ReopeningDateField({
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            // Enter leaves the field; the blur that follows is the ONE commit.
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
             if (e.key === 'Escape') setDraft(shown);
           }}
           style={{

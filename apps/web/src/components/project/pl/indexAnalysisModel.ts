@@ -180,10 +180,17 @@ export function deriveIndexColumns(i: DeriveColumnsInput): IaColumns {
       columns.push({ key: `h-${y}`, kind: 'historical', calendarYear: y, ordinal: null, label: String(y) });
     }
     for (let n = 0; n < forecastCount; n++) {
-      // The engine emits one calendar year per row; "each later year is that
-      // year plus one" is the engine's own rule (revenue.projection_calendar_years).
-      const y = cal[n] ?? base + n;
-      columns.push({ key: `f-${n + 1}`, kind: 'forecast', calendarYear: y, ordinal: n + 1, label: String(y) });
+      // The engine emits one calendar year per row (revenue.projection_calendar_years).
+      // A row the engine did not label is NOT extrapolated: the column stays an
+      // ordinal ("Year N") with no calendar year rather than a guessed figure.
+      const y = cal[n] ?? null;
+      columns.push({
+        key: `f-${n + 1}`,
+        kind: 'forecast',
+        calendarYear: y,
+        ordinal: n + 1,
+        label: y != null ? String(y) : `Year ${n + 1}`,
+      });
     }
   } else {
     const docYears = Array.from(new Set(i.documentYears.map(finiteInt).filter((y): y is number => y != null)))

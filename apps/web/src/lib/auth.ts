@@ -53,13 +53,33 @@ export interface CurrentUser {
   id: string;
 }
 
+/**
+ * Where the signed-in user stands with respect to a workspace (FON-93: a
+ * workspace is an institution Fondok registered; analysts never mint one).
+ *
+ *  - `demo`    — Clerk not configured; the static demo workspace.
+ *  - `pending` — before mount / before Clerk loads, or no org is active yet
+ *                but the user belongs to one (``ClerkTokenBridge`` activates
+ *                the first membership; the next render is `active`).
+ *  - `none`    — Clerk loaded, no active org AND no membership at all: every
+ *                worker call will 409 ``no_active_organization``. The UI
+ *                says "No workspace assigned" — it never invents an org.
+ *  - `active`  — an organization is active.
+ */
+export type WorkspaceStatus = 'demo' | 'pending' | 'none' | 'active';
+
 export interface CurrentOrg {
   /** Clerk organization id, or `null` when no org / demo mode. */
   id: string | null;
   name: string;
   plan: string;
   url: string;
+  status: WorkspaceStatus;
 }
+
+/** The one sentence shown wherever the app meets a user with no workspace. */
+export const NO_WORKSPACE_MESSAGE =
+  "No workspace assigned — ask Fondok to add you to your institution's workspace";
 
 function deriveInitials(first: string | null | undefined, last: string | null | undefined, email: string | null | undefined): string {
   const f = (first || '').trim();
@@ -129,25 +149,36 @@ export function useCurrentOrg(): CurrentOrg {
       name: mockWorkspace.name,
       plan: mockWorkspace.plan,
       url: mockWorkspace.url,
+      status: 'demo',
     };
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const { organization } = useOrganization();
+  const { organization, isLoaded: orgLoaded } = useOrganization();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { user, isLoaded: userLoaded } = useUser();
   // The org ``id`` is NOT gated on mount: it is never rendered as text (only
   // consumed by effects — ``setCurrentOrgId`` for the X-Tenant-Id header), and
   // gating it would let the Sidebar's mount effect write ``null`` over the id
   // ``ClerkTokenBridge`` just installed, re-opening the FON-20 org-less
-  // first-request race. The rendered fields (name / plan / url) ARE gated.
+  // first-request race. The rendered fields (name / plan / url / status) ARE
+  // gated — the server renders `pending`, so must the client's first pass.
   const liveId = organization?.id ?? null;
   if (!mounted || !organization) {
-    // Personal workspace — no org selected (and the server's view before
-    // mount). Pretend it's a "Personal" workspace so the sidebar pill still
-    // renders something useful.
+    // No org active (and the server's view before mount). With
+    // ``hidePersonal`` there is no "personal" workspace to fall back to: a
+    // user who belongs to NO organization has no workspace at all, and the
+    // Sidebar says so instead of showing a "Personal" pill over a dead-end
+    // switcher while every worker call 409s. A user who belongs to one is
+    // `pending` — the token bridge activates it on the next tick.
+    const loaded = mounted && orgLoaded && userLoaded;
+    const memberships = user?.organizationMemberships ?? [];
+    const status: WorkspaceStatus = loaded && !!user && memberships.length === 0 ? 'none' : 'pending';
     return {
       id: liveId,
-      name: 'Personal Workspace',
-      plan: 'Free',
-      url: 'personal',
+      name: status === 'none' ? 'No workspace assigned' : 'Workspace',
+      plan: '',
+      url: 'none',
+      status,
     };
   }
   return {
@@ -155,6 +186,7 @@ export function useCurrentOrg(): CurrentOrg {
     name: organization.name,
     plan: (organization.publicMetadata?.plan as string | undefined) ?? 'Pro Plan',
     url: organization.slug ?? organization.id,
+    status: 'active',
   };
 }
 

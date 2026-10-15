@@ -429,20 +429,24 @@ export default function MethodologyPage() {
               (market study / STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the
               report&apos;s own calendar year (<code>cbre_horizons.year_&lt;n&gt;.calendar_year</code>, pipeline v7) and
               labelled Market / CBRE Horizons with document and page — a CBRE forecast is a market forecast, not a comp-set
-              forecast. Penetration rows: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
+              forecast. A calendar shorter than the horizon is not extended: a model year the engine did not place reads
+              &quot;Year N&quot; with no calendar year. Penetration rows: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
               forecast columns the analyst&apos;s MPI / ARI target for that model year where one is set (by-year, else the
-              all-years target; RGI derived as MPI × ARI ÷ 100), else the published index held flat — the hover text
+              all-years target; RGI derived as MPI × ARI ÷ 100) while &quot;Use STR rates in the model&quot; is on — so the
+              index rows only print a target the Subject rows actually run on — else the published index held flat, with
+              a one-line note when targets are set but not applied; the hover text
               says which; the subject ÷ market indices, occupancy (pts), ADR ($ and %) and RevPAR variances to the comp
               set, Fair Share of Supply = subject rooms ÷ (comp-set rooms + subject rooms), fair-share occupancy, actual
               share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at Target, the
-              latter computed per year against the target that applies to that year. Every cell shows its formula and
+              latter computed per year against the analyst-set target that applies to that year (a document default —
+              the published index itself — is not a target, so with none set the row is &quot;—&quot; and says so). Every cell shows its formula and
               inputs on hover; a cell with no reported input is &quot;—&quot;.
             </BadgeRow>
             <BadgeRow source="seed" name="Seed Default">
               Kimpton fixture default. Surfaced as a Seed badge with grey tone — no deal-specific data has overridden this yet. The senior origination fee (1.50% of the senior loan) is one of these: a Fondok seed, not a document-sourced figure, editable on Debt and the single source for the Sources &amp; Uses &ldquo;Senior Loan Origination Fee&rdquo; line and Overview &ldquo;Financing Costs&rdquo;.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Row">
-              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level, the reopening / re-flag date — and the <strong>purchase price</strong>: the wizard&apos;s &quot;Purchase / Indicative Price&quot; field is parsed to whole dollars (&quot;$36.4M&quot;, &quot;36,400,000&quot;; a range such as &quot;$120-140M&quot; stores its <em>midpoint</em> and is labelled &quot;range midpoint&quot; on the Review step) and saved as <code className="text-[11.5px]">purchase_price</code>, which seeds the model&apos;s purchase price with this badge rather than &quot;Seed&quot;. Text that does not read as a price is kept as a note and sends nothing — the model keeps its seed until the analyst sets the price on CAPEX → Deal Summary, where it stays editable. The Property Name is not a deal-row field — see below.
+              Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project name, city, brand, keys, service level, the reopening / re-flag date — and the <strong>purchase price</strong>: the wizard&apos;s &quot;Purchase / Indicative Price&quot; field is parsed to whole dollars (&quot;$36.4M&quot;, &quot;36,400,000&quot;; a range such as &quot;$120-140M&quot; stores its <em>midpoint</em> and is labelled &quot;range midpoint&quot; on the Review step) and saved as <code className="text-[11.5px]">purchase_price</code>, which seeds the model&apos;s purchase price with this badge rather than &quot;Seed&quot;. A bare figure under $1,000,000 with no unit (&quot;36400&quot;, &quot;1,200&quot;) and a two-year period (&quot;2024-2025&quot;) are not read as prices — the hint asks for M / MM or the full dollars. Text that does not read as a price is kept as a note and sends nothing — the model keeps its seed until the analyst sets the price on CAPEX → Deal Summary, where it stays editable. The Property Name is not a deal-row field — see below.
             </BadgeRow>
           </div>
         </Card>

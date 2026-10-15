@@ -348,6 +348,25 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
     expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/Could not read a price/);
   });
 
+  it('a unit-less figure under $1M ("36400") is NOT persisted as $36,400 — the hint asks for M / MM or full dollars and the payload sends null', async () => {
+    driveToReviewWithPrice('36400');
+    expect(reviewPrice()).toBe('"36400" — not read as a price; set it on CAPEX → Deal Summary');
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
+  });
+
+  it('the hint names the fix for a too-small figure and refuses a YYYY-YYYY period', () => {
+    render(<NewProjectPage />);
+    fireEvent.change(priceInput(), { target: { value: '36400' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/too small for a hotel price/);
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/Add M \/ MM \("36\.4M"\) or type the full dollars \("36,400,000"\)/);
+    fireEvent.change(priceInput(), { target: { value: '2024-2025' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent(/two four-digit years read as a period, not a price range/);
+    fireEvent.change(priceInput(), { target: { value: '36.4MM' } });
+    expect(screen.getByTestId('price-parse-hint')).toHaveTextContent('Parsed as $36,400,000');
+  });
+
   it('a range "$120-140M" stores the midpoint and Review says "range midpoint"', async () => {
     driveToReviewWithPrice('$120-140M');
     expect(reviewPrice()).toBe('$130,000,000 (range midpoint of $120-140M)');
