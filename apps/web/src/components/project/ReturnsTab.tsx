@@ -40,6 +40,7 @@ interface SensitivityMatrix {
   baseCol: number;
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { stabilizedYearBlock } from '@/lib/engines/noi';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
@@ -672,20 +673,34 @@ function ReturnsSummary({
   const holdYears = sb(preview?.hold_years, getEngineField<number>(outputs, 'returns', 'hold_years'));
 
   // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
-  // basis. Stabilized NOI = the last operating-year NOI from the returns
-  // engine's own ``noi_by_year``; total cost basis = ``capital.total_capital``.
-  // If either is unsourceable we render '—' rather than a fabricated number.
-  const noiByYear = sb(preview?.noi_by_year, getEngineField<number[]>(outputs, 'returns', 'noi_by_year'));
-  const totalCapital = sb(
-    preview?.total_capital,
-    getEngineField<number>(outputs, 'capital', 'total_capital'),
-  );
+  // basis. Stabilized NOI is THE stabilized year's NOI before the FF&E reserve,
+  // off the ONE block the expense engine publishes (`expense.stabilization`,
+  // FON-41 / FON-59 #3) — the same year and basis the Overview's Stabilized NOI
+  // row, its Yield on Cost row and its YoC benchmark print. It used to be the
+  // LAST hold year's after-reserve cash NOI (`returns.noi_by_year[-1]`), so the
+  // same page showed two different "Yield on Cost" figures under one caption.
+  // Total cost basis = `capital.total_capital`. Either unsourceable → '—' with
+  // the reason, never a borrowed year. A sandbox preview carries no
+  // stabilization block, so the tile is withheld while one is active rather
+  // than printing a canonical figure under a "Sandbox" chip.
+  const stab = stabilizedYearBlock(getEngineField<unknown>(outputs, 'expense'));
   const stabilizedNoi =
-    Array.isArray(noiByYear) && noiByYear.length > 0 ? noiByYear[noiByYear.length - 1] : undefined;
+    stab?.stabilized_noi_before_reserve != null && Number.isFinite(stab.stabilized_noi_before_reserve)
+      ? stab.stabilized_noi_before_reserve
+      : undefined;
+  const totalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
   const yieldOnCost =
-    stabilizedNoi != null && totalCapital != null && totalCapital > 0
+    !sandboxOn && stabilizedNoi != null && totalCapital != null && totalCapital > 0
       ? stabilizedNoi / totalCapital
       : undefined;
+  const yieldOnCostUnavailable =
+    yieldOnCost != null
+      ? undefined
+      : sandboxOn
+        ? 'Sandbox case — Yield on Cost reads the canonical run’s stabilized year (expense.stabilization); reset to base to see it'
+        : stabilizedNoi == null
+          ? awaitingRun('expense.stabilization.stabilized_noi_before_reserve')
+          : awaitingRun('capital.total_capital');
 
   // ── Secondary row (3 white cards). Equity Profit + Initial Equity read off
   // the canonical levered cash-flow series so they reconcile to the bridge. ──
@@ -781,15 +796,13 @@ function ReturnsSummary({
             label="Yield on Cost"
             sandbox={sandboxOn}
             flashKey={yieldOnCost}
-            sub="Stabilized NOI ÷ total cost basis"
-            value={fmtP(yieldOnCost)}
-            unavailable={
-              yieldOnCost != null
-                ? undefined
-                : stabilizedNoi == null
-                  ? awaitingRun('returns.noi_by_year')
-                  : awaitingRun('capital.total_capital')
+            sub={
+              stab
+                ? `Stabilized NOI (Year ${stab.stabilized_year}, before FF&E reserve) ÷ total capital`
+                : 'Stabilized NOI (before FF&E reserve) ÷ total capital'
             }
+            value={fmtP(yieldOnCost)}
+            unavailable={yieldOnCostUnavailable}
           />
         </div>
       </div>

@@ -246,15 +246,29 @@ function CandidateRow({ c, keys, onUse }: { c: RenovationBudgetCandidate; keys: 
   );
 }
 
+/** The lane a reference-only document is filed under, in the Data Room's
+ *  words. The worker sends `lane_label`; older workers sent only Future CapEx
+ *  rows, so a row with neither field keeps that label. */
+export function referenceLaneLabel(r: Pick<RenovationBudgetReferenceDoc, 'lane' | 'lane_label'>): string {
+  if (r.lane_label && r.lane_label.trim()) return r.lane_label.trim();
+  return r.lane === 'historic' ? 'Historic CapEx' : 'Future CapEx';
+}
+
 function ReferenceRow({ r }: { r: RenovationBudgetReferenceDoc }) {
   const date = fmtPlanDate(r.date);
+  const laneLabel = referenceLaneLabel(r);
+  // Historic CapEx only — the ledger's own annual totals
+  // (`historic_capex.by_year.<YYYY>.total_usd`), as printed.
+  const byYear = Object.entries(r.by_year ?? {})
+    .filter(([, v]) => typeof v === 'number' && Number.isFinite(v))
+    .sort(([a], [b]) => a.localeCompare(b));
   return (
-    <div data-testid="renovation-reference-doc" style={{ padding: '6px 0', fontSize: 12 }}>
+    <div data-testid="renovation-reference-doc" data-lane={r.lane ?? ''} style={{ padding: '6px 0', fontSize: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <FileText size={11} aria-hidden="true" style={{ color: palette.textMuted, flexShrink: 0 }} />
           <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.filename}</span>
-          <Meta>Future CapEx</Meta>
+          <Meta>{laneLabel}</Meta>
         </span>
         <span style={{ fontVariantNumeric: 'tabular-nums', color: palette.textMuted }}>
           {typeof r.total_usd === 'number' ? fmtCurrency(r.total_usd) : '—'}
@@ -265,6 +279,14 @@ function ReferenceRow({ r }: { r: RenovationBudgetReferenceDoc }) {
         {r.prepared_by && <Meta>Prepared by {r.prepared_by}</Meta>}
         {!r.extracted && <Meta>Not extracted yet</Meta>}
       </div>
+      {byYear.length > 0 && (
+        <div data-testid="renovation-reference-by-year" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, paddingLeft: 17, marginTop: 2 }}>
+          <Meta>By year:</Meta>
+          {byYear.map(([year, usd]) => (
+            <Meta key={year}>{year} {fmtCurrency(usd as number)}</Meta>
+          ))}
+        </div>
+      )}
       {r.items.length > 0 && (
         <ul style={{ listStyle: 'none', margin: '3px 0 0', padding: '0 0 0 17px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {r.items.map((it, i) => (

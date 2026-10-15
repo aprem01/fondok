@@ -534,8 +534,9 @@ SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
 SOURCE_PIP_OM = "pip_om"
 SOURCE_PIP_USER = "pip_user"
 # FON-101 — the renovation budget read off a separate PIP / CapEx document
-# (``capex_plan.pip.total_usd`` on a CAPEX extraction whose ``doc_subtype``
-# is not ``future``). Outranks ``om_broker`` for ``renovation_budget``; among
+# (``capex_plan.pip.total_usd`` on a CAPEX extraction in the PIP lane —
+# ``doc_subtype`` ``pip`` or untagged; Historic / Future CapEx are reference
+# only). Outranks ``om_broker`` for ``renovation_budget``; among
 # several documents the latest plan date wins. The string is owned by
 # ``services.renovation_budget`` (one definition, imported at the top of
 # this module) and listed here next to its siblings for the reader.
@@ -1324,9 +1325,9 @@ async def _load_engine_inputs(
                 sources["purchase_price"] = SOURCE_DEAL_ROW
             except (TypeError, ValueError):
                 pass
-        pos = mapping.get("positioning")
-        if isinstance(pos, str) and pos.strip():
-            subject_chain_scale = pos.strip()
+        subject_chain_scale = chain_scale_from_positioning(
+            mapping.get("positioning")
+        )
         # FON-98 — the reopening / re-flag date anchors the stabilization
         # default (Year 3 from the first full operating year after it). A
         # deal row value, so it is badged ``deal_row``; absent → the close
@@ -1524,8 +1525,9 @@ async def _load_engine_inputs(
     # FON-101 — a separate PIP / CapEx document outranks the OM's broker
     # figure for ``renovation_budget`` (Sam, 2026-10-14: it is the more
     # detailed source). Candidates are every CAPEX extraction carrying
-    # ``capex_plan.pip.total_usd`` whose ``doc_subtype`` is not ``future``
-    # (Future CapEx documents are reference only, never auto-incorporated);
+    # ``capex_plan.pip.total_usd`` in the PIP lane (``doc_subtype`` ``pip``
+    # or untagged; Historic and Future CapEx are reference only, never
+    # auto-incorporated whatever namespace their rows carry);
     # the latest plan date wins (``capex_plan.document.plan_date``, else the
     # report date, else the upload date). The analyst override still wins
     # over all of it: the override loop below re-applies it on top, and
@@ -5967,6 +5969,31 @@ _PORTFOLIO_PNL_FIELD_MAP: dict[str, str] = {
 # (current_year - vintage_year <= 3) so analysts can't accidentally
 # apply a 2018 portfolio roll-up to a 2026 deal.
 _PORTFOLIO_LIBRARY_LOOKBACK_YEARS = 3
+
+
+#: ``deals.positioning`` values that are NOT a chain scale. ``default`` is
+#: the wizard's "no tier chosen" sentinel (web ``positioningTiers``); passing
+#: it on as the subject chain scale made the portfolio-library gate skip
+#: every tagged entry (``"default"`` matches nothing) where an unknown scale
+#: would have accepted them all, and gave the comp-sales matcher a scale no
+#: comparable can carry.
+_NON_CHAIN_SCALE_POSITIONING: frozenset[str] = frozenset({"default", "various"})
+
+
+def chain_scale_from_positioning(value: object) -> str | None:
+    """The deal's chain scale from ``deals.positioning``, or ``None``.
+
+    Accepts the web's tier ids (``upper-upscale``) and STR labels
+    (``Upper Upscale``) alike — consumers normalise dashes / case. Blank
+    and the ``default`` sentinel read as *unknown* (no chain-scale filter),
+    never as a scale of their own.
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s or s.lower() in _NON_CHAIN_SCALE_POSITIONING:
+        return None
+    return s
 
 
 def _normalize_chain_scale_for_library(value: str | None) -> str | None:

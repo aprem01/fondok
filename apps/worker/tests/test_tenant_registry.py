@@ -323,6 +323,24 @@ async def test_admin_tenants_register_requires_internal_caller(_rsa_key) -> None
         assert r.status_code == 201, r.text
         assert r.json()["status"] == "active"
 
+        # Self-lockout guard: the caller may rename its own internal row but
+        # never demote or suspend it over HTTP (no API path could undo that).
+        for bad in ({"kind": "external"}, {"kind": "internal", "status": "suspended"}):
+            r = await c.post(
+                "/admin/tenants",
+                json={"clerk_org_id": INTERNAL_ORG, "name": "Fondok Internal", **bad},
+                headers=_bearer(_admin_token(_rsa_key, INTERNAL_ORG)),
+            )
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"] == "cannot_demote_own_internal_tenant"
+        r = await c.post(
+            "/admin/tenants",
+            json={"clerk_org_id": INTERNAL_ORG, "name": "Fondok HQ", "kind": "internal", "status": "active"},
+            headers=_bearer(_admin_token(_rsa_key, INTERNAL_ORG)),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["name"] == "Fondok HQ" and r.json()["kind"] == "internal"
+
 
 # ─────────────────────── /webhooks/clerk ───────────────────────
 

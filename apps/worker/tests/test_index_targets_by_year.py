@@ -450,6 +450,22 @@ def test_seam_never_overwrites_an_explicit_analyst_rate() -> None:
     assert "explicit analyst value" in base[BASE_DRIVERS_BY_YEAR][0]["reason"]
 
 
+def test_seam_explicit_rate_reason_joins_the_other_metrics_reason() -> None:
+    # Occupancy is an explicit analyst value (not driven); ADR is on the STR
+    # basis with a scalar-only ARI target, so Year 2 carries the out-year gate
+    # reason for ADR. The explicit-value note must JOIN it, not replace it.
+    base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0, 115.0], KEY_ARI_TARGET: 100.0, KEY_OCC_GROWTH: 0.012})
+    sources = {"starting_occupancy": "analyst_override", "starting_adr": "str_subject_ttm"}
+    build_index_drivers(
+        base, sources, {KEY_MPI_TARGET_BY_YEAR, KEY_ARI_TARGET, KEY_OCC_GROWTH, "starting_occupancy"},
+        rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=2, calendar_years=[],
+    )
+    y2 = base[BASE_DRIVERS_BY_YEAR][1]
+    assert y2["occupancy_status"] == "no_target" and y2["adr_status"] == "scalar_year1_only"
+    assert "explicit analyst value" in y2["reason"]
+    assert "ADR: the all-years target drives Year 1 only" in y2["reason"]
+
+
 def test_seam_needs_the_str_basis_to_have_landed() -> None:
     base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0]})
     sources = {"starting_occupancy": "t12_actual", "starting_adr": "t12_actual"}

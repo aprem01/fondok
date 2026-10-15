@@ -10,7 +10,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, searchBrandFamilies } from '@/lib/mockData';
+import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, brandPositioningLabel, searchBrandFamilies } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
@@ -702,17 +702,23 @@ function Step2({ data, update, defaultProfile, onSetDefault }: StepProps & {
     <div>
       <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Return Requirements</h2>
       <p className="text-[12.5px] text-ink-500 mb-3">Select the investment strategy that matches your return targets.</p>
+      {/* Sam 2026-10-14 #17 — the profile is a strategy tag plus an optional
+          Target LIRR preset band. It moves no model number: `return_profile`
+          feeds no engine, and the wizard never writes `target_irr`. The
+          target is entered (or the band applied by an explicit click) on the
+          Overview's Investment Profile. */}
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
-        Selecting an investment profile calibrates the default capital structure (leverage,
-        debt cost), exit assumptions (hold, cap rate), and waterfall hurdles. Used as the
-        benchmark against which the deal&apos;s underwritten returns are evaluated.
+        The investment profile tags the deal&apos;s strategy and offers its Target LIRR band
+        as a preset on the Overview. It changes no assumption — leverage, debt cost, hold,
+        exit cap rate and waterfall hurdles are set on their own tabs — and no Target LIRR is
+        saved until you enter one (or apply the band) on the Overview&apos;s Investment Profile.
       </div>
       <CoachMark
         anchorId="wizard-step2-profile-cards"
         viewKey="wizard-step2"
         title="What this picks"
         body={<>
-          Return profile sets target LIRR thresholds and the default capital structure.
+          The return profile tags the strategy and offers a Target LIRR preset band on the Overview — it sets no assumption by itself.
           <span className="block mt-1.5">
             {returnProfiles.map((p, i) => (
               <span key={p.id}>{i > 0 && ' · '}<b>{p.label}</b> {p.target.replace('-', '–')}</span>
@@ -1004,7 +1010,7 @@ function Step4({ data, update }: StepProps) {
                           <Check size={12} className="absolute top-1.5 right-1.5 text-brand-500" />
                         )}
                         <div className="text-[12px] font-medium text-ink-900 pr-3">{b.name}</div>
-                        <div className="text-[10px] text-ink-500 mt-0.5">{b.tier} · {brandFamilyShort(fam)}</div>
+                        <div className="text-[10px] text-ink-500 mt-0.5">{brandPositioningLabel(b)} · {brandFamilyShort(fam)}</div>
                       </button>
                     );
                   })}
@@ -1025,13 +1031,18 @@ function Step4({ data, update }: StepProps) {
 function PositioningPicker({ data, update }: StepProps) {
   const prefill = data.brand === 'agnostic' ? null : brandDefaultPositioning(data.brand);
   const prefillLabel = prefill ? positioningTiers.find(p => p.id === prefill)?.label : null;
-  // Anchor each tier to consumer-recognizable brands so the choice is concrete.
+  // Anchor each tier to consumer-recognizable brands so the choice is
+  // concrete. Examples follow STR's published chain-scale table (the same
+  // source `brandDefaultPositioning` pre-fills from), so a card never names
+  // a brand STR places on a different rung.
   const tierExample: Record<string, string> = {
     luxury: 'Ritz-Carlton, Four Seasons, St. Regis.',
-    upscale: 'Westin, Marriott full-service, Hyatt Regency.',
-    midscale: 'Holiday Inn Express, Hampton Inn, Courtyard.',
+    'upper-upscale': 'Westin, Marriott Hotels, Hyatt Regency, Kimpton.',
+    upscale: 'Courtyard, Hilton Garden Inn, Hyatt Place.',
+    'upper-midscale': 'Holiday Inn Express, Hampton by Hilton, Holiday Inn.',
+    midscale: 'Wingate by Wyndham, Tru by Hilton, Spark by Hilton.',
     economy: 'Motel 6, Days Inn, Super 8.',
-    default: 'No specific tier — Fondok picks based on the brand and ADR.',
+    default: 'No tier chosen — choosing a brand above pre-fills its STR chain scale.',
   };
   return (
     <div>

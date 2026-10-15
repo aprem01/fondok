@@ -364,3 +364,29 @@ async def test_patch_without_note_is_refused() -> None:
         assert r.status_code == 200, r.text
         stored = r.json()["field_overrides"]
         assert stored["projection_methods.rooms_dept_expense.method"]["note"]
+
+
+# Sam 2026-10-14 #7 — a method chosen with NO value holds the line's own
+# Year-1 ratio for every driver, never a benchmark constant. The pct_revenue
+# case is pinned above; these pin POR and PAR the same way.
+def test_por_null_value_holds_year1_dollars_per_occupied_room() -> None:
+    out = _run({"rooms_dept_expense": {"method": "por", "value": None}})
+    y1_occupied = KEYS * 365 * OCC[0]
+    ratio = T12["rooms_dept_expense"] / y1_occupied
+    assert out.years[0].dept_expenses.rooms == pytest.approx(T12["rooms_dept_expense"])
+    for t, yr in enumerate(out.years):
+        assert yr.dept_expenses.rooms == pytest.approx(ratio * KEYS * 365 * OCC[t])
+    lm = out.line_methods["rooms_dept_expense"]
+    assert lm.source == "override" and lm.method == "por"
+    assert lm.value == pytest.approx(ratio)
+
+
+def test_par_null_value_holds_year1_dollars_per_available_room() -> None:
+    out = _run({"utilities": {"method": "par", "value": None}})
+    ratio = T12["utilities"] / (KEYS * 365)
+    # PAR with the key count flat across the hold holds the Year-1 dollars.
+    for yr in out.years:
+        assert yr.undistributed.utilities == pytest.approx(T12["utilities"])
+    lm = out.line_methods["utilities"]
+    assert lm.source == "override" and lm.method == "par"
+    assert lm.value == pytest.approx(ratio)

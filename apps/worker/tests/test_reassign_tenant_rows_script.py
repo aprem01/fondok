@@ -130,6 +130,40 @@ async def test_column_map_matches_the_sqlite_schema(sqlite_engine) -> None:
             assert col in names, f"{table}: {col!r} not in SQLite columns {sorted(names)}"
 
 
+# ─────────────────────────── the window bound per dialect ───────────────────────────
+
+
+class _FakeEngine:
+    def __init__(self, dialect: str) -> None:
+        self.dialect = type("D", (), {"name": dialect})()
+
+
+def test_window_bound_is_a_tz_aware_datetime_on_postgres_and_iso_text_on_sqlite() -> None:
+    """asyncpg refuses a ``str`` for a TIMESTAMPTZ parameter (``DataError:
+    expected a datetime.date or datetime.datetime instance, got 'str'``), so
+    a windowed run against prod used to fail its count pass for every table
+    and refuse to commit. Postgres gets a datetime; SQLite keeps the text."""
+    pg = script._window_value(_FakeEngine("postgresql"), "2026-06-01")
+    assert isinstance(pg, datetime) and pg.tzinfo is not None
+    assert pg == datetime(2026, 6, 1, tzinfo=UTC)
+    pg_dt = script._window_value(_FakeEngine("postgresql"), "2026-06-01T12:30:00+02:00")
+    assert pg_dt.utcoffset() is not None and pg_dt.isoformat() == "2026-06-01T12:30:00+02:00"
+    assert script._window_value(_FakeEngine("sqlite"), " 2026-06-01 ") == "2026-06-01"
+    with pytest.raises(ValueError):
+        script._window_value(_FakeEngine("postgresql"), "June 1st")
+
+
+def test_window_sql_binds_through_the_dialect_helper() -> None:
+    params: dict = {}
+    where = script._window_sql(_FakeEngine("postgresql"), "documents", "2026-06-01", "2026-07-01", params)
+    assert where == ["uploaded_at >= :since", "uploaded_at < :until"]
+    assert params == {
+        "since": datetime(2026, 6, 1, tzinfo=UTC),
+        "until": datetime(2026, 7, 1, tzinfo=UTC),
+    }
+    assert script._window_sql(_FakeEngine("postgresql"), "deals", None, None, {}) == []
+
+
 # ─────────────────────────── the plan and the commit ───────────────────────────
 
 SOURCE = UUID("00000000-0000-0000-0000-000000000000")
@@ -198,6 +232,11 @@ class _UndisposableEngine:
 
     def __init__(self, engine) -> None:
         self._engine = engine
+
+    @property
+    def dialect(self):
+        # The script picks the window bind type off ``engine.dialect.name``.
+        return self._engine.dialect
 
     def begin(self):
         return self._engine.begin()

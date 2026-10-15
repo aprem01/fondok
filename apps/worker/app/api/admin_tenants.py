@@ -107,6 +107,17 @@ async def register_tenant(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="clerk_org_id must be a Clerk organization id (org_…)",
         )
+    if tenant_id == auth.tenant_id and (body.kind != "internal" or body.status != "active"):
+        # Re-registering the CALLER's own org as external / suspended /
+        # pending_review would, with REQUIRE_REGISTERED_TENANT on, lock
+        # every internal user out within the cache TTL — and this route
+        # needs an internal caller, so nothing over HTTP could undo it
+        # (only scripts/register_tenant.py from a shell). Refuse; renames
+        # of the own row (kind=internal, status=active) still go through.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="cannot_demote_own_internal_tenant",
+        )
     stored = await upsert_tenant(
         tenant_id=tenant_id,
         clerk_org_id=body.clerk_org_id,

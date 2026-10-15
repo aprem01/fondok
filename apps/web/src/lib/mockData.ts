@@ -145,9 +145,9 @@ export type ReturnProfileId = 'core' | 'core-plus' | 'value-add' | 'opportunisti
 // together which produced unrealistic ADR anchors on upper-midscale
 // brands). Order is bottom-up so the wizard renders cheapest first.
 export const positioningTiers = [
-  { id: 'default', label: 'Default', desc: 'Engine-derived from brand catalog + market comps.' },
+  { id: 'default', label: 'Default', desc: 'No tier chosen — pick a brand to pre-fill its STR chain scale. Until then the model applies no chain-scale filter.' },
   { id: 'economy', label: 'Economy', desc: 'Lowest ADR tier (e.g. Days Inn, Super 8)' },
-  { id: 'midscale', label: 'Midscale', desc: 'Limited-service value tier (e.g. La Quinta, Wingate)' },
+  { id: 'midscale', label: 'Midscale', desc: 'Limited-service value tier (e.g. Wingate, Tru by Hilton)' },
   { id: 'upper-midscale', label: 'Upper Midscale', desc: 'Select-service tier (e.g. Hampton Inn, Holiday Inn Express)' },
   { id: 'upscale', label: 'Upscale', desc: 'Full-service mid-market (e.g. Courtyard, Hyatt Place)' },
   { id: 'upper-upscale', label: 'Upper Upscale', desc: 'Full-service luxury-adjacent (e.g. Marriott, Hilton, Sheraton)' },
@@ -605,6 +605,15 @@ const POSITIONING_BY_SCALE: Record<string, string> = {
   Midscale: 'midscale',
   Economy: 'economy',
 };
+
+/**
+ * Sam 2026-10-14 #1 — the chain-scale label shown beside a brand: STR's
+ * published chain scale wherever STR lists the brand, else the catalog's
+ * own classification. The same rule `brandDefaultPositioning` pre-fills from.
+ */
+export function brandPositioningLabel(b: Pick<Brand, 'tier' | 'scale'>): string {
+  return b.scale ?? b.tier;
+}
 
 /**
  * R-024 — the brand's default positioning (a `positioningTiers` id): its STR

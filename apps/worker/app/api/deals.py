@@ -441,7 +441,9 @@ class RenovationBudgetCandidate(BaseModel):
 
 
 class RenovationBudgetReferenceDoc(BaseModel):
-    """A Future CapEx document — reference only, never in the model."""
+    """A Historic or Future CapEx document — reference only, never in the
+    model. ``lane`` / ``lane_label`` name the Data Room lane it is filed
+    under; ``by_year`` is the Historic ledger's annual totals as printed."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -472,7 +474,7 @@ class RenovationBudgetCandidatesResponse(BaseModel):
     reference_only: list[RenovationBudgetReferenceDoc] = Field(default_factory=list)
     precedence: str = (
         "analyst override > latest-dated PIP / CapEx document > OM broker pro forma > seed; "
-        "Future CapEx documents are reference only"
+        "Historic and Future CapEx documents are reference only"
     )
 
 
@@ -2108,11 +2110,11 @@ async def get_renovation_budget_candidates(
     one the model is on, and why.
 
     Candidates: the analyst override (when set), each PIP / CapEx document
-    (``doc_subtype != 'future'``) with its extracted PIP total, plan date
-    and status, and the OM's broker figure. Precedence is analyst override
-    > latest-dated PIP / CapEx document > OM > seed. Future CapEx documents
-    are listed separately under ``reference_only`` with their items — never
-    in the model. The selection REPORTS ``_load_engine_inputs`` (the same
+    in the PIP lane (``doc_subtype`` ``pip`` or untagged) with its extracted
+    PIP total, plan date and status, and the OM's broker figure. Precedence
+    is analyst override > latest-dated PIP / CapEx document > OM > seed.
+    Historic and Future CapEx documents are listed separately under
+    ``reference_only`` with their own lane's items — never in the model. The selection REPORTS ``_load_engine_inputs`` (the same
     resolution the model runs on); nothing is re-derived here.
     """
     row = (
@@ -3979,15 +3981,16 @@ async def _load_subject_market_and_chain(
 ) -> tuple[str | None, str | None]:
     """Pull the subject's ``"City, ST"`` market + chain-scale label.
 
-    Best-effort: the deals row carries ``city`` and (when present)
-    ``service`` we map onto a chain-scale bucket. Missing
+    Best-effort: the deals row carries ``city``, the analyst's
+    ``positioning`` (R-024 / Sam 2026-10-14 #1: the brand's STR chain
+    scale by default, overridable per deal) and ``service``. Missing
     fields are returned as ``None`` — the comp engine handles that by
     falling back to recency-only weighting + reporting method=median.
     """
     row = (
         await session.execute(
             text(
-                "SELECT city, service FROM deals "
+                "SELECT city, service, positioning FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
             {"id": str(deal_id), "tenant": str(tenant_id)},
@@ -4000,10 +4003,27 @@ async def _load_subject_market_and_chain(
     # No state column on the deals row today; the API expects
     # ``"City, ST"`` so we hand back just the city.
     subject_market = str(city) if city else None
-    # Map ``service`` (Full Service / Select Service / Luxury / Resort)
-    # onto a chain-scale bucket. Approximate but enough to enable the
-    # chain-match weight; the analyst can refine via overrides.
-    service = (m.get("service") or "").strip().lower()
+    return (
+        subject_market,
+        _chain_scale_for_deal_row(m.get("positioning"), m.get("service")),
+    )
+
+
+def _chain_scale_for_deal_row(positioning: object, service: object) -> str | None:
+    """The subject chain scale the comp-sales matcher weights against.
+
+    The deal's ``positioning`` wins whenever it names a chain scale — it
+    is the analyst's per-deal override of the brand's STR scale. Only
+    with no positioning (or the ``default`` sentinel) is ``service``
+    (Full Service / Select Service / Luxury / Resort) mapped onto an
+    approximate bucket, exactly as before.
+    """
+    from ..services.engine_runner import chain_scale_from_positioning
+
+    from_positioning = chain_scale_from_positioning(positioning)
+    if from_positioning is not None:
+        return from_positioning
+    service = (str(service) if service is not None else "").strip().lower()
     if service in ("luxury", "ultra luxury"):
         chain_scale: str | None = "luxury"
     elif service in ("full service", "full-service"):
@@ -4016,7 +4036,7 @@ async def _load_subject_market_and_chain(
         chain_scale = "upper-upscale"
     else:
         chain_scale = None
-    return (subject_market, chain_scale)
+    return chain_scale
 
 
 @router.get(

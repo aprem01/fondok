@@ -292,8 +292,18 @@ def _text(value: Any) -> str | None:
 
 
 def _page(row: Mapping[str, Any]) -> int | None:
+    """``source_page`` as a 1-based int. The extractor emits it as an int,
+    but rows also arrive with ``12.0`` or ``"12"`` (the market readers'
+    ``coerce_page`` tolerates the same); anything that is not a positive
+    whole number is ``None``, never a guess."""
     page = row.get("source_page")
-    return int(page) if isinstance(page, int) and not isinstance(page, bool) else None
+    if page is None or isinstance(page, bool):
+        return None
+    try:
+        n = int(float(str(page).strip()))
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
 
 
 def parse_capex_fields(doc: CapexDocument, fields: Any) -> CapexDocument:

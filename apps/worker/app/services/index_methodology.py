@@ -609,8 +609,17 @@ def resolve_index_methodology(
     }
     for key in ASSUMPTION_KEYS:
         v = coerce_float(override_scalar(overrides, key))
-        if v is not None:
-            assumptions[key] = Figure(value=v, source="override", detail=override_note(overrides, key))
+        if v is None:
+            continue
+        if key in (KEY_MPI_TARGET, KEY_ARI_TARGET):
+            # The panel must print the SAME number the by-year grid and the
+            # model run on: a target typed as a ratio (1.10) is 110 index
+            # points everywhere (``read_targets_by_year`` / ``validate_index_target``).
+            # A legacy out-of-range value stays as stored so the row still
+            # says "Your override" rather than silently showing the default.
+            pts = _index_points(v)
+            v = pts if pts is not None else v
+        assumptions[key] = Figure(value=v, source="override", detail=override_note(overrides, key))
     return IndexMethodologyReading(
         selected=selected,
         selected_source=selected_source,
@@ -1143,18 +1152,24 @@ def build_index_drivers(
     changed: list[str] = []
     for y in reading.years:
         rec = driver_record(y, reading.method)
+        # Join, never overwrite: ``rec["reason"]`` already carries resolve()'s
+        # per-metric explanation for the OTHER metric (e.g. the ADR out-year
+        # gate), which the grid tooltip would otherwise lose.
+        extra: list[str] = []
         if y.occupancy is not None and occ_ok:
             occ_list[y.year - 1] = y.occupancy
         elif y.occupancy is not None:
             rec["occupancy"] = None
             rec["occupancy_status"] = "no_target"
-            rec["reason"] = "Year-1 occupancy is an explicit analyst value, not the STR basis — the target is not applied."
+            extra.append("Occupancy: Year-1 occupancy is an explicit analyst value, not the STR basis — the target is not applied.")
         if y.adr is not None and adr_ok:
             adr_list[y.year - 1] = y.adr
         elif y.adr is not None:
             rec["adr"] = None
             rec["adr_status"] = "no_target"
-            rec["reason"] = "Year-1 ADR is an explicit analyst value, not the STR basis — the target is not applied."
+            extra.append("ADR: Year-1 ADR is an explicit analyst value, not the STR basis — the target is not applied.")
+        if extra:
+            rec["reason"] = "; ".join([*extra, *([rec["reason"]] if rec.get("reason") else [])])
         records.append(rec)
     if not any(v is not None for v in occ_list) and not any(v is not None for v in adr_list):
         return []

@@ -29,8 +29,8 @@ Test/synthetic ingest
 ---------------------
 ``POST /observability/_test/model-call`` accepts a single ``ModelCall``
 JSON body and inserts it into the ``model_calls`` table. The endpoint
-is gated by ``ALLOW_TEST_INGEST=true`` (defaults to true in dev so the
-unit tests work; production sets it false). It exists so tests that
+is gated by ``ALLOW_TEST_INGEST=true`` (default off; the unit-test modules
+that use it set the variable before importing the app). It exists so tests that
 don't run the full agent stack can still validate the aggregation
 math without standing up a Postgres-only fixture.
 """
@@ -60,8 +60,15 @@ router = APIRouter()
 
 
 def _is_test_ingest_enabled() -> bool:
-    """Default-on in dev; set ``ALLOW_TEST_INGEST=false`` in prod."""
-    return (os.environ.get("ALLOW_TEST_INGEST", "true").lower() != "false")
+    """Default-OFF. Set ``ALLOW_TEST_INGEST=true`` to open the synthetic
+    ingest route (the unit tests do).
+
+    Until 2026-10-15 the default was ON unless the operator remembered to
+    set ``false``, so on a deployment without the variable any signed-in
+    analyst could insert made-up ``model_calls`` rows into their own
+    tenant's cost dashboard. A test seam is opt-in, never opt-out.
+    """
+    return os.environ.get("ALLOW_TEST_INGEST", "false").strip().lower() == "true"
 
 
 async def _resolve_scope(auth: AuthContext, all_tenants: bool) -> str | None:
@@ -343,7 +350,7 @@ async def ingest_model_call(
 ) -> dict[str, Any]:
     """Insert a synthetic ModelCall row into the local model_calls table.
 
-    Only enabled when ``ALLOW_TEST_INGEST`` is not set to "false". The
+    Only enabled when ``ALLOW_TEST_INGEST`` is set to "true". The
     endpoint exists so unit tests can validate the observability
     aggregation math without standing up a real agent run. The row is
     stamped with the caller's tenant (FON-93) so the scoped reads above

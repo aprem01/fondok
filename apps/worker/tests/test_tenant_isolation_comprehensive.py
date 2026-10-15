@@ -180,7 +180,11 @@ ENDPOINT_CASES: list[EndpointCase] = [
     EndpointCase("GET", "/deals", "/{deal_id}/memo/edits"),
     # documents_router — deal-scoped reads
     EndpointCase("GET", "/deals", "/{deal_id}/documents"),
-    EndpointCase("GET", "/deals", "/{deal_id}/search"),
+    # ``?q=`` is REQUIRED: without it FastAPI answers 422 before the handler
+    # runs, and until 2026-10-15 that 422 let this row "pass" while the route
+    # itself carried no auth or tenant dependency at all (any holder of a
+    # deal UUID could full-text search its documents with no session).
+    EndpointCase("GET", "/deals", "/{deal_id}/search?q=probe"),
     EndpointCase("GET", "/deals", "/{deal_id}/market-data"),
     EndpointCase(
         "GET", "/deals", "/{deal_id}/comp_set_drift", skip_positive=True
@@ -574,3 +578,112 @@ async def test_tenant_middleware_accepts_scoped_select(
             _os.environ.pop("STRICT_TENANT_ENFORCEMENT", None)
         else:
             _os.environ["STRICT_TENANT_ENFORCEMENT"] = prior
+
+
+# ─────────────────────────── document-level routes (FON-93, 2026-10-15) ─────────
+
+
+@pytest.fixture
+async def two_tenants_with_docs(
+    two_tenants: tuple[TenantFixture, TenantFixture],
+) -> tuple[TenantFixture, TenantFixture, str, str]:
+    """``two_tenants`` plus one ``documents`` row per deal — the per-document
+    routes need a doc id to reach their lookup."""
+    import uuid as _uuid
+
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    tenant_a, tenant_b = two_tenants
+    doc_a, doc_b = str(_uuid.uuid4()), str(_uuid.uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        for doc_id, fx in ((doc_a, tenant_a), (doc_b, tenant_b)):
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO documents (id, deal_id, tenant_id, filename, status,
+                                           content_hash, storage_key)
+                    VALUES (:id, :deal, :tenant, 'probe.pdf', 'FAILED',
+                            'deadbeef', 'probe/key.pdf')
+                    """
+                ),
+                {"id": doc_id, "deal": fx.deal_id, "tenant": fx.tenant_id},
+            )
+        await session.commit()
+    return tenant_a, tenant_b, doc_a, doc_b
+
+
+DOCUMENT_ROUTES: list[tuple[str, str]] = [
+    # Until 2026-10-15 neither route resolved a caller: anyone holding the two
+    # UUIDs could re-fire a paid extraction on another institution's file.
+    ("POST", "/deals/{deal_id}/documents/{doc_id}/reprocess"),
+    ("POST", "/deals/{deal_id}/documents/{doc_id}/extract"),
+    ("POST", "/deals/{deal_id}/documents/{doc_id}/extract?force=true"),
+]
+
+
+@pytest.mark.parametrize("method,template", DOCUMENT_ROUTES, ids=lambda x: x if "/" in x else "")
+@pytest.mark.asyncio
+async def test_document_routes_404_across_tenants_and_401_without_a_caller(
+    method: str,
+    template: str,
+    two_tenants_with_docs: tuple[TenantFixture, TenantFixture, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tenant A on Tenant B's document → 404 (never 2xx, never a background
+    task); the same request with no credentials and the local header path
+    closed → 401 — the posture ``/health.auth.jwt_required`` advertises."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.config import get_settings
+    from app.main import app
+
+    tenant_a, tenant_b, _doc_a, doc_b = two_tenants_with_docs
+    path = template.format(deal_id=tenant_b.deal_id, doc_id=doc_b)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.request(method, path, headers={"X-Tenant-Id": tenant_a.tenant_id})
+        assert resp.status_code == 404, (path, resp.status_code, resp.text[:300])
+        assert "not on this tenant" in resp.text, resp.text
+
+        monkeypatch.setenv("ALLOW_TENANT_HEADER_WITHOUT_JWT", "0")
+        get_settings.cache_clear()
+        try:
+            resp = await client.request(method, path)
+            assert resp.status_code == 401, (path, resp.status_code, resp.text[:300])
+            # The legacy /model stubs used to answer 200 placeholders with no caller.
+            r = await client.post("/model/" + tenant_b.deal_id + "/engines/run", json={"engine": "revenue"})
+            assert r.status_code == 401, r.text
+            r = await client.post("/model/" + tenant_b.deal_id + "/scenarios", json={"name": "probe"})
+            assert r.status_code == 401, r.text
+            r = await client.get(f"/deals/{tenant_b.deal_id}/search?q=probe")
+            assert r.status_code == 401, r.text
+        finally:
+            monkeypatch.setenv("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
+            get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_search_scopes_the_owner_and_404s_the_stranger(
+    two_tenants: tuple[TenantFixture, TenantFixture],
+) -> None:
+    """Owner: 200 with an (empty, SQLite has no document_chunks) hit list.
+    Stranger: 404, not an empty 200 — an empty list would still confirm the
+    deal exists on another tenant."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    tenant_a, tenant_b = two_tenants
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        own = await client.get(
+            f"/deals/{tenant_a.deal_id}/search?q=revpar", headers={"X-Tenant-Id": tenant_a.tenant_id}
+        )
+        assert own.status_code == 200, own.text
+        assert own.json()["hits"] == []
+        other = await client.get(
+            f"/deals/{tenant_b.deal_id}/search?q=revpar", headers={"X-Tenant-Id": tenant_a.tenant_id}
+        )
+        assert other.status_code == 404, other.text

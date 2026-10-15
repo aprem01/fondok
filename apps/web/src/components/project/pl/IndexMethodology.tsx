@@ -279,10 +279,21 @@ function AssumptionRow({
     setEditing(true);
   };
   const save = () => {
-    const n = Number(draft.replace(/[%\s,]/g, ''));
-    if (!Number.isFinite(n) || draft.trim() === '') return;
+    if (draft.trim() === '') return;
     if (needNote && !note.trim()) return;
-    onSave(overrideKey, unit === 'growth' ? n / 100 : n, note.trim());
+    let value: number;
+    if (unit === 'growth') {
+      const n = Number(draft.replace(/[%\s,]/g, ''));
+      if (!Number.isFinite(n)) return;
+      value = n / 100;
+    } else {
+      // Same reading as the by-year grid: a ratio (1.10) is 110 index points,
+      // so the panel, the grid and the model never disagree on the unit.
+      const pts = parseIndexPoints(draft.replace(/%/g, ''));
+      if (pts == null) return;
+      value = pts;
+    }
+    onSave(overrideKey, value, note.trim());
     setEditing(false);
   };
   return (

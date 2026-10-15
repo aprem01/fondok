@@ -87,8 +87,15 @@ class ScenarioResponse(BaseModel):
 
 
 @router.post("/{deal_id}/engines/run", response_model=EngineRunResponse)
-async def run_engine_legacy(deal_id: UUID, body: EngineRunRequest) -> EngineRunResponse:
+async def run_engine_legacy(
+    deal_id: UUID,
+    body: EngineRunRequest,
+    _tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> EngineRunResponse:
     """Legacy stub — kept so existing clients don't 404.
+
+    FON-93 (2026-10-15): resolves the caller like every other route so an
+    unauthenticated request is 401, not a 200 placeholder.
 
     TODO(remove-legacy-model-route): the web app moved to the
     deal-scoped ``/deals/{id}/engines/{name}/run`` route months ago;
@@ -101,8 +108,14 @@ async def run_engine_legacy(deal_id: UUID, body: EngineRunRequest) -> EngineRunR
 
 
 @router.post("/{deal_id}/scenarios", response_model=ScenarioResponse)
-async def create_scenario(deal_id: UUID, body: ScenarioRequest) -> ScenarioResponse:
+async def create_scenario(
+    deal_id: UUID,
+    body: ScenarioRequest,
+    _tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> ScenarioResponse:
     """Stub: spawns a what-if scenario derived from the base case.
+
+    FON-93 (2026-10-15): resolves the caller (401 without a session).
 
     TODO(scenario-engine): no real scenario runner yet. The plan is
     to overlay ``ScenarioRequest.overrides`` on the base assumptions

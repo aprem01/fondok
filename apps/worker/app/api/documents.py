@@ -398,7 +398,13 @@ async def _fail_interrupted_document(
     BaseException (``asyncio.CancelledError`` on worker shutdown / task
     cancellation, ``KeyboardInterrupt``, ``SystemExit``). Marks the row
     FAILED only if it is still in a processing status — the inner
-    handlers normally got there first."""
+    handlers normally got there first.
+
+    ``UPLOADED`` is included here on purpose: the upload job sits at
+    UPLOADED between the parse commit and the EXTRACTING stamp (context-
+    store embedding, then the extractor-slot wait), and a cancellation in
+    that window used to leave the row at UPLOADED with no task behind it —
+    a status the web renders as in-flight and the watchdog never scans."""
     kind = "cancelled" if isinstance(exc, asyncio.CancelledError) else "other"
     message = (
         ERROR_KIND_MESSAGES["cancelled"]
@@ -411,7 +417,7 @@ async def _fail_interrupted_document(
         error_kind=kind,
         error_message=message,
         error_raw=repr(exc),
-        expected_statuses=DOC_PROCESSING_STATUSES,
+        expected_statuses=DOC_PROCESSING_STATUSES | {DOC_STATUS_UPLOADED},
     )
 
 
@@ -2563,9 +2569,9 @@ async def upload_documents(
     # plausibility window (1900-2100).
     fiscal_years: list[str] | None = Form(None),
     # FON-41 / R-036 — optional per-file subcategory, index-aligned with
-    # ``files`` exactly like ``fiscal_years``. CAPEX accepts ``future`` /
-    # ``historic``; anything else (or a subtype on another doc_type)
-    # collapses to NULL.
+    # ``files`` exactly like ``fiscal_years``. CAPEX accepts ``pip`` /
+    # ``future`` / ``historic``; anything else (or a subtype on another
+    # doc_type) collapses to NULL.
     user_doc_subtypes: list[str] | None = Form(None),
 ) -> list[DocumentRecord]:
     """Persist one-or-more documents against ``deal_id`` and kick off
@@ -3355,9 +3361,16 @@ async def search_deal_chunks(
     deal_id: UUID,
     q: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     k: int = 10,
 ) -> SearchResponse:
     """Search across every chunked document on a deal.
+
+    FON-93 (2026-10-15): this route carried no auth dependency at all —
+    any caller holding a deal UUID could full-text search that deal's
+    document text with no session. It now resolves the caller's tenant
+    like every other deal-scoped route, 404s on a deal the tenant does
+    not own, and scopes the chunk query by ``tenant_id``.
 
     Phase 3 of the dynamic-extensibility refactor. Backs the data-room
     search box + any future agent tool that needs to ground answers in
@@ -3371,6 +3384,9 @@ async def search_deal_chunks(
     from ..extraction import embeddings
     from ..extraction.context_store import search_chunks
 
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     if not q or not q.strip():
         return SearchResponse(deal_id=deal_id, query=q or "", hits=[])
 
@@ -3378,6 +3394,7 @@ async def search_deal_chunks(
     hits = await search_chunks(
         session,
         deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
         query=q.strip(),
         k=k,
     )
@@ -3706,6 +3723,13 @@ def _aggregate_market_data(
         if doc_name and doc_type not in doc_names:
             doc_names[doc_type] = doc_name
 
+        # The comp-set roster must come from ONE report (the newest
+        # extraction that lists one), never a by-index merge of two: with a
+        # 2024 and a 2025 STR Trend on the deal, ``compset.1.keys`` from the
+        # older report must not overwrite the newer report's row. Bucket this
+        # extraction's roster separately and adopt it only when no newer
+        # extraction already supplied one.
+        row_compset: dict[int, dict[str, Any]] = {}
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -3715,7 +3739,7 @@ def _aggregate_market_data(
             value = f.get("value")
             page = _coerce_int(f.get("source_page") or f.get("page_number") or f.get("page"))
             if doc_type == "STR_TREND":
-                _bucket_str_trend(name, value, str_trend_fields, compset_rows)
+                _bucket_str_trend(name, value, str_trend_fields, row_compset)
             elif doc_type == "CBRE_HORIZONS":
                 _bucket_cbre(name, value, cbre_fields)
             elif doc_type == "PNL_BENCHMARK":
@@ -3725,6 +3749,8 @@ def _aggregate_market_data(
             key = f"{doc_type}:{name.lower()}"
             if key not in meta:
                 meta[key] = _FieldMeta(page=page, doc_name=doc_name, doc_type=doc_type)
+        if row_compset and not compset_rows:
+            compset_rows.update(row_compset)
 
     str_trend = _build_str_trend_block(
         str_trend_fields, compset_rows, meta=meta, doc_name=doc_names.get("STR_TREND")
@@ -3810,7 +3836,9 @@ def _bucket_str_trend(
             idx = int(idx_str)
         except (ValueError, IndexError):
             return
-        compset.setdefault(idx, {})[attr] = value
+        # First value seen wins (chunks of one extraction arrive in order;
+        # across extractions the caller keeps only the newest roster).
+        compset.setdefault(idx, {}).setdefault(attr, value)
         return
     # Subject + indices + rollups land in the flat dict so the most
     # recent extraction's value wins (don't overwrite if already set
@@ -5358,11 +5386,17 @@ async def reprocess_document(
     doc_id: UUID,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> ExtractionStartResponse:
     """Re-run parse + extract for a doc that previously hit PARSE_FAILED
     or FAILED. Pulls the body back from raw storage by content_hash and
     re-fires `_run_parse_and_extract`. Returns 404 if the row or the
     raw bytes are missing.
+
+    FON-93 (2026-10-15): the route resolved no caller at all — anyone
+    with the two UUIDs could re-fire a paid extraction on another
+    institution's document. The lookup is now scoped to the caller's
+    tenant (cross-tenant → 404, same as ``/download``).
 
     Sam's QA reported that documents stuck in PARSE_FAILED have no
     user-driven retry path. This endpoint backs the Retry button in
@@ -5377,22 +5411,24 @@ async def reprocess_document(
                 SELECT id, deal_id, tenant_id, filename, content_hash,
                        storage_key, status, uploaded_at /*status_changed_at*/
                   FROM documents
-                 WHERE id = :id AND deal_id = :deal_id
+                 WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant
                 """,
                 )
             ),
-            {"id": str(doc_id), "deal_id": str(deal_id)},
+            {"id": str(doc_id), "deal_id": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
     m = row._mapping
     filename = m["filename"] or "upload.pdf"
     content_hash = m["content_hash"]
-    tenant_id = str(m["tenant_id"])
+    tenant_id = str(tenant_id)
     storage_key = m["storage_key"]
 
     # FON-91 — a row still moving (younger than EXTRACTION_STUCK_MINUTES)
@@ -5728,10 +5764,11 @@ class ReclassifyBody(BaseModel):
 
     doc_type: str | None = None
     fiscal_year: int | None = None
-    # FON-41 / R-036 — CAPEX subcategory (``future`` | ``historic``).
-    # Omitted = unchanged; explicit ``null`` clears it (Data Room then
-    # files the doc under Historic CapEx). Moving a doc OFF CAPEX always
-    # clears it.
+    # FON-41 / R-036 + the PIP lane — CAPEX subcategory (``pip`` |
+    # ``future`` | ``historic``). Omitted = unchanged; explicit ``null``
+    # clears it (an untagged CAPEX file is classifier-assigned: it may
+    # ground the model and the Data Room files it under PIP / Renovation
+    # Budget). Moving a doc OFF CAPEX always clears it.
     doc_subtype: str | None = None
 
 
@@ -6443,6 +6480,7 @@ async def extract_document(
     doc_id: UUID,
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     force: Annotated[
         bool,
         Query(
@@ -6475,20 +6513,25 @@ async def extract_document(
                     """
                 SELECT id, deal_id, tenant_id, status, uploaded_at /*status_changed_at*/
                   FROM documents
-                 WHERE id = :id AND deal_id = :deal_id
+                 WHERE id = :id AND deal_id = :deal_id AND tenant_id = :tenant
                 """,
                 )
             ),
-            {"id": str(doc_id), "deal_id": str(deal_id)},
+            {"id": str(doc_id), "deal_id": str(deal_id), "tenant": str(tenant_id)},
         )
     ).first()
     if row is None:
+        # FON-93 (2026-10-15): the lookup is scoped to the caller's tenant —
+        # before, this route resolved no caller and any holder of the two
+        # UUIDs could fire a paid extraction on another institution's file.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
 
-    tenant_id = str(row._mapping["tenant_id"])
+    tenant_id = str(tenant_id)
 
     # FON-91 — a row still moving (younger than EXTRACTION_STUCK_MINUTES)
     # is refused with 409 so two pipelines never run on one document; an

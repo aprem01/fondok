@@ -46,6 +46,23 @@ Shipped 2026-10-14 on `main`; live as soon as the worker deploys.
 6. **Web:** the sidebar `OrganizationSwitcher` hides the personal account
    and the "Create organization" action, so an analyst cannot mint a
    workspace from the app. (Clerk also needs the dashboard toggle — §5.)
+7. **Every deal-scoped route resolves a caller (2026-10-15).** A route
+   audit found three that did not: `GET /deals/{id}/search` (full-text
+   search over a deal's document text with no session at all) and
+   `POST …/documents/{doc}/reprocess` + `POST …/documents/{doc}/extract`
+   (re-fire a paid extraction on any document given its two UUIDs). All
+   three now take `Depends(get_tenant_id)`, scope their lookup by the
+   caller's tenant (cross-tenant → 404, no caller → 401) and the chunk
+   search carries `tenant_id` in its SQL. The legacy `/model/{id}/…`
+   stubs require a caller too. Locked by
+   `tests/test_tenant_isolation_comprehensive.py` (the `/search` catalog
+   row now sends `?q=` — without it FastAPI 422'd before the handler and
+   the probe proved nothing) and
+   `test_document_routes_404_across_tenants_and_401_without_a_caller`.
+8. **Clerk session-token v2 claims.** The worker reads the org from
+   top-level `org_id` / `org_role` (v1) **or** `o.id` / `o.rol` (v2), so a
+   Clerk instance upgrade does not turn every session into
+   `409 no_active_organization` (`tests/test_rbac.py::test_v2_session_token_org_claims_resolve_tenant_and_role`).
 
 The header path (`ALLOW_TENANT_HEADER_WITHOUT_JWT`) is unchanged: off by
 default, on only in `tests/conftest.py` and a developer's local `.env`.
@@ -185,7 +202,12 @@ skipped, so the folded deals opened with an empty Data Room.
 `--created-after` / `--created-before` filter each table on **its own**
 timestamp column (`TABLE_TIMESTAMP_COLUMNS` in the script: `documents` →
 `uploaded_at`, `engine_outputs` → `started_at`, `pending_batches` →
-`submitted_at`, everything else `created_at`).
+`submitted_at`, everything else `created_at`). On Postgres the bound is
+bound as a tz-aware `datetime` (a date-only value is midnight UTC);
+until 2026-10-15 it was bound as the raw string, which asyncpg refuses
+against `TIMESTAMPTZ`, so every windowed count errored and the run
+refused with exit 3 — the window had only ever worked on SQLite. A
+malformed bound now exits 2 before the database is touched.
 `tests/test_reassign_tenant_rows_script.py` checks the map against the
 migrations' DDL, so adding a tenant-scoped table without mapping it fails
 the suite. Each table is still moved in its own transaction; a write-time
@@ -216,8 +238,15 @@ Defense-in-depth below the application: even a query that forgets its
   `fondok_app` role (`LOGIN NOBYPASSRLS`), grants DML, then for every
   tenant-scoped table: `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL
   SECURITY`, and a policy
-  `USING (tenant_id = current_setting('app.tenant_id', true)::uuid)` with
-  the same `WITH CHECK`. Idempotent; **not** run at startup.
+  `USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)`
+  with the same `WITH CHECK`. The `NULLIF` matters: once any transaction on
+  a pooled connection has published the GUC, a later transaction that
+  publishes nothing reads `''` (not NULL) from `current_setting`, and
+  `''::uuid` raises `invalid input syntax for type uuid` — every unscoped
+  statement on that connection would 500 instead of seeing zero rows
+  (verified on Postgres 16, 2026-10-15). The policy is dropped and
+  recreated on each run, so re-applying the file upgrades an older
+  policy. Idempotent; **not** run at startup.
 * `app/database.py` — an `after_begin` listener registered **once, on the
   Session class** (`TenantSession`, the sync session behind every
   `AsyncSession` the factory builds). When `DB_SET_TENANT_GUC` is on and

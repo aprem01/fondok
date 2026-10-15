@@ -11,12 +11,18 @@
 --   each transaction (apps/worker/app/database.py, behind the
 --   DB_SET_TENANT_GUC setting). ``true`` = transaction-local, so the value
 --   can never leak to the next request on a pooled connection.
--- * Every policy is ``USING tenant_id = current_setting('app.tenant_id')::uuid``
+-- * Every policy is
+--   ``USING tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid``
 --   for reads/updates/deletes and the same expression as ``WITH CHECK`` for
---   writes. ``current_setting(name, true)`` returns NULL when the GUC is
---   unset; NULL = anything is NULL, which Postgres treats as false — so a
---   connection that never published a tenant sees ZERO rows and can write
---   none. Fail closed.
+--   writes. ``current_setting(name, true)`` returns NULL only while the
+--   placeholder has NEVER been set on the session; once any transaction on
+--   a pooled connection has run ``set_config(..., true)`` the placeholder
+--   exists and every later transaction that publishes nothing reads the
+--   EMPTY STRING instead — and ``''::uuid`` raises ``invalid input syntax
+--   for type uuid`` (verified on Postgres 16, 2026-10-15). ``NULLIF`` folds
+--   that back to NULL; NULL = anything is NULL, which Postgres treats as
+--   false — so a connection that published no tenant sees ZERO rows and can
+--   write none, instead of 500ing. Fail closed, not fail loud.
 -- * FORCE ROW LEVEL SECURITY makes the policy apply to the table OWNER too.
 --   Even so, the worker must connect as a NON-owner role (``fondok_app``)
 --   that has no BYPASSRLS — a superuser or BYPASSRLS role ignores RLS
@@ -93,30 +99,31 @@ BEGIN
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
 
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies
-             WHERE schemaname = 'public' AND tablename = t
-               AND policyname = 'tenant_isolation'
-        ) THEN
-            EXECUTE format(
-                'CREATE POLICY tenant_isolation ON public.%I '
-                'FOR ALL '
-                'USING (tenant_id = current_setting(''app.tenant_id'', true)::uuid) '
-                'WITH CHECK (tenant_id = current_setting(''app.tenant_id'', true)::uuid)',
-                t
-            );
-        END IF;
+        -- Drop-and-recreate (not IF NOT EXISTS) so re-running the file
+        -- after a policy-expression change upgrades the policy in place;
+        -- the whole file runs in one transaction, so there is no window
+        -- with the table unprotected.
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON public.%I', t);
+        EXECUTE format(
+            'CREATE POLICY tenant_isolation ON public.%I '
+            'FOR ALL '
+            'USING (tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid) '
+            'WITH CHECK (tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid)',
+            t
+        );
     END LOOP;
 END
 $$;
 
 COMMIT;
 
--- Verification (run as fondok_app):
+-- Verification (run as fondok_app, all in ONE session):
 --   SELECT count(*) FROM deals;                                  -- 0 (no GUC)
 --   BEGIN; SELECT set_config('app.tenant_id', '<tenant uuid>', true);
 --   SELECT count(*) FROM deals;                                  -- that tenant's deals
 --   COMMIT;
+--   SELECT current_setting('app.tenant_id', true);               -- '' (placeholder persists)
+--   SELECT count(*) FROM deals;                                  -- 0 again — NOT an error
 --
 -- Rollback (owner role):
 --   ALTER TABLE <t> NO FORCE ROW LEVEL SECURITY;

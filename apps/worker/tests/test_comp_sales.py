@@ -568,3 +568,22 @@ def test_comp_seller_defaults_null() -> None:
     result = build_comp_set(deal_id="deal-1", transactions=[comp], today=_TODAY)
     assert result.transactions[0].seller is None
     assert result.transactions[0].buyer is None
+
+
+# ───────── subject chain scale from the deal row (Sam 2026-10-14 #1) ─────────
+
+
+def test_deal_positioning_wins_over_service_for_the_subject_chain_scale() -> None:
+    """The analyst's per-deal positioning (the brand's STR chain scale by
+    default, overridable on Overview) is the subject chain scale the comp
+    matcher weights against; ``service`` is only the fallback."""
+    from app.api.deals import _chain_scale_for_deal_row
+
+    # Positioning set → it wins, whatever ``service`` says.
+    assert _chain_scale_for_deal_row("luxury", "Select Service") == "luxury"
+    assert _chain_scale_for_deal_row("Upper Midscale", "Full Service") == "Upper Midscale"
+    # No positioning / the wizard's "default" sentinel → the service bucket.
+    assert _chain_scale_for_deal_row(None, "Full Service") == "upper-upscale"
+    assert _chain_scale_for_deal_row("default", "Select Service") == "upper-midscale"
+    assert _chain_scale_for_deal_row("", "Luxury") == "luxury"
+    assert _chain_scale_for_deal_row("default", None) is None

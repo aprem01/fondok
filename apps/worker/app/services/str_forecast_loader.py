@@ -192,7 +192,11 @@ def _bucket_str_trend_row(
         period = _normalize_period(period_raw)
         if period is None:
             return
-        monthly.setdefault(period, {})[attr] = value
+        # Rows arrive newest-extraction-first (``_STR_ROWS_SQL`` orders by
+        # ``created_at DESC``), so the FIRST value seen for a (month, attr)
+        # is the newest extraction's — keep it. Plain assignment let the
+        # oldest extraction overwrite a re-extraction's fix.
+        monthly.setdefault(period, {}).setdefault(attr, value)
         return
 
     if lname.startswith("ttm_performance.compset."):
@@ -202,7 +206,7 @@ def _bucket_str_trend_row(
             idx = int(idx_str)
         except (ValueError, IndexError):
             return
-        compset.setdefault(idx, {})[attr] = value
+        compset.setdefault(idx, {}).setdefault(attr, value)  # newest wins
         return
 
     if lname.startswith("ttm_performance.indices."):

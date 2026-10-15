@@ -113,6 +113,30 @@ async def test_cache_stats_endpoint(deal_id: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ingest_is_opt_in(deal_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ALLOW_TEST_INGEST`` unset or anything but ``true`` → 404. Until
+    2026-10-15 the default was ON, so a deployment that never set the
+    variable let any signed-in analyst insert made-up cost rows."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    await _ensure_schema()
+    body = {"deal_id": deal_id, "agent_name": "extractor", "model": "m"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for value in (None, "false", "1", "yes", ""):
+            if value is None:
+                monkeypatch.delenv("ALLOW_TEST_INGEST", raising=False)
+            else:
+                monkeypatch.setenv("ALLOW_TEST_INGEST", value)
+            r = await client.post("/observability/_test/model-call", json=body)
+            assert r.status_code == 404, (value, r.text)
+        monkeypatch.setenv("ALLOW_TEST_INGEST", "true")
+        r = await client.post("/observability/_test/model-call", json=body)
+        assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
 async def test_agent_costs_aggregation(deal_id: str) -> None:
     """Multiple calls across two agents — per-agent breakdown sums correctly."""
     from httpx import ASGITransport, AsyncClient
