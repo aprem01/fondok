@@ -28,6 +28,13 @@ Safety knobs:
                   set the ``documents`` count errored and the table was
                   SKIPPED while deals / extractions / audit rows moved: the
                   folded deals opened with an empty Data Room.
+                  On Postgres the bound is bound as a tz-aware ``datetime``
+                  (``_window_value``): asyncpg refuses a ``str`` against a
+                  TIMESTAMPTZ column (``DataError: expected a datetime.date
+                  or datetime.datetime instance, got 'str'``), which until
+                  2026-10-15 made EVERY windowed count fail and the run
+                  refuse with exit 3 — the window only ever worked on the
+                  SQLite test DB. A date-only value means midnight UTC.
 * --tables      — comma-separated list; default is all tenant-scoped
                   tables discovered at import time
 
@@ -55,6 +62,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -120,17 +128,51 @@ def timestamp_column(table: str) -> str:
     return TABLE_TIMESTAMP_COLUMNS[table]
 
 
-def _window_sql(table: str, since: str | None, until: str | None, params: dict) -> list[str]:
+def parse_window_bound(raw: str) -> datetime:
+    """``--created-after`` / ``--created-before`` → tz-aware UTC ``datetime``.
+
+    Accepts an ISO date (``2026-06-01`` → midnight UTC) or an ISO datetime;
+    a naive datetime is taken as UTC. Raises ``ValueError`` on anything
+    else so ``main`` can refuse the run before touching the database.
+    """
+    value = datetime.fromisoformat(raw.strip())
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value
+
+
+def _window_value(engine, raw: str) -> datetime | str:
+    """The bind value for one window bound on the live dialect.
+
+    asyncpg encodes a TIMESTAMPTZ parameter only from a ``datetime`` /
+    ``date`` — a ``str`` raises ``DataError`` — so Postgres gets the parsed
+    datetime. SQLite stores these columns as ISO TEXT and compares strings,
+    so it keeps the ISO text the operator typed (an aiosqlite-adapted
+    datetime would compare as ``YYYY-MM-DD HH:MM:SS+00:00`` against rows
+    written as ``YYYY-MM-DDTHH:MM:SS`` and sort the ``T`` wrong).
+    """
+    parsed = parse_window_bound(raw)  # validates on both dialects
+    # ``AsyncEngine`` and ``Engine`` both expose ``.dialect``; anything that
+    # does not is treated as the production dialect (Postgres).
+    dialect_name = getattr(getattr(engine, "dialect", None), "name", "") or ""
+    if dialect_name == "sqlite":
+        return raw.strip()
+    return parsed
+
+
+def _window_sql(
+    engine, table: str, since: str | None, until: str | None, params: dict
+) -> list[str]:
     """``WHERE`` fragments for the timestamp window, binding into ``params``."""
     where: list[str] = []
     if since or until:
         col = timestamp_column(table)
         if since:
             where.append(f"{col} >= :since")
-            params["since"] = since
+            params["since"] = _window_value(engine, since)
         if until:
             where.append(f"{col} < :until")
-            params["until"] = until
+            params["until"] = _window_value(engine, until)
     return where
 
 
@@ -138,7 +180,7 @@ async def _count(engine, table: str, tenant: UUID, since: str | None, until: str
     """Rows on ``tenant`` within the window. Raises on any DB / map error —
     the caller turns that into a refused run, never a skipped table."""
     params: dict = {"tenant": str(tenant)}
-    where = ["tenant_id = :tenant", *_window_sql(table, since, until, params)]
+    where = ["tenant_id = :tenant", *_window_sql(engine, table, since, until, params)]
     sql = f"SELECT COUNT(*) FROM {table} WHERE {' AND '.join(where)}"
     async with engine.begin() as conn:
         row = (await conn.execute(text(sql), params)).scalar_one()
@@ -147,7 +189,7 @@ async def _count(engine, table: str, tenant: UUID, since: str | None, until: str
 
 async def _reassign(engine, table: str, from_tenant: UUID, to_tenant: UUID, since: str | None, until: str | None) -> int:
     params: dict = {"from_tenant": str(from_tenant), "to_tenant": str(to_tenant)}
-    where = ["tenant_id = :from_tenant", *_window_sql(table, since, until, params)]
+    where = ["tenant_id = :from_tenant", *_window_sql(engine, table, since, until, params)]
     sql = f"UPDATE {table} SET tenant_id = :to_tenant WHERE {' AND '.join(where)}"
     async with engine.begin() as conn:
         result = await conn.execute(text(sql), params)
@@ -206,6 +248,15 @@ async def main() -> int:
     if source_uuid == target_uuid:
         print("ERROR: source and target tenant are the same — nothing to do", file=sys.stderr)
         return 2
+
+    for flag, raw in (("--created-after", args.created_after), ("--created-before", args.created_before)):
+        if raw is None:
+            continue
+        try:
+            parse_window_bound(raw)
+        except ValueError:
+            print(f"ERROR: {flag} {raw!r} is not an ISO date/datetime (e.g. 2026-06-01)", file=sys.stderr)
+            return 2
 
     tables = [t.strip() for t in args.tables.split(",") if t.strip()]
 

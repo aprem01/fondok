@@ -66,8 +66,10 @@ export interface CoverageFile {
    *  flagged (no line is rendered). */
   reviewReason?: string | null;
   fiscalYear: number | null;
-  /** FON-41 / R-036 — the worker's ``doc_subtype`` (CAPEX: ``future`` |
-   *  ``historic``). Null / absent groups a CAPEX file under Historic CapEx. */
+  /** FON-41 / R-036 + the PIP lane — the worker's ``doc_subtype`` (CAPEX:
+   *  ``pip`` | ``historic`` | ``future``). Null / absent is classifier-assigned
+   *  and may ground the model, so it groups under PIP / Renovation Budget
+   *  (lib/docSubtype.effectiveDocSubtype). */
   docSubtype?: string | null;
   /** Upstream doc status (UPLOADED / EXTRACTED / FAILED / …) — drives the
    *  processing-state badge (FON-40). */

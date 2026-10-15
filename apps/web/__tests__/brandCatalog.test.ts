@@ -14,6 +14,8 @@ import {
   brandChain,
   brandDefaultPositioning,
   brandFamilies,
+  brandPositioningLabel,
+  findBrand,
   positioningTiers,
   searchBrandFamilies,
 } from '@/lib/mockData';
@@ -124,5 +126,27 @@ describe('R-024 — default positioning per brand', () => {
     expect(brandDefaultPositioning('Independent / Unflagged')).toBeNull();
     expect(brandDefaultPositioning('Design Hotels')).toBeNull();
     expect(brandDefaultPositioning(null)).toBeNull();
+  });
+});
+
+describe('Sam 2026-10-14 #1 — the label shown beside a brand is its STR chain scale', () => {
+  it('uses the published STR scale where STR lists the brand, else the catalog classification', () => {
+    // STR places Holiday Inn in Upper Midscale; the legacy catalog tier reads Upscale.
+    expect(brandPositioningLabel(findBrand('Holiday Inn')!.brand)).toBe('Upper Midscale');
+    expect(brandPositioningLabel(findBrand('Kimpton')!.brand)).toBe('Upper Upscale');
+    // Not in STR's table → the catalog's own classification stays.
+    expect(brandPositioningLabel(findBrand('Equinox Hotels')!.brand)).toBe('Luxury');
+    expect(brandPositioningLabel(findBrand('Independent / Unflagged')!.brand)).toBe('Various');
+  });
+
+  it('agrees with the positioning the brand pre-fills, for every brand with a single scale', () => {
+    const byLabel = new Map(positioningTiers.map((p) => [p.label, p.id]));
+    for (const f of brandFamilies) {
+      for (const b of f.brands) {
+        const label = brandPositioningLabel(b);
+        if (label === 'Various') continue;
+        expect(brandDefaultPositioning(b.name), b.name).toBe(byLabel.get(label));
+      }
+    }
   });
 });

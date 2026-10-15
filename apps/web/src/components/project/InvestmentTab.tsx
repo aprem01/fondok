@@ -515,6 +515,7 @@ export default function InvestmentTab() {
             dealId={dealId}
             engineName="capital"
             runMode="all"
+            lastRunRows={outputs ? Object.values(outputs.engines ?? {}) : undefined}
             onRunStart={() => setComputing(true)}
             onRunComplete={() => {
               setComputing(false);
@@ -681,6 +682,7 @@ export default function InvestmentTab() {
           dealId={dealId}
           engineName="capital"
           runMode="all"
+          lastRunRows={outputs ? Object.values(outputs.engines ?? {}) : undefined}
           onRunStart={() => setComputing(true)}
           onRunComplete={() => {
             setComputing(false);

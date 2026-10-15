@@ -658,3 +658,55 @@ async def test_engine_falls_through_to_cbre_when_library_empty() -> None:
     assert portfolio_tagged == [], (
         f"unexpected portfolio_pnl tags with empty library: {portfolio_tagged}"
     )
+
+
+@pytest.mark.asyncio
+async def test_default_positioning_is_not_a_chain_scale_gate() -> None:
+    """Sam 2026-10-14 #1 / R-024 — ``positioning = 'default'`` is the wizard's
+    "no tier chosen" sentinel, not a chain scale. It used to be handed to the
+    library gate verbatim, where ``"default"`` matched no tagged entry and the
+    firm's roll-up silently dropped out; an unknown scale must accept every
+    entry instead (degraded matching beats no library at all)."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_PORTFOLIO_PNL,
+        _load_engine_inputs,
+        chain_scale_from_positioning,
+    )
+
+    assert chain_scale_from_positioning("default") is None
+    assert chain_scale_from_positioning("  ") is None
+    assert chain_scale_from_positioning(None) is None
+    assert chain_scale_from_positioning("upper-upscale") == "upper-upscale"
+    assert chain_scale_from_positioning("Upper Upscale") == "Upper Upscale"
+
+    async with _client() as c:
+        r = await c.post(
+            "/portfolio-library",
+            json=_entry_body(
+                "Upper Upscale roll-up",
+                chain_scales=["Upper Upscale"],
+                expense_ratios={"rooms_dept_pct": 0.27},
+            ),
+        )
+        assert r.status_code == 201, r.text
+
+    factory = get_session_factory()
+
+    deal_default = uuid4()
+    await _insert_deal_row(deal_id=deal_default, positioning="default")
+    async with factory() as session:
+        base = await _load_engine_inputs(
+            session, str(deal_default), tenant_id=_TENANT
+        )
+    assert base["__sources__"].get("rooms_dept_pct") == SOURCE_PORTFOLIO_PNL
+
+    # The web stores the tier id (dashes, lower case); the gate must read it
+    # as the same scale as the STR label the library entry was tagged with.
+    deal_id_form = uuid4()
+    await _insert_deal_row(deal_id=deal_id_form, positioning="upper-upscale")
+    async with factory() as session:
+        base = await _load_engine_inputs(
+            session, str(deal_id_form), tenant_id=_TENANT
+        )
+    assert base["__sources__"].get("rooms_dept_pct") == SOURCE_PORTFOLIO_PNL

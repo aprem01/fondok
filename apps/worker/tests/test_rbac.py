@@ -586,3 +586,40 @@ async def test_normalize_clerk_role() -> None:
     assert normalize_clerk_role("") == "unknown"
     # Custom role slug passes through bare.
     assert normalize_clerk_role("org:analyst") == "analyst"
+
+
+# ─────────────────────── Clerk session-token v2 claim shape ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_v2_session_token_org_claims_resolve_tenant_and_role(_rsa_key) -> None:
+    """Clerk v2 session tokens carry the org under ``o`` (``o.id`` /
+    ``o.rol``) instead of top-level ``org_id`` / ``org_role``. The worker
+    must read either shape — a Clerk instance upgrade must not turn every
+    session into 409 ``no_active_organization``."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.deals import coerce_org_tenant_id
+    from app.main import app
+
+    await _ensure_schema()
+    admin_v2 = _sign(
+        _rsa_key,
+        {"sub": "user_v2admin", "v": 2, "o": {"id": "org_V2ORG", "rol": "admin", "slg": "v2"}},
+    )
+    member_v2 = _sign(
+        _rsa_key,
+        {"sub": "user_v2member", "v": 2, "o": {"id": "org_V2ORG", "rol": "member", "slg": "v2"}},
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/admin/cost", headers={"Authorization": f"Bearer {admin_v2}"})
+        assert r.status_code == 200, r.text
+        assert r.json()["tenant_id"] == str(coerce_org_tenant_id("org_V2ORG"))
+        r = await client.get("/admin/cost", headers={"Authorization": f"Bearer {member_v2}"})
+        assert r.status_code == 403, r.text
+        r = await client.get("/deals", headers={"Authorization": f"Bearer {member_v2}"})
+        assert r.status_code == 200, r.text
+        # ``o`` present but not an org → still refused, never guessed.
+        bogus = _sign(_rsa_key, {"sub": "user_x", "v": 2, "o": {"id": "user_abc", "rol": "admin"}})
+        r = await client.get("/deals", headers={"Authorization": f"Bearer {bogus}"})
+        assert r.status_code == 409, r.text

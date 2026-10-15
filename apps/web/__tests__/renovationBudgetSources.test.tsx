@@ -80,7 +80,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import RenovationBudgetSources, {
-  prefillNote, fmtPlanDate, SOURCES_TITLE, REFERENCE_ONLY_TITLE, USE_THIS_LABEL, IN_THE_MODEL_LABEL,
+  prefillNote, fmtPlanDate, referenceLaneLabel, SOURCES_TITLE, REFERENCE_ONLY_TITLE, USE_THIS_LABEL, IN_THE_MODEL_LABEL,
 } from '@/components/project/RenovationBudgetSources';
 
 beforeEach(() => { candidatesSpy.mockClear(); fixture = FIXTURE; });
@@ -138,6 +138,49 @@ describe('RenovationBudgetSources — the candidate list', () => {
     expect(within(ref).getByText('Future CapEx — reference only, never incorporated in the model.')).toBeInTheDocument();
     // Never offered as a candidate.
     expect(within(ref).queryByText(USE_THIS_LABEL)).toBeNull();
+  });
+
+  it('labels a Historic CapEx ledger by its own lane (never "Future CapEx") and prints its by-year totals', async () => {
+    fixture = {
+      ...FIXTURE,
+      reference_only: [
+        {
+          id: 'document:hist', lane: 'historic', lane_label: 'Historic CapEx', document_id: 'doc-hist',
+          filename: 'CapEx 2022-2024.xlsx', date: '2026-09-01', date_basis: 'plan_date', prepared_by: null,
+          total_usd: 1_000_000, extracted: true, pip_total_usd: 12_000_000,
+          items: [{ index: 1, name: 'Chiller', year: 2022, usd: 300_000, category: 'building_systems' }],
+          by_year: { '2023': 700_000, '2022': 300_000 },
+          reason: 'Historic CapEx — reference only, never incorporated in the model. It states a PIP total; re-tag it as PIP / Renovation budget in the Data Room to make it a candidate.',
+        },
+        FIXTURE.reference_only[0],
+      ],
+    };
+    render(<RenovationBudgetSources dealId="deal-uuid-1" live onUse={vi.fn()} defaultOpen />);
+    const ref = await screen.findByTestId('renovation-budget-reference-only');
+    const rows = within(ref).getAllByTestId('renovation-reference-doc');
+    expect(rows).toHaveLength(2);
+    const hist = rows[0];
+    expect(hist.getAttribute('data-lane')).toBe('historic');
+    expect(within(hist).getByText('Historic CapEx')).toBeInTheDocument();
+    expect(within(hist).queryByText('Future CapEx')).toBeNull();
+    expect(within(hist).getByText('$1,000,000')).toBeInTheDocument();
+    const byYear = within(hist).getByTestId('renovation-reference-by-year');
+    // Sorted by year, as printed — not by the object's key order.
+    expect(byYear.textContent).toBe('By year:2022 $300,0002023 $700,000');
+    expect(within(hist).getByText(/re-tag it as PIP \/ Renovation budget/)).toBeInTheDocument();
+    // The Future CapEx row keeps its own lane label and has no by-year block.
+    const fut = rows[1];
+    expect(within(fut).getByText('Future CapEx')).toBeInTheDocument();
+    expect(within(fut).queryByTestId('renovation-reference-by-year')).toBeNull();
+    // Neither lane is ever offered as a candidate.
+    expect(within(ref).queryByText(USE_THIS_LABEL)).toBeNull();
+  });
+
+  it('referenceLaneLabel falls back by lane id, then to Future CapEx for a worker that sends neither field', () => {
+    expect(referenceLaneLabel({ lane: 'historic' })).toBe('Historic CapEx');
+    expect(referenceLaneLabel({ lane: 'future' })).toBe('Future CapEx');
+    expect(referenceLaneLabel({})).toBe('Future CapEx');
+    expect(referenceLaneLabel({ lane: 'historic', lane_label: 'Historic CapEx (ledger)' })).toBe('Historic CapEx (ledger)');
   });
 
   it('"Use this" prefills the justification from the document and date, lets the analyst edit it, and writes the override through onUse', async () => {

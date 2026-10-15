@@ -107,8 +107,18 @@ async def get_current_auth(
                 detail="invalid or expired session token",
             )
         user_id = claims.get("sub")
-        org_id = claims.get("org_id")
-        org_role_raw = claims.get("org_role")
+        # Clerk session-token claims. v1 tokens carry top-level ``org_id``
+        # / ``org_role``; v2 tokens (the default for newer Clerk
+        # instances) move them under ``o`` as ``o.id`` / ``o.rol`` (a bare
+        # slug, no ``org:`` prefix — ``normalize_clerk_role`` accepts
+        # both). Read v1 first, then v2, so the same worker serves either
+        # shape and a Clerk instance upgrade never turns every session
+        # into a 409 ``no_active_organization``.
+        org_claims = claims.get("o")
+        if not isinstance(org_claims, dict):
+            org_claims = {}
+        org_id = claims.get("org_id") or org_claims.get("id")
+        org_role_raw = claims.get("org_role") or org_claims.get("rol")
         email = claims.get("email")
         role = normalize_clerk_role(org_role_raw)
 

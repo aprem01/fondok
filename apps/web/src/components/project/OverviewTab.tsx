@@ -94,7 +94,7 @@ import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceLabel } from '@/lib/provenance';
-import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning } from '@/lib/mockData';
+import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/mockData';
 import {
   KpiTile,
   SectionCard,
@@ -418,17 +418,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     rerunRef.current = setTimeout(() => { void fullRun.run().then(() => setRunToken(Date.now())); }, 1400);
   }, [liveMode, fullRun]);
 
+  // Resolves `true` when the PATCH landed, `false` when it was refused (demo
+  // deal, worker error) — callers that guard against a double-save (the
+  // reopening-date field) use it to release their guard on a refusal.
   const persist = useCallback(
-    async (patch: Parameters<typeof api.deals.update>[1], msg = 'Saved — re-running the model…') => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    async (patch: Parameters<typeof api.deals.update>[1], msg = 'Saved — re-running the model…'): Promise<boolean> => {
+      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return false; }
       try {
         await api.deals.update(dealId, patch);
         toast(msg, { type: 'success' });
         void refreshDeal?.();
         scheduleRun();
+        return true;
       } catch (err) {
         const detail = err instanceof WorkerError ? err.body : String(err);
         toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+        return false;
       }
     },
     [dealId, liveMode, toast, refreshDeal, scheduleRun],
@@ -1485,9 +1490,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
                 <ProfileSelect
                   label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
-                  options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${b.tier})` })))}
+                  options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${brandPositioningLabel(b)})` })))}
                   onChange={(v) => {
-                    const prefill = brandDefaultPositioning(v);
+                    // Pre-fill the tier from the flag ONLY while the deal has no
+                    // tier ("Default"). A tier already stored — the wizard sets it
+                    // from the PROPOSED brand, or the analyst chose one — is never
+                    // clobbered by correcting the EXISTING flag: on a re-flag deal
+                    // that silently flipped an upscale subject to the old flag's
+                    // economy scale, which drives the comp-sales chain-scale match
+                    // and the portfolio-library ratios. The Positioning select
+                    // beside this one changes the tier explicitly.
+                    const prefill = positioningId === 'default' ? brandDefaultPositioning(v) : null;
                     void persist(prefill ? { brand: v, positioning: prefill } : { brand: v });
                   }}
                 />
@@ -1508,7 +1521,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               value={deal?.reopening_date ?? null}
               anchorLabel={stabilizationAnchorLabel(stab)}
               fallbackNote={stabilizationAnchorFallbackNote(stab)}
-              onSave={(v) => void persist(
+              onSave={(v) => persist(
                 { reopening_date: v },
                 v ? 'Reopening date saved — re-running the model (stabilization re-anchors)…' : 'Reopening date cleared — re-running the model (Year 3 after close)…',
               )}
@@ -1809,7 +1822,8 @@ function ReopeningDateField({
   anchorLabel: string | null;
   /** Why a saved reopening date could not anchor the default, when it could not. */
   fallbackNote: string | null;
-  onSave: (v: string | null) => void;
+  /** Resolves `false` when the save was refused, so the field can retry it. */
+  onSave: (v: string | null) => void | Promise<boolean | void>;
 }) {
   const shown = value && ISO_DATE.test(value) ? value : '';
   const [draft, setDraft] = useState(shown);
@@ -1827,7 +1841,13 @@ function ReopeningDateField({
     if (next === (shown || null)) return;
     if (pending.current === (next ?? '')) return;
     pending.current = next ?? '';
-    onSave(next);
+    // A REFUSED save (worker 4xx/5xx, demo deal) never changes `value`, so the
+    // effect above never clears the guard — the analyst's next blur with the
+    // same date was silently dropped and only a different date could be sent.
+    // Release the guard on a refusal; a landed save clears it through `value`.
+    void Promise.resolve(onSave(next)).then((ok) => {
+      if (ok === false && pending.current === (next ?? '')) pending.current = null;
+    });
   };
   const hint = fallbackNote
     ?? (shown

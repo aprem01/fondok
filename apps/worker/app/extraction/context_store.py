@@ -193,8 +193,10 @@ async def search_chunks(
 ) -> list[dict[str, Any]]:
     """Search a deal's chunks for the query string.
 
-    ``tenant_id`` adds ``AND tenant_id = :tenant`` to both chunk queries; the
-    route resolves it from the caller and has already 404'd a foreign deal.
+    ``tenant_id`` (FON-93) adds ``AND tenant_id = :tenant`` to both chunk
+    queries so the read is scoped the way every other ``document_chunks``
+    statement is — the route resolves it from the caller and has already
+    404'd a deal the tenant does not own.
 
     Strategy:
         * Always do Postgres FTS using ``plainto_tsquery('english', :q)``

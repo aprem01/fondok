@@ -64,6 +64,19 @@ function fullRun(): EngineOutputsResponse {
         cash_flows: [-19_000_000, 1_400_000, 1_500_000, 1_600_000, 1_700_000, 22_700_000],
       }, { assumptions: { ...FULL_ASSUMPTIONS } }),
       capital: row('capital', { total_capital: 44_000_000 }),
+      // THE stabilized year (expense.stabilization) — the Yield on Cost tile
+      // reads this block's before-reserve NOI, the same figure the Overview's
+      // Stabilized NOI row prints; never `returns.noi_by_year[-1]`.
+      expense: row('expense', {
+        stabilization: {
+          stabilized_year_index: 2,
+          stabilized_year: 3,
+          source: 'default_year_3',
+          anchor: 'acquisition_close',
+          stabilized_noi_before_reserve: 3_400_000,
+          stabilized_cash_noi: 3_200_000,
+        },
+      }),
       debt: row('debt', { year_one_dscr: 1.45 }),
       sensitivity: row('sensitivity', {
         matrices: [
@@ -190,11 +203,31 @@ describe('Returns Summary — a run missing a headline field names it instead of
     expect(screen.getByText('Awaiting model run — returns.equity_multiple is not on this run')).toBeInTheDocument();
   });
 
-  it('noi_by_year absent → Yield on Cost "—" and names returns.noi_by_year', () => {
-    outputsRef.value = withReturns({ noi_by_year: undefined });
+  it('stabilization block absent → Yield on Cost "—" and names expense.stabilization (never the last hold year)', () => {
+    // The last hold year's cash NOI (noi_by_year[-1] = 3.4M) is still on the
+    // run; it must NOT stand in for the stabilized year.
+    const run = fullRun() as unknown as { engines: Record<string, unknown> };
+    delete run.engines.expense;
+    outputsRef.value = run;
     render(<ReturnsTab />);
     expect(screen.queryByText('7.73%')).not.toBeInTheDocument();
-    expect(screen.getByText('Awaiting model run — returns.noi_by_year is not on this run')).toBeInTheDocument();
+    expect(
+      screen.getByText('Awaiting model run — expense.stabilization.stabilized_noi_before_reserve is not on this run'),
+    ).toBeInTheDocument();
+  });
+
+  it('Yield on Cost reads the stabilized year (Year 3), not the last hold year', () => {
+    // Stabilized Year-3 NOI before reserve 3.0M vs last-year cash NOI 3.4M →
+    // 3.0M ÷ 44M = 6.82%, and the caption names the year and basis.
+    const run = fullRun() as unknown as { engines: Record<string, EngineRow> };
+    run.engines.expense.outputs = {
+      stabilization: { ...(run.engines.expense.outputs.stabilization as Record<string, unknown>), stabilized_noi_before_reserve: 3_000_000 },
+    };
+    outputsRef.value = run;
+    render(<ReturnsTab />);
+    expect(screen.getByText('6.82%')).toBeInTheDocument();
+    expect(screen.queryByText('7.73%')).not.toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
   });
 
   it('cash_flows absent → Equity Profit and Initial Equity are "—" and name returns.cash_flows', () => {
