@@ -32,6 +32,7 @@ import re
 import secrets
 import time
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
@@ -54,6 +55,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..auth.context import current_tenant_id
@@ -111,6 +113,345 @@ DOC_STATUS_EXTRACTING = "EXTRACTING"
 DOC_STATUS_EXTRACTED = "EXTRACTED"
 DOC_STATUS_PARSE_FAILED = "PARSE_FAILED"
 DOC_STATUS_FAILED = "FAILED"
+
+#: FON-91 — statuses that mean "a background task owns this row right
+#: now". A row that stays in one of these longer than
+#: ``EXTRACTION_STUCK_MINUTES`` has lost its task (worker redeploy, task
+#: cancelled, unhandled BaseException); the watchdog in
+#: ``services.extraction_watchdog`` marks it FAILED / ``timeout`` and the
+#: /extract + /reprocess endpoints accept a retry on it (and refuse one on
+#: a fresher row so two pipelines never run on one document).
+DOC_PROCESSING_STATUSES: frozenset[str] = frozenset(
+    {DOC_STATUS_PARSING, DOC_STATUS_CLASSIFYING, DOC_STATUS_EXTRACTING}
+)
+
+#: Human stage names for log lines, error messages and the audit trail.
+DOC_STAGE_LABELS: dict[str, str] = {
+    DOC_STATUS_PARSING: "Parsing",
+    DOC_STATUS_UPLOADED: "Uploaded",
+    DOC_STATUS_CLASSIFYING: "Classifying",
+    DOC_STATUS_EXTRACTING: "Extracting",
+    DOC_STATUS_EXTRACTED: "Extracted",
+    DOC_STATUS_PARSE_FAILED: "Parse failed",
+    DOC_STATUS_FAILED: "Failed",
+}
+
+
+def _stage_label(status: str | None) -> str:
+    return DOC_STAGE_LABELS.get((status or "").upper(), status or "unknown")
+
+
+# FON-91 — the id of the background job currently driving a document.
+# Set by ``_run_parse_and_extract`` / ``_run_extraction_pipeline`` so every
+# stage log line (PARSING → UPLOADED → CLASSIFYING → EXTRACTING →
+# EXTRACTED / FAILED) can be joined back to one job; ``None`` on request
+# paths.
+_extraction_job_id: ContextVar[str | None] = ContextVar(
+    "fondok_extraction_job_id", default=None
+)
+
+
+def _job_tag() -> str:
+    return _extraction_job_id.get() or "-"
+
+
+_STATUS_CHANGED_AT_CACHE_KEY = "fondok_documents_has_status_changed_at"
+
+
+async def _documents_has_status_changed_at(session: AsyncSession) -> bool:
+    """Does the live ``documents`` table carry ``status_changed_at`` (FON-91)?
+
+    Same catalog-introspection pattern as ``_documents_has_doc_subtype``:
+    a failed probe SELECT would poison the open transaction, so we read
+    the catalog instead. Any failure answers False — status writes then
+    skip the stamp and readers fall back to ``uploaded_at``. Memoised on
+    ``session.info``.
+    """
+    try:
+        cached = session.info.get(_STATUS_CHANGED_AT_CACHE_KEY)
+    except Exception:
+        cached = None
+    if isinstance(cached, bool):
+        return cached
+    try:
+        is_sqlite = (
+            session.bind is not None and session.bind.dialect.name == "sqlite"
+        )
+        if is_sqlite:
+            rows = await session.execute(text("PRAGMA table_info(documents)"))
+            have = {str(r[1]).lower() for r in rows.fetchall()}
+        else:
+            rows = await session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'documents'"
+                )
+            )
+            have = {str(r[0]).lower() for r in rows.fetchall()}
+        answer = "status_changed_at" in have
+    except Exception:
+        answer = False
+    if not answer:
+        logger.debug(
+            "documents: status_changed_at column absent — status writes "
+            "unstamped; stuck-row age falls back to uploaded_at"
+        )
+    with contextlib.suppress(Exception):
+        session.info[_STATUS_CHANGED_AT_CACHE_KEY] = answer
+    return answer
+
+
+def _timestamp_bind(session: AsyncSession, value: datetime) -> Any:
+    """Bind value for a timestamp column on either dialect — SQLite stores
+    TEXT (ISO-8601 so it round-trips through ``_coerce_timestamp``),
+    Postgres takes the datetime."""
+    is_sqlite = session.bind is not None and session.bind.dialect.name == "sqlite"
+    return value.astimezone(UTC).isoformat() if is_sqlite else value
+
+
+async def _status_stamp(
+    session: AsyncSession, *, now: datetime | None = None
+) -> tuple[str, dict[str, Any]]:
+    """SQL fragment + bind params that stamp ``status_changed_at`` on a
+    status write — ``("", {})`` on a schema without the column.
+
+    Usage: ``frag, params = await _status_stamp(session)``, then splice
+    ``{frag}`` after ``SET status = :s`` in the (tenant-scoped, as always)
+    UPDATE and spread ``**params`` into its bind dict.
+    """
+    if not await _documents_has_status_changed_at(session):
+        return "", {}
+    return ", status_changed_at = :status_at", {
+        "status_at": _timestamp_bind(session, now or _now())
+    }
+
+
+async def _with_status_changed_at(session: AsyncSession, sql: str) -> str:
+    """Fill the ``/*status_changed_at*/`` marker in a documents SELECT with
+    the real column, or a NULL stand-in on a schema without it."""
+    col = (
+        ", status_changed_at"
+        if await _documents_has_status_changed_at(session)
+        else ", NULL AS status_changed_at"
+    )
+    return sql.replace("/*status_changed_at*/", col)
+
+
+def _coerce_timestamp(value: Any) -> datetime | None:
+    """Postgres returns tz-aware datetimes; SQLite returns the TEXT we (or
+    ``CURRENT_TIMESTAMP``) wrote. Naive values are read as UTC."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        raw = value.strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _status_age_minutes(
+    row: Mapping[str, Any], *, now: datetime | None = None
+) -> float | None:
+    """Minutes since the row's status last changed — ``status_changed_at``
+    first, ``uploaded_at`` when the column is absent / NULL (a fresh
+    upload's first status IS its upload). ``None`` when neither parses."""
+    since = _coerce_timestamp(row.get("status_changed_at")) or _coerce_timestamp(
+        row.get("uploaded_at")
+    )
+    if since is None:
+        return None
+    now = (now or _now()).astimezone(UTC)
+    return max(0.0, (now - since).total_seconds() / 60.0)
+
+
+def _merge_error_payload(
+    raw: Any, *, error_kind: str, error_message: str, **extra: Any
+) -> dict[str, Any]:
+    """Merge a typed failure into an ``extraction_data`` blob (dict, JSON
+    text or NULL) without dropping the parse-stage payload."""
+    data: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        data = dict(raw)
+    elif isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data = dict(parsed)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+    data["error_kind"] = error_kind
+    data["error_message"] = error_message
+    for k, v in extra.items():
+        if v is not None:
+            data[k] = v
+    return data
+
+
+async def _mark_document_failed(
+    *,
+    doc_id: str,
+    tenant_id: str,
+    error_kind: str,
+    error_message: str,
+    error_raw: str | None = None,
+    expected_statuses: frozenset[str] | set[str] | None = None,
+    terminal_status: str = DOC_STATUS_FAILED,
+    factory: Any = None,
+) -> bool:
+    """Mark a document FAILED from a FRESH session. Never raises.
+
+    FON-91: the failure write used to share the pipeline's own session —
+    when the exception was a DB error that session was poisoned, the
+    follow-up UPDATE failed too ("failed to record FAILED status") and the
+    row stayed EXTRACTING forever. A fresh session also lets the
+    cancellation / shutdown path record the failure after the task's
+    transaction is gone. ``expected_statuses`` makes the write optimistic
+    (``AND status IN (…)``) so a row that already moved on is left alone;
+    returns True when a row was updated.
+    """
+    factory = factory or get_session_factory()
+    try:
+        async with factory() as s:
+            existing = (
+                await s.execute(
+                    text(
+                        "SELECT status, extraction_data FROM documents "
+                        "WHERE id = :id AND tenant_id = :tenant"
+                    ),
+                    {"id": str(doc_id), "tenant": str(tenant_id)},
+                )
+            ).first()
+            if existing is None:
+                return False
+            current_status = str(existing._mapping.get("status") or "")
+            if expected_statuses is not None and current_status not in expected_statuses:
+                return False
+            payload = _merge_error_payload(
+                existing._mapping.get("extraction_data"),
+                error_kind=error_kind,
+                error_message=error_message,
+                error_raw=(str(error_raw)[:500] if error_raw else None),
+                failed_from_status=current_status or None,
+                failed_job_id=_extraction_job_id.get(),
+            )
+            frag, stamp = await _status_stamp(s)
+            guard = ""
+            params: dict[str, Any] = {
+                "s": terminal_status,
+                "d": json.dumps(payload),
+                "id": str(doc_id),
+                "tenant": str(tenant_id),
+                **stamp,
+            }
+            if expected_statuses is not None:
+                names = sorted(expected_statuses)
+                guard = " AND status IN (" + ", ".join(
+                    f":exp{i}" for i in range(len(names))
+                ) + ")"
+                params.update({f"exp{i}": n for i, n in enumerate(names)})
+            result = await s.execute(
+                # tenant_id predicate keeps tenant_middleware / Sentry quiet
+                # — see apps/worker/app/tenant_middleware.py.
+                text(
+                    f"UPDATE documents SET status = :s, extraction_data = :d{frag} "
+                    f"WHERE id = :id AND tenant_id = :tenant{guard}"
+                ),
+                params,
+            )
+            await s.commit()
+            updated = (result.rowcount or 0) > 0
+            logger.warning(
+                "stage %s: doc=%s job=%s error_kind=%s from=%s updated=%s — %s",
+                terminal_status,
+                doc_id,
+                _job_tag(),
+                error_kind,
+                current_status,
+                updated,
+                error_message,
+            )
+            return updated
+    except Exception:
+        logger.exception(
+            "documents: failed to record %s for doc=%s job=%s (error_kind=%s)",
+            terminal_status,
+            doc_id,
+            _job_tag(),
+            error_kind,
+        )
+        return False
+
+
+async def _fail_interrupted_document(
+    *, doc_id: str, tenant_id: str, exc: BaseException, stage: str
+) -> None:
+    """Outermost safety net for a background task that died with a
+    BaseException (``asyncio.CancelledError`` on worker shutdown / task
+    cancellation, ``KeyboardInterrupt``, ``SystemExit``). Marks the row
+    FAILED only if it is still in a processing status — the inner
+    handlers normally got there first."""
+    kind = "cancelled" if isinstance(exc, asyncio.CancelledError) else "other"
+    message = (
+        ERROR_KIND_MESSAGES["cancelled"]
+        if kind == "cancelled"
+        else f"Extraction stopped during {stage} ({type(exc).__name__}). Click Retry to re-run."
+    )
+    await _mark_document_failed(
+        doc_id=doc_id,
+        tenant_id=tenant_id,
+        error_kind=kind,
+        error_message=message,
+        error_raw=repr(exc),
+        expected_statuses=DOC_PROCESSING_STATUSES,
+    )
+
+
+def _refuse_if_still_processing(
+    row: Mapping[str, Any], *, stuck_minutes: int
+) -> float | None:
+    """FON-91 — gate for ``/extract`` and ``/reprocess`` on a row in a
+    processing status.
+
+    A row younger than ``stuck_minutes`` still has a live task: refuse
+    with 409 so two pipelines never run on one document. A row older
+    than that has lost its task (or the watchdog hasn't ticked yet):
+    accept the retry and return the age in minutes so the caller can
+    log + audit it. Rows in a terminal status return ``None`` untouched.
+    A processing row whose timestamps don't parse is accepted — the
+    alternative is a permanent dead end.
+    """
+    status_now = str(row.get("status") or "").upper()
+    if status_now not in DOC_PROCESSING_STATUSES:
+        return None
+    age = _status_age_minutes(row)
+    if age is not None and age < stuck_minutes:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"document is still {_stage_label(status_now)} "
+                f"({age:.0f} min elapsed). A retry is accepted once a job "
+                f"has made no progress for {stuck_minutes} min "
+                "(EXTRACTION_STUCK_MINUTES); until then wait for it to "
+                "finish or fail."
+            ),
+        )
+    logger.warning(
+        "documents: accepting retry of a stuck row doc=%s status=%s age_min=%s "
+        "threshold_min=%d",
+        row.get("id"),
+        status_now,
+        f"{age:.1f}" if age is not None else "unknown",
+        stuck_minutes,
+    )
+    return age if age is not None else float("nan")
 
 
 # ─────────────────── extraction-cache versioning ────────────────────
@@ -1942,11 +2283,12 @@ async def _persist_parse_failure(
                         pass
             existing_data["error_kind"] = error_kind
             existing_data["error_message"] = error_message
+            stamp_sql, stamp_params = await _status_stamp(s)
             await s.execute(
                 # tenant_id predicate keeps tenant_middleware / Sentry quiet
                 # — see apps/worker/app/tenant_middleware.py.
                 text(
-                    "UPDATE documents SET status = :s, "
+                    f"UPDATE documents SET status = :s{stamp_sql}, "
                     "extraction_data = :d "
                     "WHERE id = :id AND tenant_id = :tenant"
                 ),
@@ -1955,9 +2297,16 @@ async def _persist_parse_failure(
                     "d": json.dumps(existing_data),
                     "id": doc_id,
                     "tenant": str(tenant_id),
+                    **stamp_params,
                 },
             )
             await s.commit()
+            logger.warning(
+                "stage PARSE_FAILED: doc=%s job=%s error_kind=%s",
+                doc_id,
+                _job_tag(),
+                error_kind,
+            )
         except Exception:
             logger.exception(
                 "parse_async: failed to record PARSE_FAILED for %s", doc_id
@@ -2564,6 +2913,7 @@ async def _run_parse_and_extract(
     tenant_id: str,
     body: bytes,
     filename: str,
+    job_id: str | None = None,
 ) -> None:
     """Background pipeline: parse → write extraction_data → run extraction.
 
@@ -2572,7 +2922,48 @@ async def _run_parse_and_extract(
     parse failure we mark the row ``PARSE_FAILED`` and stop — the
     document is still queryable, just unusable for extraction until
     re-uploaded or re-parsed manually.
+
+    FON-91: this is the OUTERMOST frame of the upload/reprocess job. Any
+    ``BaseException`` escaping the body — ``asyncio.CancelledError`` on a
+    worker shutdown or task cancellation included — marks a row still in
+    a processing status FAILED before re-raising, so a document can never
+    sit at PARSING / CLASSIFYING / EXTRACTING with no task behind it.
+    ``job_id`` is logged with every stage transition.
     """
+    job_id = job_id or str(uuid4())
+    job_token = _extraction_job_id.set(job_id)
+    try:
+        await _run_parse_and_extract_inner(
+            doc_id=doc_id,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            body=body,
+            filename=filename,
+        )
+    except BaseException as exc:  # noqa: BLE001 — mark, then re-raise
+        logger.warning(
+            "parse_async: job interrupted doc=%s job=%s exc=%s — marking FAILED",
+            doc_id,
+            job_id,
+            type(exc).__name__,
+        )
+        await _fail_interrupted_document(
+            doc_id=doc_id, tenant_id=tenant_id, exc=exc, stage="parse/extract"
+        )
+        raise
+    finally:
+        _extraction_job_id.reset(job_token)
+
+
+async def _run_parse_and_extract_inner(
+    *,
+    doc_id: str,
+    deal_id: str,
+    tenant_id: str,
+    body: bytes,
+    filename: str,
+) -> None:
+    """Body of :func:`_run_parse_and_extract` (see there)."""
     # FON-93: off the request loop there is no auth dependency to publish
     # the tenant for the RLS GUC hook — do it from the argument.
     current_tenant_id.set(str(tenant_id))
@@ -2581,6 +2972,15 @@ async def _run_parse_and_extract(
     page_count_to_persist: int | None = None
     parser_label_to_persist: str | None = None
 
+    logger.info(
+        "stage PARSING: doc=%s deal=%s tenant=%s job=%s filename=%s bytes=%d",
+        doc_id,
+        deal_id,
+        tenant_id,
+        _job_tag(),
+        filename,
+        len(body or b""),
+    )
     try:
         parsed = await parse_document(body, filename)
         page_count_to_persist = parsed.total_pages
@@ -2657,13 +3057,14 @@ async def _run_parse_and_extract(
     # Persist parse result and flip status to UPLOADED.
     async with factory() as s:
         try:
+            stamp_sql, stamp_params = await _status_stamp(s)
             await s.execute(
                 # tenant_id predicate keeps tenant_middleware / Sentry quiet
                 # — see apps/worker/app/tenant_middleware.py.
                 text(
-                    """
+                    f"""
                     UPDATE documents
-                       SET status = :s,
+                       SET status = :s{stamp_sql},
                            page_count = :pc,
                            parser = :parser,
                            template_fingerprint = :tfp,
@@ -2680,12 +3081,37 @@ async def _run_parse_and_extract(
                     "data": json.dumps(extraction_data_to_persist),
                     "id": doc_id,
                     "tenant": str(tenant_id),
+                    **stamp_params,
                 },
             )
             await s.commit()
-        except Exception:
+            logger.info(
+                "stage UPLOADED: doc=%s job=%s pages=%s parser=%s",
+                doc_id,
+                _job_tag(),
+                page_count_to_persist,
+                parser_label_to_persist,
+            )
+        except Exception as exc:
             logger.exception(
                 "parse_async: failed to persist parsed data for doc=%s", doc_id
+            )
+            # FON-91 — this used to ``return`` with the row still at
+            # PARSING and no task behind it. Record the failure (fresh
+            # session — this one may be poisoned) so the Data Room gets a
+            # Retry button instead of a spinner.
+            with contextlib.suppress(Exception):
+                await s.rollback()
+            await _mark_document_failed(
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                error_kind="other",
+                error_message=(
+                    "The parsed document could not be saved. Click Retry "
+                    "to re-run; check the worker logs if it repeats."
+                ),
+                error_raw=repr(exc),
+                expected_statuses=DOC_PROCESSING_STATUSES,
             )
             return
 
@@ -4714,12 +5140,15 @@ async def reprocess_document(
     row = (
         await session.execute(
             text(
-                """
+                await _with_status_changed_at(
+                    session,
+                    """
                 SELECT id, deal_id, tenant_id, filename, content_hash,
-                       storage_key, status
+                       storage_key, status, uploaded_at /*status_changed_at*/
                   FROM documents
                  WHERE id = :id AND deal_id = :deal_id
-                """
+                """,
+                )
             ),
             {"id": str(doc_id), "deal_id": str(deal_id)},
         )
@@ -4734,6 +5163,13 @@ async def reprocess_document(
     content_hash = m["content_hash"]
     tenant_id = str(m["tenant_id"])
     storage_key = m["storage_key"]
+
+    # FON-91 — a row still moving (younger than EXTRACTION_STUCK_MINUTES)
+    # is refused with 409; an older one has lost its task and the retry
+    # is accepted + audited.
+    stuck_age = _refuse_if_still_processing(
+        m, stuck_minutes=int(get_settings().EXTRACTION_STUCK_MINUTES)
+    )
 
     if not content_hash or not storage_key:
         raise HTTPException(
@@ -4784,16 +5220,48 @@ async def reprocess_document(
     # shot — the previous "also clear error_kind/error_message"
     # variant tried to update non-existent columns and crashed the
     # endpoint with UndefinedColumnError.
+    stamp_sql, stamp_params = await _status_stamp(session)
     await session.execute(
         text(
-            "UPDATE documents SET status = :s, extraction_data = NULL "
+            f"UPDATE documents SET status = :s{stamp_sql}, extraction_data = NULL "
             "WHERE id = :id AND tenant_id = :tenant"
         ),
-        {"s": DOC_STATUS_PARSING, "id": str(doc_id), "tenant": str(tenant_id)},
+        {
+            "s": DOC_STATUS_PARSING,
+            "id": str(doc_id),
+            "tenant": str(tenant_id),
+            **stamp_params,
+        },
     )
+    job_id = uuid4()
+    if stuck_age is not None:
+        await log_audit(
+            session,
+            tenant_id=tenant_id,
+            action="document.retry_stuck",
+            resource_type="document",
+            resource_id=str(doc_id),
+            deal_id=str(deal_id),
+            severity="warning",
+            metadata={
+                "endpoint": "reprocess",
+                "previous_status": str(m.get("status") or ""),
+                "age_minutes": None if stuck_age != stuck_age else round(stuck_age, 1),
+                "threshold_minutes": int(get_settings().EXTRACTION_STUCK_MINUTES),
+                "job_id": str(job_id),
+            },
+            tags=["fon-91", "stuck"],
+        )
     await session.commit()
 
-    job_id = uuid4()
+    logger.info(
+        "stage PARSING: doc=%s deal=%s tenant=%s job=%s (reprocess, previous_status=%s)",
+        doc_id,
+        deal_id,
+        tenant_id,
+        job_id,
+        m.get("status"),
+    )
     background_tasks.add_task(
         _run_parse_and_extract,
         doc_id=str(doc_id),
@@ -4801,6 +5269,7 @@ async def reprocess_document(
         tenant_id=tenant_id,
         body=body,
         filename=filename,
+        job_id=str(job_id),
     )
     return ExtractionStartResponse(
         document_id=doc_id,
@@ -5764,11 +6233,14 @@ async def extract_document(
     row = (
         await session.execute(
             text(
-                """
-                SELECT id, deal_id, tenant_id, status
+                await _with_status_changed_at(
+                    session,
+                    """
+                SELECT id, deal_id, tenant_id, status, uploaded_at /*status_changed_at*/
                   FROM documents
                  WHERE id = :id AND deal_id = :deal_id
-                """
+                """,
+                )
             ),
             {"id": str(doc_id), "deal_id": str(deal_id)},
         )
@@ -5781,24 +6253,58 @@ async def extract_document(
 
     tenant_id = str(row._mapping["tenant_id"])
 
+    # FON-91 — a row still moving (younger than EXTRACTION_STUCK_MINUTES)
+    # is refused with 409 so two pipelines never run on one document; an
+    # older one has lost its task and the retry is accepted + audited.
+    stuck_minutes = int(get_settings().EXTRACTION_STUCK_MINUTES)
+    stuck_age = _refuse_if_still_processing(row._mapping, stuck_minutes=stuck_minutes)
+
     # Mark the row as classifying immediately so the UI can pick up
     # the transition before the background task lands.
+    stamp_sql, stamp_params = await _status_stamp(session)
     await session.execute(
         text(
-            "UPDATE documents SET status = :s WHERE id = :id AND tenant_id = :tenant"
+            f"UPDATE documents SET status = :s{stamp_sql} "
+            "WHERE id = :id AND tenant_id = :tenant"
         ),
-        {"s": DOC_STATUS_CLASSIFYING, "id": str(doc_id), "tenant": tenant_id},
+        {
+            "s": DOC_STATUS_CLASSIFYING,
+            "id": str(doc_id),
+            "tenant": tenant_id,
+            **stamp_params,
+        },
     )
+    job_id = uuid4()
+    if stuck_age is not None:
+        await log_audit(
+            session,
+            tenant_id=tenant_id,
+            action="document.retry_stuck",
+            resource_type="document",
+            resource_id=str(doc_id),
+            deal_id=str(deal_id),
+            severity="warning",
+            metadata={
+                "endpoint": "extract",
+                "previous_status": str(row._mapping.get("status") or ""),
+                "age_minutes": None if stuck_age != stuck_age else round(stuck_age, 1),
+                "threshold_minutes": stuck_minutes,
+                "job_id": str(job_id),
+                "force": bool(force),
+            },
+            tags=["fon-91", "stuck"],
+        )
     await session.commit()
 
-    job_id = uuid4()
     logger.info(
-        "extraction_started: doc=%s deal=%s tenant=%s job=%s force=%s",
+        "stage CLASSIFYING: extraction_started doc=%s deal=%s tenant=%s job=%s "
+        "force=%s previous_status=%s",
         doc_id,
         deal_id,
         tenant_id,
         job_id,
         force,
+        row._mapping.get("status"),
     )
     background_tasks.add_task(
         _run_extraction_pipeline,
@@ -5806,6 +6312,7 @@ async def extract_document(
         doc_id=str(doc_id),
         tenant_id=tenant_id,
         force=force,
+        job_id=str(job_id),
     )
     return ExtractionStartResponse(
         document_id=doc_id,
@@ -5982,6 +6489,21 @@ ERROR_KIND_MESSAGES: dict[str, str] = {
         "extraction — running the wrong extractor would have hung for "
         "minutes without producing fields."
     ),
+    # FON-91 — the extraction watchdog found the row parked in a
+    # processing status past EXTRACTION_STUCK_MINUTES with no task alive.
+    # The watchdog writes a message naming the stage + elapsed time; this
+    # entry is the fallback copy and the classifier's answer to an
+    # asyncio.TimeoutError bubbling out of the pipeline.
+    "timeout": (
+        "Extraction timed out — the job stopped reporting progress. "
+        "Click Retry to re-run."
+    ),
+    # FON-91 — the worker shut down (redeploy) or the task was cancelled
+    # mid-extraction. Nothing is wrong with the file.
+    "cancelled": (
+        "Extraction was interrupted by a worker restart before it "
+        "finished. Nothing is wrong with the file — click Retry to re-run."
+    ),
     "other": "Extraction failed. Check the worker logs for details.",
 }
 
@@ -6029,6 +6551,10 @@ def _classify_extraction_error(exc: BaseException) -> tuple[str, str]:
         or "unsupported file extension" in low
     ):
         kind = "parse"
+    elif isinstance(exc, asyncio.CancelledError) or "cancellederror" in low:
+        kind = "cancelled"
+    elif isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timed out" in low:
+        kind = "timeout"
     else:
         kind = "other"
 
@@ -6214,9 +6740,21 @@ async def review_extraction_field(
 
 
 async def _run_extraction_pipeline(
-    *, deal_id: str, doc_id: str, tenant_id: str, force: bool = False
+    *,
+    deal_id: str,
+    doc_id: str,
+    tenant_id: str,
+    force: bool = False,
+    job_id: str | None = None,
 ) -> None:
     """Drive the LangGraph runtime end-to-end up to the first HITL gate.
+
+    FON-91: ``job_id`` (minted by the ``/extract`` route, or here when the
+    upload auto-chain calls in) is published on ``_extraction_job_id`` so
+    every stage log line carries it. The inner body marks the row FAILED
+    on ANY exception — ``asyncio.CancelledError`` from a worker shutdown
+    included — and this frame is the last-resort net for anything that
+    still escapes.
 
     On any failure the document row is marked ``FAILED`` and the error
     is logged. ``EVALS_MOCK=true`` short-circuits the agents so CI can
@@ -6234,10 +6772,21 @@ async def _run_extraction_pipeline(
     """
     from ..services.extractor_throttle import acquire_extractor_slot
 
-    async with acquire_extractor_slot():
-        await _run_extraction_pipeline_inner(
-            deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id, force=force,
+    job_token = _extraction_job_id.set(
+        job_id or _extraction_job_id.get() or str(uuid4())
+    )
+    try:
+        async with acquire_extractor_slot():
+            await _run_extraction_pipeline_inner(
+                deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id, force=force,
+            )
+    except BaseException as exc:  # noqa: BLE001 — mark, then re-raise
+        await _fail_interrupted_document(
+            doc_id=doc_id, tenant_id=tenant_id, exc=exc, stage="extraction"
         )
+        raise
+    finally:
+        _extraction_job_id.reset(job_token)
 
 
 #: Document types that have a DETERMINISTIC template extractor
@@ -6295,20 +6844,30 @@ async def _run_extraction_pipeline_inner(
                     doc_id,
                     deal_id,
                 )
+            stamp_sql, stamp_params = await _status_stamp(session)
             await session.execute(
                 # tenant_id predicate keeps tenant_middleware / Sentry quiet
                 # — see apps/worker/app/tenant_middleware.py.
                 text(
-                    "UPDATE documents SET status = :s "
+                    f"UPDATE documents SET status = :s{stamp_sql} "
                     "WHERE id = :id AND tenant_id = :tenant"
                 ),
                 {
                     "s": DOC_STATUS_EXTRACTING,
                     "id": doc_id,
                     "tenant": str(tenant_id),
+                    **stamp_params,
                 },
             )
             await session.commit()
+            logger.info(
+                "stage EXTRACTING: doc=%s deal=%s tenant=%s job=%s force=%s",
+                doc_id,
+                deal_id,
+                tenant_id,
+                _job_tag(),
+                force,
+            )
 
             row = (
                 await session.execute(
@@ -6699,11 +7258,12 @@ async def _run_extraction_pipeline_inner(
                     existing_data = dict(extraction_data)
                 existing_data["error_kind"] = kind
                 existing_data["error_message"] = friendly
+                stamp_sql, stamp_params = await _status_stamp(session)
                 await session.execute(
                     # tenant_id predicate keeps tenant_middleware / Sentry
                     # quiet — see apps/worker/app/tenant_middleware.py.
                     text(
-                        "UPDATE documents SET status = :s, "
+                        f"UPDATE documents SET status = :s{stamp_sql}, "
                         "extraction_data = :d "
                         "WHERE id = :id AND tenant_id = :tenant"
                     ),
@@ -6712,9 +7272,16 @@ async def _run_extraction_pipeline_inner(
                         "d": json.dumps(existing_data),
                         "id": doc_id,
                         "tenant": str(tenant_id),
+                        **stamp_params,
                     },
                 )
                 await session.commit()
+                logger.warning(
+                    "stage FAILED: doc=%s job=%s error_kind=%s (0 fields)",
+                    doc_id,
+                    _job_tag(),
+                    kind,
+                )
             else:
                 # Persist the Router agent's classification back to the
                 # documents row when it differs from the filename-heuristic
@@ -6796,12 +7363,13 @@ async def _run_extraction_pipeline_inner(
                     # (normalized_ai). The banner reads this column
                     # for ``aiLabel`` — without it both sides resolved
                     # from ``doc_type`` and rendered "T-12 vs T-12".
+                    stamp_sql, stamp_params = await _status_stamp(session)
                     await session.execute(
                         # tenant_id predicate keeps tenant_middleware / Sentry
                         # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
                             "UPDATE documents "
-                            "SET status = :s, misclassified = :m, "
+                            f"SET status = :s{stamp_sql}, misclassified = :m, "
                             "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
                             "extracted_period_year = :epy, "
@@ -6809,6 +7377,7 @@ async def _run_extraction_pipeline_inner(
                             "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
+                            **stamp_params,
                             "s": DOC_STATUS_EXTRACTED,
                             # asyncpg rejects int for BOOLEAN — Sam
                             # caught this at INSERT (commit 6e1ad56)
@@ -6845,11 +7414,12 @@ async def _run_extraction_pipeline_inner(
                     # surface "Router said PROPERTY_INFO, we overrode
                     # to T12" — silent rewrites are explicitly not
                     # acceptable per the locked product decision.
+                    stamp_sql, stamp_params = await _status_stamp(session)
                     await session.execute(
                         # tenant_id predicate keeps tenant_middleware / Sentry
                         # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
-                            "UPDATE documents SET status = :s, doc_type = :dt, "
+                            f"UPDATE documents SET status = :s{stamp_sql}, doc_type = :dt, "
                             "misclassified = :m, "
                             "ai_proposed_doc_type = :apdt, "
                             "year_mismatch = :ym, "
@@ -6858,6 +7428,7 @@ async def _run_extraction_pipeline_inner(
                             "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
+                            **stamp_params,
                             "s": DOC_STATUS_EXTRACTED,
                             "dt": refined_doc_type,
                             "m": False,
@@ -6870,11 +7441,12 @@ async def _run_extraction_pipeline_inner(
                         },
                     )
                 else:
+                    stamp_sql, stamp_params = await _status_stamp(session)
                     await session.execute(
                         # tenant_id predicate keeps tenant_middleware / Sentry
                         # quiet — see apps/worker/app/tenant_middleware.py.
                         text(
-                            "UPDATE documents SET status = :s, "
+                            f"UPDATE documents SET status = :s{stamp_sql}, "
                             "misclassified = :m, "
                             "ai_proposed_doc_type = NULL, "
                             "year_mismatch = :ym, "
@@ -6883,6 +7455,7 @@ async def _run_extraction_pipeline_inner(
                             "WHERE id = :id AND tenant_id = :tenant"
                         ),
                         {
+                            **stamp_params,
                             "s": DOC_STATUS_EXTRACTED,
                             "m": False,
                             "ym": bool(year_mismatch_flag),
@@ -6893,6 +7466,14 @@ async def _run_extraction_pipeline_inner(
                         },
                     )
                 await session.commit()
+                logger.info(
+                    "stage EXTRACTED: doc=%s deal=%s job=%s fields=%d agent_version=%s",
+                    doc_id,
+                    deal_id,
+                    _job_tag(),
+                    len(fields or []),
+                    agent_version,
+                )
 
             # Path-independent doc-type reconciliation (QA Harbor Palms).
             # A fresh re-upload cache-hit / template path can leave doc_type
@@ -7018,8 +7599,34 @@ async def _run_extraction_pipeline_inner(
                 doc_type=scoring_doc_type or classified_doc_type or "",
                 fields=fields,
             )
+        except asyncio.CancelledError:
+            # FON-91 — worker shutdown (redeploy) or task cancellation.
+            # CancelledError is a BaseException so the ``except Exception``
+            # below never saw it and the row stayed EXTRACTING forever.
+            # Release this session's transaction first (SQLite would
+            # otherwise hold the write lock against the fresh session),
+            # record the failure, then re-raise so cancellation completes.
+            logger.warning(
+                "extraction CANCELLED: doc=%s deal=%s job=%s — marking FAILED",
+                doc_id,
+                deal_id,
+                _job_tag(),
+            )
+            with contextlib.suppress(Exception):
+                await session.rollback()
+            await _mark_document_failed(
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                error_kind="cancelled",
+                error_message=ERROR_KIND_MESSAGES["cancelled"],
+                error_raw="asyncio.CancelledError",
+                expected_statuses=DOC_PROCESSING_STATUSES,
+            )
+            raise
         except Exception as exc:
-            logger.exception("extraction failed: doc=%s — %s", doc_id, exc)
+            logger.exception(
+                "extraction failed: doc=%s job=%s — %s", doc_id, _job_tag(), exc
+            )
             kind, friendly = _classify_extraction_error(exc)
             try:
                 from ..alerting import report_alert
@@ -7034,50 +7641,28 @@ async def _run_extraction_pipeline_inner(
                 )
             except Exception:
                 pass
-            try:
-                # Merge the error info into existing extraction_data so
-                # the parse-stage payload (parser/total_pages/pages)
-                # stays intact for forensics.
-                existing_row = (
-                    await session.execute(
-                        text(
-                            "SELECT extraction_data FROM documents "
-                            "WHERE id = :id AND tenant_id = :tenant"
-                        ),
-                        {"id": doc_id, "tenant": str(tenant_id)},
-                    )
-                ).first()
-                existing_data: dict[str, Any] = {}
-                if existing_row is not None:
-                    raw_ed = existing_row._mapping.get("extraction_data")
-                    if isinstance(raw_ed, str) and raw_ed:
-                        try:
-                            existing_data = json.loads(raw_ed)
-                        except (json.JSONDecodeError, TypeError):
-                            existing_data = {}
-                    elif isinstance(raw_ed, dict):
-                        existing_data = raw_ed
-                existing_data["error_kind"] = kind
-                existing_data["error_message"] = friendly
-                existing_data["error_raw"] = str(exc)[:500]
-                await session.execute(
-                    # tenant_id predicate keeps tenant_middleware / Sentry
-                    # quiet — see apps/worker/app/tenant_middleware.py.
-                    text(
-                        "UPDATE documents "
-                        "SET status = :s, extraction_data = :d "
-                        "WHERE id = :id AND tenant_id = :tenant"
-                    ),
-                    {
-                        "s": DOC_STATUS_FAILED,
-                        "d": json.dumps(existing_data),
-                        "id": doc_id,
-                        "tenant": str(tenant_id),
-                    },
-                )
-                await session.commit()
-            except Exception:
-                logger.exception("extraction: failed to record FAILED status")
+            # FON-91 — write the failure from a FRESH session. When ``exc``
+            # was a DB error this session is poisoned and the old
+            # same-session UPDATE failed too ("failed to record FAILED
+            # status"), leaving the row EXTRACTING with no task behind it.
+            # The parse-stage payload (parser/total_pages/pages) is merged,
+            # not replaced, so forensics keep working.
+            with contextlib.suppress(Exception):
+                await session.rollback()
+            await _mark_document_failed(
+                doc_id=doc_id,
+                tenant_id=tenant_id,
+                error_kind=kind,
+                error_message=friendly,
+                error_raw=str(exc)[:500],
+            )
+        except BaseException as exc:  # noqa: BLE001 — KeyboardInterrupt / SystemExit
+            with contextlib.suppress(Exception):
+                await session.rollback()
+            await _fail_interrupted_document(
+                doc_id=doc_id, tenant_id=tenant_id, exc=exc, stage="extraction"
+            )
+            raise
 
 
 # Pages per extraction chunk. Cost-opt pass U (2026-07): the default +
@@ -9344,6 +9929,7 @@ __all__ = [
     "DOC_STATUS_CLASSIFYING",
     "DOC_STATUS_EXTRACTED",
     "DOC_STATUS_EXTRACTING",
+    "DOC_PROCESSING_STATUSES",
     "DOC_STATUS_FAILED",
     "DOC_STATUS_UPLOADED",
     "DocumentRecord",

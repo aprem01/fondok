@@ -94,6 +94,21 @@ export interface CoverageDocMeta {
    *  template leads it with ``variant=…`` (monthly / weekly / daily STAR,
    *  legacy Custom Trend). */
   coverageNote?: string | null;
+  /** FON-91 — the worker's typed failure on a FAILED row. ``timeout`` is
+   *  the extraction watchdog: the job stopped reporting progress past
+   *  EXTRACTION_STUCK_MINUTES and the row was failed so Retry works. */
+  errorKind?: string | null;
+  errorMessage?: string | null;
+}
+
+/** FON-91 — "Timed out after N min — Retry" for a watchdog-failed row.
+ *  The worker's message leads with ``Timed out after N min``; when the
+ *  minutes can't be read the label still names the timeout. ``null`` for
+ *  every other failure (they keep "Processing Failed"). */
+export function timedOutLabel(meta?: Pick<CoverageDocMeta, 'errorKind' | 'errorMessage'>): string | null {
+  if ((meta?.errorKind ?? '').toLowerCase() !== 'timeout') return null;
+  const m = /timed out after (\d+)\s*min/i.exec(meta?.errorMessage ?? '');
+  return m ? `Timed out after ${m[1]} min — Retry` : 'Timed out — Retry';
 }
 
 // R-034 — the STR report type Fondok detected, read ONLY from what the worker
@@ -132,7 +147,12 @@ function docStatusState(
   meta?: CoverageDocMeta,
 ): { label: string; tone: 'gray' | 'blue' | 'amber' | 'green' | 'red' } {
   const s = (file.status ?? '').toUpperCase();
-  if (s === 'FAILED' || s === 'PARSE_FAILED') return { label: 'Processing Failed', tone: 'red' };
+  if (s === 'FAILED' || s === 'PARSE_FAILED') {
+    // FON-91 — a watchdog timeout is not a broken file: say so, and that
+    // Retry is the next step.
+    const timedOut = timedOutLabel(meta);
+    return { label: timedOut ?? 'Processing Failed', tone: 'red' };
+  }
   if (s === 'UPLOADING') return { label: 'Uploading', tone: 'gray' };
   // E-004 — never render a review verdict before the extraction is here.
   if (s === 'EXTRACTED' && meta?.extractionLoaded === false) {

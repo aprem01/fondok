@@ -534,6 +534,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         userProvidedDocType: d.user_provided_doc_type ?? null,
         aiProposedDocType: d.ai_proposed_doc_type ?? null,
         coverageNote: extractions[d.id]?.confidence_report?.coverage_note ?? null,
+        // FON-91 — lets the stage badge say "Timed out after N min — Retry".
+        errorKind: d.error_kind ?? null,
+        errorMessage: d.error_message ?? null,
       };
     }
     return m;
