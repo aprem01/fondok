@@ -93,6 +93,29 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://fondok:fondok@localhost:5432/fondok
         run: uv run python -c "from app.main import app; print('OK')"
 
+  # FON-88 — extractor changes must bump EXTRACTION_PIPELINE_VERSION.
+  # ``scripts/check_pipeline_version.py`` diffs the merge-base with
+  # origin/main (HEAD^ on a push to main): a change under
+  # apps/worker/app/extraction/ or apps/worker/app/agents/ without a bump
+  # in apps/worker/app/api/documents.py fails unless a commit in the range
+  # carries the ``pipeline-version: unchanged`` trailer. Stdlib only — no
+  # uv sync needed. fetch-depth 0 so origin/main and the range are present.
+  pipeline-version:
+    name: Extraction pipeline version guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check EXTRACTION_PIPELINE_VERSION was bumped
+        run: python scripts/check_pipeline_version.py
+
   # Conditional eval gating ported from LogiCov: only burn a CI minute
   # on the golden set when something the engines/agents/graph/schemas/
   # evals depend on actually changed — or when we're landing on main

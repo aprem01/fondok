@@ -444,6 +444,23 @@ class Settings(BaseSettings):
     DIGEST_SCHEDULER_ENABLED: bool = Field(default=True)
     DIGEST_SCHEDULER_TICK_SECONDS: float = Field(default=60.0, gt=0.0)
 
+    # ── Extraction watchdog (FON-91) ────────────────────────────────
+    # A document whose background task died (worker redeploy, task
+    # cancelled, unhandled BaseException) used to sit at PARSING /
+    # CLASSIFYING / EXTRACTING forever (2026-10-08: a forced
+    # re-extraction of a 74-sheet P&L stayed EXTRACTING for 37 minutes
+    # with no newer extraction_results row and no error_kind). The
+    # watchdog in ``services.extraction_watchdog`` runs one tick at
+    # startup and then every ``EXTRACTION_WATCHDOG_TICK_SECONDS``; any
+    # row whose status is older than ``EXTRACTION_STUCK_MINUTES`` is
+    # marked FAILED with ``error_kind="timeout"``. The same threshold
+    # lets ``POST .../extract`` and ``.../reprocess`` accept a document
+    # that is still in a processing state (a fresher one is refused
+    # with 409 so two pipelines never run on one row).
+    EXTRACTION_WATCHDOG_ENABLED: bool = Field(default=True)
+    EXTRACTION_WATCHDOG_TICK_SECONDS: float = Field(default=60.0, gt=0.0)
+    EXTRACTION_STUCK_MINUTES: int = Field(default=30, ge=1)
+
     @property
     def async_database_url(self) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""

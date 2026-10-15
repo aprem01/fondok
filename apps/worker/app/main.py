@@ -38,6 +38,7 @@ from .database import dispose_engine, get_engine
 from .migrations import run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
+from .services.extraction_watchdog import start_watchdog, stop_watchdog
 from .telemetry import setup_langsmith, setup_telemetry
 from .tenant_middleware import register_tenant_safety_listener
 
@@ -167,6 +168,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         start_poller()
     except Exception as exc:
         logger.exception("analyst batch poller start failed: %s", exc)
+    # FON-91 — extraction watchdog. A worker that just booted owns no
+    # in-flight extraction task, so the loop's immediate first tick is
+    # the startup sweep: any document still PARSING / CLASSIFYING /
+    # EXTRACTING for longer than ``EXTRACTION_STUCK_MINUTES`` is marked
+    # FAILED / timeout instead of spinning forever. No-op when
+    # ``EXTRACTION_WATCHDOG_ENABLED=False``. Never raises out of lifespan.
+    try:
+        start_watchdog()
+    except Exception as exc:
+        logger.exception("extraction watchdog start failed: %s", exc)
     try:
         yield
     finally:
@@ -179,6 +190,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await stop_poller()
         except Exception as exc:
             logger.warning("analyst batch poller stop failed: %s", exc)
+        try:
+            await stop_watchdog()
+        except Exception as exc:
+            logger.warning("extraction watchdog stop failed: %s", exc)
         await dispose_engine()
 
 

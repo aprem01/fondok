@@ -141,6 +141,12 @@ export default function MethodologyPage() {
             body="A post-extraction reclassifier reads p_and_l_usali.period_type off the extracted fields and narrows broad PNL/T12 classifications into PNL_MONTHLY, PNL_YTD, or T12. This is why a single-month upload no longer outranks an annual T-12 in the engine actuals loaders."
           />
         </Stages>
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">Stuck jobs time out; they never spin forever</h4>
+          <p className="text-[12.5px] text-ink-700 leading-relaxed">
+            Every status change on a document is time-stamped (<code className="text-[11.5px]">status_changed_at</code>), and every stage log line carries the job id that drove it. A worker-side watchdog sweeps at startup and once a minute: any document still Parsing, Classifying or Extracting with no status change for <code className="text-[11.5px]">EXTRACTION_STUCK_MINUTES</code> (default 30) is marked Failed with <code className="text-[11.5px]">error_kind=timeout</code>, a message naming the stage and the elapsed time, and an audit entry (<code className="text-[11.5px]">document.extraction_timed_out</code>). The Data Room shows it as &ldquo;Timed out after N min — Retry&rdquo;. A job that dies with an exception — including a worker restart mid-extraction — is failed on the spot (<code className="text-[11.5px]">error_kind=cancelled</code>) rather than left in flight. Retry on a document that is still moving and younger than the threshold is refused, so two pipelines never run on one file; once the threshold has passed, Retry (or a forced re-extraction) is accepted and audited. Nothing is wrong with the file in either case — the same bytes run again from the start.
+          </p>
+        </Card>
       </Section>
 
       {/* ─── 2. Projection methodology ─────────────────────────────── */}

@@ -215,6 +215,16 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS template_fingerprint TEXT",
     ),
     (
+        # FON-91 — when ``status`` last changed. Every status write in
+        # ``api/documents.py`` stamps it (column-probed, so a worker
+        # ahead of the migration keeps working); the extraction
+        # watchdog and the /extract + /reprocess stale-row guard read
+        # ``COALESCE(status_changed_at, uploaded_at)`` to decide how
+        # long a row has been in flight.
+        "documents.add_status_changed_at",
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ",
+    ),
+    (
         # TASK T2 — one learned cell-mapping per (tenant, fingerprint).
         # ``mapping_json`` carries the label-anchored entries plus the
         # source doc's USALI score for the sibling verification gate.
@@ -1363,6 +1373,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         # duplicate-column errors, same as every other sqlite ALTER).
         "documents.add_template_fingerprint_sqlite",
         "ALTER TABLE documents ADD COLUMN template_fingerprint TEXT",
+    ),
+    (
+        # FON-91 — SQLite mirror of ``documents.add_status_changed_at``.
+        "documents.add_status_changed_at_sqlite",
+        "ALTER TABLE documents ADD COLUMN status_changed_at TEXT",
     ),
     (
         # TASK T2 — sibling-template mapping store (see the Postgres
