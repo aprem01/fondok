@@ -335,10 +335,11 @@ def by_year_target_spec(list_key: str, year: int) -> AssumptionSpec:
     return AssumptionSpec(
         by_year_target_key(list_key, year),
         f"{label} — {year_label}",
-        "index points (100 = parity with the selected benchmark)",
+        "index points 25–250 (100 = parity with the selected benchmark) or a ratio 0.25–2.5",
         f"Index Analysis target by year: {year_label} {noun} = benchmark {noun} for that year × target "
         f"÷ 100 while \"Use STR rates in the model\" is on; blank = the all-years target "
-        f"(drives Year 1 only unless a market {noun} growth override is set)",
+        f"(drives Year 1 only unless a market {noun} growth override is set); "
+        f"a value outside both bands is refused on import, never applied",
     )
 
 

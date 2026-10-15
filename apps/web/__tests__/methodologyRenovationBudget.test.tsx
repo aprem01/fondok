@@ -40,9 +40,20 @@ describe('Methodology — renovation budget precedence (FON-101)', () => {
     expect(card).toHaveTextContent('more than 2% away from the sum of its own scope items is flagged');
 
     const future = screen.getByTestId('methodology-future-capex-reference-only');
-    expect(future).toHaveTextContent('Future CapEx is reference only.');
+    expect(future).toHaveTextContent('Historic and Future CapEx are reference only.');
     expect(future).toHaveTextContent('never incorporated into the renovation budget');
     expect(future).toHaveTextContent('Reference only — not in the model');
+    expect(future).toHaveTextContent('historic_capex.*');
+    expect(future).toHaveTextContent('future_capex.*');
+    expect(future).toHaveTextContent('re-tag it as PIP / Renovation Budget');
+
+    // The PIP lane: the one CapEx lane that feeds the model; untagged = classifier-assigned.
+    const lanes = screen.getByTestId('methodology-capex-lanes');
+    expect(lanes).toHaveTextContent('Three CapEx lanes, one of which feeds the model.');
+    expect(lanes).toHaveTextContent('PIP / Renovation Budget');
+    expect(lanes).toHaveTextContent('only lane the renovation budget reads');
+    expect(lanes).toHaveTextContent('classifier-assigned');
+    expect(steps[1]).toContain('doc_subtype = pip');
   });
 
   it('the Year-1 displacement paragraph names the PIP document as a deal-specific budget', () => {

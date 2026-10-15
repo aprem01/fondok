@@ -705,10 +705,106 @@ async def test_projection_apply_folds_by_year_rows_into_the_list_override() -> N
             {"id": str(deal_id), "t": _TENANT},
         )).first()
     fo = json.loads(row[0])
-    # Untouched years keep their entry; the list grows to the edited year; one note.
-    assert fo["index_mpi_target_by_year"] == {"value": [None, 110.0, 115.0], "note": "Post-PIP share gain"}
+    # Untouched years keep their entry; the list grows to the edited year; the
+    # list's legacy note survives in front of the edited year's own note.
+    assert fo["index_mpi_target_by_year"] == {
+        "value": [None, 110.0, 115.0], "note": "old · Y3: Post-PIP share gain",
+    }
     assert "index_ari_target_by_year" not in fo
     assert "index_mpi_target_by_year.3" not in fo  # never a dotted key on the deal
+
+
+def test_by_year_note_merge_keeps_every_untouched_years_note() -> None:
+    from app.api.pl_roundtrip import merge_by_year_notes, split_by_year_notes
+
+    assert merge_by_year_notes(None, {2: "a"}) == "Y2: a"
+    assert merge_by_year_notes("", {3: "c", 2: "b"}) == "Y2: b · Y3: c"
+    # An edited year replaces only its own segment; the rest stay.
+    assert merge_by_year_notes("Y2: keep · Y4: keep4", {3: "new"}) == "Y2: keep · Y3: new · Y4: keep4"
+    assert merge_by_year_notes("Y2: old2 · Y3: old3", {2: "new2"}) == "Y2: new2 · Y3: old3"
+    # A legacy whole-list note is never lost.
+    assert merge_by_year_notes("Share gain", {2: "b"}) == "Share gain · Y2: b"
+    assert split_by_year_notes("legacy · Y2: a · Y10: j") == ("legacy", {2: "a", 10: "j"})
+    assert split_by_year_notes(None) == (None, {})
+
+
+@pytest.mark.asyncio
+async def test_projection_apply_keeps_each_years_note_and_refuses_out_of_range() -> None:
+    """Several by-year rows in one apply: each year keeps ITS note ("Y2: … ·
+    Y3: …"), untouched years keep theirs, and a value that is neither index
+    points (25–250) nor a ratio (0.25–2.5) is refused with the reason — "5"
+    is never read as 5 index points and driven into the model."""
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import
+    from app.database import get_session_factory
+    from app.services.index_methodology import coerce_target_list
+
+    deal_id, *_ = await _setup(overrides={
+        "index_mpi_target_by_year": {
+            "value": [None, 110.0, None, 120.0], "note": "Y2: share gain · Y4: stabilised",
+        },
+    })
+    body = ProjApplyBody(changes=[
+        {"key": "index_mpi_target_by_year.3", "new_value": 115, "note": "Post-PIP"},
+        {"key": "index_mpi_target_by_year.4", "new_value": 1.25, "note": "ratio form"},  # 1.25 → 125 pts
+        {"key": "index_mpi_target_by_year.1", "new_value": 5, "note": "typo"},           # refused
+        {"key": "index_ari_target_by_year.1", "new_value": 300, "note": "typo"},         # refused
+        {"key": "index_ari_target_by_year.2", "new_value": 12, "note": "ambiguous"},     # refused
+    ])
+    async with get_session_factory()() as s:
+        res = await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert [a["key"] for a in res["applied"]] == [
+        "index_mpi_target_by_year.3", "index_mpi_target_by_year.4",
+    ]
+    skipped = {x["key"]: x for x in res["skipped"]}
+    assert set(skipped) == {
+        "index_mpi_target_by_year.1", "index_ari_target_by_year.1", "index_ari_target_by_year.2",
+    }
+    for sk in skipped.values():
+        assert sk["reason"] == "out_of_range"
+        assert "25–250" in sk["detail"] and "0.25–2.5" in sk["detail"]
+
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    fo = json.loads(row[0])
+    mpi = fo["index_mpi_target_by_year"]
+    assert mpi["value"] == [None, 110.0, 115.0, 1.25]
+    assert mpi["note"] == "Y2: share gain · Y3: Post-PIP · Y4: ratio form"
+    # The loader reads the ratio as 125 index points, never as 1.25 points.
+    assert coerce_target_list(mpi["value"]) == [None, 110.0, 115.0, 125.0]
+    # Nothing was stored for the refused ARI rows.
+    assert "index_ari_target_by_year" not in fo
+
+
+@pytest.mark.asyncio
+async def test_projection_export_survives_a_market_data_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The Benchmark column is a convenience: when ``load_market_data`` raises
+    (an aggregation bug on a malformed benchmark extraction), the export still
+    serves the analyst's projections — without the column — and logs."""
+    import logging
+
+    import app.api.pl_roundtrip as mod
+    from app.database import get_session_factory
+    from app.export.pl_workbooks import BENCHMARK_HEADER
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("benchmark aggregation blew up")
+
+    monkeypatch.setattr(mod, "load_market_data", _boom)
+    deal_id, *_ = await _setup()
+    with caplog.at_level(logging.ERROR, logger="app.api.pl_roundtrip"):
+        async with get_session_factory()() as s:
+            resp = await mod.export_projections(deal_id=deal_id, session=s, auth=_auth())
+    assert resp.status_code == 200
+    wp = _sheet(resp.body, "Future P&L")
+    header = [c.value for c in wp[1]]
+    assert BENCHMARK_HEADER not in header
+    assert wp.max_row > 1  # the projections themselves are there
+    assert any("market data unavailable" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio

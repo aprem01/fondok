@@ -703,3 +703,214 @@ async def test_candidates_endpoint_is_tenant_scoped() -> None:
     assert code == 200
     assert [c["filename"] for c in body["candidates"]] == ["PIP.pdf"]
     assert body["selected_value_usd"] == pytest.approx(6_250_000)
+
+
+# ───────────────────────── CAPEX lanes (pip / historic / future / NULL) ─────────────────────────
+
+
+def _historic_fields(total: float) -> list[dict[str, object]]:
+    return [
+        _row("historic_capex.items.1.name", "Chiller replacement", page=2),
+        _row("historic_capex.items.1.year", 2022, page=2),
+        _row("historic_capex.items.1.usd", total * 0.3, page=2),
+        _row("historic_capex.items.2.name", "Guestroom soft goods", page=2),
+        _row("historic_capex.items.2.year", 2023, page=2),
+        _row("historic_capex.items.2.usd", "$" + f"{total * 0.7:,.0f}", page=2),
+        _row("historic_capex.by_year.2022.total_usd", total * 0.3, page=3),
+        _row("historic_capex.by_year.2023.total_usd", total * 0.7, page=3),
+        _row("historic_capex.total_usd", total, page=3),
+    ]
+
+
+def test_lane_rules_only_pip_or_untagged_may_ground() -> None:
+    from app.api.documents import DOC_SUBTYPES_BY_DOC_TYPE, _normalize_doc_subtype
+    from app.services.renovation_budget import (
+        PIP_CAPEX_SUBTYPE,
+        REFERENCE_ONLY_CAPEX_SUBTYPES,
+        CapexDocument,
+        eligible_pip_documents,
+        select_pip_candidate,
+    )
+
+    # The upload / reclassify contract carries all three lanes.
+    assert DOC_SUBTYPES_BY_DOC_TYPE["CAPEX"] == frozenset({"pip", "future", "historic"})
+    assert _normalize_doc_subtype("CAPEX", " PIP ") == PIP_CAPEX_SUBTYPE
+    assert REFERENCE_ONLY_CAPEX_SUBTYPES == frozenset({"future", "historic"})
+
+    def doc(doc_id: str, subtype: str | None, *, plan: str) -> CapexDocument:
+        return CapexDocument(document_id=doc_id, filename=f"{doc_id}.pdf", doc_subtype=subtype,
+                             uploaded_at="2026-10-01", pip_total_usd=1_000_000, plan_date=plan)
+
+    pip = doc("pip", "pip", plan="2026-01-01")
+    untagged = doc("null", None, plan="2026-02-01")
+    historic = doc("hist", "historic", plan="2026-03-01")
+    future = doc("fut", "future", plan="2026-04-01")
+    stray = doc("stray", "someday", plan="2025-12-01")  # never stored, but tolerated as untagged
+
+    assert pip.may_ground_model and untagged.may_ground_model and stray.may_ground_model
+    assert historic.is_reference_only and future.is_reference_only
+    assert not historic.may_ground_model and not future.may_ground_model
+
+    # Newest plan date wins AMONG eligible lanes; the newer reference-only
+    # documents never compete even though they carry a PIP total.
+    assert [d.document_id for d in eligible_pip_documents([pip, untagged, historic, future, stray])] == [
+        "null", "pip", "stray",
+    ]
+    assert select_pip_candidate([historic, future]) is None
+    assert select_pip_candidate([historic, pip]) is pip
+
+
+def test_parse_reads_the_historic_namespace_with_numeric_strings() -> None:
+    from app.services.renovation_budget import CapexDocument, parse_capex_fields
+
+    doc = parse_capex_fields(
+        CapexDocument(document_id="h", filename="h.xlsx", doc_subtype="historic"),
+        _historic_fields(1_000_000),
+    )
+    assert doc.historic_total_usd == pytest.approx(1_000_000)
+    assert [(i["year"], i["usd"]) for i in doc.historic_items] == [
+        (2022, pytest.approx(300_000)), (2023, pytest.approx(700_000)),  # "$700,000" coerced
+    ]
+    assert doc.historic_by_year == {"2022": pytest.approx(300_000), "2023": pytest.approx(700_000)}
+    assert doc.pip_total_usd is None and doc.future_items == []
+
+
+@pytest.mark.asyncio
+async def test_pip_lane_grounds_the_model() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(deal_id, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
+    pip_doc, _ = await _insert_doc(
+        deal_id, doc_type="CAPEX", filename="Brand PIP.pdf", doc_subtype="pip",
+        fields=_pip_fields(6_400_000, plan_date="2026-02-01"), ts=_T0 + timedelta(days=1),
+    )
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(6_400_000)
+    assert base["__sources__"]["renovation_budget"] == "pip_document"
+    assert base["__source_fields__"]["renovation_budget"]["document_id"] == str(pip_doc)
+
+
+@pytest.mark.asyncio
+async def test_untagged_capex_is_classifier_assigned_and_still_grounds() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(deal_id, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
+    await _insert_doc(
+        deal_id, doc_type="CAPEX", filename="bulk-drop PIP.pdf", doc_subtype=None,
+        fields=_pip_fields(6_400_000, plan_date="2026-02-01"), ts=_T0 + timedelta(days=1),
+    )
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(6_400_000)
+    assert base["__sources__"]["renovation_budget"] == "pip_document"
+
+
+@pytest.mark.asyncio
+async def test_historic_lane_never_grounds_even_when_the_llm_labelled_pip_rows() -> None:
+    """The finding: a historic ledger the extractor labelled ``capex_plan.pip.*``
+    used to ground ``renovation_budget`` and trip Year-1 displacement. The
+    lane wins over the namespace: Historic CapEx is reference only, listed
+    with ITS namespace (``historic_capex.*``) and the stray PIP total shown
+    with a re-tag hint."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, keys=100)
+    await _insert_doc(deal_id, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
+    hist_doc, _ = await _insert_doc(
+        deal_id, doc_type="CAPEX", filename="CapEx 2022-2024.xlsx", doc_subtype="historic",
+        fields=_historic_fields(1_000_000) + _pip_fields(12_000_000, plan_date="2026-09-01"),
+        ts=_T0 + timedelta(days=3),
+    )
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(8_000_000)
+    assert base["__sources__"]["renovation_budget"] == "om_broker"
+
+    code, body = await _get(f"/deals/{deal_id}/renovation-budget-candidates", _TENANT)
+    assert code == 200, body
+    assert [c["kind"] for c in body["candidates"]] == ["om_broker"]
+    assert len(body["reference_only"]) == 1
+    ref = body["reference_only"][0]
+    assert ref["document_id"] == str(hist_doc)
+    assert ref["lane"] == "historic" and ref["lane_label"] == "Historic CapEx"
+    # Only the historic namespace is read off it — never the PIP rows as its total.
+    assert ref["total_usd"] == pytest.approx(1_000_000)
+    assert [i["year"] for i in ref["items"]] == [2022, 2023]
+    assert ref["by_year"] == {"2022": pytest.approx(300_000), "2023": pytest.approx(700_000)}
+    assert ref["pip_total_usd"] == pytest.approx(12_000_000)
+    assert ref["reason"].startswith("Historic CapEx — reference only")
+    assert "re-tag it as PIP / Renovation budget" in ref["reason"]
+
+
+@pytest.mark.asyncio
+async def test_future_lane_is_reference_only_with_its_own_namespace() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(deal_id, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
+    fut_doc, _ = await _insert_doc(
+        deal_id, doc_type="CAPEX", filename="5yr plan.xlsx", doc_subtype="future",
+        fields=_future_fields(2_000_000) + _pip_fields(12_000_000, plan_date="2026-09-01"),
+        ts=_T0 + timedelta(days=3),
+    )
+    code, body = await _get(f"/deals/{deal_id}/renovation-budget-candidates", _TENANT)
+    assert code == 200, body
+    assert body["selected_source"] == "om_broker"
+    ref = body["reference_only"][0]
+    assert ref["document_id"] == str(fut_doc)
+    assert ref["lane"] == "future" and ref["lane_label"] == "Future CapEx"
+    assert ref["total_usd"] == pytest.approx(2_000_000)   # future_capex.total_usd, not the PIP rows
+    assert [i["year"] for i in ref["items"]] == [2028, 2029]
+    assert ref["by_year"] == {}
+    assert ref["pip_total_usd"] == pytest.approx(12_000_000)
+    assert ref["reason"].startswith("Future CapEx — reference only")
+    assert "re-tag it as PIP / Renovation budget" in ref["reason"]
+
+
+@pytest.mark.asyncio
+async def test_all_three_lanes_plus_untagged_on_one_deal() -> None:
+    """One deal, four CAPEX documents: the untagged and ``pip`` ones compete
+    (newest plan date wins), the ``historic`` and ``future`` ones are listed as
+    reference only — even though every one of them states a PIP total."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    docs = {}
+    for name, subtype, plan, total in (
+        ("untagged.pdf", None, "2026-01-01", 5_000_000),
+        ("pip.pdf", "pip", "2026-03-01", 6_000_000),
+        ("historic.xlsx", "historic", "2026-05-01", 7_000_000),
+        ("future.xlsx", "future", "2026-07-01", 9_000_000),
+    ):
+        doc_id, _ = await _insert_doc(
+            deal_id, doc_type="CAPEX", filename=name, doc_subtype=subtype,
+            fields=_pip_fields(total, plan_date=plan), ts=_T0,
+        )
+        docs[name] = str(doc_id)
+    base = await _base_for(deal_id)
+    assert base["renovation_budget"] == pytest.approx(6_000_000)
+    assert base["__source_fields__"]["renovation_budget"]["document_id"] == docs["pip.pdf"]
+
+    code, body = await _get(f"/deals/{deal_id}/renovation-budget-candidates", _TENANT)
+    assert code == 200, body
+    assert {c["filename"] for c in body["candidates"]} == {"untagged.pdf", "pip.pdf"}
+    assert [c["filename"] for c in body["candidates"] if c["selected"]] == ["pip.pdf"]
+    assert {r["filename"]: r["lane"] for r in body["reference_only"]} == {
+        "historic.xlsx": "historic", "future.xlsx": "future",
+    }
+    assert all(r["pip_total_usd"] in (7_000_000, 9_000_000) for r in body["reference_only"])
+
+
+def test_critic_capex_check_coerces_numeric_strings_like_the_loader() -> None:
+    """``"$5,000,000"`` grounds the model (``renovation_budget._num`` accepts
+    it), so the critic's total-vs-items check must read it too."""
+    from app.agents.critic import check_capex_plausibility
+
+    fields = [
+        _row("capex_plan.pip.total_usd", "$5,000,000", page=4),
+        _row("capex_plan.pip.scope_items.1.usd", "1,000,000", page=5),
+        _row("capex_plan.pip.scope_items.2.usd", 1_000_000, page=5),
+        _row("capex_plan.pip.scope_items.3.usd", "$1,000,000.00", page=5),
+    ]
+    flags = check_capex_plausibility(fields, doc_type="CAPEX")
+    assert len(flags) == 1
+    assert flags[0].total_usd == 5_000_000 and flags[0].scope_items_sum_usd == 3_000_000
+    assert flags[0].scope_items_count == 3 and flags[0].delta_pct == pytest.approx(0.4)
+    # Prose / blanks / booleans are still not numbers.
+    fields[0]["value"] = "TBD"
+    assert check_capex_plausibility(fields, doc_type="CAPEX") == []

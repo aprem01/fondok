@@ -205,11 +205,43 @@ def _valid_adr(v: float) -> float | None:
     return v if v > 0 else None
 
 
+#: Accepted penetration-target ranges, after reading the analyst's number as
+#: either index points (100 = parity) or a ratio (1.0 = parity). The two
+#: bands do not overlap, so a value tells us its own unit; anything between
+#: them ("5", "12") or beyond is ambiguous or implausible and is REFUSED —
+#: never read as 5 index points and applied to the model.
+INDEX_POINTS_RANGE: tuple[float, float] = (25.0, 250.0)
+INDEX_RATIO_RANGE: tuple[float, float] = (0.25, 2.5)
+
+
+def validate_index_target(raw: Any) -> tuple[float | None, str | None]:
+    """One penetration target as typed → ``(index points, None)``, or
+    ``(None, reason)`` when it cannot be applied.
+
+    Shared by the Excel apply (``api.pl_roundtrip``), the PATCH override
+    gate (``api.deals.update_deal``) and ``coerce_target_list`` so every
+    path refuses the same values for the same reason.
+    """
+    f = coerce_float(raw)
+    if f is None:
+        return None, "not a number"
+    lo_r, hi_r = INDEX_RATIO_RANGE
+    lo_p, hi_p = INDEX_POINTS_RANGE
+    if lo_r <= f <= hi_r:
+        return f * 100.0, None
+    if lo_p <= f <= hi_p:
+        return f, None
+    return None, (
+        f"{f:g} is outside the accepted range — index points "
+        f"{lo_p:g}–{hi_p:g} (100 = parity with the benchmark) or a ratio "
+        f"{lo_r:g}–{hi_r:g} (1.0 = parity)"
+    )
+
+
 def _index_points(v: float | None) -> float | None:
-    """STR indices arrive as a ratio (1.032) or index points (103.2)."""
-    if v is None or v <= 0:
-        return None
-    return v if v > 3 else v * 100.0
+    """STR indices arrive as a ratio (1.032) or index points (103.2);
+    out-of-range values read as unset (see ``validate_index_target``)."""
+    return validate_index_target(v)[0]
 
 
 def _growth_fraction(v: Any) -> float | None:
@@ -670,24 +702,49 @@ def apply_index_assumptions(
 # ───────────────────────────── by-year targets (FON-95 part 2) ─────────────────────────────
 
 
-def coerce_target_list(raw: Any) -> list[float | None]:
-    """``index_*_target_by_year`` → index points per model year (``None`` = unset).
-
-    Accepts a list or a JSON-encoded list. Each entry arrives as index points
-    (110) or a ratio (1.10); zero / negative / unparseable = not set.
-    """
+def _target_list_entries(raw: Any) -> list[Any] | None:
+    """The raw entries of an ``index_*_target_by_year`` value (list or
+    JSON-encoded list), capped at the model horizon; ``None`` when the value
+    is not a list at all."""
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
         except ValueError:
-            return []
+            return None
     if not isinstance(raw, (list, tuple)):
+        return None
+    return list(raw)[:MAX_MODEL_YEARS]
+
+
+def coerce_target_list(raw: Any) -> list[float | None]:
+    """``index_*_target_by_year`` → index points per model year (``None`` = unset).
+
+    Accepts a list or a JSON-encoded list. Each entry arrives as index points
+    (110) or a ratio (1.10); blank / zero / negative / unparseable / outside
+    the accepted range (``validate_index_target``) = not set — an out-of-range
+    entry is never read as points and driven into the model.
+    """
+    entries = _target_list_entries(raw)
+    if entries is None:
         return []
-    out: list[float | None] = []
-    for v in list(raw)[:MAX_MODEL_YEARS]:
-        f = coerce_float(v)
-        out.append(_index_points(f) if f is not None and f > 0 else None)
-    return out
+    return [validate_index_target(v)[0] for v in entries]
+
+
+def target_list_problems(raw: Any) -> list[str]:
+    """Why an ``index_*_target_by_year`` value cannot be stored as sent —
+    one line per offending year, empty when every set entry is valid.
+    ``None`` / blank entries are "unset" and never a problem."""
+    entries = _target_list_entries(raw)
+    if entries is None:
+        return [] if raw is None else ["must be a list with one entry per model year (null = unset)"]
+    problems: list[str] = []
+    for idx, v in enumerate(entries, start=1):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            continue
+        pts, why = validate_index_target(v)
+        if pts is None:
+            problems.append(f"Year {idx}: {why}")
+    return problems
 
 
 TargetSource = Literal["by_year", "scalar"]
@@ -1181,6 +1238,8 @@ __all__ = [
     "BASE_OCC_BY_YEAR",
     "BY_YEAR_TARGET_KEYS",
     "DEFAULT_METHOD",
+    "INDEX_POINTS_RANGE",
+    "INDEX_RATIO_RANGE",
     "IndexByYearReading",
     "IndexYearReading",
     "KEY_ADR_GROWTH",
@@ -1196,6 +1255,8 @@ __all__ = [
     "driver_record",
     "read_targets_by_year",
     "resolve_index_by_year",
+    "target_list_problems",
+    "validate_index_target",
     "METHODS",
     "METHOD_COSTAR_COMP_SET",
     "METHOD_MARKET_BENCHMARK",

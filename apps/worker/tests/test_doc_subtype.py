@@ -314,6 +314,39 @@ async def test_reclassify_to_capex_with_subtype_and_off_capex_clears() -> None:
         assert await _stored_subtype(doc_id) is None
 
 
+@pytest.mark.asyncio
+async def test_pip_lane_is_a_valid_capex_subtype() -> None:
+    """The PIP / Renovation budget lane (``pip``) — the one CAPEX lane that
+    feeds the model — is accepted by reclassify and normalised like the
+    others; it is still not valid on a non-CAPEX doc_type."""
+    from app.api.documents import DOC_SUBTYPES_BY_DOC_TYPE, _normalize_doc_subtype
+
+    assert DOC_SUBTYPES_BY_DOC_TYPE["CAPEX"] == frozenset({"pip", "future", "historic"})
+    assert _normalize_doc_subtype("CAPEX", "PIP") == "pip"
+    assert _normalize_doc_subtype("capex", " pip ") == "pip"
+    assert _normalize_doc_subtype("T12", "pip") is None
+
+    deal_id = await _seed_deal()
+    doc_id = await _seed_document(deal_id, subtype="future")
+    url = f"/deals/{deal_id}/documents/{doc_id}/classification"
+    async with _client() as client:
+        r = await client.patch(url, headers=HEADERS, json={"doc_subtype": "pip"})
+        assert r.status_code == 200, r.text
+        assert r.json()["doc_subtype"] == "pip"
+        assert r.json()["doc_type"] == "CAPEX"
+        assert await _stored_subtype(doc_id) == "pip"
+
+        listed = (await client.get(f"/deals/{deal_id}/documents", headers=HEADERS)).json()
+        assert {d["id"]: d["doc_subtype"] for d in listed}[doc_id] == "pip"
+
+        t12_id = await _seed_document(deal_id, doc_type="T12")
+        r = await client.patch(
+            f"/deals/{deal_id}/documents/{t12_id}/classification",
+            headers=HEADERS, json={"doc_subtype": "pip"},
+        )
+        assert r.status_code == 422, r.text
+
+
 # ─────────────────────── schema without the column ───────────────────────
 
 

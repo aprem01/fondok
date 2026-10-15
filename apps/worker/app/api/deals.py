@@ -1472,6 +1472,52 @@ async def update_deal(
                 },
             )
 
+        # ── Index Analysis penetration targets — range gate ──────────────
+        #
+        # ``index_mpi_target`` / ``index_ari_target`` and their ``_by_year``
+        # lists are read as index points (100 = parity) or a ratio (1.0 =
+        # parity). A value outside both bands ("5", "12", 400) is refused
+        # here — the same validator the Excel apply and the loader use — so
+        # it can never be stored and later drive Year-1 occupancy to 3.8%.
+        # Clearing a key or an entry (null / blank) is never a problem.
+        from ..services.index_methodology import (
+            BY_YEAR_TARGET_KEYS,
+            KEY_ARI_TARGET,
+            KEY_MPI_TARGET,
+            target_list_problems,
+            validate_index_target,
+        )
+
+        out_of_range: dict[str, str] = {}
+        for k in changed_keys:
+            if k not in new_overrides:
+                continue  # a cleared key is a revert to source
+            v = after_flat.get(k)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                continue
+            if k in (KEY_MPI_TARGET, KEY_ARI_TARGET):
+                points, why = validate_index_target(v)
+                if points is None:
+                    out_of_range[k] = why or "invalid"
+            elif k in BY_YEAR_TARGET_KEYS:
+                problems = target_list_problems(v)
+                if problems:
+                    out_of_range[k] = "; ".join(problems)
+        if out_of_range:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "override_out_of_range",
+                    "keys": sorted(out_of_range),
+                    "problems": out_of_range,
+                    "message": (
+                        "A penetration target is index points 25–250 "
+                        "(100 = parity) or a ratio 0.25–2.5 (1.0 = parity). "
+                        "Nothing was saved."
+                    ),
+                },
+            )
+
     set_clauses: list[str] = []
     params: dict[str, Any] = {"id": str(deal_id), "tenant": tenant_id_str}
     # Postgres stores `field_overrides` as JSONB and needs an explicit

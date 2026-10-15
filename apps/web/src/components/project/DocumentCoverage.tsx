@@ -9,7 +9,9 @@
  * categories expand to their files; financial files carry inline
  * [T-12 / P&L] · [Annual / Monthly / YTD] · [Year] dropdowns wired to the
  * reclassify endpoint (POST-upload correction, re-buckets ranking + coverage).
- * CapEx files carry a [Historic / Future] select (FON-41 / R-036 doc_subtype).
+ * CapEx files carry a [PIP / Renovation budget · Historic · Future] lane
+ * select (FON-41 / R-036 doc_subtype + the PIP lane — only PIP / untagged
+ * feeds the model; Historic and Future are reference only).
  *
  * Currently rendered behind a ``?coverage=1`` preview flag so the live Data
  * Room is untouched until the layout is signed off.
@@ -40,7 +42,13 @@ import {
   formatElapsed,
   isProcessingStatus,
 } from '@/lib/progress';
-import { DOC_SUBTYPES_BY_DOC_TYPE, effectiveDocSubtype, type DocSubtype } from '@/lib/docSubtype';
+import {
+  DOC_SUBTYPES_BY_DOC_TYPE,
+  DOC_SUBTYPE_HELP,
+  DOC_SUBTYPE_LABEL,
+  effectiveDocSubtype,
+  type DocSubtype,
+} from '@/lib/docSubtype';
 
 export interface CoverageFile {
   id: string;
@@ -222,9 +230,12 @@ type CategorySpec = {
 // doc_type, so:
 //  - Comp Set / Market Reports holds MARKET_STUDY — the Router's lane for
 //    CoStar / market files (the wizard slot uploads them as STR_TREND).
-//  - Historic CapEx and Future CapEx both hold CAPEX files, split by the
-//    worker's ``doc_subtype`` (FON-41 / R-036): ``future`` → Future CapEx,
-//    ``historic`` or unstated (legacy uploads, bulk drop) → Historic CapEx.
+//  - Historic CapEx, Future CapEx and PIP / Renovation Budget all hold CAPEX
+//    files, split by the worker's ``doc_subtype`` (FON-41 / R-036 + the PIP
+//    lane): ``historic`` → Historic CapEx, ``future`` → Future CapEx, ``pip``
+//    or unstated (legacy uploads, bulk drop — classifier-assigned, may feed
+//    the model) → PIP / Renovation Budget. Only the PIP lane grounds the
+//    model's renovation budget; the other two are reference only.
 export const CATEGORIES: CategorySpec[] = [
   { id: 'om', label: 'Offering Memorandum', match: ['OM'] },
   { id: 'room_mix', label: 'Hotel Program', match: ['ROOM_MIX'] },
@@ -247,6 +258,7 @@ export const CATEGORIES: CategorySpec[] = [
   { id: 'insurance', label: 'Insurance Records', match: ['INSURANCE'] },
   { id: 'property_tax', label: 'Property Taxes', match: ['PROPERTY_TAX'] },
   { id: 'future_capex', label: 'Future CapEx', match: ['CAPEX'], subtype: 'future' },
+  { id: 'pip_capex', label: 'PIP / Renovation Budget', match: ['CAPEX'], subtype: 'pip' },
   { id: 'property_info', label: 'Other Property Info', match: ['PROPERTY_INFO'] },
   { id: 'leases', label: 'Leases & Agreements', match: ['LEASES', 'CONTRACT'] },
   // R-031 — Due Diligence is a regular row (no muted "optional" tag).
@@ -323,10 +335,7 @@ const DOC_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'OTHER', label: 'Other' },
 ];
 
-const SUBTYPE_LABEL: Record<DocSubtype, string> = {
-  historic: 'Historic',
-  future: 'Future',
-};
+const SUBTYPE_LABEL: Record<DocSubtype, string> = DOC_SUBTYPE_LABEL;
 
 /** The coverage category a file lands in: doc_type match, then — for rows
  *  pinned to a subtype — the file's effective ``doc_subtype``. */
@@ -812,7 +821,8 @@ function CoverageFileRow({
       ? detectedStrReportType(file.docType, meta)
       : null;
   // FON-41 / R-036 — doc_types that split by subtype (CAPEX) get a second
-  // select; ``subtype`` is the effective one (unstated CAPEX → Historic).
+  // select; ``subtype`` is the effective one (unstated CAPEX → PIP lane,
+  // because the loader treats an untagged CAPEX file like ``pip``).
   const subtypeOptions = DOC_SUBTYPES_BY_DOC_TYPE[(file.docType ?? '').toUpperCase().trim()];
   const subtype = effectiveDocSubtype(file.docType, file.docSubtype);
   const confTone =
@@ -952,10 +962,12 @@ function CoverageFileRow({
             ))}
           </select>
           {subtypeOptions && (
-            // FON-41 / R-036 — CapEx files move between Historic and Future
-            // CapEx by subtype; the doc_type stays CAPEX.
+            // FON-41 / R-036 + the PIP lane — CapEx files move between the
+            // PIP / Renovation Budget, Historic and Future lanes by subtype;
+            // the doc_type stays CAPEX. Only the PIP lane feeds the model.
             <select
-              aria-label={`CapEx timing for ${file.name}`}
+              aria-label={`CapEx lane for ${file.name}`}
+              title={subtype ? DOC_SUBTYPE_HELP[subtype] : undefined}
               className={selectCls}
               value={subtype ?? ''}
               disabled={busy}
@@ -967,7 +979,7 @@ function CoverageFileRow({
               }}
             >
               {subtypeOptions.map((o) => (
-                <option key={o} value={o}>
+                <option key={o} value={o} title={DOC_SUBTYPE_HELP[o]}>
                   {SUBTYPE_LABEL[o] ?? o}
                 </option>
               ))}

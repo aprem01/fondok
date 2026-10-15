@@ -562,9 +562,12 @@ class DocumentRecord(BaseModel):
     # not persisted; recomputed on every list.
     primary_financial_source: bool = False
     # FON-41 / R-036 — per-file subcategory inside a doc_type. Today only
-    # CAPEX carries one: ``future`` (forward capital plan / PIP budget) or
-    # ``historic`` (spend already incurred). NULL = not stated, which the
-    # Data Room files under Historic CapEx. Set by the upload's
+    # CAPEX carries one — its lane: ``pip`` (PIP / renovation budget — the
+    # one lane that feeds the model), ``future`` (forward hold-period
+    # capital plan, reference only) or ``historic`` (spend already incurred,
+    # reference only). NULL = not stated (bulk drop / legacy upload): the
+    # classifier decides, so the loader treats it like ``pip`` and the Data
+    # Room files it under PIP / Renovation Budget. Set by the upload's
     # ``user_doc_subtypes[]`` or the reclassify endpoint; never by the
     # Router or extraction.
     doc_subtype: str | None = None
@@ -1672,8 +1675,20 @@ async def classify_for_extraction(
 # The subcategories each doc_type accepts. Only CAPEX has any today; every
 # other doc_type stores NULL. Deliberately NOT new DocType values — the
 # Router, the extractor and every engine keep reading plain ``CAPEX``.
+#
+# CAPEX lanes (mirrored by ``apps/web/src/lib/docSubtype.ts`` and read by
+# ``services.renovation_budget``):
+#   pip       PIP / Renovation budget — the day-one PIP, owner budget or
+#             approved capital plan. The ONLY tagged lane that grounds
+#             ``renovation_budget`` (untagged NULL counts as this lane).
+#   future    Future CapEx — forward hold-period plan. Reference only; the
+#             loader reads ``future_capex.*`` off it and nothing else.
+#   historic  Historic CapEx — spend already incurred. Reference only; the
+#             loader reads ``historic_capex.*`` off it and nothing else.
+# The lane never reaches the extractor (the prompt is per doc_type), so
+# adding one does not change extraction output and needs no pv bump.
 DOC_SUBTYPES_BY_DOC_TYPE: dict[str, frozenset[str]] = {
-    "CAPEX": frozenset({"future", "historic"}),
+    "CAPEX": frozenset({"pip", "future", "historic"}),
 }
 
 _DOC_SUBTYPE_CACHE_KEY = "fondok_documents_has_doc_subtype"
@@ -2091,8 +2106,10 @@ async def upload_documents(
 
     ``user_doc_subtypes`` (FON-41 / R-036) rides the same positional
     contract and lands on ``documents.doc_subtype``: a CAPEX file is
-    ``future`` (forward plan / PIP budget) or ``historic``. It never
-    changes ``doc_type`` — the Router and extractor still see ``CAPEX``.
+    ``pip`` (PIP / renovation budget — feeds the model), ``future``
+    (forward plan, reference only) or ``historic`` (reference only). It
+    never changes ``doc_type`` — the Router and extractor still see
+    ``CAPEX``.
 
     ``user_provided_doc_type`` is stored verbatim. Once extraction runs,
     if the Router agent's classification disagrees with the analyst's
@@ -6253,12 +6270,12 @@ _TEMPLATE_HANDLED_DOC_TYPES: frozenset[str] = frozenset(
 # CAPEX is deliberately NOT in this set (FON-101). It has no deterministic
 # template extractor — the LLM reads ``extraction_schemas/capex.md`` — so a
 # learned same-template sibling mapping is as good here as it is for a P&L
-# workbook. The ``doc_subtype`` an analyst tags a CAPEX file with (``future``
-# / ``historic``) does not change this: sibling reuse copies the SOURCE
-# document's field names (a workbook laid out like a PIP budget yields
+# workbook. The ``doc_subtype`` an analyst tags a CAPEX file with (``pip`` /
+# ``future`` / ``historic``) does not change this: sibling reuse copies the
+# SOURCE document's field names (a workbook laid out like a PIP budget yields
 # ``capex_plan.pip.*`` either way), and the engine-input loader gates on the
-# reusing document's OWN stored subtype — a ``future`` document never feeds
-# ``renovation_budget`` whatever namespace its rows carry
+# reusing document's OWN stored subtype — a ``future`` or ``historic``
+# document never feeds ``renovation_budget`` whatever namespace its rows carry
 # (``services.renovation_budget.select_pip_candidate``). The only cost of a
 # subtype mismatch is a mislabelled namespace on a reference-only document,
 # which the Data Room shows and the analyst can re-extract with ``force``.
