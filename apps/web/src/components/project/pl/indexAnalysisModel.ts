@@ -38,6 +38,9 @@ export interface CompSetEntryAPI {
   occupancy_pct?: number | null;
   adr_usd?: number | null;
   revpar_usd?: number | null;
+  /** 'closed' when any STR report on the deal marks the hotel closed (the
+   *  worker's market_comp_set rule) — listed, but never counted in keys. */
+  status?: 'active' | 'closed' | null;
 }
 export interface StrSubjectAnnualAPI {
   calendar_year: number;
@@ -247,6 +250,21 @@ export function emptySeries(n: number): YearSeries {
 // reported", not a real value: an operating hotel never books 0% occupancy or a
 // $0 ADR. Coerce all of these to null so the UI shows blank and never
 // fabricates a zero.
+/** Comp-set "keys" row = total room count of the ACTIVE hotels on the named
+ *  roster (closed hotels excluded; the roster excludes the subject); the
+ *  ``total_keys`` rollup only when the roster yields nothing — the extracted
+ *  rollup has proven unreliable. */
+export function compSetKeys(str: StrTrendAPI | null | undefined): number | null {
+  const fromRoster = (str?.compset ?? []).reduce(
+    (acc, row) =>
+      acc + (row.status !== 'closed' && typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
+    0,
+  );
+  if (fromRoster > 0) return fromRoster;
+  const fromRollup = str?.total_keys;
+  return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
+}
+
 export function posOrNull(v: number | null | undefined): number | null {
   return typeof v === 'number' && isFinite(v) && v > 0 ? v : null;
 }

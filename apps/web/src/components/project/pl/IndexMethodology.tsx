@@ -238,6 +238,8 @@ export const INDEX_ASSUMPTIONS: { key: string; label: string; unit: 'growth' | '
 export function figureSourceText(f: IndexFigure | undefined | null): string {
   if (!f) return '—';
   if (f.source === 'override') return `Your override${f.detail ? ` — ${f.detail}` : ''}`;
+  // A stored value the model does not apply — never presented as an active override.
+  if (f.source === 'ignored_override') return `Stored override ignored${f.detail ? ` — ${f.detail}` : ''}`;
   const refs = (f.inputs ?? []).map(
     (r) => `${r.doc_name ?? 'document'}${r.page ? `, p.${r.page}` : ''} (${r.field_name})`,
   );

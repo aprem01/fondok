@@ -952,7 +952,7 @@ describe('Index Analysis — Sam #3', () => {
     const row = screen.getByTestId('index-penetration-oppty-target');
     expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
     expect(within(row).getByText('Revenue Opportunity at Target').getAttribute('title')).toMatch(
-      /Targets set but not applied — Targets by year do not feed Projections yet/,
+      /Targets set but not applied — Targets by year do not feed the Future P&L yet/,
     );
   });
 

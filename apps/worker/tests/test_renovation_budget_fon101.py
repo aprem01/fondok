@@ -1060,3 +1060,24 @@ async def test_assumption_sources_carries_displacement_status() -> None:
     # Tenant-scoped like the rest of the response.
     code, _ = await _get(f"/deals/{deal_id}/assumption_sources", _OTHER_TENANT)
     assert code == 404
+
+
+@pytest.mark.asyncio
+async def test_page_rejects_fractional_and_non_positive_pages() -> None:
+    """``source_page`` must be a positive whole number; a fractional page is
+    not truncated into a citation (12.5 -> None, never 12)."""
+    from app.services.renovation_budget import _page
+
+    assert _page({"source_page": 12}) == 12
+    assert _page({"source_page": 12.0}) == 12
+    assert _page({"source_page": "12"}) == 12
+    assert _page({"source_page": " 7.0 "}) == 7
+    assert _page({"source_page": 12.5}) is None
+    assert _page({"source_page": "3.9"}) is None
+    assert _page({"source_page": 0}) is None
+    assert _page({"source_page": -2}) is None
+    assert _page({"source_page": "nan"}) is None
+    assert _page({"source_page": "inf"}) is None
+    assert _page({"source_page": True}) is None
+    assert _page({"source_page": None}) is None
+    assert _page({}) is None

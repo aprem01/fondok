@@ -112,7 +112,10 @@ _CBRE_LEGACY_YEAR_RE = re.compile(
 #: The source id stamped on an engine key one of these assumptions moved.
 SOURCE_INDEX_ASSUMPTION = "index_assumption"
 
-FigureSource = Literal["document", "computed", "override"]
+#: ``ignored_override`` — the analyst stored a value that is NOT applied
+#: (a legacy out-of-range MPI / ARI target); ``detail`` says why. It is
+#: never an active override and never a document default.
+FigureSource = Literal["document", "computed", "override", "ignored_override"]
 
 # Market-level and segment-level occupancy / ADR rows. ``period`` is ``ttm``,
 # a 4-digit year (optionally ``_annual``) or absent (undated). Forecast rows
@@ -144,7 +147,9 @@ class Figure:
 
     ``source`` is ``document`` (one extraction row), ``computed`` (a formula of
     the ``inputs`` rows), ``override`` (the analyst's own value; ``detail`` is
-    their note) or ``None`` (no source — ``detail`` says why).
+    their note), ``ignored_override`` (a stored analyst value the model does
+    NOT apply — no value; ``detail`` says why) or ``None`` (no source —
+    ``detail`` says why).
     """
 
     value: float | None
@@ -653,11 +658,16 @@ def resolve_index_methodology(
             # A legacy out-of-range value (stored before the range gate) is
             # IGNORED everywhere it is read — the model never runs on it — so
             # the row shows no value and says why, never a number nothing applies.
+            # Its source is ``ignored_override`` — distinct from an active
+            # override AND from "no source", so the panel can say a stored
+            # value exists but is not applied.
             pts = _index_points(v)
             if pts is None:
-                assumptions[key] = Figure.none(
-                    stored_target_problem(override_scalar(overrides, key), key)
-                    or "Stored target is outside the accepted range — re-enter it."
+                assumptions[key] = Figure(
+                    value=None,
+                    source="ignored_override",
+                    detail=stored_target_problem(override_scalar(overrides, key), key)
+                    or "Stored target is outside the accepted range — re-enter it. It is ignored, not applied.",
                 )
                 continue
             v = pts

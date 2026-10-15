@@ -206,12 +206,17 @@ def _bucket_str_trend_row(
             idx = int(idx_str)
         except (ValueError, IndexError):
             return
-        compset.setdefault(idx, {}).setdefault(attr, value)  # newest wins
+        # ``compset`` is the roster of ONE report (the caller hands each
+        # extraction its own dict and keeps the newest non-empty one) —
+        # index positions are not stable across reports, so rosters are
+        # never merged by index.
+        compset.setdefault(idx, {}).setdefault(attr, value)
         return
 
     if lname.startswith("ttm_performance.indices."):
         rest = lname[len("ttm_performance.indices.") :]
-        indices[rest] = value
+        # Newest extraction first (see above) — the first value seen wins.
+        indices.setdefault(rest, value)
 
 
 def _build_monthly_records(
@@ -295,13 +300,20 @@ async def load_str_history_for_deal(
     monthly: dict[str, dict[str, Any]] = {}
     compset: dict[int, dict[str, Any]] = {}
     indices: dict[str, Any] = {}
-    for row in materialized:
+    for row in materialized:  # newest extraction first
         fields = row["_fields"]
+        # The comp-set roster comes from ONE report — the newest STR-lane
+        # extraction that carries one. Rosters are positional (``compset.0``,
+        # ``compset.1`` …) and a hotel's index differs between reports, so a
+        # union by index would blend different hotels into one row.
+        row_compset: dict[int, dict[str, Any]] = {}
         for f in fields:
             name = (f.get("field_name") or "").strip()
             if not name:
                 continue
-            _bucket_str_trend_row(name, f.get("value"), monthly, compset, indices)
+            _bucket_str_trend_row(name, f.get("value"), monthly, row_compset, indices)
+        if not compset and row_compset:
+            compset = row_compset
 
     comp_revpar = _compset_avg_revpar(compset)
     rgi = _coerce_float(indices.get("rgi_revpar_index"))

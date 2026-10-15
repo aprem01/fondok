@@ -79,6 +79,7 @@ from ..services.financial_source_rank import (
 from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
+from ..services.market_comp_set import closed_roster_indices
 from ..services.market_fields import extraction_lane
 from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
@@ -1242,6 +1243,11 @@ class CompSetEntry(BaseModel):
     occupancy_pct: float | None = None
     adr_usd: float | None = None
     revpar_usd: float | None = None
+    #: ``closed`` when ANY STR report on the deal marks this hotel closed
+    #: (extracted ``status`` or STR's "Closed - " label — the Market tab's
+    #: ``market_comp_set`` rule); closed hotels are listed but excluded from
+    #: the roster's key total and hotel count.
+    status: Literal["active", "closed"] = "active"
 
 
 class StrSubjectAnnual(BaseModel):
@@ -3732,6 +3738,9 @@ def _aggregate_market_data(
     meta: dict[str, _FieldMeta] = {}
     # Comp-set rows are keyed by their numeric index (1..7).
     compset_rows: dict[int, dict[str, Any]] = {}
+    # Every STR-lane roster on the deal (newest extraction first) — only for
+    # the closed-hotel rule, which reads closures from ANY report.
+    all_rosters: list[dict[int, dict[str, Any]]] = []
     sources: dict[str, list[UUID]] = {}
     doc_names: dict[str, str] = {}
 
@@ -3803,11 +3812,19 @@ def _aggregate_market_data(
             key = f"{doc_type}:{name.lower()}"
             if key not in meta:
                 meta[key] = _FieldMeta(page=page, doc_name=doc_name, doc_type=doc_type)
+        if row_compset:
+            all_rosters.append(row_compset)
         if row_compset and not compset_rows:
             compset_rows.update(row_compset)
 
     str_trend = _build_str_trend_block(
-        str_trend_fields, compset_rows, meta=meta, doc_name=doc_names.get("STR_TREND")
+        str_trend_fields,
+        compset_rows,
+        meta=meta,
+        doc_name=doc_names.get("STR_TREND"),
+        closed_indices=(
+            closed_roster_indices(compset_rows, all_rosters) if compset_rows else set()
+        ),
     )
     cbre = _build_cbre_block(cbre_fields, meta=meta, doc_name=doc_names.get("CBRE_HORIZONS"))
     pnl = _build_pnl_block(
@@ -3950,6 +3967,7 @@ def _build_str_trend_block(
     *,
     meta: Mapping[str, _FieldMeta] | None = None,
     doc_name: str | None = None,
+    closed_indices: set[int] | frozenset[int] = frozenset(),
 ) -> StrTrendBlock | None:
     if not flat and not compset:
         return None
@@ -3960,9 +3978,12 @@ def _build_str_trend_block(
             occupancy_pct=_coerce_float(compset[i].get("occupancy_pct")),
             adr_usd=_coerce_float(compset[i].get("adr_usd")),
             revpar_usd=_coerce_float(compset[i].get("revpar_usd")),
+            status="closed" if i in closed_indices else "active",
         )
         for i in sorted(compset.keys())
     ]
+    # Closed hotels (``market_comp_set`` rule) stay listed but never count.
+    active_entries = [e for e in compset_entries if e.status != "closed"]
 
     # `comp_set.total_keys` is the sum of room counts across every
     # property in the comp set. STR's "Response" tab carries it as the
@@ -3974,7 +3995,7 @@ def _build_str_trend_block(
     # record so we leave them out of this comp-set rollup.
     extracted_total_keys = _coerce_int(flat.get("comp_set.total_keys"))
     if extracted_total_keys is None or extracted_total_keys <= 0:
-        keys_sum = sum(e.keys for e in compset_entries if e.keys and e.keys > 0)
+        keys_sum = sum(e.keys for e in active_entries if e.keys and e.keys > 0)
         derived_total_keys: int | None = keys_sum if keys_sum > 0 else None
     else:
         derived_total_keys = extracted_total_keys
@@ -3985,7 +4006,7 @@ def _build_str_trend_block(
     extracted_size = _coerce_int(flat.get("comp_set.comp_set_size"))
     if extracted_size is None or extracted_size <= 0:
         derived_size: int | None = (
-            sum(1 for e in compset_entries if e.name or (e.keys and e.keys > 0))
+            sum(1 for e in active_entries if e.name or (e.keys and e.keys > 0))
             or None
         )
     else:

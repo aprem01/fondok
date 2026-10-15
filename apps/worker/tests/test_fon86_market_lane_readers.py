@@ -246,3 +246,106 @@ async def test_str_readers_take_the_genuine_str_report_past_a_newer_mis_tagged_o
     # The STR report's June (76% / $330), never the market report's (60% / $150).
     assert june.occupancy == pytest.approx(0.76)
     assert june.adr == 330.0
+
+
+# ───────────── comp-set roster + indices: one report, newest wins ─────────────
+
+
+def _str_report(*, compset_revpars: list[float], rgi: float | None, with_month: bool = True) -> dict[str, Any]:
+    fields: list[dict[str, Any]] = []
+    if with_month:
+        fields += [
+            {"field_name": "ttm_performance.subject.monthly.2024_06.occupancy_pct", "value": 80.0},
+            {"field_name": "ttm_performance.subject.monthly.2024_06.adr_usd", "value": 250.0},
+        ]
+    for i, rp in enumerate(compset_revpars):
+        fields.append({"field_name": f"ttm_performance.compset.{i}.name", "value": f"Hotel {i}"})
+        fields.append({"field_name": f"ttm_performance.compset.{i}.revpar_usd", "value": rp})
+    if rgi is not None:
+        fields.append({"field_name": "ttm_performance.indices.rgi_revpar_index", "value": rgi})
+    return {
+        "doc_type": "STR_TREND",
+        "agent_version": STR_STAMP,
+        "ai_proposed_doc_type": "STR_TREND",
+        "fields": fields,
+    }
+
+
+@pytest.mark.asyncio
+async def test_str_history_comp_set_roster_is_the_newest_report_only() -> None:
+    """Newest report lists 2 hotels; an older one lists 3. The comp-set RevPAR
+    baseline must be the newest report's 2-hotel average — the older report's
+    hotel at index 2 must not be merged in by position."""
+    newest = _str_report(compset_revpars=[100.0, 200.0], rgi=None)
+    older = _str_report(compset_revpars=[900.0, 900.0, 900.0], rgi=None, with_month=False)
+    session = _FakeSession([_db_row(newest, "2026-10-06"), _db_row(older, "2026-09-01")])
+    history = await load_str_history_for_deal(session, deal_id="deal-1", tenant_id="tenant-1")  # type: ignore[arg-type]
+    assert len(history) == 1
+    assert history[0].comp_set_revpar == pytest.approx(150.0)
+
+
+@pytest.mark.asyncio
+async def test_str_history_roster_falls_back_to_an_older_report_when_newest_has_none() -> None:
+    newest = _str_report(compset_revpars=[], rgi=None)
+    older = _str_report(compset_revpars=[120.0, 180.0], rgi=None, with_month=False)
+    session = _FakeSession([_db_row(newest, "2026-10-06"), _db_row(older, "2026-09-01")])
+    history = await load_str_history_for_deal(session, deal_id="deal-1", tenant_id="tenant-1")  # type: ignore[arg-type]
+    assert history[0].comp_set_revpar == pytest.approx(150.0)
+
+
+@pytest.mark.asyncio
+async def test_str_history_indices_newest_extraction_wins() -> None:
+    """No comp set -> the month's index falls back to the RGI; the newest
+    extraction's RGI (1.10) must win over the older one's (0.80)."""
+    newest = _str_report(compset_revpars=[], rgi=1.10)
+    older = _str_report(compset_revpars=[], rgi=0.80, with_month=False)
+    session = _FakeSession([_db_row(newest, "2026-10-06"), _db_row(older, "2026-09-01")])
+    history = await load_str_history_for_deal(session, deal_id="deal-1", tenant_id="tenant-1")  # type: ignore[arg-type]
+    assert history[0].revpar_index == pytest.approx(1.10)
+
+
+# ───────────── market-data envelope: closed comp-set hotels excluded ─────────────
+
+
+def _roster_report(doc_id: Any, roster: list[tuple[str, int]]) -> dict[str, Any]:
+    fields: list[dict[str, Any]] = [
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 78.4},
+    ]
+    for i, (name, keys) in enumerate(roster, start=1):
+        fields.append({"field_name": f"ttm_performance.compset.{i}.name", "value": name})
+        fields.append({"field_name": f"ttm_performance.compset.{i}.keys", "value": keys})
+    return {
+        "document_id": doc_id,
+        "doc_type": "STR_TREND",
+        "agent_version": STR_STAMP,
+        "ai_proposed_doc_type": "STR_TREND",
+        "filename": STR_NAME,
+        "fields": fields,
+    }
+
+
+def test_envelope_roster_excludes_a_hotel_an_older_report_marks_closed() -> None:
+    """Live E-009 shape: the newest trend report lists "Blue Moon Hotel · 75
+    rooms" with no marker; an older daily report lists "Closed - Blue Moon
+    Hotel · 0 rooms". The envelope shows the newest roster, flags Blue Moon
+    closed, and leaves its 75 keys out of the total Index Analysis reads."""
+    newest = _roster_report(uuid4(), [("The Betsy", 130), ("Blue Moon Hotel", 75), ("The Tony", 214)])
+    older = _roster_report(uuid4(), [("Closed - Blue Moon Hotel", 0), ("The Tony", 214)])
+    env = _aggregate_market_data([newest, older], uuid4())
+    assert env.str_trend is not None
+    by_name = {e.name: e for e in env.str_trend.compset}
+    assert set(by_name) == {"The Betsy", "Blue Moon Hotel", "The Tony"}
+    assert by_name["Blue Moon Hotel"].status == "closed"
+    assert by_name["The Betsy"].status == "active"
+    assert env.str_trend.total_keys == 130 + 214
+    assert env.str_trend.comp_set_size == 2
+
+
+def test_envelope_roster_without_closure_markers_counts_every_hotel() -> None:
+    """A 0-room row with no marker is NOT closed — nothing is inferred."""
+    only = _roster_report(uuid4(), [("The Betsy", 130), ("Blue Moon Hotel", 0)])
+    env = _aggregate_market_data([only], uuid4())
+    assert env.str_trend is not None
+    assert all(e.status == "active" for e in env.str_trend.compset)
+    assert env.str_trend.total_keys == 130
+    assert env.str_trend.comp_set_size == 2

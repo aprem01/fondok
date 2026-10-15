@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { INDEX_POINTS_RANGE, INDEX_RATIO_RANGE, toIndexPoints, validateIndexTarget } from '@/lib/indexTarget';
-import { parseIndexPoints, fmtAssumption } from '@/components/project/pl/IndexMethodology';
+import { parseIndexPoints, fmtAssumption, figureSourceText } from '@/components/project/pl/IndexMethodology';
 import {
   buildCompSeries,
   COMP_FORECAST_NONE_REASON,
@@ -92,5 +92,20 @@ describe('buildCompSeries — the comp-set forecast (Sam #3 c)', () => {
     expect(r.sources[7]?.label).toBe('Grown (assumption)');
     expect(r.sources[7]?.detail).toMatch(/Submarket\.pdf, p\.6/);
     expect(r.forecastReason).toMatch(/No market occupancy growth assumption/);
+  });
+});
+
+describe('figureSourceText — an ignored stored target is never "Your override"', () => {
+  it('names the stored value as ignored and gives the reason', () => {
+    const reason =
+      'Stored all-years MPI target 5 is outside 25–250 index points (or 0.25–2.5 as a ratio) — re-enter it. It is ignored, not applied.';
+    const text = figureSourceText({ value: null, source: 'ignored_override', inputs: [], detail: reason });
+    expect(text).toBe(`Stored override ignored — ${reason}`);
+    expect(text).not.toMatch(/Your override/);
+  });
+  it('an active override still reads "Your override"', () => {
+    expect(figureSourceText({ value: 110, source: 'override', inputs: [], detail: 'Hold share' })).toBe(
+      'Your override — Hold share',
+    );
   });
 });

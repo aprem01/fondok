@@ -111,7 +111,9 @@ def test_engine_seam_ignores_a_legacy_out_of_range_scalar(legacy: Any) -> None:
 def test_panel_shows_no_value_and_the_reason_for_a_legacy_scalar() -> None:
     r = resolve_index_methodology(STR_ROWS, {KEY_MPI_TARGET: {"value": 5, "note": "old"}})
     fig = r.assumptions[KEY_MPI_TARGET]
-    assert fig.value is None and fig.source is None
+    # Distinct from an active override AND from "no source": a stored value
+    # exists, the model ignores it, and the detail says why.
+    assert fig.value is None and fig.source == "ignored_override"
     assert "5 is outside 25–250" in (fig.detail or "") and "re-enter it" in (fig.detail or "")
 
 

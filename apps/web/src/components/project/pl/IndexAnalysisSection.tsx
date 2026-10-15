@@ -75,6 +75,7 @@ import {
   type RevenueYear,
   type YearSeries,
   type YearTarget,
+  compSetKeys,
 } from './indexAnalysisModel';
 
 export type { ForecastBoundary } from './indexAnalysisModel';
@@ -418,18 +419,8 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   );
   const market = useMemo(() => buildMarketSeries(cols, marketData), [cols, marketData]);
 
-  // Comp-set "keys" row = total comp-set room count (the named roster, which
-  // excludes the subject; the ``total_keys`` rollup only when the roster is
-  // empty — the extracted rollup has proven unreliable).
-  const compKeys: number | null = (() => {
-    const fromRoster = (str?.compset ?? []).reduce(
-      (acc, row) => acc + (typeof row.keys === 'number' && row.keys > 0 ? row.keys : 0),
-      0,
-    );
-    if (fromRoster > 0) return fromRoster;
-    const fromRollup = str?.total_keys;
-    return typeof fromRollup === 'number' && fromRollup > 0 ? fromRollup : null;
-  })();
+  // Comp-set "keys" row = active roster keys (closed hotels excluded).
+  const compKeys: number | null = compSetKeys(str);
 
   // The ANALYST's all-years MPI / ARI targets (source 'override') feed
   // "Revenue Opportunity at Target" where no per-year target applies. A

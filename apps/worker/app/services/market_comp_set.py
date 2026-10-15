@@ -925,6 +925,50 @@ def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
     return out
 
 
+def closed_roster_indices(
+    roster: Mapping[int, Mapping[str, Any]],
+    all_rosters: Sequence[Mapping[int, Mapping[str, Any]]],
+) -> set[int]:
+    """Indices of ``roster`` (one report's ``ttm_performance.compset.<n>.*``
+    rows) whose hotel is CLOSED under the same rule the Market tab's comp set
+    uses (:func:`derive_comp_set_union`): an explicit marker (extracted
+    ``status`` or STR's ``"Closed - "`` label) in ANY report on the deal,
+    matched across reports by STR id, normalised name or the alias rule.
+
+    For readers that show one report's roster (the market-data envelope
+    behind Index Analysis) but must exclude the same closed hotels from
+    their key totals. ``all_rosters`` should include ``roster`` itself;
+    order does not change which hotels are closed.
+    """
+    snapshots = [RosterSnapshot(rows=roster)] + [
+        RosterSnapshot(rows=r) for r in all_rosters if r is not roster
+    ]
+    closed = [h for h in derive_comp_set_union(snapshots).hotels if h.status == "closed"]
+    if not closed:
+        return set()
+    out: set[int] = set()
+    for idx, entry in roster.items():
+        raw_name = entry.get("name")
+        name = str(raw_name).strip() if raw_name is not None else ""
+        if classify_hotel_status(name, entry.get("status"))[0] == "closed":
+            out.add(idx)
+            continue
+        sid = _str_id(entry.get("str_id"))
+        norm = normalized_hotel_name(name) if name else ""
+        for h in closed:
+            if sid and h.str_id:
+                if h.str_id == sid:
+                    out.add(idx)
+                    break
+                continue
+            names = {normalized_hotel_name(h.name), normalized_hotel_name(h.name_as_reported)}
+            names.update(normalized_hotel_name(m) for m in h.merged_names)
+            if norm and norm in names:
+                out.add(idx)
+                break
+    return out
+
+
 def derive_comp_set_from_inputs(inputs: StrMarketInputs) -> CompSetDerivation:
     size = inputs.flat.get(ROLLUP_SIZE)
     keys = inputs.flat.get(ROLLUP_KEYS)
@@ -1106,6 +1150,7 @@ __all__ = [
     "TtmBlend",
     "build_str_inputs",
     "classify_hotel_status",
+    "closed_roster_indices",
     "derive_comp_set",
     "derive_comp_set_from_inputs",
     "derive_comp_set_union",

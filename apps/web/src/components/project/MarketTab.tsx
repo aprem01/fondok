@@ -69,6 +69,7 @@ interface StrCompRow {
   occupancy_pct: number | null;
   adr_usd: number | null;
   revpar_usd: number | null;
+  status?: 'active' | 'closed' | null;
 }
 interface StrTrend {
   subject_occupancy_pct: number | null;
@@ -1844,8 +1845,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   // rollup, which counts closed hotels the keys exclude (344 keys / "5 hotels").
   const compSetBlock = workerMarket?.comp_set ?? null;
   const rosterKeySum =
-    strTrend?.compset?.reduce((s, c) => s + (c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
-  const rosterCount = strTrend?.compset?.length || null;
+    strTrend?.compset?.reduce((s, c) => s + (c.status !== 'closed' && c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
+  const rosterCount = strTrend?.compset?.filter((c) => c.status !== 'closed').length || null;
   const compKeyCount = compSetBlock?.active_keys ?? rosterKeySum;
   const activeHotelCount = compSetBlock?.active_count ?? rosterCount;
 

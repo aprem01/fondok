@@ -1154,8 +1154,10 @@ class IndexFigureOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: float | None = None
-    #: ``document`` / ``computed`` / ``override``; None = no source (see ``detail``).
-    source: Literal["document", "computed", "override"] | None = None
+    #: ``document`` / ``computed`` / ``override`` / ``ignored_override`` (a
+    #: stored analyst value that is not applied — see ``detail``); None = no
+    #: source (see ``detail``).
+    source: Literal["document", "computed", "override", "ignored_override"] | None = None
     inputs: list[FieldRefOut] = Field(default_factory=list)
     detail: str | None = None
     period_label: str | None = None

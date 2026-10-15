@@ -4150,7 +4150,10 @@ def _chain_scale_for_deal_row(positioning: object, service: object) -> str | Non
     is the analyst's per-deal override of the brand's STR scale. Only
     with no positioning (or the ``default`` sentinel) is ``service``
     (Full Service / Select Service / Luxury / Resort) mapped onto an
-    approximate bucket, exactly as before.
+    approximate bucket, exactly as before. So "Default" positioning is NOT
+    "no chain scale" here (it is for the portfolio P&L library filter —
+    ``engine_runner.chain_scale_from_positioning``); the methodology page
+    ("Brand and positioning") states both.
     """
     from ..services.engine_runner import chain_scale_from_positioning
 

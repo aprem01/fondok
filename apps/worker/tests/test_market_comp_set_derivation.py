@@ -737,3 +737,24 @@ def test_ordering_year_only_sorts_behind_a_known_month_of_the_same_year_and_unda
     assert [(o.extraction_id, o.period_end) for o in order_str_extractions(rows)] == [
         ("e-jan", "2025-01"), ("e-year", "2025"), ("e-dec24", "2024-12"), ("e-undated", None),
     ]
+
+
+def test_closed_roster_indices_reads_closures_from_any_report() -> None:
+    from app.services.market_comp_set import closed_roster_indices
+
+    newest = {
+        1: {"name": "Blue Moon Hotel", "keys": 75},
+        2: {"name": "The Tony", "keys": 214, "str_id": "111"},
+        3: {"name": "The Betsy Hotel", "keys": 130},
+        4: {"name": "Faena", "keys": 169, "status": "closed"},
+    }
+    older = {
+        1: {"name": "Closed - Blue Moon Hotel", "keys": 0},
+        # Same STR id under a different name, marked closed -> closed.
+        2: {"name": "Tony Hotel South Beach", "keys": 214, "str_id": "111", "status": "closed"},
+        # Alias of the Betsy (same keys, two-token prefix) - active here.
+        3: {"name": "The Betsy South Beach", "keys": 130},
+    }
+    assert closed_roster_indices(newest, [newest, older]) == {1, 2, 4}
+    # No markers anywhere -> nothing is closed (a 0-room row is not a marker).
+    assert closed_roster_indices({1: {"name": "A Hotel", "keys": 0}}, []) == set()

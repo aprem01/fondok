@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import type { EngineOutputsResponse, HistoricalBaselineResponse } from '@/lib/api';
 import {
   buildCompSeries,
+  compSetKeys,
   buildMarketSeries,
   buildSubjectSeries,
   computePenetration,
@@ -412,5 +413,25 @@ describe('computePenetration (FON-95)', () => {
       expect(r.cells.every((c) => c.text === '—')).toBe(true);
       expect(r.reason).toMatch(/Comp-set room count unknown/);
     }
+  });
+});
+
+describe('compSetKeys — active roster keys only', () => {
+  it('excludes a hotel the worker flags closed', () => {
+    expect(
+      compSetKeys({
+        compset: [
+          { name: 'The Betsy', keys: 130, status: 'active' },
+          { name: 'Blue Moon Hotel', keys: 75, status: 'closed' },
+          { name: 'The Tony', keys: 214 },
+        ],
+        total_keys: 419,
+      }),
+    ).toBe(344);
+  });
+  it('falls back to the rollup only when the roster yields nothing', () => {
+    expect(compSetKeys({ compset: [], total_keys: 419 })).toBe(419);
+    expect(compSetKeys({ compset: [{ name: 'X', keys: 0 }], total_keys: null })).toBeNull();
+    expect(compSetKeys(null)).toBeNull();
   });
 });

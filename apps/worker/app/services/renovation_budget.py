@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -300,9 +301,13 @@ def _page(row: Mapping[str, Any]) -> int | None:
     if page is None or isinstance(page, bool):
         return None
     try:
-        n = int(float(str(page).strip()))
+        f = float(str(page).strip())
     except (TypeError, ValueError):
         return None
+    # ``12.5`` is not a page — truncating it to 12 would be a guess.
+    if not math.isfinite(f) or not f.is_integer():
+        return None
+    n = int(f)
     return n if n >= 1 else None
 
 

@@ -1602,3 +1602,36 @@ describe('OverviewTab — Sam #6 Market / Submarket', () => {
     expect(within(field).getByTestId('market-source-line')).toHaveTextContent('STR id TEST-M1');
   });
 });
+
+// ── R-024 / Sam #1 — the Current flag never overwrites a stored positioning ──
+describe('OverviewTab — Current flag vs stored positioning', () => {
+  /** The two selects inside the Brand and Positioning control: [Current flag, Positioning]. */
+  const selects = () => within(screen.getByTestId('brand-and-positioning')).getAllByRole('combobox');
+
+  it('changing the Current flag on a deal with a stored tier writes ONLY the brand', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upscale' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const [flag, tier] = selects();
+    expect(tier).toHaveValue('upscale');
+    fireEvent.change(flag, { target: { value: 'Hampton by Hilton' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { brand: 'Hampton by Hilton' });
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('positioning');
+  });
+
+  it('pre-fills the tier from the flag only while the deal has none ("Default")', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const [flag, tier] = selects();
+    expect(tier).toHaveValue('default');
+    fireEvent.change(flag, { target: { value: 'Hampton by Hilton' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { brand: 'Hampton by Hilton', positioning: 'upper-midscale' });
+  });
+
+  it('the Positioning select still changes the tier explicitly', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upscale' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.change(selects()[1], { target: { value: 'luxury' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'luxury' }));
+  });
+});

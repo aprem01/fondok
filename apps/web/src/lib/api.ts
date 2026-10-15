@@ -427,10 +427,12 @@ export interface IndexFieldRef {
   doc_id?: string | null;
   page?: number | null;
 }
-/** One Index Analysis figure and its source (`null` source = none; see detail). */
+/** One Index Analysis figure and its source (`null` source = none; see detail).
+ *  `ignored_override` = a stored analyst value the model does NOT apply (a
+ *  legacy out-of-range MPI / ARI target); no value, `detail` says why. */
 export interface IndexFigure {
   value: number | null;
-  source: 'document' | 'computed' | 'override' | null;
+  source: 'document' | 'computed' | 'override' | 'ignored_override' | null;
   inputs: IndexFieldRef[];
   detail?: string | null;
   period_label?: string | null;
