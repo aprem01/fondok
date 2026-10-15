@@ -58,6 +58,8 @@ const fbYear = (i: number) => ({
   other_revenue: 600_000,
   total_revenue: TOTAL_REVENUE,
 });
+// Sam #9 — the incentive fee the stub expense run carries (null = none modelled).
+let INCENTIVE_FEE: number | null = null;
 const expYear = (i: number) => ({
   year: i + 1,
   total_revenue: TOTAL_REVENUE,
@@ -71,6 +73,7 @@ const expYear = (i: number) => ({
     total: 3_200_000,
   },
   mgmt_fee: 408_000,
+  incentive_mgmt_fee: INCENTIVE_FEE,
   ffe_reserve: 552_613,
   fixed_charges: { property_taxes: 700_000, insurance: 300_000, rent: 0, other_fixed: 0, total: 1_000_000 },
   gop: 5_400_000,
@@ -173,6 +176,7 @@ beforeEach(() => {
   fx.update.mockClear();
   fx.run.mockClear();
   CALENDAR_YEARS = CALENDAR;
+  INCENTIVE_FEE = null;
   FIELD_OVERRIDES = { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } };
 });
 
@@ -418,5 +422,47 @@ describe('FON-41 · Assumptions panel — editable fields are wired, the linked 
     const row = screen.getByText('Exit cap rate').parentElement as HTMLElement;
     expect(interactiveIn(row)).toEqual([]);
     expect(within(row).getByText('CAPEX →').getAttribute('href')).toContain('tab=investment');
+  });
+});
+
+// ── 6. Sam #9 — base vs incentive management fee ─────────────────────
+describe('Sam #9 · Incentive management fee', () => {
+  it('unset: no Future P&L row, a blank input (never a made-up 0), and EBITDA = GOP − base fee', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByTestId('row-incentive-mgmt-fee')).toBeNull();
+    const input = screen.getByTestId('assumption-panel-input-incentive_mgmt_fee_pct_of_gop') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(input.placeholder).toBe('—');
+    // Blurring the blank field is not an edit: no justification gate opens.
+    fireEvent.blur(input);
+    expect(screen.queryByTestId('assumption-panel-note-incentive_mgmt_fee_pct_of_gop')).toBeNull();
+    expect(screen.getByTestId('row-ebitda').textContent).toContain('$4,992,000');
+  });
+
+  it('modelled: the row renders under the base fee and EBITDA deducts it', () => {
+    INCENTIVE_FEE = 499_200; // 10% × (GOP 5,400,000 − base 408,000)
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const row = screen.getByTestId('row-incentive-mgmt-fee');
+    expect(row.textContent).toContain('Incentive management fee');
+    expect(row.textContent).toContain('$499,200');
+    expect(screen.getByTestId('row-mgmt-fee').nextElementSibling).toBe(row);
+    expect(screen.getByTestId('row-ebitda').textContent).toContain('$4,492,800');
+  });
+
+  it('Save needs a justification and PATCHes the fraction as {value, note}', async () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const key = 'incentive_mgmt_fee_pct_of_gop';
+    const input = screen.getByTestId(`assumption-panel-input-${key}`);
+    fireEvent.change(input, { target: { value: '10' } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByTestId(`assumption-panel-save-${key}`));
+    expect(fx.update).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId(`assumption-panel-note-${key}`), {
+      target: { value: 'HMA §7: 10% of GOP after the base fee' },
+    });
+    fireEvent.click(screen.getByTestId(`assumption-panel-save-${key}`));
+    await waitFor(() => expect(fx.update).toHaveBeenCalledTimes(1));
+    const [, body] = fx.update.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides[key]).toEqual({ value: 0.1, note: 'HMA §7: 10% of GOP after the base fee' });
   });
 });

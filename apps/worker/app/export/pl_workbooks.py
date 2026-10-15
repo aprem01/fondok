@@ -118,6 +118,9 @@ PROJ_LINES: tuple[tuple[str, str, str], ...] = (
     ("expense", "undistributed.total", "Total Undistributed Expenses"),
     ("expense", "gop", "Gross Operating Profit"),
     ("expense", "mgmt_fee", "Management Fee"),
+    # Sam #9 — only written when the run modelled an incentive fee (see
+    # ``OPTIONAL_PROJ_PATHS``); otherwise the row is omitted, never blank-filled.
+    ("expense", "incentive_mgmt_fee", "Incentive Management Fee"),
     ("expense", "fixed_charges.property_taxes", "Property Taxes"),
     ("expense", "fixed_charges.insurance", "Insurance"),
     ("expense", "fixed_charges.rent", "Rent"),
@@ -126,6 +129,11 @@ PROJ_LINES: tuple[tuple[str, str, str], ...] = (
     ("expense", "noi_institutional", "NOI (before FF&E reserve)"),
     ("expense", "ffe_reserve", "FF&E Reserve"),
 )
+
+#: ``PROJ_LINES`` rows written only when the run carries a value for them in
+#: at least one year. Sam #9 — the incentive management fee is opt-in, so a
+#: deal without one gets no row at all rather than a row of blanks.
+OPTIONAL_PROJ_PATHS: frozenset[str] = frozenset({"expense.incentive_mgmt_fee"})
 
 #: FON-97 — the Future P&L sheet's read-only "Benchmark %" column header.
 #: The import parser skips any column whose header starts with this word.
@@ -230,6 +238,12 @@ ASSUMPTIONS: tuple[AssumptionSpec, ...] = (
     AssumptionSpec(
         "mgmt_fee_pct", "Management fee", "fraction of total revenue",
         "Applied to each year's total revenue",
+    ),
+    AssumptionSpec(
+        "incentive_mgmt_fee_pct_of_gop", "Incentive management fee",
+        "fraction of GOP after the base fee (0.10 = 10%)",
+        "Each year: max(0, GOP − base management fee) × this rate, deducted "
+        "before NOI; blank = no incentive fee",
     ),
     AssumptionSpec(
         "hold_years", "Projection period (hold)", "years",
@@ -771,7 +785,16 @@ def build_projections_workbook(
     if bm_col is not None:
         ws.cell(row=1, column=bm_col, value=BENCHMARK_HEADER)
     _style_header(ws, 1, 2 + len(year_headers) + (1 if bm_col is not None else 0))
-    for r_i, (eng, path, label) in enumerate(PROJ_LINES):
+    proj_lines = [
+        (eng, path, label)
+        for eng, path, label in PROJ_LINES
+        if f"{eng}.{path}" not in OPTIONAL_PROJ_PATHS
+        or any(
+            values.get(proj_cell_key(eng, path, i)) is not None
+            for i in range(len(year_headers))
+        )
+    ]
+    for r_i, (eng, path, label) in enumerate(proj_lines):
         r = 2 + r_i
         ws.cell(row=r, column=1, value=f"{eng}.{path}")
         ws.cell(row=r, column=2, value=label)
@@ -788,7 +811,7 @@ def build_projections_workbook(
             if bv is not None:
                 bc.number_format = "0.0%"
     if not year_headers:
-        ws.cell(row=2 + len(PROJ_LINES) + 1, column=2,
+        ws.cell(row=2 + len(proj_lines) + 1, column=2,
                 value="No model run yet — run the model to populate the projection.")
     ws.column_dimensions["A"].hidden = True
     ws.column_dimensions["B"].width = 40
@@ -1025,6 +1048,7 @@ __all__ = [
     "HIST_FORMAT",
     "HIST_LINES",
     "PROJ_FORMAT",
+    "OPTIONAL_PROJ_PATHS",
     "PROJ_LINES",
     "HistCell",
     "HistColumn",
