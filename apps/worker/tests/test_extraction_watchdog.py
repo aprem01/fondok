@@ -474,3 +474,198 @@ async def test_reprocess_refuses_a_fresh_processing_row(db_env) -> None:
         r = await client.post(f"/deals/{deal_id}/documents/{doc}/reprocess")
     assert r.status_code == 409, r.text
     assert "still Parsing" in r.json()["detail"]
+
+
+# ─────────────────────────── #18 re-extraction ───────────────────────────
+
+
+async def _audit_rows(
+    factory: Any, *, tenant_id: str, doc_id: str, action: str
+) -> list[dict[str, Any]]:
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT actor_id, actor_email, payload FROM audit_log "
+                    "WHERE tenant_id = :t AND resource_id = :rid AND action = :a "
+                    "ORDER BY created_at"
+                ),
+                {"t": tenant_id, "rid": doc_id, "a": action},
+            )
+        ).fetchall()
+    out = []
+    for r in rows:
+        m = dict(r._mapping)
+        raw = m.get("payload")
+        m["payload"] = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
+        out.append(m)
+    return out
+
+
+def _as_analyst(tenant_id: str):
+    """Override the route's ``get_current_auth`` with a JWT-shaped analyst so
+    the audit row's actor can be asserted (the X-Tenant-Id test path has no
+    user)."""
+    from uuid import UUID
+
+    from app.auth import get_current_auth
+    from app.auth.context import AuthContext
+    from app.main import app
+
+    ctx = AuthContext(
+        tenant_id=UUID(tenant_id), user_id="user_reextract", role="member",
+        source="jwt", email="analyst@fondok.test",
+    )
+    app.dependency_overrides[get_current_auth] = lambda: ctx
+    return app
+
+
+@pytest.mark.parametrize("prev_status", ["EXTRACTED", "FAILED"])
+async def test_extract_re_runs_a_finished_document_with_force_and_audits_actor(
+    db_env, prev_status: str
+) -> None:
+    from app.auth import get_current_auth
+
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory, tenant_id=tenant_id, deal_id=deal_id,
+        status=prev_status, status_changed_minutes_ago=2,
+    )
+    pipeline = AsyncMock()
+    app = _as_analyst(tenant_id)
+    try:
+        with patch.object(docs_module, "_run_extraction_pipeline", pipeline):
+            async with await _client() as client:
+                # no ?force — a finished document is ALWAYS re-run fresh
+                r = await client.post(f"/deals/{deal_id}/documents/{doc}/extract")
+    finally:
+        app.dependency_overrides.pop(get_current_auth, None)
+    assert r.status_code == 202, r.text
+    pipeline.assert_awaited_once()
+    kwargs = pipeline.await_args.kwargs
+    assert kwargs["force"] is True
+    assert kwargs["job_id"] == r.json()["job_id"]
+    assert (await _row(factory, doc, tenant_id))["status"] == "CLASSIFYING"
+    rows = await _audit_rows(
+        factory, tenant_id=tenant_id, doc_id=doc, action="document.re_extract_requested"
+    )
+    assert len(rows) == 1
+    assert rows[0]["actor_id"] == "user_reextract"
+    assert rows[0]["actor_email"] == "analyst@fondok.test"
+    meta = rows[0]["payload"]["metadata"]
+    assert meta["previous_status"] == prev_status
+    assert meta["endpoint"] == "extract"
+    assert meta["force"] is True and meta["force_requested"] is False
+    assert meta["pipeline_version"] == docs_module.EXTRACTION_PIPELINE_VERSION
+    assert meta["job_id"] == r.json()["job_id"]
+
+
+async def test_extract_on_a_not_yet_extracted_row_is_not_a_re_extract(db_env) -> None:
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory, tenant_id=tenant_id, deal_id=deal_id,
+        status="UPLOADED", status_changed_minutes_ago=1,
+    )
+    pipeline = AsyncMock()
+    with patch.object(docs_module, "_run_extraction_pipeline", pipeline):
+        async with await _client() as client:
+            r = await client.post(f"/deals/{deal_id}/documents/{doc}/extract")
+    assert r.status_code == 202, r.text
+    assert pipeline.await_args.kwargs["force"] is False
+    assert "document.re_extract_requested" not in await _audit_actions(
+        factory, tenant_id=tenant_id, doc_id=doc
+    )
+
+
+async def test_re_extract_refused_while_genuinely_processing(db_env) -> None:
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory, tenant_id=tenant_id, deal_id=deal_id,
+        status="CLASSIFYING", status_changed_minutes_ago=1,
+    )
+    pipeline = AsyncMock()
+    with patch.object(docs_module, "_run_extraction_pipeline", pipeline):
+        async with await _client() as client:
+            r = await client.post(f"/deals/{deal_id}/documents/{doc}/extract?force=true")
+    assert r.status_code == 409, r.text
+    pipeline.assert_not_awaited()
+    assert await _audit_actions(factory, tenant_id=tenant_id, doc_id=doc) == []
+
+
+async def test_re_extract_is_tenant_scoped(db_env) -> None:
+    factory, _tenant_id, _deal_id = db_env
+    # an EXTRACTED document that belongs to ANOTHER tenant's deal
+    async with factory() as session:
+        other_deal = (
+            await session.execute(
+                text("SELECT id FROM deals WHERE tenant_id = :t LIMIT 1"),
+                {"t": _OTHER_TENANT},
+            )
+        ).scalar_one()
+    doc = await _seed_doc(
+        factory, tenant_id=_OTHER_TENANT, deal_id=str(other_deal),
+        status="EXTRACTED", status_changed_minutes_ago=5,
+    )
+    pipeline = AsyncMock()
+    with patch.object(docs_module, "_run_extraction_pipeline", pipeline):
+        async with await _client() as client:
+            r = await client.post(f"/deals/{other_deal}/documents/{doc}/extract")
+    assert r.status_code == 404, r.text
+    pipeline.assert_not_awaited()
+    assert (await _row(factory, doc, _OTHER_TENANT))["status"] == "EXTRACTED"
+
+
+async def test_reprocess_of_a_failed_document_is_a_forced_audited_re_extract(
+    db_env,
+) -> None:
+    from app.auth import get_current_auth
+
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory, tenant_id=tenant_id, deal_id=deal_id,
+        status="PARSE_FAILED", status_changed_minutes_ago=3,
+    )
+
+    class _Store:
+        async def get(self, key: str) -> bytes:
+            return b"%PDF-1.4 stored"
+
+    job = AsyncMock()
+    app = _as_analyst(tenant_id)
+    try:
+        with patch.object(docs_module, "get_raw_store", lambda settings: _Store()), \
+                patch.object(docs_module, "_run_parse_and_extract", job):
+            async with await _client() as client:
+                r = await client.post(f"/deals/{deal_id}/documents/{doc}/reprocess")
+    finally:
+        app.dependency_overrides.pop(get_current_auth, None)
+    assert r.status_code == 202, r.text
+    job.assert_awaited_once()
+    assert job.await_args.kwargs["force"] is True
+    rows = await _audit_rows(
+        factory, tenant_id=tenant_id, doc_id=doc, action="document.re_extract_requested"
+    )
+    assert len(rows) == 1 and rows[0]["actor_id"] == "user_reextract"
+    assert rows[0]["payload"]["metadata"]["endpoint"] == "reprocess"
+    assert rows[0]["payload"]["metadata"]["previous_status"] == "PARSE_FAILED"
+
+
+async def test_parse_and_extract_hands_force_to_the_extraction_stage(
+    db_env, monkeypatch
+) -> None:
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory, tenant_id=tenant_id, deal_id=deal_id,
+        status="PARSING", status_changed_minutes_ago=0,
+    )
+    captured: dict[str, Any] = {}
+
+    async def _inner(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(docs_module, "_run_parse_and_extract_inner", _inner)
+    await docs_module._run_parse_and_extract(
+        doc_id=doc, deal_id=deal_id, tenant_id=tenant_id,
+        body=b"%PDF-1.4", filename="x.pdf", force=True,
+    )
+    assert captured["force"] is True

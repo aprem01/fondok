@@ -12,6 +12,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
+import Modal from '@/components/ui/Modal';
 import { engines, templates } from '@/lib/mockData';
 import {
   api,
@@ -27,6 +28,14 @@ import {
 } from '@/lib/api';
 import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import {
+  REEXTRACT_CONSEQUENCES,
+  planReextractAll,
+  reextractBatchDone,
+  reextractEligibility,
+  reextractFailureReason,
+  type ReextractEndpoint,
+} from '@/lib/reextract';
 import { openDocumentInNewTab, shortReason } from '@/lib/openDocument';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -308,8 +317,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // re-fire as the polling loop re-emits the same EXTRACTED record.
   const extractionToastedRef = useRef<Set<string>>(new Set());
 
-  const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction, settled: docsSettled } =
+  const { documents, uploading, upload, extractions, error: docsError, refresh, refreshExtraction, settled: docsSettled, reextract } =
     useDocuments(rawId);
+
+  // #18 — "Re-run extraction" (per document + for all). The confirm step
+  // says what a re-run does (lib/reextract REEXTRACT_CONSEQUENCES);
+  // ``reextractStartedAt`` feeds the stage timer while the re-run is in
+  // flight; ``reextractBatchRef`` tracks the documents of the current
+  // re-run so the model auto-runs ONCE when the last of them finishes.
+  const [reextractConfirm, setReextractConfirm] = useState<
+    { kind: 'one'; docId: string } | { kind: 'all' } | null
+  >(null);
+  const [reextractBusy, setReextractBusy] = useState(false);
+  const [reextractStartedAt, setReextractStartedAt] = useState<Record<string, string>>({});
+  const reextractBatchRef = useRef<Map<string, { seenProcessing: boolean }>>(new Map());
+  const [reextractRunDue, setReextractRunDue] = useState(false);
 
   // FON-41 — the SAME historical columns + review state the Financials
   // worksheet renders: the same hook, over this tab's own documents /
@@ -477,7 +499,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     documents.forEach((d) => {
       if (extractionToastedRef.current.has(d.id)) return;
       const ex = extractions[d.id];
-      if (ex && ex.status === 'EXTRACTED') {
+      // #18 — while a document is being re-run its held extraction is the
+      // PREVIOUS run's; only an EXTRACTED row marks it seen, so a re-run
+      // that fails still toasts.
+      if (ex && ex.status === 'EXTRACTED' && d.status !== 'FAILED' && !isProcessingStatus(d.status)) {
         // Mark seen so the failure branch below doesn't fire later
         // if the row transitions back through a state machine, and
         // so any future aggregate-toast logic doesn't double-count.
@@ -539,10 +564,12 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         // FON-91 — lets the stage badge say "Timed out after N min — Retry".
         errorKind: d.error_kind ?? null,
         errorMessage: d.error_message ?? null,
+        // #18 — the stage timer of a re-run measures from the request.
+        reextractStartedAt: reextractStartedAt[d.id] ?? null,
       };
     }
     return m;
-  }, [documents, extractions]);
+  }, [documents, extractions, reextractStartedAt]);
   const anyDocProcessing = documents.some((d) => isProcessingStatus(d.status));
 
   // Build the unified doc rows the UI renders.
@@ -880,6 +907,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       autoRunRef.current.lastSeen = extractedDocCount;
       return;
     }
+    // #18 — a re-run in flight owns the auto-run: it fires once when the
+    // whole batch is done (below), not per document as each one lands.
+    if (reextractBatchRef.current.size > 0 || reextractRunDue) return;
     if (extractedDocCount <= autoRunRef.current.lastSeen) return;
     if (fullRunRunning || fullRunDisabled) return;
     const t = setTimeout(() => {
@@ -887,7 +917,105 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       autoRunRef.current.run();
     }, 2500);
     return () => clearTimeout(t);
-  }, [extractedDocCount, fullRunRunning, fullRunDisabled, liveMode, docsSettled]);
+  }, [extractedDocCount, fullRunRunning, fullRunDisabled, liveMode, docsSettled, reextractRunDue]);
+
+  // #18 — track the current re-run batch through the existing status
+  // polling. Each document must be seen in the pipeline, then terminal;
+  // when the last one is, the model runs ONCE (if any came back EXTRACTED).
+  const docStatusSig = documents.map((d) => `${d.id}:${d.status}`).join('|');
+  useEffect(() => {
+    const batch = reextractBatchRef.current;
+    if (batch.size === 0) return;
+    for (const d of documents) {
+      const p = batch.get(d.id);
+      if (p && isProcessingStatus(d.status)) p.seenProcessing = true;
+    }
+    if (!reextractBatchDone(batch, documents)) return;
+    const anyExtracted = documents.some(
+      (d) => batch.has(d.id) && (d.status ?? '').toUpperCase() === 'EXTRACTED',
+    );
+    batch.clear();
+    setReextractStartedAt({});
+    // The re-run put the EXTRACTED count back where it was; re-baseline so
+    // the per-upload detector above doesn't read it as new extractions.
+    autoRunRef.current.lastSeen = extractedDocCount;
+    if (anyExtracted) setReextractRunDue(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docStatusSig]);
+
+  useEffect(() => {
+    if (!reextractRunDue || !liveMode) return;
+    if (fullRunRunning || fullRunDisabled) return;
+    const t = setTimeout(() => {
+      setReextractRunDue(false);
+      autoRunRef.current.lastSeen = extractedDocCount;
+      autoRunRef.current.run();
+    }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reextractRunDue, fullRunRunning, fullRunDisabled, liveMode]);
+
+  const reextractTargets = (
+    which: { kind: 'one'; docId: string } | { kind: 'all' },
+  ): { id: string; endpoint: ReextractEndpoint }[] => {
+    const ids =
+      which.kind === 'all'
+        ? planReextractAll(documents).ids
+        : [which.docId];
+    const out: { id: string; endpoint: ReextractEndpoint }[] = [];
+    for (const id of ids) {
+      const endpoint = reextractEligibility(documents.find((d) => d.id === id)?.status).endpoint;
+      if (endpoint) out.push({ id, endpoint });
+    }
+    return out;
+  };
+
+  const onConfirmReextract = async () => {
+    const which = reextractConfirm;
+    setReextractConfirm(null);
+    if (!which || !reextract) return;
+    const targets = reextractTargets(which);
+    if (targets.length === 0) return;
+    const batch = reextractBatchRef.current;
+    for (const t of targets) {
+      batch.set(t.id, { seenProcessing: false });
+      // A re-run that fails must toast again.
+      extractionToastedRef.current.delete(t.id);
+    }
+    setReextractBusy(true);
+    const startedAt = new Date().toISOString();
+    try {
+      const out = await reextract(targets);
+      for (const f of out.failed) batch.delete(f.id);
+      if (out.accepted.length > 0) {
+        setReextractStartedAt((prev) => {
+          const next = { ...prev };
+          for (const id of out.accepted) next[id] = startedAt;
+          return next;
+        });
+        toast(
+          out.accepted.length === 1
+            ? `Re-running extraction for ${documents.find((d) => d.id === out.accepted[0])?.filename ?? 'the document'}`
+            : `Re-running extraction for ${out.accepted.length} documents`,
+          { type: 'info' },
+        );
+      }
+      for (const f of out.failed) {
+        const name = documents.find((d) => d.id === f.id)?.filename ?? 'a document';
+        toast(`Couldn't re-run extraction for ${name}: ${reextractFailureReason(f.error)}`, { type: 'error' });
+      }
+    } catch (err: unknown) {
+      for (const t of targets) batch.delete(t.id);
+      toast(`Couldn't re-run extraction: ${reextractFailureReason(err)}`, { type: 'error' });
+    } finally {
+      setReextractBusy(false);
+    }
+  };
+  const reextractConfirmCount = reextractConfirm ? reextractTargets(reextractConfirm).length : 0;
+  const reextractConfirmName =
+    reextractConfirm?.kind === 'one'
+      ? documents.find((d) => d.id === reextractConfirm.docId)?.filename ?? 'this document'
+      : null;
 
   const onPickFiles = () => fileInputRef.current?.click();
 
@@ -1317,8 +1445,52 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           onConfirmClassification={confirmAutoClassification}
           busyDocId={reclassifyingDoc}
           docMeta={docMeta}
+          onReextract={(docId) => setReextractConfirm({ kind: 'one', docId })}
+          onReextractAll={() => setReextractConfirm({ kind: 'all' })}
+          reextractBusy={reextractBusy}
         />
       )}
+
+      {/* #18 — the re-run confirm step: what a re-run does, then go. */}
+      <Modal
+        open={reextractConfirm != null}
+        onClose={() => setReextractConfirm(null)}
+        title={
+          reextractConfirm?.kind === 'all'
+            ? 'Re-run extraction for all documents?'
+            : 'Re-run extraction?'
+        }
+        maxWidth="max-w-lg"
+      >
+        <div className="p-5 space-y-3" data-testid="reextract-confirm">
+          <p className="text-[12.5px] text-ink-900">
+            {reextractConfirm?.kind === 'all'
+              ? `${reextractConfirmCount} document${reextractConfirmCount === 1 ? '' : 's'} will be extracted again.`
+              : `${reextractConfirmName} will be extracted again.`}
+          </p>
+          <ul className="list-disc pl-5 space-y-1.5 text-[12px] text-ink-700 leading-relaxed">
+            {REEXTRACT_CONSEQUENCES.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" size="sm" onClick={() => setReextractConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void onConfirmReextract()}
+              disabled={reextractConfirmCount === 0}
+              data-testid="reextract-confirm-go"
+            >
+              {reextractConfirm?.kind === 'all'
+                ? `Re-run ${reextractConfirmCount} document${reextractConfirmCount === 1 ? '' : 's'}`
+                : 'Re-run extraction'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* FON-18 / FON-31 — the old worker-fed Deal Readiness card is retired
           to avoid two coverage cards. Demo deals still get the Checklist. */}

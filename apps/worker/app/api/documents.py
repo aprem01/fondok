@@ -461,6 +461,53 @@ def _refuse_if_still_processing(
     return age if age is not None else float("nan")
 
 
+#: #18 re-extraction — a ``/extract`` (or ``/reprocess``) call on a document
+#: in one of these statuses re-runs a document that already finished, so it
+#: is audited as ``document.re_extract_requested`` and (on ``/extract``)
+#: always runs with ``force`` semantics.
+_RE_EXTRACT_STATUSES: frozenset[str] = frozenset(
+    {DOC_STATUS_EXTRACTED, DOC_STATUS_FAILED}
+)
+
+
+async def _audit_re_extract_requested(
+    session: AsyncSession,
+    *,
+    auth: AuthContext,
+    tenant_id: str,
+    deal_id: str,
+    doc_id: str,
+    endpoint: str,
+    previous_status: str,
+    job_id: str,
+    force_requested: bool,
+    force_effective: bool,
+) -> None:
+    """#18 — one ``document.re_extract_requested`` audit row naming who asked
+    for the re-run (``actor_id`` / ``actor_email`` from the caller's auth;
+    both None on the header-only / default path) and under which pipeline."""
+    await log_audit(
+        session,
+        tenant_id=tenant_id,
+        actor_id=auth.user_id,
+        actor_email=auth.email,
+        action="document.re_extract_requested",
+        resource_type="document",
+        resource_id=doc_id,
+        deal_id=deal_id,
+        metadata={
+            "endpoint": endpoint,
+            "previous_status": previous_status,
+            "job_id": job_id,
+            "force_requested": force_requested,
+            "force": force_effective,
+            "pipeline_version": EXTRACTION_PIPELINE_VERSION,
+            "auth_source": auth.source,
+        },
+        tags=["re-extract"],
+    )
+
+
 # ─────────────────── extraction-cache versioning ────────────────────
 #
 # Sam cost-opt (2026-07): the Router → Extractor → Normalizer chain is
@@ -3086,8 +3133,12 @@ async def _run_parse_and_extract(
     body: bytes,
     filename: str,
     job_id: str | None = None,
+    force: bool = False,
 ) -> None:
     """Background pipeline: parse → write extraction_data → run extraction.
+
+    ``force`` (#18 re-extraction via ``/reprocess``) is handed to the
+    extraction stage: no content-hash cache clone, no sibling reuse.
 
     Runs entirely off the request loop so a slow LlamaParse on a dense
     OM never trips the proxy's HTTP timeout (Sam QA re-test #2). On
@@ -3111,6 +3162,7 @@ async def _run_parse_and_extract(
             tenant_id=tenant_id,
             body=body,
             filename=filename,
+            force=force,
         )
     except BaseException as exc:  # noqa: BLE001 — mark, then re-raise
         logger.warning(
@@ -3134,6 +3186,7 @@ async def _run_parse_and_extract_inner(
     tenant_id: str,
     body: bytes,
     filename: str,
+    force: bool = False,
 ) -> None:
     """Body of :func:`_run_parse_and_extract` (see there)."""
     # FON-93: off the request loop there is no auth dependency to publish
@@ -3320,6 +3373,7 @@ async def _run_parse_and_extract_inner(
         deal_id=deal_id,
         doc_id=doc_id,
         tenant_id=tenant_id,
+        force=force,
     )
 
 
@@ -5387,6 +5441,7 @@ async def reprocess_document(
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
 ) -> ExtractionStartResponse:
     """Re-run parse + extract for a doc that previously hit PARSE_FAILED
     or FAILED. Pulls the body back from raw storage by content_hash and
@@ -5437,6 +5492,8 @@ async def reprocess_document(
     stuck_age = _refuse_if_still_processing(
         m, stuck_minutes=int(get_settings().EXTRACTION_STUCK_MINUTES)
     )
+    previous_status = str(m.get("status") or "").upper()
+    re_extract = previous_status in _RE_EXTRACT_STATUSES | {DOC_STATUS_PARSE_FAILED}
 
     if not content_hash or not storage_key:
         raise HTTPException(
@@ -5519,6 +5576,22 @@ async def reprocess_document(
             },
             tags=["fon-91", "stuck"],
         )
+    # #18 — the Data Room's "Re-run extraction" on a FAILED / PARSE_FAILED
+    # document comes through here (it re-parses from the stored file), so
+    # it is audited with the actor and runs fresh (force) like /extract.
+    if re_extract:
+        await _audit_re_extract_requested(
+            session,
+            auth=auth,
+            tenant_id=tenant_id,
+            deal_id=str(deal_id),
+            doc_id=str(doc_id),
+            endpoint="reprocess",
+            previous_status=previous_status,
+            job_id=str(job_id),
+            force_requested=False,
+            force_effective=True,
+        )
     await session.commit()
 
     logger.info(
@@ -5537,6 +5610,7 @@ async def reprocess_document(
         body=body,
         filename=filename,
         job_id=str(job_id),
+        force=re_extract,
     )
     return ExtractionStartResponse(
         document_id=doc_id,
@@ -6481,6 +6555,7 @@ async def extract_document(
     background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
     force: Annotated[
         bool,
         Query(
@@ -6488,7 +6563,8 @@ async def extract_document(
                 "Bypass the content-hash extraction cache AND sibling-template "
                 "reuse for this run so the document goes through the full "
                 "router/template/LLM path (then the reconciler and critic as "
-                "normal). Accepts true/1. Default false: unchanged behaviour."
+                "normal). Accepts true/1. Implied for a document that is "
+                "already EXTRACTED or FAILED (a re-extraction)."
             ),
         ),
     ] = False,
@@ -6504,6 +6580,17 @@ async def extract_document(
     otherwise short-circuit the extraction (2026-10-08: a stale v1 sibling
     mapping reproduced a partial field set under v3 and the result was then
     cached). The resulting row is a fresh extraction, never a cache clone.
+
+    #18 re-extraction (2026-10-15): a document that is already EXTRACTED or
+    FAILED is a RE-extraction — the Data Room's "Re-run extraction" action.
+    It always runs with ``force`` semantics (otherwise an EXTRACTED row would
+    just be cloned back out of the content-hash cache under the same
+    pipeline version) and is audited as ``document.re_extract_requested``
+    with the caller as actor. A row that is genuinely still processing and
+    younger than ``EXTRACTION_STUCK_MINUTES`` is still refused with 409.
+    The run writes a NEW ``extraction_results`` row; the previous one is
+    kept but no longer read (every reader takes the newest row), so field
+    reviews made on the old row (accept / edit / reject) do not carry over.
     """
     row = (
         await session.execute(
@@ -6539,6 +6626,12 @@ async def extract_document(
     stuck_minutes = int(get_settings().EXTRACTION_STUCK_MINUTES)
     stuck_age = _refuse_if_still_processing(row._mapping, stuck_minutes=stuck_minutes)
 
+    # #18 — an EXTRACTED / FAILED row is a re-extraction: always a fresh run
+    # under the current pipeline (force), never a cache clone of itself.
+    previous_status = str(row._mapping.get("status") or "").upper()
+    re_extract = previous_status in _RE_EXTRACT_STATUSES
+    run_force = bool(force) or re_extract
+
     # Mark the row as classifying immediately so the UI can pick up
     # the transition before the background task lands.
     stamp_sql, stamp_params = await _status_stamp(session)
@@ -6570,9 +6663,22 @@ async def extract_document(
                 "age_minutes": None if stuck_age != stuck_age else round(stuck_age, 1),
                 "threshold_minutes": stuck_minutes,
                 "job_id": str(job_id),
-                "force": bool(force),
+                "force": bool(run_force),
             },
             tags=["fon-91", "stuck"],
+        )
+    if re_extract:
+        await _audit_re_extract_requested(
+            session,
+            auth=auth,
+            tenant_id=tenant_id,
+            deal_id=str(deal_id),
+            doc_id=str(doc_id),
+            endpoint="extract",
+            previous_status=previous_status,
+            job_id=str(job_id),
+            force_requested=bool(force),
+            force_effective=run_force,
         )
     await session.commit()
 
@@ -6583,7 +6689,7 @@ async def extract_document(
         deal_id,
         tenant_id,
         job_id,
-        force,
+        run_force,
         row._mapping.get("status"),
     )
     background_tasks.add_task(
@@ -6591,7 +6697,7 @@ async def extract_document(
         deal_id=str(deal_id),
         doc_id=str(doc_id),
         tenant_id=tenant_id,
-        force=force,
+        force=run_force,
         job_id=str(job_id),
     )
     return ExtractionStartResponse(

@@ -7,6 +7,7 @@ import {
   WorkerDocument,
   ExtractionResult,
 } from '@/lib/api';
+import type { ReextractEndpoint } from '@/lib/reextract';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useDocuments — the deal's document list + per-document extraction results.
@@ -89,6 +90,9 @@ interface DealStore {
   failures: Set<string>;
   /** FON-41a: latched — list attempted + every EXTRACTED doc loaded-or-failed. */
   settled: boolean;
+  /** #18: docs whose held extraction is from BEFORE a re-run — re-fetched
+   *  once the doc is EXTRACTED again instead of being treated as final. */
+  stale: Set<string>;
 }
 
 const stores = new Map<string, DealStore>();
@@ -111,6 +115,7 @@ function getStore(dealId: string): DealStore {
       listAttempted: false,
       failures: new Set(),
       settled: false,
+      stale: new Set(),
     };
     stores.set(dealId, s);
   }
@@ -165,6 +170,9 @@ function runExtractionFetch(
     .then((r) => {
       store.results.set(docId, r);
       store.failures.delete(docId);
+      if (TERMINAL_EXTRACTION_STATUSES.has((r?.status as string | undefined) ?? '')) {
+        store.stale.delete(docId);
+      }
       broadcastExtraction(store, docId, r);
       const status = (r?.status as string | undefined) ?? '';
       if (!TERMINAL_EXTRACTION_STATUSES.has(status) && attempt < EXTRACTION_MAX_ATTEMPTS) {
@@ -208,7 +216,9 @@ function scheduleExtractionRetry(
 function ensureExtraction(store: DealStore, dealId: string, doc: WorkerDocument): void {
   if (!FETCHABLE_DOC_STATUSES.has(doc.status)) return;
   const existing = store.results.get(doc.id);
-  if (existing && TERMINAL_EXTRACTION_STATUSES.has(existing.status)) return;
+  if (existing && TERMINAL_EXTRACTION_STATUSES.has(existing.status) && !store.stale.has(doc.id)) {
+    return;
+  }
   if (store.inflight.has(doc.id) || store.retryTimers.has(doc.id)) return;
   const att = store.attempts.get(doc.id);
   if (att && att.status === doc.status) return; // already fetched for this status
@@ -223,6 +233,15 @@ function applyDocuments(store: DealStore, dealId: string, rows: WorkerDocument[]
   }
   store.documents = rows;
   store.listAttempted = true;
+  // #18 — a doc back in the pipeline (a re-run) holds an extraction from the
+  // previous run: mark it stale and forget the status it was fetched for, so
+  // it is fetched again once the new run lands EXTRACTED.
+  for (const d of rows) {
+    if (ACTIVE_DOC_STATUSES.has(d.status) && store.results.has(d.id)) {
+      store.stale.add(d.id);
+      store.attempts.delete(d.id);
+    }
+  }
   for (const s of store.subscribers) s.onDocuments(rows);
   for (const d of rows) ensureExtraction(store, dealId, d);
   recomputeMeta(store);
@@ -324,6 +343,18 @@ export interface DocumentsState {
   /** FON-23: force-refetch one doc's extraction after an analyst review. */
   refreshExtraction: (docId: string) => Promise<void>;
   upload: (files: File[]) => Promise<WorkerDocument[]>;
+  /** #18: re-run extraction for these documents (see lib/reextract). Each
+   *  goes to ``/extract`` (EXTRACTED) or ``/reprocess`` (FAILED /
+   *  PARSE_FAILED); accepted ones flip to an in-flight status in the shared
+   *  list at once and the existing poller tracks them to the end. */
+  reextract: (
+    targets: ReadonlyArray<{ id: string; endpoint: ReextractEndpoint }>,
+  ) => Promise<ReextractOutcome>;
+}
+
+export interface ReextractOutcome {
+  accepted: string[];
+  failed: { id: string; error: unknown }[];
 }
 
 export function useDocuments(dealId: string | null | undefined): DocumentsState {
@@ -440,6 +471,49 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     [idStr, live, refresh],
   );
 
+  const reextract = useCallback(
+    async (
+      targets: ReadonlyArray<{ id: string; endpoint: ReextractEndpoint }>,
+    ): Promise<ReextractOutcome> => {
+      if (!live) throw new Error('worker not connected');
+      const settledCalls = await Promise.allSettled(
+        targets.map((t) =>
+          t.endpoint === 'reprocess'
+            ? api.documents.reprocess(idStr, t.id)
+            : api.documents.extract(idStr, t.id, { force: true }),
+        ),
+      );
+      const accepted: string[] = [];
+      const failed: { id: string; error: unknown }[] = [];
+      settledCalls.forEach((r, i) => {
+        const id = targets[i].id;
+        if (r.status === 'fulfilled') accepted.push(id);
+        else failed.push({ id, error: r.reason });
+      });
+      if (accepted.length > 0) {
+        const store = getStore(idStr);
+        // The worker flipped each accepted row to an in-flight status before
+        // answering 202. A list fetch that started BEFORE that must not land
+        // afterwards and show the old terminal status (the poller would then
+        // stop): drop it, apply the in-flight status now, and fetch afresh.
+        store.listSeq += 1;
+        store.listInflight = null;
+        const flipped = new Set(accepted);
+        const statusFor = new Map(targets.map((t) => [t.id, t.endpoint === 'reprocess' ? 'PARSING' : 'CLASSIFYING']));
+        applyDocuments(
+          store,
+          idStr,
+          (store.documents ?? []).map((d) =>
+            flipped.has(d.id) ? { ...d, status: statusFor.get(d.id) ?? 'CLASSIFYING' } : d,
+          ),
+        );
+        refresh();
+      }
+      return { accepted, failed };
+    },
+    [idStr, live, refresh],
+  );
+
   return {
     documents,
     loading,
@@ -451,5 +525,6 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     refresh,
     refreshExtraction,
     upload,
+    reextract,
   };
 }

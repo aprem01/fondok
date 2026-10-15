@@ -30,6 +30,7 @@ import {
   ExternalLink,
   Download,
   Loader2,
+  RotateCw,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -49,6 +50,7 @@ import {
   effectiveDocSubtype,
   type DocSubtype,
 } from '@/lib/docSubtype';
+import { planReextractAll, reextractEligibility } from '@/lib/reextract';
 
 export interface CoverageFile {
   id: string;
@@ -109,6 +111,10 @@ export interface CoverageDocMeta {
    *  EXTRACTION_STUCK_MINUTES and the row was failed so Retry works. */
   errorKind?: string | null;
   errorMessage?: string | null;
+  /** #18 — ISO time this browser asked for a re-run of the document. While
+   *  the re-run is in flight the stage timer measures from here, not from
+   *  the original upload. */
+  reextractStartedAt?: string | null;
 }
 
 /** FON-91 — "Timed out after N min — Retry" for a watchdog-failed row.
@@ -164,6 +170,9 @@ function docStatusState(
     return { label: timedOut ?? 'Processing Failed', tone: 'red' };
   }
   if (s === 'UPLOADING') return { label: 'Uploading', tone: 'gray' };
+  // #18 — a document back in the pipeline (a re-run) still holds its previous
+  // result's field count; the stage it is in wins over that stale verdict.
+  if (isProcessingStatus(s)) return { label: docStageLabel(s) ?? 'Processing', tone: 'blue' };
   // E-004 — never render a review verdict before the extraction is here.
   if (s === 'EXTRACTED' && meta?.extractionLoaded === false) {
     return { label: 'Loading fields…', tone: 'gray' };
@@ -225,6 +234,14 @@ export interface DocumentCoverageProps {
   busyDocId?: string | null;
   /** Per-document provenance (upload time, detected year) keyed by id. */
   docMeta?: Record<string, CoverageDocMeta>;
+  /** #18 — re-run extraction for one document (the host confirms first).
+   *  Omitted → no per-row action. */
+  onReextract?: (docId: string) => void;
+  /** #18 — re-run extraction for every extracted / failed document (the
+   *  host confirms first). Omitted → no bulk action. */
+  onReextractAll?: () => void;
+  /** #18 — true while a re-run request is being sent (disables both). */
+  reextractBusy?: boolean;
   className?: string;
 }
 
@@ -383,6 +400,9 @@ export function DocumentCoverage({
   onConfirmClassification,
   busyDocId,
   docMeta,
+  onReextract,
+  onReextractAll,
+  reextractBusy = false,
   className,
 }: DocumentCoverageProps) {
   // E-001 — one 1 Hz ticker for the whole card, only while something is
@@ -409,6 +429,12 @@ export function DocumentCoverage({
   ).length;
   const canRun = (byCategory.get('financials')!.length ?? 0) > 0;
   const pct = Math.round((coreCovered / CORE_TOTAL) * 100);
+  // #18 — the bulk re-run: disabled (with the reason) while anything is
+  // still in the pipeline, or when nothing is eligible.
+  const reextractAllPlan = planReextractAll(files);
+  const reextractAllDisabledReason = reextractBusy
+    ? 'Sending the re-run request…'
+    : reextractAllPlan.disabledReason;
 
   // Covered categories are open by default; we track only what the analyst
   // explicitly COLLAPSED. This way async-loaded files show without a click
@@ -494,6 +520,29 @@ export function DocumentCoverage({
             {canRun ? 'Ready to run' : 'Needs financials'}
           </span>
         </div>
+        {onReextractAll && files.length > 0 && (
+          <div className="flex items-center justify-end gap-2 mt-3">
+            {reextractAllDisabledReason && (
+              <span className="text-[11px] text-ink-500" data-testid="reextract-all-reason">
+                {reextractAllDisabledReason}
+              </span>
+            )}
+            <button
+              type="button"
+              data-testid="reextract-all"
+              onClick={() => onReextractAll()}
+              disabled={reextractAllDisabledReason != null}
+              title={
+                reextractAllDisabledReason ??
+                `Re-run extraction for ${reextractAllPlan.ids.length} document${reextractAllPlan.ids.length === 1 ? '' : 's'} under the current pipeline`
+              }
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded border border-border text-ink-700 hover:bg-ink-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              <RotateCw size={12} aria-hidden="true" />
+              Re-run extraction for all documents
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Category rows */}
@@ -587,6 +636,8 @@ export function DocumentCoverage({
                       onOpenInNewTab={onOpenInNewTab}
                       onDownload={onDownload}
                       onConfirmClassification={onConfirmClassification}
+                      onReextract={onReextract}
+                      reextractBusy={reextractBusy}
                     />
                   ))}
                 </ul>
@@ -623,6 +674,8 @@ export function DocumentCoverage({
                 onOpenReview={onOpenReview}
                 onOpenInNewTab={onOpenInNewTab}
                 onDownload={onDownload}
+                onReextract={onReextract}
+                reextractBusy={reextractBusy}
               />
             ))}
           </ul>
@@ -637,15 +690,25 @@ export function DocumentCoverage({
 function FileActions({
   docId,
   name,
+  status,
   onOpenInNewTab,
   onDownload,
+  onReextract,
+  reextractBusy = false,
 }: {
   docId: string;
   name: string;
+  status?: string;
   onOpenInNewTab?: (docId: string) => void;
   onDownload?: (docId: string) => void;
+  onReextract?: (docId: string) => void;
+  reextractBusy?: boolean;
 }) {
-  if (!onOpenInNewTab && !onDownload) return null;
+  if (!onOpenInNewTab && !onDownload && !onReextract) return null;
+  // #18 — "Re-run extraction": disabled with the reason while the document
+  // is still in the pipeline (the worker would refuse it with 409 anyway).
+  const eligibility = reextractEligibility(status);
+  const reextractReason = reextractBusy ? 'Sending the re-run request…' : eligibility.reason;
   return (
     <span className="inline-flex items-center gap-1.5 flex-shrink-0">
       {onOpenInNewTab && (
@@ -668,6 +731,19 @@ function FileActions({
           className="text-ink-500 hover:text-ink-900 transition-colors"
         >
           <Download size={13} aria-hidden="true" />
+        </button>
+      )}
+      {onReextract && (
+        <button
+          type="button"
+          data-testid="reextract-doc"
+          onClick={() => onReextract(docId)}
+          disabled={reextractReason != null}
+          title={reextractReason ?? 'Re-run extraction under the current pipeline'}
+          aria-label={`Re-run extraction for ${name}`}
+          className="text-ink-500 hover:text-ink-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <RotateCw size={13} aria-hidden="true" />
         </button>
       )}
     </span>
@@ -710,6 +786,8 @@ function UnclassifiedRow({
   onOpenReview,
   onOpenInNewTab,
   onDownload,
+  onReextract,
+  reextractBusy,
 }: {
   file: CoverageFile;
   busy: boolean;
@@ -720,6 +798,8 @@ function UnclassifiedRow({
   onOpenReview?: DocumentCoverageProps['onOpenReview'];
   onOpenInNewTab?: (docId: string) => void;
   onDownload?: (docId: string) => void;
+  onReextract?: (docId: string) => void;
+  reextractBusy?: boolean;
 }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 pl-12 border-t border-border/60">
@@ -733,8 +813,11 @@ function UnclassifiedRow({
       <FileActions
         docId={file.id}
         name={file.name}
+        status={file.status}
         onOpenInNewTab={onOpenInNewTab}
         onDownload={onDownload}
+        onReextract={onReextract}
+        reextractBusy={reextractBusy}
       />
       {file.docType && (
         <span
@@ -799,12 +882,16 @@ function CoverageFileRow({
   onOpenInNewTab,
   onDownload,
   onConfirmClassification,
+  onReextract,
+  reextractBusy,
   meta,
   now,
 }: {
   file: CoverageFile;
   financial: boolean;
   onConfirmClassification?: (docId: string) => void;
+  onReextract?: (docId: string) => void;
+  reextractBusy?: boolean;
   /** R-034 — STR Reports row: show the detected report type when the
    *  analyst left it on "Not sure". */
   strReport?: boolean;
@@ -876,8 +963,11 @@ function CoverageFileRow({
       <FileActions
         docId={file.id}
         name={file.name}
+        status={file.status}
         onOpenInNewTab={onOpenInNewTab}
         onDownload={onDownload}
+        onReextract={onReextract}
+        reextractBusy={reextractBusy}
       />
 
       {financial ? (
@@ -1098,10 +1188,12 @@ function StageBadge({
   const processing = state.tone === 'blue' && isProcessingStatus(file.status);
   // E-004 — EXTRACTED but the extraction record hasn't been fetched yet.
   const loadingFields = state.label === 'Loading fields…';
-  const elapsed = processing ? elapsedSince(meta?.uploadedAt, now) : null;
+  // #18 — during a re-run the timer measures from the re-run request.
+  const since = meta?.reextractStartedAt ?? meta?.uploadedAt;
+  const elapsed = processing ? elapsedSince(since, now) : null;
   const title =
     elapsed != null
-      ? `${state.label} · ${formatElapsed(elapsed)} since upload`
+      ? `${state.label} · ${formatElapsed(elapsed)} since ${meta?.reextractStartedAt ? 're-run requested' : 'upload'}`
       : loadingFields
         ? 'Extraction finished — fetching its fields and review count'
         : undefined;
