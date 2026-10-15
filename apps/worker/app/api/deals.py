@@ -395,6 +395,15 @@ class AssumptionSourcesResponse(BaseModel):
     # loader supplies it: why a key has no grounded value. Also
     # feature-detected, also ``{}`` until then.
     reasons: dict[str, str] = Field(default_factory=dict)
+    # FON-89 — what the Year-1 displacement gate decided and why, computed by
+    # the loader AFTER every override is applied (``__displacement_status__``):
+    # ``{active, state, source, detail, renovation_budget,
+    # renovation_budget_per_key, y1_occupancy_displacement_pct,
+    # y1_adr_displacement_pct}``. ``state`` is the closed ``DISPLACEMENT_*``
+    # vocabulary in ``engine_runner``; ``detail`` is the sentence the CAPEX
+    # Renovation row and the Future P&L Year-1 basis line print. ``None`` on a
+    # worker whose loader does not emit it.
+    displacement_status: dict[str, Any] | None = None
 
 
 class RenovationBudgetCandidate(BaseModel):
@@ -2024,6 +2033,11 @@ async def get_assumption_sources(
             session, deal_id=deal_id, tenant_id=tenant_id, source_fields=source_fields
         )
     raw_reasons = base.pop("__reasons__", None)
+    # FON-89 — the loader's Year-1 displacement verdict (dict or absent).
+    raw_displacement = base.pop("__displacement_status__", None)
+    displacement_status: dict[str, Any] | None = (
+        raw_displacement if isinstance(raw_displacement, dict) else None
+    )
     # The runner emits either a bare ``ReasonCode`` or ``{"code": …,
     # "detail": …}``; the wire carries the bare code either way. The prose
     # behind a reason travels on ``GET /deals/{id}/lineage`` as
@@ -2077,6 +2091,7 @@ async def get_assumption_sources(
         source_documents=source_documents,
         source_fields=source_fields,
         reasons=assumption_reasons,
+        displacement_status=displacement_status,
     )
 
 

@@ -461,6 +461,143 @@ async def _lookup_extraction_cache(
     return dict(row._mapping)
 
 
+# ───────────────── FON-20 — which lookup failed? (404 detail) ─────────────────
+#
+# Every per-document route resolves a document by ``id AND deal_id AND
+# tenant_id`` and answered a bare "document <id> not found on deal <deal>"
+# when that failed. The Data Room list uses the same tenant dependency and
+# the same three predicates, so a document the list shows IS openable — yet
+# the ticket kept coming back, and the bare detail could not say whether the
+# documents row was missing, sat on another deal, or sat on another tenant
+# (the July root cause: an org-less Clerk token resolving ``DEFAULT_TENANT_ID``
+# wrote documents whose ``tenant_id`` was not their deal's). These helpers
+# append the failed lookup to the detail. They never name another tenant's
+# data: a row on another tenant reads exactly like a missing row, and a
+# caller who does not own the deal learns only that.
+
+
+def _same_id(a: Any, b: Any) -> bool:
+    return str(a).lower() == str(b).lower()
+
+
+async def _document_not_found_detail(
+    session: AsyncSession,
+    *,
+    deal_id: UUID | str,
+    doc_id: UUID | str,
+    tenant_id: UUID | str,
+) -> str:
+    """``"document <doc> not found on deal <deal> (<which lookup failed>)"``.
+
+    Prefix is byte-identical to the historical detail so the web's error
+    matching keeps working; only the parenthetical is new. Best-effort: any
+    read failure returns the bare prefix.
+    """
+    base = f"document {doc_id} not found on deal {deal_id}"
+    try:
+        deal_row = (
+            await session.execute(
+                text("SELECT tenant_id FROM deals WHERE id = :id"),
+                {"id": str(deal_id)},
+            )
+        ).first()
+        doc_row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT deal_id, tenant_id, status
+                      FROM documents
+                     WHERE id = :id
+                    """
+                ),
+                {"id": str(doc_id)},
+            )
+        ).first()
+    except Exception:  # noqa: BLE001 — diagnostics must never mask the 404
+        return base
+
+    if deal_row is None or not _same_id(deal_row._mapping["tenant_id"], tenant_id):
+        # The caller does not own the deal (or it does not exist). Say only
+        # that; the document's whereabouts are not theirs to learn.
+        return f"{base} (deal_lookup_failed: deal {deal_id} is not on this tenant)"
+    if doc_row is None:
+        return (
+            f"{base} (document_lookup_failed: no documents row with id {doc_id} "
+            "— deleted or never uploaded)"
+        )
+    m = doc_row._mapping
+    if not _same_id(m["deal_id"], deal_id):
+        if _same_id(m["tenant_id"], tenant_id):
+            return (
+                f"{base} (document_lookup_failed: document {doc_id} belongs to "
+                f"deal {m['deal_id']} on this tenant, not deal {deal_id})"
+            )
+        return f"{base} (document_lookup_failed: no document {doc_id} on this tenant)"
+    if not _same_id(m["tenant_id"], tenant_id):
+        # Same deal, so only the tenant predicate failed: the row's tenant is
+        # not its deal's. That is the FON-20 data shape — repair the row.
+        return (
+            f"{base} (tenant_mismatch: the documents row is on a different tenant "
+            f"than its deal — data repair needed; status={m['status']})"
+        )
+    return f"{base} (document_lookup_failed: row exists; status={m['status']})"
+
+
+async def _extraction_not_found_detail(
+    session: AsyncSession,
+    *,
+    deal_id: UUID | str,
+    doc_id: UUID | str,
+    tenant_id: UUID | str,
+) -> str:
+    """Detail for a review route that found no ``extraction_results`` row:
+    distinguishes "the document itself is not on this deal" from "the
+    document is here but has no extraction" (and whether rows exist for it
+    under another deal on this tenant)."""
+    base = f"no extraction for document {doc_id} on deal {deal_id}"
+    doc_detail = await _document_not_found_detail(
+        session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+    )
+    if " (" not in doc_detail:
+        return base  # diagnostics unavailable (read failure) — bare prefix
+    if "row exists;" not in doc_detail:
+        # The document lookup itself failed — reuse its diagnosis verbatim.
+        return f"{base} ({doc_detail.split(' (', 1)[1]}"
+    try:
+        doc_row = (
+            await session.execute(
+                text("SELECT status FROM documents WHERE id = :id"),
+                {"id": str(doc_id)},
+            )
+        ).first()
+        elsewhere = (
+            await session.execute(
+                text(
+                    """
+                    SELECT deal_id, COUNT(*) AS n
+                      FROM extraction_results
+                     WHERE document_id = :id AND tenant_id = :tenant
+                     GROUP BY deal_id
+                    """
+                ),
+                {"id": str(doc_id), "tenant": str(tenant_id)},
+            )
+        ).fetchall()
+    except Exception:  # noqa: BLE001
+        return base
+    status_txt = doc_row._mapping["status"] if doc_row is not None else None
+    other = [str(r._mapping["deal_id"]) for r in elsewhere if not _same_id(r._mapping["deal_id"], deal_id)]
+    if other:
+        return (
+            f"{base} (extraction_lookup_failed: document status={status_txt}; its "
+            f"extraction_results rows are on deal {', '.join(other)}, not deal {deal_id})"
+        )
+    return (
+        f"{base} (extraction_lookup_failed: document status={status_txt}; "
+        "no extraction_results row on this deal and tenant)"
+    )
+
+
 # ─────────────────────────── response shapes ───────────────────────────
 
 
@@ -2139,6 +2276,17 @@ async def upload_documents(
     fiscal_years_padded = _pad(fiscal_years, len(files))
     user_doc_subtypes_padded = _pad(user_doc_subtypes, len(files))
     has_doc_subtype = await _documents_has_doc_subtype(session)
+
+    # FON-20 — the caller's tenant must own the deal it uploads to. Without
+    # this gate a request that resolved the WRONG tenant (July 2026: an
+    # org-less Clerk token fell to DEFAULT_TENANT_ID) wrote documents whose
+    # ``tenant_id`` was not their deal's — rows the Data Room could list or
+    # not depending on which tenant the next request resolved, and that no
+    # per-document route could open. 404 (not 403): a stranger learns
+    # nothing about the deal's existence.
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     settings = get_settings()
     tenant_id_str = str(tenant_id)
@@ -4345,7 +4493,9 @@ async def download_document(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
     storage_key = row._mapping["storage_key"]
     filename = row._mapping["filename"] or "document.pdf"
@@ -4574,7 +4724,9 @@ async def get_document_download_url(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
     storage_key = row._mapping["storage_key"]
     filename = row._mapping["filename"] or "document.pdf"
@@ -4680,9 +4832,20 @@ async def download_document_signed(
         )
     ).first()
     if row is None:
+        deal_tenant = (
+            await session.execute(
+                text("SELECT tenant_id FROM deals WHERE id = :id"),
+                {"id": str(deal_id)},
+            )
+        ).scalar()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session,
+                deal_id=deal_id,
+                doc_id=doc_id,
+                tenant_id=deal_tenant if deal_tenant is not None else "",
+            ),
         )
     storage_key = row._mapping["storage_key"]
     filename = row._mapping["filename"] or "document.pdf"
@@ -4905,7 +5068,9 @@ async def accept_classification(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
 
     current = dict(row._mapping)
@@ -5110,7 +5275,9 @@ async def reclassify_document(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
 
     sets: list[str] = []
@@ -5280,7 +5447,9 @@ async def accept_year(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found on deal {deal_id}",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
 
     current = dict(row._mapping)
@@ -5869,7 +6038,9 @@ async def get_extraction(
     if doc_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"document {doc_id} not found",
+            detail=await _document_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
     doc_status = doc_row._mapping["status"]
     page_count_raw = doc_row._mapping.get("page_count")
@@ -6113,7 +6284,9 @@ async def review_extraction_field(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"no extraction for document {doc_id} on deal {deal_id}",
+            detail=await _extraction_not_found_detail(
+                session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+            ),
         )
 
     m = row._mapping

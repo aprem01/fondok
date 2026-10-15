@@ -284,6 +284,41 @@ export interface AssumptionSourcesResponse {
    *  ``REASONS`` in ``lib/ontology/reasons.generated``. OPTIONAL, same
    *  degrade rule as ``source_fields``. */
   reasons?: Record<string, ReasonCode>;
+  /** FON-89 — what the worker's Year-1 displacement gate decided and why,
+   *  computed AFTER every override is applied. OPTIONAL / null on a worker
+   *  whose loader does not emit it; the UI then prints nothing. */
+  displacement_status?: DisplacementStatus | null;
+}
+
+/**
+ * FON-89 — the Year-1 PIP displacement verdict (`engine_runner._displacement_status`).
+ * `state` is the worker's closed vocabulary; `detail` is the sentence the CAPEX
+ * Renovation row and the Future P&L Year-1 basis line print VERBATIM — every
+ * number in it (the percentages the revenue engine applies, the budget per
+ * key) is the loader's own, never composed in the browser.
+ */
+export type DisplacementState =
+  | 'on_pip_document'
+  | 'on_om_broker'
+  | 'on_analyst'
+  | 'on'
+  | 'off_analyst'
+  | 'off_no_budget'
+  | 'off_immaterial'
+  | 'off_analyst_entry'
+  | 'off_seed'
+  | 'off';
+
+export interface DisplacementStatus {
+  active: boolean;
+  state: DisplacementState | string;
+  /** `assumption_sources.sources.renovation_budget` at the time of the verdict. */
+  source: string;
+  detail: string;
+  renovation_budget: number;
+  renovation_budget_per_key: number;
+  y1_occupancy_displacement_pct: number;
+  y1_adr_displacement_pct: number;
 }
 
 /** Where one assumption was read from inside its source document. Every
