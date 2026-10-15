@@ -18,6 +18,7 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { openLineage } from './LineageDrawer';
 import { renovationBasis, type RenovationBasis } from '@/lib/renovationBasis';
+import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import CapexPlanPanel, { DEFAULT_CAPEX_PLAN, type CapexPlanState } from './CapexPlanPanel';
 import HistoricalBaselinePanel from './HistoricalBaselinePanel';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
@@ -221,6 +222,10 @@ export default function InvestmentTab() {
   // provenance map (`assumption_sources`). Resolved here, above the
   // engine-unavailable early return, so the hook order is stable.
   const renoSource = useSource('renovation_budget');
+  // FON-89 — the worker's Year-1 displacement verdict (on / off and why),
+  // printed verbatim under the Renovation Budget basis. Null until the
+  // provenance payload lands or on a worker that does not emit it.
+  const displacementLine = displacementStatusLine(useDisplacementStatus());
   // E-020 — "Comps range" hint on the Entry Cap Rate row, from the deal's
   // extracted transaction comps that disclose a cap rate (worker-computed).
   // `undefined` = not loaded / unavailable → no hint at all.
@@ -904,11 +909,33 @@ export default function InvestmentTab() {
                 // FON-101 — the basis line plus the source chip (OM broker / PIP
                 // document / override), clickable through to the document.
                 basis: (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <RenovationBasisLine basis={renoBasis} onTrace={traceRenovation} />
-                    {renoSource?.source && (
-                      <span data-testid="renovation-budget-source-chip">
-                        <AssumptionBadge source={renoSource.source} documentId={renoSource.field?.document_id ?? renoSource.docId} dealId={dealId} />
+                  <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <RenovationBasisLine basis={renoBasis} onTrace={traceRenovation} />
+                      {renoSource?.source && (
+                        <span data-testid="renovation-budget-source-chip">
+                          <AssumptionBadge source={renoSource.source} documentId={renoSource.field?.document_id ?? renoSource.docId} dealId={dealId} />
+                        </span>
+                      )}
+                    </span>
+                    {/* FON-89 — the Year-1 displacement verdict, the worker's
+                        sentence verbatim. "attention" = the one state that asks
+                        the analyst to decide (an analyst-entered budget without
+                        an OM / PIP document never displaces by itself). */}
+                    {displacementLine && (
+                      <span
+                        data-testid="renovation-displacement-status"
+                        data-displacement-state={displacementLine.state}
+                        data-displacement-tone={displacementLine.tone}
+                        style={{
+                          fontSize: 10.5, lineHeight: 1.45,
+                          color: displacementLine.tone === 'attention'
+                            ? prov.amber
+                            : displacementLine.tone === 'on' ? palette.textSecondary : palette.textMuted,
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>Y1 displacement</span>
+                        {' · '}{displacementLine.text}
                       </span>
                     )}
                   </span>

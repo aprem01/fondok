@@ -18,6 +18,7 @@ import { createElement } from 'react';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse, AssumptionSourceField } from '@/lib/api';
 import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
+import { DisplacementStatusContext } from '@/lib/hooks/useDisplacementStatus';
 
 export interface ResolvedSource {
   /**
@@ -111,7 +112,18 @@ export function ProvenanceProvider({
     [data, settled],
   );
 
-  return createElement(Ctx.Provider, { value }, children);
+  // FON-89 — the Year-1 displacement verdict rides on the same payload; it is
+  // served through its own context (see lib/hooks/useDisplacementStatus) so
+  // harnesses that mock THIS module still render its consumers.
+  return createElement(
+    Ctx.Provider,
+    { value },
+    createElement(
+      DisplacementStatusContext.Provider,
+      { value: data?.displacement_status ?? null },
+      children,
+    ),
+  );
 }
 
 /** Load state of the deal's provenance map — see ``ProvCtx.settled``. */

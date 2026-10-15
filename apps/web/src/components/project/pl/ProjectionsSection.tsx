@@ -89,6 +89,7 @@ import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride, isStrBasisSource } from '@/lib/provenance';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { api } from '@/lib/api';
@@ -487,6 +488,9 @@ export default function ProjectionsSection({
   const occSrc = useSource('starting_occupancy');
   const adrSrc = useSource('starting_adr');
   const strSeedSrc = useSource('revenue_seed_from_str_forecast');
+  // FON-89 — the worker's Year-1 displacement verdict, one line under the
+  // basis chips, printed verbatim (null until the provenance payload lands).
+  const displacementLine = displacementStatusLine(useDisplacementStatus());
   // FON-61 (61.2) — ONE helper, not a hand-rolled equality: the STR seed's
   // source id was split three ways (forward forecast / subject TTM actual /
   // comp-set rates) and every one of them is an STR basis.
@@ -916,6 +920,31 @@ export default function ProjectionsSection({
           </Button>
         </div>
       </div>
+
+      {/* FON-89 — one line under the Year-1 basis: the worker's displacement
+          verdict, verbatim. An analyst-entered renovation budget without an
+          OM / PIP document never displaces by itself (the gate runs before the
+          override loop); that state asks for a decision and is toned amber.
+          A PIP document (FON-101) or the OM's broker figure does displace and
+          the line says so with the percentages the revenue engine applies. */}
+      {displacementLine && (
+        <p
+          data-testid="y1-displacement-status"
+          data-displacement-state={displacementLine.state}
+          data-displacement-tone={displacementLine.tone}
+          className={cn(
+            'text-[11px] leading-snug -mt-2 mb-3',
+            displacementLine.tone === 'attention'
+              ? 'text-warn-700'
+              : displacementLine.tone === 'on'
+                ? 'text-ink-600'
+                : 'text-ink-500',
+          )}
+        >
+          <span className="font-semibold">Year-1 basis · PIP displacement</span>
+          {' — '}{displacementLine.text}
+        </p>
+      )}
 
       <ProjectionsControls
         dealId={dealId}

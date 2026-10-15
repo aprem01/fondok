@@ -2488,12 +2488,159 @@ async def _load_engine_inputs(
         key: sf.as_dict() for key, sf in source_fields.items()
     }
     base["__reasons__"] = reasons
+    # FON-89 — say what the Year-1 displacement gate decided and why, AFTER
+    # the override loop (the gate itself runs before it, which is exactly why
+    # a persisted ``renovation_budget`` override alone never displaces).
+    base["__displacement_status__"] = _displacement_status(
+        base,
+        sources,
+        source_fields=frozenset(source_fields),
+        analyst_override_paths=analyst_override_paths,
+    )
     return base
 
 
 def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
     """One ``__reasons__`` entry."""
     return {"code": code, "detail": detail}
+
+
+# ───────────── FON-89 — Year-1 displacement status (honest UI) ─────────────
+#
+# The Year-1 displacement gate above fires only for a DEAL-SPECIFIC renovation
+# budget — one read off a PIP / CapEx document (FON-101, ``pip_document``), off
+# the OM's broker pro forma (FON-85, ``om_broker``) or carried by the deal row —
+# and it runs BEFORE the override loop. A persisted
+# ``field_overrides.renovation_budget`` therefore never displaces on its own.
+# Sam has not decided whether an analyst-entered PIP should displace by
+# default, so the behaviour stays; what changes is that the model now SAYS so.
+# ``_displacement_status`` is computed once the loader is done (every override
+# applied) and travels on ``GET /deals/{id}/assumption_sources`` as
+# ``displacement_status``; the CAPEX tab's Renovation row and the Future P&L
+# Year-1 basis line print its ``detail`` verbatim. Numbers in the detail are
+# the loader's own (the percentages the revenue engine will apply, the budget
+# per key) — nothing is invented here.
+
+#: Materiality floor the gate uses — kept next to the gate's literal.
+_DISPLACEMENT_PER_KEY_FLOOR_USD = 5_000
+
+#: ``displacement_status.state`` vocabulary (closed set; the web switches on it).
+DISPLACEMENT_ON_PIP_DOCUMENT = "on_pip_document"
+DISPLACEMENT_ON_OM_BROKER = "on_om_broker"
+DISPLACEMENT_ON_ANALYST = "on_analyst"
+DISPLACEMENT_ON = "on"
+DISPLACEMENT_OFF_ANALYST = "off_analyst"
+DISPLACEMENT_OFF_NO_BUDGET = "off_no_budget"
+DISPLACEMENT_OFF_IMMATERIAL = "off_immaterial"
+DISPLACEMENT_OFF_ANALYST_ENTRY = "off_analyst_entry"
+DISPLACEMENT_OFF_SEED = "off_seed"
+DISPLACEMENT_OFF = "off"
+
+_DISPLACEMENT_PCT_KEYS = frozenset(
+    {"y1_occupancy_displacement_pct", "y1_adr_displacement_pct"}
+)
+
+
+def _pct_label(fraction: float) -> str:
+    """``0.15`` → ``"15%"``; ``0.075`` → ``"7.5%"``."""
+    pct = fraction * 100.0
+    return f"{pct:.0f}%" if abs(pct - round(pct)) < 1e-9 else f"{pct:.1f}%"
+
+
+def _displacement_status(
+    base: dict[str, Any],
+    sources: dict[str, str],
+    *,
+    source_fields: frozenset[str],
+    analyst_override_paths: set[str],
+) -> dict[str, Any]:
+    """Describe the Year-1 displacement the model will run with, and why.
+
+    Returns ``{active, state, source, detail, renovation_budget,
+    renovation_budget_per_key, y1_occupancy_displacement_pct,
+    y1_adr_displacement_pct}``. ``state`` is one of the ``DISPLACEMENT_*``
+    constants; ``detail`` is the sentence the UI prints.
+    """
+
+    def _f(v: Any) -> float:
+        try:
+            return float(v) if v not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    budget = _f(base.get("renovation_budget"))
+    keys = _f(base.get("keys"))
+    per_key = budget / keys if keys > 0 else 0.0
+    occ = _f(base.get("y1_occupancy_displacement_pct"))
+    adr = _f(base.get("y1_adr_displacement_pct"))
+    source = sources.get("renovation_budget", SOURCE_SEED)
+    grounded = "renovation_budget" in source_fields
+    analyst_set_pct = bool(_DISPLACEMENT_PCT_KEYS & analyst_override_paths)
+    active = occ > 0.0 or adr > 0.0
+    pcts = f"occupancy −{_pct_label(occ)}, ADR −{_pct_label(adr)}"
+
+    if active:
+        if analyst_set_pct:
+            state = DISPLACEMENT_ON_ANALYST
+            detail = (
+                f"Year-1 displacement on — the displacement percentages are "
+                f"analyst-set ({pcts})."
+            )
+        elif source == SOURCE_PIP_DOCUMENT:
+            state = DISPLACEMENT_ON_PIP_DOCUMENT
+            detail = (
+                f"Year-1 displacement on — the renovation budget is read off a "
+                f"PIP / CapEx document ({pcts})."
+            )
+        elif source == SOURCE_OM_BROKER:
+            state = DISPLACEMENT_ON_OM_BROKER
+            detail = (
+                f"Year-1 displacement on — the renovation budget is the OM's "
+                f"broker pro forma figure ({pcts})."
+            )
+        else:
+            state = DISPLACEMENT_ON
+            detail = f"Year-1 displacement on ({pcts})."
+    elif analyst_set_pct:
+        state = DISPLACEMENT_OFF_ANALYST
+        detail = "Year-1 displacement off — the displacement percentages are analyst-set to 0."
+    elif budget <= 0.0:
+        state = DISPLACEMENT_OFF_NO_BUDGET
+        detail = "Year-1 displacement off — no renovation budget."
+    elif per_key <= _DISPLACEMENT_PER_KEY_FLOOR_USD:
+        state = DISPLACEMENT_OFF_IMMATERIAL
+        detail = (
+            f"Year-1 displacement off — the renovation budget is "
+            f"${per_key:,.0f} / key, under the ${_DISPLACEMENT_PER_KEY_FLOOR_USD:,} / key "
+            f"materiality floor."
+        )
+    elif source == SOURCE_ANALYST_OVERRIDE and not grounded:
+        state = DISPLACEMENT_OFF_ANALYST_ENTRY
+        detail = (
+            "Year-1 displacement off — the renovation budget is an analyst entry "
+            "without an OM or PIP document; set the Y1 displacement % or upload "
+            "the PIP."
+        )
+    elif source == SOURCE_SEED and not grounded:
+        state = DISPLACEMENT_OFF_SEED
+        detail = (
+            "Year-1 displacement off — the renovation budget is the Fondok seed "
+            "default, not a deal-specific figure."
+        )
+    else:
+        state = DISPLACEMENT_OFF
+        detail = "Year-1 displacement off."
+
+    return {
+        "active": active,
+        "state": state,
+        "source": source,
+        "detail": detail,
+        "renovation_budget": budget,
+        "renovation_budget_per_key": per_key,
+        "y1_occupancy_displacement_pct": occ,
+        "y1_adr_displacement_pct": adr,
+    }
 
 
 #: Source labels that CONTRADICT document provenance — an analyst typed the
