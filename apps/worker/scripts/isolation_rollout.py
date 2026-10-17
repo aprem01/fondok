@@ -65,7 +65,6 @@ from sqlalchemy import text
 from app.api.deals import coerce_org_tenant_id
 from app.config import get_settings
 from app.database import get_engine
-from app.migrations import run_startup_migrations
 from app.tenants import Tenant, get_tenant, list_tenants, upsert_tenant
 
 _HERE = Path(__file__).resolve().parent
@@ -340,9 +339,32 @@ async def run(args: argparse.Namespace, out=sys.stdout) -> int:
 
     print_environment(settings, out)
 
-    # Idempotent; guarantees the tenants table exists on an older DB.
-    await run_startup_migrations()
+    # Never run migrations from an operator's laptop: the deployed worker
+    # applies them at boot (2026-10-17: the dry run used to call
+    # run_startup_migrations() against production, which is a write path).
+    # Require the schema to be current instead, and in dry-run mode make
+    # every connection read-only so a bug here cannot write anything.
     engine = get_engine()
+    if not execute:
+        from sqlalchemy import event
+
+        def _read_only(dbapi_conn, _record):  # pragma: no cover - driver glue
+            raw = getattr(dbapi_conn, "_connection", None)
+            if raw is not None and hasattr(dbapi_conn, "await_"):
+                dbapi_conn.await_(raw.execute("SET default_transaction_read_only = on"))
+            else:  # sqlite: no server setting; the plan issues SELECTs only
+                return None
+
+        event.listen(engine.sync_engine, "connect", _read_only)
+    tables = await existing_tables(engine)
+    if "tenants" not in tables or "deals" not in tables:
+        print(
+            "ERROR: this database has no `tenants`/`deals` table. The deployed worker "
+            "creates them at boot — deploy (or run the worker once against this DATABASE_URL) "
+            "and retry. This script does not run migrations.",
+            file=out,
+        )
+        raise SystemExit(2)
 
     registry = await list_tenants()
     print_registry(registry, out)
