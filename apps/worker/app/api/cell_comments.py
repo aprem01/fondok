@@ -59,6 +59,9 @@ class CellComment(BaseModel):
     created_at: datetime
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+    #: Set when "Duplicate deal" copied this comment: the SOURCE deal's id.
+    #: NULL for a comment written on this deal.
+    copied_from_deal_id: UUID | None = None
 
 
 class CreateCommentBody(BaseModel):
@@ -127,6 +130,9 @@ def _row_to_comment(m: Any) -> CellComment:
         created_at=_coerce_dt(m["created_at"]) or datetime.now(UTC),
         resolved_at=_coerce_dt(m["resolved_at"]),
         resolved_by=m["resolved_by"],
+        copied_from_deal_id=(
+            UUID(str(m["copied_from_deal_id"])) if m.get("copied_from_deal_id") else None
+        ),
     )
 
 
@@ -149,14 +155,14 @@ async def list_cell_comments(
         params["cell"] = cell_key
         stmt = text(
             "SELECT id, deal_id, cell_key, cell_label, body, author_id, author_email, "
-            "created_at, resolved_at, resolved_by FROM cell_comments "
+            "created_at, resolved_at, resolved_by, copied_from_deal_id FROM cell_comments "
             "WHERE deal_id = :deal AND tenant_id = :tenant AND cell_key = :cell "
             "ORDER BY created_at ASC"
         )
     else:
         stmt = text(
             "SELECT id, deal_id, cell_key, cell_label, body, author_id, author_email, "
-            "created_at, resolved_at, resolved_by FROM cell_comments "
+            "created_at, resolved_at, resolved_by, copied_from_deal_id FROM cell_comments "
             "WHERE deal_id = :deal AND tenant_id = :tenant "
             "ORDER BY created_at ASC LIMIT 5000"
         )

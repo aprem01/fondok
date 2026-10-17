@@ -18,14 +18,23 @@ export const workerUrl = (): string => BASE;
 // These mirror the Pydantic response models in apps/worker/app/api.
 // Kept narrow on purpose — only fields the web app reads.
 
+/** POST /deals/{id}/duplicate body — mirrors ``DuplicateDealRequest``. */
+export interface DuplicateDealRequest {
+  /** Also copy the P&L cell comments (default false; Sam picks per copy). */
+  include_cell_comments: boolean;
+}
+
 /** POST /deals/{id}/duplicate — mirrors ``DuplicateDealResponse``. */
 export interface DuplicateDealResponse {
   deal: WorkerDeal;
   source_deal_id: string;
   /** Rows copied per table (deals, documents, extraction_results, …). */
   copied: Record<string, number>;
-  /** Tables intentionally not copied (engine_outputs, audit_log, …). */
+  /** Tables intentionally not copied (engine_outputs, audit_log, …;
+   *  cell_comments when the request did not ask for them). */
   skipped: string[];
+  /** Echo of the request choice. */
+  include_cell_comments: boolean;
 }
 
 export interface WorkerDeal {
@@ -2014,6 +2023,8 @@ export interface CellComment {
   created_at: string;
   resolved_at: string | null;
   resolved_by: string | null;
+  /** Set when "Duplicate deal" copied this comment: the source deal's id. */
+  copied_from_deal_id?: string | null;
 }
 
 export interface HistImportChange {
@@ -2278,12 +2289,13 @@ export const api = {
       request<void>('DELETE', `/deals/${id}/hard`),
     /** Duplicate a deal (POST /deals/{id}/duplicate) into the same
      *  workspace as "<name> (copy YYYY-MM-DD)". Copies the deal fields,
-     *  assumptions (with their notes), scenarios, cell comments and the
-     *  documents with their latest reviewed extractions — the stored files
-     *  are shared, not re-uploaded. Model runs are NOT copied: the new deal
-     *  must be re-run. */
-    duplicate: (id: string) =>
-      request<DuplicateDealResponse>('POST', `/deals/${id}/duplicate`),
+     *  assumptions (with their notes), scenarios and the documents with
+     *  their latest reviewed extractions — the stored files are shared, not
+     *  re-uploaded. Cell comments travel only when
+     *  ``body.include_cell_comments`` is true (default false). Model runs
+     *  are NOT copied: the new deal must be re-run. */
+    duplicate: (id: string, body: DuplicateDealRequest = { include_cell_comments: false }) =>
+      request<DuplicateDealResponse>('POST', `/deals/${id}/duplicate`, body),
   },
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>

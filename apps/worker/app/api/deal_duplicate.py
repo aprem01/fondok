@@ -31,9 +31,14 @@ extraction_results          COPY    the LATEST row per document only — that
                                     (accepted / edited / rejected).
 scenarios                   COPY    re-keyed (new ids), ``last_run_id`` NULL
                                     because no run is copied.
-cell_comments               COPY    body prefixed "[Copied from <deal>]";
-                                    ``hist:<doc>::`` keys re-pointed at the
-                                    copied documents.
+cell_comments               OPT     only when the request body says
+                                    ``include_cell_comments: true`` (Sam
+                                    chooses per copy; default off). Copied
+                                    rows carry ``copied_from_deal_id`` = the
+                                    source deal, body prefixed
+                                    "[Copied from <deal>]", ``hist:<doc>::``
+                                    keys re-pointed at the copied documents.
+                                    Otherwise listed under ``skipped``.
 document_chunks (PG only)   COPY    server-side INSERT … SELECT, so search /
                                     memo retrieval work on the copy without
                                     re-embedding. Best effort (savepoint).
@@ -132,6 +137,18 @@ SKIPPED_TABLES: tuple[str, ...] = (
 )
 
 
+class DuplicateDealRequest(BaseModel):
+    """Per-copy choices. The body is optional — an empty POST is the default
+    copy (no cell comments)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Also copy the P&L cell comments (marked ``copied_from_deal_id``).
+    #: Off by default: a comment thread is a conversation about the ORIGINAL
+    #: deal's numbers and usually should not follow an experiment copy.
+    include_cell_comments: bool = False
+
+
 class DuplicateDealResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -139,8 +156,11 @@ class DuplicateDealResponse(BaseModel):
     source_deal_id: UUID
     #: Rows copied per table.
     copied: dict[str, int]
-    #: Tables intentionally not copied.
+    #: Tables intentionally not copied (``cell_comments`` appears here when
+    #: the request did not ask for them).
     skipped: list[str]
+    #: Echo of the request choice.
+    include_cell_comments: bool
 
 
 def _is_sqlite(session: AsyncSession) -> bool:
@@ -240,13 +260,17 @@ async def duplicate_deal(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     auth: Annotated[AuthContext, Depends(get_current_auth)],
+    body: DuplicateDealRequest | None = None,
 ) -> DuplicateDealResponse:
     """Copy a deal, its documents, reviewed extractions, assumptions and
     scenarios into a new deal in the same tenant. Engine outputs are NOT
-    copied — the new deal must be re-run. See the module docstring for the
+    copied — the new deal must be re-run. Cell comments come along only when
+    ``body.include_cell_comments`` is true. See the module docstring for the
     per-table decision."""
     tenant = str(tenant_id)
     src = str(deal_id)
+    include_comments = bool(body.include_cell_comments) if body else False
+    skipped: list[str] = list(SKIPPED_TABLES)
 
     source = (
         await session.execute(
@@ -400,10 +424,15 @@ async def duplicate_deal(
             session, deal_id=new_deal, tenant_id=tenant
         )
 
-    # ── cell comments (marked as copied) ───────────────────────────────
-    cc_cols = await _table_columns(session, "cell_comments")
-    copied["cell_comments"] = 0
+    # ── cell comments (opt-in; marked as copied) ───────────────────────
+    # Tenant-scoped on both ends: the SELECT carries the tenant predicate and
+    # the copied row keeps the source row's tenant_id (same tenant as the
+    # caller, proven by the deals lookup above).
+    cc_cols = await _table_columns(session, "cell_comments") if include_comments else None
+    if not include_comments:
+        skipped.append("cell_comments")
     if cc_cols:
+        copied["cell_comments"] = 0
         prefix = f"{COPIED_COMMENT_PREFIX}{source_row.get('name') or 'original deal'}] "
         for r in (
             await session.execute(
@@ -425,6 +454,10 @@ async def duplicate_deal(
                     "id": str(uuid4()),
                     "deal_id": new_deal,
                     "body": prefix + str(c.get("body") or ""),
+                    # The source deal, so a reader can tell a copied thread
+                    # from one written on this deal (the body prefix is
+                    # display text; this is the key).
+                    "copied_from_deal_id": src,
                 },
                 remap_columns=frozenset({"cell_key"}),
                 id_map=doc_map,
@@ -484,7 +517,8 @@ async def duplicate_deal(
             "source_name": source_row.get("name"),
             "name": new_name,
             "copied": copied,
-            "skipped": list(SKIPPED_TABLES),
+            "skipped": skipped,
+            "include_cell_comments": include_comments,
             "document_id_map": doc_map,
         },
     )
@@ -511,5 +545,6 @@ async def duplicate_deal(
         deal=_row_to_record(dict(refreshed._mapping)),
         source_deal_id=deal_id,
         copied=copied,
-        skipped=list(SKIPPED_TABLES),
+        skipped=skipped,
+        include_cell_comments=include_comments,
     )

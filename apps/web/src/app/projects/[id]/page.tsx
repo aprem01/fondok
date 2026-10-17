@@ -38,7 +38,12 @@ import { DataKey } from '@/components/design';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useCurrentRole } from '@/lib/auth';
-import { duplicateDealConfirmText, duplicateDealDoneText, duplicateDealErrorText } from '@/lib/duplicateDeal';
+import {
+  duplicateDealDoneText,
+  duplicateDealErrorText,
+  type DuplicateDealChoices,
+} from '@/lib/duplicateDeal';
+import DuplicateDealDialog from '@/components/project/DuplicateDealDialog';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
@@ -192,12 +197,16 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // Duplicate deal — copies the deal, assumptions (with notes), scenarios,
-  // comments and documents with their reviewed extractions; NOT the model
-  // runs, so the copy opens with "run the model". Lets an analyst re-extract
-  // or experiment on a copy without losing reviewed fields on the original.
+  // Duplicate deal — copies the deal, assumptions (with notes), scenarios
+  // and documents with their reviewed extractions; cell comments only when
+  // the analyst ticks the box in the confirm dialog (per copy, default off);
+  // NOT the model runs, so the copy opens with "run the model". Lets an
+  // analyst re-extract or experiment on a copy without losing reviewed
+  // fields on the original.
   const [duplicating, setDuplicating] = useState(false);
-  const onDuplicate = async () => {
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const duplicateName = (deal?.name || `deal ${rawId}`).trim();
+  const onDuplicate = () => {
     if (!workerConnected || isMockId) {
       toast('Duplicate available once worker is connected to this deal', {
         type: 'info',
@@ -205,11 +214,16 @@ export default function ProjectDetailPage() {
       return;
     }
     if (duplicating) return;
-    const name = (deal?.name || `deal ${rawId}`).trim();
-    if (!window.confirm(duplicateDealConfirmText(name))) return;
+    setDuplicateOpen(true);
+  };
+  const runDuplicate = async (choices: DuplicateDealChoices) => {
+    if (duplicating) return;
     setDuplicating(true);
     try {
-      const res = await workerApi.deals.duplicate(rawId);
+      const res = await workerApi.deals.duplicate(rawId, {
+        include_cell_comments: choices.includeCellComments,
+      });
+      setDuplicateOpen(false);
       toast(duplicateDealDoneText(res.deal.name), { type: 'success' });
       router.push(`/projects/${res.deal.id}`);
     } catch (err) {
@@ -915,6 +929,15 @@ export default function ProjectDetailPage() {
           </aside>
         </>
       )}
+
+      {/* Duplicate deal — per-copy choice of whether cell comments travel. */}
+      <DuplicateDealDialog
+        open={duplicateOpen}
+        dealName={duplicateName}
+        busy={duplicating}
+        onClose={() => setDuplicateOpen(false)}
+        onConfirm={(choices) => void runDuplicate(choices)}
+      />
 
       {/* Wave 3 W3.2 — scenario editor side panel (NO modal). */}
       {liveMode && (
