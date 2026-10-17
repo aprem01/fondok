@@ -47,6 +47,22 @@ class RawStore(ABC):
     async def exists(self, key: str) -> bool:
         """Cheap presence check."""
 
+    @abstractmethod
+    def delete(self, key: str) -> bool:
+        """Remove the object at ``key``. Returns True when something was
+        removed, False when nothing was there (idempotent, never raises for
+        a missing object).
+
+        Synchronous by contract: the one caller,
+        ``api.documents.delete_document``, runs it as
+        ``await asyncio.to_thread(store.delete, storage_key)`` after the
+        row DELETE commits and only once no other ``documents`` row (a
+        duplicated deal's copy, or the original) still references the key.
+        Raises ``StorageError`` for a key this store does not own — a
+        foreign bucket, a path outside the local root, the wrong scheme —
+        so a malformed key can never unlink something else.
+        """
+
 
 # ──────────────────────────── local ────────────────────────────
 
@@ -92,6 +108,19 @@ class LocalRawStore(RawStore):
             return _file_uri_to_path(key).exists()
         except StorageError:
             return False
+
+    def delete(self, key: str) -> bool:
+        path = _file_uri_to_path(key)
+        root = self.root.resolve()
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            raise StorageError(
+                f"local store: refusing to delete outside root {root}: {key}"
+            )
+        if not resolved.is_file():
+            return False
+        resolved.unlink()
+        return True
 
 
 def _file_uri_to_path(uri: str) -> Path:
@@ -228,6 +257,17 @@ class S3RawStore(RawStore):
 
         return await asyncio.to_thread(_head)
 
+    def delete(self, key: str) -> bool:
+        bucket, object_key = _parse_s3_uri(key)
+        if bucket != self.bucket:
+            raise StorageError(
+                f"refusing to delete from foreign bucket: {bucket}"
+            )
+        # S3 DeleteObject is idempotent (204 whether or not the key existed),
+        # so the only outcome short of an exception is "gone".
+        self._client().delete_object(Bucket=bucket, Key=object_key)
+        return True
+
     async def presigned_get_url(
         self,
         key: str,
@@ -322,6 +362,16 @@ def get_raw_store(settings: Settings | None = None) -> RawStore:
     return _RAW_STORE
 
 
+def get_store(settings: Settings | None = None) -> RawStore:
+    """The same process singleton as :func:`get_raw_store`, under the name
+    ``api.documents.delete_document`` resolves lazily
+    (``from ..storage import get_store``). Until 2026-10-17 that import had
+    no target: every document delete logged "storage delete failed … blob
+    orphaned" and left the object in place. Keep both names pointing at the
+    one cache so a test's ``reset_raw_store_cache`` covers either."""
+    return get_raw_store(settings)
+
+
 def reset_raw_store_cache() -> None:
     """Test utility — drop the cached store so a settings change wins."""
     global _RAW_STORE
@@ -334,5 +384,6 @@ __all__ = [
     "S3RawStore",
     "StorageError",
     "get_raw_store",
+    "get_store",
     "reset_raw_store_cache",
 ]

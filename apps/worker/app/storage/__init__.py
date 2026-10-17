@@ -8,7 +8,8 @@ Two backends:
   bucket. Required for any real LP / sponsor pilot.
 
 Selection happens via ``get_raw_store()`` reading
-``Settings.OBJECT_STORE_BACKEND``.
+``Settings.OBJECT_STORE_BACKEND``. ``get_store`` is the same singleton under
+the name the document-delete path imports.
 """
 
 from .raw_store import (
@@ -17,6 +18,7 @@ from .raw_store import (
     S3RawStore,
     StorageError,
     get_raw_store,
+    get_store,
     reset_raw_store_cache,
 )
 
@@ -26,5 +28,6 @@ __all__ = [
     "S3RawStore",
     "StorageError",
     "get_raw_store",
+    "get_store",
     "reset_raw_store_cache",
 ]

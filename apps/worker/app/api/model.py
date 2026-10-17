@@ -894,11 +894,24 @@ async def _compare(
         if ref in ("latest", "canonical"):
             if canonical:
                 return canonical
-            if runs:  # never completed a full chain — newest run instead
-                return runs[0]["run_id"]
+            if not runs:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"deal {deal_id} has no engine runs",
+                )
+            # Runs exist but none completed the full chain, so there is no
+            # canonical run. ``latest`` promises the canonical run (the one
+            # every tab serves; the panel labels it "Latest (canonical)"),
+            # so say so rather than silently diffing against the newest
+            # partial / failed run and reporting its gaps as changes.
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"deal {deal_id} has no engine runs",
+                detail=(
+                    f"deal {deal_id} has no canonical run: none of its "
+                    f"{len(runs)} run(s) completed the full engine chain. "
+                    f"Pass an explicit run id as {label} to compare a "
+                    "partial run."
+                ),
             )
         if ref not in known:
             raise HTTPException(
@@ -956,7 +969,9 @@ async def compare_engine_runs(
 ) -> RunCompareResponse:
     """Field-level diff of two runs' headline outputs — read-only.
 
-    ``head`` defaults to ``latest`` (the deal's canonical run). Unchanged
+    ``head`` defaults to ``latest`` (the deal's canonical run). A deal with
+    runs but no canonical run — none completed the full chain — gets 404
+    for ``latest``; name a run id to compare a partial run. Unchanged
     fields are omitted unless ``?all=1``.
     """
     result = await _compare(
