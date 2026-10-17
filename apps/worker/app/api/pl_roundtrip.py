@@ -48,6 +48,9 @@ from ..export.pl_workbooks import (
     assumption_spec,
     by_year_target_assumptions,
     split_by_year_target_key,
+    SCHEDULE_KEY,
+    schedule_assumptions,
+    split_schedule_period_key,
     HistCell,
     HistColumn,
     HistCurrent,
@@ -467,7 +470,28 @@ async def _assumption_state(
         v = lst[year - 1] if year - 1 < len(lst) else None
         values[spec.key] = v
         srcs[spec.key] = "analyst_override" if v is not None else ""
-    return values, srcs, overrides, ASSUMPTIONS + by_year_specs
+    # Sam, 2026-10-15 — the renovation displacement schedule, one row per
+    # period per field, plus one blank period. The value is the saved
+    # period's own field; blank = not set.
+    saved_periods = _schedule_periods(overrides)
+    schedule_specs = schedule_assumptions(len(saved_periods))
+    for spec in schedule_specs:
+        period, field = split_schedule_period_key(spec.key)  # type: ignore[misc]
+        entry = saved_periods[period - 1] if period - 1 < len(saved_periods) else {}
+        v = to_number(entry.get(field)) if isinstance(entry, dict) else None
+        values[spec.key] = v
+        srcs[spec.key] = "analyst_override" if v is not None else ""
+    return values, srcs, overrides, ASSUMPTIONS + by_year_specs + schedule_specs
+
+
+def _schedule_periods(overrides: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The saved ``renovation_displacement_schedule`` periods as dicts (``[]``
+    when absent or malformed) — the same list the runner reads."""
+    ov = overrides.get(SCHEDULE_KEY)
+    raw = ov.get("value") if isinstance(ov, dict) else ov
+    if not isinstance(raw, list):
+        return []
+    return [dict(e) for e in raw if isinstance(e, dict)]
 
 
 async def _active_line_methods(
@@ -501,18 +525,26 @@ def _needs_note(key: str) -> bool:
 # whole-list note and is kept in front, so no justification is ever lost.
 
 _YEAR_NOTE_SEP = " · "
-_YEAR_NOTE_RE = re.compile(r"^Y(\d{1,2}):\s*(.*)$", re.DOTALL)
+#: ``prefix`` — ``"Y"`` for the by-year target lists (``Y2: …``), ``"P"`` for
+#: the renovation displacement schedule's periods (``P1: …``).
+_NOTE_PREFIX_RE = {
+    "Y": re.compile(r"^Y(\d{1,2}):\s*(.*)$", re.DOTALL),
+    "P": re.compile(r"^P(\d{1,2}):\s*(.*)$", re.DOTALL),
+}
 
 
-def split_by_year_notes(note: str | None) -> tuple[str | None, dict[int, str]]:
+def split_by_year_notes(
+    note: str | None, *, prefix: str = "Y"
+) -> tuple[str | None, dict[int, str]]:
     """``"old · Y2: a · Y3: b"`` → ``("old", {2: "a", 3: "b"})``."""
     general: list[str] = []
     by_year: dict[int, str] = {}
+    rx = _NOTE_PREFIX_RE[prefix]
     for seg in (note or "").split(_YEAR_NOTE_SEP):
         seg = seg.strip()
         if not seg:
             continue
-        m = _YEAR_NOTE_RE.match(seg)
+        m = rx.match(seg)
         if m:
             by_year[int(m.group(1))] = m.group(2).strip()
         else:
@@ -520,19 +552,24 @@ def split_by_year_notes(note: str | None) -> tuple[str | None, dict[int, str]]:
     return (_YEAR_NOTE_SEP.join(general) or None), by_year
 
 
-def merge_by_year_notes(existing: str | None, new_by_year: Mapping[int, str]) -> str:
+def merge_by_year_notes(
+    existing: str | None, new_by_year: Mapping[int, str], *, prefix: str = "Y"
+) -> str:
     """Fold this apply's per-year notes into the list's existing note.
 
     Years edited now replace their own segment; every other year's segment
     — and any legacy whole-list note — survives untouched. The result is
     ``"<legacy> · Y2: … · Y3: …"`` in year order ("" when there is nothing).
+    With ``prefix="P"`` the segments are per renovation period instead.
     """
-    general, by_year = split_by_year_notes(existing)
+    general, by_year = split_by_year_notes(existing, prefix=prefix)
     for year, text_ in new_by_year.items():
         cleaned = (text_ or "").strip()
         if cleaned:
             by_year[int(year)] = cleaned
-    segments = ([general] if general else []) + [f"Y{y}: {by_year[y]}" for y in sorted(by_year)]
+    segments = ([general] if general else []) + [
+        f"{prefix}{y}: {by_year[y]}" for y in sorted(by_year)
+    ]
     return _YEAR_NOTE_SEP.join(segments)
 
 
@@ -553,7 +590,16 @@ async def export_projections(
     headers, values = await _projection_state(session, deal_id, tenant)
     cur, srcs, overrides, specs = await _assumption_state(session, deal_id, tenant)
 
+    saved_periods = _schedule_periods(overrides)
+
     def _note_for(key: str) -> str | None:
+        sp = split_schedule_period_key(key)
+        if sp is not None:
+            period = saved_periods[sp[0] - 1] if sp[0] - 1 < len(saved_periods) else None
+            own = period.get("note") if isinstance(period, dict) else None
+            if isinstance(own, str) and own.strip():
+                return own.strip()
+            return _override_note(overrides.get(SCHEDULE_KEY)) if period is not None else None
         by = split_by_year_target_key(key)
         return _override_note(overrides.get(by[0] if by is not None else key))
 
@@ -680,6 +726,11 @@ async def apply_projections_import(
     # each edited year keeps its own note (``merge_by_year_notes``).
     by_year_changes: dict[str, dict[int, float]] = {}
     by_year_notes: dict[str, dict[int, str]] = {}
+    # Sam, 2026-10-15 — renovation-schedule rows fold into their JSON list
+    # override, period by period; each edited period keeps its own note.
+    schedule_changes: dict[int, dict[str, float | int]] = {}
+    schedule_notes: dict[int, str] = {}
+    schedule_rows: dict[int, list[dict[str, Any]]] = {}
     batch_keys = {ch.key for ch in body.changes}
     for ch in body.changes:
         spec = assumption_spec(ch.key)
@@ -748,6 +799,16 @@ async def apply_projections_import(
                 by_year_notes.setdefault(list_key, {})[year] = note
             applied.append({"key": ch.key, "old_value": now_val, "new_value": value, "note": note})
             continue
+        sp = split_schedule_period_key(ch.key)
+        if sp is not None:
+            period, field = sp
+            schedule_changes.setdefault(period, {})[field] = value
+            if note:
+                schedule_notes[period] = note
+            schedule_rows.setdefault(period, []).append(
+                {"key": ch.key, "old_value": now_val, "new_value": value, "note": note}
+            )
+            continue
         pm = split_projection_method_key(ch.key)
         if pm is not None:
             mkey = f"projection_methods.{pm[0]}.method"
@@ -793,6 +854,60 @@ async def apply_projections_import(
                 override_note(overrides, list_key), by_year_notes.get(list_key, {})
             )
             merged[list_key] = {"value": new_list, "note": note} if note else new_list
+
+    # Sam, 2026-10-15 — fold the per-period rows into the schedule list the
+    # runner reads. A NEW period (index past the saved list) needs both
+    # months in this batch — the engine cannot place a period with one end
+    # — and every period is validated with the loader's own validator before
+    # anything is stored; a refused period's rows are skipped with the reason.
+    if schedule_changes:
+        from ..services.engine_runner import renovation_schedule_problems
+
+        periods = _schedule_periods(overrides)
+        applied_periods: set[int] = set()
+        for period in sorted(schedule_changes):
+            edits = schedule_changes[period]
+            idx = period - 1
+            if idx > len(periods):
+                for r in schedule_rows[period]:
+                    skipped.append({"key": r["key"], "reason": "period_out_of_order",
+                                    "detail": f"Fill period {len(periods) + 1} first."})
+                continue
+            if idx == len(periods):
+                if "start_month" not in edits or "end_month" not in edits:
+                    for r in schedule_rows[period]:
+                        skipped.append({"key": r["key"], "reason": "period_incomplete",
+                                        "detail": "A new period needs both First month and Last month."})
+                    continue
+                periods.append({})
+            entry = dict(periods[idx])
+            entry.update(edits)
+            entry.setdefault("rooms_offline_pct", 0.0)
+            entry.setdefault("rate_discount_pct", 0.0)
+            if schedule_notes.get(period):
+                entry["note"] = schedule_notes[period]
+            problems = renovation_schedule_problems([entry])
+            if problems:
+                for r in schedule_rows[period]:
+                    skipped.append({"key": r["key"], "reason": "out_of_range",
+                                    "detail": "; ".join(problems)})
+                if idx == len(periods) - 1 and not periods[idx]:
+                    periods.pop()
+                continue
+            periods[idx] = entry
+            applied.extend(schedule_rows[period])
+            applied_periods.add(period)
+        if applied_periods:
+            from ..services.index_methodology import override_note
+
+            # Only the periods that were actually stored contribute a note —
+            # a refused period's justification never lands on the list.
+            note = merge_by_year_notes(
+                override_note(overrides, SCHEDULE_KEY),
+                {p: n for p, n in schedule_notes.items() if p in applied_periods},
+                prefix="P",
+            )
+            merged[SCHEDULE_KEY] = {"value": periods, "note": note} if note else periods
 
     if applied:
         await update_deal(

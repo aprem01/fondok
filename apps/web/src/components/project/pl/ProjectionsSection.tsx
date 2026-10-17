@@ -960,7 +960,10 @@ export default function ProjectionsSection({
           verdict, verbatim. Sam (2026-10-15): no renovation budget — analyst,
           OM broker or PIP document — displaces Year 1 by itself; only the
           explicit Y1 displacement assumptions (owned by the CAPEX tab, linked
-          here) or a structured PIP closure schedule do. */}
+          here), a structured PIP closure schedule, or the explicit renovation
+          displacement SCHEDULE do. When the schedule is active the worker's
+          sentence names its periods and per-year factors (state
+          `on_schedule`) — still this one line, nothing composed here. */}
       {displacementLine && (
         <p
           data-testid="y1-displacement-status"

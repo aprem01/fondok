@@ -597,6 +597,95 @@ describe('InvestmentTab — the renovation window is an Investment assumption', 
   });
 });
 
+// Sam, 2026-10-15 — the explicit renovation displacement schedule lives in the
+// Initial Renovation / PIP section's footer, is OFF until a period is saved,
+// and saves ONE `renovation_displacement_schedule` list override with ONE
+// note through the same canonical PATCH path as every other assumption.
+describe('InvestmentTab — renovation displacement schedule (Sam, 2026-10-15)', () => {
+  it('renders OFF with no period saved and never shows a factor it did not get from the worker', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    const box = screen.getByTestId('renovation-displacement-schedule');
+    expect(box.getAttribute('data-schedule-state')).toBe('off');
+    expect(screen.getByTestId('renovation-schedule-off').textContent).toContain('Off — no renovation period entered');
+    expect(screen.queryByTestId('renovation-schedule-by-year')).toBeNull();
+  });
+
+  it('saves the schedule as {value: [periods], note} under renovation_displacement_schedule', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('renovation-schedule-edit'));
+    fireEvent.change(screen.getByLabelText('Period 1 first month'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('Period 1 last month'), { target: { value: '6' } });
+    fireEvent.change(screen.getByLabelText('Period 1 rooms offline %'), { target: { value: '25' } });
+    fireEvent.change(screen.getByLabelText('Period 1 rate discount %'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Period 1 note'), { target: { value: 'Tower A guestrooms' } });
+
+    // Refused without a justification — nothing is written.
+    fireEvent.click(screen.getByLabelText('Save schedule'));
+    expect(await screen.findByTestId('renovation-schedule-error')).toBeTruthy();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Schedule justification'), {
+      target: { value: 'GC phasing plan, rev 3.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save schedule'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.renovation_displacement_schedule).toEqual({
+      value: [{ start_month: 1, end_month: 6, rooms_offline_pct: 0.25, rate_discount_pct: 0.1, note: 'Tower A guestrooms' }],
+      note: 'GC phasing plan, rev 3.',
+    });
+    // No dotted per-period keys ever reach the deal.
+    expect(Object.keys(body.field_overrides).some((k) => k.startsWith('renovation_displacement_schedule.'))).toBe(false);
+  });
+
+  it('renders the saved periods and the WORKER\'s per-year factors, and clears without a note', async () => {
+    mockOverrides = {
+      renovation_displacement_schedule: {
+        value: [{ start_month: 1, end_month: 6, rooms_offline_pct: 0.25, rate_discount_pct: 0.1 }],
+        note: 'GC phasing plan',
+      },
+    };
+    const status: DisplacementStatus = {
+      active: true,
+      state: 'on_schedule',
+      source: 'seed',
+      detail: 'Renovation impact on — analyst-set displacement schedule (months 1–6: 25% rooms offline, 10% rate discount). Year 1: occupancy ×0.875, ADR ×0.957.',
+      renovation_budget: 5_280_000,
+      renovation_budget_per_key: 40_000,
+      y1_occupancy_displacement_pct: 0,
+      y1_adr_displacement_pct: 0,
+      schedule: [{ start_month: 1, end_month: 6, rooms_offline_pct: 0.25, rate_discount_pct: 0.1 }],
+      schedule_by_year: [{ year: 1, entries: [0], months_in_period: 6, rooms_offline_share: 0.125, occupancy_factor: 0.875, adr_factor: 0.9571428571 }],
+    };
+    render(
+      <DisplacementStatusContext.Provider value={status}>
+        <InvestmentTab />
+      </DisplacementStatusContext.Provider>,
+    );
+    await waitFor(() => expect(timelineSpy).toHaveBeenCalled());
+    expect(screen.getByTestId('renovation-displacement-schedule').getAttribute('data-schedule-state')).toBe('on');
+    const row = screen.getAllByTestId('renovation-schedule-row')[0];
+    expect(row.textContent).toContain('1–6');
+    expect(row.textContent).toContain('25%');
+    expect(row.textContent).toContain('10%');
+    // The per-year line is the worker's figure, formatted — not recomputed.
+    expect(screen.getByTestId('renovation-schedule-by-year').textContent).toContain('occupancy ×0.875');
+    expect(screen.getByTestId('renovation-schedule-by-year').textContent).toContain('ADR ×0.957');
+    // The status line on the Renovation Budget row carries the on_schedule state.
+    expect(screen.getByTestId('renovation-displacement-status').getAttribute('data-displacement-state')).toBe('on_schedule');
+
+    // Remove the only period → "Clear schedule" writes the key away (no note).
+    fireEvent.click(screen.getByTestId('renovation-schedule-edit'));
+    fireEvent.click(screen.getByLabelText('Remove period 1'));
+    fireEvent.click(screen.getByLabelText('Save schedule'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect('renovation_displacement_schedule' in body.field_overrides).toBe(false);
+  });
+});
+
 describe('InvestmentTab — Hotel Purchase is linked, not calculated', () => {
   it('reads the worker basis and names the Deal Summary as its owner', async () => {
     render(<InvestmentTab />);

@@ -367,14 +367,106 @@ def by_year_target_assumptions(hold_years: int) -> tuple[AssumptionSpec, ...]:
     )
 
 
+#: Sam, 2026-10-15 — the explicit renovation displacement SCHEDULE, one sheet
+#: row per period per field (``renovation_displacement_schedule.2.end_month`` =
+#: the second period's last month). The import folds the rows back into the
+#: ``renovation_displacement_schedule`` JSON list the engine runner reads
+#: (``[{start_month, end_month, rooms_offline_pct, rate_discount_pct, note}]``).
+#: The export lists every saved period plus ONE blank period (to add the next
+#: one), so the row count follows the deal and these are generated per export.
+#: Periods are months from the acquisition close, 1-based and inclusive; the
+#: engine weighs each month 1/12 of its model year (``engines/revenue.py``).
+SCHEDULE_KEY = "renovation_displacement_schedule"
+SCHEDULE_MAX_PERIODS = 24
+SCHEDULE_FIELDS: tuple[tuple[str, str, str, str, bool], ...] = (
+    (
+        "start_month", "First month",
+        "model month, 1-based from the acquisition close (1 = first operating month)",
+        "Start of the renovation period, inclusive; a model year is 12 months from close",
+        True,
+    ),
+    (
+        "end_month", "Last month",
+        "model month, 1-based from the acquisition close, ≥ first month",
+        "End of the renovation period, inclusive",
+        True,
+    ),
+    (
+        "rooms_offline_pct", "Rooms offline",
+        "fraction of inventory (0.25 = 25% of rooms out of service)",
+        "Each month in the period: occupancy × (1 − rooms offline); the year's factor is the "
+        "12-month average",
+        False,
+    ),
+    (
+        "rate_discount_pct", "Rate discount",
+        "fraction of ADR (0.10 = 10% off on the rooms still selling)",
+        "Each month in the period: ADR × (1 − rate discount) on the open rooms; the year's "
+        "factor is weighted by open rooms. The schedule replaces the Y1 displacement "
+        "percentages — never applied on top",
+        False,
+    ),
+)
+_SCHEDULE_KEY_RE = re.compile(
+    r"^renovation_displacement_schedule\.(?P<period>[1-9]\d?)\."
+    r"(?P<field>start_month|end_month|rooms_offline_pct|rate_discount_pct)$"
+)
+
+
+def schedule_period_key(period: int, field: str) -> str:
+    return f"{SCHEDULE_KEY}.{period}.{field}"
+
+
+def split_schedule_period_key(key: str) -> tuple[int, str] | None:
+    """``renovation_displacement_schedule.2.end_month`` → ``(2, "end_month")``;
+    ``None`` for any other key (or a period past the cap)."""
+    m = _SCHEDULE_KEY_RE.match(key or "")
+    if not m:
+        return None
+    period = int(m.group("period"))
+    if not 1 <= period <= SCHEDULE_MAX_PERIODS:
+        return None
+    return period, m.group("field")
+
+
+def schedule_period_spec(period: int, field: str) -> AssumptionSpec:
+    label, unit, method, integer = next(
+        ((lbl, u, mth, integ) for f, lbl, u, mth, integ in SCHEDULE_FIELDS if f == field),
+        (field, "", "", False),
+    )
+    return AssumptionSpec(
+        schedule_period_key(period, field),
+        f"Renovation period {period} — {label}",
+        unit,
+        f"Renovation displacement schedule: {method}. A new period needs both months; "
+        f"a renovation budget alone never moves operations",
+        integer=integer,
+    )
+
+
+def schedule_assumptions(saved_periods: int) -> tuple[AssumptionSpec, ...]:
+    """The schedule rows for a deal with ``saved_periods`` periods on file:
+    every saved period plus one blank period to fill in."""
+    n = max(0, min(int(saved_periods or 0), SCHEDULE_MAX_PERIODS - 1)) + 1
+    return tuple(
+        schedule_period_spec(period, field)
+        for period in range(1, n + 1)
+        for field, *_rest in SCHEDULE_FIELDS
+    )
+
+
 def assumption_spec(key: str) -> AssumptionSpec | None:
-    """The spec behind an Assumptions-sheet key: a fixed ``ASSUMPTIONS`` entry
-    or a by-year penetration target row; ``None`` = not an editable key."""
+    """The spec behind an Assumptions-sheet key: a fixed ``ASSUMPTIONS`` entry,
+    a by-year penetration target row or a renovation-schedule period row;
+    ``None`` = not an editable key."""
     spec = ASSUMPTION_BY_KEY.get(key)
     if spec is not None:
         return spec
     by = split_by_year_target_key(key)
-    return by_year_target_spec(*by) if by is not None else None
+    if by is not None:
+        return by_year_target_spec(*by)
+    sp = split_schedule_period_key(key)
+    return schedule_period_spec(*sp) if sp is not None else None
 
 
 ASSUMPTION_COLUMNS: tuple[str, ...] = (
@@ -1041,6 +1133,11 @@ __all__ = [
 
 
     "BY_YEAR_TARGET_LISTS",
+    "SCHEDULE_FIELDS",
+    "SCHEDULE_KEY",
+    "schedule_assumptions",
+    "schedule_period_key",
+    "split_schedule_period_key",
     "assumption_spec",
     "by_year_target_assumptions",
     "by_year_target_key",

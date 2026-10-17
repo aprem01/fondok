@@ -178,6 +178,66 @@ class PIPDisplacement(BaseModel):
         return self
 
 
+
+# ─────────── Renovation displacement schedule (Sam, 2026-10-15) ───────────
+#
+# "Renovation impacts should be driven by explicit assumptions around timing,
+# room displacement, and rate adjustments." The schedule is the analyst's
+# explicit statement of those three things, period by period, in months from
+# the acquisition close. It is OFF by default — an empty list leaves every
+# engine output byte-identical — and a renovation BUDGET never produces one.
+#
+# The exact arithmetic lives in ``apps/worker/app/engines/revenue.py``
+# (``renovation_displacement_factors``) and on the methodology page; in short,
+# model year ``y`` is months ``12(y-1)+1 .. 12y``, each month weighs 1/12, the
+# rooms taken offline reduce the year's occupancy (on the full-inventory basis
+# the P&L reports) and the rate discount reduces the ADR of the rooms that
+# still sell.
+
+
+class RenovationDisplacementPeriod(BaseModel):
+    """One renovation period: months (1-based from the acquisition close,
+    inclusive on both ends), the share of inventory offline and the rate
+    discount on the rooms that remain open while it lasts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_month: Annotated[int, Field(ge=1, le=240)]
+    end_month: Annotated[int, Field(ge=1, le=240)]
+    rooms_offline_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    rate_discount_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def _check_month_order(self) -> "RenovationDisplacementPeriod":
+        if self.end_month < self.start_month:
+            raise ValueError(
+                f"end_month ({self.end_month}) must be >= start_month "
+                f"({self.start_month})"
+            )
+        return self
+
+
+class RenovationDisplacementYear(BaseModel):
+    """What the schedule did to one model year — the revenue engine's own
+    provenance for its occupancy / ADR factors (nothing here is re-derived
+    anywhere else)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    #: 0-based indexes into the schedule of the periods touching this year.
+    entries: list[int] = Field(default_factory=list)
+    #: Months of this year inside at least one period (0..12).
+    months_in_period: Annotated[int, Field(ge=0, le=12)] = 0
+    #: Σ over the year's months of the rooms offline that month ÷ 12.
+    rooms_offline_share: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
+    #: 1 − rooms_offline_share — multiplies the year's occupancy.
+    occupancy_factor: Annotated[float, Field(ge=0.0, le=1.0)] = 1.0
+    #: Open-room-weighted (1 − rate discount) — multiplies the year's ADR.
+    adr_factor: Annotated[float, Field(ge=0.0, le=1.0)] = 1.0
+
+
 # ─────────────── Capex Three-Bucket Plan (Wave 2 P2.5) ───────────────
 #
 # Institutional hotel underwriting splits capex into three buckets:
@@ -427,6 +487,17 @@ class RevenueEngineInput(BaseModel):
     # ``apps/worker/app/engines/revenue.py``.
     pip_displacement: PIPDisplacement | None = None
 
+    # Sam, 2026-10-15 — the explicit renovation displacement SCHEDULE (periods
+    # in months from close × rooms offline × rate discount). Empty (the
+    # default) changes nothing. Non-empty, it is the ONLY displacement the
+    # engine applies: the scalar ``y1_*_displacement_pct`` and the structured
+    # ``pip_displacement`` are NOT applied on top (never double-applied — the
+    # schedule wins, and ``displacement_status`` says so). Arithmetic in
+    # ``apps/worker/app/engines/revenue.py::renovation_displacement_factors``.
+    renovation_displacement_schedule: list[RenovationDisplacementPeriod] = Field(
+        default_factory=list
+    )
+
     # FON-41 #2 — the projection's CALENDAR anchor. ``year`` on each projection
     # row is an ORDINAL (1..hold_years), so the grid had no calendar of its own
     # and the UI printed the ordinal as if it were a year ("Base Year 1, Year 1
@@ -516,6 +587,13 @@ class RevenueEngineOutput(BaseModel):
     # on (benchmark, target, derived RGI, resulting occupancy / ADR, status).
     # Empty when no penetration target drove the run.
     index_drivers_by_year: list[IndexDriverYear] = Field(default_factory=list)
+    # Sam, 2026-10-15 — per-year provenance of the renovation displacement
+    # schedule (which periods, how many months, the resulting occupancy / ADR
+    # factors). One entry per model year the schedule touches; EMPTY when no
+    # schedule is set, so legacy outputs are byte-identical.
+    renovation_displacement_by_year: list[RenovationDisplacementYear] = Field(
+        default_factory=list
+    )
 
 
 # ─────────────── P&L Engine ───────────────

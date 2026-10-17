@@ -64,5 +64,35 @@ describe('Methodology — renovation budget precedence (FON-101)', () => {
     expect(p.textContent).toContain('y1_occupancy_displacement_pct');
     // The removed heuristic is never described as live behaviour.
     expect(p.textContent).not.toMatch(/depressed 15%|\$5,000 per key/);
+    // Sam, 2026-10-15 — the explicit schedule is named as a displacement lever.
+    expect(p.textContent).toContain('renovation displacement schedule');
+  });
+
+  it('the renovation displacement schedule paragraph states the arithmetic and that the budget alone never moves operations', () => {
+    render(<MethodologyPage />);
+    const p = screen.getByTestId('methodology-displacement-schedule');
+    expect(p.textContent).toContain('renovation_displacement_schedule');
+    expect(p.textContent).toContain('one override with one justification note');
+    // Period semantics + the per-year factor arithmetic, matching
+    // engines/revenue.py::renovation_displacement_factors.
+    expect(p.textContent).toContain('counted from the acquisition close');
+    expect(p.textContent).toContain('every month weighs 1/12');
+    expect(p.textContent).toContain('occupancy factor');
+    expect(p.textContent).toContain('ADR factor');
+    expect(p.textContent).toContain('open-room-weighted');
+    expect(p.textContent).toContain('occupancy × 0.875 and ADR × 0.957');
+    // Never double-applied; off by default; the budget alone moves nothing.
+    expect(p.textContent).toContain('not applied on top');
+    expect(p.textContent).toContain('every deal runs exactly as before');
+    expect(p.textContent).toContain('renovation budget alone never moves');
+    // Excel round-trip is mentioned.
+    expect(p.textContent).toContain('Excel Assumptions sheet');
+  });
+
+  it('the status paragraph quotes the on_schedule sentence shape', () => {
+    render(<MethodologyPage />);
+    const p = screen.getByTestId('methodology-displacement-status');
+    expect(p.textContent).toContain('analyst-set displacement schedule (months 1–6: 25% rooms offline, 10% rate discount)');
+    expect(p.textContent).toContain('the schedule wins');
   });
 });

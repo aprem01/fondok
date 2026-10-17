@@ -1776,6 +1776,35 @@ async def update_deal(
                 problems = target_list_problems(v)
                 if problems:
                     out_of_range[k] = "; ".join(problems)
+        # Sam, 2026-10-15 — the explicit renovation displacement schedule is
+        # a list of periods; a malformed one (end before start, a share
+        # outside 0–1, an unknown field) is refused here with the same
+        # validator the loader and the Excel apply use, so it can never be
+        # stored and later silently dropped by the engine.
+        from ..services.engine_runner import (
+            KEY_RENOVATION_SCHEDULE,
+            renovation_schedule_problems,
+        )
+
+        schedule_problems: list[str] = []
+        if KEY_RENOVATION_SCHEDULE in changed_keys and KEY_RENOVATION_SCHEDULE in new_overrides:
+            sched_value = after_flat.get(KEY_RENOVATION_SCHEDULE)
+            if sched_value is not None:
+                schedule_problems = renovation_schedule_problems(sched_value)
+        if schedule_problems:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "renovation_schedule_invalid",
+                    "keys": [KEY_RENOVATION_SCHEDULE],
+                    "problems": {KEY_RENOVATION_SCHEDULE: "; ".join(schedule_problems)},
+                    "message": (
+                        "Each renovation period needs start_month ≤ end_month "
+                        "(1-based months from close) and rooms_offline_pct / "
+                        "rate_discount_pct between 0 and 1. Nothing was saved."
+                    ),
+                },
+            )
         if out_of_range:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

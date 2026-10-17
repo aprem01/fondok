@@ -322,16 +322,42 @@ export interface AssumptionSourcesResponse {
  * own, never composed in the browser.
  *
  * Sam, 2026-10-15: Year 1 is displaced ONLY by explicit assumptions — the
- * analyst's `y1_*_displacement_pct` (`on_analyst`) or a structured PIP closure
- * schedule (`on_pip_schedule`). A renovation budget never displaces by itself,
- * whatever its source (`off_no_assumption`).
+ * analyst's `y1_*_displacement_pct` (`on_analyst`), a structured PIP closure
+ * schedule (`on_pip_schedule`), or the explicit renovation displacement
+ * SCHEDULE — periods in months from close × rooms offline × rate discount
+ * (`on_schedule`; it wins over the other two inside the engine, never stacked).
+ * A renovation budget never displaces by itself, whatever its source
+ * (`off_no_assumption`).
  */
 export type DisplacementState =
+  | 'on_schedule'
   | 'on_analyst'
   | 'on_pip_schedule'
   | 'on'
   | 'off_analyst'
   | 'off_no_assumption';
+
+/** One period of the renovation displacement schedule
+ *  (`field_overrides.renovation_displacement_schedule[i]`); months are
+ *  1-based from the acquisition close, inclusive; shares are fractions. */
+export interface RenovationDisplacementPeriod {
+  start_month: number;
+  end_month: number;
+  rooms_offline_pct: number;
+  rate_discount_pct: number;
+  note?: string | null;
+}
+
+/** The revenue engine's own per-model-year result of the schedule
+ *  (`revenue.renovation_displacement_by_year[i]`, echoed on the status). */
+export interface RenovationDisplacementYear {
+  year: number;
+  entries: number[];
+  months_in_period: number;
+  rooms_offline_share: number;
+  occupancy_factor: number;
+  adr_factor: number;
+}
 
 export interface DisplacementStatus {
   active: boolean;
@@ -344,6 +370,11 @@ export interface DisplacementStatus {
   renovation_budget_per_key: number;
   y1_occupancy_displacement_pct: number;
   y1_adr_displacement_pct: number;
+  /** The explicit schedule the loader materialized (absent on a worker that
+   *  predates it; `[]` when none is set). */
+  schedule?: RenovationDisplacementPeriod[] | null;
+  /** The engine's per-year factors for that schedule — the numbers it runs on. */
+  schedule_by_year?: RenovationDisplacementYear[] | null;
 }
 
 /** Where one assumption was read from inside its source document. Every

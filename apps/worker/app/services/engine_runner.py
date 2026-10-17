@@ -106,6 +106,7 @@ from ..engines.stabilization import resolve_stabilized_year_index
 from fondok_schemas.underwriting import (
     IndexDriverYear,
     PIPDisplacement,
+    RenovationDisplacementPeriod,
     RevenueEngineInput,
     RevenueSegment,
 )
@@ -1769,7 +1770,11 @@ async def _load_engine_inputs(
     #   * the analyst's ``y1_occupancy_displacement_pct`` /
     #     ``y1_adr_displacement_pct`` overrides (applied by the override loop
     #     below, note-required like every engine input), or
-    #   * the analyst's structured ``pip_displacement.*`` closure schedule.
+    #   * the analyst's structured ``pip_displacement.*`` closure schedule, or
+    #   * the analyst's explicit ``renovation_displacement_schedule`` (periods
+    #     in months from close × rooms offline × rate discount — the lever Sam
+    #     described; it wins over both of the above, see
+    #     ``_coerce_renovation_schedule`` and ``_displacement_status``).
     # No extraction schema carries an explicit rooms-offline / rate-displacement
     # figure today (capex.md emits PIP spend timing in dollars / % of total,
     # never rooms out of service), so nothing extracted feeds these keys.
@@ -1933,6 +1938,19 @@ async def _load_engine_inputs(
             if path == "noi_override_by_year" and isinstance(value, list):
                 prior = base.get("noi_override_by_year")
                 base["noi_override_by_year"] = value
+                _stamp_override_source(
+                    sources, analyst_override_paths, path, prior, value
+                )
+                continue
+            # Sam, 2026-10-15 — the explicit renovation displacement schedule
+            # (JSON list of {start_month, end_month, rooms_offline_pct,
+            # rate_discount_pct, note?}). Routed before the scalar guard; the
+            # revenue input builder materializes it via
+            # ``_coerce_renovation_schedule``. Default (absent) = no schedule,
+            # byte-identical outputs.
+            if path == KEY_RENOVATION_SCHEDULE and isinstance(value, list):
+                prior = base.get(KEY_RENOVATION_SCHEDULE)
+                base[KEY_RENOVATION_SCHEDULE] = value
                 _stamp_override_source(
                     sources, analyst_override_paths, path, prior, value
                 )
@@ -2502,6 +2520,14 @@ def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
 #: ``displacement_status.state`` vocabulary (closed set; the web switches on it).
 DISPLACEMENT_ON_ANALYST = "on_analyst"
 DISPLACEMENT_ON_PIP_SCHEDULE = "on_pip_schedule"
+#: Sam, 2026-10-15 — the explicit renovation displacement schedule is set and
+#: moves at least one model year. It outranks both the scalar ``y1_*`` and the
+#: ``pip_displacement.*`` levers inside the revenue engine (never stacked), so
+#: the status names the periods and says the others are not applied.
+DISPLACEMENT_ON_SCHEDULE = "on_schedule"
+
+#: The ``field_overrides`` key of the explicit schedule (one list, one note).
+KEY_RENOVATION_SCHEDULE = "renovation_displacement_schedule"
 DISPLACEMENT_ON = "on"
 DISPLACEMENT_OFF_ANALYST = "off_analyst"
 DISPLACEMENT_OFF_NO_ASSUMPTION = "off_no_assumption"
@@ -2566,8 +2592,64 @@ def _displacement_status(
     flat_on = occ > 0.0 or adr > 0.0
     active = schedule_on or flat_on
     pcts = f"occupancy −{_pct_label(occ)}, ADR −{_pct_label(adr)}"
+    # Sam, 2026-10-15 — the explicit renovation displacement schedule outranks
+    # both levers above inside the revenue engine, so it is checked before
+    # either. The per-year factors are the engine's own helper's output —
+    # the status never re-derives a number.
+    reno_schedule = _coerce_renovation_schedule(base)
+    reno_by_year: dict[int, Any] = {}
+    if reno_schedule:
+        from ..engines.revenue import renovation_displacement_factors
 
-    if schedule_on:
+        try:
+            hold = int(float(base.get("hold_years") or 5))
+        except (TypeError, ValueError):
+            hold = 5
+        reno_by_year = renovation_displacement_factors(reno_schedule, max(1, hold))
+    reno_schedule_on = bool(reno_by_year)
+
+    extra: dict[str, Any] = {
+        "schedule": [p.model_dump() for p in reno_schedule],
+        "schedule_by_year": [reno_by_year[k].model_dump() for k in sorted(reno_by_year)],
+    }
+
+    if reno_schedule_on:
+        from ..engines.revenue import schedule_period_label
+
+        active = True
+        state = DISPLACEMENT_ON_SCHEDULE
+        periods = "; ".join(schedule_period_label(p) for p in reno_schedule)
+        years = ", ".join(
+            f"Year {y}: occupancy ×{reno_by_year[y].occupancy_factor:.3f}, "
+            f"ADR ×{reno_by_year[y].adr_factor:.3f}"
+            for y in sorted(reno_by_year)
+        )
+        detail = (
+            f"Renovation impact on — analyst-set displacement schedule "
+            f"({periods}). {years}."
+        )
+        if 1 not in reno_by_year:
+            detail += " Year 1 is not inside a renovation period and is undisplaced."
+        if flat_on or schedule_on:
+            superseded: list[str] = []
+            if flat_on:
+                superseded.append(f"the Y1 displacement assumptions ({pcts})")
+            if schedule_on:
+                superseded.append("the PIP closure schedule")
+            detail += (
+                f" The schedule wins: {' and '.join(superseded)} "
+                f"{'are' if len(superseded) > 1 else 'is'} not applied on top."
+            )
+    elif reno_schedule:
+        # Every period lies past the hold — nothing to apply. Say so rather
+        # than fall through to a sentence that denies the schedule exists.
+        active = False
+        state = DISPLACEMENT_OFF_ANALYST
+        detail = (
+            "No renovation impact — the displacement schedule's periods all "
+            "fall after the projection period, so no model year is displaced."
+        )
+    elif schedule_on:
         state = DISPLACEMENT_ON_PIP_SCHEDULE
         strategy = str(schedule.closure_strategy).replace("_", " ")
         detail = (
@@ -2604,6 +2686,7 @@ def _displacement_status(
         "renovation_budget_per_key": per_key,
         "y1_occupancy_displacement_pct": occ,
         "y1_adr_displacement_pct": adr,
+        **extra,
     }
 
 
@@ -3486,6 +3569,62 @@ def _build_pip_displacement(
             overrides,
         )
         return None
+
+
+def _coerce_renovation_schedule(
+    base: dict[str, Any],
+) -> "list[RenovationDisplacementPeriod]":
+    """Materialize the analyst's explicit renovation displacement schedule
+    (``base['renovation_displacement_schedule']``, a JSON list) as typed
+    periods. ``[]`` when absent, not a list, or empty.
+
+    An entry that fails validation (months out of order, a percentage
+    outside 0–1, an unknown field) is DROPPED with a warning rather than
+    crashing the run — the API gate (``deals.py``) refuses such an entry
+    at save time, so this only guards a hand-edited row. The status and
+    the engine both read the result of this function, so they can never
+    disagree about which periods are live.
+    """
+    raw = base.get(KEY_RENOVATION_SCHEDULE)
+    if not isinstance(raw, list) or not raw:
+        return []
+    out: list[RenovationDisplacementPeriod] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            logger.warning("renovation_displacement_schedule[%d] is not an object: %r", i, entry)
+            continue
+        try:
+            out.append(RenovationDisplacementPeriod(**entry))
+        except Exception:  # noqa: BLE001 - intentional swallow, see docstring
+            logger.warning(
+                "renovation_displacement_schedule[%d] failed validation: %r", i, entry
+            )
+    return out
+
+
+def renovation_schedule_problems(value: Any) -> list[str]:
+    """Validation messages for a ``renovation_displacement_schedule`` override
+    value; ``[]`` when every entry is a well-formed period. Shared by the API
+    gate and the Excel apply so a bad row is refused with the same words."""
+    if not isinstance(value, list):
+        return ["must be a list of periods"]
+    problems: list[str] = []
+    for i, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            problems.append(f"period {i + 1}: not an object")
+            continue
+        try:
+            RenovationDisplacementPeriod(**entry)
+        except Exception as exc:  # noqa: BLE001 - message only
+            errors = getattr(exc, "errors", None)
+            msgs: list[str] = []
+            if callable(errors):
+                for e in errors():
+                    loc = ".".join(str(x) for x in e.get("loc", ()))
+                    msg = str(e.get("msg", "invalid")).removeprefix("Value error, ")
+                    msgs.append(f"{loc}: {msg}" if loc else msg)
+            problems.append(f"period {i + 1}: " + ("; ".join(msgs) if msgs else "invalid"))
+    return problems
 
 
 # Map extracted T-12 field paths onto the canonical expense-line keys
@@ -6365,6 +6504,10 @@ def _build_input_for(
             ),
             segments=segments,
             pip_displacement=_build_pip_displacement(base),
+            # Sam, 2026-10-15 — the explicit renovation displacement schedule
+            # (empty unless the analyst entered one; wins over the two levers
+            # above inside the engine).
+            renovation_displacement_schedule=_coerce_renovation_schedule(base),
             # FON-41 #2 — the projection calendar anchor. The SAME date the
             # timeline engine is built on (below), so "Year 1 — 2025" on the
             # statement and "Hotel Purchase 2025-09-30" on the timeline can

@@ -22,6 +22,16 @@ Y2 occupancy ramps linearly back to baseline over
 ADR is uplifted by ``revpar_index_post_reno``. When ``pip_displacement``
 is ``None`` (or its strategy is ``"none"``) the engine falls back to the
 legacy ``y1_*_displacement_pct`` math byte-for-byte.
+
+Sam, 2026-10-15 — explicit renovation displacement SCHEDULE. When
+``RevenueEngineInput.renovation_displacement_schedule`` is non-empty the
+engine converts its periods (months from close × rooms offline × rate
+discount) into one occupancy factor and one ADR factor per model year —
+``renovation_displacement_factors`` holds the exact arithmetic — and applies
+them to every year the schedule touches. The schedule is then the ONLY
+displacement applied: the scalar ``y1_*_displacement_pct`` and the structured
+``pip_displacement`` are ignored rather than stacked (never double-applied).
+An empty schedule (the default) leaves every output byte-identical.
 """
 
 from __future__ import annotations
@@ -30,6 +40,8 @@ from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
     IndexDriverYear,
     PIPDisplacement,
+    RenovationDisplacementPeriod,
+    RenovationDisplacementYear,
     RevenueEngineInput,
     RevenueEngineOutput,
     RevenueProjectionYear,
@@ -71,6 +83,104 @@ def projection_calendar_years(
     if start is None or hold_years <= 0:
         return []
     return [start + i for i in range(hold_years)]
+
+
+# ──────── Renovation displacement schedule (Sam, 2026-10-15) ────────
+
+MONTHS_PER_YEAR = 12
+
+
+def renovation_displacement_factors(
+    schedule: list[RenovationDisplacementPeriod],
+    hold_years: int,
+) -> dict[int, RenovationDisplacementYear]:
+    """Per-model-year occupancy / ADR factors from an explicit renovation
+    displacement schedule. ``{}`` when the schedule is empty.
+
+    The arithmetic — the methodology page states the same in prose:
+
+    * Model year ``y`` is months ``12·(y−1)+1 .. 12·y`` counted from the
+      acquisition close (``start_month`` = 1 is the first operating month).
+      Every month weighs 1/12 of its year; calendar day counts are ignored.
+    * For each month ``m``: ``offline_m = min(1, Σ rooms_offline_pct)`` and
+      ``discount_m = min(1, Σ rate_discount_pct)`` over the periods whose
+      ``[start_month, end_month]`` contains ``m`` (overlapping periods add,
+      capped at 100%). A month outside every period has both at 0.
+      ``open_m = 1 − offline_m`` is the share of inventory still selling.
+    * ``rooms_offline_share_y = Σ_m offline_m ÷ 12`` and
+      ``occupancy_factor_y = 1 − rooms_offline_share_y = Σ_m open_m ÷ 12``.
+      Occupancy is reported on the FULL inventory (keys × 365), so taking
+      rooms offline shows up as lower occupancy — which is how a P&L reads
+      a renovation year — and RevPAR = rooms revenue ÷ rooms available still
+      reconciles.
+    * ``adr_factor_y = Σ_m open_m·(1 − discount_m) ÷ Σ_m open_m`` — the rate
+      discount applies to the rooms that remain open in the discounted
+      months, so the year's ADR is the open-room-weighted average rate of
+      what actually sold (1.0 when the hotel is closed all year: nothing
+      sold, so there is no rate to discount; the occupancy factor is 0).
+    * The year's rooms revenue is therefore
+      ``rooms_available × occupancy × occupancy_factor_y × ADR × adr_factor_y``
+      ``= rooms_available × occupancy × ADR × Σ_m open_m·(1 − discount_m) ÷ 12``,
+      i.e. exactly the sum of twelve monthly ``open share × discounted rate``
+      terms — one calculation, applied twice (occupancy and rate), not two.
+    * Only the year the period falls in moves. Years the schedule does not
+      touch keep factor 1.0 and are NOT listed in the result; out-years
+      compound from the un-displaced baseline exactly as before.
+    """
+    if not schedule:
+        return {}
+    out: dict[int, RenovationDisplacementYear] = {}
+    for y in range(1, hold_years + 1):
+        first = MONTHS_PER_YEAR * (y - 1) + 1
+        entries: list[int] = []
+        open_sum = 0.0
+        open_discounted_sum = 0.0
+        months_in_period = 0
+        for m in range(first, first + MONTHS_PER_YEAR):
+            offline = 0.0
+            discount = 0.0
+            touched = False
+            for i, period in enumerate(schedule):
+                if period.start_month <= m <= period.end_month:
+                    touched = True
+                    offline += period.rooms_offline_pct
+                    discount += period.rate_discount_pct
+                    if i not in entries:
+                        entries.append(i)
+            if touched:
+                months_in_period += 1
+            offline = min(1.0, offline)
+            discount = min(1.0, discount)
+            open_share = 1.0 - offline
+            open_sum += open_share
+            open_discounted_sum += open_share * (1.0 - discount)
+        if not entries:
+            continue
+        occupancy_factor = open_sum / MONTHS_PER_YEAR
+        adr_factor = (open_discounted_sum / open_sum) if open_sum > 0.0 else 1.0
+        out[y] = RenovationDisplacementYear(
+            year=y,
+            entries=entries,
+            months_in_period=months_in_period,
+            rooms_offline_share=min(1.0, max(0.0, 1.0 - occupancy_factor)),
+            occupancy_factor=min(1.0, max(0.0, occupancy_factor)),
+            adr_factor=min(1.0, max(0.0, adr_factor)),
+        )
+    return out
+
+
+def schedule_period_label(period: RenovationDisplacementPeriod) -> str:
+    """``"months 1–6: 25% rooms offline, 10% rate discount"`` — the sentence
+    fragment the displacement status and the lineage notes print."""
+    span = (
+        f"month {period.start_month}"
+        if period.start_month == period.end_month
+        else f"months {period.start_month}–{period.end_month}"
+    )
+    return (
+        f"{span}: {period.rooms_offline_pct:.0%} rooms offline, "
+        f"{period.rate_discount_pct:.0%} rate discount"
+    )
 
 
 # ─────────────── Brand displacement multipliers (Wave 2 P2.4) ───────────────
@@ -322,9 +432,15 @@ def _rate_trace(
     pip: PIPDisplacement | None,
     pip_y1_factor: tuple[str, float],
     pip_out_year_factor: tuple[str, float] | None,
+    schedule_factor: tuple[str, float, RenovationDisplacementYear] | None = None,
+    schedule: list[RenovationDisplacementPeriod] | None = None,
 ) -> ValueTrace:
     """The trace for one year's occupancy or ADR — the exact branch
     :meth:`RevenueEngine.run` took for it, named.
+
+    * Any year under an explicit renovation displacement schedule
+      (``schedule_factor`` set): the year's base × the schedule's factor for
+      that year, naming the periods and months behind it.
 
     * Year 1: the starting assumption (or the Year-1 index driver) × the
       Year-1 displacement — the legacy ``(1 − y1_*_displacement_pct)`` or the
@@ -351,9 +467,32 @@ def _rate_trace(
         )
         return starting_key
 
+    def _schedule_note(name: str, factor: float, sched_year: RenovationDisplacementYear) -> str:
+        periods = ", ".join(
+            schedule_period_label(schedule[i])
+            for i in sched_year.entries
+            if schedule is not None and 0 <= i < len(schedule)
+        )
+        return (
+            f"Renovation displacement schedule, Year {sched_year.year}: "
+            f"{sched_year.months_in_period} of 12 months inside a renovation period "
+            f"({periods}); {name} = {factor:.6g}. The scalar Y1 displacement "
+            "assumptions and any PIP closure schedule are not applied on top."
+        )
+
     if year == 1:
         base = _year_one_base()
-        if pip is not None:
+        if schedule_factor is not None:
+            name, factor, sched_year = schedule_factor
+            inputs.append(
+                ValueInput(
+                    name=name, value=factor,
+                    assumption_key="renovation_displacement_schedule",
+                )
+            )
+            formula = f"{metric} = {base} × {name}"
+            notes.append(_schedule_note(name, factor, sched_year))
+        elif pip is not None:
             name, factor = pip_y1_factor
             inputs.append(ValueInput(name=name, value=factor))
             formula = f"{metric} = {base} × {name}"
@@ -431,6 +570,19 @@ def _rate_trace(
         inputs.append(ValueInput(name=name, value=factor))
         formula = f"{formula} × {name}"
         notes.append(f"Structured PIP: {name} = {factor:.6g} applied.")
+    if schedule_factor is not None and year >= 2:
+        # An out-year a renovation period falls into (e.g. months 13–18)
+        # carries that year's schedule factor on top of the compounded /
+        # driven base — the base itself is never displaced.
+        name, factor, sched_year = schedule_factor
+        inputs.append(
+            ValueInput(
+                name=name, value=factor,
+                assumption_key="renovation_displacement_schedule",
+            )
+        )
+        formula = f"{formula} × {name}"
+        notes.append(_schedule_note(name, factor, sched_year))
 
     return ValueTrace(value=value, formula=formula, inputs=inputs, note=" ".join(notes))
 
@@ -528,6 +680,31 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             payload.pip_displacement is not None
             and payload.pip_displacement.closure_strategy != "none"
         ) else None
+        # Sam, 2026-10-15 — the explicit renovation displacement schedule.
+        # Non-empty, it is the only displacement applied: the scalar Y1
+        # percentages and the structured PIP are switched OFF here so nothing
+        # is applied twice. Empty → ``{}`` and every branch below is verbatim.
+        schedule = list(payload.renovation_displacement_schedule or [])
+        sched_by_year = renovation_displacement_factors(schedule, payload.hold_years)
+        if schedule:
+            pip_v2 = None
+            y1_occ_disp = 0.0
+            y1_adr_disp = 0.0
+
+        def _sched_factor(year: int, which: str) -> float:
+            sy = sched_by_year.get(year)
+            if sy is None:
+                return 1.0
+            return sy.occupancy_factor if which == "occupancy" else sy.adr_factor
+
+        def _sched_trace(
+            year: int, which: str
+        ) -> tuple[str, float, RenovationDisplacementYear] | None:
+            sy = sched_by_year.get(year)
+            if sy is None:
+                return None
+            name = "schedule_occupancy_factor" if which == "occupancy" else "schedule_adr_factor"
+            return (name, _sched_factor(year, which), sy)
         if pip_v2 is not None:
             brand_recovery_mult, brand_revpar_mult = _resolve_brand_multipliers(
                 pip_v2.brand
@@ -555,6 +732,9 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     # under wing_by_wing.
                     occ = baseline_occ * y1_revenue_factor
                     adr = baseline_adr * y1_adr_drag
+                elif 1 in sched_by_year:
+                    occ = baseline_occ * _sched_factor(1, "occupancy")
+                    adr = baseline_adr * _sched_factor(1, "adr")
                 else:
                     occ = baseline_occ * (1.0 - y1_occ_disp)
                     adr = baseline_adr * (1.0 - y1_adr_disp)
@@ -601,6 +781,12 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     # Y3+ — full recovery, full uplift.
                     occ = base_occ_y
                     adr = base_adr_y * effective_revpar_index
+                elif y in sched_by_year:
+                    # A renovation period falling into this year (months
+                    # 12(y−1)+1 .. 12y) displaces it; the base it compounds
+                    # from is untouched, so later years recover in full.
+                    occ = base_occ_y * _sched_factor(y, "occupancy")
+                    adr = base_adr_y * _sched_factor(y, "adr")
                 else:
                     occ = base_occ_y
                     adr = base_adr_y
@@ -639,6 +825,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                             # applicable) — segments share the same
                             # construction-nuisance haircut.
                             seg_adr_yn = seg.adr * y1_adr_drag
+                        elif 1 in sched_by_year:
+                            # The schedule's rate discount applies inside
+                            # each segment (the open rooms of every segment
+                            # sell at the discounted rate).
+                            seg_adr_yn = seg.adr * _sched_factor(1, "adr")
                         else:
                             # Y1 displacement applies inside each segment.
                             # ``starting_adr`` baseline; segment ADR uses
@@ -648,6 +839,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         seg_adr_grown = seg.adr * (1.0 + seg_g) ** (y - 1)
                         if pip_v2 is not None:
                             seg_adr_yn = seg_adr_grown * effective_revpar_index
+                        elif y in sched_by_year:
+                            seg_adr_yn = seg_adr_grown * _sched_factor(y, "adr")
                         else:
                             seg_adr_yn = seg_adr_grown
                     seg_occupied = occupied * seg.mix_pct
@@ -971,6 +1164,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     if pip_v2 is not None and y == 2
                     else None
                 ),
+                schedule_factor=_sched_trace(y, "occupancy"),
+                schedule=schedule,
             )
             prov[f"years[{idx}].adr"] = _rate_trace(
                 metric="adr",
@@ -995,6 +1190,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     if pip_v2 is not None and y >= 2
                     else None
                 ),
+                schedule_factor=_sched_trace(y, "adr"),
+                schedule=schedule,
             )
             prov[f"years[{idx}].occupied_rooms"] = ValueTrace(
                 value=occupied,
@@ -1082,6 +1279,9 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             index_drivers_by_year=[
                 drivers_by_year[k] for k in sorted(drivers_by_year)
             ],
+            renovation_displacement_by_year=[
+                sched_by_year[k] for k in sorted(sched_by_year)
+            ],
         )
 
 
@@ -1089,6 +1289,8 @@ __all__ = [
     "RevenueEngine",
     "projection_calendar_years",
     "projection_start_year",
+    "renovation_displacement_factors",
+    "schedule_period_label",
     "_BRAND_DISPLACEMENT_MULTIPLIERS",
     "_resolve_brand_multipliers",
 ]

@@ -3,6 +3,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   type ReactNode,
 } from 'react';
@@ -35,6 +36,11 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import RenovationBudgetSources from './RenovationBudgetSources';
+import RenovationDisplacementSchedule, {
+  RENOVATION_SCHEDULE_KEY,
+  parseRenovationSchedule,
+} from './RenovationDisplacementSchedule';
+import type { RenovationDisplacementPeriod } from '@/lib/api';
 import {
   KpiTile,
   SectionCard,
@@ -49,6 +55,7 @@ import {
 import type { FieldUnit } from '@/lib/fieldValue';
 import {
   applyOverridePatch,
+  noteOf,
   patchRequiresNote,
   requiresNote,
   NOTE_REQUIRED_MESSAGE,
@@ -305,6 +312,42 @@ export default function InvestmentTab() {
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
+
+  // Sam, 2026-10-15 — the explicit renovation displacement schedule (periods
+  // in months from close × rooms offline × rate discount). ONE override key,
+  // ONE note (an engine input, so the FON-74 rule applies); `null` clears it,
+  // a revert to source that needs no note. The worker's loader routes the
+  // list straight to the revenue engine, which then applies the schedule
+  // INSTEAD of the scalar Y1 percentages — never on top of them.
+  const onSaveSchedule = useCallback(
+    async (periods: RenovationDisplacementPeriod[] | null, note = '') => {
+      if (!liveMode) {
+        toast('Editing is disabled on demo deals', { type: 'info' });
+        return;
+      }
+      const patch = { [RENOVATION_SCHEDULE_KEY]: periods };
+      if (periods !== null && !note.trim() && patchRequiresNote(patch)) {
+        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      const next = applyOverridePatch(invOverrides, patch, note);
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        toast(periods === null ? 'Schedule cleared — re-running the model…' : 'Saved — re-running the model…', { type: 'success' });
+        void refreshDeal?.();
+        if (invRerunRef.current) clearTimeout(invRerunRef.current);
+        invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
+      } catch (err) {
+        const detail = err instanceof WorkerError ? err.body : String(err);
+        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+      }
+    },
+    [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
+  );
+  const savedSchedule = useMemo(
+    () => parseRenovationSchedule(invOverrides[RENOVATION_SCHEDULE_KEY]),
+    [invOverrides],
   );
 
   // FON-101 — "Use this" on the Renovation budget sources disclosure: the
@@ -927,7 +970,8 @@ export default function InvestmentTab() {
                     {/* FON-89 — the Year-1 displacement verdict, the worker's
                         sentence verbatim. The budget never displaces Year 1 by
                         itself (Sam, 2026-10-15); only the explicit Y1
-                        displacement inputs further down this section do. */}
+                        displacement inputs further down this section, or the
+                        renovation displacement schedule in its footer, do. */}
                     {displacementLine && (
                       <span
                         data-testid="renovation-displacement-status"
@@ -1021,7 +1065,9 @@ export default function InvestmentTab() {
                 ),
               },
               // Sam, 2026-10-15 — Year-1 renovation impact comes ONLY from these
-              // explicit assumptions, never from the budget above. The value is
+              // explicit assumptions (or the renovation displacement schedule in
+              // this section's footer, which the engine applies INSTEAD of these
+              // when it is set), never from the budget above. The value is
               // the persisted override when one exists (the loader applies that
               // same override, but `displacement_status` is fetched once per deal
               // and would echo the pre-save 0.0% beside an "Analyst override"
@@ -1098,12 +1144,26 @@ export default function InvestmentTab() {
                 // CapEx document with date + status), which one the model is on,
                 // "Use this", and the Future CapEx documents that are reference only.
                 extra: (
-                  <RenovationBudgetSources
-                    dealId={dealId}
-                    live={liveMode}
-                    refreshKey={`${JSON.stringify(invOverrides['renovation_budget'] ?? null)}|${runToken ?? ''}`}
-                    onUse={onUseRenovationCandidate}
-                  />
+                  <>
+                    {/* Sam, 2026-10-15 — the explicit renovation displacement
+                        schedule. Off (no period) by default; when set it is the
+                        only renovation impact the revenue engine applies. The
+                        per-year factors printed under it are the worker's own
+                        (displacement_status.schedule_by_year). */}
+                    <RenovationDisplacementSchedule
+                      periods={savedSchedule}
+                      savedNote={noteOf(invOverrides[RENOVATION_SCHEDULE_KEY])}
+                      byYear={displacementStatus?.schedule_by_year ?? null}
+                      editable={liveMode}
+                      onSave={onSaveSchedule}
+                    />
+                    <RenovationBudgetSources
+                      dealId={dealId}
+                      live={liveMode}
+                      refreshKey={`${JSON.stringify(invOverrides['renovation_budget'] ?? null)}|${runToken ?? ''}`}
+                      onUse={onUseRenovationCandidate}
+                    />
+                  </>
                 ),
                 formula: 'Already counted once in Sources & Uses, as the Renovation use line — the Hold-Period Capex Plan below is a different bucket, not a duplicate of this one.',
               },
