@@ -96,6 +96,11 @@ import {
 } from '@/lib/api';
 import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import {
+  stabilizedYearBlock,
+  stabilizationAnchorCaption,
+  stabilizationAnchorFallbackNote,
+} from '@/lib/engines/noi';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
@@ -500,6 +505,16 @@ export default function DebtTab() {
   const wRefiRateBasis = getEngineField<string>(outputs, 'debt', 'refi_rate_basis');
   const wStabDy = getEngineField<number>(outputs, 'debt', 'stabilized_debt_yield');
   const wStabDscr = getEngineField<number>(outputs, 'debt', 'stabilized_dscr');
+  // FON-98 — the stabilized year behind the two cards above, with the anchor it
+  // counts from. The debt engine resolves its stabilized year through the SAME
+  // rule the expense engine publishes on `expense.stabilization`
+  // (`resolve_stabilized_year_index`: analyst override → Year 3 after the
+  // reopening date when it places on the projection → Year 3 after close), so
+  // the block's caption describes the year these ratios were read on. No block
+  // (a run that predates it) → no caption; the year is never guessed here.
+  const stabBlock = stabilizedYearBlock(getEngineField<unknown>(outputs, 'expense'));
+  const stabAnchorCaption = stabilizationAnchorCaption(stabBlock) ?? undefined;
+  const stabAnchorNote = stabilizationAnchorFallbackNote(stabBlock) ?? undefined;
   // FON-72 follow-up — Completion Guarantee covenant status (qualitative). The
   // engine echoes the saved override; before a re-run lands we read the pending
   // override optimistically so the control reflects the analyst's pick at once.
@@ -1055,9 +1070,11 @@ export default function DebtTab() {
     // FON-63 — a Year-1 DSCR the engine nulled for negative NOI reads N/A.
     const na = naYear != null && dscrNa(c?.current ?? wDscr, naYear);
     // No "Awaiting" on an N/A — nothing is pending; the ratio has no meaning.
+    // Entry / Year-1 cards name no stabilized year, so they carry no anchor.
+    const noAnchor = { anchor: undefined as string | undefined, anchorNote: undefined as string | undefined };
     return na
-      ? { ...card, value: 'N/A', title: DSCR_NA_TOOLTIP as string | undefined, status: 'Not meaningful' }
-      : { ...card, title: undefined as string | undefined };
+      ? { ...card, ...noAnchor, value: 'N/A', title: DSCR_NA_TOOLTIP as string | undefined, status: 'Not meaningful' }
+      : { ...card, ...noAnchor, title: undefined as string | undefined };
   };
   const stabCard = (
     label: string, v: number | undefined, isDscr: boolean,
@@ -1073,6 +1090,12 @@ export default function DebtTab() {
       title: na ? DSCR_NA_TOOLTIP : undefined,
       value: na ? 'N/A' : has(v) ? (isDscr ? `${v.toFixed(2)}x` : fmtPct(v, 1)) : '—',
       basis,
+      // FON-98 — the stabilized year and its anchor, exactly as the Overview's
+      // Stabilization Year reads ("Year 3 after close (default)" / "Year 6 —
+      // Year 3 after reopening (Mar 2027) (default)"), plus the Sam #7
+      // exception note when the reopening could not anchor the default.
+      anchor: stabAnchorCaption,
+      anchorNote: stabAnchorNote,
       covenant: threshold != null && threshCov ? covCovenantCaption(threshCov) : 'Enter threshold →',
       ...statusOf(passes, threshold != null),
       ...(na ? { status: 'Not meaningful' } : {}),
@@ -1305,6 +1328,16 @@ export default function DebtTab() {
                         <span title={m.title} style={{ fontSize: 19, fontWeight: 700, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>{m.value}</span>
                       </div>
                       <div style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 5, lineHeight: 1.4 }}>{m.basis}</div>
+                      {m.anchor && (
+                        <div data-testid="credit-metric-anchor" style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 3, lineHeight: 1.4 }}>
+                          Stabilized year: {m.anchor}
+                        </div>
+                      )}
+                      {m.anchorNote && (
+                        <div data-testid="credit-metric-anchor-note" style={{ fontSize: 10.5, color: palette.textMuted, marginTop: 3, lineHeight: 1.4 }}>
+                          {m.anchorNote}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 8 }}>
                         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.03em', textTransform: 'uppercase', color: m.statusColor, background: m.statusBg, borderRadius: 5, padding: '3px 7px' }}>{m.status}</span>
                         {m.needsThreshold ? (

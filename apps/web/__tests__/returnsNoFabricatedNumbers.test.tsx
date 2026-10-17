@@ -380,4 +380,81 @@ describe('Returns — stabilized NOI and exit NOI stay separate figures with sep
     // Neither caption borrows the other's name.
     expect(screen.queryByText(/Stabilized NOI.*exit cap/)).not.toBeInTheDocument();
   });
+
+  // (c) 2026-10-17 — a run that predates `exit_noi_period_label` ran on the
+  // forward-12 basis; Returns now says so in the Overview's exact spelling
+  // instead of dropping the basis from the tile.
+  it('a run without the period label names the forward-12 basis exactly as the Overview Exit row does', () => {
+    render(<ReturnsTab />);
+    expect(
+      screen.getByText('7.00% exit cap · Exit NOI (forward 12-month, after FF&E reserve)'),
+    ).toBeInTheDocument();
+  });
+
+  it('the stabilized exit basis is named on the Exit Value tile and the Exit Assumptions card alike', () => {
+    outputsRef.value = withReturns({
+      exit_noi_basis: 'stabilized',
+      exit_noi_period_label: 'Stabilized NOI (Year 3, grown to Year 5)',
+    });
+    render(<ReturnsTab />);
+    expect(
+      screen.getByText('7.00% exit cap · Exit NOI (Stabilized NOI (Year 3, grown to Year 5))'),
+    ).toBeInTheDocument();
+    // The Exit Assumptions card (same Summary view) spells it identically.
+    expect(
+      screen.getByTitle('Exit NOI (Stabilized NOI (Year 3, grown to Year 5)) ÷ exit cap rate'),
+    ).toBeInTheDocument();
+  });
+});
+
+// FON-98 (2026-10-17) — Yield on Cost names the stabilized year AND the anchor
+// it counts from, exactly as the Overview's Stabilization Year reads, with the
+// Sam #7 exception note when the reopening could not anchor the default.
+describe('Returns — Yield on Cost carries the stabilization anchor caption', () => {
+  const withStabilization = (patch: Record<string, unknown>) => {
+    const run = fullRun() as unknown as { engines: Record<string, EngineRow> };
+    run.engines.expense.outputs = {
+      stabilization: { ...(run.engines.expense.outputs.stabilization as Record<string, unknown>), ...patch },
+    };
+    outputsRef.value = run;
+  };
+
+  it('close anchor → "Year 3 after close (default)", no exception note', () => {
+    withStabilization({ default_year: 3, clamped: false, reopening_date: null, anchor_fallback_reason: null });
+    render(<ReturnsTab />);
+    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByTestId('yoc-anchor')).toHaveTextContent('Stabilized year: Year 3 after close (default)');
+    expect(screen.queryByTestId('yoc-anchor-note')).toBeNull();
+  });
+
+  it('reopening anchor → names the year, the rule and the date', () => {
+    withStabilization({
+      stabilized_year_index: 5, stabilized_year: 6, source: 'default_year_3_reopening',
+      anchor: 'reopening', default_year: 3, reopening_date: '2027-03-15', anchor_fallback_reason: null,
+    });
+    render(<ReturnsTab />);
+    expect(screen.getByText('Stabilized NOI (Year 6, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByTestId('yoc-anchor')).toHaveTextContent(
+      'Stabilized year: Year 6 — Year 3 after reopening (Mar 2027) (default)',
+    );
+    expect(screen.queryByTestId('yoc-anchor-note')).toBeNull();
+  });
+
+  it('Sam #7 fallback → close caption plus the exception note', () => {
+    withStabilization({ default_year: 3, reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' });
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('yoc-anchor')).toHaveTextContent('Stabilized year: Year 3 after close (default)');
+    expect(screen.getByTestId('yoc-anchor-note')).toHaveTextContent(
+      'Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+    );
+  });
+
+  it('no stabilization block → no caption alongside the honest dash', () => {
+    const run = fullRun() as unknown as { engines: Record<string, unknown> };
+    delete run.engines.expense;
+    outputsRef.value = run;
+    render(<ReturnsTab />);
+    expect(screen.queryByTestId('yoc-anchor')).toBeNull();
+    expect(screen.queryByTestId('yoc-anchor-note')).toBeNull();
+  });
 });

@@ -533,8 +533,11 @@ describe('ReturnsTab — negative-NOI strip (FON-63) and Exit NOI basis label (F
     expect(screen.getByText('7.00% exit cap · Exit NOI (forward 12-month, Year 6)')).toBeInTheDocument();
   });
 
-  it('keeps today’s sub-label on a run without the basis label', () => {
+  it('names the forward-12 basis, in the Overview Exit row’s spelling, on a run without the basis label', () => {
+    // (c) 2026-10-17 — a run that predates `exit_noi_period_label` ran on the
+    // forward-12 basis (byte-identical pre-FON-44 reversion); say so rather
+    // than drop the basis from the tile while the Overview names it.
     render(<ReturnsTab />);
-    expect(screen.getByText('7.00% exit cap')).toBeInTheDocument();
+    expect(screen.getByText('7.00% exit cap · Exit NOI (forward 12-month, after FF&E reserve)')).toBeInTheDocument();
   });
 });

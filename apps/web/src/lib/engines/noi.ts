@@ -288,6 +288,45 @@ export function stabilizationYearLabel(block: StabilizedYearBlock | null): strin
   return `Year ${y}`;
 }
 
+/**
+ * The one-line anchor caption a stabilized figure carries wherever it is
+ * printed away from the Overview's Stabilization section — Financing's
+ * stabilized Debt Yield / DSCR cards, Returns' Yield on Cost, CAPEX's Exit NOI
+ * basis row. It is the Overview's Stabilization Year text, so the same run
+ * reads the same everywhere:
+ *   close      → "Year 3 after close (default)"
+ *   reopening  → "Year 6 — Year 3 after reopening (Mar 2027) (default)"
+ *   override   → "Year 4 (your override) — default would be Year 3 after close"
+ * The `reopening_before_projection` exception travels separately, via
+ * `stabilizationAnchorFallbackNote`, so a surface can print it in plain sight.
+ * Null without a block — never a guessed year.
+ */
+export function stabilizationAnchorCaption(block: StabilizedYearBlock | null): string | null {
+  if (!block) return null;
+  const year = stabilizationYearLabel(block);
+  if (!year) return null;
+  if (block.source === 'analyst_override') {
+    return `${year} — default would be ${stabilizationAnchorLabel(block)}`;
+  }
+  return year;
+}
+
+/**
+ * FON-59 R-058 / FON-44 (R-059) — the reversion-NOI label, one spelling for
+ * the Overview's Exit row, Returns' Exit Value tile and its Exit Assumptions
+ * card. A run that carries `returns.exit_noi_period_label` names the basis and
+ * period it ran on ("Forward 12-month NOI (Year 6)", "Stabilized NOI (Year 3,
+ * grown to Year 5)", "Reconciliation override"); a run that predates the label
+ * keeps the pre-R-059 wording, which IS the basis every such run used.
+ */
+export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
+
+export function exitNoiLabel(periodLabel: string | null | undefined): string {
+  return typeof periodLabel === 'string' && periodLabel.trim()
+    ? `Exit NOI (${periodLabel.trim()})`
+    : EXIT_NOI_LABEL;
+}
+
 /** The model-detected hint shown beneath the year, or `null` without one. */
 export function stabilizationDetectedHint(block: StabilizedYearBlock | null): string | null {
   if (!block || block.detected_year == null) return null;

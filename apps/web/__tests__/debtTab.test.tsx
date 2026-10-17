@@ -1095,3 +1095,80 @@ describe('DebtTab — R-069 Capital Stack', () => {
     expect(rows[0]).toMatchObject({ amount: '—', status: 'not modelled yet', modelled: false });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-98 (2026-10-17) — the "Debt Yield — Stabilized" and "DSCR — Stabilized"
+// cards name the stabilized year WITH the anchor it counts from, exactly as
+// the Overview's Stabilization Year reads, and carry the Sam #7 exception
+// note when the reopening date could not anchor the default. The caption is
+// read off `expense.stabilization` — the same rule the debt engine resolves
+// its stabilized year by — and is simply absent on a run without the block.
+// ─────────────────────────────────────────────────────────────────────────
+describe('DebtTab — stabilized credit cards carry the stabilization anchor caption', () => {
+  const withStabilization = (block: Record<string, unknown> | null) => {
+    currentOutputs = makeOutputs({ stabilized_debt_yield: 0.124, stabilized_dscr: 1.52 });
+    if (block) {
+      (currentOutputs.engines as unknown as Record<string, unknown>).expense = {
+        deal_id: 'deal-uuid-1', engine: 'expense', status: 'complete', summary: '',
+        outputs: { stabilization: block },
+        inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'run-1',
+      };
+    }
+  };
+  const CLOSE = {
+    stabilized_year_index: 2, stabilized_year: 3, source: 'default_year_3', anchor: 'acquisition_close',
+    default_year: 3, clamped: false, reopening_date: null, anchor_fallback_reason: null,
+  };
+
+  beforeEach(() => { nav.params = new URLSearchParams(''); });
+
+  it('close anchor — both stabilized cards read "Year 3 after close (default)", no exception note', () => {
+    withStabilization(CLOSE);
+    render(<DebtTab />);
+    const captions = screen.getAllByTestId('credit-metric-anchor');
+    expect(captions).toHaveLength(2);
+    for (const c of captions) expect(c).toHaveTextContent('Stabilized year: Year 3 after close (default)');
+    expect(screen.queryByTestId('credit-metric-anchor-note')).toBeNull();
+    // The values are still the debt engine's own.
+    expect(screen.getByText('12.4%')).toBeInTheDocument();
+    expect(screen.getByText('1.52x')).toBeInTheDocument();
+  });
+
+  it('reopening anchor — the caption names the year, the rule and the reopening date', () => {
+    withStabilization({
+      ...CLOSE, stabilized_year_index: 5, stabilized_year: 6,
+      source: 'default_year_3_reopening', anchor: 'reopening', reopening_date: '2027-03-15',
+    });
+    render(<DebtTab />);
+    const captions = screen.getAllByTestId('credit-metric-anchor');
+    expect(captions).toHaveLength(2);
+    for (const c of captions) {
+      expect(c).toHaveTextContent('Stabilized year: Year 6 — Year 3 after reopening (Mar 2027) (default)');
+    }
+    expect(screen.queryByTestId('credit-metric-anchor-note')).toBeNull();
+  });
+
+  it('Sam #7 fallback — close caption plus the exception note, in plain sight on both cards', () => {
+    withStabilization({ ...CLOSE, reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' });
+    render(<DebtTab />);
+    for (const c of screen.getAllByTestId('credit-metric-anchor')) {
+      expect(c).toHaveTextContent('Stabilized year: Year 3 after close (default)');
+    }
+    const notes = screen.getAllByTestId('credit-metric-anchor-note');
+    expect(notes).toHaveLength(2);
+    for (const n of notes) {
+      expect(n).toHaveTextContent(
+        'Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+      );
+    }
+  });
+
+  it('no stabilization block → no caption (the year is never guessed); entry cards never carry one', () => {
+    withStabilization(null);
+    render(<DebtTab />);
+    expect(screen.queryByTestId('credit-metric-anchor')).toBeNull();
+    expect(screen.queryByTestId('credit-metric-anchor-note')).toBeNull();
+    // The stabilized values themselves still render from the debt engine.
+    expect(screen.getByText('12.4%')).toBeInTheDocument();
+  });
+});

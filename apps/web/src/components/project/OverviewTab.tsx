@@ -123,6 +123,8 @@ import {
   stabilizationAnchorLabel,
   stabilizationAnchorFallbackNote,
   STABILIZED_NOI_LABEL,
+  EXIT_NOI_LABEL,
+  exitNoiLabel,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
 import { ReturnsSection } from './ReturnsTab';
@@ -284,16 +286,11 @@ const PROPOSED_BRAND_NONE = 'None selected';
 /** R-025 — the Operating Model row's reason when none was captured. */
 const OPERATING_MODEL_NONE = 'Not captured at deal creation';
 
-/** FON-59 R-058 — the Exit section's reversion-NOI row: one row, both names. */
-export const EXIT_NOI_LABEL = 'Exit NOI (forward 12-month, after FF&E reserve)';
-
-/** FON-44 (R-059) — the Exit NOI row label: the engine's own basis/period
- *  label when the run carries one, today's forward-12 wording otherwise. */
-export function exitNoiLabel(periodLabel: string | null | undefined): string {
-  return typeof periodLabel === 'string' && periodLabel.trim()
-    ? `Exit NOI (${periodLabel.trim()})`
-    : EXIT_NOI_LABEL;
-}
+/** FON-59 R-058 / FON-44 (R-059) — the Exit section's reversion-NOI row: one
+ *  row, both names. The label is shared with Returns (Exit Value tile, Exit
+ *  Assumptions card) through lib/engines/noi.ts so the two never drift;
+ *  re-exported here for the callers and tests that import it from this tab. */
+export { EXIT_NOI_LABEL, exitNoiLabel };
 
 /** Slug of a title — the stable test hook for one section / tile. */
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

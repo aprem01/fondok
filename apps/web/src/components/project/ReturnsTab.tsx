@@ -41,7 +41,12 @@ interface SensitivityMatrix {
   baseCol: number;
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
-import { stabilizedYearBlock } from '@/lib/engines/noi';
+import {
+  stabilizedYearBlock,
+  stabilizationAnchorCaption,
+  stabilizationAnchorFallbackNote,
+  exitNoiLabel,
+} from '@/lib/engines/noi';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
@@ -714,10 +719,17 @@ function ReturnsSummary({
     preview?.exit_cap_rate,
     getEngineField<number>(outputs, 'returns', 'exit_cap_rate'),
   );
-  // FON-44 (R-059) — the basis + period of the NOI the exit capitalizes.
-  // Canonical run only: a sandbox preview can move the hold, and with it the
-  // period, so the label is withheld while a preview is showing.
-  const exitNoiPeriod = sandboxOn ? undefined : exitNoiPeriodLabel(outputs);
+  // FON-44 (R-059) — the basis + period of the NOI the exit capitalizes, in
+  // the ONE spelling the Overview's Exit row uses (`exitNoiLabel`): the run's
+  // own label when it carries one, else the pre-R-059 forward-12 wording that
+  // every such run ran on. Canonical run only: a sandbox preview can move the
+  // hold, and with it the period, so the caption is withheld while a preview
+  // is showing — never a basis the preview may not have used.
+  const exitNoiCaption = sandboxOn ? undefined : exitNoiLabel(exitNoiPeriodLabel(outputs));
+  // FON-98 — the stabilized year's anchor, as the Overview states it, under the
+  // Yield on Cost tile; the Sam #7 exception note travels with it.
+  const yocAnchor = sandboxOn ? null : stabilizationAnchorCaption(stab);
+  const yocAnchorNote = sandboxOn ? null : stabilizationAnchorFallbackNote(stab);
   const hasFlows = Array.isArray(flows) && flows.length >= 2;
   const initialEquity = hasFlows ? -flows![0] : undefined; // −close-period outflow
   const totalToEquity = hasFlows ? flows!.slice(1).reduce((a, b) => a + b, 0) : undefined;
@@ -798,9 +810,23 @@ function ReturnsSummary({
             sandbox={sandboxOn}
             flashKey={yieldOnCost}
             sub={
-              stab
-                ? `Stabilized NOI (Year ${stab.stabilized_year}, before FF&E reserve) ÷ total capital`
-                : 'Stabilized NOI (before FF&E reserve) ÷ total capital'
+              <>
+                <span>
+                  {stab
+                    ? `Stabilized NOI (Year ${stab.stabilized_year}, before FF&E reserve) ÷ total capital`
+                    : 'Stabilized NOI (before FF&E reserve) ÷ total capital'}
+                </span>
+                {yocAnchor && (
+                  <span data-testid="yoc-anchor" style={{ display: 'block', marginTop: 3 }}>
+                    Stabilized year: {yocAnchor}
+                  </span>
+                )}
+                {yocAnchorNote && (
+                  <span data-testid="yoc-anchor-note" style={{ display: 'block', marginTop: 3 }}>
+                    {yocAnchorNote}
+                  </span>
+                )}
+              </>
             }
             value={fmtP(yieldOnCost)}
             unavailable={yieldOnCostUnavailable}
@@ -818,10 +844,10 @@ function ReturnsSummary({
           flashKey={exitValue}
           sub={
             exitCap != null
-              ? `${fmtPct(exitCap, 2)} exit cap${exitNoiPeriod ? ` · Exit NOI (${exitNoiPeriod})` : ''}`
-              : exitNoiPeriod
-                ? `Gross sale — Exit NOI (${exitNoiPeriod}) ÷ exit cap`
-                : 'Gross sale — forward NOI ÷ exit cap'
+              ? `${fmtPct(exitCap, 2)} exit cap${exitNoiCaption ? ` · ${exitNoiCaption}` : ''}`
+              : exitNoiCaption
+                ? `Gross sale — ${exitNoiCaption} ÷ exit cap`
+                : 'Gross sale — exit NOI ÷ exit cap'
           }
           value={fmtM(exitValue)}
           unavailable={exitValue == null ? awaitingRun('returns.gross_sale_price') : undefined}
@@ -1010,7 +1036,8 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
       state: 'calculated',
       color: prov.black,
       weight: 700,
-      title: exitNoiPeriod ? `Exit NOI (${exitNoiPeriod}) ÷ exit cap rate` : 'Forward NOI ÷ exit cap rate',
+      // Same spelling as the Overview's Exit row and the Exit Value tile.
+      title: `${exitNoiLabel(exitNoiPeriod)} ÷ exit cap rate`,
     },
     {
       label: 'Selling Costs',
