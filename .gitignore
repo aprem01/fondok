@@ -6,6 +6,7 @@ dist
 *.log
 .env
 .env.local
+.env.prod
 __pycache__
 .venv
 .uv
