@@ -13,7 +13,9 @@
  * uses (departmental expense ÷ that department's revenue; everything else ÷
  * total revenue), plus the benchmark's POR / PAR.
  *
- * Read-only: nothing here writes an override or feeds an engine. Every value
+ * Read-only: nothing here writes an override or feeds an engine (FON-109 —
+ * the "Apply benchmark" action in ``BenchmarkSuggestion.tsx`` is the only
+ * path from a benchmark to the model, as an analyst override). Every value
  * is either the engine's Year-1 output or a number the worker extracted from
  * the report; anything missing renders "—". With no benchmark uploaded the
  * panel renders nothing at all.
@@ -267,7 +269,8 @@ export default function BenchmarkComparison({
           <p className="text-[11.5px] text-ink-500 mt-2 leading-snug">
             The model’s Year-1 cost ratios beside the uploaded P&amp;L benchmark, with the
             benchmark’s POR / PAR per line. The same ratios sit in the table’s Benchmark column.
-            Read-only — the benchmark does not change the model.
+            This panel is read-only. The benchmark changes the model only where you apply a
+            suggestion (Apply benchmark), which saves an analyst override with a note.
           </p>
         </div>
         <div className="overflow-x-auto">

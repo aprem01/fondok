@@ -15,9 +15,10 @@ the SAME ratio basis the model's "% Rev" cell uses:
   ratio), and
 * everything else → % of total revenue.
 
-Read-only and deterministic: nothing here feeds the engines. (The engine's
-existing benchmark use — ``engine_runner._load_pnl_benchmark_overrides`` —
-is untouched.) Every number traces to an extracted field; a category with no
+Read-only and deterministic: nothing here feeds the engines. (FON-109 — the
+benchmark suggestions, ``services.benchmark_suggestions``, reuse this map; a
+benchmark ratio reaches the model only when the analyst applies it as an
+override with a note.) Every number traces to an extracted field; a category with no
 benchmark value is omitted rather than filled, so the UI never shows a
 benchmark the report did not publish.
 

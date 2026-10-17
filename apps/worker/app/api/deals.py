@@ -498,6 +498,56 @@ class RenovationBudgetCandidatesResponse(BaseModel):
     )
 
 
+class BenchmarkSuggestion(BaseModel):
+    """FON-109 — one P&L benchmark ratio the analyst may apply.
+
+    Built by ``services.benchmark_suggestions``. The benchmark never reaches
+    the model on its own: ``suggested_value`` lands only when the analyst
+    applies it as a ``field_overrides`` entry (with ``suggested_note``, or
+    their own edit of it). ``current_value`` / ``current_source`` are what the
+    model runs on right now.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    suggested_value: float
+    benchmark_line: str | None = None
+    benchmark_line_label: str | None = None
+    ratio_source: str | None = None
+    field_name: str | None = None
+    peer_set_size: int | None = None
+    document_id: str | None = None
+    extraction_result_id: str | None = None
+    filename: str | None = None
+    page: int | None = None
+    #: The value in use (a fraction) and its source id
+    #: (``analyst_override`` / ``portfolio_pnl`` / ``seed``).
+    current_value: float | None = None
+    current_source: str | None = None
+    #: The analyst's note on the override in use, when there is one.
+    current_note: str | None = None
+    #: True when the override in use equals this suggestion.
+    applied: bool = False
+    #: True when the T-12 states this line for Year 1 (that amount wins for
+    #: Year 1; the ratio drives the later years / an omitted line).
+    year1_from_t12: bool = False
+    suggested_note: str
+
+
+class BenchmarkSuggestionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    peer_set_size: int | None = None
+    suggestions: list[BenchmarkSuggestion] = Field(default_factory=list)
+    policy: str = (
+        "P&L benchmark ratios are suggestions: they change the model only when the "
+        "analyst applies one as an override with a justification note."
+    )
+
+
 class DealProvenanceResponse(BaseModel):
     """Per-value provenance & calculation rationale (FON-25 / FON-27).
 
@@ -2326,6 +2376,100 @@ async def get_renovation_budget_candidates(
         keys=keys,
         candidates=[RenovationBudgetCandidate(**c) for c in candidates],
         reference_only=[RenovationBudgetReferenceDoc(**r) for r in reference_only],
+    )
+
+
+@router.get(
+    "/{deal_id}/benchmark-suggestions",
+    response_model=BenchmarkSuggestionsResponse,
+)
+async def get_benchmark_suggestions(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+) -> BenchmarkSuggestionsResponse:
+    """FON-109 — the P&L benchmark's suggested ratios, and what is in use.
+
+    Sam (2026-10-15): CBRE / HotStats benchmarks are suggestions that require
+    analyst approval rather than flowing into the model. For rooms / F&B
+    departmental expense, management fee and FF&E reserve this returns the
+    benchmark's ratio (the line, peer-set size, document + page) beside the
+    value the model is on and its source, resolved by ``_load_engine_inputs``
+    (nothing is re-derived). Applying one is an ordinary ``PATCH /deals/{id}``
+    of ``field_overrides`` with a note; this route writes nothing.
+    """
+    row = (
+        await session.execute(
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+
+    from ..engines.expense import HOTEL_TYPE_DEFAULTS
+    from ..services.benchmark_suggestions import build_suggestions, load_benchmark_rows
+    from ..services.engine_runner import (
+        _load_deal_overrides_raw,
+        _load_engine_inputs,
+        _normalize_override_shape,
+    )
+
+    rows = await load_benchmark_rows(session, deal_id=str(deal_id), tenant_id=str(tenant_id))
+    suggestions, peer_set_size = build_suggestions(rows)
+    if not suggestions:
+        return BenchmarkSuggestionsResponse(id=deal_id, peer_set_size=peer_set_size)
+
+    base = await _load_engine_inputs(session, str(deal_id), tenant_id=str(tenant_id))
+    sources = base.get("__sources__") or {}
+    ratio_overrides = base.get("overrides") or {}
+    t12_lines = base.get("t12_expense_actuals") or {}
+    hotel_defaults = HOTEL_TYPE_DEFAULTS.get(
+        str(base.get("hotel_type") or "full"), HOTEL_TYPE_DEFAULTS["full"]
+    )
+    raw_overrides = await _load_deal_overrides_raw(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    persisted = _normalize_override_shape(raw_overrides)
+
+    out: list[BenchmarkSuggestion] = []
+    for s in suggestions:
+        key = s["key"]
+        if key in ("mgmt_fee_pct", "ffe_reserve_pct"):
+            current = base.get(key)
+        else:
+            current = ratio_overrides.get(key, hotel_defaults.get(key))
+        current_value = (
+            float(current)
+            if isinstance(current, (int, float)) and not isinstance(current, bool)
+            else None
+        )
+        if key in persisted:
+            current_source = "analyst_override"
+        else:
+            current_source = sources.get(key) or "seed"
+        applied = (
+            key in persisted
+            and current_value is not None
+            and abs(current_value - float(s["suggested_value"])) < 1e-9
+        )
+        t12_line = s.pop("t12_line", None)
+        out.append(
+            BenchmarkSuggestion(
+                **s,
+                peer_set_size=peer_set_size,
+                current_value=current_value,
+                current_source=current_source,
+                current_note=_override_note(raw_overrides.get(key)),
+                applied=applied,
+                year1_from_t12=bool(t12_line and t12_line in t12_lines),
+            )
+        )
+    return BenchmarkSuggestionsResponse(
+        id=deal_id, peer_set_size=peer_set_size, suggestions=out
     )
 
 

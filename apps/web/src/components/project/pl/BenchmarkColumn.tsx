@@ -21,11 +21,18 @@
  * publish, or a basis that disagrees with the row's all render "—" with the
  * reason in the tooltip. The delta's colour marks DIRECTION only (model
  * above / below the benchmark) — no "good / bad" threshold is invented.
- * Read-only: nothing here writes an override or feeds an engine.
+ *
+ * FON-109 — the benchmark never feeds an engine on its own. On the rows the
+ * worker serves a suggestion for (Rooms and F&B departmental expense,
+ * Management Fees) the compared cell carries an "Apply benchmark" action
+ * (``BenchmarkSuggestion.tsx``): it writes the analyst override with a
+ * prefilled, editable note and re-runs the model. The cell itself writes
+ * nothing.
  */
 
 import { createContext, useContext } from 'react';
 import { cn } from '@/lib/format';
+import { ApplyBenchmarkAction, CATEGORY_TO_SUGGESTION_KEY } from './BenchmarkSuggestion';
 import {
   SOURCE_NOTE,
   benchmarkBasisLabel,
@@ -124,7 +131,7 @@ export function BenchmarkHeaderCell({ className }: { className?: string }) {
       data-testid="projection-benchmark-col-header"
       title={`CBRE / HotStats comp-set ratio for the line, on the same basis as % Rev, and the model's Year-1 difference in points.${
         ctx.block.source_filename ? ` Source: ${ctx.block.source_filename}.` : ''
-      } Read-only — the benchmark does not change the model.`}
+      } The benchmark changes the model only where you apply it (Apply benchmark), as an analyst override with a note.`}
     >
       Benchmark
     </th>
@@ -224,6 +231,11 @@ export function BenchmarkCell({
       >
         {delta == null ? '—' : `${glyph}${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pts`}
       </span>
+      {CATEGORY_TO_SUGGESTION_KEY[c.key] && (
+        <div>
+          <ApplyBenchmarkAction overrideKey={CATEGORY_TO_SUGGESTION_KEY[c.key]} compact />
+        </div>
+      )}
     </td>
   );
 }
