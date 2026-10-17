@@ -1635,3 +1635,42 @@ describe('OverviewTab — Current flag vs stored positioning', () => {
     await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'luxury' }));
   });
 });
+
+describe('OverviewTab — Sam 2026-10-15 positioning source chip', () => {
+  const OM_DEAL = {
+    positioning: 'upper-upscale',
+    positioning_source: 'om_brand_str_scale',
+    positioning_source_detail: {
+      document_id: 'doc-1', document_filename: 'Anglers OM.pdf', page: 7, doc_type: 'OM',
+      om_brand: 'Kimpton', catalog_brand: 'Kimpton Hotels & Restaurants', str_scale: 'Upper Upscale',
+      match: 'short_form',
+    },
+  };
+
+  it('shows the OM brand → STR scale with its document and page beside Positioning', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, ...OM_DEAL };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const box = screen.getByTestId('brand-and-positioning');
+    const chip = within(box).getByTestId('positioning-source');
+    expect(chip).toHaveAttribute('data-source', 'om_brand_str_scale');
+    expect(chip).toHaveTextContent('From OM brand Kimpton → STR Upper Upscale (Anglers OM.pdf, p.7)');
+    expect(within(box).getAllByRole('combobox')[1]).toHaveValue('upper-upscale');
+  });
+
+  it('the override is unchanged: choosing another tier PATCHes positioning only', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, ...OM_DEAL };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.change(within(screen.getByTestId('brand-and-positioning')).getAllByRole('combobox')[1], { target: { value: 'luxury' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'luxury' }));
+  });
+
+  it('an analyst tier reads "Analyst"; Default shows no chip', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'luxury', positioning_source: 'analyst' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('positioning-source')).toHaveTextContent('Analyst');
+    cleanup();
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'default', positioning_source: null };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('positioning-source')).toBeNull();
+  });
+});

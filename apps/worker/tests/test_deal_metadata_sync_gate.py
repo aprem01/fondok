@@ -143,7 +143,10 @@ async def _run_sync(
 
 
 async def _audit_inputs(deal_id: str) -> list[dict[str, Any]]:
-    """``input_payload`` of every metadata-sync audit row for the deal."""
+    """``input_payload`` of every keys / brand / city metadata-sync audit row
+    for the deal. The OM-brand → positioning suggestion (Sam 2026-10-15)
+    writes its own ``positioning`` row; it is covered by
+    ``test_om_brand_positioning.py`` and filtered out here."""
     from app.database import get_session_factory
 
     factory = get_session_factory()
@@ -161,7 +164,8 @@ async def _audit_inputs(deal_id: str) -> list[dict[str, Any]]:
                 {"rid": deal_id},
             )
         ).all()
-    return [json.loads(r._mapping["payload"])["input"] for r in rows]
+    inputs = [json.loads(r._mapping["payload"])["input"] for r in rows]
+    return [i for i in inputs if i.get("column") != "positioning"]
 
 
 def _field(name: str, value: Any) -> dict[str, Any]:

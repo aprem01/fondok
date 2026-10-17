@@ -32,6 +32,13 @@ export interface WorkerDeal {
   // worker; surfaced on the Overview's Investment Profile tile.
   return_profile?: string | null;
   positioning?: string | null;
+  /** Sam 2026-10-15 — where `positioning` came from: `om_brand_str_scale`
+   *  (the OM's brand matched the brand catalog → its STR chain scale, filled
+   *  while the deal had no tier), `analyst` (wizard / Overview), or null
+   *  (Default / legacy). Absent on older workers. */
+  positioning_source?: string | null;
+  /** The OM route's evidence. Absent / null for any other source. */
+  positioning_source_detail?: PositioningSourceDetail | null;
   /** EXISTING brand — analyst-typed, or filled from the OM's
    *  `property_overview.brand` only when empty. */
   brand: string | null;
@@ -656,6 +663,23 @@ export interface LineageRecord {
   unresolved: LineageRefusal[];
   /** True when the run predates the deal's latest document or override. */
   stale: boolean;
+}
+
+/** Sam 2026-10-15 — evidence for an OM-brand → STR chain scale positioning. */
+export interface PositioningSourceDetail {
+  document_id?: string | null;
+  document_filename?: string | null;
+  page?: number | null;
+  doc_type?: string | null;
+  /** The brand text as the OM states it (e.g. "Kimpton"). */
+  om_brand?: string | null;
+  /** The catalog brand it matched (e.g. "Kimpton Hotels & Restaurants"). */
+  catalog_brand?: string | null;
+  catalog_family?: string | null;
+  /** STR's published chain scale (e.g. "Upper Upscale"). */
+  str_scale?: string | null;
+  /** exact | alias | short_form | leading_brand_mark */
+  match?: string | null;
 }
 
 export interface NewDealBody {
