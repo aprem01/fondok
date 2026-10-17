@@ -63,6 +63,23 @@ Shipped 2026-10-14 on `main`; live as soon as the worker deploys.
    top-level `org_id` / `org_role` (v1) **or** `o.id` / `o.rol` (v2), so a
    Clerk instance upgrade does not turn every session into
    `409 no_active_organization` (`tests/test_rbac.py::test_v2_session_token_org_claims_resolve_tenant_and_role`).
+9. **Three more routes 404 a foreign deal (2026-10-17).** The first run of
+   `scripts/isolation_check.py` (§9) over every mounted deal-scoped route
+   found three that answered another tenant 2xx: the three `/export/*`
+   routes built an *empty* payload for a foreign deal (`load_live_payload`
+   never raises; every inner query is tenant-scoped, so no data crossed,
+   but a stranger downloaded a blank workbook / PDF / deck instead of a
+   404); `POST …/backfill_embeddings` returned its "skipped" envelope
+   before the tenant check on a worker without the chunk table or without
+   `VOYAGE_API_KEY`; and `POST …/memo/{section}/edits` had no ownership
+   gate (the GET did), so a caller could append an edit + audit row
+   against a foreign deal id. All three now 404. Locked by
+   `tests/test_isolation_scripts.py::test_exports_backfill_and_memo_edit_404_a_foreign_deal`.
+   One deliberate exception remains: `GET /deals/{id}/audit` returns the
+   **empty** feed (`total: 0, entries: []`) for a foreign id rather than
+   404 (documented in `api/audit.py`; both shapes leak the same
+   information). The checker accepts that route only when the body is
+   exactly that empty shape.
 
 The header path (`ALLOW_TENANT_HEADER_WITHOUT_JWT`) is unchanged: off by
 default, on only in `tests/conftest.py` and a developer's local `.env`.
@@ -132,7 +149,11 @@ registry outage is a (retryable) outage for JWT traffic.
 
 ## 5. Rollout order (Prem, by hand)
 
-Do these in order; each step is independently reversible.
+Do these in order; each step is independently reversible. **§10 is the
+checked version of this list** — it sequences the same steps through
+`scripts/isolation_rollout.py` (dry run, then `--execute` for the database
+steps) and ends with the two isolation proofs (§9). Use §10; this section
+stays as the explanation of each step.
 
 1. **Deploy the worker** (`git push origin main` → Railway). Nothing
    changes for users yet except the hole closes (§2.1) and
@@ -313,7 +334,158 @@ registry (`list_tenants()`), publishing each tenant before its scan.
 5. Rollback at any step: switch the DSN back to the owner; optionally
    `DISABLE ROW LEVEL SECURITY` (footer of the SQL file).
 
-## 8. Not covered here
+## 9. Phase-3 tooling (no hand steps in the data path)
+
+Three tools, added 2026-10-17, so that turning enforcement on is a
+sequence of checked steps rather than a list of things to remember.
+
+### `apps/worker/scripts/isolation_check.py` — the HTTP proof
+
+Runs against a **live worker** and proves, route by route, that firm B
+cannot read or touch firm A's deal. Routes are enumerated from
+`app.main` (the same enumeration `tests/test_unauthenticated_routes_guard.py`
+uses), so a route that ships tomorrow is probed tomorrow; `--routes openapi`
+reads the deployed worker's `/openapi.json` instead when the checkout
+might not match the deploy.
+
+* **Credentials.** JWT mode: `FIRM_A_JWT` / `FIRM_B_JWT` (two Clerk session
+  tokens, one member of each firm — DevTools → Network → any worker call
+  → `Authorization`; they expire in about a minute). Header mode (local
+  only): `--tenant-a` / `--tenant-b` UUIDs against a worker started with
+  `ALLOW_TENANT_HEADER_WITHOUT_JWT=1`; the script reads
+  `/health.auth.jwt_required` first and refuses header mode on a worker
+  that requires JWTs.
+* **What it asserts.** Both credentials resolve to distinct tenants; the
+  two `GET /deals` lists are disjoint and every row carries its caller's
+  tenant; for every deal-scoped route, firm B at firm A's real deal (and
+  first document) gets 404/403 — a 2xx is a `LEAK`; an anonymous request
+  gets 401 (JWT required) or 404 (header path open, served
+  `DEFAULT_TENANT_ID`); the owner is also probed on GET routes so a 404 for
+  everyone is reported as `INCONCLUSIVE`, never as a pass. `/settings/tenant`,
+  `/admin/tenants` and `/observability/*?all=1` are checked against each
+  caller's registry `kind` (internal: whole registry + cross-tenant view;
+  external: own row only, 403 on `all=1`).
+* **It writes nothing by default.** Only GET routes are probed against the
+  real deal; mutating routes are listed as `SKIP`. `--allow-writes` creates
+  one scratch deal per firm, probes every mutating route on firm A's
+  *scratch* deal as firm B, and hard-deletes both afterwards (archives when
+  the credential is not an admin, and says so).
+* **Exit status.** 0 clean; 1 on any `LEAK` or `ERROR` (`--strict` also on
+  `INCONCLUSIVE`); 2 on a discovery problem. `--json out.json` writes the
+  rows.
+
+```bash
+cd apps/worker
+FIRM_A_JWT=eyJ… FIRM_B_JWT=eyJ… uv run python scripts/isolation_check.py \
+    --base-url https://<worker> --allow-writes
+```
+
+`tests/test_isolation_scripts.py` drives it over an ASGI transport against
+the local app with two tenants (all 100 deal-scoped routes, writes on) and
+proves it is not vacuous (a toy app that serves a foreign deal → `LEAK`,
+exit 1).
+
+### `apps/web/e2e/prod/02-two-firm-isolation.spec.ts` — the browser proof
+
+Opt-in exactly like the live-deal smoke (`FONDOK_E2E_PROD=1` + the
+production base URL + the five smoke secrets) **plus** `FONDOK_SMOKE_B_EMAIL`,
+`FONDOK_SMOKE_B_PASSWORD`, `FONDOK_SMOKE_B_ORG` — a second Clerk test user
+in a *different* organization. Signs in as firm A, opens the pinned deal
+and reads its project list; signs in as firm B in a fresh browser context,
+makes `FONDOK_SMOKE_B_ORG` the active org (refuses to run as any other),
+visits firm A's deal URL and asserts the app's not-found state
+(`data-testid="deal-load-error"`, "Could not load this deal" — the worker
+404s), then asserts firm B's project list shares no deal id and no deal
+name with firm A's. Read-only; without the firm-B secrets it skips itself
+naming them and `global-setup.ts` warns that isolation was not checked.
+See `apps/web/e2e/README.md`.
+
+### `apps/worker/scripts/isolation_rollout.py` — the sequenced runbook
+
+Dry run by default. Against `DATABASE_URL` it prints: (0) which Clerk
+variables are present (names only) and the current flag values; (1) the
+registry; (2) what `register_tenant.py` would do for `--internal-org`
+(INSERT vs. UPDATE and which fields); (3) for each `--deal-id`, the tenant
+it currently lives under — located with a tenant-predicated lookup across
+the registry rows, the all-zeros catch-all and every `--fold-org` /
+`--fold-tenant` you name (a deal under no known tenant is reported, never
+guessed) — and, per source tenant, the per-table row counts
+`reassign_default_tenant_rows.py` would move, with a warning when that
+tenant also owns deals you did not list (the fold moves a whole tenant);
+(4) the Clerk dashboard steps; (5) the Railway variables to flip and the
+`/health.auth` fields that must read true afterwards; (6) how to verify.
+
+`--execute` performs **only the database steps** — the internal-tenant
+upsert and the per-table moves, through the same functions the two
+scripts use — and refuses when a listed deal was not found, when a source
+tenant owns unlisted deals (unless `--move-whole-tenant`), or when any
+table cannot be counted. Clerk and Railway changes are never performed;
+they are printed. `tests/test_isolation_scripts.py` checks that the dry run
+writes nothing (row counts and tenant ids unchanged) and that `--execute`
+registers and folds exactly the listed tenants.
+
+```bash
+cd apps/worker   # with the production DATABASE_URL in the environment
+uv run python scripts/isolation_rollout.py \
+    --internal-org org_<FondokInternal> \
+    --fold-org org_<SamOld> --fold-org org_<EshanOld> --fold-org org_<RaniOld> \
+    --deal-id <uuid> --deal-id <uuid> …          # dry run
+uv run python scripts/isolation_rollout.py … --execute
+```
+
+## 10. Phase-3 checklist (Sam / Prem — follow in order)
+
+Each step says who, what, and how you know it worked. Nothing before
+step 8 changes what any user sees.
+
+1. **Prem — deploy the worker** (`git push origin main`). Check
+   `curl -s https://<worker>/health | python -m json.tool` → `auth.jwt_required: true`,
+   `auth.header_tenant_path_enabled: false`.
+2. **Prem — Clerk dashboard → Organizations settings:** turn **off**
+   "Allow users to create organizations".
+3. **Prem — Clerk dashboard:** create (or confirm) the "Fondok Internal"
+   org; add Sam, Eshan, Rani, Prem. Copy its `org_…` id. For each person,
+   note the `org_…` id of the single-member org they have been using (Clerk
+   → Users → their memberships).
+4. **Prem — list the deals that must follow into Fondok Internal** (the
+   app's `/projects` as each person, or `GET /deals` with their session).
+5. **Prem — dry run the rollout** with the production `DATABASE_URL`:
+   `isolation_rollout.py --internal-org org_<FondokInternal> --fold-org …
+   --deal-id …` (§9). Read the plan: every listed deal found; no "NOT FOUND";
+   no "also owns N deal(s) NOT in your list" you did not expect; the
+   `document_chunks` / `audit_log` notes understood (§6 on the audit trigger).
+6. **Prem — execute the DB steps:** same command `--execute`. Expect
+   `registered org_… → <uuid> kind=internal status=active` and `moved N`
+   per table. Re-run the dry run: the source tenants now count 0.
+7. **Sam — sign in with Fondok Internal active.** `/projects` lists the
+   folded deals; each opens; the Data Room shows its documents. If a deal
+   is missing, stop and tell Prem (nothing has been enforced yet).
+8. **Prem — Clerk webhook:** add `https://<worker>/webhooks/clerk` for
+   `organization.created/updated/deleted`; set its `whsec_…` as
+   `CLERK_WEBHOOK_SECRET` on Railway; redeploy; send the dashboard test
+   event → `200 {"ok": true, …}`.
+9. **Prem — flip `REQUIRE_REGISTERED_TENANT=1`** on Railway. Verify
+   `/health.auth.registered_tenant_required: true`.
+10. **Sam — re-check step 7.** Then, as a throwaway Clerk org (or a user
+    with no org), confirm the app shows "No workspace assigned" / the
+    worker answers `403 tenant_not_registered`.
+11. **Prem — run the HTTP proof against production:** `isolation_check.py
+    --base-url https://<worker> --allow-writes` with a Fondok Internal JWT
+    as firm A and a second registered org's JWT as firm B. Expect
+    `RESULT: PASS`, `LEAK=0 ERROR=0`. Attach the table (or `--json`) to the
+    Linear ticket.
+12. **Prem — provision firm B for the browser proof** (`FONDOK_SMOKE_B_*`
+    repository secrets) and run `pnpm test:e2e:prod`; `02-two-firm-isolation`
+    must pass, not skip.
+13. **Later, separate change window — RLS** (§7): apply
+    `001_enable_rls.sql`, verify as `fondok_app`, set `DB_SET_TENANT_GUC=1`,
+    switch the DSN, re-run step 11.
+
+Rollback at any point before step 13: unset `REQUIRE_REGISTERED_TENANT`
+(step 9) — the registry and the folded rows are harmless with enforcement
+off.
+
+## 11. Not covered here
 
 * Clerk-side membership (who is in which org) — Clerk dashboard.
 * Per-tenant storage prefixes in S3 — paths already embed `tenant_id`;

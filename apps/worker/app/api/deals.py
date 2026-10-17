@@ -4178,6 +4178,16 @@ async def post_memo_edit(
     same transaction — if either insert fails the other rolls back, so
     a half-recorded change never reaches the IT-review trail.
     """
+    # FON-93 — the deal must be the caller's. Until 2026-10-17 this write
+    # had no ownership gate (the GET below has one): a caller from another
+    # tenant could append a memo edit + audit row against a foreign deal id
+    # and get 201. The rows carried the CALLER's tenant, so the owner never
+    # saw them, but a write against another institution's deal must 404
+    # like every other deal route (found by scripts/isolation_check.py).
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+
     tenant_id_str = str(tenant_id)
     actor_id = "system"  # TODO: thread through Clerk user once auth lands
 

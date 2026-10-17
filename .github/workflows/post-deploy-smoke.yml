@@ -46,6 +46,11 @@ name: Post-deploy smoke (live deal)
 # Until all five are set the smoke job NO-OPS with a warning rather than
 # failing every deploy. A "not configured" annotation is not a pass — check
 # the job summary.
+#
+#   FONDOK_SMOKE_B_EMAIL    OPTIONAL — a second test user in a DIFFERENT
+#   FONDOK_SMOKE_B_PASSWORD Clerk org, for apps/web/e2e/prod/02-two-firm-
+#   FONDOK_SMOKE_B_ORG      isolation.spec.ts (FON-93). Unset → that spec
+#                           skips itself; the live-deal smoke still runs.
 
 on:
   # Run it by hand: GitHub → Actions → this workflow → Run workflow.
@@ -215,6 +220,13 @@ jobs:
           FONDOK_SMOKE_EMAIL: ${{ secrets.FONDOK_SMOKE_EMAIL }}
           FONDOK_SMOKE_PASSWORD: ${{ secrets.FONDOK_SMOKE_PASSWORD }}
           FONDOK_SMOKE_DEAL_ID: ${{ secrets.FONDOK_SMOKE_DEAL_ID }}
+          # Firm B for 02-two-firm-isolation (FON-93 Phase 3). OPTIONAL: when
+          # these are unset the spec skips itself and global-setup prints a
+          # warning — the live-deal smoke still runs. Not part of the creds
+          # guard above on purpose.
+          FONDOK_SMOKE_B_EMAIL: ${{ secrets.FONDOK_SMOKE_B_EMAIL }}
+          FONDOK_SMOKE_B_PASSWORD: ${{ secrets.FONDOK_SMOKE_B_PASSWORD }}
+          FONDOK_SMOKE_B_ORG: ${{ secrets.FONDOK_SMOKE_B_ORG }}
         run: cd apps/web && pnpm test:e2e:prod
 
       - name: Upload Playwright report

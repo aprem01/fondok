@@ -62,6 +62,50 @@ export const REQUIRED_ENV: ReadonlyArray<{ name: string; purpose: string }> = [
   },
 ];
 
+/**
+ * The SECOND firm the two-firm isolation spec (`02-two-firm-isolation.spec.ts`)
+ * signs in as. Optional on top of `REQUIRED_ENV`: the live-deal smoke must
+ * keep running when nobody has provisioned firm B yet, so these are not in
+ * `REQUIRED_ENV` — the spec skips itself, naming the missing ones, and
+ * `global-setup.ts` says so in its log line.
+ *
+ * Firm B must be a Clerk test user whose active organization is a DIFFERENT
+ * org from the smoke user's — the whole point is that it owns none of firm
+ * A's deals. Give it a deal or two of its own so its project list is not
+ * trivially empty.
+ */
+export const TWO_FIRM_ENV: ReadonlyArray<{ name: string; purpose: string }> = [
+  {
+    name: 'FONDOK_SMOKE_B_EMAIL',
+    purpose:
+      'Identifier of a SECOND dedicated Clerk test user (a +clerk_test address), member of a different org from the smoke user.',
+  },
+  { name: 'FONDOK_SMOKE_B_PASSWORD', purpose: 'That user’s password.' },
+  {
+    name: 'FONDOK_SMOKE_B_ORG',
+    purpose:
+      'Firm B’s Clerk organization id (org_…) or slug — the spec makes it the active org and refuses to run as any other.',
+  },
+];
+
+/** Both opt-ins AND every firm-B secret present. */
+export function twoFirmEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return prodSmokeEnabled(env) && TWO_FIRM_ENV.every(({ name }) => (env[name] ?? '').trim() !== '');
+}
+
+/**
+ * Why the two-firm spec is not running, or null when it is. Reuses the prod
+ * skip reason first so a run that forgot an opt-in is told that, not "firm B
+ * is missing".
+ */
+export function twoFirmSkipReason(env: NodeJS.ProcessEnv = process.env): string | null {
+  const prod = prodSmokeSkipReason(env);
+  if (prod !== null) return prod;
+  const missing = TWO_FIRM_ENV.filter(({ name }) => (env[name] ?? '').trim() === '').map(({ name }) => name);
+  if (missing.length === 0) return null;
+  return `Two-firm isolation needs a second firm — set ${missing.join(', ')}.`;
+}
+
 /** True when `raw` is a URL whose host is exactly the production alias. */
 export function baseUrlIsProd(raw: string | undefined): boolean {
   if (!raw) return false;

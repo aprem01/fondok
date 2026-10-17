@@ -1,5 +1,12 @@
 import type { FullConfig } from '@playwright/test';
-import { OPT_IN_FLAG, REQUIRED_ENV, prodSmokeEnabled, prodSmokeSkipReason } from './guard';
+import {
+  OPT_IN_FLAG,
+  REQUIRED_ENV,
+  TWO_FIRM_ENV,
+  prodSmokeEnabled,
+  prodSmokeSkipReason,
+  twoFirmEnabled,
+} from './guard';
 
 /**
  * Global setup for the `prod` post-deploy smoke — FON-76.
@@ -82,6 +89,20 @@ export default async function prodGlobalSetup(_config: FullConfig): Promise<void
     `[prod smoke] Clerk testing token minted. Reading deal ${process.env.FONDOK_SMOKE_DEAL_ID} `
       + `at ${process.env.PLAYWRIGHT_BASE_URL} — read-only.`,
   );
+
+  // The two-firm isolation spec is additive: say whether it will run, so a
+  // green job is not mistaken for proof that isolation was checked.
+  if (twoFirmEnabled()) {
+    // eslint-disable-next-line no-console
+    console.log('[prod smoke] Firm B secrets present — 02-two-firm-isolation will run (read-only).');
+  } else {
+    const missing = TWO_FIRM_ENV.filter(({ name }) => !(process.env[name] ?? '').trim()).map(({ name }) => name);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[prod smoke] 02-two-firm-isolation will SKIP — missing ${missing.join(', ')}. `
+        + 'Isolation was NOT checked in the browser on this run.',
+    );
+  }
 }
 
 /** Re-exported so a failing skip reason is greppable from one place. */
