@@ -8,7 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { duplicateDealConfirmText, duplicateDealDoneText } from '@/lib/duplicateDeal';
+import { duplicateDealConfirmText, duplicateDealDoneText, duplicateDealErrorText } from '@/lib/duplicateDeal';
+import { WorkerError } from '@/lib/api';
 
 const root = join(__dirname, '..');
 const worker = readFileSync(
@@ -60,5 +61,34 @@ describe('duplicate deal wiring', () => {
     expect(page).toContain('window.confirm(duplicateDealConfirmText(name))');
     expect(page).toContain('workerApi.deals.duplicate(rawId)');
     expect(page).toContain('router.push(`/projects/${res.deal.id}`)');
+  });
+});
+
+// The worker's refusal reason rides in the WorkerError BODY ({"detail": …});
+// the message is only "POST /deals/{id}/duplicate → 409". The toast must say
+// why and what to do, not just the status.
+describe('duplicate deal failure text', () => {
+  const REASON =
+    'Some documents are still being processed (1 of 3). Wait for extraction to finish, then duplicate the deal.';
+
+  it('surfaces the worker detail from a WorkerError body', () => {
+    const err = new WorkerError('POST /deals/abc/duplicate → 409', 409, JSON.stringify({ detail: REASON }));
+    const text = duplicateDealErrorText(err);
+    expect(text).toContain('Duplicate failed');
+    expect(text).toContain(REASON);
+    expect(text).toContain('409');
+  });
+
+  it('falls back to the raw body, then the message, and never invents a reason', () => {
+    expect(duplicateDealErrorText(new WorkerError('POST /deals/abc/duplicate → 502', 502, 'Bad gateway')))
+      .toBe('Duplicate failed: Bad gateway (POST /deals/abc/duplicate → 502)');
+    expect(duplicateDealErrorText(new WorkerError('POST /deals/abc/duplicate → 500', 500, '')))
+      .toBe('Duplicate failed: POST /deals/abc/duplicate → 500');
+    expect(duplicateDealErrorText(new Error('Failed to fetch'))).toBe('Duplicate failed: Failed to fetch');
+    expect(duplicateDealErrorText('boom')).toBe('Duplicate failed: boom');
+  });
+
+  it('the project header uses it in the catch', () => {
+    expect(page).toContain('toast(duplicateDealErrorText(err)');
   });
 });

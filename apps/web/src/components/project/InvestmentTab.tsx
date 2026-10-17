@@ -1022,16 +1022,20 @@ export default function InvestmentTab() {
               },
               // Sam, 2026-10-15 — Year-1 renovation impact comes ONLY from these
               // explicit assumptions, never from the budget above. The value is
-              // the loader's own (displacement_status), else the persisted
-              // override, else "—". Engine inputs, so a justification note is
-              // required; 0–50% per the revenue engine's schema bound.
+              // the persisted override when one exists (the loader applies that
+              // same override, but `displacement_status` is fetched once per deal
+              // and would echo the pre-save 0.0% beside an "Analyst override"
+              // badge until the page remounts), else the loader's own
+              // (displacement_status), else "—". Engine inputs, so a
+              // justification note is required; 0–50% per the revenue engine's
+              // schema bound.
               { id: 'renoY1OccDisp', label: 'Y1 Rooms Offline (Occupancy Displacement)', kind: 'input',
                 state: 'assumption',
                 overridden: overridden('y1_occupancy_displacement_pct'),
                 note: 'Year-1 occupancy reduction while rooms are out of service — 0% unless set',
                 value: (
                   <AssumptionField
-                    value={displacementStatus?.y1_occupancy_displacement_pct ?? numericOverride(invOverrides, 'y1_occupancy_displacement_pct')}
+                    value={numericOverride(invOverrides, 'y1_occupancy_displacement_pct') ?? displacementStatus?.y1_occupancy_displacement_pct ?? undefined}
                     editable={liveMode} format={(v) => fmtPct(v, 1)}
                     toDraft={(v) => (v * 100).toFixed(1)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 && n <= 50 ? n / 100 : null; }}
@@ -1046,7 +1050,7 @@ export default function InvestmentTab() {
                 note: 'Year-1 ADR reduction for disruption pricing — 0% unless set',
                 value: (
                   <AssumptionField
-                    value={displacementStatus?.y1_adr_displacement_pct ?? numericOverride(invOverrides, 'y1_adr_displacement_pct')}
+                    value={numericOverride(invOverrides, 'y1_adr_displacement_pct') ?? displacementStatus?.y1_adr_displacement_pct ?? undefined}
                     editable={liveMode} format={(v) => fmtPct(v, 1)}
                     toDraft={(v) => (v * 100).toFixed(1)} suffix="%"
                     parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 && n <= 50 ? n / 100 : null; }}

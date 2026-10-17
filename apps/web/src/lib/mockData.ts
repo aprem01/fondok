@@ -145,7 +145,7 @@ export type ReturnProfileId = 'core' | 'core-plus' | 'value-add' | 'opportunisti
 // together which produced unrealistic ADR anchors on upper-midscale
 // brands). Order is bottom-up so the wizard renders cheapest first.
 export const positioningTiers = [
-  { id: 'default', label: 'Default', desc: 'No tier chosen — pick a brand to pre-fill its STR chain scale. Until then the model applies no chain-scale filter.' },
+  { id: 'default', label: 'Default', desc: 'No tier chosen — a brand suggests its STR chain scale, and so may the Offering Memorandum. Until a tier is chosen the model applies no chain-scale filter.' },
   { id: 'economy', label: 'Economy', desc: 'Lowest ADR tier (e.g. Days Inn, Super 8)' },
   { id: 'midscale', label: 'Midscale', desc: 'Limited-service value tier (e.g. Wingate, Tru by Hilton)' },
   { id: 'upper-midscale', label: 'Upper Midscale', desc: 'Select-service tier (e.g. Hampton Inn, Holiday Inn Express)' },
@@ -616,10 +616,13 @@ export function brandPositioningLabel(b: Pick<Brand, 'tier' | 'scale'>): string 
 }
 
 /**
- * R-024 — the brand's default positioning (a `positioningTiers` id): its STR
+ * R-024 — the brand's suggested positioning (a `positioningTiers` id): its STR
  * chain scale where STR publishes one, else its catalog tier. Null when the
  * brand is unknown or has no single scale ("Various" — Independent, Design
- * Hotels, the Outdoor Collection), in which case nothing is pre-filled.
+ * Hotels, the Outdoor Collection), in which case nothing is suggested. Since
+ * Sam 2026-10-15 this is a SUGGESTION the analyst selects — the wizard and the
+ * Overview never write it to the deal on their own (the worker would record
+ * it as the analyst's choice and the OM could no longer suggest a scale).
  */
 export function brandDefaultPositioning(name: string | null | undefined): string | null {
   const hit = findBrand(name);

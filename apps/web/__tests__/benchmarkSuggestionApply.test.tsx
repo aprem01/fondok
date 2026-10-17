@@ -159,11 +159,16 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
     }),
   };
 });
+// The deal's stored overrides — a test may add one (an applied FF&E benchmark)
+// before rendering; `beforeEach` puts the default back.
+const dealFx = vi.hoisted(() => ({
+  overrides: { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } } as Record<string, unknown>,
+}));
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
     deal: {
       id: 'deal-uuid-1', name: 'Kimpton Angler', keys: 132,
-      field_overrides: { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } },
+      field_overrides: dealFx.overrides,
     },
     status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
   }),
@@ -196,7 +201,9 @@ import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
 
 beforeEach(() => {
   cleanup();
-  fx.update.mockClear();
+  dealFx.overrides = { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } };
+  fx.update.mockReset();
+  fx.update.mockImplementation(async () => ({ id: 'deal-uuid-1' }));
   fx.run.mockClear();
   fx.market.mockReset();
   fx.market.mockImplementation(async () => MARKET);
@@ -297,5 +304,64 @@ describe('FON-109 · Apply benchmark in the Assumptions panel', () => {
     expect(screen.queryByTestId('apply-benchmark-rooms_dept_pct')).toBeNull();
     expect(screen.queryByTestId('benchmark-suggestion-mgmt_fee_pct')).toBeNull();
     expect(screen.queryByTestId('benchmark-suggestion-ffe_reserve_pct')).toBeNull();
+  });
+});
+
+// Approval must be reversible, and a failed approval must not eat the note.
+describe('FON-109 · the applied benchmark can be seen and reset; a failed apply keeps the note', () => {
+  it('a failed PATCH leaves the note editor open with the analyst\'s edit; success closes it', async () => {
+    fx.update.mockImplementationOnce(async () => {
+      throw new Error('PATCH /deals/deal-uuid-1 → 500');
+    });
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    fireEvent.click(await screen.findByTestId('apply-benchmark-rooms_dept_pct'));
+    const note = screen.getByTestId('apply-benchmark-note-rooms_dept_pct') as HTMLInputElement;
+    fireEvent.change(note, { target: { value: 'Peer set matches our flag; applying.' } });
+    fireEvent.click(screen.getByTestId('apply-benchmark-save-rooms_dept_pct'));
+    await waitFor(() => expect(fx.update).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fx.toast).toHaveBeenCalledWith('Could not apply override', { type: 'error' }));
+    // Still open, note intact, nothing re-ran.
+    const still = screen.getByTestId('apply-benchmark-note-rooms_dept_pct') as HTMLInputElement;
+    expect(still.value).toBe('Peer set matches our flag; applying.');
+    expect(fx.run).not.toHaveBeenCalled();
+    // Retry succeeds → closes.
+    fireEvent.click(screen.getByTestId('apply-benchmark-save-rooms_dept_pct'));
+    await waitFor(() => expect(fx.update).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId('apply-benchmark-note-rooms_dept_pct')).toBeNull());
+    expect(fx.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('the FF&E reserve has its own input showing the value in use, with no reset while nothing is overridden', async () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const input = (await screen.findByTestId('assumption-panel-input-ffe_reserve_pct')) as HTMLInputElement;
+    // The suggestion's "in use" value (4%, platform default) — never a browser-made number.
+    await waitFor(() => expect(input.value).toBe('4'));
+    expect(screen.queryByTestId('assumption-panel-reset-ffe_reserve_pct')).toBeNull();
+  });
+
+  it('an applied FF&E benchmark shows as the override and "Reset to source" removes it and re-runs', async () => {
+    dealFx.overrides = {
+      ...dealFx.overrides,
+      ffe_reserve_pct: { value: 0.05, note: 'Applied CBRE benchmark FF&E Reserve 5% from CBRE-Trends-2025.pdf p.9' },
+    };
+    fx.suggestions.mockImplementation(async () => ({
+      ...SUGGESTIONS,
+      suggestions: SUGGESTIONS.suggestions.map((s) =>
+        s.key === 'ffe_reserve_pct'
+          ? { ...s, applied: true, current_value: 0.05, current_source: 'analyst_override', current_note: s.suggested_note }
+          : s,
+      ),
+    }));
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const input = (await screen.findByTestId('assumption-panel-input-ffe_reserve_pct')) as HTMLInputElement;
+    expect(input.value).toBe('5');
+    await screen.findByTestId('benchmark-applied-ffe_reserve_pct');
+    fireEvent.click(screen.getByTestId('assumption-panel-reset-ffe_reserve_pct'));
+    await waitFor(() => expect(fx.update).toHaveBeenCalledTimes(1));
+    const [, body] = fx.update.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides).not.toHaveProperty('ffe_reserve_pct');
+    // The unrelated override survives the reset.
+    expect(body.field_overrides.acquisition_close_date).toEqual({ value: '2025-09-30', note: 'PSA' });
+    await waitFor(() => expect(fx.run).toHaveBeenCalledTimes(1));
   });
 });

@@ -5,11 +5,17 @@
  *
  * Engine runs are append-only, so every earlier run on the deal is a
  * preserved baseline. This panel picks a baseline run (default: the newest
- * complete, full-chain, non-scenario run completed BEFORE the chosen UTC
- * date — prefilled with the last deploy before Sam's QA changes) and a head
- * run (default: latest canonical), then lists every headline field that
- * moved, grouped by engine, with absolute and % deltas and each side's
- * provenance. Export writes the same table to .xlsx via the worker.
+ * complete, full-chain run completed BEFORE the chosen UTC date that is not a
+ * non-Base scenario's latest run — prefilled with the last deploy before
+ * Sam's QA changes) and a head run (default: latest canonical), then lists
+ * every headline field that moved, grouped by engine, with absolute and %
+ * deltas and each side's provenance. Export writes the same table to .xlsx
+ * via the worker.
+ *
+ * When every run post-dates the default cutoff (a duplicated deal, any deal
+ * created after that deploy) the worker names no baseline; the panel then
+ * falls back to the newest complete run before the head and SAYS so, rather
+ * than opening empty. A date the analyst picks never falls back.
  *
  * Read-only: nothing here runs or edits an engine.
  */
@@ -21,6 +27,7 @@ import type { EngineRunListResponse, RunCompareResponse } from '@/lib/api';
 import {
   DEFAULT_BASELINE_CUTOFF,
   cutoffToIso,
+  fallbackBaseline,
   fmtDeltaAbs,
   fmtDeltaPct,
   fmtValue,
@@ -49,6 +56,8 @@ export default function RunComparePanel({ dealId }: Props) {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The run the panel defaulted to when the worker named none (see header).
+  const [fallback, setFallback] = useState<string | null>(null);
 
   // Runs + the default baseline for the chosen cutoff.
   useEffect(() => {
@@ -58,7 +67,14 @@ export default function RunComparePanel({ dealId }: Props) {
       .runs(dealId, cutoff ? cutoffToIso(cutoff) : undefined, ctl.signal)
       .then((res) => {
         setRuns(res);
-        setBase(res.baseline_run_id ?? '');
+        if (res.baseline_run_id) {
+          setBase(res.baseline_run_id);
+          setFallback(null);
+          return;
+        }
+        const fb = cutoff === DEFAULT_BASELINE_CUTOFF ? fallbackBaseline(res) : null;
+        setBase(fb?.run_id ?? '');
+        setFallback(fb?.run_id ?? null);
       })
       .catch((err) => {
         if ((err as Error).name === 'AbortError') return;
@@ -85,7 +101,10 @@ export default function RunComparePanel({ dealId }: Props) {
         if ((err as Error).name === 'AbortError') return;
         setError(errText(err));
       } finally {
-        setLoading(false);
+        // An aborted request is one the effect cleanup replaced: its
+        // successor has already set loading=true, so this stale finally
+        // must not clear it (the old pair would show with no "Comparing…").
+        if (!signal?.aborted) setLoading(false);
       }
     },
     [dealId, base, head, showAll],
@@ -153,7 +172,7 @@ export default function RunComparePanel({ dealId }: Props) {
             data-testid="run-compare-base"
           >
             <option value="">
-              {runs && !runs.baseline_run_id
+              {runs && !runs.baseline_run_id && !fallback
                 ? '— no complete run before this date'
                 : 'Select a run'}
             </option>
@@ -211,7 +230,17 @@ export default function RunComparePanel({ dealId }: Props) {
         <p className="mt-3 text-[12px] text-ink-500">
           {runList.length === 0
             ? 'This deal has no engine runs yet.'
-            : 'Pick a baseline run, or move the date to one after the deal’s first complete run.'}
+            : runList.length === 1
+              ? 'This deal has one run so far — run the model again to have something to compare it with.'
+              : 'Pick a baseline run, or move the date to one after the deal’s first complete run.'}
+        </p>
+      )}
+
+      {fallback && base === fallback && runs && !error && (
+        <p className="mt-3 text-[12px] text-ink-500" data-testid="run-compare-fallback-note">
+          No complete run finished before {cutoff.replace('T', ' ')} UTC on this deal, so the
+          baseline defaulted to its newest complete run before the current one
+          ({fallback.slice(0, 8)}). Pick another run or move the date to change it.
         </p>
       )}
 

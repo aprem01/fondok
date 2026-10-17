@@ -5,6 +5,8 @@
  * that route copies and skips.
  */
 
+import { WorkerError } from './api';
+
 /** The confirm prompt shown before duplicating. */
 export function duplicateDealConfirmText(dealName: string): string {
   return (
@@ -22,4 +24,32 @@ export function duplicateDealConfirmText(dealName: string): string {
 /** Toast after a successful duplicate. */
 export function duplicateDealDoneText(newName: string): string {
   return `Created "${newName}". Run the model on the copy to see results.`;
+}
+
+/**
+ * The toast line for a failed duplicate. ``request()`` throws a
+ * ``WorkerError`` whose ``message`` is only "POST /deals/{id}/duplicate → 409";
+ * the worker's reason ("Some documents are still being processed (…). Wait
+ * for extraction to finish, then duplicate the deal.") travels in ``body`` as
+ * ``{"detail": "..."}``. Prefer that detail; fall back to the raw body, then
+ * the message. Never invents a reason.
+ */
+export function duplicateDealErrorText(err: unknown): string {
+  const prefix = 'Duplicate failed';
+  if (err instanceof WorkerError) {
+    const body = (err.body ?? '').trim();
+    let detail = '';
+    if (body) {
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown };
+        if (typeof parsed?.detail === 'string') detail = parsed.detail.trim();
+        else if (parsed?.detail != null) detail = JSON.stringify(parsed.detail);
+      } catch {
+        detail = body;
+      }
+    }
+    return detail ? `${prefix}: ${detail} (${err.message})` : `${prefix}: ${err.message}`;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return `${prefix}: ${msg}`;
 }
