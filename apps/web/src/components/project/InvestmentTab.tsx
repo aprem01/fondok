@@ -25,7 +25,12 @@ import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { fmtCurrency, fmtPct, fmtMillions, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
-import { noiBeforeReserve } from '@/lib/engines/noi';
+import {
+  noiBeforeReserve,
+  stabilizedYearBlock,
+  stabilizationAnchorCaption,
+  stabilizationAnchorFallbackNote,
+} from '@/lib/engines/noi';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
@@ -468,6 +473,19 @@ export default function InvestmentTab() {
     typeof wExitNoiPeriodLabelRaw === 'string' && wExitNoiPeriodLabelRaw.trim()
       ? wExitNoiPeriodLabelRaw.trim()
       : undefined;
+  // FON-98 — when the exit basis is Stabilized NOI, the basis row names the
+  // stabilized year WITH the anchor it counts from, exactly as the Overview's
+  // Stabilization Year reads, plus the Sam #7 exception note when the
+  // reopening date could not anchor the default. Read off the one block the
+  // expense engine publishes; no block → no caption, never a guessed year.
+  const stabBlock = stabilizedYearBlock(getEngineField<unknown>(outputs, 'expense'));
+  const exitBasisStabilizedNote =
+    wExitNoiBasis === 'stabilized' && stabBlock
+      ? [
+          `Stabilized year: ${stabilizationAnchorCaption(stabBlock)}.`,
+          stabilizationAnchorFallbackNote(stabBlock),
+        ].filter(Boolean).join(' ')
+      : undefined;
   const wHoldYears = getEngineField<number>(outputs, 'returns', 'hold_years');
   // E-022 (FON-44) — Hold Period is the analyst's INPUT; the engine's
   // `returns.hold_years` is only its echo. When Returns fails or is skipped
@@ -826,7 +844,7 @@ export default function InvestmentTab() {
                 overridden: overridden('exit_noi_basis'),
                 note: wExitNoiBasis === 'override'
                   ? 'An Exit NOI override is in effect — it wins over either basis until it is cleared.'
-                  : undefined,
+                  : exitBasisStabilizedNote,
                 value: (
                   <ExitNoiBasisSelect
                     value={

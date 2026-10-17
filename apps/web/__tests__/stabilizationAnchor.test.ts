@@ -17,6 +17,9 @@ import {
   stabilizationYearLabel,
   fmtMonthYear,
   reopeningBeforeProjectionNote,
+  stabilizationAnchorCaption,
+  exitNoiLabel,
+  EXIT_NOI_LABEL,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
 
@@ -116,5 +119,53 @@ describe('stabilizationYearLabel / stabilizationSignalNote carry the anchor', ()
     expect(stabilizationSignalNote(reopening({ source: 'analyst_override' }))).toBe(
       'Analyst-selected. Default would be Year 3 after reopening (Mar 2027).',
     );
+  });
+});
+
+// 2026-10-17 — the caption every OTHER surface prints (Financing's stabilized
+// cards, Returns' Yield on Cost, CAPEX's Exit NOI basis row) is the Overview's
+// Stabilization Year text, so one run reads the same on every tab.
+describe('stabilizationAnchorCaption — the anchor caption shared by Financing, Returns and CAPEX', () => {
+  it('close anchor reads exactly as the Overview Stabilization Year row', () => {
+    expect(stabilizationAnchorCaption(close())).toBe('Year 3 after close (default)');
+  });
+
+  it('reopening anchor names the year, the rule and the date', () => {
+    expect(stabilizationAnchorCaption(reopening())).toBe('Year 6 — Year 3 after reopening (Mar 2027) (default)');
+  });
+
+  it('the reopening-before-projection fallback keeps the close caption; the exception is a separate note', () => {
+    const block = close({ reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' });
+    expect(stabilizationAnchorCaption(block)).toBe('Year 3 after close (default)');
+    expect(stabilizationAnchorFallbackNote(block)).toBe(
+      'Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+    );
+  });
+
+  it('an analyst override names the default it replaced', () => {
+    expect(stabilizationAnchorCaption(close({ source: 'analyst_override', stabilized_year: 4, stabilized_year_index: 3 })))
+      .toBe('Year 4 (your override) — default would be Year 3 after close');
+    expect(stabilizationAnchorCaption(reopening({ source: 'analyst_override', stabilized_year: 4, stabilized_year_index: 3 })))
+      .toBe('Year 4 (your override) — default would be Year 3 after reopening (Mar 2027)');
+  });
+
+  it('no block → null, never a guessed year', () => {
+    expect(stabilizationAnchorCaption(null)).toBeNull();
+  });
+});
+
+// (c) — the Exit NOI label is ONE spelling for the Overview's Exit row and
+// Returns' Exit Value tile / Exit Assumptions card.
+describe('exitNoiLabel — one Exit NOI spelling for Overview and Returns', () => {
+  it('names the run’s own basis + period when it carries one', () => {
+    expect(exitNoiLabel('Forward 12-month NOI (Year 6)')).toBe('Exit NOI (Forward 12-month NOI (Year 6))');
+    expect(exitNoiLabel('Stabilized NOI (Year 3, grown to Year 5)')).toBe('Exit NOI (Stabilized NOI (Year 3, grown to Year 5))');
+    expect(exitNoiLabel('Reconciliation override')).toBe('Exit NOI (Reconciliation override)');
+  });
+
+  it('a run that predates the label keeps the forward-12 wording it ran on', () => {
+    expect(exitNoiLabel(undefined)).toBe(EXIT_NOI_LABEL);
+    expect(exitNoiLabel('  ')).toBe(EXIT_NOI_LABEL);
+    expect(EXIT_NOI_LABEL).toBe('Exit NOI (forward 12-month, after FF&E reserve)');
   });
 });

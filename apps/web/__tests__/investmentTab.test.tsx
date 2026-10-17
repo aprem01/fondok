@@ -1010,6 +1010,57 @@ describe('InvestmentTab — Exit NOI basis (FON-44 / R-059)', () => {
     expect(screen.getByText(/Exit NOI override is in effect/)).toBeInTheDocument();
     expect(select().value).toBe('forward_12m');
   });
+
+  // FON-98 (2026-10-17) — with the Stabilized NOI basis in effect, the basis
+  // row names the stabilized year WITH its anchor (the Overview's Stabilization
+  // Year text) and the Sam #7 exception note when the fallback applies.
+  describe('stabilized basis names the stabilization anchor', () => {
+    type ExpenseRow = { outputs: Record<string, unknown> };
+    const originalExpense = engines.expense as unknown as ExpenseRow;
+    const withStabilization = (block: Record<string, unknown>) => {
+      (engines as Record<string, unknown>).expense = {
+        ...originalExpense,
+        outputs: { ...originalExpense.outputs, stabilization: block },
+      };
+    };
+    afterEach(() => { (engines as Record<string, unknown>).expense = originalExpense; });
+    const CLOSE = {
+      stabilized_year_index: 2, stabilized_year: 3, source: 'default_year_3', anchor: 'acquisition_close',
+      default_year: 3, clamped: false, reopening_date: null, anchor_fallback_reason: null,
+    };
+
+    it('close anchor → "Year 3 after close (default)"', () => {
+      withReturnsOutputs({ exit_noi_basis: 'stabilized', exit_noi_period_label: 'Stabilized NOI (Year 3, grown to Year 5)' });
+      withStabilization(CLOSE);
+      render(<InvestmentTab />);
+      expect(screen.getByText('Stabilized year: Year 3 after close (default).')).toBeInTheDocument();
+    });
+
+    it('reopening anchor → names the year, the rule and the date', () => {
+      withReturnsOutputs({ exit_noi_basis: 'stabilized', exit_noi_period_label: 'Stabilized NOI (Year 6, the exit year)' });
+      withStabilization({
+        ...CLOSE, stabilized_year_index: 5, stabilized_year: 6,
+        source: 'default_year_3_reopening', anchor: 'reopening', reopening_date: '2027-03-15',
+      });
+      render(<InvestmentTab />);
+      expect(screen.getByText('Stabilized year: Year 6 — Year 3 after reopening (Mar 2027) (default).')).toBeInTheDocument();
+    });
+
+    it('Sam #7 fallback → close caption plus the exception note', () => {
+      withReturnsOutputs({ exit_noi_basis: 'stabilized', exit_noi_period_label: 'Stabilized NOI (Year 3, grown to Year 5)' });
+      withStabilization({ ...CLOSE, reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' });
+      render(<InvestmentTab />);
+      expect(screen.getByText(
+        'Stabilized year: Year 3 after close (default). Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+      )).toBeInTheDocument();
+    });
+
+    it('forward-12 basis carries no stabilization caption', () => {
+      withStabilization(CLOSE);
+      render(<InvestmentTab />);
+      expect(screen.queryByText(/Stabilized year:/)).toBeNull();
+    });
+  });
 });
 
 // R-062 / R-069 — the tab is labelled CAPEX and debt lives on Financing; the
