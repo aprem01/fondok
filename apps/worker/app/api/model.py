@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fondok_schemas.reasons import ReasonCode
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -706,6 +706,302 @@ async def get_investment_bridge(
         session, deal_id=deal_id, tenant_id=str(tenant_id)
     )
     return InvestmentBridgeResponse(deal_id=deal_id, **build_investment_bridge(rows))
+
+
+# ─────────────── Regression baselines: list + compare runs ───────────────
+#
+# Sam (2026-10-16): preserve the Kimpton model outputs so expected changes can
+# be told apart from unintended calculation drift. ``engine_outputs`` is
+# append-only (one INSERT per engine per run; only deal deletion removes rows),
+# so every earlier run already IS a preserved baseline. These read-only routes
+# list those runs and diff the headline outputs of any two. Registered BEFORE
+# ``/{deal_id}/engines/{name}`` so "runs" / "compare" are not read as an
+# engine name.
+
+
+class EngineRunScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    is_base: bool
+
+
+class EngineRunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    engines: list[str]
+    status: Literal["complete", "partial", "failed", "running"]
+    # Has every base engine (the FON-73 canonical gate).
+    is_full_chain: bool
+    # Is the run the deal-wide canonical snapshot the tabs serve right now.
+    is_canonical: bool
+    # Set when a scenario's ``last_run_id`` points at this run. Only the
+    # scenario's latest run is recorded, so older scenario runs read as
+    # plain runs (documented in docs/REGRESSION_BASELINE.md).
+    scenario: EngineRunScenario | None = None
+
+
+class EngineRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    canonical_run_id: str | None = None
+    # When ``?before=`` was passed: the newest complete, full-chain,
+    # non-scenario run completed before that instant (the default baseline).
+    baseline_before: str | None = None
+    baseline_run_id: str | None = None
+    runs: list[EngineRunSummary]
+
+
+class RunCompareSide(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    engines: dict[str, str] = Field(
+        default_factory=dict, description="engine → status in this run"
+    )
+
+
+class RunCompareField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    engine: str
+    group: str
+    label: str
+    unit: str
+    status: Literal["changed", "added", "removed", "unchanged"]
+    base_value: float | int | str | None = None
+    head_value: float | int | str | None = None
+    delta_abs: float | None = None
+    delta_pct: float | None = None
+    delta_reason: str | None = None
+    base_provenance: dict[str, Any] | None = None
+    head_provenance: dict[str, Any] | None = None
+
+
+class RunCompareResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    base: RunCompareSide
+    head: RunCompareSide
+    include_unchanged: bool
+    fields_compared: int
+    fields_changed: int
+    tolerance: dict[str, float]
+    fields: list[RunCompareField]
+
+
+def _parse_before(value: str | None) -> datetime | None:
+    from ..services.run_compare import parse_ts
+
+    if value is None:
+        return None
+    dt = parse_ts(value)
+    if dt is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"before={value!r} is not an ISO-8601 timestamp",
+        )
+    return dt
+
+
+async def _deal_runs(
+    session: AsyncSession, *, deal_id: str, tenant_id: UUID
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    from ..services.engine_runner import (
+        CANONICAL_ENGINES,
+        _coerce_uuid,
+        get_canonical_run_id,
+    )
+    from ..services.run_compare import list_runs
+
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    deal_uuid = str(_coerce_uuid(deal_id))
+    canonical = await get_canonical_run_id(
+        session, deal_id=deal_id, tenant_id=str(tenant_id)
+    )
+    runs = await list_runs(
+        session,
+        deal_uuid=deal_uuid,
+        tenant_id=str(tenant_id),
+        canonical_engines=CANONICAL_ENGINES,
+        canonical_run_id=canonical,
+    )
+    return deal_uuid, canonical, runs
+
+
+@engines_router.get(
+    "/{deal_id}/engines/runs",
+    response_model=EngineRunListResponse,
+)
+async def list_engine_runs(
+    deal_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    before: str | None = None,
+) -> EngineRunListResponse:
+    """Every persisted run on the deal (newest first) — read-only."""
+    from ..services.run_compare import pick_baseline
+
+    before_dt = _parse_before(before)
+    _, canonical, runs = await _deal_runs(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    baseline = pick_baseline(runs, before_dt) if before_dt else None
+    return EngineRunListResponse(
+        deal_id=deal_id,
+        canonical_run_id=canonical,
+        baseline_before=before_dt.isoformat() if before_dt else None,
+        baseline_run_id=baseline["run_id"] if baseline else None,
+        runs=[EngineRunSummary(**r) for r in runs],
+    )
+
+
+async def _compare(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: UUID,
+    base: str,
+    head: str,
+    include_unchanged: bool,
+) -> dict[str, Any]:
+    from ..services.run_compare import (
+        ABS_TOL,
+        REL_TOL,
+        diff_fields,
+        extract_headline_fields,
+        load_run_engines,
+        outputs_only,
+    )
+
+    deal_uuid, canonical, runs = await _deal_runs(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    known = {r["run_id"] for r in runs}
+
+    def _resolve(ref: str, label: str) -> str:
+        if ref in ("latest", "canonical"):
+            if canonical:
+                return canonical
+            if runs:  # never completed a full chain — newest run instead
+                return runs[0]["run_id"]
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"deal {deal_id} has no engine runs",
+            )
+        if ref not in known:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"{label} run {ref} not found on deal {deal_id}",
+            )
+        return ref
+
+    base_id = _resolve(base, "base")
+    head_id = _resolve(head, "head")
+    base_rows = await load_run_engines(
+        session, deal_uuid=deal_uuid, tenant_id=str(tenant_id), run_id=base_id
+    )
+    head_rows = await load_run_engines(
+        session, deal_uuid=deal_uuid, tenant_id=str(tenant_id), run_id=head_id
+    )
+    base_fields = extract_headline_fields(outputs_only(base_rows))
+    head_fields = extract_headline_fields(outputs_only(head_rows))
+    rows = diff_fields(base_fields, head_fields, include_unchanged=include_unchanged)
+    compared = len({f["key"] for f in base_fields} | {f["key"] for f in head_fields})
+    changed = sum(1 for r in rows if r["status"] != "unchanged")
+
+    def _side(run_id: str, engines: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        meta = next((r for r in runs if r["run_id"] == run_id), {})
+        return {
+            "run_id": run_id,
+            "started_at": meta.get("started_at"),
+            "completed_at": meta.get("completed_at"),
+            "engines": {name: row["status"] for name, row in engines.items()},
+        }
+
+    return {
+        "deal_id": deal_id,
+        "base": _side(base_id, base_rows),
+        "head": _side(head_id, head_rows),
+        "include_unchanged": include_unchanged,
+        "fields_compared": compared,
+        "fields_changed": changed,
+        "tolerance": {"rel": REL_TOL, "abs": ABS_TOL},
+        "fields": rows,
+    }
+
+
+@engines_router.get(
+    "/{deal_id}/engines/compare",
+    response_model=RunCompareResponse,
+)
+async def compare_engine_runs(
+    deal_id: str,
+    base: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    head: str = "latest",
+    all: int = 0,  # noqa: A002 — the public query param is ``?all=1``
+) -> RunCompareResponse:
+    """Field-level diff of two runs' headline outputs — read-only.
+
+    ``head`` defaults to ``latest`` (the deal's canonical run). Unchanged
+    fields are omitted unless ``?all=1``.
+    """
+    result = await _compare(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        base=base,
+        head=head,
+        include_unchanged=bool(all),
+    )
+    return RunCompareResponse(**result)
+
+
+@engines_router.get("/{deal_id}/engines/compare/xlsx")
+async def export_engine_run_compare(
+    deal_id: str,
+    base: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    head: str = "latest",
+    all: int = 0,  # noqa: A002
+) -> Response:
+    """The same comparison as an .xlsx workbook (Summary + Changed fields)."""
+    from ..services.run_compare import build_compare_workbook
+
+    result = await _compare(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        base=base,
+        head=head,
+        include_unchanged=bool(all),
+    )
+    payload = build_compare_workbook(result)
+    fname = (
+        f"fondok-run-compare-{result['base']['run_id'][:8]}"
+        f"-vs-{result['head']['run_id'][:8]}.xlsx"
+    )
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @engines_router.get(

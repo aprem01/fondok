@@ -21,6 +21,7 @@ import {
 import { api, isWorkerConnected, WorkerError } from '@/lib/api';
 import type { AuditEntry, AuditSeverity, DealAuditResponse } from '@/lib/api';
 import { cn } from '@/lib/format';
+import RunComparePanel from './RunComparePanel';
 
 interface Props {
   dealId: string;
@@ -98,6 +99,9 @@ export default function ActivityFeed({ dealId }: Props) {
   }
 
   return (
+    <>
+    {/* Regression baselines (2026-10-16): baseline run vs. head run. */}
+    <RunComparePanel dealId={dealId} />
     <div className="flex gap-6">
       <div className="flex-1 min-w-0">
         {/* Filter chips */}
@@ -171,6 +175,7 @@ export default function ActivityFeed({ dealId }: Props) {
         />
       )}
     </div>
+    </>
   );
 }
 

@@ -1053,6 +1053,72 @@ export interface EngineRunStatusResponse {
   engines: EngineOutputResponse[];
 }
 
+// ── Regression baselines: run list + run compare (2026-10-16) ─────────
+export interface EngineRunSummary {
+  run_id: string;
+  started_at: string | null;
+  completed_at: string | null;
+  engines: string[];
+  status: 'complete' | 'partial' | 'failed' | 'running';
+  is_full_chain: boolean;
+  is_canonical: boolean;
+  scenario: { id: string; name: string; is_base: boolean } | null;
+}
+
+export interface EngineRunListResponse {
+  deal_id: string;
+  canonical_run_id: string | null;
+  baseline_before: string | null;
+  baseline_run_id: string | null;
+  runs: EngineRunSummary[];
+}
+
+export interface RunCompareProvenance {
+  state?: string | null;
+  source?: unknown;
+  formula?: string | null;
+  note?: string | null;
+  reason?: string | null;
+  assumption_key?: string | null;
+  inputs?: { name: string | null; value: unknown; source: unknown; assumption_key: string | null }[];
+}
+
+export type RunCompareUnit = 'usd' | 'pct' | 'x' | 'year' | 'text';
+
+export interface RunCompareField {
+  key: string;
+  engine: string;
+  group: string;
+  label: string;
+  unit: RunCompareUnit | string;
+  status: 'changed' | 'added' | 'removed' | 'unchanged';
+  base_value: number | string | null;
+  head_value: number | string | null;
+  delta_abs: number | null;
+  delta_pct: number | null;
+  delta_reason: string | null;
+  base_provenance: RunCompareProvenance | null;
+  head_provenance: RunCompareProvenance | null;
+}
+
+export interface RunCompareSide {
+  run_id: string;
+  started_at: string | null;
+  completed_at: string | null;
+  engines: Record<string, string>;
+}
+
+export interface RunCompareResponse {
+  deal_id: string;
+  base: RunCompareSide;
+  head: RunCompareSide;
+  include_unchanged: boolean;
+  fields_compared: number;
+  fields_changed: number;
+  tolerance: { rel: number; abs: number };
+  fields: RunCompareField[];
+}
+
 // ── Transaction timeline (FON-71) ───────────────────────────────────
 export interface TimelineEvent {
   event: string;
@@ -2332,6 +2398,48 @@ export const api = {
         undefined,
         { signal },
       ),
+    /** Every persisted run on the deal, newest first. With ``before`` the
+     *  response also names the default baseline: the newest complete,
+     *  full-chain, non-scenario run completed before that instant. */
+    runs: (dealId: string, before?: string, signal?: AbortSignal) =>
+      request<EngineRunListResponse>(
+        'GET',
+        `/deals/${dealId}/engines/runs${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+        undefined,
+        { signal },
+      ),
+    /** Field-level diff of two runs' headline outputs (read-only). ``head``
+     *  defaults to ``latest`` (the canonical run). */
+    compare: (
+      dealId: string,
+      base: string,
+      head = 'latest',
+      opts: { all?: boolean; signal?: AbortSignal } = {},
+    ) => {
+      const qs = new URLSearchParams({ base, head });
+      if (opts.all) qs.set('all', '1');
+      return request<RunCompareResponse>(
+        'GET',
+        `/deals/${dealId}/engines/compare?${qs.toString()}`,
+        undefined,
+        { signal: opts.signal },
+      );
+    },
+    /** The same comparison as an .xlsx workbook, saved by the browser. */
+    downloadCompareXlsx: async (
+      dealId: string,
+      base: string,
+      head: string,
+      filename: string,
+      all = false,
+    ): Promise<void> => {
+      const qs = new URLSearchParams({ base, head });
+      if (all) qs.set('all', '1');
+      const blob = await requestBlob(
+        `/deals/${dealId}/engines/compare/xlsx?${qs.toString()}`,
+      );
+      saveBlob(blob, filename);
+    },
     /** FON-68 step 3 — ephemeral Returns sandbox preview. Runs the chain in
      *  memory under slider overrides and returns IRR/EM/CoC/exit/DSCR (+ an
      *  optional sensitivity grid). NEVER persists to engine_outputs. */

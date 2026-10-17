@@ -67,6 +67,9 @@ const LINEAGE_KINDS: { label: string; id: string; desc: string }[] = [
  *      assumption → field → document → page walk that
  *      `GET /deals/{id}/lineage` serves, what each step is, when a link
  *      states a reason instead of closing, and what `stale` means.
+ *  10. Regression baselines (2026-10-16) — every engine run is kept, the
+ *      Activity tab's "Compare runs" panel diffs any two, and the repo pins
+ *      a Kimpton golden baseline (docs/REGRESSION_BASELINE.md).
  *
  * Loom walkthrough embed slot is reserved at the top — drops in
  * without a code change once the video lands.
@@ -1091,6 +1094,23 @@ export default function MethodologyPage() {
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What &ldquo;stale&rdquo; means</h4>
           <p className="text-[12.5px] text-ink-600 leading-relaxed">
             A chain describes one engine run, so it is only as current as that run&apos;s inputs. When a document is uploaded — or the deal record edited, or a document the run relied on deleted — <em>after</em> the run started, the chain is marked <strong className="text-ink-700">stale</strong>. Stale does not mean wrong and it does not hide the chain: the evidence shown is still exactly what produced the numbers you are looking at. It means the deal has moved since, and re-running the model will produce a different chain. It is the same condition Section 7&apos;s <code className="text-[11.5px]">stale_run</code> describes, surfaced on the evidence rather than on a single figure.
+          </p>
+        </Card>
+      </Section>
+
+      {/* ─── 10. Regression baselines ─────────────────────────────── */}
+      <Section
+        id="regression-baselines"
+        number="10"
+        title="Telling an intended change from a calculation drift"
+        intro="Every model run is kept, so the numbers a deal showed before a change can always be put next to the numbers it shows after — field by field, with the source of each side."
+      >
+        <Card className="p-5" data-testid="methodology-regression-baselines">
+          <p className="text-[12.5px] text-ink-600 leading-relaxed">
+            Each engine run writes a new row per engine and never overwrites an earlier one; only deleting the deal removes them. The <strong className="text-ink-700">Compare runs</strong> panel at the top of a deal&apos;s Activity tab picks a <strong className="text-ink-700">baseline</strong> — by default the newest complete run of the full engine chain that finished before a date you choose, skipping a run recorded as a scenario&apos;s latest run — and a <strong className="text-ink-700">head</strong> run (by default the run every tab is serving now). It lists each headline output that moved, grouped by engine: occupancy, ADR, RevPAR, revenue, departmental and undistributed expenses, management fee, FF&amp;E reserve, GOP and NOI before and after the reserve for each year; purchase price, total capitalization, equity and renovation; loan amount and DSCR by year; levered and unlevered IRR, equity multiple, exit value and exit NOI; the stabilization block; and LP and GP IRR. Each row shows both values, the absolute change and the percentage change, with the engine&apos;s recorded source and formula for each side. A percentage change on a zero baseline, or a field one run does not carry, shows a dash and says why. The same table exports to Excel. Comparing never re-runs or edits the model.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            The repository also keeps a fixed reference: the Kimpton golden fixture&apos;s full engine outputs as of 16 October 2026 (<code className="text-[11.5px]">evals/baselines/kimpton-golden-2026-10-16.json</code>). <code className="text-[11.5px]">scripts/compare_golden_baseline.py</code> re-runs that fixture on the current code and prints the same field-level diff, so every change to a calculation can be checked against what it was expected to move.
           </p>
         </Card>
       </Section>
