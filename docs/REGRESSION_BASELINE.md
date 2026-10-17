@@ -20,7 +20,7 @@ deal showed before a change are still in the database under that earlier
 | Route | What it returns |
 |---|---|
 | `GET /deals/{id}/engines/runs[?before=<ISO-8601>]` | Every run on the deal, newest first: `run_id`, `started_at`, `completed_at`, `engines`, `status` (`complete` / `partial` / `failed` / `running`), `is_full_chain` (has all 8 base engines), `is_canonical` (the run the tabs are serving now) and `scenario` (set when a scenario's `last_run_id` points at the run). With `before`, `baseline_run_id` names the newest complete, full-chain run that finished before that instant and is not a non-base scenario's latest run. |
-| `GET /deals/{id}/engines/compare?base=<run_id>&head=<run_id or latest>[&all=1]` | Field-level diff of the headline outputs. `head` defaults to `latest`, which is the canonical run. Each row has `base_value`, `head_value`, `delta_abs` (head − base), `delta_pct` ((head − base) / \|base\|), and `base_provenance` / `head_provenance` (the engine's recorded state, source, formula and inputs for that field, when it records one). When a delta cannot be computed it is `null` and `delta_reason` says why: a zero base, or a field one run does not carry. Unchanged fields are left out unless you pass `all=1`. Two values count as unchanged within rel 1e-9 / abs 1e-6. |
+| `GET /deals/{id}/engines/compare?base=<run_id>&head=<run_id or latest>[&all=1]` | Field-level diff of the headline outputs. `head` defaults to `latest`, which is the canonical run (the run every tab serves). A deal whose runs never completed the full 8-engine chain has no canonical run, and `latest` then returns 404 saying so rather than quietly comparing against the newest partial run; pass a run id from the runs list to compare a partial run. Each row has `base_value`, `head_value`, `delta_abs` (head − base), `delta_pct` ((head − base) / \|base\|), and `base_provenance` / `head_provenance` (the engine's recorded state, source, formula and inputs for that field, when it records one). When a delta cannot be computed it is `null` and `delta_reason` says why: a zero base, or a field one run does not carry. Unchanged fields are left out unless you pass `all=1`. Two values count as unchanged within rel 1e-9 / abs 1e-6. |
 | `GET /deals/{id}/engines/compare/xlsx?…` | The same comparison as an .xlsx workbook, with a Summary sheet and a "Changed fields" sheet. |
 
 The headline fields:
@@ -48,7 +48,10 @@ the endpoint and the repo script below use it.
    characters of its id, and tags such as `canonical`, `partial chain` or
    `scenario: <name>`.
 3. **Head run** defaults to **Latest (canonical)**, the run every tab shows
-   now. You can pick any other run instead.
+   now. You can pick any other run instead. On a deal that has never
+   completed a full chain there is no canonical run; the panel reports the
+   404 instead of comparing against a partial run, and you pick the head run
+   by hand.
 4. The table lists every headline field that moved, grouped by engine. Tick
    **Show unchanged** to see every field. **Export .xlsx** downloads the
    table.

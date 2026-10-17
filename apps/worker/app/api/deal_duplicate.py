@@ -15,8 +15,13 @@ table                       action  why
 deals                       COPY    every column; new id, name
                                     ``"<name> (copy YYYY-MM-DD)"``, fresh
                                     created_at / updated_at.
-                                    ``field_overrides`` (values AND notes) is
-                                    copied verbatim apart from document ids.
+                                    ``field_overrides`` (values AND notes) and
+                                    ``positioning_source_detail`` (the OM→STR
+                                    provenance) are copied verbatim apart
+                                    from document ids, which are re-pointed
+                                    at the copied documents so the copy's
+                                    "where did this tier come from" names a
+                                    document it owns.
 documents                   COPY    new document ids, SAME ``storage_key`` /
                                     ``content_hash`` (the bytes are never
                                     re-uploaded); doc type, user doc type,
@@ -53,8 +58,14 @@ Storage: raw-store keys embed the ORIGINAL deal id in their path
 key verbatim (``RawStore.get(storage_key)``), so the copied row simply keeps
 the original key — download, signed download and re-extract all read the
 same object. Deleting the copy never removes those objects: hard-deleting a
-deal touches no blobs, and the per-document delete skips the blob while any
-other ``documents`` row still references the key.
+deal touches no blobs, and the per-document delete skips the blob
+(``RawStore.delete``) while any other ``documents`` row still references the
+key.
+
+Duplicating is refused (409) while any document sits in a status owned by a
+running pipeline task — the pipeline's own ``DOC_PROCESSING_STATUSES`` from
+``api.documents``, resolved at call time so a stage added there is honoured
+here without a second edit.
 
 Every statement on tenant data carries a ``tenant_id`` predicate; the
 source deal must belong to the caller (404 otherwise).
@@ -87,9 +98,19 @@ from .deals import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-#: Document statuses owned by a running background task. Copying such a row
-#: would strand the copy mid-pipeline (no task drives it), so we refuse.
-_IN_FLIGHT_STATUSES = frozenset({"PARSING", "CLASSIFYING", "EXTRACTING"})
+def _in_flight_statuses() -> frozenset[str]:
+    """Document statuses owned by a running background task. Copying such a
+    row would strand the copy mid-pipeline (no task drives it), so we refuse.
+
+    This is the pipeline's own set, not a re-declaration: ``api.documents``
+    defines it and the watchdog / ``/extract`` / ``/reprocess`` guards read
+    it. Imported lazily (``documents`` imports ``deals``, as this module does;
+    the watchdog takes the same route) and read at call time.
+    """
+    from . import documents as _documents
+
+    return frozenset(_documents.DOC_PROCESSING_STATUSES)
+
 
 COPIED_COMMENT_PREFIX = "[Copied from "
 
@@ -253,10 +274,11 @@ async def duplicate_deal(
             )
         ).fetchall()
     ]
+    in_flight = _in_flight_statuses()
     busy = [
         d.get("filename")
         for d in docs
-        if str(d.get("status") or "").upper() in _IN_FLIGHT_STATUSES
+        if str(d.get("status") or "").upper() in in_flight
     ]
     if busy:
         raise HTTPException(
@@ -290,7 +312,11 @@ async def duplicate_deal(
         table="deals",
         columns=deal_cols,
         row=new_row,
-        remap_columns=frozenset({"field_overrides"}),
+        # Both are JSON text that may embed a document id of the SOURCE deal:
+        # ``field_overrides`` (``hist:<doc>::field`` layout keys) and
+        # ``positioning_source_detail`` (the OM that suggested the STR scale,
+        # written by documents.py). Re-point them at the copied documents.
+        remap_columns=frozenset({"field_overrides", "positioning_source_detail"}),
         id_map=doc_map,
     )
     copied["deals"] = 1

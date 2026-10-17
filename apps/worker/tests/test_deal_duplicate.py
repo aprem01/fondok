@@ -8,11 +8,18 @@ Pins:
   comments (marked copied), documents (new ids, SAME storage key / content
   hash) and each document's LATEST extraction_results row (analyst reviews
   included) are copied;
+* the OM→STR positioning provenance (``positioning_source_detail``) on the
+  copy names the COPIED document, never a document id the copy does not own;
+* the "still processing" refusal gates on the pipeline's own status set
+  (``documents.DOC_PROCESSING_STATUSES``), so a new stage cannot drift past it;
 * engine_outputs and audit history are not;
 * the original is byte-for-byte untouched;
 * another tenant gets 404;
 * deleting the copy (one document, then the whole deal) leaves the
-  original's documents downloadable and never deletes a shared object.
+  original's documents downloadable and never deletes a shared object —
+  proven against the REAL ``LocalRawStore`` file through the real
+  ``app.storage.get_store`` symbol — and the object IS removed once the last
+  row referencing it goes.
 """
 
 from __future__ import annotations
@@ -194,12 +201,33 @@ async def seeded() -> dict[str, str]:
                     "ts": created,
                 },
             )
+        # OM→STR positioning suggestion, as documents.py records it: the
+        # detail JSON names the OM document that carried the brand.
+        positioning_detail = {
+            "document_id": doc_id,
+            "document_filename": FILENAME,
+            "page": 3,
+            "doc_type": "OM",
+            "om_brand": "Kimpton",
+            "catalog_brand": "Kimpton Hotels & Restaurants",
+            "catalog_family": "IHG",
+            "str_scale": "Upper Upscale",
+            "match": "exact",
+        }
         await s.execute(
             text(
-                "UPDATE deals SET field_overrides = :fo, state = 'READY' "
+                "UPDATE deals SET field_overrides = :fo, state = 'READY', "
+                "positioning = 'Upper Upscale', "
+                "positioning_source = 'om_brand_str_scale', "
+                "positioning_source_detail = :psd "
                 "WHERE id = :id AND tenant_id = :tenant"
             ),
-            {"fo": json.dumps(overrides), "id": deal_id, "tenant": tenant},
+            {
+                "fo": json.dumps(overrides),
+                "psd": json.dumps(positioning_detail),
+                "id": deal_id,
+                "tenant": tenant,
+            },
         )
         run_id = str(uuid4())
         await s.execute(
@@ -290,12 +318,31 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
     (copy_deal,) = copy["deals"]
     new_doc = copy["documents"][0]["id"]
     for col, val in orig_deal.items():
-        if col in ("id", "name", "created_at", "updated_at", "field_overrides"):
+        if col in (
+            "id", "name", "created_at", "updated_at", "field_overrides",
+            "positioning_source_detail",
+        ):
             continue
         assert copy_deal[col] == val, col
     fo = json.loads(copy_deal["field_overrides"])
     assert fo["revenue.adr_growth"] == {"value": 0.035, "note": "Per CBRE forecast"}
     assert fo["worksheet_layout"] == {"rows": [f"hist:{new_doc}::rooms_revenue"]}
+
+    # OM→STR positioning provenance: the copy's "where did this tier come
+    # from" names the COPIED OM, never a document id the copy does not own;
+    # every other key of the detail is verbatim.
+    assert copy_deal["positioning"] == "Upper Upscale"
+    assert copy_deal["positioning_source"] == "om_brand_str_scale"
+    src_detail = json.loads(orig_deal["positioning_source_detail"])
+    copy_detail = json.loads(copy_deal["positioning_source_detail"])
+    assert src_detail["document_id"] == doc_id
+    assert copy_detail["document_id"] == new_doc
+    assert {k: v for k, v in copy_detail.items() if k != "document_id"} == {
+        k: v for k, v in src_detail.items() if k != "document_id"
+    }
+    psd = body["deal"]["positioning_source_detail"]
+    assert psd["document_id"] == new_doc
+    assert psd["document_filename"] == FILENAME and psd["page"] == 3
 
     # documents — new id, SAME stored object, metadata preserved.
     (od,) = before["documents"]
@@ -408,21 +455,81 @@ async def test_duplicate_refuses_while_a_document_is_processing(
     assert "still being processed" in r.json()["detail"]
 
 
+def test_in_flight_statuses_are_the_pipelines_own() -> None:
+    """The 409 guard gates on the SAME set the pipeline and the watchdog use,
+    so a stage added to ``DOC_PROCESSING_STATUSES`` can never slip past it."""
+    from app.api import deal_duplicate, documents
+
+    assert deal_duplicate._in_flight_statuses() == documents.DOC_PROCESSING_STATUSES
+    assert {"PARSING", "CLASSIFYING", "EXTRACTING"} <= deal_duplicate._in_flight_statuses()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_refuses_on_a_stage_added_to_the_pipeline(
+    seeded: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drift test: a stage registered on the pipeline's status set is honoured
+    by the duplicate guard with no second edit."""
+    from sqlalchemy import text
+
+    from app.api import documents
+    from app.database import get_session_factory
+
+    monkeypatch.setattr(
+        documents,
+        "DOC_PROCESSING_STATUSES",
+        documents.DOC_PROCESSING_STATUSES | {"VERIFYING"},
+    )
+    async with get_session_factory()() as s:
+        await s.execute(
+            text(
+                "UPDATE documents SET status = 'VERIFYING' "
+                "WHERE id = :id AND tenant_id = :t"
+            ),
+            {"id": seeded["doc_id"], "t": seeded["tenant"]},
+        )
+        await s.commit()
+    async with await _client() as c:
+        r = await c.post(
+            f"/deals/{seeded['deal_id']}/duplicate",
+            headers={"X-Tenant-Id": seeded["tenant"]},
+        )
+    assert r.status_code == 409
+    assert "still being processed" in r.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_deleting_the_copy_keeps_the_original_downloadable(
     seeded: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import app.storage as storage_pkg
+    from app.storage import LocalRawStore
+    from app.storage.raw_store import _file_uri_to_path
 
+    # The per-document delete resolves ``app.storage.get_store`` lazily and
+    # runs ``store.delete(key)`` in a thread. Spy on the REAL symbol (default
+    # ``raising=True`` — a missing export fails here, not silently in prod)
+    # and let the real LocalRawStore do the work so the file on disk is the
+    # evidence.
+    real_get_store = storage_pkg.get_store
     deleted: list[str] = []
 
-    class _RecordingStore:
-        def delete(self, key: str) -> None:
-            deleted.append(key)
+    def _spying_get_store(settings=None):
+        store = real_get_store(settings)
+        assert isinstance(store, LocalRawStore)
+        real_delete = store.delete
 
-    # The per-document delete resolves ``app.storage.get_store`` lazily;
-    # record what it would remove.
-    monkeypatch.setattr(storage_pkg, "get_store", lambda: _RecordingStore(), raising=False)
+        def _delete(key: str) -> bool:
+            deleted.append(key)
+            return real_delete(key)
+
+        monkeypatch.setattr(store, "delete", _delete)
+        return store
+
+    monkeypatch.setattr(storage_pkg, "get_store", _spying_get_store)
+
+    blob = _file_uri_to_path(seeded["storage_key"])
+    assert blob.exists()
 
     tenant, src, doc_id = seeded["tenant"], seeded["deal_id"], seeded["doc_id"]
     h = {"X-Tenant-Id": tenant}
@@ -436,27 +543,28 @@ async def test_deleting_the_copy_keeps_the_original_downloadable(
         d = await c.delete(f"/deals/{new}/documents/{new_doc}", headers=h)
         assert d.status_code == 204, d.text
         assert deleted == [], "a shared raw object was scheduled for deletion"
+        assert blob.exists(), "a shared raw object was removed from disk"
 
         # Hard-delete the whole copy.
         d = await c.delete(f"/deals/{new}/hard", headers=h)
         assert d.status_code == 204, d.text
         assert (await c.get(f"/deals/{new}", headers=h)).status_code == 404
+        assert blob.exists()
 
         dl = await c.get(f"/deals/{src}/documents/{doc_id}/download", headers=h)
         assert dl.status_code == 200, dl.text
         assert dl.content == PDF_BYTES
         assert (await c.post(f"/deals/{src}/duplicate", headers={"X-Tenant-Id": str(uuid4())})).status_code == 404
 
-    from app.storage.raw_store import _file_uri_to_path
-
-    assert _file_uri_to_path(seeded["storage_key"]).exists()
+    assert blob.exists()
 
     # Once nothing else references the key, deleting the original document
-    # still schedules the object for removal (the guard is not a blanket skip).
+    # really removes the object (the guard is not a blanket skip).
     async with await _client() as c:
         d = await c.delete(f"/deals/{src}/documents/{doc_id}", headers=h)
         assert d.status_code == 204, d.text
     assert deleted == [seeded["storage_key"]]
+    assert not blob.exists(), "the last reference went but the object stayed"
 
 
 def test_duplicate_route_is_tenant_guarded() -> None:

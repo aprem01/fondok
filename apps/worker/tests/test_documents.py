@@ -429,6 +429,83 @@ async def test_local_raw_store(tmp_path: Path) -> None:
     assert got == body
 
 
+@pytest.mark.asyncio
+async def test_local_raw_store_delete(tmp_path: Path) -> None:
+    """``delete`` is synchronous by contract (``documents.delete_document``
+    runs it via ``asyncio.to_thread``): it unlinks the object, is idempotent,
+    and refuses any key outside the store's root."""
+    from app.storage import LocalRawStore, StorageError
+    from app.storage.raw_store import _file_uri_to_path
+
+    store = LocalRawStore(tmp_path / "raw")
+    key = await store.put(
+        tenant_id="t1",
+        deal_id="d1",
+        content_hash="abc123",
+        filename="Miami Beach OM.pdf",  # percent-encoded in the key
+        bytes_=b"pdf",
+    )
+    path = _file_uri_to_path(key)
+    assert path.exists()
+    assert store.delete(key) is True
+    assert not path.exists()
+    assert not await store.exists(key)
+    assert store.delete(key) is False  # already gone: no error
+
+    # A key that resolves outside the root is never unlinked.
+    outside = tmp_path / "elsewhere.bin"
+    outside.write_bytes(b"keep me")
+    with pytest.raises(StorageError):
+        store.delete(outside.resolve().as_uri())
+    assert outside.exists()
+    with pytest.raises(StorageError):
+        store.delete("s3://some-bucket/fondok/raw/x")
+
+
+def test_s3_raw_store_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S3 ``delete`` issues one ``delete_object`` on the store's own bucket
+    and refuses a key that names another bucket."""
+    from app.storage import S3RawStore, StorageError
+
+    calls: list[dict] = []
+
+    class _FakeS3Client:
+        def delete_object(self, Bucket, Key):  # noqa: N803 — boto3 signature
+            calls.append({"Bucket": Bucket, "Key": Key})
+            return {"ResponseMetadata": {"HTTPStatusCode": 204}}
+
+    store = S3RawStore(bucket="fondok-raw-test", region="us-east-1")
+    monkeypatch.setattr(store, "_client", lambda: _FakeS3Client())
+
+    key = "s3://fondok-raw-test/fondok/raw/t1/d1/abc-thing.pdf"
+    assert store.delete(key) is True
+    assert calls == [{"Bucket": "fondok-raw-test", "Key": "fondok/raw/t1/d1/abc-thing.pdf"}]
+
+    with pytest.raises(StorageError):
+        store.delete("s3://someone-elses-bucket/fondok/raw/t1/d1/abc-thing.pdf")
+    with pytest.raises(StorageError):
+        store.delete("file:///tmp/not-s3.pdf")
+    assert len(calls) == 1
+
+
+def test_storage_exports_get_store_for_the_document_delete_path() -> None:
+    """``documents.delete_document`` resolves ``app.storage.get_store`` by
+    name; the package must export it and it must hand back the same
+    singleton ``get_raw_store`` does."""
+    import app.storage as storage_pkg
+    from app.storage import RawStore, get_raw_store, get_store, reset_raw_store_cache
+
+    assert "get_store" in storage_pkg.__all__
+    reset_raw_store_cache()
+    try:
+        store = get_store()
+        assert isinstance(store, RawStore)
+        assert store is get_raw_store()
+        assert callable(getattr(store, "delete", None))
+    finally:
+        reset_raw_store_cache()
+
+
 # ─────────────────────────── upload ───────────────────────────
 
 

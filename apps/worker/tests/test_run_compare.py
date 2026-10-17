@@ -313,6 +313,70 @@ async def test_run_ids_of_another_tenant_never_resolve() -> None:
 
 
 @pytest.mark.asyncio
+async def test_latest_head_is_404_when_the_deal_has_no_canonical_run() -> None:
+    """``head=latest`` means the canonical run — the one the tabs serve and
+    the one the panel labels "Latest (canonical)". A deal that has never
+    completed a full 8-engine chain has no such run, so ``latest`` must say
+    so (404 naming the gap) instead of silently diffing against the newest
+    partial run. An explicit run id still compares."""
+    from app.database import get_session_factory
+
+    deal, tenant = str(uuid4()), str(uuid4())
+    partial_old, partial_new = str(uuid4()), str(uuid4())
+    async with get_session_factory()() as session:
+        await _seed_deal(session, deal_id=deal, tenant_id=tenant)
+        # Two single-engine runs: neither is a full chain → no canonical run.
+        await _insert_row(session, deal_id=deal, tenant_id=tenant, run_id=partial_old,
+                          engine="returns", outputs={"levered_irr": 0.20},
+                          started="2026-10-15T20:00:00+00:00",
+                          completed="2026-10-15T20:00:05+00:00")
+        await _insert_row(session, deal_id=deal, tenant_id=tenant, run_id=partial_new,
+                          engine="returns", outputs={"levered_irr": 0.25},
+                          started="2026-10-16T20:00:00+00:00",
+                          completed="2026-10-16T20:00:05+00:00")
+        await session.commit()
+
+    async with _client() as c:
+        h = {"X-Tenant-Id": tenant}
+        runs = (await c.get(f"/deals/{deal}/engines/runs", headers=h)).json()
+        assert runs["canonical_run_id"] is None
+        assert [x["run_id"] for x in runs["runs"]] == [partial_new, partial_old]
+        assert not any(x["is_full_chain"] for x in runs["runs"])
+
+        for head in ("latest", "canonical"):
+            for path in ("compare", "compare/xlsx"):
+                r = await c.get(f"/deals/{deal}/engines/{path}",
+                                params={"base": partial_old, "head": head},
+                                headers=h)
+                assert r.status_code == 404, (head, path, r.status_code, r.text)
+                detail = r.json()["detail"]
+                assert "canonical" in detail and partial_new not in detail
+        # ``base=latest`` is held to the same rule.
+        r = await c.get(f"/deals/{deal}/engines/compare",
+                        params={"base": "latest", "head": partial_new}, headers=h)
+        assert r.status_code == 404
+
+        # Naming the partial run explicitly still works.
+        r = await c.get(f"/deals/{deal}/engines/compare",
+                        params={"base": partial_old, "head": partial_new}, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["head"]["run_id"] == partial_new
+        irr = {f["key"]: f for f in body["fields"]}["returns.levered_irr"]
+        assert irr["base_value"] == pytest.approx(0.20)
+        assert irr["head_value"] == pytest.approx(0.25)
+
+        # No runs at all: the pre-existing 404 still says so.
+        empty = str(uuid4())
+        async with get_session_factory()() as session:
+            await _seed_deal(session, deal_id=empty, tenant_id=tenant)
+        r = await c.get(f"/deals/{empty}/engines/compare",
+                        params={"base": "latest", "head": "latest"}, headers=h)
+        assert r.status_code == 404
+        assert "no engine runs" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_before_picks_newest_full_chain_base_run_and_skips_scenarios() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import CANONICAL_ENGINES
