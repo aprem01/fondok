@@ -146,6 +146,7 @@ real user, and asserts the figures are there. Files:
 | `prod/guard.ts`                | The opt-in rule and the required-secret list, defined once |
 | `prod/global-setup.ts`         | Validates secrets, then mints the Clerk Testing Token     |
 | `prod/01-live-deal-smoke.spec.ts` | The smoke itself                                       |
+| `prod/02-two-firm-isolation.spec.ts` | Firm B cannot see firm A's deal (needs the firm-B secrets; skips otherwise) |
 | `prod/guard-check.mjs`         | The test **for** the guard                                |
 
 Driven by `.github/workflows/post-deploy-smoke.yml`.
@@ -260,6 +261,33 @@ FONDOK_E2E_PROD=1 PLAYWRIGHT_BASE_URL=https://fondok-app.vercel.app \
 `test:e2e:prod` passes `--project=prod`, so the `mock` specs are not dragged
 along against production — several of them assert mock-mode behaviour and
 would be meaningless there.
+
+### The two-firm isolation spec (`prod/02-two-firm-isolation.spec.ts`)
+
+FON-93 Phase 3. `01` proves firm A can read its own deal; `02` proves the
+other half of the tenancy contract from the user's seat: signed in as a
+member of a **different** Clerk organization (firm B), firm A's deal URL
+renders the app's not-found state (`data-testid="deal-load-error"`, heading
+"Could not load this deal" — the worker answers `404` for every deal-scoped
+route on a foreign tenant) and firm B's project list shares no deal id and no
+deal name with firm A's. Two browser contexts, one session each, every
+navigation a GET. It is the browser-level twin of
+`apps/worker/scripts/isolation_check.py`, which asserts the same contract
+route-by-route over HTTP.
+
+It is **additive to the smoke's opt-in**: on top of the five secrets above it
+needs three more, and without them it skips itself naming the missing ones so
+the live-deal smoke keeps running where firm B is not provisioned yet
+(`global-setup.ts` prints a warning — a green job did not check isolation).
+
+| Secret                    | What it is                                                                   |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `FONDOK_SMOKE_B_EMAIL`    | A second dedicated Clerk test user (`+clerk_test`), member of a DIFFERENT org from the smoke user |
+| `FONDOK_SMOKE_B_PASSWORD` | That user's password                                                         |
+| `FONDOK_SMOKE_B_ORG`      | Firm B's Clerk org id (`org_…`) or slug — made active before any navigation; the spec refuses to run as any other org |
+
+Optional `FONDOK_SMOKE_ORG` pins firm A's org the same way. Give firm B a deal
+or two of its own so its list is not trivially empty.
 
 ### Known weakness, worth fixing
 

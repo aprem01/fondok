@@ -3516,19 +3516,11 @@ async def backfill_embeddings(
     from ..extraction import embeddings
     from ..extraction.context_store import _table_exists, _to_vector_literal
 
-    if not await _table_exists(session):
-        return BackfillEmbeddingsResponse(
-            deal_id=deal_id,
-            skipped_reason="document_chunks table not present (SQLite or pgvector unavailable)",
-        )
-
-    if not embeddings.is_enabled():
-        return BackfillEmbeddingsResponse(
-            deal_id=deal_id,
-            skipped_reason="VOYAGE_API_KEY not set on the worker",
-        )
-
-    # Verify deal exists + tenant authorization.
+    # Verify deal exists + tenant authorization FIRST. Until 2026-10-17 the
+    # two "skipped" early returns below ran before this check, so on a
+    # worker without the chunk table or without VOYAGE_API_KEY another
+    # tenant's deal id was answered 200 (an empty envelope) instead of 404
+    # — found by scripts/isolation_check.py.
     row = (
         await session.execute(
             text(
@@ -3542,6 +3534,18 @@ async def backfill_embeddings(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"deal {deal_id} not found",
+        )
+
+    if not await _table_exists(session):
+        return BackfillEmbeddingsResponse(
+            deal_id=deal_id,
+            skipped_reason="document_chunks table not present (SQLite or pgvector unavailable)",
+        )
+
+    if not embeddings.is_enabled():
+        return BackfillEmbeddingsResponse(
+            deal_id=deal_id,
+            skipped_reason="VOYAGE_API_KEY not set on the worker",
         )
 
     # Total + missing counts (for the response).

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid5
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +64,23 @@ async def _load_payload(
     :func:`_real_documents_reviewed`).
     """
     if _is_real_uuid(deal_id):
+        # FON-93 — the deal must be on the caller's tenant. ``load_live_payload``
+        # never raises for missing data: every query it runs is tenant-scoped,
+        # so for a foreign (or unknown) deal id it assembled an EMPTY payload
+        # and the route served a blank workbook / PDF / deck with a 200 — no
+        # data crossed, but a stranger got a file where every other deal
+        # route answers 404 (found by scripts/isolation_check.py, 2026-10-17).
+        owned = (
+            await session.execute(
+                text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+                {"id": deal_id, "tenant": str(tenant_id)},
+            )
+        ).first()
+        if owned is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"deal {deal_id} not found",
+            )
         return await load_live_payload(session, deal_id, str(tenant_id))
     deal, model, memo = load_demo_payload(deal_id)
     real_docs = await _real_documents_reviewed(
