@@ -1161,12 +1161,25 @@ class IndexFigureOut(BaseModel):
     inputs: list[FieldRefOut] = Field(default_factory=list)
     detail: str | None = None
     period_label: str | None = None
+    #: Sam #6 (2026-10-15) — actual history vs projected benchmark, labelled:
+    #: ``actual`` / ``forecast`` / ``assumption`` and the one-line label
+    #: ("Actual · STR TTM May 2025 · <doc>", "Forecast · CBRE Horizons 2027 ·
+    #: <doc> p.4", "Assumption · grown at market growth"). None = not a
+    #: benchmark figure (an assumption value, a target) or no value.
+    basis: Literal["actual", "forecast", "assumption"] | None = None
+    basis_label: str | None = None
+    #: The reporting period end of an actual (STR TTM window end, ISO).
+    period_end: str | None = None
+    #: The report / publication date of a forecast's document (CBRE Horizons).
+    report_date: str | None = None
 
     @classmethod
     def of(cls, f: Any) -> IndexFigureOut:
         return cls(
             value=f.value, source=f.source, inputs=[FieldRefOut.of(r) for r in f.inputs],
             detail=f.detail, period_label=f.period_label,
+            basis=getattr(f, "basis", None), basis_label=getattr(f, "basis_label", None),
+            period_end=getattr(f, "period_end", None), report_date=getattr(f, "report_date", None),
         )
 
 
@@ -1256,6 +1269,12 @@ class IndexMethodologyResponse(BaseModel):
     subject_occupancy: IndexFigureOut
     subject_adr: IndexFigureOut
     subject_period_label: str | None = None
+    #: Sam #6 — the STR TTM reporting period end (ISO ``YYYY-MM`` or finer;
+    #: a bare year when only the report year is known) and the CBRE Horizons
+    #: report date, so the Year-1 actual and the Year-2+ forecast are labelled
+    #: with their source and period. None = the documents do not state them.
+    subject_period_end: str | None = None
+    cbre_report_date: str | None = None
     assumptions: dict[str, IndexFigureOut]
     #: "Use STR rates in the model" — the assumptions feed revenue only when on.
     toggle_on: bool
@@ -1347,6 +1366,8 @@ def index_methodology_response(
         subject_occupancy=IndexFigureOut.of(reading.subject_occupancy),
         subject_adr=IndexFigureOut.of(reading.subject_adr),
         subject_period_label=reading.subject_period_label,
+        subject_period_end=getattr(reading, "subject_period_end", None),
+        cbre_report_date=getattr(reading, "cbre_report_date", None),
         assumptions={k: IndexFigureOut.of(v) for k, v in reading.assumptions.items()},
         toggle_on=reading.toggle_on,
         by_year=rows_out,

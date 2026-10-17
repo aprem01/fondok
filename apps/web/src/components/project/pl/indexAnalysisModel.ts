@@ -60,6 +60,11 @@ export interface StrTrendAPI {
   rgi_revpar_index?: number | null;
   report_month?: string | null;
   report_year?: number | null;
+  /** Sam #6 — the subject TTM's reporting period end (ISO) for the extraction
+   *  that supplied it, how it was resolved, and that document. */
+  ttm_period_end?: string | null;
+  ttm_period_end_basis?: string | null;
+  ttm_doc_name?: string | null;
   doc_name?: string | null;
   comp_set_size?: number | null;
   total_keys?: number | null;
@@ -228,6 +233,11 @@ export interface YearSeries {
   revpar: (number | null)[]; // dollars
 }
 
+/** Sam #6 (2026-10-15) — what kind of number a benchmark cell is: a reported
+ *  actual, a CBRE forecast, or an assumption (a reported level grown at the
+ *  market growth assumption). Shown as a worded chip, never colour alone. */
+export type BenchmarkBasis = 'actual' | 'forecast' | 'assumption';
+
 /** Where one column's figures came from — the short label goes in the
  *  Source row, the detail on hover. */
 export interface CellSource {
@@ -236,6 +246,71 @@ export interface CellSource {
   detail: string;
   /** Engine rows only — ``revenue.years[yearIndex]``. */
   yearIndex?: number;
+  /** Sam #6 — the basis chip and its one-line label ("Actual · STR TTM May
+   *  2025 · <doc>", "Forecast · CBRE Horizons 2027 · <doc> p.4", "Assumption
+   *  · grown at market growth"). Absent on the subject's model projection,
+   *  which is the underwriting, not a benchmark. */
+  basis?: BenchmarkBasis;
+  basisLabel?: string;
+}
+
+// ─────────────────────────── basis labels (Sam #6) ───────────────────────────
+// Mirrors apps/worker/app/services/index_methodology.py actual_label /
+// forecast_label / ASSUMPTION_GROWN_LABEL so the by-year grid (worker labels)
+// and the tables (built here from market-data) read the same.
+
+export const BASIS_CHIP_TEXT: Record<BenchmarkBasis, string> = {
+  actual: 'Actual',
+  forecast: 'Forecast',
+  assumption: 'Assumption',
+};
+
+export const ASSUMPTION_GROWN_BASIS_LABEL = 'Assumption · grown at market growth';
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "2025-05" / "2025-05-31" → "May 2025"; "2025" → "2025"; else null. */
+export function periodEndText(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^((?:19|20)\d{2})(?:-(\d{2}))?/.exec(String(iso).trim());
+  if (!m) return null;
+  if (m[2]) {
+    const month = MONTHS_SHORT[Number(m[2]) - 1];
+    if (month) return `${month} ${m[1]}`;
+  }
+  return m[1];
+}
+
+/** "Actual · STR TTM May 2025 · <doc>" — period / doc omitted when unknown. */
+export function actualBasisLabel(source: string, period: string | null | undefined, doc: string | null | undefined): string {
+  const head = `Actual · ${source}${period ? ` ${period}` : ''}`;
+  return doc ? `${head} · ${doc}` : head;
+}
+
+/** "Forecast · CBRE Horizons 2027 · <doc> p.4". */
+export function cbreForecastBasisLabel(calendarYear: number, doc: string | null | undefined, page: number | null | undefined): string {
+  const head = `Forecast · CBRE Horizons ${calendarYear}`;
+  return doc ? `${head} · ${doc}${page ? ` p.${page}` : ''}` : head;
+}
+
+/** The STR TTM period end the market-data envelope names: the worker's
+ *  resolved ``ttm_period_end``, else the legacy ``report_month``. */
+export function strTtmPeriodEnd(str: StrTrendAPI | null | undefined): string | null {
+  return str?.ttm_period_end ?? str?.report_month ?? null;
+}
+
+/** "Actual · STR TTM May 2025 · <doc>" for the STR comp-set anchor. */
+export function strTtmBasisLabel(str: StrTrendAPI | null | undefined): string {
+  const end = periodEndText(strTtmPeriodEnd(str)) ?? (str?.report_year ? String(str.report_year) : null);
+  return actualBasisLabel('STR TTM', end, str?.ttm_doc_name ?? str?.doc_name ?? null);
+}
+
+/** The worker's basis for one by-year figure, or null (no value / older worker). */
+export function figureBasis(
+  f: IndexFigure | null | undefined,
+): { basis: BenchmarkBasis; label: string } | null {
+  if (!f || f.value == null || !f.basis) return null;
+  return { basis: f.basis, label: f.basis_label ?? BASIS_CHIP_TEXT[f.basis] };
 }
 
 export function emptySeries(n: number): YearSeries {
@@ -357,6 +432,8 @@ export function buildSubjectSeries(
           kind: 'str_annual',
           label: 'STR annual',
           detail: `STR Trend annual ${col.calendarYear} subject figures (ttm_performance.subject.annual.${col.calendarYear})${docRef(str?.doc_name, a?.page)}`,
+          basis: 'actual',
+          basisLabel: actualBasisLabel('STR annual', String(col.calendarYear), str?.doc_name ?? null),
         };
         return;
       }
@@ -375,6 +452,8 @@ export function buildSubjectSeries(
         kind: 'pnl_fiscal_year',
         label: 'P&L FY',
         detail: `Fiscal-year ${col.calendarYear} P&L actual (multi-year historical baseline)`,
+        basis: 'actual',
+        basisLabel: actualBasisLabel('P&L FY', String(col.calendarYear), null),
       };
       return;
     }
@@ -491,7 +570,9 @@ export function buildCompSeries(
       sources[anchorIndex] = {
         kind: 'str_ttm',
         label: 'STR TTM',
-        detail: `STR comp set = subject TTM ÷ penetration index (MPI / ARI / RGI), ${strPeriodLabel(str) ?? 'trailing twelve months'}${docRef(str.doc_name)}`,
+        detail: `STR comp set = subject TTM ÷ penetration index (MPI / ARI / RGI), ${strPeriodLabel(str) ?? 'trailing twelve months'}${docRef(str.ttm_doc_name ?? str.doc_name)}`,
+        basis: 'actual',
+        basisLabel: strTtmBasisLabel(str),
       };
     }
   }
@@ -517,7 +598,13 @@ export function buildCompSeries(
       r?.occupancy?.detail ? `Occupancy: ${r.occupancy.detail}${figureDocs(r.occupancy)}` : null,
       r?.adr?.detail ? `ADR: ${r.adr.detail}${figureDocs(r.adr)}` : null,
     ].filter(Boolean);
+    // The worker labels each year; an older worker sends no basis, then the
+    // ordinal says it (Year 1 = the TTM level itself, later years = grown).
+    const wb = figureBasis(r?.occupancy) ?? figureBasis(r?.adr);
+    const basis: BenchmarkBasis = wb?.basis ?? (col.ordinal === 1 ? 'actual' : 'assumption');
     sources[i] = {
+      basis,
+      basisLabel: wb?.label ?? (basis === 'actual' ? strTtmBasisLabel(str) : ASSUMPTION_GROWN_BASIS_LABEL),
       kind: 'comp_grown',
       label: col.ordinal === 1 ? 'STR TTM (Y1)' : 'Grown (assumption)',
       detail: `STR comp set ${col.ordinal === 1 ? 'TTM level as the Year-1 benchmark' : 'grown at the market growth assumption'} — the same series the STR comp-set index method runs on. ${parts.join(' · ')}`,
@@ -537,6 +624,9 @@ export function buildCompSeries(
 export function strPeriodLabel(str: StrTrendAPI | null | undefined): string | null {
   if (!str) return null;
   if (str.report_month) return `TTM to ${str.report_month}`;
+  // Sam #6 — the worker's resolved TTM period end (month precision or finer).
+  const end = str.ttm_period_end && str.ttm_period_end.length >= 7 ? periodEndText(str.ttm_period_end) : null;
+  if (end) return `TTM to ${end}`;
   if (str.report_year) return `STR ${str.report_year} TTM`;
   return null;
 }
@@ -597,11 +687,16 @@ export function buildMarketSeries(cols: IaColumns, market: MarketDataAPIResponse
     }
     if (touched && sources[i] == null) sources[i] = source;
   };
-  const marketSource = (p: MarketHistoryPointAPI, when: string): CellSource => ({
-    kind: 'market_actual',
-    label: p.doc_type === 'MARKET_STUDY' ? 'Market study' : p.doc_type === 'PNL_BENCHMARK' ? 'Benchmark' : 'STR market',
-    detail: `${segment ? `${segment.replace(/_/g, ' ')} segment` : 'Market-wide'} actual, ${when} (${(p.fields ?? []).join(', ') || 'market-level row'})${docRef(p.doc_name, p.page)}`,
-  });
+  const marketSource = (p: MarketHistoryPointAPI, when: string): CellSource => {
+    const label = p.doc_type === 'MARKET_STUDY' ? 'Market study' : p.doc_type === 'PNL_BENCHMARK' ? 'Benchmark' : 'STR market';
+    return {
+      kind: 'market_actual',
+      label,
+      detail: `${segment ? `${segment.replace(/_/g, ' ')} segment` : 'Market-wide'} actual, ${when} (${(p.fields ?? []).join(', ') || 'market-level row'})${docRef(p.doc_name, p.page)}`,
+      basis: 'actual',
+      basisLabel: actualBasisLabel(label, when === 'trailing twelve months' ? 'TTM' : when === 'undated' ? null : when, p.doc_name ?? null),
+    };
+  };
 
   for (const p of chosen) {
     if (p.period === 'annual' && p.calendar_year != null) {
@@ -650,7 +745,9 @@ export function buildMarketSeries(cols: IaColumns, market: MarketDataAPIResponse
       sources[i] = {
         kind: 'cbre_forecast',
         label: 'CBRE',
-        detail: `CBRE Hotel Horizons forecast year ${y.year_index} = ${cal}${cbre?.submarket ? `, ${cbre.submarket}` : ''}${docRef(cbre?.doc_name, y.page)}`,
+        detail: `CBRE Hotel Horizons forecast year ${y.year_index} = ${cal}${cbre?.submarket ? `, ${cbre.submarket}` : ''}${docRef(cbre?.doc_name, y.page)}${cbre?.publication_date ? ` (report dated ${cbre.publication_date})` : ''}`,
+        basis: 'forecast',
+        basisLabel: cbreForecastBasisLabel(cal, cbre?.doc_name ?? null, y.page ?? null),
       };
       placed++;
     }

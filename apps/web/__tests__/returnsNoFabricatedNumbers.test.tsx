@@ -361,3 +361,23 @@ describe('Returns section — no engine run at all', () => {
     expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
   });
 });
+
+// Sam #7 (2026-10-15) — "Stabilized NOI should remain separate from exit NOI."
+describe('Returns — stabilized NOI and exit NOI stay separate figures with separate labels', () => {
+  it('Yield on Cost reads the stabilized year; Exit Value names the exit NOI it capitalizes', () => {
+    // Stabilized Year-3 NOI 3.4M (before reserve) vs exit NOI 3.64M (forward 12 months).
+    outputsRef.value = withReturns({
+      terminal_noi: 3_640_000,
+      exit_noi_basis: 'forward_12',
+      exit_noi_period_label: 'Forward 12-month NOI (Year 6)',
+    });
+    render(<ReturnsTab />);
+    // 3.4M ÷ 44M = 7.73% — the stabilized figure, not 3.64M ÷ 44M = 8.27%.
+    expect(screen.getByText('7.73%')).toBeInTheDocument();
+    expect(screen.queryByText('8.27%')).not.toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByText('7.00% exit cap · Exit NOI (Forward 12-month NOI (Year 6))')).toBeInTheDocument();
+    // Neither caption borrows the other's name.
+    expect(screen.queryByText(/Stabilized NOI.*exit cap/)).not.toBeInTheDocument();
+  });
+});

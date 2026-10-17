@@ -140,6 +140,12 @@ _GROWTH_CBRE_LONG_RUN_RE = re.compile(r"^cbre_horizons\.long_run_avg\.(?P<metric
 
 # ───────────────────────────── value objects ─────────────────────────────
 
+BenchmarkBasis = Literal["actual", "forecast", "assumption"]
+
+#: Sam #6 — the comp-set out-years are the reported level grown at the market
+#: growth assumption (STR publishes no comp-set forecast).
+ASSUMPTION_GROWN_LABEL = "Assumption · grown at market growth"
+
 
 @dataclass(frozen=True)
 class Figure:
@@ -157,6 +163,20 @@ class Figure:
     inputs: list[FieldRef] = field(default_factory=list)
     detail: str | None = None
     period_label: str | None = None
+    #: Sam #6 (2026-10-15) — WHAT KIND of number a benchmark figure is, so an
+    #: analyst never reads a projected benchmark as history: ``actual`` (a
+    #: reported trailing-twelve-month / calendar-year figure), ``forecast`` (a
+    #: CBRE Horizons projection) or ``assumption`` (a reported level grown at
+    #: the market growth assumption). ``basis_label`` is the one-line label the
+    #: web prints beside the value ("Actual · STR TTM May 2025 · <doc>",
+    #: "Forecast · CBRE Horizons 2027 · <doc> p.4", "Assumption · grown at
+    #: market growth"). Display only — never read by an engine.
+    basis: BenchmarkBasis | None = None
+    basis_label: str | None = None
+    #: The reporting period end of an ``actual`` (ISO ``YYYY-MM`` / date / year).
+    period_end: str | None = None
+    #: The publication / report date of the document a ``forecast`` came from.
+    report_date: str | None = None
 
     @classmethod
     def none(cls, detail: str) -> Figure:
@@ -187,6 +207,10 @@ class IndexMethodologyReading:
     subject_period_label: str | None
     assumptions: dict[str, Figure]
     toggle_on: bool
+    #: Sam #6 — the STR TTM reporting period end (ISO) and the CBRE Horizons
+    #: report date the by-year benchmark labels name. None = not reported.
+    subject_period_end: str | None = None
+    cbre_report_date: str | None = None
 
     def method(self, name: str) -> MethodReading | None:
         return next((m for m in self.methods if m.method == name), None)
@@ -339,6 +363,64 @@ def _period_label(period: str | None) -> str | None:
     return period
 
 
+_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def period_end_text(iso: str | None) -> str | None:
+    """``2025-05`` / ``2025-05-31`` → ``May 2025``; ``2025`` → ``2025``; else None."""
+    if not iso:
+        return None
+    m = re.match(r"^((?:19|20)\d{2})(?:-(\d{2}))?", str(iso).strip())
+    if not m:
+        return None
+    if m.group(2):
+        month = int(m.group(2))
+        if 1 <= month <= 12:
+            return f"{_MONTH_NAMES[month - 1]} {m.group(1)}"
+    return m.group(1)
+
+
+def _family(doc_type: str | None) -> str:
+    t = (doc_type or "").upper()
+    if t in {"STR", "STR_TREND"}:
+        return "STR"
+    if t == "COSTAR":
+        return "CoStar"
+    if t == "CBRE_HORIZONS":
+        return "CBRE Horizons"
+    if t == "MARKET_STUDY":
+        return "Market study"
+    return "Market report"
+
+
+def actual_label(source: str, period: str | None, doc: str | None) -> str:
+    """``Actual · STR TTM May 2025 · <doc>`` — the Year-1 benchmark label."""
+    head = f"Actual · {source}{f' {period}' if period else ''}"
+    return f"{head} · {doc}" if doc else head
+
+
+def forecast_label(calendar_year: int, doc: str | None, page: int | None, *, kind: str = "forecast") -> str:
+    """``Forecast · CBRE Horizons 2027 · <doc> p.4`` — a CBRE year's label
+    (``Actual · …`` when the report tags that year as an actual)."""
+    head = f"{'Actual' if kind == 'actual' else 'Forecast'} · CBRE Horizons {calendar_year}"
+    if not doc:
+        return head
+    return f"{head} · {doc}{f' p.{page}' if page else ''}"
+
+
+def read_cbre_report_date(rows: Sequence[FieldRow]) -> str | None:
+    """The newest CBRE Horizons report's publication date as the extraction
+    states it (``cbre_horizons.publication_date``), else that document's
+    ``report_as_of``. None when no CBRE report dates itself."""
+    for r in rows:
+        if r.lname == "cbre_horizons.publication_date" and isinstance(r.value, str) and r.value.strip():
+            return r.value.strip()
+    for r in rows:
+        if r.lname.startswith("cbre_horizons.") and r.report_as_of:
+            return r.report_as_of
+    return None
+
+
 def _pick_metric(
     rows: Iterable[tuple[FieldRow, re.Match[str]]], metric: str
 ) -> tuple[FieldRow, float, str | None] | None:
@@ -369,7 +451,12 @@ def _figure_from(pick: tuple[FieldRow, float, str | None] | None, missing: str) 
     if pick is None:
         return Figure.none(missing)
     row, v, period = pick
-    return Figure(value=v, source="document", inputs=[FieldRef.of(row)], period_label=_period_label(period))
+    label = _period_label(period)
+    return Figure(
+        value=v, source="document", inputs=[FieldRef.of(row)], period_label=label,
+        basis="actual", basis_label=actual_label(_family(row.doc_type), label, row.doc_name),
+        period_end=period if period and period != "ttm" else None,
+    )
 
 
 def _docs(*figures: Figure) -> list[str]:
@@ -388,6 +475,20 @@ def _str_rows(rows: Sequence[FieldRow]) -> list[FieldRow]:
     return [r for r in rows if (r.doc_type or "").upper() in {"STR", "STR_TREND"}]
 
 
+def ttm_period_end(blend: Any) -> str | None:
+    """The STR TTM window's period end: the last month of the subject's
+    monthly series, else the report period the STR reader resolved for that
+    report (extracted period-end field, document date, filename token or
+    report year — ``market_comp_set.resolve_report_period_end``)."""
+    return getattr(blend, "period_end", None) or getattr(blend, "period_end_used", None)
+
+
+def _ttm_basis(blend: Any) -> tuple[str | None, str]:
+    end = ttm_period_end(blend)
+    doc = getattr(blend, "source_doc_name", None) or next(iter(getattr(blend, "documents", None) or []), None)
+    return end, actual_label("STR TTM", period_end_text(end), doc)
+
+
 def read_subject_ttm(rows: Sequence[FieldRow]) -> tuple[Figure, Figure, str | None]:
     """The subject's STR trailing-twelve-month occupancy / ADR and its period."""
     str_rows = _str_rows(rows)
@@ -401,15 +502,22 @@ def read_subject_ttm(rows: Sequence[FieldRow]) -> tuple[Figure, Figure, str | No
         else f"STR {blend.report_year}" if blend.report_year
         else "STR TTM"
     )
+    ttm_end, basis_label = _ttm_basis(blend)
     occ_ref = by_name.get("ttm_performance.subject.occupancy_pct")
     adr_ref = by_name.get("ttm_performance.subject.adr_usd")
     occ = (
-        Figure(value=_occ_fraction(blend.subject_occupancy_pct), source="document", inputs=[occ_ref], period_label=period)
+        Figure(
+            value=_occ_fraction(blend.subject_occupancy_pct), source="document", inputs=[occ_ref], period_label=period,
+            basis="actual", basis_label=basis_label, period_end=ttm_end,
+        )
         if occ_ref is not None and blend.subject_occupancy_pct is not None
         else Figure.none("The STR report carries no subject TTM occupancy.")
     )
     adr = (
-        Figure(value=blend.subject_adr_usd, source="document", inputs=[adr_ref], period_label=period)
+        Figure(
+            value=blend.subject_adr_usd, source="document", inputs=[adr_ref], period_label=period,
+            basis="actual", basis_label=basis_label, period_end=ttm_end,
+        )
         if adr_ref is not None and blend.subject_adr_usd is not None
         else Figure.none("The STR report carries no subject TTM ADR.")
     )
@@ -433,6 +541,7 @@ def read_str_comp_set(rows: Sequence[FieldRow]) -> tuple[MethodReading, Figure, 
         )
     by_name = {ref.field_name.lower(): ref for ref in blend.inputs}
     period = f"TTM to {blend.period_end}" if blend.period_end else None
+    ttm_end, basis_label = _ttm_basis(blend)
 
     def refs(*names: str) -> list[FieldRef]:
         return [by_name[n] for n in names if n in by_name]
@@ -442,6 +551,7 @@ def read_str_comp_set(rows: Sequence[FieldRow]) -> tuple[MethodReading, Figure, 
             value=_occ_fraction(blend.occupancy_pct), source="computed",
             inputs=refs("ttm_performance.subject.occupancy_pct", "ttm_performance.indices.mpi_occupancy_index"),
             detail="subject TTM occupancy ÷ MPI", period_label=period,
+            basis="actual", basis_label=basis_label, period_end=ttm_end,
         )
         if blend.occupancy_pct is not None
         else Figure.none("The STR report lacks the subject TTM occupancy or the MPI index.")
@@ -451,6 +561,7 @@ def read_str_comp_set(rows: Sequence[FieldRow]) -> tuple[MethodReading, Figure, 
             value=blend.adr_usd, source="computed",
             inputs=refs("ttm_performance.subject.adr_usd", "ttm_performance.indices.ari_adr_index"),
             detail="subject TTM ADR ÷ ARI", period_label=period,
+            basis="actual", basis_label=basis_label, period_end=ttm_end,
         )
         if blend.adr_usd is not None
         else Figure.none("The STR report lacks the subject TTM ADR or the ARI index.")
@@ -639,6 +750,7 @@ def resolve_index_methodology(
     costar = read_costar_comp_set(rows)
     methods = [str_method, market, costar]
     subj_occ, subj_adr, subj_period = read_subject_ttm(rows)
+    subj_end = subj_occ.period_end or subj_adr.period_end
     chosen = next(m for m in methods if m.method == selected)
 
     assumptions: dict[str, Figure] = {
@@ -681,6 +793,8 @@ def resolve_index_methodology(
         subject_period_label=subj_period,
         assumptions=assumptions,
         toggle_on=toggle_is_on(overrides),
+        subject_period_end=subj_end,
+        cbre_report_date=read_cbre_report_date(rows),
     )
 
 
@@ -933,6 +1047,7 @@ def _grown_series(
                     value=level.value, source=level.source, inputs=list(level.inputs),
                     detail=f"{method_label} {period} {noun}" + (f" ({level.detail})" if level.detail else ""),
                     period_label=period,
+                    basis=level.basis, basis_label=level.basis_label, period_end=level.period_end,
                 )
             )
             continue
@@ -962,6 +1077,8 @@ def _grown_series(
                     f"at {growth.value:+.2%} market {noun} growth ({growth_basis})"
                 ),
                 period_label=f"Year {y}",
+                basis="assumption",
+                basis_label=ASSUMPTION_GROWN_LABEL,
             )
         )
     return out
@@ -1004,6 +1121,11 @@ def _cbre_series(
                 table.setdefault(cal, {}).update({k: v for k, v in slot.items() if k != "calendar_year"})
     scope_label = "All Hotels" if scope == "all" else scope.replace("_", " ")
     have_cbre = bool(tables or legacy)
+    # The publication date each CBRE extraction states (newest first).
+    report_dates: dict[str | None, str] = {}
+    for r in rows:
+        if r.lname == "cbre_horizons.publication_date" and isinstance(r.value, str) and r.value.strip():
+            report_dates.setdefault(r.extraction_id, r.value.strip())
 
     def year_figure(y: int, attr: str, level: Figure, noun: str) -> Figure:
         if y == 1:
@@ -1013,6 +1135,7 @@ def _cbre_series(
                 value=level.value, source=level.source, inputs=list(level.inputs),
                 detail=f"{method_label} {level.period_label or 'reported'} {noun}",
                 period_label=level.period_label,
+                basis=level.basis, basis_label=level.basis_label, period_end=level.period_end,
             )
         cal = calendar_years[y - 1] if y - 1 < len(calendar_years) else None
         if cal is None:
@@ -1038,6 +1161,10 @@ def _cbre_series(
         return Figure(
             value=v, source="document", inputs=[FieldRef.of(row)],
             detail=f"CBRE Horizons {scope_label} {cal} {kind} {noun}", period_label=str(cal),
+            basis="forecast" if kind == "forecast" else "actual",
+            basis_label=forecast_label(cal, row.doc_name, row.page, kind=kind),
+            period_end=str(cal) if kind == "actual" else None,
+            report_date=report_dates.get(row.extraction_id) or row.report_as_of,
         )
 
     occ = [year_figure(y, "occupancy_pct", level_occ, "occupancy") for y in range(1, hold_years + 1)]

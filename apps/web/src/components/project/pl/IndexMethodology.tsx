@@ -46,6 +46,7 @@ import { sourceLabel } from '@/lib/provenance';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { PL_SUB_LABEL } from '@/lib/projectTabs';
+import { BASIS_CHIP_TEXT, figureBasis, periodEndText, type BenchmarkBasis } from './indexAnalysisModel';
 
 // ─────────────────────────── shared formatting ───────────────────────────
 
@@ -61,6 +62,65 @@ const fmtAdr = (v: number | null | undefined): string =>
     : '—';
 const fmtGrowth = (v: number | null | undefined): string =>
   typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}%` : '—';
+
+// ─────────────────────────── Sam #6 — basis chip ───────────────────────────
+
+const CHIP_BORDER: Record<BenchmarkBasis, string> = {
+  actual: 'border-solid',
+  forecast: 'border-dashed',
+  assumption: 'border-dotted',
+};
+
+/**
+ * Sam #6 (2026-10-15) — a small worded chip saying whether a benchmark value
+ * is a reported ACTUAL, a CBRE FORECAST or an ASSUMPTION. The word carries the
+ * meaning (the border style only echoes it), so the distinction never rests
+ * on colour.
+ */
+export function BasisChip({ basis, label, testId }: { basis: BenchmarkBasis; label?: string | null; testId?: string }) {
+  return (
+    <span
+      data-testid={testId ?? `basis-chip-${basis}`}
+      data-basis={basis}
+      title={label ?? undefined}
+      className={`inline-block align-middle rounded border ${CHIP_BORDER[basis]} border-ink-400 px-1 leading-[14px] text-[9px] font-semibold uppercase tracking-wide text-ink-700`}
+    >
+      {BASIS_CHIP_TEXT[basis]}
+    </span>
+  );
+}
+
+/** Chip + the one-line basis label ("Actual · STR TTM May 2025 · <doc>"). */
+export function BasisLine({ fig, testId }: { fig: IndexFigure | null | undefined; testId?: string }) {
+  const b = figureBasis(fig);
+  if (!b) return null;
+  return (
+    <div className="flex items-center justify-end gap-1 text-[10px] text-ink-500" data-testid={testId} title={b.label}>
+      <BasisChip basis={b.basis} label={b.label} />
+      <span className="max-w-[200px] truncate">{b.label}</span>
+    </div>
+  );
+}
+
+/** The one line above the by-year grid naming each band's source and period. */
+export function byYearBasisNote(data: Pick<IndexMethodologyResponse, 'by_year' | 'subject_period_end' | 'cbre_report_date'>): string | null {
+  const rows = data.by_year ?? [];
+  if (!rows.length) return null;
+  const y1 = figureBasis(rows[0]?.benchmark_occupancy) ?? figureBasis(rows[0]?.benchmark_adr);
+  const later = rows.slice(1).map((r) => figureBasis(r.benchmark_occupancy) ?? figureBasis(r.benchmark_adr)).filter(Boolean);
+  if (!y1 && !later.length) return null;
+  const parts: string[] = [];
+  if (y1) parts.push(`Year 1 benchmark: ${y1.label}${y1.basis === 'actual' ? ' — reported historical data' : ''}.`);
+  if (later.some((b) => b!.basis === 'forecast')) {
+    const date = data.cbre_report_date ? ` (report dated ${data.cbre_report_date})` : '';
+    parts.push(`Year 2 onward: CBRE Horizons forecast${date} — a projected benchmark, not history.`);
+  } else if (later.some((b) => b!.basis === 'assumption')) {
+    parts.push('Year 2 onward: the Year-1 level grown at the market growth assumption — an assumption, not a published forecast.');
+  }
+  const endText = periodEndText(data.subject_period_end);
+  if (endText && !(y1?.label ?? '').includes(endText)) parts.push(`STR TTM period ends ${endText}.`);
+  return parts.join(' ');
+}
 
 // ─────────────────────────── E-027 — reconciliation ───────────────────────────
 
@@ -539,6 +599,11 @@ function IndexByYearGrid({
           ))}
         </div>
       )}
+      {byYearBasisNote(data) && (
+        <div className="text-[11px] text-ink-600" data-testid="index-by-year-basis-note">
+          {byYearBasisNote(data)}
+        </div>
+      )}
       {!applies && (
         <div className="text-[11px] text-warning-700" data-testid="index-by-year-disabled">
           {data.by_year_disabled_reason ?? `Targets by year do not feed the ${PL_SUB_LABEL.projections} yet.`}
@@ -570,12 +635,14 @@ function IndexByYearGrid({
                   <div className="text-[10px] text-ink-400 max-w-[200px] truncate" data-testid={`index-by-year-bench-occ-src-${r.year}`}>
                     {r.benchmark_occupancy.value == null ? r.benchmark_occupancy.detail ?? 'No source' : figureSourceText(r.benchmark_occupancy)}
                   </div>
+                  <BasisLine fig={r.benchmark_occupancy} testId={`index-by-year-bench-occ-basis-${r.year}`} />
                 </td>
                 <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceText(r.benchmark_adr)}>
                   <div>{fmtAdr(r.benchmark_adr.value)}</div>
                   <div className="text-[10px] text-ink-400 max-w-[200px] truncate">
                     {r.benchmark_adr.value == null ? r.benchmark_adr.detail ?? 'No source' : figureSourceText(r.benchmark_adr)}
                   </div>
+                  <BasisLine fig={r.benchmark_adr} testId={`index-by-year-bench-adr-basis-${r.year}`} />
                 </td>
                 <td className="py-1.5 pr-3 text-right tabular-nums">
                   {editing ? (
@@ -763,9 +830,21 @@ export function IndexMethodologyPanel({ dealId }: { dealId: string }) {
           </div>
           <div className="text-ink-600 mt-0.5">
             Occupancy {fmtOcc(selected.occupancy.value)} — {figureSourceText(selected.occupancy)}
+            {figureBasis(selected.occupancy) && (
+              <span className="ml-1">
+                <BasisChip basis={figureBasis(selected.occupancy)!.basis} label={figureBasis(selected.occupancy)!.label} />{' '}
+                <span className="text-ink-500">{figureBasis(selected.occupancy)!.label}</span>
+              </span>
+            )}
           </div>
           <div className="text-ink-600">
             ADR {fmtAdr(selected.adr.value)} — {figureSourceText(selected.adr)}
+            {figureBasis(selected.adr) && (
+              <span className="ml-1">
+                <BasisChip basis={figureBasis(selected.adr)!.basis} label={figureBasis(selected.adr)!.label} />{' '}
+                <span className="text-ink-500">{figureBasis(selected.adr)!.label}</span>
+              </span>
+            )}
           </div>
         </div>
       )}
