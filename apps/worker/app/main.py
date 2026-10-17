@@ -17,6 +17,7 @@ from .api import analysis as analysis_router
 from .api import audit as audit_router
 from .api import cell_comments as cell_comments_router
 from .api import data_library as data_library_router
+from .api import deal_duplicate as deal_duplicate_router
 from .api import deals as deals_router
 from .api import documents as documents_router
 from .api import dossier as dossier_router
@@ -234,6 +235,11 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router.router, tags=["health"])
     app.include_router(deals_router.router, prefix="/deals", tags=["deals"])
+    # POST /deals/{id}/duplicate — copy a deal (docs, reviewed extractions,
+    # assumptions, scenarios) without its engine outputs.
+    app.include_router(
+        deal_duplicate_router.router, prefix="/deals", tags=["deals"]
+    )
     # Documents are deal-scoped: /deals/{deal_id}/documents/...
     app.include_router(documents_router.router, prefix="/deals", tags=["documents"])
     app.include_router(model_router.router, prefix="/model", tags=["model"])

@@ -257,11 +257,12 @@ async def create_base_scenario_for_deal(
             text(
                 """
                 SELECT id FROM scenarios
-                 WHERE deal_id = :deal AND is_base = :is_base
+                 WHERE deal_id = :deal AND tenant_id = :tenant
+                   AND is_base = :is_base
                  LIMIT 1
                 """
             ),
-            {"deal": deal_id_str, "is_base": True},
+            {"deal": deal_id_str, "tenant": tenant_id_str, "is_base": True},
         )
     ).first()
     if existing is not None:

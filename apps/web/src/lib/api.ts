@@ -18,6 +18,16 @@ export const workerUrl = (): string => BASE;
 // These mirror the Pydantic response models in apps/worker/app/api.
 // Kept narrow on purpose — only fields the web app reads.
 
+/** POST /deals/{id}/duplicate — mirrors ``DuplicateDealResponse``. */
+export interface DuplicateDealResponse {
+  deal: WorkerDeal;
+  source_deal_id: string;
+  /** Rows copied per table (deals, documents, extraction_results, …). */
+  copied: Record<string, number>;
+  /** Tables intentionally not copied (engine_outputs, audit_log, …). */
+  skipped: string[];
+}
+
 export interface WorkerDeal {
   id: string;
   tenant_id: string;
@@ -2266,6 +2276,14 @@ export const api = {
      *  (orphan-tolerant). Audit-logged at severity=warning. Irreversible. */
     delete: (id: string) =>
       request<void>('DELETE', `/deals/${id}/hard`),
+    /** Duplicate a deal (POST /deals/{id}/duplicate) into the same
+     *  workspace as "<name> (copy YYYY-MM-DD)". Copies the deal fields,
+     *  assumptions (with their notes), scenarios, cell comments and the
+     *  documents with their latest reviewed extractions — the stored files
+     *  are shared, not re-uploaded. Model runs are NOT copied: the new deal
+     *  must be re-run. */
+    duplicate: (id: string) =>
+      request<DuplicateDealResponse>('POST', `/deals/${id}/duplicate`),
   },
   documents: {
     list: (dealId: string, signal?: AbortSignal) =>

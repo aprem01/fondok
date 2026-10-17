@@ -5064,6 +5064,22 @@ async def delete_document(
         },
     )
 
+    # A duplicated deal (POST /deals/{id}/duplicate) shares the original's
+    # raw objects: its document rows carry the SAME storage_key. Never remove
+    # an object another document row still points at.
+    key_still_referenced = False
+    if storage_key:
+        still = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM documents "
+                    "WHERE storage_key = :key AND tenant_id = :tenant LIMIT 1"
+                ),
+                {"key": storage_key, "tenant": str(tenant_id)},
+            )
+        ).first()
+        key_still_referenced = still is not None
+
     # Audit BEFORE commit so a crash still leaves the audit row.
     try:
         from ..audit import log_audit
@@ -5089,8 +5105,9 @@ async def delete_document(
 
     # Best-effort object-store cleanup. We don't roll back DB on
     # storage failure — orphaned blobs are an ops nuisance, not a
-    # correctness bug.
-    if storage_key:
+    # correctness bug. Skipped while another document row (a duplicated
+    # deal's copy, or the original) still references the object.
+    if storage_key and not key_still_referenced:
         try:
             from ..storage import get_store
 
