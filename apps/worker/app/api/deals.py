@@ -415,7 +415,8 @@ class AssumptionSourcesResponse(BaseModel):
     # loader supplies it: why a key has no grounded value. Also
     # feature-detected, also ``{}`` until then.
     reasons: dict[str, str] = Field(default_factory=dict)
-    # FON-89 — what the Year-1 displacement gate decided and why, computed by
+    # FON-89 — what Year-1 displacement the model runs with and why (explicit
+    # assumptions only, never the renovation budget — Sam 2026-10-15), computed by
     # the loader AFTER every override is applied (``__displacement_status__``):
     # ``{active, state, source, detail, renovation_budget,
     # renovation_budget_per_key, y1_occupancy_displacement_pct,

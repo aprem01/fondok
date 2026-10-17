@@ -395,7 +395,8 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     // The PIP lane — the ONLY CapEx slot that feeds the model. Uploads as
     // CAPEX tagged doc_subtype ``pip``; the worker's loader reads
     // ``capex_plan.pip.total_usd`` off it as the renovation-budget candidate
-    // that outranks the OM (FON-101) and trips Year-1 PIP displacement.
+    // that outranks the OM (FON-101). It is a capital figure only — it never
+    // displaces Year 1 by itself (Sam, 2026-10-15).
     id: 'pip_capex',
     label: 'PIP / Renovation Budget',
     sidebarLabel: 'PIP / Renovation Budget',
@@ -403,7 +404,7 @@ export const WIZARD_CATEGORIES: WizardCategorySpec[] = [
     multiFile: true,
     Icon: Wrench,
     description:
-      'The day-one PIP: brand-issued Property Improvement Plan, owner renovation budget, approved capital plan or contractor estimate. Feeds the model — its stated total becomes the renovation budget (outranking the OM) and drives Year-1 PIP displacement.',
+      'The day-one PIP: brand-issued Property Improvement Plan, owner renovation budget, approved capital plan or contractor estimate. Feeds the model — its stated total becomes the renovation budget (outranking the OM). Year-1 occupancy / ADR are only reduced by the displacement assumptions you set on CAPEX.',
     exampleChip: 'e.g. brand PIP priced out, renovation budget, approved capital plan, rebranding / repositioning budget',
     defaultDocType: 'CAPEX',
     lanePicker: true,

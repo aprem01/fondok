@@ -13,7 +13,8 @@ Covered here:
 * the critic's PIP-total-vs-scope-items check flags and never alters;
 * loader precedence — OM only · OM + one PIP · two PIPs by date · plan date
   beats upload order · override wins · shadow override keeps the PIP label ·
-  ``future`` is never selected · the Year-1 displacement guard sees a PIP;
+  ``future`` is never selected · a PIP budget alone never displaces Year 1
+  (Sam, 2026-10-15);
 * source stamping (``pip_document`` + the exact row, dated);
 * ``GET /deals/{id}/renovation-budget-candidates`` — every candidate with
   its selected flag and reason, Future CapEx under ``reference_only``,
@@ -425,8 +426,10 @@ async def test_pip_document_outranks_the_om_and_is_stamped_with_its_row() -> Non
     # The registry classifies the CAPEX path onto the same concept.
     assert row["concept"] == "renovation_budget"
     assert row["basis"] == "budget"
-    # A material PIP displaces Year 1 (the guard sees a deal-specific budget).
-    assert base["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
+    # Sam, 2026-10-15 — a PIP document's budget is a capital cost; it never
+    # displaces Year 1 by itself.
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == 0.0
     assert "renovation_budget" not in base["__reasons__"]
 
 
@@ -918,15 +921,36 @@ def test_critic_capex_check_coerces_numeric_strings_like_the_loader() -> None:
 
 # ───────────── FON-89 — Year-1 displacement status (honest UI) ─────────────
 #
-# A persisted ``field_overrides.renovation_budget`` ALONE never displaces Year
-# 1: the gate (``reno_is_deal_specific``) runs before the override loop. Sam
-# has not decided whether an analyst-entered PIP should displace by default,
-# so the behaviour is pinned as-is and the loader now SAYS what it decided —
+# Sam, 2026-10-15: "An analyst-entered renovation budget should not
+# automatically reduce Year 1 occupancy or ADR … renovation impacts should be
+# driven by explicit assumptions around timing, room displacement, and rate
+# adjustments." No budget — analyst-entered, OM broker, PIP document — ever
+# displaces Year 1. Only the analyst's y1_* / pip_displacement.* assumptions
+# do. The loader says what it decided —
 # ``base["__displacement_status__"]`` → ``assumption_sources.displacement_status``.
+
+_NONE_DETAIL = (
+    "No Year-1 renovation impact — set rooms offline / rate displacement "
+    "assumptions to model one."
+)
+
+
+def _assert_no_displacement(base: dict) -> dict:
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == 0.0
+    assert base["__sources__"]["y1_occupancy_displacement_pct"] == "seed"
+    assert base["__sources__"]["y1_adr_displacement_pct"] == "seed"
+    st = base["__displacement_status__"]
+    assert st["active"] is False
+    assert st["state"] == "off_no_assumption"
+    assert st["detail"].startswith(_NONE_DETAIL)
+    assert st["y1_occupancy_displacement_pct"] == 0.0
+    assert st["y1_adr_displacement_pct"] == 0.0
+    return st
 
 
 @pytest.mark.asyncio
-async def test_analyst_renovation_budget_alone_reports_displacement_off_honestly() -> None:
+async def test_analyst_renovation_budget_alone_never_displaces() -> None:
     deal_id = uuid4()
     await _insert_deal(
         deal_id,
@@ -934,26 +958,20 @@ async def test_analyst_renovation_budget_alone_reports_displacement_off_honestly
         field_overrides={"renovation_budget": {"value": 9_500_000, "note": "GC bid"}},
     )
     base = await _base_for(deal_id)
-    # Behaviour unchanged (FON-89 is open): the override does not displace.
     assert base["renovation_budget"] == pytest.approx(9_500_000)
     assert base["__sources__"]["renovation_budget"] == "analyst_override"
-    assert base["y1_occupancy_displacement_pct"] == 0.0
-    assert base["y1_adr_displacement_pct"] == 0.0
-    # …and the model says so, with the way out.
-    st = base["__displacement_status__"]
-    assert st["active"] is False
-    assert st["state"] == "off_analyst_entry"
+    st = _assert_no_displacement(base)
     assert st["source"] == "analyst_override"
     assert st["renovation_budget"] == pytest.approx(9_500_000)
     assert st["renovation_budget_per_key"] == pytest.approx(9_500_000 / 132)
-    assert "analyst entry without an OM or PIP document" in st["detail"]
-    assert "set the Y1 displacement % or upload the PIP" in st["detail"]
+    # The budget is named a capital cost — never a cause of an impact.
+    assert "capital cost only; it does not change Year-1 occupancy or ADR" in st["detail"]
 
 
 @pytest.mark.asyncio
-async def test_pip_document_reports_displacement_on_with_its_source() -> None:
-    """Since FON-101 a PIP / CapEx document DOES displace — the status must
-    say so and name the source, with the percentages the engine will apply."""
+async def test_pip_document_budget_alone_never_displaces() -> None:
+    """A $71k/key PIP read off a PIP / CapEx document used to set the 15% /
+    8% haircut. It is a capital figure only now."""
     deal_id = uuid4()
     await _insert_deal(deal_id, keys=100)
     await _insert_doc(
@@ -962,46 +980,40 @@ async def test_pip_document_reports_displacement_on_with_its_source() -> None:
     )
     base = await _base_for(deal_id)
     assert base["__sources__"]["renovation_budget"] == "pip_document"
-    assert base["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
-    st = base["__displacement_status__"]
-    assert st["active"] is True
-    assert st["state"] == "on_pip_document"
+    st = _assert_no_displacement(base)
     assert st["source"] == "pip_document"
-    assert st["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
-    assert st["y1_adr_displacement_pct"] == pytest.approx(0.08)
-    assert "PIP / CapEx document" in st["detail"]
-    assert "occupancy −15%, ADR −8%" in st["detail"]
 
 
 @pytest.mark.asyncio
-async def test_om_seed_immaterial_and_analyst_pct_states() -> None:
-    # OM broker figure → on_om_broker.
+async def test_om_broker_and_seed_budgets_never_displace() -> None:
+    # OM broker figure ($8.0M on 132 keys) → no impact.
     om_deal = uuid4()
     await _insert_deal(om_deal, keys=132)
     await _insert_doc(om_deal, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
-    st = (await _base_for(om_deal))["__displacement_status__"]
-    assert (st["active"], st["state"], st["source"]) == (True, "on_om_broker", "om_broker")
+    base = await _base_for(om_deal)
+    assert base["__sources__"]["renovation_budget"] == "om_broker"
+    assert _assert_no_displacement(base)["source"] == "om_broker"
 
-    # Kimpton seed alone → off_seed (the Harbor Palms guard, said out loud).
+    # Kimpton seed alone → no impact.
     seed_deal = uuid4()
     await _insert_deal(seed_deal, keys=132)
-    st = (await _base_for(seed_deal))["__displacement_status__"]
-    assert (st["active"], st["state"], st["source"]) == (False, "off_seed", "seed")
+    assert _assert_no_displacement(await _base_for(seed_deal))["source"] == "seed"
 
-    # A grounded but tiny PIP → off_immaterial, with the per-key figure.
-    small = uuid4()
-    await _insert_deal(small, keys=132)
+    # OM + PIP document together → still none.
+    both = uuid4()
+    await _insert_deal(both, keys=132)
+    await _insert_doc(both, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
     await _insert_doc(
-        small, doc_type="OM", filename="OM.pdf",
-        fields=[_row("broker_proforma.renovation_budget_usd", 500_000.0, page=31)], ts=_T0,
+        both, doc_type="CAPEX", filename="Brand PIP.pdf",
+        fields=_pip_fields(9_000_000, plan_date="2026-04-01"), ts=_T0 + timedelta(hours=1),
     )
-    st = (await _base_for(small))["__displacement_status__"]
-    assert st["state"] == "off_immaterial"
-    assert "$3,788 / key" in st["detail"] and "$5,000 / key" in st["detail"]
+    _assert_no_displacement(await _base_for(both))
 
-    # The analyst sets the percentages directly → on_analyst / off_analyst,
-    # whatever the budget's source is. This IS the "set the Y1 displacement %"
-    # way out the off_analyst_entry detail points at.
+
+@pytest.mark.asyncio
+async def test_explicit_analyst_displacement_assumptions_are_applied() -> None:
+    # The analyst sets the percentages → on_analyst, with the percentages the
+    # revenue engine applies, whatever the budget's source is.
     on_deal = uuid4()
     await _insert_deal(
         on_deal, keys=132,
@@ -1013,23 +1025,28 @@ async def test_om_seed_immaterial_and_analyst_pct_states() -> None:
     )
     base = await _base_for(on_deal)
     assert base["y1_occupancy_displacement_pct"] == pytest.approx(0.10)
+    assert base["y1_adr_displacement_pct"] == pytest.approx(0.05)
+    assert base["__sources__"]["y1_occupancy_displacement_pct"] == "analyst_override"
     st = base["__displacement_status__"]
     assert (st["active"], st["state"]) == (True, "on_analyst")
+    assert "analyst-set displacement assumptions" in st["detail"]
     assert "occupancy −10%, ADR −5%" in st["detail"]
 
-    # Zeroing ONE leg leaves the other on (the OM PIP still knocks ADR 8%) —
-    # that is still "on", and said as analyst-set because the analyst touched
-    # the percentages. Zeroing both is what turns it off.
+    # One leg only, on an OM PIP deal: the OM no longer adds the other leg.
     half_deal = uuid4()
     await _insert_deal(
         half_deal, keys=132,
-        field_overrides={"y1_occupancy_displacement_pct": {"value": 0.0, "note": "no closure"}},
+        field_overrides={"y1_adr_displacement_pct": {"value": 0.04, "note": "rate drag"}},
     )
     await _insert_doc(half_deal, doc_type="OM", filename="OM.pdf", fields=_OM_FIELDS, ts=_T0)
-    st = (await _base_for(half_deal))["__displacement_status__"]
+    base = await _base_for(half_deal)
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == pytest.approx(0.04)
+    st = base["__displacement_status__"]
     assert (st["active"], st["state"]) == (True, "on_analyst")
-    assert "occupancy −0%, ADR −8%" in st["detail"]
+    assert "occupancy −0%, ADR −4%" in st["detail"]
 
+    # Both zeroed → off_analyst.
     off_deal = uuid4()
     await _insert_deal(
         off_deal, keys=132,
@@ -1044,6 +1061,23 @@ async def test_om_seed_immaterial_and_analyst_pct_states() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_pip_closure_schedule_reports_on() -> None:
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id, keys=132,
+        field_overrides={
+            "pip_displacement.closure_strategy": {"value": "full_closure", "note": "brand PIP closes the hotel"},
+        },
+    )
+    base = await _base_for(deal_id)
+    # The flat percentages stay 0 — the structured schedule is the lever.
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    st = base["__displacement_status__"]
+    assert (st["active"], st["state"]) == (True, "on_pip_schedule")
+    assert "analyst-set PIP closure schedule (full closure)" in st["detail"]
+
+
+@pytest.mark.asyncio
 async def test_assumption_sources_carries_displacement_status() -> None:
     deal_id = uuid4()
     await _insert_deal(
@@ -1053,8 +1087,8 @@ async def test_assumption_sources_carries_displacement_status() -> None:
     code, body = await _get(f"/deals/{deal_id}/assumption_sources", _TENANT)
     assert code == 200, body
     st = body["displacement_status"]
-    assert st["state"] == "off_analyst_entry" and st["active"] is False
-    assert "analyst entry" in st["detail"]
+    assert st["state"] == "off_no_assumption" and st["active"] is False
+    assert "No Year-1 renovation impact" in st["detail"]
     # The metadata key never leaks into the badged values.
     assert "__displacement_status__" not in body["values"]
     # Tenant-scoped like the rest of the response.

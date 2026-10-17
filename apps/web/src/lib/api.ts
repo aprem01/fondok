@@ -298,28 +298,29 @@ export interface AssumptionSourcesResponse {
 }
 
 /**
- * FON-89 — the Year-1 PIP displacement verdict (`engine_runner._displacement_status`).
+ * FON-89 — the Year-1 renovation-impact verdict (`engine_runner._displacement_status`).
  * `state` is the worker's closed vocabulary; `detail` is the sentence the CAPEX
  * Renovation row and the Future P&L Year-1 basis line print VERBATIM — every
- * number in it (the percentages the revenue engine applies, the budget per
- * key) is the loader's own, never composed in the browser.
+ * number in it (the percentages the revenue engine applies) is the loader's
+ * own, never composed in the browser.
+ *
+ * Sam, 2026-10-15: Year 1 is displaced ONLY by explicit assumptions — the
+ * analyst's `y1_*_displacement_pct` (`on_analyst`) or a structured PIP closure
+ * schedule (`on_pip_schedule`). A renovation budget never displaces by itself,
+ * whatever its source (`off_no_assumption`).
  */
 export type DisplacementState =
-  | 'on_pip_document'
-  | 'on_om_broker'
   | 'on_analyst'
+  | 'on_pip_schedule'
   | 'on'
   | 'off_analyst'
-  | 'off_no_budget'
-  | 'off_immaterial'
-  | 'off_analyst_entry'
-  | 'off_seed'
-  | 'off';
+  | 'off_no_assumption';
 
 export interface DisplacementStatus {
   active: boolean;
   state: DisplacementState | string;
-  /** `assumption_sources.sources.renovation_budget` at the time of the verdict. */
+  /** `assumption_sources.sources.renovation_budget` at the time of the verdict
+   *  (context only — it never decides the state). */
   source: string;
   detail: string;
   renovation_budget: number;

@@ -68,7 +68,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
-import { PL_SUB_LABEL } from '@/lib/projectTabs';
+import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 import {
   CASH_NOI_LABEL,
   noiBeforeReserveLabel,
@@ -931,11 +931,10 @@ export default function ProjectionsSection({
       </div>
 
       {/* FON-89 — one line under the Year-1 basis: the worker's displacement
-          verdict, verbatim. An analyst-entered renovation budget without an
-          OM / PIP document never displaces by itself (the gate runs before the
-          override loop); that state asks for a decision and is toned amber.
-          A PIP document (FON-101) or the OM's broker figure does displace and
-          the line says so with the percentages the revenue engine applies. */}
+          verdict, verbatim. Sam (2026-10-15): no renovation budget — analyst,
+          OM broker or PIP document — displaces Year 1 by itself; only the
+          explicit Y1 displacement assumptions (owned by the CAPEX tab, linked
+          here) or a structured PIP closure schedule do. */}
       {displacementLine && (
         <p
           data-testid="y1-displacement-status"
@@ -943,15 +942,19 @@ export default function ProjectionsSection({
           data-displacement-tone={displacementLine.tone}
           className={cn(
             'text-[11px] leading-snug -mt-2 mb-3',
-            displacementLine.tone === 'attention'
-              ? 'text-warn-700'
-              : displacementLine.tone === 'on'
-                ? 'text-ink-600'
-                : 'text-ink-500',
+            displacementLine.tone === 'on' ? 'text-ink-600' : 'text-ink-500',
           )}
         >
-          <span className="font-semibold">Year-1 basis · PIP displacement</span>
-          {' — '}{displacementLine.text}
+          <span className="font-semibold">Year-1 basis · renovation impact</span>
+          {' — '}{displacementLine.text}{' '}
+          <Link
+            href={`/projects/${dealId}?tab=investment`}
+            data-testid="y1-displacement-owner"
+            title="The Year-1 displacement assumptions are owned by the CAPEX tab's Renovation section"
+            className="underline decoration-dotted"
+          >
+            {TAB_LABEL.investment} inputs →
+          </Link>
         </p>
       )}
 

@@ -35,28 +35,30 @@ vi.mock('@/lib/api', async (importOriginal) => {
 import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 
-const OFF_ANALYST_ENTRY: DisplacementStatus = {
+// Sam, 2026-10-15 — a renovation budget (here a PIP document's) never
+// displaces Year 1 by itself; the worker says so and points at the inputs.
+const OFF_NO_ASSUMPTION: DisplacementStatus = {
   active: false,
-  state: 'off_analyst_entry',
-  source: 'analyst_override',
+  state: 'off_no_assumption',
+  source: 'pip_document',
   detail:
-    'Year-1 displacement off — the renovation budget is an analyst entry without an OM or PIP document; set the Y1 displacement % or upload the PIP.',
-  renovation_budget: 9_500_000,
-  renovation_budget_per_key: 71_969.7,
+    'No Year-1 renovation impact — set rooms offline / rate displacement assumptions to model one. The renovation budget is a capital cost only; it does not change Year-1 occupancy or ADR.',
+  renovation_budget: 7_100_000,
+  renovation_budget_per_key: 71_000,
   y1_occupancy_displacement_pct: 0,
   y1_adr_displacement_pct: 0,
 };
 
-const ON_PIP: DisplacementStatus = {
+const ON_ANALYST: DisplacementStatus = {
   active: true,
-  state: 'on_pip_document',
+  state: 'on_analyst',
   source: 'pip_document',
   detail:
-    'Year-1 displacement on — the renovation budget is read off a PIP / CapEx document (occupancy −15%, ADR −8%).',
+    'Year-1 renovation impact on — analyst-set displacement assumptions (occupancy −10%, ADR −5%).',
   renovation_budget: 7_100_000,
   renovation_budget_per_key: 71_000,
-  y1_occupancy_displacement_pct: 0.15,
-  y1_adr_displacement_pct: 0.08,
+  y1_occupancy_displacement_pct: 0.1,
+  y1_adr_displacement_pct: 0.05,
 };
 
 const payload = (displacement_status: DisplacementStatus | null | undefined): AssumptionSourcesResponse => ({
@@ -78,28 +80,25 @@ function Probe() {
 }
 
 describe('displacementStatusLine', () => {
-  it('keeps the worker sentence verbatim and tones the analyst-entry state as attention', () => {
-    const line = displacementStatusLine(OFF_ANALYST_ENTRY);
+  it('keeps the worker sentence verbatim; an undisplaced Year 1 is muted, never a warning', () => {
+    const line = displacementStatusLine(OFF_NO_ASSUMPTION);
     expect(line).toEqual({
-      tone: 'attention',
-      state: 'off_analyst_entry',
-      text: OFF_ANALYST_ENTRY.detail,
+      tone: 'muted',
+      state: 'off_no_assumption',
+      text: OFF_NO_ASSUMPTION.detail,
     });
   });
 
-  it('tones every active state "on" and every other off state "muted"', () => {
-    expect(displacementStatusLine(ON_PIP)?.tone).toBe('on');
-    expect(displacementStatusLine({ ...ON_PIP, state: 'on_om_broker' })?.tone).toBe('on');
-    expect(displacementStatusLine({ ...ON_PIP, state: 'on_analyst' })?.tone).toBe('on');
-    expect(displacementStatusLine({ ...OFF_ANALYST_ENTRY, state: 'off_seed' })?.tone).toBe('muted');
-    expect(displacementStatusLine({ ...OFF_ANALYST_ENTRY, state: 'off_immaterial' })?.tone).toBe('muted');
-    expect(displacementStatusLine({ ...OFF_ANALYST_ENTRY, state: 'off_analyst' })?.tone).toBe('muted');
+  it('tones every active state "on" and every off state "muted"', () => {
+    expect(displacementStatusLine(ON_ANALYST)?.tone).toBe('on');
+    expect(displacementStatusLine({ ...ON_ANALYST, state: 'on_pip_schedule' })?.tone).toBe('on');
+    expect(displacementStatusLine({ ...OFF_NO_ASSUMPTION, state: 'off_analyst' })?.tone).toBe('muted');
   });
 
   it('prints nothing when the worker sent nothing (old worker, loading, blank detail)', () => {
     expect(displacementStatusLine(null)).toBeNull();
     expect(displacementStatusLine(undefined)).toBeNull();
-    expect(displacementStatusLine({ ...ON_PIP, detail: '   ' })).toBeNull();
+    expect(displacementStatusLine({ ...ON_ANALYST, detail: '   ' })).toBeNull();
   });
 });
 
@@ -110,30 +109,32 @@ describe('ProvenanceProvider → useDisplacementStatus', () => {
   afterEach(cleanup);
 
   it('serves the payload verdict to consumers under the provider', async () => {
-    fx.assumptionSources.mockResolvedValue(payload(OFF_ANALYST_ENTRY));
+    fx.assumptionSources.mockResolvedValue(payload(OFF_NO_ASSUMPTION));
     render(
       <ProvenanceProvider dealId="deal-uuid-1">
         <Probe />
       </ProvenanceProvider>,
     );
     const el = await waitFor(() => screen.getByTestId('probe'));
-    expect(el.getAttribute('data-state')).toBe('off_analyst_entry');
-    expect(el.getAttribute('data-tone')).toBe('attention');
-    expect(el.textContent).toBe(OFF_ANALYST_ENTRY.detail);
+    expect(el.getAttribute('data-state')).toBe('off_no_assumption');
+    expect(el.getAttribute('data-tone')).toBe('muted');
+    expect(el.textContent).toBe(OFF_NO_ASSUMPTION.detail);
+    // Never implies the budget alone causes an impact.
+    expect(el.textContent).not.toMatch(/displacement on|−15%|−8%/);
     expect(fx.assumptionSources).toHaveBeenCalledTimes(1);
   });
 
-  it('says a PIP document displaces (FON-101) when the worker says so', async () => {
-    fx.assumptionSources.mockResolvedValue(payload(ON_PIP));
+  it('says explicit analyst displacement assumptions are applied when the worker says so', async () => {
+    fx.assumptionSources.mockResolvedValue(payload(ON_ANALYST));
     render(
       <ProvenanceProvider dealId="deal-uuid-1">
         <Probe />
       </ProvenanceProvider>,
     );
     const el = await waitFor(() => screen.getByTestId('probe'));
-    expect(el.getAttribute('data-state')).toBe('on_pip_document');
-    expect(el.textContent).toContain('PIP / CapEx document');
-    expect(el.textContent).toContain('occupancy −15%, ADR −8%');
+    expect(el.getAttribute('data-state')).toBe('on_analyst');
+    expect(el.getAttribute('data-tone')).toBe('on');
+    expect(el.textContent).toContain('occupancy −10%, ADR −5%');
   });
 
   it('stays silent on a worker that does not emit the field', async () => {

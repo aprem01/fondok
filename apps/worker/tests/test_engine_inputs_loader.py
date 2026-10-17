@@ -1283,32 +1283,27 @@ async def test_shadow_override_equal_to_the_om_figure_keeps_om_broker() -> None:
     )
 
 
-# ═══════════ FON-85 (Step B) — an OM-sourced PIP displaces Year 1 ═══════════
+# ═══ Sam, 2026-10-15 — an OM-sourced PIP budget never displaces Year 1 ═══
 
 
 @pytest.mark.asyncio
-async def test_om_sourced_pip_triggers_year_one_displacement() -> None:
-    """FON-85 (Step B). The Y1 displacement guard keys off "is the renovation
-    deal-specific". An $8.0M PIP off the OM on 132 keys ($60.6k/key) is, so
-    the 15% / 8% Year-1 haircut fires. Before this the OM path kept the
-    ``seed`` label and the guard never saw it.
-
-    (A persisted ``field_overrides.renovation_budget`` alone does NOT displace
-    today — the override loop runs after this guard — which is a separate,
-    pre-existing gap and deliberately not pinned here.)"""
+async def test_om_sourced_pip_budget_alone_does_not_displace_year_one() -> None:
+    """FON-85 Step B used to fire a 15% / 8% Year-1 haircut for an $8.0M OM
+    PIP on 132 keys. Sam (2026-10-15): renovation impacts come from explicit
+    timing / room-displacement / rate assumptions only, never from a budget
+    amount — so the OM figure is a capital cost and Year 1 is undisplaced."""
     om_deal = uuid4()
     await _insert_deal(om_deal, name="OM PIP", keys=132, purchase=36_400_000)
     await _insert_om_extraction(om_deal, fields=[_OM_RENO_ROW])
     base = await _base_for(om_deal)
-    assert base["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
-    assert base["y1_adr_displacement_pct"] == pytest.approx(0.08)
+    assert base["__sources__"]["renovation_budget"] == "om_broker"
+    assert base["y1_occupancy_displacement_pct"] == 0.0
+    assert base["y1_adr_displacement_pct"] == 0.0
 
 
 @pytest.mark.asyncio
-async def test_seed_and_immaterial_om_pips_keep_displacement_off() -> None:
-    """The Harbor Palms guard still holds: the Kimpton $5.28M seed (no OM)
-    never displaces, and an OM PIP under the $5k/key materiality floor
-    ($500k on 132 keys = $3.8k/key) does not either."""
+async def test_seed_and_small_om_pips_keep_displacement_off() -> None:
+    """The Kimpton $5.28M seed (no OM) and a small OM PIP stay undisplaced."""
     seed_deal = uuid4()
     await _insert_deal(seed_deal, name="Seed PIP", keys=132, purchase=36_400_000)
     base = await _base_for(seed_deal)
