@@ -441,8 +441,14 @@ step 8 changes what any user sees.
 1. **Prem — deploy the worker** (`git push origin main`). Check
    `curl -s https://<worker>/health | python -m json.tool` → `auth.jwt_required: true`,
    `auth.header_tenant_path_enabled: false`.
-2. **Prem — Clerk dashboard → Organizations settings:** turn **off**
-   "Allow users to create organizations".
+2. **Prem — turn off organization creation.** Two layers, both settable
+   from the Clerk CLI (done 2026-10-17 on the dev instance): the per-user
+   flag for existing users (`PATCH /users/{id}` `create_organization_enabled=false`)
+   and the default for NEW users
+   (`clerk api /instance/organization_settings -X PATCH -d '{"organization_creation_defaults":{"enabled":false}}' --yes --app <app> --instance dev`).
+   Verify with `clerk api /instance/organization_settings …` →
+   `organization_creation_defaults.enabled: false`. The dashboard toggle is the
+   same setting.
 3. **Prem — Clerk dashboard:** create (or confirm) the "Fondok Internal"
    org; add Sam, Eshan, Rani, Prem. Copy its `org_…` id. For each person,
    note the `org_…` id of the single-member org they have been using (Clerk
@@ -460,10 +466,14 @@ step 8 changes what any user sees.
 7. **Sam — sign in with Fondok Internal active.** `/projects` lists the
    folded deals; each opens; the Data Room shows its documents. If a deal
    is missing, stop and tell Prem (nothing has been enforced yet).
-8. **Prem — Clerk webhook:** add `https://<worker>/webhooks/clerk` for
-   `organization.created/updated/deleted`; set its `whsec_…` as
-   `CLERK_WEBHOOK_SECRET` on Railway; redeploy; send the dashboard test
-   event → `200 {"ok": true, …}`.
+8. **Prem — Clerk webhook.** The instance needs a Svix app first
+   (`clerk api /webhooks/svix -X POST --yes …`, once); then
+   `clerk api /webhooks/svix_url -X POST --yes …` returns a one-time Svix
+   dashboard link. In it add an endpoint `https://<worker>/webhooks/clerk`
+   for `organization.created/updated/deleted` and copy its `whsec_…` into
+   `apps/worker/.env.prod` (never into chat); push it to Railway as
+   `CLERK_WEBHOOK_SECRET` (`railway variables --set … --service fondok-worker`),
+   redeploy, send the dashboard test event → `200 {"ok": true, …}`.
 9. **Prem — flip `REQUIRE_REGISTERED_TENANT=1`** on Railway. Verify
    `/health.auth.registered_tenant_required: true`.
 10. **Sam — re-check step 7.** Then, as a throwaway Clerk org (or a user
