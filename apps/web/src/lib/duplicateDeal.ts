@@ -1,22 +1,60 @@
 /**
- * "Duplicate deal" — copy text shared by the project-header action and its
- * test. The worker route is POST /deals/{id}/duplicate
- * (apps/worker/app/api/deal_duplicate.py); keep this list in step with what
- * that route copies and skips.
+ * "Duplicate deal" — copy text shared by the project-header dialog and its
+ * tests. The worker route is POST /deals/{id}/duplicate
+ * (apps/worker/app/api/deal_duplicate.py); keep these lists in step with what
+ * that route copies and skips. Cell comments are the one per-copy choice
+ * (``include_cell_comments``, default off — Sam picks on each copy).
  */
 
 import { WorkerError } from './api';
 
-/** The confirm prompt shown before duplicating. */
-export function duplicateDealConfirmText(dealName: string): string {
+export interface DuplicateDealChoices {
+  /** Also copy the P&L cell comments (worker ``include_cell_comments``). */
+  includeCellComments: boolean;
+}
+
+export const DEFAULT_DUPLICATE_CHOICES: DuplicateDealChoices = {
+  includeCellComments: false,
+};
+
+/** What the copy gets, in the order the dialog lists them. */
+export function duplicateDealCopiedItems(choices: DuplicateDealChoices): string[] {
+  return [
+    'the deal details',
+    'your assumptions and their notes',
+    'scenarios',
+    ...(choices.includeCellComments
+      ? ['P&L cell comments (each marked as copied from this deal)']
+      : []),
+    'every document with its latest extraction (including the fields you reviewed)',
+  ];
+}
+
+/** What the copy does NOT get, in the order the dialog lists them. */
+export function duplicateDealSkippedItems(choices: DuplicateDealChoices): string[] {
+  return [
+    'model runs',
+    'the activity history',
+    ...(choices.includeCellComments ? [] : ['P&L cell comments']),
+  ];
+}
+
+function joinList(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+/** The confirm summary shown before duplicating (also the dialog body). */
+export function duplicateDealConfirmText(
+  dealName: string,
+  choices: DuplicateDealChoices = DEFAULT_DUPLICATE_CHOICES,
+): string {
   return (
     `Duplicate "${dealName}"?\n\n` +
-    'The copy gets: the deal details, your assumptions and their notes, ' +
-    'scenarios, cell comments, and every document with its latest ' +
-    'extraction (including the fields you reviewed). The files themselves ' +
-    'are shared, not uploaded again.\n\n' +
-    'Not copied: model runs and the activity history. The new deal shows ' +
-    'no results until you run the model on it.\n\n' +
+    `The copy gets: ${joinList(duplicateDealCopiedItems(choices))}. ` +
+    'The files themselves are shared, not uploaded again.\n\n' +
+    `Not copied: ${joinList(duplicateDealSkippedItems(choices))}. ` +
+    'The new deal shows no results until you run the model on it.\n\n' +
     'The original deal is not changed.'
   );
 }

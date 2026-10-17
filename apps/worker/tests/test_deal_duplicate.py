@@ -4,10 +4,14 @@ Sam's QA plan: "Since re-extraction resets reviewed fields, I'll use a
 duplicate Kimpton deal or preserve the existing assumptions before testing."
 
 Pins:
-* the deal row, field_overrides (with notes), scenarios (re-keyed), cell
-  comments (marked copied), documents (new ids, SAME storage key / content
-  hash) and each document's LATEST extraction_results row (analyst reviews
-  included) are copied;
+* the deal row, field_overrides (with notes), scenarios (re-keyed), documents
+  (new ids, SAME storage key / content hash) and each document's LATEST
+  extraction_results row (analyst reviews included) are copied;
+* cell comments are copied ONLY when the body says
+  ``include_cell_comments: true`` (Sam chooses per copy) — then marked
+  ``copied_from_deal_id`` + "[Copied from …]" with keys re-pointed; by default
+  they are listed under ``skipped`` and the copy has none; an unknown body key
+  is a 422; another tenant's comment on the same deal id is never copied;
 * the OM→STR positioning provenance (``positioning_source_detail``) on the
   copy names the COPIED document, never a document id the copy does not own;
 * the "still processing" refusal gates on the pipeline's own status set
@@ -290,7 +294,11 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
     before = await _snapshot(src, tenant)
 
     async with await _client() as c:
-        r = await c.post(f"/deals/{src}/duplicate", headers={"X-Tenant-Id": tenant})
+        r = await c.post(
+            f"/deals/{src}/duplicate",
+            json={"include_cell_comments": True},
+            headers={"X-Tenant-Id": tenant},
+        )
     assert r.status_code == 201, r.text
     body = r.json()
     new = body["deal"]["id"]
@@ -299,6 +307,8 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
     today = datetime.now(UTC).date().isoformat()
     assert body["deal"]["name"] == f"Kimpton Dup Test (copy {today})"
     assert "engine_outputs" in body["skipped"] and "audit_log" in body["skipped"]
+    assert "cell_comments" not in body["skipped"]
+    assert body["include_cell_comments"] is True
     assert body["copied"] == {
         "deals": 1,
         "documents": 1,
@@ -382,11 +392,13 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
     assert json.loads(down["overrides"]) == [{"key": "revenue.adr_growth", "value": 0.01}]
     assert sum(1 for s in copy["scenarios"] if s["is_base"]) == 1
 
-    # cell comments — marked as copied, key re-pointed.
+    # cell comments — marked as copied (column + body prefix), key re-pointed.
     (cc,) = copy["cell_comments"]
     assert cc["body"] == "[Copied from Kimpton Dup Test] Ties to the STR report"
     assert cc["cell_key"] == f"hist:{new_doc}::rooms_revenue"
     assert cc["author_id"] == before["cell_comments"][0]["author_id"]
+    assert cc["copied_from_deal_id"] == src
+    assert before["cell_comments"][0]["copied_from_deal_id"] is None
 
     # NOT copied: engine outputs (model must be re-run) and audit history.
     assert before["engine_outputs"], "fixture should have a run on the original"
@@ -403,6 +415,8 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
     meta = json.loads(audit[0]["payload"])["metadata"]
     assert meta["source_deal_id"] == src
     assert meta["document_id_map"] == {doc_id: new_doc}
+    assert meta["include_cell_comments"] is True
+    assert "cell_comments" not in meta["skipped"]
 
     # Storage reads on the copy resolve the original object.
     async with await _client() as c:
@@ -415,6 +429,136 @@ async def test_duplicate_copies_everything_specified(seeded: dict[str, str]) -> 
         listed = await c.get(f"/deals/{new}/documents", headers={"X-Tenant-Id": tenant})
         assert listed.status_code == 200
         assert [d["id"] for d in listed.json()] == [new_doc]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [None, {}, {"include_cell_comments": False}])
+async def test_duplicate_skips_cell_comments_unless_asked(
+    seeded: dict[str, str], body: dict | None
+) -> None:
+    """Sam chooses per copy. An empty POST (the pre-option client), an empty
+    body and an explicit ``false`` all mean: no comments on the copy, and the
+    response + audit entry say so under ``skipped``."""
+    tenant, src = seeded["tenant"], seeded["deal_id"]
+    before = await _snapshot(src, tenant)
+    assert len(before["cell_comments"]) == 1
+
+    async with await _client() as c:
+        kwargs = {} if body is None else {"json": body}
+        r = await c.post(f"/deals/{src}/duplicate", headers={"X-Tenant-Id": tenant}, **kwargs)
+    assert r.status_code == 201, r.text
+    res = r.json()
+    new = res["deal"]["id"]
+    assert res["include_cell_comments"] is False
+    assert "cell_comments" not in res["copied"]
+    assert "cell_comments" in res["skipped"]
+    # Everything else still travels.
+    assert res["copied"] == {
+        "deals": 1,
+        "documents": 1,
+        "extraction_results": 1,
+        "scenarios": 2,
+    }
+
+    copy = await _snapshot(new, tenant)
+    assert copy["cell_comments"] == []
+    assert len(copy["documents"]) == 1 and len(copy["scenarios"]) == 2
+    assert await _snapshot(src, tenant) == before, "the original deal must be untouched"
+
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as s:
+        audit = await _rows(
+            s,
+            "SELECT action, payload FROM audit_log WHERE deal_id = :d AND tenant_id = :t",
+            {"d": new, "t": tenant},
+        )
+    meta = json.loads(audit[0]["payload"])["metadata"]
+    assert meta["include_cell_comments"] is False
+    assert "cell_comments" in meta["skipped"]
+
+    # The comments API on the copy is empty; on the original, the comment is
+    # not marked as copied.
+    async with await _client() as c:
+        h = {"X-Tenant-Id": tenant}
+        assert (await c.get(f"/deals/{new}/comments", headers=h)).json() == []
+        (orig,) = (await c.get(f"/deals/{src}/comments", headers=h)).json()
+        assert orig["copied_from_deal_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_rejects_unknown_body_keys(seeded: dict[str, str]) -> None:
+    tenant, src = seeded["tenant"], seeded["deal_id"]
+    async with await _client() as c:
+        r = await c.post(
+            f"/deals/{src}/duplicate",
+            json={"include_comments": True},
+            headers={"X-Tenant-Id": tenant},
+        )
+        assert r.status_code == 422, r.text
+        r = await c.post(
+            f"/deals/{src}/duplicate",
+            json={"include_cell_comments": "yes please"},
+            headers={"X-Tenant-Id": tenant},
+        )
+        assert r.status_code == 422, r.text
+    snap = await _snapshot(src, tenant)
+    assert len(snap["deals"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_copied_comments_are_tenant_scoped_and_surface_their_source(
+    seeded: dict[str, str],
+) -> None:
+    """A ``cell_comments`` row that names the same deal id but another tenant
+    (defence in depth — the deal lookup already refuses foreign callers) is
+    never copied, and the copy's comments API reports the source deal."""
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    tenant, src, doc_id = seeded["tenant"], seeded["deal_id"], seeded["doc_id"]
+    other_tenant = str(uuid4())
+    async with get_session_factory()() as s:
+        await s.execute(
+            text(
+                "INSERT INTO cell_comments (id, tenant_id, deal_id, cell_key, body, "
+                "created_at) VALUES (:id, :t, :d, :k, 'foreign tenant row', "
+                "'2026-10-01 00:00:00')"
+            ),
+            {
+                "id": str(uuid4()),
+                "t": other_tenant,
+                "d": src,
+                "k": f"hist:{doc_id}::rooms_revenue",
+            },
+        )
+        await s.commit()
+
+    async with await _client() as c:
+        h = {"X-Tenant-Id": tenant}
+        r = await c.post(
+            f"/deals/{src}/duplicate", json={"include_cell_comments": True}, headers=h
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["copied"]["cell_comments"] == 1
+        new = r.json()["deal"]["id"]
+        listed = (await c.get(f"/deals/{new}/comments", headers=h)).json()
+    assert len(listed) == 1
+    (cm,) = listed
+    assert cm["copied_from_deal_id"] == src
+    assert cm["body"].startswith("[Copied from Kimpton Dup Test] ")
+    assert "foreign tenant row" not in cm["body"]
+
+    copy = await _snapshot(new, tenant)
+    assert [c["body"] for c in copy["cell_comments"]] == [cm["body"]]
+    async with get_session_factory()() as s:
+        foreign = await _rows(
+            s,
+            "SELECT * FROM cell_comments WHERE deal_id = :d AND tenant_id = :t",
+            {"d": new, "t": other_tenant},
+        )
+    assert foreign == []
 
 
 @pytest.mark.asyncio

@@ -1257,6 +1257,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON cell_comments (tenant_id, deal_id, cell_key)
         """,
     ),
+    # Duplicate deal (opt-in comment copy) — the source deal a copied comment
+    # came from; NULL for a comment written on this deal.
+    (
+        "cell_comments.add_copied_from_deal_id",
+        "ALTER TABLE cell_comments ADD COLUMN IF NOT EXISTS copied_from_deal_id UUID",
+    ),
     # Sam #6 — STR's market / submarket definition list, loaded from STR's
     # file by ``scripts/load_str_markets.py`` (nothing else writes it).
     #
@@ -2183,6 +2189,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_cell_comments_deal_cell
         ON cell_comments (tenant_id, deal_id, cell_key)
         """,
+    ),
+    # ``copied_from_deal_id`` mirror (UUID → TEXT); PRAGMA-guarded ADD COLUMN.
+    (
+        "cell_comments.add_copied_from_deal_id",
+        "ALTER TABLE cell_comments ADD COLUMN copied_from_deal_id TEXT",
     ),
     # Sam #6 — SQLite mirror of the Postgres STR reference table (see the
     # Postgres entry for why it is deliberately not tenant-scoped).
