@@ -16,7 +16,11 @@ const DIAG_ENABLED = process.env.NEXT_PUBLIC_SHOW_DIAG === 'true';
 interface Diag {
   workerUrl: string;
   connected: boolean;
-  health: { status?: string; version?: string; db?: string } | null;
+  health: {
+    status?: string;
+    version?: string;
+    db?: { status?: string; migrations_dsn?: 'owner' | 'same' };
+  } | null;
   healthError: string | null;
   dealsCount: number | null;
   dealsError: string | null;
@@ -199,7 +203,8 @@ function DiagPageInner() {
           <>
             <Kv k="status" v={String(diag.health?.status ?? '?')} />
             <Kv k="version" v={String(diag.health?.version ?? '?')} />
-            <Kv k="db" v={String(diag.health?.db ?? '?')} />
+            <Kv k="db" v={String(diag.health?.db?.status ?? '?')} />
+            <Kv k="db.migrations_dsn" v={String(diag.health?.db?.migrations_dsn ?? '?')} />
           </>
         )}
       </Section>

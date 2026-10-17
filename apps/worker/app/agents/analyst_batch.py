@@ -316,26 +316,43 @@ async def _update_pending_status(
     await session.commit()
 
 
-async def _list_open_batches(session: AsyncSession) -> list[PendingBatchRow]:
+_OPEN_BATCH_PREDICATE = "WHERE status IN ('queued', 'in_progress')"
+
+
+async def _list_open_batches(
+    session: AsyncSession, *, tenant_id: str | None = None
+) -> list[PendingBatchRow]:
+    """Open batches, oldest first. ``tenant_id`` (FON-93, per-tenant scans
+    under RLS) adds ``AND tenant_id = :tenant``; ``None`` is today's
+    cross-tenant scan, unchanged."""
+    params: dict[str, Any] = {}
+    scope = ""
+    if tenant_id is not None:
+        scope = "\n               AND tenant_id = :tenant"
+        params["tenant"] = str(tenant_id)
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT id, batch_id, deal_id, tenant_id, agent_name, status,
                    submitted_at, completed_at, error
               FROM pending_batches
-             WHERE status IN ('queued', 'in_progress')
+             {_OPEN_BATCH_PREDICATE}{scope}
              ORDER BY submitted_at ASC
             """
-        )
+        ),
+        params,
     )
     rows: list[PendingBatchRow] = []
     for r in result.fetchall():
         rows.append(
             PendingBatchRow(
-                id=r[0],
+                # Postgres (asyncpg) returns UUID objects for the three uuid
+                # columns; the row model wants strings (SQLite already
+                # returns TEXT). Found by tests/test_rls_postgres.py.
+                id=str(r[0]),
                 batch_id=r[1],
-                deal_id=r[2],
-                tenant_id=r[3],
+                deal_id=str(r[2]),
+                tenant_id=str(r[3]),
                 agent_name=r[4],
                 status=r[5],
                 submitted_at=_coerce_dt(r[6]),
@@ -513,9 +530,24 @@ async def poll_pending_batches(
     tally = {"checked": 0, "completed": 0, "failed": 0, "expired": 0, "pending": 0}
     tenant_token = current_tenant_id.set(current_tenant_id.get())
     try:
-        # Cross-tenant scan: under RLS this needs the owner DSN (see
-        # docs/WORKSPACE_ISOLATION.md §7 "Background jobs").
-        open_rows = await _list_open_batches(session)
+        # FON-93: with RLS off this is today's single cross-tenant scan;
+        # with the GUC hook live it is one scan per tenant, each under that
+        # tenant's GUC (services/tenant_scan.py, docs/WORKSPACE_ISOLATION.md §7).
+        from ..services.tenant_scan import plan_tenant_scan, scan_by_tenant
+
+        plan = await plan_tenant_scan(
+            distinct_tenants_sql=(
+                f"SELECT DISTINCT tenant_id FROM pending_batches {_OPEN_BATCH_PREDICATE}"
+            ),
+            job="analyst_batch_poller",
+        )
+
+        async def _fetch(s: AsyncSession, tenant: str | None) -> list[PendingBatchRow]:
+            if tenant is None:  # today's call, verbatim
+                return await _list_open_batches(s)
+            return await _list_open_batches(s, tenant_id=tenant)
+
+        open_rows = await scan_by_tenant(session, plan, _fetch)
         if not open_rows:
             return tally
         # End the scan's transaction so each row below starts its own and

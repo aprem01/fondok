@@ -39,6 +39,7 @@ from .pipeline_digest import (
     compute_next_run_at,
     dispatch_digest,
 )
+from .tenant_scan import plan_tenant_scan, scan_by_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,27 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     return m
 
 
+_DUE_PREDICATE = """
+                 WHERE is_active = :active
+                   AND next_run_at IS NOT NULL
+                   AND next_run_at <= :now
+"""
+
+
+def _now_param(session: AsyncSession, now: datetime) -> Any:
+    """SQLite stores ``next_run_at`` as TEXT and compares as TEXT, so we
+    bind an ISO-8601 string explicitly to keep the comparison sane
+    (otherwise SQLAlchemy emits a ``YYYY-MM-DD HH:MM:SS.ffffff``
+    coercion without TZ that mis-orders against our ``+00:00``-stamped
+    rows). Postgres takes the datetime directly."""
+    is_sqlite = (
+        session.bind is not None and session.bind.dialect.name == "sqlite"
+    )
+    return now.astimezone(UTC).isoformat() if is_sqlite else now
+
+
 async def _fetch_due_schedules(
-    session: AsyncSession, *, now: datetime
+    session: AsyncSession, *, now: datetime, tenant_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Pull every active schedule whose ``next_run_at`` is in the past.
 
@@ -82,30 +102,24 @@ async def _fetch_due_schedules(
     decision is a single indexed query — no need to recompute cadence
     in SQL.
 
-    SQLite stores ``next_run_at`` as TEXT and compares as TEXT, so we
-    bind an ISO-8601 string explicitly to keep the comparison sane
-    (otherwise SQLAlchemy emits a ``YYYY-MM-DD HH:MM:SS.ffffff``
-    coercion without TZ that mis-orders against our ``+00:00``-stamped
-    rows). Postgres takes the datetime directly.
+    ``tenant_id`` (FON-93, per-tenant scans under RLS) adds
+    ``AND tenant_id = :tenant``; ``None`` is today's cross-tenant scan,
+    unchanged.
     """
-    is_sqlite = (
-        session.bind is not None and session.bind.dialect.name == "sqlite"
-    )
-    now_param: Any = (
-        now.astimezone(UTC).isoformat() if is_sqlite else now
-    )
+    params: dict[str, Any] = {"active": True, "now": _now_param(session, now)}
+    scope = ""
+    if tenant_id is not None:
+        scope = "                   AND tenant_id = :tenant\n"
+        params["tenant"] = str(tenant_id)
     rows = (
         await session.execute(
             text(
                 f"""
                 SELECT {_SCHEDULE_COLUMNS}
                   FROM pipeline_digest_schedules
-                 WHERE is_active = :active
-                   AND next_run_at IS NOT NULL
-                   AND next_run_at <= :now
-                """
+                {_DUE_PREDICATE}{scope}"""
             ),
-            {"active": True, "now": now_param},
+            params,
         )
     ).fetchall()
     return [_row_to_dict(r) for r in rows]
@@ -169,9 +183,24 @@ async def tick_once(now: datetime | None = None) -> int:
 
 async def _tick_with_session(session: AsyncSession, *, now: datetime) -> int:
     dispatched = 0
-    # Cross-tenant scan: under RLS this needs the owner DSN (see
-    # docs/WORKSPACE_ISOLATION.md §7 "Background jobs").
-    due = await _fetch_due_schedules(session, now=now)
+    # FON-93: with RLS off this is today's single cross-tenant scan; with
+    # the GUC hook live it is one scan per tenant, each under that
+    # tenant's GUC (services/tenant_scan.py, docs/WORKSPACE_ISOLATION.md §7).
+    plan = await plan_tenant_scan(
+        distinct_tenants_sql=(
+            "SELECT DISTINCT tenant_id FROM pipeline_digest_schedules"
+            + _DUE_PREDICATE
+        ),
+        params={"active": True, "now": _now_param(session, now)},
+        job="digest_scheduler",
+    )
+
+    async def _fetch(s: AsyncSession, tenant: str | None) -> list[dict[str, Any]]:
+        if tenant is None:  # today's call, verbatim
+            return await _fetch_due_schedules(s, now=now)
+        return await _fetch_due_schedules(s, now=now, tenant_id=tenant)
+
+    due = await scan_by_tenant(session, plan, _fetch)
     # End the scan's transaction so each schedule below starts its own and
     # the ``after_begin`` hook publishes THAT schedule's tenant.
     await session.commit()

@@ -36,7 +36,7 @@ from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .api import webhooks as webhooks_router
 from .config import get_settings
-from .database import dispose_engine, get_engine
+from .database import dispose_engine, dispose_migrations_engine, get_engine
 from .migrations import run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
@@ -95,6 +95,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await run_startup_migrations()
     except Exception as exc:
         logger.exception("startup migrations failed: %s", exc)
+    # FON-93 — the owner-DSN engine (``DATABASE_URL_MIGRATIONS``) exists
+    # for the DDL above only. Dispose it here so no owner connection is
+    # pooled while the worker serves traffic as ``fondok_app``; a no-op
+    # when DDL ran on the serving engine (the variable unset).
+    try:
+        await dispose_migrations_engine()
+    except Exception as exc:
+        logger.warning("migrations engine dispose failed: %s", exc)
     # Defense-in-depth tenant-isolation listener — installed AFTER
     # migrations so the schema bootstrap (which legitimately runs
     # CREATE TABLE + a handful of unscoped SELECTs against system

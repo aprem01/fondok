@@ -89,11 +89,14 @@ default, on only in `tests/conftest.py` and a developer's local `.env`.
 | Setting (Railway → `fondok-worker`) | Default | What it turns on |
 | --- | --- | --- |
 | `REQUIRE_REGISTERED_TENANT` | `False` | A JWT whose org is not an `active` row in `tenants` gets `403 tenant_not_registered`. If the registry itself cannot be read (DB down, table missing) the request gets `503 tenant_registry_unavailable` + `Retry-After: 2` — an outage is never reported as "not registered", and is never cached. |
-| `DB_SET_TENANT_GUC` | `False` | Every transaction of every worker session — request-scoped **and** background (extraction pipeline, Run Model task, cost persistence, batch poller, digest scheduler) — runs `set_config('app.tenant_id', <tenant>, true)` so Postgres RLS policies can see the caller. No-op on SQLite. |
+| `DB_SET_TENANT_GUC` | `False` | Every transaction of every worker session — request-scoped **and** background (extraction pipeline, Run Model task, cost persistence, batch poller, digest scheduler, extraction watchdog) — runs `set_config('app.tenant_id', <tenant>, true)` so Postgres RLS policies can see the caller. Also switches the three periodic scans from one cross-tenant SELECT to one SELECT per tenant (§7 "Background jobs"). No-op on SQLite. |
+| `DATABASE_URL_MIGRATIONS` | unset | The **owner** DSN for DDL only. Unset: startup migrations run on the serving engine (today). Set: `run_startup_migrations()` runs on a dedicated engine built from it, disposed right after; the serving `DATABASE_URL` can then be the non-owner `fondok_app` role (§7). Also used, one un-pooled connection per tick, by the background scans to discover tenants when the registry is not in force. |
 | `CLERK_WEBHOOK_SECRET` | unset | Enables `POST /webhooks/clerk`. Unset → every delivery is refused with 503 (never accepted unsigned). |
 
-`/health` → `auth` reports all of these:
-`{"header_tenant_path_enabled", "jwt_required", "registered_tenant_required", "rls_tenant_guc"}`.
+`/health` → `auth` reports the flags:
+`{"header_tenant_path_enabled", "jwt_required", "registered_tenant_required", "rls_tenant_guc"}`;
+`/health` → `db.migrations_dsn` reports `"owner"` (a dedicated DDL DSN is set) or
+`"same"` — presence only, never the URL.
 
 ## 4. The registry
 
@@ -248,10 +251,33 @@ After the move, the old single-member orgs can be deleted in Clerk (or
 left as `suspended` rows in the registry so the audit trail explains the
 UUIDs).
 
-## 7. Row-level security (ready, not applied)
+## 7. Row-level security (ready to apply — code complete, not yet applied)
 
 Defense-in-depth below the application: even a query that forgets its
 `WHERE tenant_id = …` returns only the caller's rows.
+
+Everything the worker needs to run as the non-owner role is in the repo
+and is exercised against a real Postgres by
+`apps/worker/tests/test_rls_postgres.py` (opt-in, see `docs/TESTING.md`).
+With both new variables unset production behaves exactly as before.
+
+### The two variables
+
+| Railway variable | Role it connects as | Used for |
+| --- | --- | --- |
+| `DATABASE_URL` | `fondok_app` after step 5 below (the owner until then) | every request session, every background session — all DML |
+| `DATABASE_URL_MIGRATIONS` | the owner (Railway's default user) | `run_startup_migrations()` at boot — `CREATE TABLE / INDEX / EXTENSION`, `ALTER TABLE`, the audit trigger — on a dedicated engine disposed as soon as the DDL is done; and the scans' `SELECT DISTINCT tenant_id` tenant discovery (one un-pooled connection per tick, only when the registry is not in force) |
+
+Every DDL site in the worker is in `app/migrations.py` (`MIGRATIONS`,
+including `CREATE EXTENSION IF NOT EXISTS vector`); it is the only
+startup DDL. LangGraph's `AsyncPostgresSaver` is opened with
+`from_conn_string` (no DDL) and its `setup()` is never called — if that
+ever changes it must use `settings.sync_migrations_database_url`. The
+`tenant_middleware` listener is attached to the serving engine only; the
+DDL engine is never bound to a session factory, so the tenant GUC hook
+(a `TenantSession` listener) never fires on it and it never serves a
+tenant read. `/health.db.migrations_dsn` reads `"owner"` when the
+variable is set, `"same"` otherwise.
 
 ### Pieces already in the repo
 
@@ -284,55 +310,93 @@ Defense-in-depth below the application: even a query that forgets its
   request. The flag is read on every call, so flipping it needs no restart
   ordering. The tenant comes from the `current_tenant_id` ContextVar, set
   by `get_current_auth` on every request path and by each background
-  entrypoint from its `tenant_id` argument.
+  entrypoint from its `tenant_id` argument. A caller that published
+  nothing — `None` **or** a blank string — makes the hook skip
+  `set_config` entirely, so a tenant-less connection under
+  `DB_SET_TENANT_GUC=1` never raises; it simply sees zero rows (the
+  policy's `NULLIF` covers the `''` placeholder on the SQL side).
+* `app/services/tenant_scan.py` — the per-tenant iteration the three
+  periodic scans use under RLS (next section).
 
 ### Why a non-owner role
 
 `FORCE ROW LEVEL SECURITY` applies policies to the table owner, but a
 superuser or any role with `BYPASSRLS` ignores them. Railway's default
-Postgres user is the owner and typically superuser. So:
-
-* keep the owner role for `run_startup_migrations()` (DDL) — or run
-  migrations from a one-off job;
-* point the worker's `DATABASE_URL` at `fondok_app` for serving traffic.
-
-Simplest shape: two Railway variables, `DATABASE_URL` (fondok_app) and
-`DATABASE_URL_MIGRATIONS` (owner). Teaching `run_startup_migrations` to
-prefer the second when set is a small follow-up; until then apply
-`001_enable_rls.sql` manually and run migrations manually when the schema
-changes.
+Postgres user is the owner and typically superuser. So the owner role
+stays for `run_startup_migrations()` (through `DATABASE_URL_MIGRATIONS`)
+and the worker's `DATABASE_URL` points at `fondok_app` for serving
+traffic. Both are wired; the table above says which does what.
 
 ### Background jobs
 
 Per-deal background work (document parse / extraction, the Run Model
-task, cost persistence) now sets `current_tenant_id` from its `tenant_id`
+task, cost persistence) sets `current_tenant_id` from its `tenant_id`
 argument before opening its session, so under RLS it reads and writes as
 that tenant.
 
-The digest scheduler (`services/digest_scheduler.py`) and the Anthropic
-batch poller (`agents/analyst_batch.py`) set the tenant **per row inside
-their loop** (and end the scan's transaction first, so each row's
-statements start a fresh transaction under that row's tenant). Their
-initial scan, however, is cross-tenant (`SELECT … FROM
-pipeline_digest_schedules WHERE next_run_at <= now` / open
-`pending_batches`) and under RLS as `fondok_app` would return nothing.
-Before step 7.4 either (a) run the worker's background loops under the
-owner DSN, or (b) replace the scan with a per-tenant iteration over the
-registry (`list_tenants()`), publishing each tenant before its scan.
+The three periodic jobs — the digest scheduler
+(`services/digest_scheduler.py`), the Anthropic batch poller
+(`agents/analyst_batch.py`) and the extraction watchdog
+(`services/extraction_watchdog.py`) — have no request context. Each
+still sets the tenant **per row inside its loop** (ending the scan's
+transaction first, so each row's statements start a fresh transaction
+under that row's tenant). Their *initial scan* now goes through
+`services/tenant_scan.py`:
 
-### Order
+* **RLS off** (`DB_SET_TENANT_GUC` unset, or SQLite): one cross-tenant
+  SELECT, the same statement as before — same rows, same order of
+  effects. Production today.
+* **RLS on**: one SELECT per tenant, `current_tenant_id` published
+  *before* each (so the GUC hook scopes the transaction) and the SQL
+  carrying `AND tenant_id = :tenant` (so the owner, which bypasses RLS,
+  cannot return every tenant's rows N times). The tenants come from the
+  registry (`list_tenants()`) when `REQUIRE_REGISTERED_TENANT` is on and
+  it has rows — an unregistered tenant has no data plane, so its rows are
+  not scanned; else from `SELECT DISTINCT tenant_id FROM <table> WHERE
+  <the scan's predicate>` read through `DATABASE_URL_MIGRATIONS` (one
+  un-pooled owner connection per tick); else — no registry rows and no
+  owner DSN — today's single query, which as `fondok_app` returns nothing
+  and is logged once per tick.
 
-1. Apply `001_enable_rls.sql` as the owner, in a change window. Policies
-   exist but the worker still connects as the owner → nothing changes.
-2. Verify as `fondok_app` with psql (the file's footer has the queries):
-   no GUC → 0 rows; GUC set → that tenant's rows.
-3. Set `DB_SET_TENANT_GUC=1` on Railway (worker still as owner → still
-   nothing changes functionally; `/health.auth.rls_tenant_guc` flips).
-4. Switch the worker's `DATABASE_URL` to `fondok_app`. Smoke the product
-   as Fondok Internal and as one external tenant. Watch for 0-row
-   responses on background jobs (§ above).
-5. Rollback at any step: switch the DSN back to the owner; optionally
-   `DISABLE ROW LEVEL SECURITY` (footer of the SQL file).
+### Order (Railway, in a change window)
+
+Each step is independently reversible; nothing before step 5 changes what
+any user sees.
+
+1. **Set `DATABASE_URL_MIGRATIONS` = the owner DSN** (the value
+   `DATABASE_URL` has today). Redeploy. `/health.db.migrations_dsn`
+   reads `"owner"`; startup DDL now runs on the dedicated engine and the
+   serving engine is unchanged (it is still the owner).
+2. **Apply `apps/worker/migrations/rls/001_enable_rls.sql` as the owner**
+   (psql, one transaction). It creates `fondok_app`, grants DML, enables
+   and forces RLS, and (re)creates the policies. Then
+   `ALTER ROLE fondok_app PASSWORD '…'` (never into chat). Policies exist
+   but the worker still connects as the owner → nothing changes.
+3. **Verify as `fondok_app` with psql** (the file's footer has the
+   queries): no GUC → 0 rows; GUC set → that tenant's rows; after a
+   commit `current_setting` reads `''` and the count is 0 again, **not an
+   error**.
+4. **Set `DB_SET_TENANT_GUC=1`.** Redeploy. `/health.auth.rls_tenant_guc`
+   flips; every session publishes the caller's tenant and the three
+   scans iterate tenants. The worker is still the owner, so functionally
+   nothing changes yet.
+5. **Switch `DATABASE_URL` to the `fondok_app` DSN** (same host/db, user
+   `fondok_app`, the password from step 2). Redeploy. From here RLS is
+   enforced.
+6. **Smoke.** As Fondok Internal and as one external tenant: `/projects`,
+   open a deal, Data Room, Run Model. Re-run `isolation_check.py` (§9,
+   step 11 of §10). Watch the worker log for `digest_scheduler` /
+   `analyst_batch_poller` / `extraction_watchdog` lines — a tick that
+   logs "cross-tenant scan (returns nothing as fondok_app)" means neither
+   the registry nor `DATABASE_URL_MIGRATIONS` is available to it.
+7. **Rollback at any step:** switch `DATABASE_URL` back to the owner DSN
+   and redeploy — the policies stay, harmless, because the owner is a
+   superuser. Optionally `DISABLE ROW LEVEL SECURITY` (footer of the SQL
+   file) and unset `DB_SET_TENANT_GUC` / `DATABASE_URL_MIGRATIONS`.
+
+Local proof before the change window: run `tests/test_rls_postgres.py`
+against a throwaway Postgres (`docs/TESTING.md`); it performs steps 1–5
+in-process and checks the three scans find every tenant's rows.
 
 ## 9. Phase-3 tooling (no hand steps in the data path)
 
@@ -487,9 +551,10 @@ step 8 changes what any user sees.
 12. **Prem — provision firm B for the browser proof** (`FONDOK_SMOKE_B_*`
     repository secrets) and run `pnpm test:e2e:prod`; `02-two-firm-isolation`
     must pass, not skip.
-13. **Later, separate change window — RLS** (§7): apply
-    `001_enable_rls.sql`, verify as `fondok_app`, set `DB_SET_TENANT_GUC=1`,
-    switch the DSN, re-run step 11.
+13. **Later, separate change window — RLS** (§7 "Order"): set
+    `DATABASE_URL_MIGRATIONS` to the owner DSN, apply `001_enable_rls.sql`,
+    verify as `fondok_app`, set `DB_SET_TENANT_GUC=1`, switch `DATABASE_URL`
+    to `fondok_app`, re-run step 11. Rollback = switch `DATABASE_URL` back.
 
 Rollback at any point before step 13: unset `REQUIRE_REGISTERED_TENANT`
 (step 9) — the registry and the folded rows are harmless with enforcement

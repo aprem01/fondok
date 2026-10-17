@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import __version__
 from ..config import get_settings
-from ..database import get_session
+from ..database import get_session, migrations_dsn_kind
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -126,7 +126,11 @@ async def health(
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
-        "db": db_status,
+        # FON-93 — ``migrations_dsn``: "owner" when DATABASE_URL_MIGRATIONS
+        # (a dedicated owner DSN for startup DDL) is set, "same" when DDL
+        # runs on the serving engine. Presence only; the URL is never
+        # reported.
+        "db": {"status": db_status, "migrations_dsn": migrations_dsn_kind()},
         "usali_rules": rules_loaded,
         "structural_recognizer": recognizer_ok,
         "ontology_version": ontology_version,

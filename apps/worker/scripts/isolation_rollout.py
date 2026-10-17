@@ -86,6 +86,7 @@ TARGET_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("REQUIRE_REGISTERED_TENANT", "1", "/health.auth.registered_tenant_required == true"),
     ("CLERK_WEBHOOK_SECRET", "whsec_… (set)", "POST /webhooks/clerk test event → 200 {\"ok\": true}"),
     ("DB_SET_TENANT_GUC", "1 — LATER, with RLS (§7)", "/health.auth.rls_tenant_guc == true"),
+    ("DATABASE_URL_MIGRATIONS", "owner DSN — LATER, with RLS (§7), set BEFORE switching DATABASE_URL to fondok_app", "/health.db.migrations_dsn == \"owner\""),
 )
 
 

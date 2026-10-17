@@ -236,7 +236,13 @@ async def run_deal(
     tenant_id: str,
     source_uris: list[str] | None = None,
 ) -> DealState:
-    """Start the graph for a deal. Runs up to the first interrupt."""
+    """Start the graph for a deal. Runs up to the first interrupt.
+
+    FON-93: ``from_conn_string`` opens a plain connection and performs no
+    DDL — the checkpointer's ``setup()`` is never called by the worker.
+    If it ever is, it must run on ``settings.sync_migrations_database_url``
+    (the owner DSN) and never on the serving ``fondok_app`` DSN.
+    """
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     settings = get_settings()

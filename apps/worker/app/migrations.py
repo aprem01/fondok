@@ -24,7 +24,7 @@ import re
 from sqlalchemy import text
 
 from .config import get_settings
-from .database import get_engine
+from .database import get_migrations_engine
 
 logger = logging.getLogger(__name__)
 
@@ -2249,10 +2249,19 @@ async def run_startup_migrations() -> None:
 
     On SQLite we apply the lighter ``SQLITE_MIGRATIONS`` set so the
     documents + extractions flow works for local dev / unit tests.
-    LangGraph's checkpointer manages its own schema (Postgres only).
+    LangGraph's checkpointer manages its own schema (Postgres only) and
+    nothing in the worker calls its ``setup()`` — there is no checkpoint
+    DDL at startup.
+
+    FON-93: every statement runs on :func:`get_migrations_engine` — the
+    serving engine when ``DATABASE_URL_MIGRATIONS`` is unset (today's
+    behaviour), else a dedicated owner-DSN engine so the serving role can
+    be the non-owner ``fondok_app``. The caller (``app.main.lifespan``)
+    disposes the dedicated engine right after this returns.
     """
     settings = get_settings()
-    is_sqlite = settings.async_database_url.startswith("sqlite")
+    ddl_url = settings.async_migrations_database_url or settings.async_database_url
+    is_sqlite = ddl_url.startswith("sqlite")
     entries = SQLITE_MIGRATIONS if is_sqlite else MIGRATIONS
 
     if is_sqlite:
@@ -2260,8 +2269,9 @@ async def run_startup_migrations() -> None:
             "migrations: sqlite detected — applying lite schema "
             "(deals/documents/extraction_results)"
         )
+    logger.info("migrations: ddl engine=%s", settings.migrations_dsn_kind)
 
-    engine = get_engine()
+    engine = get_migrations_engine()
     # NOTE: each migration runs in its OWN transaction so a single
     # failure (e.g. an idempotent ALTER on a fresh DB) cannot poison
     # the rest of the batch. SQLite gets an extra guard: we parse

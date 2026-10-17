@@ -17,10 +17,12 @@ row still in a processing status older than the threshold is already
 orphaned) and then every ``EXTRACTION_WATCHDOG_TICK_SECONDS`` (default
 60s). Each tick:
 
-1. cross-tenant scan of ``documents`` for rows in ``PARSING`` /
-   ``CLASSIFYING`` / ``EXTRACTING`` — the SELECT names ``tenant_id`` so
-   ``tenant_middleware`` sees a tenant reference, the same convention
-   ``digest_scheduler`` uses;
+1. scan of ``documents`` for rows in ``PARSING`` / ``CLASSIFYING`` /
+   ``EXTRACTING`` — the SELECT names ``tenant_id`` so ``tenant_middleware``
+   sees a tenant reference, the same convention ``digest_scheduler`` uses.
+   With RLS off it is today's single cross-tenant SELECT; with the RLS
+   GUC hook live it runs once per tenant, each under that tenant's GUC
+   (``services/tenant_scan.py``);
 2. per row: publish THAT row's tenant on ``current_tenant_id`` (FON-93 —
    the RLS GUC hook reads it on the next transaction), compute the age
    from ``COALESCE(status_changed_at, uploaded_at)`` and, when it exceeds
@@ -52,6 +54,7 @@ from ..audit import log_audit
 from ..auth.context import current_tenant_id
 from ..config import get_settings
 from ..database import get_session_factory
+from .tenant_scan import plan_tenant_scan, scan_by_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -76,36 +79,48 @@ def timeout_message(*, stage: str, elapsed_minutes: float, threshold_minutes: in
     )
 
 
-async def _fetch_processing_rows(session: AsyncSession) -> list[dict[str, Any]]:
+def _processing_predicate() -> tuple[str, dict[str, Any]]:
+    """``WHERE status IN (…)`` over the processing statuses + its binds."""
+    from ..api.documents import DOC_PROCESSING_STATUSES
+
+    statuses = sorted(DOC_PROCESSING_STATUSES)
+    placeholders = ", ".join(f":st{i}" for i in range(len(statuses)))
+    return (
+        f"WHERE status IN ({placeholders})",
+        {f"st{i}": s for i, s in enumerate(statuses)},
+    )
+
+
+async def _fetch_processing_rows(
+    session: AsyncSession, *, tenant_id: str | None = None
+) -> list[dict[str, Any]]:
     """Every document in a processing status, across tenants.
 
     ``tenant_id`` in the column list is what satisfies the
     tenant_middleware predicate check for this deliberately cross-tenant
     scan (see module docstring). ``status_changed_at`` is column-probed
     — a worker ahead of the migration reads NULL and falls back to
-    ``uploaded_at``.
+    ``uploaded_at``. ``tenant_id`` (FON-93, per-tenant scans under RLS)
+    adds ``AND tenant_id = :tenant``; ``None`` is today's cross-tenant
+    scan, unchanged.
     """
-    from ..api.documents import (
-        DOC_PROCESSING_STATUSES,
-        _with_status_changed_at,
-    )
+    from ..api.documents import _with_status_changed_at
 
-    statuses = sorted(DOC_PROCESSING_STATUSES)
-    placeholders = ", ".join(f":st{i}" for i in range(len(statuses)))
+    predicate, params = _processing_predicate()
+    scope = ""
+    if tenant_id is not None:
+        scope = "\n           AND tenant_id = :tenant"
+        params["tenant"] = str(tenant_id)
     sql = await _with_status_changed_at(
         session,
         f"""
         SELECT id, deal_id, tenant_id, filename, status,
                uploaded_at /*status_changed_at*/
           FROM documents
-         WHERE status IN ({placeholders})
+         {predicate}{scope}
         """,
     )
-    rows = (
-        await session.execute(
-            text(sql), {f"st{i}": s for i, s in enumerate(statuses)}
-        )
-    ).fetchall()
+    rows = (await session.execute(text(sql), params)).fetchall()
     return [dict(r._mapping) for r in rows]
 
 
@@ -208,7 +223,22 @@ async def _tick_with_session(session: AsyncSession, *, now: datetime) -> int:
 
     settings = get_settings()
     threshold = int(settings.EXTRACTION_STUCK_MINUTES)
-    rows = await _fetch_processing_rows(session)
+    # FON-93: with RLS off this is today's single cross-tenant scan; with
+    # the GUC hook live it is one scan per tenant, each under that
+    # tenant's GUC (services/tenant_scan.py, docs/WORKSPACE_ISOLATION.md §7).
+    predicate, predicate_params = _processing_predicate()
+    plan = await plan_tenant_scan(
+        distinct_tenants_sql=f"SELECT DISTINCT tenant_id FROM documents {predicate}",
+        params=predicate_params,
+        job="extraction_watchdog",
+    )
+
+    async def _fetch(s: AsyncSession, tenant: str | None) -> list[dict[str, Any]]:
+        if tenant is None:  # today's call, verbatim
+            return await _fetch_processing_rows(s)
+        return await _fetch_processing_rows(s, tenant_id=tenant)
+
+    rows = await scan_by_tenant(session, plan, _fetch)
     # End the scan's transaction so each row below starts its own and the
     # ``after_begin`` hook publishes THAT row's tenant (FON-93).
     await session.commit()

@@ -2136,7 +2136,14 @@ function saveBlob(blob: Blob, filename: string): void {
 }
 
 export const api = {
-  health: () => request<{ status: string; version: string; db: string }>('GET', '/health'),
+  health: () =>
+    request<{
+      status: string;
+      version: string;
+      // FON-93 — `migrations_dsn` is "owner" when the worker runs startup DDL
+      // on a dedicated owner DSN (DATABASE_URL_MIGRATIONS), "same" otherwise.
+      db: { status: string; migrations_dsn: 'owner' | 'same' };
+    }>('GET', '/health'),
   admin: {
     /** Tenant-scoped LLM cost + cache hit-rate rollup. Requires
      *  ``org:admin`` role on the worker side (gated via require_role). */

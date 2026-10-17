@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # Default to a local sqlite file so `uv run uvicorn ...` works
     # without provisioning Postgres. Production sets the asyncpg DSN.
     DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./fondok.db")
+    # FON-93 — the OWNER DSN for DDL only. Unset (today's production): every
+    # startup migration runs on the serving engine, exactly as before. Set:
+    # ``run_startup_migrations()`` (CREATE TABLE / ALTER / CREATE EXTENSION
+    # / the audit trigger) runs through a dedicated engine built from this
+    # DSN, which is disposed as soon as startup DDL is done and is never
+    # used to serve a request. This is what lets ``DATABASE_URL`` point at
+    # the non-owner ``fondok_app`` role (LOGIN NOBYPASSRLS, DML only) once
+    # ``migrations/rls/001_enable_rls.sql`` is applied — see
+    # ``docs/WORKSPACE_ISOLATION.md`` §7 for the Railway order.
+    DATABASE_URL_MIGRATIONS: str | None = Field(default=None)
 
     # ── LLM providers ───────────────────────────────────────────────
     ANTHROPIC_API_KEY: SecretStr | None = Field(default=None)
@@ -461,23 +471,52 @@ class Settings(BaseSettings):
     EXTRACTION_WATCHDOG_TICK_SECONDS: float = Field(default=60.0, gt=0.0)
     EXTRACTION_STUCK_MINUTES: int = Field(default=30, ge=1)
 
-    @property
-    def async_database_url(self) -> str:
+    @staticmethod
+    def _as_async_dsn(url: str) -> str:
         """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""
-        url = self.DATABASE_URL
         if url.startswith("postgresql+asyncpg://"):
             return url
         if url.startswith("postgresql://"):
             return "postgresql+asyncpg://" + url[len("postgresql://") :]
         return url
 
-    @property
-    def sync_database_url(self) -> str:
-        """LangGraph's PostgresSaver wants a sync DSN."""
-        url = self.DATABASE_URL
+    @staticmethod
+    def _as_sync_dsn(url: str) -> str:
         if url.startswith("postgresql+asyncpg://"):
             return "postgresql://" + url[len("postgresql+asyncpg://") :]
         return url
+
+    @property
+    def async_database_url(self) -> str:
+        """SQLAlchemy expects ``postgresql+asyncpg://`` for the asyncpg driver."""
+        return self._as_async_dsn(self.DATABASE_URL)
+
+    @property
+    def sync_database_url(self) -> str:
+        """LangGraph's PostgresSaver wants a sync DSN."""
+        return self._as_sync_dsn(self.DATABASE_URL)
+
+    @property
+    def async_migrations_database_url(self) -> str | None:
+        """The owner DSN for DDL (``DATABASE_URL_MIGRATIONS``), normalised
+        like :attr:`async_database_url`; ``None`` when unset or blank, which
+        means "DDL runs on the serving engine" (today's behaviour)."""
+        url = (self.DATABASE_URL_MIGRATIONS or "").strip()
+        return self._as_async_dsn(url) if url else None
+
+    @property
+    def sync_migrations_database_url(self) -> str | None:
+        """Sync form of :attr:`async_migrations_database_url` — the DSN any
+        future LangGraph ``AsyncPostgresSaver.setup()`` (checkpoint-table
+        DDL) must use; ``None`` when unset."""
+        url = (self.DATABASE_URL_MIGRATIONS or "").strip()
+        return self._as_sync_dsn(url) if url else None
+
+    @property
+    def migrations_dsn_kind(self) -> str:
+        """``"owner"`` when a dedicated DDL DSN is configured, else ``"same"``.
+        Presence only — the URL itself is never reported."""
+        return "owner" if self.async_migrations_database_url else "same"
 
     @property
     def cors_origin_list(self) -> list[str]:

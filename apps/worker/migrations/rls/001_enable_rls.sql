@@ -33,10 +33,13 @@
 -- * ``tenants`` (the registry) is read by the auth layer BEFORE a tenant
 --   is known, so it is not RLS-protected; it holds no customer data.
 --
--- Background jobs: the digest scheduler and batch poller iterate across
--- tenants with no request context. With this file applied and
--- DB_SET_TENANT_GUC on they must either run under the owner role or
--- publish each tenant's GUC as they iterate — see the doc.
+-- Background jobs: the digest scheduler, the batch poller and the
+-- extraction watchdog have no request context. With DB_SET_TENANT_GUC on
+-- they iterate tenants (the registry, else DISTINCT tenant_id read via
+-- DATABASE_URL_MIGRATIONS) and publish each tenant's GUC before its scan
+-- — apps/worker/app/services/tenant_scan.py; verified against a real
+-- Postgres by tests/test_rls_postgres.py (FONDOK_TEST_POSTGRES_URL).
+-- Startup DDL runs through DATABASE_URL_MIGRATIONS (the owner) when set.
 
 BEGIN;
 

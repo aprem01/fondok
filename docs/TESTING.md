@@ -29,6 +29,37 @@ cd apps/web && npx tsc --noEmit -p . && npx vitest run --poolOptions.threads.max
 Suite size on 2026-10-17: 2,544 passed / 6 skipped / 2 xfailed / 15 deselected
 (`live_llm`, `slow`), about six minutes on a laptop.
 
+### Postgres RLS integration test (opt-in)
+
+`apps/worker/tests/test_rls_postgres.py` proves the FON-93 row-level-security
+setup against a **real Postgres** as the non-owner `fondok_app` role: it runs
+the startup migrations through `DATABASE_URL_MIGRATIONS` (owner), applies
+`migrations/rls/001_enable_rls.sql`, seeds two tenants, and checks that with
+no GUC the app role sees 0 rows, with the GUC only that tenant's rows across
+`deals` / `documents` / `extraction_results` / `engine_outputs`, that a
+cross-tenant write is refused, and that the digest scheduler, batch poller
+and extraction watchdog each find both tenants' rows by iterating tenants.
+It is skipped (9 tests, cleanly) unless `FONDOK_TEST_POSTGRES_URL` is set.
+
+The database is **modified** (role `fondok_app` created with password
+`fondok_app_test`, tables truncated) — point it at a throwaway only:
+
+```sh
+docker run -d --name fondok-rls-pg -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner \
+  -e POSTGRES_DB=fondok_rls -p 54329:5432 postgres:16
+cd apps/worker && mkdir -p .tmp_fx && \
+  FONDOK_TEST_POSTGRES_URL=postgresql://owner:owner@127.0.0.1:54329/fondok_rls \
+  TMPDIR=$PWD/.tmp_fx .venv/bin/python -m pytest -q -p no:cacheprovider \
+    -o pythonpath="../../packages/schemas-py ." tests/test_rls_postgres.py
+docker rm -f fondok-rls-pg
+```
+
+Plain `postgres:16` has no pgvector, so the `pgvector.enable_extension` and
+`document_chunks.*` migrations log a failure and are skipped — expected; the
+test does not touch `document_chunks`. Use the `pgvector/pgvector:pg16` image
+for a full schema. The same variable also enables
+`tests/test_tenant_registry.py::test_factory_sessions_publish_the_guc_on_postgres`.
+
 ### Shell gotcha that produces "sqlite errors everywhere"
 
 `TMPDIR=$PWD/.tmp_fx cmd1 && cmd2` applies `TMPDIR` to **cmd1 only**; `cmd2`
