@@ -229,6 +229,19 @@ export function stabilizationAnchorLabel(block: StabilizedYearBlock | null): str
 }
 
 /**
+ * Sam #7 (2026-10-15) — the exact note for the `reopening_before_projection`
+ * fallback: the reopening-anchored Year 3 lands before projection Year 1, so
+ * the stabilization year is measured from the acquisition close instead.
+ */
+export function reopeningBeforeProjectionNote(defaultYear: number, reopening: string | null): string {
+  const date = reopening ? ` (${reopening})` : '';
+  return (
+    `Exception: Year ${defaultYear} after the reopening date${date} falls before the first projected year, ` +
+    'so stabilization is measured from the acquisition close instead.'
+  );
+}
+
+/**
  * FON-98 — when the deal carries a reopening date the worker could NOT use as
  * the anchor, say why (never silently fall back). Null otherwise.
  */
@@ -240,7 +253,9 @@ export function stabilizationAnchorFallbackNote(block: StabilizedYearBlock | nul
     case 'no_close_date':
       return `The reopening date${date} could not be placed on the projection because the deal has no acquisition close date — set it on CAPEX, and the default will count from the reopening.`;
     case 'reopening_before_projection':
-      return `Year 3 after the reopening date${date} falls before the projection starts, so the default counts from the acquisition close instead.`;
+      // Sam #7 (2026-10-15) — close date is the MVP fallback, provided the
+      // exception is stated wherever the stabilization anchor is shown.
+      return reopeningBeforeProjectionNote(block.default_year ?? 3, when);
     default:
       return `The reopening date${date} could not anchor the default (${String(block.anchor_fallback_reason)}); it counts from the acquisition close instead.`;
   }
@@ -291,8 +306,10 @@ export function stabilizationSignalNote(block: StabilizedYearBlock | null): stri
   const hint = stabilizationDetectedHint(block);
   const fallback = stabilizationAnchorFallbackNote(block);
   if (block.source === 'analyst_override') {
-    // FON-98 — name the default the override replaced, with its anchor.
-    const anchor = `Default would be ${stabilizationAnchorLabel(block)}.`;
+    // FON-98 — name the default the override replaced, with its anchor (and,
+    // Sam #7, why that default counts from close when the reopening could not
+    // anchor it).
+    const anchor = `Default would be ${stabilizationAnchorLabel(block)}.${fallback ? ` ${fallback}` : ''}`;
     return hint ? `Analyst-selected. ${anchor} ${hint}` : `Analyst-selected. ${anchor}`;
   }
   if (block.source === 'default_year_3' || block.source === 'default_year_3_reopening') {

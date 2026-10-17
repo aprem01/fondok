@@ -436,6 +436,16 @@ export interface IndexFigure {
   inputs: IndexFieldRef[];
   detail?: string | null;
   period_label?: string | null;
+  /** Sam #6 (2026-10-15) — actual history vs projected benchmark: the kind of
+   *  number this benchmark figure is and its one-line label ("Actual · STR TTM
+   *  May 2025 · <doc>", "Forecast · CBRE Horizons 2027 · <doc> p.4",
+   *  "Assumption · grown at market growth"). Absent on an older worker. */
+  basis?: 'actual' | 'forecast' | 'assumption' | null;
+  basis_label?: string | null;
+  /** Reporting period end of an actual (ISO). */
+  period_end?: string | null;
+  /** Report / publication date of a forecast's document (CBRE Horizons). */
+  report_date?: string | null;
 }
 export type IndexMethodId = 'str_comp_set' | 'market_benchmark' | 'costar_comp_set';
 export interface IndexMethod {
@@ -498,6 +508,10 @@ export interface IndexMethodologyResponse {
   subject_occupancy: IndexFigure;
   subject_adr: IndexFigure;
   subject_period_label?: string | null;
+  /** Sam #6 — the STR TTM reporting period end (ISO) and the CBRE Horizons
+   *  report date. Null when the documents do not state them. */
+  subject_period_end?: string | null;
+  cbre_report_date?: string | null;
   assumptions: Record<string, IndexFigure>;
   toggle_on: boolean;
   /** FON-95 part 2 — one row per model year (1..hold); absent on an older worker. */

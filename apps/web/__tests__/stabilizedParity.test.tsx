@@ -408,3 +408,43 @@ describe('Overview Stabilization card copy (default / override / clamped)', () =
     );
   });
 });
+
+// ── Sam #7 (2026-10-15) — close date as the MVP fallback, with a clear note ──
+describe('Overview — reopening-before-projection fallback note and stabilized vs exit NOI', () => {
+  const NOTE =
+    'Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.';
+
+  it('the Stabilization section states the exception in plain sight (not only in a popover)', () => {
+    BLOCK_PATCH = {
+      source: 'default_year_3', anchor: 'acquisition_close', default_year: 3, clamped: false,
+      reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection',
+    };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const section = screen.getByTestId('overview-section-stabilization');
+    expect(within(section).getByTestId('stabilization-anchor-fallback')).toHaveTextContent(NOTE);
+    // The anchor row still reads the close anchor it actually uses.
+    expect(rowValue('Stabilization Anchor')).toBe('Year 3 after close');
+    // The reopening-date field on the Investment Profile card says the same.
+    expect(screen.getByTestId('reopening-date-field')).toHaveTextContent(NOTE);
+    expect(screen.queryByTestId('stabilization-needs-rerun')).toBeNull();
+  });
+
+  it('no exception note when the anchor resolved normally', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('stabilization-anchor-fallback')).toBeNull();
+  });
+
+  it('Stabilized NOI and Exit NOI are separate figures under separate labels, in separate sections', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const stabRow = rowFor(STABILIZED_NOI_LABEL);
+    const exitRow = rowFor('Exit NOI (forward 12-month, after FF&E reserve)');
+    expect(stabRow).not.toBe(exitRow);
+    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$4,355,000'); // the stabilized year, before reserve
+    expect(rowValue('Exit NOI (forward 12-month, after FF&E reserve)')).toBe('$3,640,000'); // returns.terminal_noi
+    expect(within(screen.getByTestId('overview-section-stabilization')).queryByText(/^Exit NOI/)).toBeNull();
+    expect(within(screen.getByTestId('overview-section-exit')).queryByText(STABILIZED_NOI_LABEL)).toBeNull();
+    // Neither figure is printed under the other's label.
+    expect(stabRow.textContent).not.toContain('$3,640,000');
+    expect(exitRow.textContent).not.toContain('$4,355,000');
+  });
+});

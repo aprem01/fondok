@@ -16,6 +16,7 @@ import {
   stabilizationSignalNote,
   stabilizationYearLabel,
   fmtMonthYear,
+  reopeningBeforeProjectionNote,
   type StabilizedYearBlock,
 } from '@/lib/engines/noi';
 
@@ -63,9 +64,12 @@ describe('stabilizationAnchorLabel', () => {
     const block = close({ reopening_date: '2027-03-15', anchor_fallback_reason: 'no_close_date' });
     expect(stabilizationAnchorLabel(block)).toBe('Year 3 after close');
     expect(stabilizationAnchorFallbackNote(block)).toMatch(/reopening date \(Mar 2027\) could not be placed .* no acquisition close date/);
+    // Sam #7 (2026-10-15) — close is the MVP fallback, with this exact note.
     expect(
       stabilizationAnchorFallbackNote(close({ reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' })),
-    ).toMatch(/falls before the projection starts/);
+    ).toBe(
+      'Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+    );
     expect(stabilizationAnchorFallbackNote(close())).toBeNull();
     expect(stabilizationAnchorFallbackNote(null)).toBeNull();
   });
@@ -93,6 +97,19 @@ describe('stabilizationYearLabel / stabilizationSignalNote carry the anchor', ()
   it('the fallback reason is part of the Future P&L note (never a silent fallback)', () => {
     const note = stabilizationSignalNote(close({ reopening_date: '2027-03-15', anchor_fallback_reason: 'no_close_date' }));
     expect(note).toMatch(/^Default: Year 3 after close\. The reopening date \(Mar 2027\) could not be placed/);
+  });
+
+  it('Sam #7 — the reopening-before-projection exception is in the Future P&L note (default and override)', () => {
+    const block = close({ reopening_date: '2019-06-01', anchor_fallback_reason: 'reopening_before_projection' });
+    expect(stabilizationSignalNote(block)).toBe(
+      'Default: Year 3 after close. Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead. Confirm or change it.',
+    );
+    expect(stabilizationSignalNote({ ...block, source: 'analyst_override' })).toBe(
+      'Analyst-selected. Default would be Year 3 after close. Exception: Year 3 after the reopening date (Jun 2019) falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+    );
+    expect(reopeningBeforeProjectionNote(3, null)).toBe(
+      'Exception: Year 3 after the reopening date falls before the first projected year, so stabilization is measured from the acquisition close instead.',
+    );
   });
 
   it('an override names the default it replaced', () => {

@@ -41,6 +41,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import {
+  BasisChip,
   buildReconciliation,
   IndexMethodologyPanel,
   ProjectionsReconciliation,
@@ -81,7 +82,7 @@ import {
 export type { ForecastBoundary } from './indexAnalysisModel';
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are that TTM level grown at the market occupancy / ADR growth assumption (the document default or your override on Index methodology) — an assumption, not an STR figure — and stay blank with the reason when no growth value exists. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero.';
+  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are that TTM level grown at the market occupancy / ADR growth assumption (the document default or your override on Index methodology) — an assumption, not an STR figure — and stay blank with the reason when no growth value exists. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (CBRE Horizons for that calendar year, with document and page) or Assumption (the Year-1 level grown at the market growth assumption), so reported history is never read as a projected benchmark.';
 
 /**
  * FON-41 E-027 — where an Index Analysis SUBJECT column's numbers come from.
@@ -269,11 +270,24 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
             cols={cols}
             label="Source"
             cells={sources.map((s) => (
-              <span className="text-[10.5px] text-ink-500" title={s?.detail ?? undefined}>
-                {s?.label ?? '—'}
+              <span className="inline-flex flex-col items-end gap-0.5 text-[10.5px] text-ink-500">
+                {s?.basis && <BasisChip basis={s.basis} label={s.basisLabel} />}
+                <span title={s?.detail ?? undefined}>{s?.label ?? '—'}</span>
               </span>
             ))}
             testId={`index-source-row-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+          />
+          <Row
+            cols={cols}
+            label="Basis"
+            labelTitle="Sam #6 — whether each column is reported historical data (Actual), a CBRE projection (Forecast) or the Year-1 level grown at the market growth assumption (Assumption), with its source and reporting period."
+            cells={sources.map((s) => (
+              <span className="inline-block max-w-[150px] truncate text-[10px] text-ink-500" title={s?.basisLabel ?? undefined}>
+                {s?.basisLabel ?? '—'}
+              </span>
+            ))}
+            zebra
+            testId={`index-basis-row-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
           />
         </tbody>
       </table>

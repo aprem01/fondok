@@ -1066,3 +1066,95 @@ describe('Index Analysis — Sam #3', () => {
     expect(screen.queryByText(/CoStar Market — Competitive Set/)).toBeNull();
   });
 });
+
+// ─────────────── Sam #6 (2026-10-15) — actual vs forecast basis labels ───────────────
+
+describe('Index Analysis — every benchmark value names its basis (Sam #6)', () => {
+  const STR_DOC = 'STR Trend May 2025.xlsx';
+  const CBRE_DOC = 'Miami Horizons Q3 2025.xlsx';
+  /** The worker's market-benchmark grid: Year 1 the reported TTM (actual),
+   *  Years 2–3 the CBRE Horizons forecast for that calendar year. */
+  function labelledRows() {
+    return byYearRows().map((r) => {
+      const y1 = r.year === 1;
+      const label = y1
+        ? `Actual · STR TTM May 2025 · ${STR_DOC}`
+        : `Forecast · CBRE Horizons ${r.calendar_year} · ${CBRE_DOC} p.4`;
+      const basis = y1 ? 'actual' : 'forecast';
+      return {
+        ...r,
+        benchmark_occupancy: { ...r.benchmark_occupancy, basis, basis_label: label, report_date: y1 ? null : 'September 2025' },
+        benchmark_adr: { ...r.benchmark_adr, basis, basis_label: label },
+      };
+    });
+  }
+
+  it('the by-year grid prints a worded chip + the source / period label under each benchmark value', async () => {
+    mockIndexMethodology = methodology({
+      by_year: labelledRows(), hold_years: 3, calendar_known: true,
+      by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
+      subject_period_end: '2025-05', cbre_report_date: 'September 2025',
+    });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    const grid = await screen.findByTestId('index-by-year-grid');
+    const y1 = within(grid).getByTestId('index-by-year-bench-occ-basis-1');
+    expect(y1).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
+    expect(within(y1).getByTestId('basis-chip-actual')).toHaveTextContent('Actual');
+    const y2 = within(grid).getByTestId('index-by-year-bench-occ-basis-2');
+    expect(y2).toHaveTextContent(`Forecast · CBRE Horizons 2026 · ${CBRE_DOC} p.4`);
+    expect(within(y2).getByTestId('basis-chip-forecast')).toHaveTextContent('Forecast');
+    expect(within(grid).getByTestId('index-by-year-bench-adr-basis-3')).toHaveTextContent('CBRE Horizons 2027');
+    // One line names the two bands, the CBRE report date and that Year 2+ is projected.
+    const note = within(grid).getByTestId('index-by-year-basis-note');
+    expect(note).toHaveTextContent(`Year 1 benchmark: Actual · STR TTM May 2025 · ${STR_DOC} — reported historical data.`);
+    expect(note).toHaveTextContent('Year 2 onward: CBRE Horizons forecast (report dated September 2025) — a projected benchmark, not history.');
+  });
+
+  it('the comp-set series past Year 1 is labelled an assumption; a "—" value carries no chip', async () => {
+    const rows = byYearRows().map((r) => ({
+      ...r,
+      benchmark_occupancy:
+        r.year === 3
+          ? { value: null, source: null, inputs: [], detail: 'No market occupancy growth assumption', period_label: null }
+          : {
+              ...r.benchmark_occupancy,
+              basis: r.year === 1 ? 'actual' : 'assumption',
+              basis_label: r.year === 1 ? `Actual · STR TTM May 2025 · ${STR_DOC}` : 'Assumption · grown at market growth',
+            },
+    }));
+    mockIndexMethodology = methodology({ by_year: rows, hold_years: 3, calendar_known: true, by_year_applies: true });
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    const grid = await screen.findByTestId('index-by-year-grid');
+    const y2 = within(grid).getByTestId('index-by-year-bench-occ-basis-2');
+    expect(y2).toHaveTextContent('Assumption · grown at market growth');
+    expect(within(y2).getByTestId('basis-chip-assumption')).toHaveTextContent('Assumption');
+    expect(within(grid).queryByTestId('index-by-year-bench-occ-basis-3')).toBeNull();
+    expect(within(grid).getByTestId('index-by-year-basis-note')).toHaveTextContent(
+      'Year 2 onward: the Year-1 level grown at the market growth assumption — an assumption, not a published forecast.',
+    );
+  });
+
+  it('the tables carry the chip in the Source row and the full label in a Basis row', async () => {
+    mockMarket = {
+      ...MARKET_NO_CBRE,
+      str_trend: { ...MARKET_NO_CBRE.str_trend, ttm_period_end: '2025-05', doc_name: STR_DOC },
+      cbre_horizons: { ...CBRE_2025, years: [CBRE_2025.years[1]], publication_date: 'September 2025' },
+    };
+    render(<IndexAnalysisSection dealId={DEAL} />);
+    await screen.findByText('Subject Property');
+    // Comp set: the STR TTM anchor (2024 column) is an actual with its period end.
+    const comp = tableOf('STR Competitive Set');
+    const compBasis = rowCells('Basis', comp);
+    expect(compBasis[FIRST_FORECAST - 1]).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
+    expect(within(rowCells('Source', comp)[FIRST_FORECAST - 1]).getByTestId('basis-chip-actual')).toBeInTheDocument();
+    // Market: the 2026 column is the CBRE forecast with document + page.
+    const market = tableOf('Market');
+    const mBasis = rowCells('Basis', market);
+    expect(mBasis[FIRST_FORECAST + 1]).toHaveTextContent(`Forecast · CBRE Horizons 2026 · ${CBRE_DOC} p.4`);
+    expect(within(rowCells('Source', market)[FIRST_FORECAST + 1]).getByTestId('basis-chip-forecast')).toBeInTheDocument();
+    // Subject history (P&L fiscal year) is an actual; the subject projection is the model — no chip.
+    const subject = tableOf('Subject Property');
+    expect(rowCells('Basis', subject)[FIRST_FORECAST - 1]).toHaveTextContent('Actual · P&L FY 2024');
+    expect(within(rowCells('Source', subject)[FIRST_FORECAST]).queryByTestId(/basis-chip-/)).toBeNull();
+  });
+});

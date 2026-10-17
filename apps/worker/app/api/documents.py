@@ -79,8 +79,8 @@ from ..services.financial_source_rank import (
 from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
-from ..services.market_comp_set import closed_roster_indices
-from ..services.market_fields import extraction_lane
+from ..services.market_comp_set import closed_roster_indices, resolve_report_period_end
+from ..services.market_fields import extraction_lane, parse_extraction_records
 from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
@@ -1281,6 +1281,19 @@ class StrTrendBlock(BaseModel):
     compset: list[CompSetEntry] = Field(default_factory=list)
     #: ``str_trend.report_year`` — the calendar year the TTM window ends in.
     report_year: int | None = None
+    #: Sam #6 (2026-10-15) — the reporting period end of the subject TTM
+    #: (ISO ``YYYY-MM`` / ``YYYY-MM-DD``; a bare year only when nothing finer
+    #: is stated) for the extraction that supplied the subject TTM, resolved by
+    #: the STR reader's rule (``market_comp_set.resolve_report_period_end``):
+    #: an extracted period-end field, the subject monthly series, period start
+    #: + months, the document's ``report_as_of``, a filename token, the report
+    #: year. ``ttm_period_end_basis`` names which. None = nothing dates it.
+    ttm_period_end: str | None = None
+    ttm_period_end_basis: str | None = None
+    #: The document that supplied the subject TTM (may differ from
+    #: ``doc_name`` when an older report carries the TTM and a newer one only
+    #: the roster).
+    ttm_doc_name: str | None = None
     #: The STR Trend document the block was read from (newest extraction).
     doc_name: str | None = None
     #: FON-95 — the subject's STR annual history, oldest year first.
@@ -3743,6 +3756,10 @@ def _aggregate_market_data(
     all_rosters: list[dict[int, dict[str, Any]]] = []
     sources: dict[str, list[UUID]] = {}
     doc_names: dict[str, str] = {}
+    # Sam #6 — the reporting period of the extraction that supplied the
+    # subject TTM (the newest one carrying it — the same one ``setdefault``
+    # lets win the subject figures below).
+    ttm_period: tuple[str | None, str | None, str | None] | None = None
 
     for row in rows:
         doc_type = (row.get("doc_type") or "").upper()
@@ -3816,6 +3833,8 @@ def _aggregate_market_data(
             all_rosters.append(row_compset)
         if row_compset and not compset_rows:
             compset_rows.update(row_compset)
+        if doc_type == "STR_TREND" and ttm_period is None and _carries_subject_ttm(raw_fields):
+            ttm_period = _str_ttm_period(row, raw_fields, doc_name)
 
     str_trend = _build_str_trend_block(
         str_trend_fields,
@@ -3826,6 +3845,8 @@ def _aggregate_market_data(
             closed_roster_indices(compset_rows, all_rosters) if compset_rows else set()
         ),
     )
+    if str_trend is not None and ttm_period is not None:
+        str_trend.ttm_period_end, str_trend.ttm_period_end_basis, str_trend.ttm_doc_name = ttm_period
     cbre = _build_cbre_block(cbre_fields, meta=meta, doc_name=doc_names.get("CBRE_HORIZONS"))
     pnl = _build_pnl_block(
         pnl_fields, source_filename=doc_names.get("PNL_BENCHMARK")
@@ -3842,6 +3863,48 @@ def _aggregate_market_data(
         market_history=market_history,
         sources=sources,
     )
+
+
+_SUBJECT_TTM_FIELDS = frozenset(
+    {"ttm_performance.subject.occupancy_pct", "ttm_performance.subject.adr_usd"}
+)
+
+
+def _carries_subject_ttm(raw_fields: list[Any]) -> bool:
+    return any(
+        isinstance(f, dict)
+        and isinstance(f.get("field_name"), str)
+        and f["field_name"].strip().lower() in _SUBJECT_TTM_FIELDS
+        and f.get("value") is not None
+        for f in raw_fields
+    )
+
+
+def _str_ttm_period(
+    row: Mapping[str, Any], raw_fields: list[Any], doc_name: str | None
+) -> tuple[str | None, str | None, str | None]:
+    """``(period_end, basis, doc_name)`` of ONE STR extraction — the STR
+    reader's own period rule, so Index Analysis and Market Overview name the
+    same TTM window. Never raises: an unparseable row reports no period."""
+    try:
+        rows = parse_extraction_records(
+            [
+                {
+                    "fields": raw_fields,
+                    "document_id": row.get("document_id"),
+                    "extraction_id": row.get("extraction_id"),
+                    "filename": doc_name,
+                    "doc_type": "STR_TREND",
+                    "created_at": row.get("created_at"),
+                    "report_as_of": row.get("report_as_of"),
+                    "report_as_of_precision": row.get("report_as_of_precision"),
+                }
+            ]
+        )
+        end, basis, _source = resolve_report_period_end(rows)
+    except Exception:  # pragma: no cover — provenance must never break the envelope
+        return None, None, doc_name
+    return end, (basis if end else None), doc_name
 
 
 @dataclass(frozen=True)
@@ -4360,7 +4423,9 @@ async def load_market_data(
                    er.agent_version,
                    d.doc_type,
                    d.ai_proposed_doc_type,
-                   d.filename
+                   d.filename,
+                   d.report_as_of,
+                   d.report_as_of_precision
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal

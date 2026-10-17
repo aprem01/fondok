@@ -1010,9 +1010,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
      * broken screen, and this one cost an investigation that blamed the
      * engine. Say what to do; invent nothing.
      */
+    // Sam #7 (2026-10-15) — close date is the MVP fallback for a reopening
+    // whose Year 3 lands before projection Year 1, PROVIDED the exception is
+    // stated where the anchor is shown: the section carries the note in plain
+    // sight (not only in a popover), so the year below is never read as
+    // reopening-anchored.
     const stabilizationBanner = (): RowsSection['banner'] =>
       stab
-        ? undefined
+        ? (stab.anchor_fallback_reason
+            ? { testId: 'stabilization-anchor-fallback', text: stabilizationAnchorFallbackNote(stab) ?? '' }
+            : undefined)
         : {
             testId: 'stabilization-needs-rerun',
             text:
