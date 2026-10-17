@@ -38,6 +38,7 @@ import { DataKey } from '@/components/design';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useCurrentRole } from '@/lib/auth';
+import { duplicateDealConfirmText, duplicateDealDoneText } from '@/lib/duplicateDeal';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
@@ -191,8 +192,37 @@ export default function ProjectDetailPage() {
     }
   };
 
+  // Duplicate deal — copies the deal, assumptions (with notes), scenarios,
+  // comments and documents with their reviewed extractions; NOT the model
+  // runs, so the copy opens with "run the model". Lets an analyst re-extract
+  // or experiment on a copy without losing reviewed fields on the original.
+  const [duplicating, setDuplicating] = useState(false);
+  const onDuplicate = async () => {
+    if (!workerConnected || isMockId) {
+      toast('Duplicate available once worker is connected to this deal', {
+        type: 'info',
+      });
+      return;
+    }
+    if (duplicating) return;
+    const name = (deal?.name || `deal ${rawId}`).trim();
+    if (!window.confirm(duplicateDealConfirmText(name))) return;
+    setDuplicating(true);
+    try {
+      const res = await workerApi.deals.duplicate(rawId);
+      toast(duplicateDealDoneText(res.deal.name), { type: 'success' });
+      router.push(`/projects/${res.deal.id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(`Duplicate failed: ${msg}`, { type: 'error' });
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const headerMenu = [
     { label: 'Mark as IC Ready', onSelect: onMarkICReady },
+    { label: duplicating ? 'Duplicating…' : 'Duplicate deal', onSelect: onDuplicate },
     { label: 'Archive Project', onSelect: onArchive, danger: true },
     // Wave 5 RBAC — hard-delete gated to org:admin. Non-admins get the
     // item omitted entirely (cleaner than a disabled row).

@@ -178,6 +178,8 @@ ENDPOINT_CASES: list[EndpointCase] = [
         skip_positive=True,
     ),
     EndpointCase("GET", "/deals", "/{deal_id}/memo/edits"),
+    # Duplicate deal — copies docs / reviewed extractions / assumptions.
+    EndpointCase("POST", "/deals", "/{deal_id}/duplicate"),
     # documents_router — deal-scoped reads
     EndpointCase("GET", "/deals", "/{deal_id}/documents"),
     # ``?q=`` is REQUIRED: without it FastAPI answers 422 before the handler
