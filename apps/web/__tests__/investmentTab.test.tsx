@@ -1097,3 +1097,39 @@ describe('InvestmentTab — FON-101 renovation budget sources (OM vs PIP / CapEx
     expect(updateSpy).not.toHaveBeenCalled();
   });
 });
+
+// Sam, 2026-10-15 — Year-1 renovation impact comes ONLY from explicit
+// assumptions. The two inputs live in the Initial Renovation / PIP section;
+// with nothing set and no worker verdict they print "—", never a default.
+describe('InvestmentTab — explicit Year-1 displacement inputs (no budget heuristic)', () => {
+  const OCC = 'Y1 Rooms Offline (Occupancy Displacement)';
+  const ADR = 'Y1 Rate (ADR) Displacement';
+
+  it('renders both inputs as analyst assumptions showing a dash when nothing is known', async () => {
+    render(<InvestmentTab />);
+    await waitFor(() => expect(rowDot(OCC).getAttribute('aria-label')).toBe('Assumption'));
+    expect(rowValueCell(OCC).textContent).toContain('—');
+    expect(rowValueCell(ADR).textContent).toContain('—');
+  });
+
+  it('shows a saved override and saves an edit as {value, note}', async () => {
+    mockOverrides = { y1_adr_displacement_pct: { value: 0.04, note: 'rate drag' } };
+    render(<InvestmentTab />);
+    await waitFor(() => expect(rowValueCell(ADR).textContent).toContain('4.0%'));
+
+    fireEvent.click(rowValueCell(OCC).querySelector('span') as HTMLElement);
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '12' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), {
+      target: { value: 'Brand PIP takes one wing offline for 6 months.' },
+    });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.y1_occupancy_displacement_pct).toEqual({
+      value: 0.12,
+      note: 'Brand PIP takes one wing offline for 6 months.',
+    });
+  });
+});

@@ -29,7 +29,7 @@ export function useDisplacementStatus(): DisplacementStatus | null {
   return useContext(DisplacementStatusContext);
 }
 
-export type DisplacementTone = 'on' | 'attention' | 'muted';
+export type DisplacementTone = 'on' | 'muted';
 
 export interface DisplacementStatusLine {
   tone: DisplacementTone;
@@ -40,9 +40,10 @@ export interface DisplacementStatusLine {
 }
 
 /**
- * Tone for the worker's verdict. `on_*` → "on"; `off_analyst_entry` is the
- * one state that asks the analyst for a decision (set the Y1 % or upload the
- * PIP) → "attention"; every other `off_*` is a settled fact → "muted".
+ * Tone for the worker's verdict. Active (an explicit displacement assumption
+ * is set) → "on"; otherwise "muted". No state is toned as a warning: since
+ * Sam's 2026-10-15 decision an undisplaced Year 1 is the correct default, not
+ * a gap — a renovation budget never implies an operating impact.
  * Returns `null` when there is nothing honest to print.
  */
 export function displacementStatusLine(
@@ -50,10 +51,6 @@ export function displacementStatusLine(
 ): DisplacementStatusLine | null {
   if (!status || typeof status.detail !== 'string' || !status.detail.trim()) return null;
   const state = String(status.state ?? '');
-  const tone: DisplacementTone = status.active
-    ? 'on'
-    : state === 'off_analyst_entry'
-      ? 'attention'
-      : 'muted';
+  const tone: DisplacementTone = status.active ? 'on' : 'muted';
   return { tone, text: status.detail.trim(), state };
 }

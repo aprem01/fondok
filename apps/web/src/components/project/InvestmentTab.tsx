@@ -225,8 +225,11 @@ export default function InvestmentTab() {
   const renoSource = useSource('renovation_budget');
   // FON-89 — the worker's Year-1 displacement verdict (on / off and why),
   // printed verbatim under the Renovation Budget basis. Null until the
-  // provenance payload lands or on a worker that does not emit it.
-  const displacementLine = displacementStatusLine(useDisplacementStatus());
+  // provenance payload lands or on a worker that does not emit it. Its
+  // percentages also feed the two explicit displacement inputs below — the
+  // only way Year 1 is displaced (Sam, 2026-10-15: never from the budget).
+  const displacementStatus = useDisplacementStatus();
+  const displacementLine = displacementStatusLine(displacementStatus);
   // E-020 — "Comps range" hint on the Entry Cap Rate row, from the deal's
   // extracted transaction comps that disclose a cap rate (worker-computed).
   // `undefined` = not loaded / unavailable → no hint at all.
@@ -922,9 +925,9 @@ export default function InvestmentTab() {
                       )}
                     </span>
                     {/* FON-89 — the Year-1 displacement verdict, the worker's
-                        sentence verbatim. "attention" = the one state that asks
-                        the analyst to decide (an analyst-entered budget without
-                        an OM / PIP document never displaces by itself). */}
+                        sentence verbatim. The budget never displaces Year 1 by
+                        itself (Sam, 2026-10-15); only the explicit Y1
+                        displacement inputs further down this section do. */}
                     {displacementLine && (
                       <span
                         data-testid="renovation-displacement-status"
@@ -932,12 +935,10 @@ export default function InvestmentTab() {
                         data-displacement-tone={displacementLine.tone}
                         style={{
                           fontSize: 10.5, lineHeight: 1.45,
-                          color: displacementLine.tone === 'attention'
-                            ? prov.amber
-                            : displacementLine.tone === 'on' ? palette.textSecondary : palette.textMuted,
+                          color: displacementLine.tone === 'on' ? palette.textSecondary : palette.textMuted,
                         }}
                       >
-                        <span style={{ fontWeight: 600 }}>Y1 displacement</span>
+                        <span style={{ fontWeight: 600 }}>Y1 renovation impact</span>
                         {' · '}{displacementLine.text}
                       </span>
                     )}
@@ -1017,6 +1018,41 @@ export default function InvestmentTab() {
                     onSave={(v, note) => onSaveWindowMonths('renovation_duration_months', v, note)}
                     noteKey="renovation_duration_months" testId="renovation-duration" width="w-16"
                     color={valueColor('input', false, overridden('renovation_duration_months'))} />
+                ),
+              },
+              // Sam, 2026-10-15 — Year-1 renovation impact comes ONLY from these
+              // explicit assumptions, never from the budget above. The value is
+              // the loader's own (displacement_status), else the persisted
+              // override, else "—". Engine inputs, so a justification note is
+              // required; 0–50% per the revenue engine's schema bound.
+              { id: 'renoY1OccDisp', label: 'Y1 Rooms Offline (Occupancy Displacement)', kind: 'input',
+                state: 'assumption',
+                overridden: overridden('y1_occupancy_displacement_pct'),
+                note: 'Year-1 occupancy reduction while rooms are out of service — 0% unless set',
+                value: (
+                  <AssumptionField
+                    value={displacementStatus?.y1_occupancy_displacement_pct ?? numericOverride(invOverrides, 'y1_occupancy_displacement_pct')}
+                    editable={liveMode} format={(v) => fmtPct(v, 1)}
+                    toDraft={(v) => (v * 100).toFixed(1)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 && n <= 50 ? n / 100 : null; }}
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('y1_occupancy_displacement_pct', v, note)}
+                    noteKey="y1_occupancy_displacement_pct" testId="y1-occupancy-displacement" width="w-20"
+                    color={valueColor('input', false, overridden('y1_occupancy_displacement_pct'))} />
+                ),
+              },
+              { id: 'renoY1AdrDisp', label: 'Y1 Rate (ADR) Displacement', kind: 'input',
+                state: 'assumption',
+                overridden: overridden('y1_adr_displacement_pct'),
+                note: 'Year-1 ADR reduction for disruption pricing — 0% unless set',
+                value: (
+                  <AssumptionField
+                    value={displacementStatus?.y1_adr_displacement_pct ?? numericOverride(invOverrides, 'y1_adr_displacement_pct')}
+                    editable={liveMode} format={(v) => fmtPct(v, 1)}
+                    toDraft={(v) => (v * 100).toFixed(1)} suffix="%"
+                    parse={(s) => { const n = parseFloat(s); return Number.isFinite(n) && n >= 0 && n <= 50 ? n / 100 : null; }}
+                    unit="pct_fraction" onSave={(v, note) => onSaveAssumption('y1_adr_displacement_pct', v, note)}
+                    noteKey="y1_adr_displacement_pct" testId="y1-adr-displacement" width="w-20"
+                    color={valueColor('input', false, overridden('y1_adr_displacement_pct'))} />
                 ),
               },
             ];

@@ -56,8 +56,13 @@ describe('Methodology — renovation budget precedence (FON-101)', () => {
     expect(steps[1]).toContain('doc_subtype = pip');
   });
 
-  it('the Year-1 displacement paragraph names the PIP document as a deal-specific budget', () => {
+  it('the Year-1 displacement paragraph says no budget displaces — only explicit assumptions (Sam, 2026-10-15)', () => {
     render(<MethodologyPage />);
-    expect(screen.getByText(/one read off a PIP \/ CapEx document \(badged "PIP doc"\)/)).toBeInTheDocument();
+    const p = screen.getByTestId('methodology-displacement-explicit-only');
+    expect(p.textContent).toContain('Only explicit assumptions displace Year 1.');
+    expect(p.textContent).toContain('never reduces Year-1 occupancy or ADR on its own');
+    expect(p.textContent).toContain('y1_occupancy_displacement_pct');
+    // The removed heuristic is never described as live behaviour.
+    expect(p.textContent).not.toMatch(/depressed 15%|\$5,000 per key/);
   });
 });
