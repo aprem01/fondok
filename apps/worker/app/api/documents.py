@@ -5049,8 +5049,11 @@ async def delete_document(
 
     # Order: extraction_results first (FK to documents), then the doc.
     await session.execute(
-        text("DELETE FROM extraction_results WHERE document_id = :id"),
-        {"id": str(doc_id)},
+        text(
+            "DELETE FROM extraction_results "
+            "WHERE document_id = :id AND deal_id = :deal AND tenant_id = :tenant"
+        ),
+        {"id": str(doc_id), "deal": str(deal_id), "tenant": str(tenant_id)},
     )
     await session.execute(
         text(
