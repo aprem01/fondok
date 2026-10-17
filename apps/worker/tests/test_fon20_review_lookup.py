@@ -224,7 +224,14 @@ async def test_upload_to_a_deal_on_another_tenant_is_refused() -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_404_detail_names_the_failed_lookup() -> None:
+async def test_review_404_detail_names_the_failed_lookup(caplog: pytest.LogCaptureFixture) -> None:
+    """The diagnosis (which lookup failed) is operator intel: it goes to the
+    log at WARNING; the client gets one sentence with no ids in it (the raw
+    body used to reach every toast in the web app — client sweep 2026-10-17)."""
+    import logging
+
+    from app.api.documents import DOCUMENT_NOT_FOUND_DETAIL, EXTRACTION_NOT_FOUND_DETAIL
+
     tenant = _default_tenant()
     deal_a = await _insert_deal(tenant_id=tenant, name="Deal A")
     deal_b = await _insert_deal(tenant_id=tenant, name="Deal B")
@@ -234,48 +241,60 @@ async def test_review_404_detail_names_the_failed_lookup() -> None:
             client, deal_id=deal_a, tenant=tenant, name="sample_t12.pdf"
         )
 
-        # (a) Right document, wrong deal, same tenant → say which deal it is on.
+        # (a) Right document, wrong deal, same tenant → the LOG says which
+        #     deal it is on; the client sees the bare sentence.
         for route in ("extraction", "download-url", "download"):
-            r = await client.get(
-                f"/deals/{deal_b}/documents/{doc_id}/{route}", headers=_headers(tenant)
-            )
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="app.api.documents"):
+                r = await client.get(
+                    f"/deals/{deal_b}/documents/{doc_id}/{route}", headers=_headers(tenant)
+                )
             assert r.status_code == 404, (route, r.text)
             detail = r.json()["detail"]
-            assert detail.startswith(f"document {doc_id} not found on deal {deal_b}"), detail
-            assert f"belongs to deal {deal_a}" in detail, detail
-        r = await client.patch(
-            f"/deals/{deal_b}/documents/{doc_id}/fields",
-            json={"field_name": "noi_year_1", "action": "accept"},
-            headers=_headers(tenant),
-        )
-        assert r.status_code == 404, r.text
-        assert f"belongs to deal {deal_a}" in r.json()["detail"], r.text
-        r = await client.patch(
-            f"/deals/{deal_b}/documents/{doc_id}/classification",
-            json={"doc_type": "OM"},
-            headers=_headers(tenant),
-        )
-        assert r.status_code == 404, r.text
-        assert f"belongs to deal {deal_a}" in r.json()["detail"], r.text
+            assert detail == DOCUMENT_NOT_FOUND_DETAIL, detail
+            assert str(doc_id) not in detail and str(deal_b) not in detail
+            assert f"belongs to deal {deal_a}" in caplog.text, caplog.text
+        for patch_route, body in (
+            ("fields", {"field_name": "noi_year_1", "action": "accept"}),
+            ("classification", {"doc_type": "OM"}),
+        ):
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="app.api.documents"):
+                r = await client.patch(
+                    f"/deals/{deal_b}/documents/{doc_id}/{patch_route}",
+                    json=body,
+                    headers=_headers(tenant),
+                )
+            assert r.status_code == 404, r.text
+            assert r.json()["detail"] in (DOCUMENT_NOT_FOUND_DETAIL, EXTRACTION_NOT_FOUND_DETAIL), r.text
+            assert f"belongs to deal {deal_a}" in caplog.text, caplog.text
 
-        # (b) A document id nobody has → say the documents row is missing.
+        # (b) A document id nobody has → the log says the documents row is
+        #     missing; the client sentence is unchanged.
         ghost = uuid4()
-        r = await client.get(
-            f"/deals/{deal_a}/documents/{ghost}/extraction", headers=_headers(tenant)
-        )
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="app.api.documents"):
+            r = await client.get(
+                f"/deals/{deal_a}/documents/{ghost}/extraction", headers=_headers(tenant)
+            )
         assert r.status_code == 404, r.text
-        assert "no documents row" in r.json()["detail"], r.text
+        assert r.json()["detail"] == DOCUMENT_NOT_FOUND_DETAIL, r.text
+        assert "no documents row" in caplog.text, caplog.text
 
         # (c) Another tenant asking about the real document → nothing of
-        #     ours is named: not the deal it is on, not that it exists.
+        #     ours is named anywhere a client can read: not the deal it is
+        #     on, not that it exists.
         stranger = str(uuid4())
-        r = await client.get(
-            f"/deals/{deal_a}/documents/{doc_id}/extraction", headers=_headers(stranger)
-        )
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="app.api.documents"):
+            r = await client.get(
+                f"/deals/{deal_a}/documents/{doc_id}/extraction", headers=_headers(stranger)
+            )
         assert r.status_code == 404, r.text
         detail = r.json()["detail"]
-        assert "belongs to deal" not in detail and "status=" not in detail, detail
-        assert "not on this tenant" in detail, detail
+        assert detail == DOCUMENT_NOT_FOUND_DETAIL, detail
+        assert "belongs to deal" not in caplog.text and "status=" not in caplog.text, caplog.text
+        assert "not on this tenant" in caplog.text, caplog.text
 
         # (d) Document present, extraction row absent → the review PATCH
         #     says it is the EXTRACTION lookup that failed.
@@ -290,13 +309,15 @@ async def test_review_404_detail_names_the_failed_lookup() -> None:
                 {"d": doc_id},
             )
             await session.commit()
-        r = await client.patch(
-            f"/deals/{deal_a}/documents/{doc_id}/fields",
-            json={"field_name": "noi_year_1", "action": "accept"},
-            headers=_headers(tenant),
-        )
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="app.api.documents"):
+            r = await client.patch(
+                f"/deals/{deal_a}/documents/{doc_id}/fields",
+                json={"field_name": "noi_year_1", "action": "accept"},
+                headers=_headers(tenant),
+            )
         assert r.status_code == 404, r.text
         detail = r.json()["detail"]
-        assert detail.startswith(f"no extraction for document {doc_id} on deal {deal_a}"), detail
-        assert "no extraction_results row" in detail, detail
-        assert "status=EXTRACTED" in detail, detail
+        assert detail == EXTRACTION_NOT_FOUND_DETAIL, detail
+        assert "no extraction_results row" in caplog.text, caplog.text
+        assert "status=EXTRACTED" in caplog.text, caplog.text

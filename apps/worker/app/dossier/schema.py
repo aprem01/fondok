@@ -51,7 +51,7 @@ class DossierField(BaseModel):
         "deals_table",
         "extraction",
         "engine_output",
-        "kimpton_seed",
+        "seed",
         "computed",
     ] = "extraction"
     citations: list[DossierCitation] = Field(default_factory=list)

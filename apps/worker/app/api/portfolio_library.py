@@ -723,10 +723,18 @@ async def upload_entry(
     try:
         body = await file.read()
     except Exception as exc:
+        logger.warning(
+            "portfolio upload: could not read %r: %s", file.filename, exc
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"failed to read uploaded file: {exc}",
-        )
+            detail={
+                "code": "portfolio_upload_unreadable",
+                "message": (
+                    "The file could not be opened. Upload an .xlsx, .csv or .pdf P&L."
+                ),
+            },
+        ) from exc
     if not body:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -743,10 +751,18 @@ async def upload_entry(
             content=body,
         )
     except PortfolioExtractionError as exc:
+        logger.warning(
+            "portfolio upload: extraction failed for %r: %s", file.filename, exc
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"portfolio extraction failed: {exc}",
-        )
+            detail={
+                "code": "portfolio_extraction_failed",
+                "message": (
+                    "The P&L could not be extracted. Check the file and try again."
+                ),
+            },
+        ) from exc
 
     create_body = CreateEntryBody(
         name=name,

@@ -6,7 +6,7 @@ in ``DATABASE_URL`` and writes nothing. ``--execute`` performs the
 the listed deals' tenants into it, through the same code paths as
 ``scripts/register_tenant.py`` and ``scripts/reassign_default_tenant_rows.py``.
 Clerk dashboard changes and Railway variable flips are never performed:
-they are printed as instructions, in order, with the ``/health`` fields
+they are printed as instructions, in order, with the ``/admin/health`` fields
 that must read true afterwards.
 
 Inputs
@@ -82,10 +82,10 @@ CLERK_ENV_VARS: tuple[tuple[str, str], ...] = (
 
 # Flag → value it must have on the deployed worker after Phase 3.
 TARGET_FLAGS: tuple[tuple[str, str, str], ...] = (
-    ("ALLOW_TENANT_HEADER_WITHOUT_JWT", "0 / unset", "/health.auth.header_tenant_path_enabled == false, jwt_required == true"),
-    ("REQUIRE_REGISTERED_TENANT", "1", "/health.auth.registered_tenant_required == true"),
+    ("ALLOW_TENANT_HEADER_WITHOUT_JWT", "0 / unset", "/admin/health.auth.header_tenant_path_enabled == false, jwt_required == true (anonymous GET /deals → 401)"),
+    ("REQUIRE_REGISTERED_TENANT", "1", "/admin/health.auth.registered_tenant_required == true"),
     ("CLERK_WEBHOOK_SECRET", "whsec_… (set)", "POST /webhooks/clerk test event → 200 {\"ok\": true}"),
-    ("DB_SET_TENANT_GUC", "1 — LATER, with RLS (§7)", "/health.auth.rls_tenant_guc == true"),
+    ("DB_SET_TENANT_GUC", "1 — LATER, with RLS (§7)", "/admin/health.auth.rls_tenant_guc == true"),
 )
 
 

@@ -1,15 +1,18 @@
 """Engine + scenario endpoints (the underwriting model side).
 
-Two router groups live in this module:
+One router lives in this module:
 
-    * ``router`` — legacy ``/model/...`` stubs the original UI used.
-      Kept for backwards-compatibility with the existing shape.
-
-    * ``engines_router`` — the new deal-scoped engine surface
+    * ``engines_router`` — the deal-scoped engine surface
       ``/deals/{id}/engines/...`` that the Run Model button hits. Runs
       the deterministic engine chain server-side, persists outputs to
       ``engine_outputs`` and exposes polling endpoints so the UI can
       reflect ``running → complete`` without re-running the math.
+
+The legacy ``/model/{deal_id}/engines/run`` and ``/model/{deal_id}/scenarios``
+stubs were removed 2026-10-17: they answered an empty ``outputs: {}`` envelope
+and a ``status: "queued"`` for a scenario that was never created, nothing in
+``apps/web`` called them, and the real scenario surface is
+``/deals/{id}/scenarios`` (:mod:`app.api.scenarios`).
 """
 
 from __future__ import annotations
@@ -43,86 +46,15 @@ from ..services.run_freshness import stale_engines
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
 engines_router = APIRouter()
 
-
-# ─────────────────────── legacy /model stubs ──────────────────────────
-
-
-class EngineRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    engine: str = Field(
-        description=(
-            "revenue | fb | expense | capital | debt | returns | "
-            "sensitivity | partnership"
-        )
-    )
-    inputs: dict[str, Any] = Field(default_factory=dict)
-
-
-class EngineRunResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    deal_id: UUID
-    engine: str
-    outputs: dict[str, Any] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
-
-
-class ScenarioRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    overrides: dict[str, Any] = Field(default_factory=dict)
-
-
-class ScenarioResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    deal_id: UUID
-    scenario: str
-    status: str = "queued"
-
-
-@router.post("/{deal_id}/engines/run", response_model=EngineRunResponse)
-async def run_engine_legacy(
-    deal_id: UUID,
-    body: EngineRunRequest,
-    _tenant_id: Annotated[UUID, Depends(get_tenant_id)],
-) -> EngineRunResponse:
-    """Legacy stub — kept so existing clients don't 404.
-
-    FON-93 (2026-10-15): resolves the caller like every other route so an
-    unauthenticated request is 401, not a 200 placeholder.
-
-    TODO(remove-legacy-model-route): the web app moved to the
-    deal-scoped ``/deals/{id}/engines/{name}/run`` route months ago;
-    this entry-point can be deleted once the OpenAPI client gen drops
-    the corresponding helper. Returning an empty ``outputs`` keeps
-    legacy callers from misinterpreting the response as real.
-    """
-    logger.info("model(stub-legacy): run engine=%s deal=%s", body.engine, deal_id)
-    return EngineRunResponse(deal_id=deal_id, engine=body.engine)
-
-
-@router.post("/{deal_id}/scenarios", response_model=ScenarioResponse)
-async def create_scenario(
-    deal_id: UUID,
-    body: ScenarioRequest,
-    _tenant_id: Annotated[UUID, Depends(get_tenant_id)],
-) -> ScenarioResponse:
-    """Stub: spawns a what-if scenario derived from the base case.
-
-    FON-93 (2026-10-15): resolves the caller (401 without a session).
-
-    TODO(scenario-engine): no real scenario runner yet. The plan is
-    to overlay ``ScenarioRequest.overrides`` on the base assumptions
-    and call the engine chain again with a distinct ``run_id``. For
-    now the response is a placeholder so existing clients don't 404.
-    """
-    return ScenarioResponse(deal_id=deal_id, scenario=body.name)
+#: Client sentences for ``GET /deals/{id}/engines/compare`` 404s. The panel
+#: prints ``detail`` verbatim, so neither names a UUID or a query parameter;
+#: the specifics go to ``logger.info``.
+NO_RUN_TO_COMPARE_DETAIL = (
+    "No completed model run to compare yet. Run the model, then open Compare."
+)
+RUN_NOT_ON_DEAL_DETAIL = "That model run is no longer on this deal."
 
 
 # ──────────────────── /deals/{id}/engines/... ─────────────────────────
@@ -895,28 +827,34 @@ async def _compare(
             if canonical:
                 return canonical
             if not runs:
+                logger.info("engines/compare: deal %s has no engine runs", deal_id)
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"deal {deal_id} has no engine runs",
+                    detail=NO_RUN_TO_COMPARE_DETAIL,
                 )
             # Runs exist but none completed the full chain, so there is no
             # canonical run. ``latest`` promises the canonical run (the one
             # every tab serves; the panel labels it "Latest (canonical)"),
             # so say so rather than silently diffing against the newest
-            # partial / failed run and reporting its gaps as changes.
+            # partial / failed run and reporting its gaps as changes. The
+            # client sentence is the same either way; the specifics (how
+            # many partial runs, which query parameter) are operator detail.
+            logger.info(
+                "engines/compare: deal %s has no canonical run: none of its %d "
+                "run(s) completed the full engine chain (ref=%s as %s)",
+                deal_id, len(runs), ref, label,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"deal {deal_id} has no canonical run: none of its "
-                    f"{len(runs)} run(s) completed the full engine chain. "
-                    f"Pass an explicit run id as {label} to compare a "
-                    "partial run."
-                ),
+                detail=NO_RUN_TO_COMPARE_DETAIL,
             )
         if ref not in known:
+            logger.info(
+                "engines/compare: %s run %s not found on deal %s", label, ref, deal_id
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"{label} run {ref} not found on deal {deal_id}",
+                detail=RUN_NOT_ON_DEAL_DETAIL,
             )
         return ref
 

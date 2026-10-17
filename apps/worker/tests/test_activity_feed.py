@@ -11,6 +11,7 @@ exercises the API surface + every callsite we added.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -65,6 +66,26 @@ async def _create_deal_via_api(client, *, name: str = "Activity Hotel", **kw) ->
     r = await client.post("/deals", json=body)
     assert r.status_code == 201, r.text
     return r.json()["id"]
+
+
+@contextlib.asynccontextmanager
+async def _demo_export_slug_enabled():
+    """The export routes serve the Kimpton fixture for a non-UUID id only
+    when ``DEMO_EXPORT_SLUGS`` lists it (2026-10-17); these audit tests use
+    that slug, so they opt in for their duration."""
+    from app.config import get_settings
+
+    prev = os.environ.get("DEMO_EXPORT_SLUGS")
+    os.environ["DEMO_EXPORT_SLUGS"] = "kimpton-angler-2026"
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("DEMO_EXPORT_SLUGS", None)
+        else:
+            os.environ["DEMO_EXPORT_SLUGS"] = prev
+        get_settings.cache_clear()
 
 
 def _client():
@@ -409,7 +430,7 @@ async def test_memo_pdf_export_emits_audit_entry() -> None:
     except Exception:
         have_weasyprint = False
 
-    async with _client() as client:
+    async with _client() as client, _demo_export_slug_enabled():
         if have_weasyprint:
             r = await client.get("/deals/kimpton-angler-2026/export/memo.pdf")
             assert r.status_code == 200, r.text
@@ -452,7 +473,7 @@ async def test_memo_pdf_export_emits_audit_entry() -> None:
 @pytest.mark.asyncio
 async def test_excel_export_emits_audit_entry() -> None:
     """GET /deals/{id}/export/excel writes ``export.excel_downloaded``."""
-    async with _client() as client:
+    async with _client() as client, _demo_export_slug_enabled():
         r = await client.get("/deals/kimpton-angler-2026/export/excel")
         assert r.status_code == 200, r.text
         exp = await client.get(

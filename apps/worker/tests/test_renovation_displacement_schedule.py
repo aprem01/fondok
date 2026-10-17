@@ -316,11 +316,11 @@ async def test_loader_routes_the_schedule_and_reports_on_schedule() -> None:
     assert st["active"] is True
     assert st["state"] == DISPLACEMENT_ON_SCHEDULE == "on_schedule"
     assert "months 1–6: 25% rooms offline, 10% rate discount" in st["detail"]
-    assert "Year 1: occupancy ×0.875, ADR ×0.957" in st["detail"]
+    assert "Year 1: occupancy −12.5%, ADR −4.3%" in st["detail"]
     assert st["schedule"][0]["start_month"] == 1
     assert st["schedule_by_year"][0]["occupancy_factor"] == pytest.approx(0.875)
     # The scalar levers were never set, so the status does not claim to override them.
-    assert "wins" not in st["detail"]
+    assert "takes precedence" not in st["detail"]
     # The revenue input carries the typed periods.
     payload = _build_input_for("revenue", str(deal_id), base, {})
     assert [p.start_month for p in payload.renovation_displacement_schedule] == [1]
@@ -340,9 +340,12 @@ async def test_loader_status_says_the_schedule_wins_over_the_scalar() -> None:
     base = await _base_for(deal_id)
     st = base["__displacement_status__"]
     assert st["state"] == "on_schedule"
-    assert "The schedule wins" in st["detail"]
+    assert "The renovation schedule takes precedence" in st["detail"]
     assert "occupancy −15%, ADR −8%" in st["detail"]
-    assert "not applied on top" in st["detail"]
+    assert "not applied in addition" in st["detail"]
+    # Client prose: no shorthand (Y1 / PIP) and no raw ×0.xxx factors.
+    assert "Y1" not in st["detail"] and "PIP" not in st["detail"]
+    assert "×" not in st["detail"]
     # The scalars are still reported (they are what the analyst typed) ...
     assert st["y1_occupancy_displacement_pct"] == pytest.approx(0.15)
     # ... but the engine runs the schedule, not the scalar, for Year 1.

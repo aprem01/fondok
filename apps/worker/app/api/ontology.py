@@ -29,5 +29,5 @@ async def get_concepts() -> dict[str, Any]:
         registry = get_registry()
     except Exception as exc:
         logger.exception("ontology: registry unavailable: %s", exc)
-        raise HTTPException(status_code=503, detail=f"ontology_invalid: {exc}") from exc
+        raise HTTPException(status_code=503, detail="Concept registry unavailable.") from exc
     return registry.dump()

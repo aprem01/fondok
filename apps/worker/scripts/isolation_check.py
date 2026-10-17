@@ -18,8 +18,11 @@ Credentials — pick one:
   about a minute, so mint them right before running.
 * **Header mode** (local only, ``ALLOW_TENANT_HEADER_WITHOUT_JWT=1``):
   ``--tenant-a <uuid> --tenant-b <uuid>`` (or ``TENANT_A`` / ``TENANT_B``
-  env). Never available on a deployed worker — ``/health.auth.jwt_required``
-  is read first and the unauthenticated expectation is derived from it.
+  env). Never available on a deployed worker — whether the JWT is required
+  is PROBED first (an anonymous ``GET /deals`` must be 401; the public
+  ``/health`` no longer reports the auth posture, ``/admin/health`` does,
+  internal tenants only) and the unauthenticated expectation is derived
+  from it.
 
 Routes come from the worker code (``app.main``, the same enumeration
 ``tests/test_unauthenticated_routes_guard.py`` uses) so a route that
@@ -110,8 +113,6 @@ BODY_HINTS: dict[tuple[str, str], dict[str, Any]] = {
     # ReclassifyBody: at least one field, else 422 "nothing to update".
     ("PATCH", "/deals/{deal_id}/documents/{doc_id}/classification"): {"doc_type": "T12"},
     ("POST", "/deals/{deal_id}/scenarios"): {"name": "probe"},
-    ("POST", "/model/{deal_id}/engines/run"): {"engine": "revenue"},
-    ("POST", "/model/{deal_id}/scenarios"): {"name": "probe"},
 }
 
 # Routes whose 2xx for a stranger is NOT a leak, each with the reason and a
@@ -125,14 +126,11 @@ _ACCEPTED_2XX: dict[tuple[str, str], tuple[str, Any]] = {
     ),
 }
 
-# Legacy stubs that compute nothing and read no table — the reviewed
-# ALLOWED_UNAUTHENTICATED list in tests/test_unauthenticated_routes_guard.py.
-# They still need a caller (401 with the header path closed) but a caller
-# from any tenant gets the same placeholder envelope.
-_STUB_ROUTES: dict[tuple[str, str], str] = {
-    ("POST", "/model/{deal_id}/engines/run"): "legacy stub — placeholder envelope, no compute, no read",
-    ("POST", "/model/{deal_id}/scenarios"): "legacy stub — placeholder envelope, no compute, no read",
-}
+# Routes that compute nothing and read no table, so a stranger's 2xx is a
+# placeholder rather than a leak. Empty since 2026-10-17: the legacy
+# ``/model/*`` stubs were deleted (nothing in apps/web called them). Adding
+# here is a security review, not a test fix.
+_STUB_ROUTES: dict[tuple[str, str], str] = {}
 
 # Routes never probed as the owner: a 200 streams or computes for a long
 # time, and the stranger-side 404 is the load-bearing assertion anyway.
@@ -556,24 +554,32 @@ class Checker:
             self.say(f"error: GET /health → {st} {str(health)[:200]}")
             return False
         self.health = health
-        auth = health.get("auth") or {}
-        self.jwt_required = bool(auth.get("jwt_required", True))
+        # The auth posture is no longer on the public /health (2026-10-17 —
+        # it is operator detail on /admin/health, internal tenants only), so
+        # the JWT requirement is observed, not read: an anonymous GET /deals
+        # is 401 on every deployed worker and served (as DEFAULT_TENANT_ID)
+        # only when the local header path is open.
+        anon_status, _anon_body = await get_json(self.client, "/deals", {}, t)
+        self.jwt_required = anon_status == 401
         self.say(
             f"worker {health.get('version')}  db={health.get('db')}  "
-            f"auth={json.dumps(auth, sort_keys=True)}"
+            f"anonymous GET /deals → {anon_status}  jwt_required={self.jwt_required}"
         )
         if self.mode == "header" and self.jwt_required:
             self.say(
                 "error: header mode needs ALLOW_TENANT_HEADER_WITHOUT_JWT=1 on the "
-                "worker (health says jwt_required=true). Use FIRM_A_JWT/FIRM_B_JWT."
+                "worker (anonymous GET /deals is 401). Use FIRM_A_JWT/FIRM_B_JWT."
             )
             return False
         if self.mode == "jwt" and not self.jwt_required:
             self.add(
                 Result(
-                    "health.auth.jwt_required",
+                    "anonymous GET /deals",
                     "LEAK",
-                    note="header tenant path is OPEN on this worker — never on a deployment",
+                    note=(
+                        f"served {anon_status} with no credentials — the header tenant "
+                        "path is OPEN on this worker, never on a deployment"
+                    ),
                 )
             )
 

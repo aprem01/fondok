@@ -595,6 +595,31 @@ async def get_variance(
 ) -> VarianceReportResponse:
     """Compute deterministic variance flags from the latest extraction.
 
+    Served through :mod:`app.services.read_cache` — the report is re-derived
+    only when the deal's extraction rows / documents / overrides change (or
+    the two-minute safety TTL lapses). The IC Memo tab was paying 4–10 s for
+    this on every open; the same answer now costs one fingerprint read.
+    Tenant-scoped: cross-tenant access returns 404 before the cache is asked.
+    """
+    await _assert_deal_belongs_to_tenant(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    from ..services.read_cache import cached_deal_read
+
+    return await cached_deal_read(
+        session,
+        name="variance",
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        compute=lambda: _compute_variance(session, deal_id=deal_id, tenant_id=tenant_id),
+    )
+
+
+async def _compute_variance(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> VarianceReportResponse:
+    """The uncached variance report (see :func:`get_variance`).
+
     Pulls broker-proforma + T-12 buckets the same way the Critic does
     (see ``api/documents.py::_load_critic_inputs``) and runs the rule-
     based portion of the Variance agent. The LLM narrative pass is
@@ -605,12 +630,8 @@ async def get_variance(
     either side of the comparison is missing — common until both an
     OM/broker proforma and a T-12 have been extracted on the deal.
 
-    Tenant-scoped: cross-tenant access returns 404 before the loader
-    reads any extraction data.
+    Tenant-scoped by the caller (:func:`get_variance`).
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
     # We reuse the documents module's loader so the broker / actual
     # mapping stays consistent with the Critic's input shape.
     from .documents import _load_critic_inputs  # local import: avoids cycle
@@ -674,7 +695,7 @@ async def get_variance(
     except ImportError as exc:  # pragma: no cover - schemas always present
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="fondok_schemas unavailable",
+            detail="Service temporarily unavailable.",
         ) from exc
 
     # FON-54a broker-side admission: pull every extraction row on the deal
@@ -2930,7 +2951,7 @@ async def get_pricing_asking_vs_bid(
     else:
         asking_price = model_price
         asking_source = "model_purchase_price"
-        asking_label = _PRICE_SOURCE_LABEL.get(src, src)
+        asking_label = _PRICE_SOURCE_LABEL.get(src, "Model purchase price")
 
     res = solve_asking_and_bid(
         base_input,
@@ -2976,6 +2997,30 @@ async def get_pricing_asking_vs_bid(
         bid_vs_asking=res.bid_vs_asking,
         rooms=rooms or None,
     )
+
+
+def _max_price_grid_422_detail(exc: ValueError) -> str:
+    """Client sentence for a grid ``ValueError``.
+
+    The engine's known refusals map to fixed sentences; anything else is
+    engine-internal wording (parameter names, axis sizes) and is replaced by
+    one neutral sentence with the original kept in the log.
+    """
+    from ..engines.max_price_grid import MAX_CELLS, TOO_MANY_CELLS_MESSAGE
+    from ..engines.price_solver import NO_TARGET_MESSAGE
+
+    msg = str(exc)
+    if msg == NO_TARGET_MESSAGE:
+        return NO_TARGET_MESSAGE
+    if msg == TOO_MANY_CELLS_MESSAGE:
+        return (
+            f"The pricing grid is limited to {MAX_CELLS} cells. Use at most "
+            "5 exit cap rates and 5 NOI-growth rates."
+        )
+    if msg.startswith("Grid axes must be non-empty"):
+        return "Each axis of the pricing grid needs at least one point."
+    logger.warning("max-price grid: engine refused inputs: %s", msg)
+    return "The pricing grid could not be computed for these inputs."
 
 
 @router.post(
@@ -3025,7 +3070,8 @@ async def get_pricing_max_price_grid(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_max_price_grid_422_detail(exc),
         ) from exc
     return _MaxPriceGridOut(
         deal_id=deal_id,

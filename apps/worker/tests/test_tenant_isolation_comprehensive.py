@@ -648,18 +648,21 @@ async def test_document_routes_404_across_tenants_and_401_without_a_caller(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.request(method, path, headers={"X-Tenant-Id": tenant_a.tenant_id})
         assert resp.status_code == 404, (path, resp.status_code, resp.text[:300])
-        assert "not on this tenant" in resp.text, resp.text
+        # The client sentence names nothing (the "not on this tenant"
+        # diagnosis is logged, not returned — client sweep 2026-10-17).
+        assert resp.json()["detail"] == "Document not found on this deal.", resp.text
 
         monkeypatch.setenv("ALLOW_TENANT_HEADER_WITHOUT_JWT", "0")
         get_settings.cache_clear()
         try:
             resp = await client.request(method, path)
             assert resp.status_code == 401, (path, resp.status_code, resp.text[:300])
-            # The legacy /model stubs used to answer 200 placeholders with no caller.
+            # The legacy /model stubs (200 placeholders with no caller) were
+            # removed outright on 2026-10-17 — nothing is mounted there.
             r = await client.post("/model/" + tenant_b.deal_id + "/engines/run", json={"engine": "revenue"})
-            assert r.status_code == 401, r.text
+            assert r.status_code == 404, r.text
             r = await client.post("/model/" + tenant_b.deal_id + "/scenarios", json={"name": "probe"})
-            assert r.status_code == 401, r.text
+            assert r.status_code == 404, r.text
             r = await client.get(f"/deals/{tenant_b.deal_id}/search?q=probe")
             assert r.status_code == 401, r.text
         finally:

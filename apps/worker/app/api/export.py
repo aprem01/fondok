@@ -28,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
+from ..config import get_settings
 from ..database import get_session
 from ..export import build_excel, build_memo_pdf, build_pptx
 from ..export.fixtures import load_demo_payload
@@ -38,12 +39,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+#: What a caller sees for a deal id this tenant cannot export — a foreign or
+#: unknown UUID, or a non-UUID id that is not an enabled demo slug.
+DEAL_NOT_FOUND_DETAIL = "Deal not found."
+
+
 def _is_real_uuid(deal_id: str) -> bool:
     """True for a real DB deal id (UUID), False for a slug/demo id.
 
-    Slug deals (e.g. ``kimpton-angler-2026``) keep the hard-coded fixture so
-    the Kimpton golden export stays byte-identical; real UUID deals render the
-    live deal via :func:`load_live_payload`.
+    Slug deals (``kimpton-angler-2026``) keep the hard-coded fixture ONLY when
+    ``DEMO_EXPORT_SLUGS`` lists them (empty in prod — see :mod:`app.config`);
+    real UUID deals render the live deal via :func:`load_live_payload`.
     """
     try:
         UUID(deal_id)
@@ -79,9 +85,19 @@ async def _load_payload(
         if owned is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"deal {deal_id} not found",
+                detail=DEAL_NOT_FOUND_DETAIL,
             )
         return await load_live_payload(session, deal_id, str(tenant_id))
+    # A non-UUID id reaches the fixture only when explicitly enabled. Without
+    # that, a typo'd / shared URL must answer like every other unknown deal.
+    if deal_id not in get_settings().demo_export_slugs():
+        logger.info(
+            "export: refused non-UUID deal id %r (not in DEMO_EXPORT_SLUGS)", deal_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=DEAL_NOT_FOUND_DETAIL,
+        )
     deal, model, memo = load_demo_payload(deal_id)
     real_docs = await _real_documents_reviewed(
         session, deal_id=deal_id, tenant_id=str(tenant_id)

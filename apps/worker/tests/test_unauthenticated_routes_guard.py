@@ -30,10 +30,6 @@ ALLOWED_UNAUTHENTICATED: dict[tuple[str, str], str] = {
     ("GET", "/deals/{deal_id}/documents/{doc_id}/download/signed"): "HMAC-signed, expiring path",
     ("POST", "/webhooks/clerk"): "Svix signature verified in the handler; refuses without a secret",
     ("GET", "/ontology/concepts"): "static concept registry shipped with the code",
-    ("GET", "/data-library/entries"): "stub — returns an empty list, reads no table",
-    ("GET", "/data-library/entries/{entry_id}"): "stub — placeholder envelope, reads no table",
-    ("POST", "/model/{deal_id}/engines/run"): "legacy stub — returns an empty envelope, no compute, no read",
-    ("POST", "/model/{deal_id}/scenarios"): "legacy stub — returns a placeholder, no compute, no read",
 }
 
 _AUTH_DEP_NAMES = {"get_tenant_id", "get_current_auth"}

@@ -140,6 +140,43 @@ def _seed_node(key: str) -> str:
     return f"seed:{key}"
 
 
+#: Display names for the two source codes a seed node can carry. Any other
+#: source resolves through the concept registry's ``sources`` labels.
+_SEED_SOURCE_DISPLAY: dict[str, str] = {
+    "seed": "Seed",
+    "deal_row": "Deal record",
+}
+
+
+def _seed_label(source: str | None, key: str, concept: str | None) -> str:
+    """``"Seed — Exit cap rate"`` — the terminal node's label.
+
+    The LineageDrawer renders this verbatim, so neither half is a code: the
+    source goes through :data:`_SEED_SOURCE_DISPLAY` / the registry's source
+    labels and the assumption through the registry concept's display name.
+    ``key`` stays on the node's ``id`` and ``meta.assumption_key``.
+    """
+    from ..ontology.registry import get_registry
+
+    code = source or "seed"
+    reg = None
+    try:
+        reg = get_registry()
+    except Exception:  # noqa: BLE001 — a broken registry must not break lineage
+        reg = None
+    src_display = _SEED_SOURCE_DISPLAY.get(code)
+    if src_display is None and reg is not None and code in reg.sources:
+        src_display = reg.sources[code].label
+    if src_display is None:
+        src_display = code.replace("_", " ").capitalize()
+    concept_display = None
+    if reg is not None and concept and concept in reg.concepts:
+        concept_display = reg.concepts[concept].label
+    if concept_display is None:
+        concept_display = key.replace("_", " ").capitalize()
+    return f"{src_display} — {concept_display}"
+
+
 def _benchmark_node(key: str) -> str:
     return f"benchmark:{key}"
 
@@ -1485,7 +1522,7 @@ class _WalkContext:
             LineageNode(
                 id=_seed_node(key),
                 kind="seed",
-                label=f"{label or 'seed'} — {key}",
+                label=_seed_label(label, key, concept),
                 value=_as_value(self.base.get(key)),
                 concept=concept,
                 source=label or "seed",

@@ -319,6 +319,7 @@ async def test_latest_head_is_404_when_the_deal_has_no_canonical_run() -> None:
     completed a full 8-engine chain has no such run, so ``latest`` must say
     so (404 naming the gap) instead of silently diffing against the newest
     partial run. An explicit run id still compares."""
+    from app.api.model import NO_RUN_TO_COMPARE_DETAIL, RUN_NOT_ON_DEAL_DETAIL
     from app.database import get_session_factory
 
     deal, tenant = str(uuid4()), str(uuid4())
@@ -350,7 +351,9 @@ async def test_latest_head_is_404_when_the_deal_has_no_canonical_run() -> None:
                                 headers=h)
                 assert r.status_code == 404, (head, path, r.status_code, r.text)
                 detail = r.json()["detail"]
-                assert "canonical" in detail and partial_new not in detail
+                # One client sentence — no run id, no query-parameter name.
+                assert detail == NO_RUN_TO_COMPARE_DETAIL, detail
+                assert partial_new not in detail and deal not in detail
         # ``base=latest`` is held to the same rule.
         r = await c.get(f"/deals/{deal}/engines/compare",
                         params={"base": "latest", "head": partial_new}, headers=h)
@@ -373,7 +376,12 @@ async def test_latest_head_is_404_when_the_deal_has_no_canonical_run() -> None:
         r = await c.get(f"/deals/{empty}/engines/compare",
                         params={"base": "latest", "head": "latest"}, headers=h)
         assert r.status_code == 404
-        assert "no engine runs" in r.json()["detail"]
+        assert r.json()["detail"] == NO_RUN_TO_COMPARE_DETAIL
+        # An explicit run id that is not on the deal — also one sentence.
+        r = await c.get(f"/deals/{deal}/engines/compare",
+                        params={"base": str(uuid4()), "head": partial_new}, headers=h)
+        assert r.status_code == 404
+        assert r.json()["detail"] == RUN_NOT_ON_DEAL_DETAIL
 
 
 @pytest.mark.asyncio

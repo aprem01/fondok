@@ -12,11 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .alerting import init_sentry
 from .api import admin_cost as admin_cost_router
+from .api import admin_health as admin_health_router
 from .api import admin_tenants as admin_tenants_router
 from .api import analysis as analysis_router
 from .api import audit as audit_router
 from .api import cell_comments as cell_comments_router
-from .api import data_library as data_library_router
 from .api import deal_duplicate as deal_duplicate_router
 from .api import deals as deals_router
 from .api import documents as documents_router
@@ -242,7 +242,6 @@ def create_app() -> FastAPI:
     )
     # Documents are deal-scoped: /deals/{deal_id}/documents/...
     app.include_router(documents_router.router, prefix="/deals", tags=["documents"])
-    app.include_router(model_router.router, prefix="/model", tags=["model"])
     # Deal-scoped engine surface — /deals/{id}/engines/... — backs the
     # web app's Run Model button. Mounted under /deals so the routes
     # share path-parameter semantics with the rest of the deal API.
@@ -272,9 +271,6 @@ def create_app() -> FastAPI:
     # tenant resolution model the rest of the deal API uses.
     app.include_router(
         scenarios_router.router, prefix="/deals", tags=["scenarios"]
-    )
-    app.include_router(
-        data_library_router.router, prefix="/data-library", tags=["data-library"]
     )
     # Wave 4 W4.1 — firm-level Portfolio P&L Library. Tenant-scoped via
     # ``Depends(get_tenant_id)``; the engine_runner pulls active entries
@@ -324,6 +320,14 @@ def create_app() -> FastAPI:
         admin_tenants_router.router,
         prefix="/admin",
         tags=["admin-tenants"],
+    )
+    # Operator health view (storage, auth posture, embeddings, per-tenant
+    # cache counters) — internal tenants only; the public /health says
+    # only status / version / db / degraded_reasons.
+    app.include_router(
+        admin_health_router.router,
+        prefix="/admin",
+        tags=["admin-health"],
     )
     # FON-93 — Clerk → worker webhook. Deliberately NO tenant dependency:
     # Clerk authenticates with the Svix signature, not a session JWT.

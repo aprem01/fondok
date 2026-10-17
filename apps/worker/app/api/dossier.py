@@ -153,7 +153,7 @@ async def ask_deal(
         logger.exception("ask: researcher run failed for deal=%s", deal_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"researcher failed: {type(exc).__name__}: {exc}",
+            detail="The question could not be answered right now. Try again in a moment.",
         ) from exc
 
     return AskResponse(

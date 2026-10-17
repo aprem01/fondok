@@ -88,6 +88,54 @@ from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+#: Client-facing names for the ``DocType`` enum tokens. The enum values are
+#: wire codes (``PNL_YTD``); copy a reviewer reads uses these.
+_DOC_TYPE_LABELS: dict[str, str] = {
+    "OM": "Offering Memorandum",
+    "T12": "T-12",
+    "STR": "STR Report",
+    "STR_TREND": "STR Trend Report",
+    "STR_SEGMENTATION": "STR Segmentation Report",
+    "CBRE_HORIZONS": "CBRE Horizons Forecast",
+    "PNL_BENCHMARK": "P&L Benchmark",
+    "PORTFOLIO_PNL": "Portfolio P&L",
+    "PNL": "Annual P&L",
+    "PNL_MONTHLY": "Monthly P&L",
+    "PNL_YTD": "Year-to-Date P&L",
+    "RENT_ROLL": "Rent Roll",
+    "ROOM_MIX": "Room Mix",
+    "MARKET_STUDY": "Market Study",
+    "CONTRACT": "Contract",
+    "INSURANCE": "Insurance",
+    "PROPERTY_TAX": "Property Tax",
+    "CAPEX": "CapEx / PIP",
+    "PROPERTY_INFO": "Property Information",
+    "LEASES": "Leases",
+    "SURVEYS": "Surveys",
+    "DEBT": "Debt / Term Sheet",
+    "PARTNERSHIP": "Partnership Agreement",
+    "OTHER": "Other",
+}
+
+
+def doc_type_label(doc_type: str | None) -> str:
+    """Display name for a ``DocType`` value — never the raw enum token."""
+    if not doc_type:
+        return "Unclassified"
+    code = str(doc_type).upper()
+    return _DOC_TYPE_LABELS.get(code, code.replace("_", " ").title())
+
+
+#: The one sentence a client sees when the semantic-search backfill cannot
+#: run on this worker. Which half is missing (chunk table, embeddings key)
+#: is operator detail and goes to the log.
+SEMANTIC_SEARCH_DISABLED_REASON = "Semantic search is not enabled for this workspace."
+
+#: What a client sees when a document is not on the deal it asked about. The
+#: diagnosis (wrong deal / wrong tenant / deleted) is logged, never returned.
+DOCUMENT_NOT_FOUND_DETAIL = "Document not found on this deal."
+EXTRACTION_NOT_FOUND_DETAIL = "No extraction found for this document on this deal."
+
 
 # ─────────────────────────── status enum ───────────────────────────
 
@@ -649,11 +697,12 @@ def _record_cache_miss(tenant_id: str) -> None:
 
 
 def get_extraction_cache_metrics() -> dict[str, Any]:
-    """Snapshot of the per-tenant cache-hit counters for ``/health``.
+    """Snapshot of the per-tenant cache-hit counters for ``/admin/health``.
 
     Returns a mapping ``{tenant_id: {"hits": int, "misses": int,
-    "hit_rate": float}}`` plus a rolled-up ``total`` block. Read-only —
-    safe to expose over an unauthenticated liveness probe (numbers only,
+    "hit_rate": float}}`` plus a rolled-up ``total`` block. Read-only.
+    Served to internal tenants only since 2026-10-17 — the per-tenant keys
+    are Clerk org ids, so the public probe must not list them (numbers only,
     no doc IDs or tenant PII).
     """
     all_tenants = set(_EXTRACTION_CACHE_HITS) | set(_EXTRACTION_CACHE_MISSES)
@@ -876,7 +925,7 @@ def _same_id(a: Any, b: Any) -> bool:
     return str(a).lower() == str(b).lower()
 
 
-async def _document_not_found_detail(
+async def _document_not_found_diagnosis(
     session: AsyncSession,
     *,
     deal_id: UUID | str,
@@ -885,9 +934,11 @@ async def _document_not_found_detail(
 ) -> str:
     """``"document <doc> not found on deal <deal> (<which lookup failed>)"``.
 
-    Prefix is byte-identical to the historical detail so the web's error
-    matching keeps working; only the parenthetical is new. Best-effort: any
-    read failure returns the bare prefix.
+    Operator diagnosis — WHICH lookup failed and why. Logged by
+    :func:`_document_not_found_detail`, never returned to a client (FON-20
+    put it on the wire and every raw-body toast in the web app then showed
+    ``tenant_mismatch: … data repair needed``). Best-effort: any read failure
+    returns the bare prefix.
     """
     base = f"document {doc_id} not found on deal {deal_id}"
     try:
@@ -939,7 +990,29 @@ async def _document_not_found_detail(
     return f"{base} (document_lookup_failed: row exists; status={m['status']})"
 
 
-async def _extraction_not_found_detail(
+async def _document_not_found_detail(
+    session: AsyncSession,
+    *,
+    deal_id: UUID | str,
+    doc_id: UUID | str,
+    tenant_id: UUID | str,
+) -> str:
+    """Client detail for a 404 on a document route.
+
+    Returns :data:`DOCUMENT_NOT_FOUND_DETAIL`. The FON-20 diagnosis (wrong
+    deal, wrong tenant, deleted row, tenant-mismatched row) is operator intel
+    and goes to ``logger.warning`` so a support ticket can still be answered
+    from the logs. The web never matched on the historical prefix (it keys on
+    status only — ``openDocument.ts``), so nothing downstream reads this text.
+    """
+    diagnosis = await _document_not_found_diagnosis(
+        session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+    )
+    logger.warning("document 404: %s (tenant=%s)", diagnosis, tenant_id)
+    return DOCUMENT_NOT_FOUND_DETAIL
+
+
+async def _extraction_not_found_diagnosis(
     session: AsyncSession,
     *,
     deal_id: UUID | str,
@@ -951,7 +1024,7 @@ async def _extraction_not_found_detail(
     document is here but has no extraction" (and whether rows exist for it
     under another deal on this tenant)."""
     base = f"no extraction for document {doc_id} on deal {deal_id}"
-    doc_detail = await _document_not_found_detail(
+    doc_detail = await _document_not_found_diagnosis(
         session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
     )
     if " (" not in doc_detail:
@@ -992,6 +1065,22 @@ async def _extraction_not_found_detail(
         f"{base} (extraction_lookup_failed: document status={status_txt}; "
         "no extraction_results row on this deal and tenant)"
     )
+
+
+async def _extraction_not_found_detail(
+    session: AsyncSession,
+    *,
+    deal_id: UUID | str,
+    doc_id: UUID | str,
+    tenant_id: UUID | str,
+) -> str:
+    """Client detail for a review route that found no extraction row; the
+    diagnosis is logged (see :func:`_document_not_found_detail`)."""
+    diagnosis = await _extraction_not_found_diagnosis(
+        session, deal_id=deal_id, doc_id=doc_id, tenant_id=tenant_id
+    )
+    logger.warning("extraction 404: %s (tenant=%s)", diagnosis, tenant_id)
+    return EXTRACTION_NOT_FOUND_DETAIL
 
 
 # ─────────────────────────── response shapes ───────────────────────────
@@ -3537,15 +3626,24 @@ async def backfill_embeddings(
         )
 
     if not await _table_exists(session):
+        logger.info(
+            "backfill_embeddings: skipped for deal=%s — document_chunks table not "
+            "present (SQLite or pgvector unavailable)",
+            deal_id,
+        )
         return BackfillEmbeddingsResponse(
             deal_id=deal_id,
-            skipped_reason="document_chunks table not present (SQLite or pgvector unavailable)",
+            skipped_reason=SEMANTIC_SEARCH_DISABLED_REASON,
         )
 
     if not embeddings.is_enabled():
+        logger.info(
+            "backfill_embeddings: skipped for deal=%s — VOYAGE_API_KEY not set",
+            deal_id,
+        )
         return BackfillEmbeddingsResponse(
             deal_id=deal_id,
-            skipped_reason="VOYAGE_API_KEY not set on the worker",
+            skipped_reason=SEMANTIC_SEARCH_DISABLED_REASON,
         )
 
     # Total + missing counts (for the response).
@@ -5196,13 +5294,13 @@ async def download_document(
         logger.exception("download: store.get failed for %s", storage_key)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"raw store read failed: {exc}",
+            detail="The document file could not be retrieved.",
         ) from exc
     except Exception as exc:
         logger.exception("download: store.get failed for %s", storage_key)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"raw store read failed: {exc}",
+            detail="The document file could not be retrieved.",
         ) from exc
 
     media_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
@@ -5638,13 +5736,13 @@ async def reprocess_document(
         logger.exception("reprocess: store fetch failed for %s", filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"could not fetch raw bytes from storage: {exc}",
+            detail="The document file could not be retrieved.",
         ) from exc
     except Exception as exc:
         logger.exception("reprocess: store fetch failed for %s", filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"could not fetch raw bytes from storage: {exc}",
+            detail="The document file could not be retrieved.",
         ) from exc
 
     # Flip the row back to PARSING so the UI shows immediate feedback.
@@ -5983,7 +6081,11 @@ async def reclassify_document(
         if candidate not in {dt.value for dt in DocType}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"unknown doc_type '{body.doc_type}'",
+                detail=(
+                    "Unrecognised document type. Choose one of: "
+                    + ", ".join(doc_type_label(dt.value) for dt in DocType)
+                    + "."
+                ),
             )
         new_doc_type = candidate
 
@@ -7183,6 +7285,11 @@ async def review_extraction_field(
         "requires_human_review": overall < 0.85 or not by_field_conf,
     }
 
+    # An in-place rewrite of the extraction row — no timestamp records it,
+    # so the deal read cache is told explicitly (services.read_cache).
+    from ..services.read_cache import bump_generation
+
+    bump_generation(tenant_id=tenant_id, deal_id=deal_id)
     await session.execute(
         text(
             """
@@ -9671,7 +9778,11 @@ async def _apply_verification_to_confidence(
 
     # Update the most-recent extraction_results row for this document.
     # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
-    # apps/worker/app/tenant_middleware.py.
+    # apps/worker/app/tenant_middleware.py. In-place rewrite → tell the
+    # deal read cache (services.read_cache).
+    from ..services.read_cache import bump_generation
+
+    bump_generation(tenant_id=tenant_id, deal_id=deal_id)
     await session.execute(
         text(
             """

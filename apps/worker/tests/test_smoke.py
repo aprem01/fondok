@@ -99,17 +99,49 @@ async def test_health_endpoint() -> None:
             assert body["status"] == "ok", body.get("degraded_reasons")
             assert "version" in body
             assert "db" in body
+            # The public probe describes the worker's health, never its
+            # deployment: bucket / region, auth posture, embeddings model and
+            # per-tenant cache counters live on /admin/health (2026-10-17).
+            for leaked in ("raw_store", "auth", "semantic_search", "extraction_cache"):
+                assert leaked not in body, leaked
+            assert "semantic_search" not in body["degraded_reasons"]
+
+            # Operator view — internal tenants only. Register one through the
+            # header path (the suite's trusted caller) and read it back.
+            from uuid import uuid4
+
+            from app.tenants import upsert_tenant
+
+            internal = uuid4()
+            await upsert_tenant(
+                tenant_id=internal,
+                clerk_org_id="org_smoke_internal",
+                name="Fondok Internal (smoke)",
+                kind="internal",
+                status="active",
+            )
+            ops = await client.get("/admin/health", headers={"X-Tenant-Id": str(internal)})
+            assert ops.status_code == 200, ops.text
+            obody = ops.json()
+            assert obody["status"] == body["status"]
+            assert set(obody["auth"]) == {
+                "header_tenant_path_enabled", "jwt_required",
+                "registered_tenant_required", "rls_tenant_guc",
+            }
+            assert "kind" in obody["raw_store"]
             # Semantic search must REPORT its mode, never leave it to be
             # inferred from search behaviour. On SQLite there is no
             # document_chunks table, so the honest answer is "unavailable"
             # — and full-text-only is a supported mode, not a fault, so it
             # never makes the worker degraded.
-            ss = body["semantic_search"]
+            ss = obody["semantic_search"]
             assert ss["mode"] in {"hybrid", "fulltext_only", "unavailable"}
             assert ss["chunk_store"] is False
             assert ss["mode"] == "unavailable"
             assert "embeddings" in ss
-            assert "semantic_search" not in body["degraded_reasons"]
+            # A caller that is not an internal tenant gets nothing.
+            stranger = await client.get("/admin/health", headers={"X-Tenant-Id": str(uuid4())})
+            assert stranger.status_code == 403, stranger.text
 
 
 @pytest.mark.asyncio
