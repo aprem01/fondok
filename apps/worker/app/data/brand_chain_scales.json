@@ -1,0 +1,2069 @@
+{
+  "_generated_by": "scripts/export_brand_catalog.mjs from apps/web/src/lib/mockData.ts (brandFamilies) — do not edit by hand",
+  "str_source": "STR Chain Scales (February 2026), https://www.costar.com/products/str-benchmark/resources/guidelines/str-chain-scales",
+  "positioning_by_str_scale": {
+    "Luxury": "luxury",
+    "Upper Upscale": "upper-upscale",
+    "Upscale": "upscale",
+    "Upper Midscale": "upper-midscale",
+    "Midscale": "midscale",
+    "Economy": "economy"
+  },
+  "brands": [
+    {
+      "name": "Hampton by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Hilton Hotels & Resorts",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Hilton Garden Inn",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "DoubleTree by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Home2 Suites by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Embassy Suites by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Homewood Suites by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Tru by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Curio Collection by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Tapestry Collection by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Canopy by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Signia by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Motto by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Spark by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Tempo by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "LXR Hotels & Resorts",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Conrad Hotels & Resorts",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Waldorf Astoria Hotels & Resorts",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Graduate by Hilton",
+      "family": "Hilton",
+      "aliases": [
+        "Graduate Hotels"
+      ],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "NoMad Hotels",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Outset Collection by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "LivSmart Studios by Hilton",
+      "family": "Hilton",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Courtyard by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Marriott Hotels",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Fairfield by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Residence Inn by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Sheraton",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "SpringHill Suites by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "TownePlace Suites by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Autograph Collection",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Renaissance Hotels",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Aloft Hotels",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Four Points by Sheraton",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Delta Hotels by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "AC Hotels by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "JW Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "The Westin Hotels & Resorts",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Element Hotels",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Tribute Portfolio",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Moxy Hotels",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "The Luxury Collection",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Le Méridien",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "The Ritz-Carlton",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "W Hotels",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "St. Regis Hotels & Resorts",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "EDITION Hotels",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Gaylord Hotels",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Bvlgari Hotels & Resorts",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "City Express by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Marriott Executive Apartments",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Design Hotels",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "citizenM",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "The Ritz-Carlton Reserve",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Protea Hotels by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Four Points Flex by Sheraton",
+      "family": "Marriott International",
+      "aliases": [
+        "Starwood"
+      ],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Series by Marriott",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "StudioRes",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Apartments by Marriott Bonvoy",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Outdoor Collection by Marriott Bonvoy",
+      "family": "Marriott International",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Holiday Inn Express",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Holiday Inn",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Candlewood Suites",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Staybridge Suites",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Crowne Plaza Hotels & Resorts",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "InterContinental Hotels & Resorts",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Kimpton Hotels & Restaurants",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Hotel Indigo",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "avid hotels",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "EVEN Hotels",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "voco Hotels",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Vignette Collection",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Atwell Suites",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Garner Hotels",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Iberostar Beachfront Resorts",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Regent Hotels & Resorts",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Six Senses",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Ruby Hotels",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "HUALUXE Hotels and Resorts",
+      "family": "IHG Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Hyatt Place",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Hyatt House",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Hyatt Regency",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Grand Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Hyatt Centric",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Andaz",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Park Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Thompson Hotels",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Alila Hotels & Resorts",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Destination by Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "JdV by Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Caption by Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Hyatt Studios",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Hyatt Vacation Club",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Hyatt Ziva",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Hyatt Zilara",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "UrCove",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Miraval Resorts",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Hyatt Select",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Hyatt Vivid",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "The Unbound Collection by Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Dream Hotels",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Unscripted by Hyatt",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "The Standard",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Bunkhouse Hotels",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Me and All Hotels",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Secrets Resorts & Spas",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Breathless Resorts & Spas",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Dreams Resorts & Spas",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Zoëtry Wellness & Spa Resorts",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Alua Hotels & Resorts",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Sunscape Resorts & Spas",
+      "family": "Hyatt Hotels Corp.",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Super 8 by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Days Inn by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Ramada by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Howard Johnson by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Travelodge by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Microtel by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Wingate by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Hawthorn Suites by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "AmericInn by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Baymont by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "La Quinta by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Wyndham Garden",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Wyndham Hotels & Resorts",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Wyndham Grand",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Wyndham Alltra",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "TRYP by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Dolce Hotels and Resorts by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Trademark Collection by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Registry Collection Hotels",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Esplendor by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Vienna House by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "ECHO Suites Extended Stay by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "WaterWalk Extended Stay by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Dazzler by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Ramada Encore by Wyndham",
+      "family": "Wyndham Hotels & Resorts",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Comfort Inn",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Comfort Suites",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Quality Inn",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Sleep Inn",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Clarion",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Clarion Pointe",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Cambria Hotels",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "MainStay Suites",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "WoodSpring Suites",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Suburban Studios",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Everhome Suites",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Econo Lodge",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Rodeway Inn",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Ascend Hotel Collection",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Radisson Hotels Americas",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Radisson Blu",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Radisson RED",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Park Plaza",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Country Inn & Suites by Radisson",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Radisson Individuals",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Park Inn by Radisson",
+      "family": "Choice Hotels International",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Best Western Plus",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Best Western Premier",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Vīb",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "GLō Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Executive Residency by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "BW Signature Collection",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "BW Premier Collection",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Sadie Hotel",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Aiden Hotels",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "WorldHotels Luxury",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "WorldHotels Elite",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "WorldHotels Distinctive",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "WorldHotels Crafted",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "SureStay Hotel by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "SureStay Plus by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "SureStay Studio by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "@Home by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "SureStay Collection by Best Western",
+      "family": "BWH Hotels (Best Western)",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Sonesta Hotels & Resorts",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Royal Sonesta",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Sonesta Select",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Sonesta Simply Suites",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Sonesta ES Suites",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Classico, A Sonesta Collection",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "MOD, A Sonesta Collection",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "James Hotels",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Red Lion Hotels",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Red Lion Inn & Suites",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Americas Best Value Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Knights Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Sonesta Essential",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Signature Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Hotel RL",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "GuestHouse",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Canadas Best Value Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Jameson Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Country Hearth Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "America's Best Inn",
+      "family": "Sonesta International Hotels",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Motel 6",
+      "family": "G6 Hospitality",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Studio 6",
+      "family": "G6 Hospitality",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Red Roof Inn",
+      "family": "Red Roof",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Red Roof PLUS+",
+      "family": "Red Roof",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "HomeTowne Studios by Red Roof",
+      "family": "Red Roof",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "The Red Collection",
+      "family": "Red Roof",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Extended Stay America",
+      "family": "Extended Stay America",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Extended Stay America Suites",
+      "family": "Extended Stay America",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Extended Stay America Premier Suites",
+      "family": "Extended Stay America",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "Extended Stay America Select Suites",
+      "family": "Extended Stay America",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Raffles Hotels & Resorts",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Orient Express",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Fairmont Hotels and Resorts",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Emblems Collection",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Sofitel",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Sofitel Legend",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "MGallery Collection",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Faena",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "SO/",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Rixos",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "SLS Hotels",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Mondrian",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Delano",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "21c Museum Hotels",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Our Habitas",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "25hours Hotels",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Hyde",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Morgans Originals",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "The Hoxton",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Mama Shelter",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Swissôtel",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Pullman Hotels and Resorts",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Mövenpick Hotels and Resorts",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Grand Mercure",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Mantis Collection",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Peppers",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "The Sebel",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Art Series",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Novotel",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Mercure",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Handwritten Collection",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Mantra",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Adagio",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Adagio Access",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "TRIBE",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "ibis",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "ibis Styles",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "greet",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "BreakFree",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Midscale",
+      "positioning": "midscale"
+    },
+    {
+      "name": "ibis budget",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "JO&JOE",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "hotelF1",
+      "family": "Accor",
+      "aliases": [],
+      "str_scale": "Economy",
+      "positioning": "economy"
+    },
+    {
+      "name": "Gran Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "ME by Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Paradisus by Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "The Meliá Collection",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "ZEL",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Meliá Hotels & Resorts",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "INNSiDE by Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Sol by Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "Affiliated by Meliá",
+      "family": "Meliá Hotels International",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Anantara",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Elewana Collection",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Tivoli",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "NH Collection",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "nhow",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Avani",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "NH Hotels",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Oaks Hotels & Resorts",
+      "family": "Minor Hotels",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Motel One",
+      "family": "Motel One Group",
+      "aliases": [],
+      "str_scale": "Upper Midscale",
+      "positioning": "upper-midscale"
+    },
+    {
+      "name": "The Cloud One Hotels",
+      "family": "Motel One Group",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Four Seasons Hotels and Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Aman Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Mandarin Oriental Hotel Group",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Rosewood Hotels & Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Belmond",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Capella Hotels and Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Auberge Resorts Collection",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Loews Hotels & Co",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Omni Hotels & Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "1 Hotels",
+      "family": "Other Brands",
+      "aliases": [
+        "Starwood Hotels (Starwood Capital)"
+      ],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Baccarat Hotels & Resorts",
+      "family": "Other Brands",
+      "aliases": [
+        "Starwood Hotels (Starwood Capital)"
+      ],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Treehouse Hotels",
+      "family": "Other Brands",
+      "aliases": [
+        "Starwood Hotels (Starwood Capital)"
+      ],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Independent / Unflagged",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Margaritaville Hotels & Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Great Wolf Lodge",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Drury Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Upscale",
+      "positioning": "upscale"
+    },
+    {
+      "name": "Hard Rock Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    },
+    {
+      "name": "Pendry Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Montage Hotels & Resorts",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Nobu Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Luxury",
+      "positioning": "luxury"
+    },
+    {
+      "name": "Equinox Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": null,
+      "positioning": null
+    },
+    {
+      "name": "Club Quarters Hotels",
+      "family": "Other Brands",
+      "aliases": [],
+      "str_scale": "Upper Upscale",
+      "positioning": "upper-upscale"
+    }
+  ]
+}

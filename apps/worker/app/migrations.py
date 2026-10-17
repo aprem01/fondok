@@ -186,6 +186,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS submarket TEXT",
     ),
     (
+        # Sam 2026-10-15 (om-brand-str-scale) — where ``deals.positioning``
+        # came from: ``om_brand_str_scale`` (the OM's brand matched the brand
+        # catalog and the deal had no tier, so its STR chain scale was
+        # suggested), ``analyst`` (set in the wizard / Overview), or NULL
+        # (legacy / default). ``positioning_source_detail`` is a JSON object
+        # for the OM route: document id + filename + page, the OM's brand
+        # text, the catalog brand and STR scale. Nullable, additive; the
+        # worker probes the catalog before reading / writing them.
+        "deals.add_positioning_source",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS positioning_source TEXT",
+    ),
+    (
+        "deals.add_positioning_source_detail",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS positioning_source_detail TEXT",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1411,6 +1427,15 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.add_submarket_sqlite",
         "ALTER TABLE deals ADD COLUMN submarket TEXT",
+    ),
+    (
+        # om-brand-str-scale — SQLite mirror of the positioning_source ALTERs.
+        "deals.add_positioning_source_sqlite",
+        "ALTER TABLE deals ADD COLUMN positioning_source TEXT",
+    ),
+    (
+        "deals.add_positioning_source_detail_sqlite",
+        "ALTER TABLE deals ADD COLUMN positioning_source_detail TEXT",
     ),
     (
         "documents.create_table",

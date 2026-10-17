@@ -8019,6 +8019,7 @@ async def _run_extraction_pipeline_inner(
                 tenant_id=tenant_id,
                 fields=fields,
                 doc_type=classified_doc_type,
+                doc_id=doc_id,
             )
 
             # Chain-of-verification — re-read each cited number against the
@@ -8983,6 +8984,7 @@ async def _sync_deal_metadata_from_extraction(
     tenant_id: str,
     fields: list[dict[str, Any]],
     doc_type: str | None = None,
+    doc_id: str | None = None,
 ) -> None:
     """Copy subject-property metadata from an extracted document onto the
     ``deals`` row, under the FON-84 provenance rules. Best-effort.
@@ -9010,6 +9012,12 @@ async def _sync_deal_metadata_from_extraction(
     * **city** — ``property_overview.address`` is never mapped (a street
       address must not land in ``city``). ``submarket`` / ``location``
       may fill an empty ``city`` only, and only from the OM.
+    * **positioning** (Sam 2026-10-15) — OM only: when the OM's
+      ``property_overview.brand`` confidently matches the brand catalog
+      (``services.brand_chain_scale``) and STR publishes that brand's chain
+      scale, it becomes the deal's positioning — but only while the deal has
+      none (NULL / ``default``) and the analyst never set one. See
+      :func:`_suggest_positioning_from_om_brand`.
 
     Every applied change is written to ``audit_log`` as
     ``deal.metadata_synced_from_extraction`` with ``doc_type`` and
@@ -9035,6 +9043,16 @@ async def _sync_deal_metadata_from_extraction(
         )
         return
     is_om = canonical_doc_type == _OM_CANONICAL_DOC_TYPE
+
+    if is_om:
+        await _suggest_positioning_from_om_brand(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            fields=fields,
+            doc_type=doc_type,
+            doc_id=doc_id,
+        )
 
     # Read the current deals row so we only UPDATE columns whose
     # extracted value is actually allowed to land there.
@@ -9184,6 +9202,183 @@ async def _sync_deal_metadata_from_extraction(
         deal_id,
         doc_type,
         {col: modes.get(col) for col in proposed},
+    )
+
+
+def _om_brand_field(fields: list[dict[str, Any]]) -> tuple[str, int | None] | None:
+    """The first non-blank ``property_overview.brand`` value and its page."""
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        if (f.get("field_name") or "").strip().lower() != "property_overview.brand":
+            continue
+        value = f.get("value")
+        if not isinstance(value, str) or not value.strip():
+            continue
+        page = _coerce_int(f.get("source_page") or f.get("page_number") or f.get("page"))
+        return value.strip(), page
+    return None
+
+
+async def _suggest_positioning_from_om_brand(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    fields: list[dict[str, Any]],
+    doc_type: str | None,
+    doc_id: str | None,
+) -> None:
+    """Sam 2026-10-15 — the OM's brand → its STR chain scale as the deal's
+    suggested positioning. Best-effort; the caller has already applied the
+    FON-84 gate (OM only).
+
+    * The brand must resolve under the confidence rule in
+      ``services.brand_chain_scale.match_brand`` (exact / alias / short form /
+      unambiguous leading brand mark — never a similarity guess) to a brand
+      STR publishes a chain scale for. Ambiguous ("Starwood"), unknown, and
+      "Various" / unpublished-scale brands write nothing.
+    * Fill-only: the UPDATE's own predicate requires ``positioning`` NULL /
+      blank / ``default`` AND ``positioning_source`` not ``analyst``, so an
+      analyst's tier is never overwritten, even by a race.
+    * ``positioning_source = 'om_brand_str_scale'`` and
+      ``positioning_source_detail`` (document id / filename / page, the OM's
+      brand text, the catalog brand, the STR scale, the match route) are
+      written in the same statement; an ``audit_log`` row records it as a
+      ``deal.metadata_synced_from_extraction`` change of ``positioning``.
+    """
+    from ..services.brand_chain_scale import (
+        POSITIONING_SOURCE_ANALYST,
+        POSITIONING_SOURCE_OM_BRAND,
+        match_brand,
+    )
+    from .deals import _deals_has_positioning_source
+
+    hit = _om_brand_field(fields)
+    if hit is None:
+        return
+    om_brand, page = hit
+    match = match_brand(om_brand)
+    suggested = match.suggested_positioning
+    if suggested is None or match.brand is None:
+        logger.info(
+            "deal_metadata_sync: no positioning suggestion deal=%s om_brand=%r "
+            "status=%s candidates=%s",
+            deal_id,
+            om_brand,
+            match.status,
+            list(match.candidates)[:5],
+        )
+        return
+    try:
+        if not await _deals_has_positioning_source(session):
+            return
+        filename: str | None = None
+        if doc_id:
+            with contextlib.suppress(Exception):
+                frow = (
+                    await session.execute(
+                        text(
+                            "SELECT filename FROM documents "
+                            "WHERE id = :id AND tenant_id = :tenant"
+                        ),
+                        {"id": str(doc_id), "tenant": str(tenant_id)},
+                    )
+                ).first()
+                if frow is not None:
+                    filename = frow._mapping.get("filename")
+        detail = {
+            "document_id": str(doc_id) if doc_id else None,
+            "document_filename": filename,
+            "page": page,
+            "doc_type": doc_type,
+            "om_brand": om_brand,
+            "catalog_brand": match.brand.name,
+            "catalog_family": match.brand.family,
+            "str_scale": match.brand.str_scale,
+            "match": match.kind,
+        }
+        before = (
+            await session.execute(
+                text(
+                    "SELECT positioning FROM deals "
+                    "WHERE id = :id AND tenant_id = :tenant"
+                ),
+                {"id": deal_id, "tenant": str(tenant_id)},
+            )
+        ).first()
+        if before is None:
+            return
+        old_positioning = before._mapping.get("positioning")
+        result = await session.execute(
+            text(
+                "UPDATE deals SET positioning = :positioning, "
+                "positioning_source = :source, "
+                "positioning_source_detail = :detail "
+                "WHERE id = :id AND tenant_id = :tenant "
+                "AND (positioning IS NULL OR TRIM(positioning) = '' "
+                "     OR LOWER(positioning) = 'default') "
+                "AND (positioning_source IS NULL OR positioning_source <> :analyst)"
+            ),
+            {
+                "positioning": suggested,
+                "source": POSITIONING_SOURCE_OM_BRAND,
+                "detail": json.dumps(detail),
+                "id": deal_id,
+                "tenant": str(tenant_id),
+                "analyst": POSITIONING_SOURCE_ANALYST,
+            },
+        )
+        if not result.rowcount:
+            await session.commit()
+            logger.info(
+                "deal_metadata_sync: positioning kept deal=%s (already set: %r)",
+                deal_id,
+                old_positioning,
+            )
+            return
+        await session.commit()
+    except Exception:
+        logger.exception(
+            "deal_metadata_sync: positioning suggestion failed for deal=%s", deal_id
+        )
+        await _rollback_after_best_effort(session, "positioning suggestion")
+        return
+
+    try:
+        await log_audit(
+            session,
+            tenant_id=tenant_id,
+            action="deal.metadata_synced_from_extraction",
+            resource_type="deal",
+            resource_id=deal_id,
+            input_payload={
+                "column": "positioning",
+                "old_value": (
+                    str(old_positioning) if old_positioning is not None else None
+                ),
+                "new_value": suggested,
+                "doc_type": doc_type,
+                "mode": "fill",
+                "source": POSITIONING_SOURCE_OM_BRAND,
+                "detail": detail,
+                "rule": "Sam 2026-10-15 — OM brand → STR chain scale, fill-only",
+            },
+        )
+        await session.commit()
+    except Exception:
+        logger.warning(
+            "deal_metadata_sync: positioning audit write failed for deal=%s",
+            deal_id,
+        )
+        await _rollback_after_best_effort(session, "positioning audit")
+    logger.info(
+        "deal_metadata_sync: deal=%s positioning=%s from OM brand %r (%s, %s)",
+        deal_id,
+        suggested,
+        om_brand,
+        match.brand.name,
+        match.kind,
     )
 
 

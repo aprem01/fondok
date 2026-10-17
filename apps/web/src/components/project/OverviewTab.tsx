@@ -112,6 +112,7 @@ import { isNoOpEdit } from '@/lib/fieldValue';
 import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
 import { DEAL_TYPE_OPTIONS, normalizeDealType, isDevelopmentLike, dealTypeLabel, type DealTypeId } from '@/lib/dealTypes';
 import { operatingModelLabel } from '@/lib/operatingModel';
+import { positioningSourceChip } from '@/lib/positioningSource';
 import {
   noiBeforeReserveLabel,
   stabilizedYearBlock,
@@ -1537,6 +1538,29 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   onChange={(v) => void persist({ positioning: v })}
                 />
               </div>
+              {/* Sam 2026-10-15 — where the tier came from stays visible: the
+                  OM's brand → STR chain scale (document + page), or Analyst.
+                  Changing the select above is the override (worker records it
+                  as the analyst's). */}
+              {(() => {
+                const chip = positioningSourceChip(deal);
+                if (!chip) return null;
+                const color = chip.kind === 'om_brand_str_scale' ? prov.green : chip.kind === 'analyst' ? prov.blue : palette.textFaint;
+                return (
+                  <div
+                    data-testid="positioning-source"
+                    data-source={chip.kind}
+                    title={chip.title}
+                    style={{
+                      alignSelf: 'flex-start', maxWidth: '100%', fontSize: 10.5, fontWeight: 600, color,
+                      border: `1px solid ${palette.disabledBorder}`, borderRadius: 999, padding: '2px 8px',
+                      overflowWrap: 'anywhere', lineHeight: 1.35,
+                    }}
+                  >
+                    {chip.text}
+                  </div>
+                );
+              })()}
             </div>
             {/* Sam #6 — Market / Submarket (deals.market / deals.submarket, and
                 deals.str_market_id when picked from STR's loaded list). Shown

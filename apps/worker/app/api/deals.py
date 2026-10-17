@@ -334,6 +334,14 @@ class DealRecord(BaseModel):
     str_market_id: str | None = None
     market: str | None = None
     submarket: str | None = None
+    # Sam 2026-10-15 (om-brand-str-scale) — where ``positioning`` came from:
+    # ``om_brand_str_scale`` (the OM's brand → its STR chain scale, filled
+    # while the deal had no tier), ``analyst`` (wizard / Overview), or NULL
+    # (legacy / Default / pre-migration schema). ``positioning_source_detail``
+    # carries the OM route's document id / filename / page, the OM's brand
+    # text, the catalog brand and the STR scale.
+    positioning_source: str | None = None
+    positioning_source_detail: dict[str, Any] | None = None
     # Per-field analyst overrides — keyed by extractor field path (e.g.
     # ``property_overview.year_built``) → either a scalar (legacy) or
     # a ``FieldOverrideRecord``-shaped dict ``{value, note, overridden_by,
@@ -858,6 +866,32 @@ def _bind_date(session: AsyncSession, value: date | None) -> date | str | None:
     return value.isoformat() if is_sqlite else value
 
 
+def _coerce_positioning_source_detail(value: Any) -> dict[str, Any] | None:
+    """``deals.positioning_source_detail`` (JSON text, or a dict from a JSONB
+    driver) → dict; anything unreadable → None."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def analyst_positioning_source(positioning: object) -> str | None:
+    """``positioning_source`` for a positioning the analyst sent: ``analyst``
+    for a real tier; NULL for blank / the ``default`` sentinel ("no tier
+    chosen" — the wizard sends it whenever the analyst skips the step), so
+    an OM brand may still suggest a scale there."""
+    from ..services.engine_runner import chain_scale_from_positioning
+
+    if chain_scale_from_positioning(positioning) is None:
+        return None
+    return "analyst"
+
+
 def _row_to_record(row: dict[str, Any]) -> DealRecord:
     return DealRecord(
         id=UUID(str(row["id"])),
@@ -884,6 +918,10 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         str_market_id=row.get("str_market_id"),
         market=row.get("market"),
         submarket=row.get("submarket"),
+        positioning_source=row.get("positioning_source"),
+        positioning_source_detail=_coerce_positioning_source_detail(
+            row.get("positioning_source_detail")
+        ),
         field_overrides=_coerce_overrides(row.get("field_overrides")),
         state=row.get("state") or "ONBOARDING",
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
@@ -908,6 +946,9 @@ _REOPENING_DATE_CACHE_KEY = "fondok_deals_has_reopening_date"
 #: Sam #6 — the three market columns, each probed on its own (they are three
 #: separate migrations, so one can exist without the others).
 _MARKET_COLUMNS: tuple[str, ...] = ("str_market_id", "market", "submarket")
+#: om-brand-str-scale — positioning provenance columns, probed together
+#: (both land in the same migration batch).
+_POSITIONING_SOURCE_CACHE_KEY = "fondok_deals_has_positioning_source"
 
 
 async def _deals_has_column(
@@ -1033,7 +1074,27 @@ async def _deal_columns(session: AsyncSession) -> str:
             cols = f"{cols}, {col}"
         else:
             cols = f"{cols}, NULL AS {col}"
+    # om-brand-str-scale — same contract for the positioning provenance.
+    if await _deals_has_positioning_source(session):
+        cols = f"{cols}, positioning_source, positioning_source_detail"
+    else:
+        cols = (
+            f"{cols}, NULL AS positioning_source, "
+            "NULL AS positioning_source_detail"
+        )
     return cols
+
+
+async def _deals_has_positioning_source(session: AsyncSession) -> bool:
+    """om-brand-str-scale — does the live ``deals`` table carry
+    ``positioning_source`` AND ``positioning_source_detail``?"""
+    return await _deals_has_column(
+        session, "positioning_source", _POSITIONING_SOURCE_CACHE_KEY
+    ) and await _deals_has_column(
+        session,
+        "positioning_source_detail",
+        f"{_POSITIONING_SOURCE_CACHE_KEY}_detail",
+    )
 
 
 async def _deals_has_market_column(session: AsyncSession, column: str) -> bool:
@@ -1274,6 +1335,13 @@ async def create_deal(
             "deals.create: reopening_date=%s dropped — column absent on "
             "this schema", body.reopening_date.isoformat(),
         )
+    # om-brand-str-scale — a tier chosen in the wizard is the analyst's.
+    positioning_source: str | None = None
+    if await _deals_has_positioning_source(session):
+        positioning_source = analyst_positioning_source(body.positioning)
+        params["positioning_source"] = positioning_source
+        pb_col += ", positioning_source"
+        pb_val += ", :positioning_source"
     # Sam #6 — market / submarket / STR market id, same old-schema contract.
     mkt_id, mkt_name = await _resolve_market_fields(
         session, str_market_id=body.str_market_id, market=body.market,
@@ -1385,6 +1453,7 @@ async def create_deal(
         str_market_id=market_values["str_market_id"],
         market=market_values["market"],
         submarket=market_values["submarket"],
+        positioning_source=positioning_source,
         created_at=now,
         updated_at=now,
     )
@@ -1601,6 +1670,14 @@ async def update_deal(
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
+    # om-brand-str-scale — a positioning the analyst sends replaces any OM
+    # suggestion and is recorded as theirs (a real tier → ``analyst``, so a
+    # later OM can never overwrite it; Default / blank → NULL, "no tier").
+    if "positioning" in changes and await _deals_has_positioning_source(session):
+        changes["positioning_source"] = analyst_positioning_source(
+            changes["positioning"]
+        )
+        changes["positioning_source_detail"] = None
 
     # ── FON-74 — the analyst-justification gate ──────────────────────────
     #
