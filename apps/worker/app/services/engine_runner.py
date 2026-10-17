@@ -509,6 +509,9 @@ SOURCE_SEED = "seed"
 SOURCE_DEAL_ROW = "deal_row"
 SOURCE_T12_ACTUAL = "t12_actual"
 SOURCE_CBRE_HORIZONS = "cbre_horizons"
+# FON-109 — the loader no longer stamps this: a P&L benchmark is a
+# suggestion the analyst applies (then it reads ``analyst_override``). The
+# label stays for older persisted runs / exports that carry it.
 SOURCE_PNL_BENCHMARK = "pnl_benchmark"
 # Wave 2 P2.7 — analyst's in-house portfolio benchmark. Outranks
 # ``pnl_benchmark`` (generic HostStats default) and ``cbre_horizons``
@@ -1591,10 +1594,8 @@ async def _load_engine_inputs(
 
     # External market reports (May 7 scope): when CBRE Horizons has
     # been extracted, derive ADR + RevPAR growth from its 5-year
-    # forecast and use that as the revenue engine's growth rate. When
-    # the P&L benchmark has landed, use its margins as expense
-    # synthesis ratios so unit economics reflect peer-set norms
-    # rather than the Kimpton seed.
+    # forecast and use that as the revenue engine's growth rate. (A P&L
+    # benchmark is NOT applied here — see the FON-109 note below.)
     cbre_overrides, cbre_prov, cbre_reason = await _load_cbre_horizons_overrides(
         session,
         deal_id=deal_id,
@@ -1652,20 +1653,15 @@ async def _load_engine_inputs(
             )
             sources["starting_adr"] = SOURCE_CBRE_HORIZONS
 
-    benchmark_overrides = await _load_pnl_benchmark_overrides(
-        session, deal_id=deal_id, tenant_id=effective_tenant
-    )
-    if benchmark_overrides:
-        # Merge into the engine-defaults override channel so the
-        # expense engine's ``HOTEL_TYPE_DEFAULTS`` get patched line
-        # by line at run time (rooms_dept_pct, fb_dept_pct, etc.).
-        existing = dict(base.get("overrides") or {})
-        existing.update(benchmark_overrides.get("expense_overrides", {}))
-        base["overrides"] = existing
-        for top_level_key in ("mgmt_fee_pct", "ffe_reserve_pct"):
-            if top_level_key in benchmark_overrides:
-                base[top_level_key] = benchmark_overrides[top_level_key]
-                sources[top_level_key] = SOURCE_PNL_BENCHMARK
+    # FON-109 (Sam, 2026-10-15) — a P&L benchmark report (CBRE Benchmarker /
+    # HotStats, ``PNL_BENCHMARK``) is a SUGGESTION, never engine input. Its
+    # ratios (rooms / F&B departmental, management fee, FF&E reserve) are
+    # served by ``GET /deals/{id}/benchmark-suggestions``
+    # (``services.benchmark_suggestions``) and reach the model only when the
+    # analyst applies one — as an ordinary ``field_overrides`` entry with a
+    # justification note. With no override the value falls through to the
+    # next source: the portfolio P&L (below) when present, else the seed /
+    # hotel-type default.
 
     # Wave 4 W4.1 — firm-level Portfolio P&L Library. When the tenant
     # has uploaded active library entries that cover the subject deal's
@@ -2692,8 +2688,10 @@ _SEED_REASON_DOC_TYPES: dict[str, tuple[str, ...]] = {
     "exit_cap_rate": ("OM",),
     "adr_growth": ("CBRE_HORIZONS",),
     "revpar_growth": ("CBRE_HORIZONS",),
-    "mgmt_fee_pct": ("PNL_BENCHMARK", "PORTFOLIO_PNL"),
-    "ffe_reserve_pct": ("PNL_BENCHMARK", "PORTFOLIO_PNL"),
+    # FON-109 — a PNL_BENCHMARK no longer grounds these (it is a suggestion
+    # the analyst applies as an override), so only a portfolio P&L counts.
+    "mgmt_fee_pct": ("PORTFOLIO_PNL",),
+    "ffe_reserve_pct": ("PORTFOLIO_PNL",),
 }
 
 
@@ -5830,114 +5828,6 @@ def _build_segments_from_str(
                 sources_by_field[key] = SOURCE_STR_SEGMENTATION_DEFAULT
 
     return segments, sources_by_field
-
-
-# ─────────────────── P&L Benchmark expense-ratio overrides ──────────────
-
-
-# Map extracted P&L benchmark fields onto the engine's hotel-type
-# default keys. The expense engine accepts an ``overrides`` dict that
-# patches HOTEL_TYPE_DEFAULTS line by line at run time, so when the
-# benchmark report has landed we route the published peer-set ratios
-# straight through without changing the engine signature.
-_PNL_BENCHMARK_TO_OVERRIDE: dict[str, str] = {
-    "pnl_benchmark.rooms_dept_pct": "rooms_dept_pct",
-    "pnl_benchmark.fb_dept_margin": "fb_dept_pct",  # margin → dept-pct conversion handled below
-    "pnl_benchmark.gop_margin": "gop_margin",
-    "pnl_benchmark.a_and_g_pct": "undistributed_pct_revenue",
-    "pnl_benchmark.sales_marketing_pct": "sales_marketing_pct",
-    "pnl_benchmark.utilities_pct": "utilities_pct",
-    "pnl_benchmark.property_taxes_pct": "property_taxes_pct",
-    "pnl_benchmark.insurance_pct": "insurance_pct",
-}
-
-
-async def _load_pnl_benchmark_overrides(
-    session: AsyncSession, *, deal_id: str, tenant_id: str
-) -> dict[str, Any]:
-    """Translate the deal's extracted P&L benchmark report into engine
-    expense overrides.
-
-    Returns a dict shaped as ``{ expense_overrides: {...}, mgmt_fee_pct,
-    ffe_reserve_pct }``. The caller folds ``expense_overrides`` into
-    the engine ``base["overrides"]`` channel and uses the top-level
-    keys to seed mgmt fee / FF&E reserve. Extracted percentages are
-    normalized 0..100 → 0..1 before returning.
-    """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return {}
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND UPPER(COALESCE(d.doc_type, '')) = 'PNL_BENCHMARK'
-                 ORDER BY er.created_at DESC
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return {}
-
-    raw_fields: dict[str, float] = {}
-    for r in rows.fetchall():
-        blob = r._mapping["fields"]
-        if isinstance(blob, str):
-            try:
-                blob = json.loads(blob) if blob else None
-            except (json.JSONDecodeError, TypeError):
-                continue
-        if not isinstance(blob, list):
-            continue
-        for f in blob:
-            if not isinstance(f, dict):
-                continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not isinstance(value, (int, float)):
-                continue
-            v = float(value)
-            # Normalize percentages emitted as 0..100.
-            if v > 1.0 and name.endswith(("_pct", "_margin")):
-                v = v / 100.0
-            raw_fields.setdefault(name, v)
-
-    if not raw_fields:
-        return {}
-
-    expense_overrides: dict[str, float] = {}
-    out: dict[str, Any] = {}
-
-    rooms_dept = raw_fields.get("pnl_benchmark.rooms_dept_pct")
-    if rooms_dept is not None and 0 < rooms_dept < 1.0:
-        expense_overrides["rooms_dept_pct"] = rooms_dept
-
-    fb_margin = raw_fields.get("pnl_benchmark.fb_dept_margin")
-    if fb_margin is not None and 0 < fb_margin < 1.0:
-        # F&B dept-pct = 1 - margin (margin is profit %, dept-pct is
-        # cost %; the engine takes the cost ratio).
-        expense_overrides["fb_dept_pct"] = max(0.05, 1.0 - fb_margin)
-
-    if expense_overrides:
-        out["expense_overrides"] = expense_overrides
-
-    mgmt = raw_fields.get("pnl_benchmark.mgmt_fee_pct")
-    if mgmt is not None and 0 < mgmt < 0.10:
-        out["mgmt_fee_pct"] = mgmt
-    ffe = raw_fields.get("pnl_benchmark.ffe_reserve_pct")
-    if ffe is not None and 0 < ffe < 0.10:
-        out["ffe_reserve_pct"] = ffe
-
-    return out
 
 
 # ────────────── Portfolio P&L Library + per-deal PORTFOLIO_PNL ───────────

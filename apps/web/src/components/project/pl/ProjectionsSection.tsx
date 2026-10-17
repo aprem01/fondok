@@ -115,6 +115,13 @@ import {
   storeBenchmarkToggle,
 } from './BenchmarkColumn';
 import { useDealBenchmark } from '@/lib/hooks/useDealBenchmark';
+// FON-109 — benchmark ratios are suggestions the analyst applies (as an override with a note).
+import {
+  ApplyBenchmarkAction,
+  BenchmarkSuggestionContext,
+  useBenchmarkSuggestions,
+  type BenchmarkSuggestionCtx,
+} from './BenchmarkSuggestion';
 
 // ────────────────────────────────────────────────────────────────────
 // Worker output shapes — mirror PLTab.tsx (kept local so this file
@@ -650,6 +657,17 @@ export default function ProjectionsSection({
   // exists; the choice is remembered per device (localStorage, try/catch —
   // storage that is blocked just means the switch resets next visit).
   const { block: benchmarkBlock } = useDealBenchmark(dealId);
+  // FON-109 — the benchmark's per-assumption suggestions, re-read whenever the
+  // deal's overrides change so an applied one reads as applied.
+  const { byKey: suggestionsByKey } = useBenchmarkSuggestions(dealId, overrides);
+  const suggestionCtx = useMemo<BenchmarkSuggestionCtx>(
+    () => ({
+      byKey: suggestionsByKey,
+      apply: applyOverride,
+      running: runStatus === 'running' || runStatus === 'queued',
+    }),
+    [suggestionsByKey, applyOverride, runStatus],
+  );
   const [showBenchmark, setShowBenchmark] = useState<boolean>(() => readStoredBenchmarkToggle() ?? true);
   const toggleBenchmark = useCallback(() => {
     const next = !showBenchmark;
@@ -976,6 +994,7 @@ export default function ProjectionsSection({
         onToggleBenchmark={toggleBenchmark}
       />
 
+      <BenchmarkSuggestionContext.Provider value={suggestionCtx}>
       <AssumptionsPanel
         dealId={dealId}
         overrides={overrides}
@@ -1016,6 +1035,7 @@ export default function ProjectionsSection({
         </MethodChipContext.Provider>
         </DealIdContext.Provider>
       </AssumptionOverrideContext.Provider>
+      </BenchmarkSuggestionContext.Provider>
       <BenchmarkComparison block={benchmarkBlock} modelYear={years[0] ?? null} />
     </Card>
     </CellCommentsProvider>
@@ -3307,6 +3327,10 @@ function AssumptionsPanel({
           <div style={cardTitle}>Deal economics</div>
           <div style={rowsWrap}>
             <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)} />
+            {/* FON-109 — the P&L benchmark's fee / FF&E reserve are suggestions:
+                nothing changes until the analyst applies one (with a note). */}
+            <ApplyBenchmarkAction overrideKey="mgmt_fee_pct" />
+            <ApplyBenchmarkAction overrideKey="ffe_reserve_pct" label="FF&E reserve" />
             {/* R-025 — the operating model beside the fee it informs. Context
                 only: the engine's fee math does not read it. */}
             {/* Sam #9 — the opt-in incentive fee beside the base fee. Blank =

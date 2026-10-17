@@ -419,6 +419,44 @@ export interface RenovationBudgetCandidatesResponse {
   precedence: string;
 }
 
+/** FON-109 — one P&L benchmark ratio the analyst may apply
+ *  (`GET /deals/{id}/benchmark-suggestions`, apps/worker/app/api/deals.py).
+ *  The benchmark never reaches the model by itself: `suggested_value` lands
+ *  only when the analyst applies it as a `field_overrides` entry with a note. */
+export interface BenchmarkSuggestion {
+  /** The `field_overrides` key an applied suggestion writes. */
+  key: 'rooms_dept_pct' | 'fb_dept_pct' | 'mgmt_fee_pct' | 'ffe_reserve_pct' | string;
+  label: string;
+  /** A fraction (0.246 = 24.6%). */
+  suggested_value: number;
+  benchmark_line?: string | null;
+  benchmark_line_label?: string | null;
+  ratio_source?: string | null;
+  field_name?: string | null;
+  peer_set_size?: number | null;
+  document_id?: string | null;
+  extraction_result_id?: string | null;
+  filename?: string | null;
+  page?: number | null;
+  /** What the model runs on now (fraction) and its source id. */
+  current_value?: number | null;
+  current_source?: 'analyst_override' | 'portfolio_pnl' | 'seed' | string | null;
+  current_note?: string | null;
+  /** True when the override in use equals this suggestion. */
+  applied: boolean;
+  /** The T-12 states this line for Year 1 (that amount wins for Year 1). */
+  year1_from_t12?: boolean;
+  /** "Applied CBRE benchmark <line> <value> from <doc> p.<n>" — editable before save. */
+  suggested_note: string;
+}
+
+export interface BenchmarkSuggestionsResponse {
+  id: string;
+  peer_set_size?: number | null;
+  suggestions: BenchmarkSuggestion[];
+  policy?: string;
+}
+
 /** FON-61 / E-028 — one extraction row an Index Analysis figure was read from. */
 export interface IndexFieldRef {
   field_name: string;
@@ -2109,6 +2147,16 @@ export const api = {
      *  override · each PIP / CapEx document with its plan date and status ·
      *  the OM broker figure), which one the model is on and why, plus the
      *  Future CapEx documents that are reference only. */
+    /** FON-109 — the P&L benchmark's suggested ratios (rooms / F&B
+     *  departmental, management fee, FF&E reserve) beside the value in use.
+     *  Read-only; applying one is a `field_overrides` PATCH with a note. */
+    benchmarkSuggestions: (id: string, signal?: AbortSignal) =>
+      request<BenchmarkSuggestionsResponse>(
+        'GET',
+        `/deals/${id}/benchmark-suggestions`,
+        undefined,
+        { signal },
+      ),
     renovationBudgetCandidates: (id: string, signal?: AbortSignal) =>
       request<RenovationBudgetCandidatesResponse>(
         'GET',
