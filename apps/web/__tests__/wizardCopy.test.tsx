@@ -260,15 +260,26 @@ describe('R-048 — Existing brand and Proposed brand are two separate fields', 
   });
 });
 
-describe('R-024 — Brand and Positioning: choosing a brand pre-fills positioning, still editable', () => {
-  it('Kimpton pre-fills Upper Upscale (STR chain scale); the analyst override is what gets submitted', async () => {
+// Sam 2026-10-15 — a brand's STR chain scale is a SUGGESTED positioning. The
+// worker stamps any tier the wizard sends as the analyst's choice
+// (`positioning_source = 'analyst'`) and then never lets the OM's brand
+// suggest a scale, so the wizard must send a tier only when the analyst
+// actually selected one.
+describe('R-024 — Brand and Positioning: choosing a brand suggests positioning, the analyst selects it', () => {
+  it('Kimpton suggests Upper Upscale (STR chain scale) without selecting it; the analyst\'s tier is what gets submitted', async () => {
     driveToBrandStep();
     expect(screen.getByText('Brand and Positioning', { selector: 'div' })).toBeInTheDocument(); // stepper label
     fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Kimpton' } });
     fireEvent.click(screen.getByRole('button', { name: /Kimpton Hotels & Restaurants/ }));
-    expect(bodyText()).toContain('Pre-filled from Kimpton Hotels & Restaurants');
+    expect(bodyText()).toContain('Suggested from Kimpton Hotels & Restaurants');
+    expect(bodyText()).not.toContain('Pre-filled');
+    // The suggested card is marked, not selected.
+    const card = screen.getByTestId('positioning-tier-upper-upscale');
+    expect(card).toHaveAttribute('data-suggested', 'true');
+    expect(card.textContent).toContain('Suggested from brand');
+    expect(card.className).not.toMatch(/(^|\s)border-brand-500(\s|$)/);
 
-    // Analyst changes it for this property.
+    // Analyst chooses a tier for this property.
     fireEvent.click(screen.getByRole('button', { name: /^Luxury/ }));
     clickNext(); // → Review
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
@@ -276,14 +287,28 @@ describe('R-024 — Brand and Positioning: choosing a brand pre-fills positionin
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Kimpton Hotels & Restaurants', positioning: 'luxury' });
   });
 
-  it('without an override the pre-filled positioning is submitted', async () => {
+  it('selecting the suggested tier applies it and is submitted as the analyst\'s choice', async () => {
+    driveToBrandStep();
+    fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Kimpton' } });
+    fireEvent.click(screen.getByRole('button', { name: /Kimpton Hotels & Restaurants/ }));
+    fireEvent.click(screen.getByTestId('positioning-tier-upper-upscale'));
+    expect(bodyText()).toContain('Selected: Upper Upscale');
+    clickNext();
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Kimpton Hotels & Restaurants', positioning: 'upper-upscale' });
+  });
+
+  it('without a tier click the deal is created with no tier ("default") so the OM may suggest one — never the catalog prefill', async () => {
     driveToBrandStep();
     fireEvent.change(screen.getByPlaceholderText('Search brands...'), { target: { value: 'Motel One' } });
     fireEvent.click(screen.getByRole('button', { name: /^Motel One\s*Upper Midscale/ }));
     clickNext();
+    // Review says so in words rather than implying a chosen tier.
+    expect(bodyText()).toContain('No tier chosen — Motel One suggests Upper Midscale');
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
-    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Motel One', positioning: 'upper-midscale' });
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Motel One', positioning: 'default' });
   });
 });
 

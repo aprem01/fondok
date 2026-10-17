@@ -107,8 +107,12 @@ export function useBenchmarkSuggestions(dealId: string, version: unknown): Bench
 
 export interface BenchmarkSuggestionCtx {
   byKey: ReadonlyMap<string, BenchmarkSuggestion>;
-  /** Write the override (value + the analyst's note) and re-run the model. */
-  apply: (key: string, value: number, note: string) => Promise<void>;
+  /**
+   * Write the override (value + the analyst's note) and re-run the model.
+   * Resolves to whether the write landed; the editor stays open with the
+   * analyst's note when it did not (the host has already toasted).
+   */
+  apply: (key: string, value: number, note: string) => Promise<boolean>;
   running: boolean;
 }
 
@@ -185,8 +189,8 @@ export function ApplyBenchmarkAction({
     if (!note.trim() || saving) return;
     setSaving(true);
     try {
-      await ctx.apply(s.key, s.suggested_value, note.trim());
-      setOpen(false);
+      // Close only on success — a failed PATCH keeps the edited note in place.
+      if (await ctx.apply(s.key, s.suggested_value, note.trim())) setOpen(false);
     } finally {
       setSaving(false);
     }

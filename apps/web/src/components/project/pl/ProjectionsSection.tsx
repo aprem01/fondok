@@ -119,6 +119,7 @@ import { useDealBenchmark } from '@/lib/hooks/useDealBenchmark';
 import {
   ApplyBenchmarkAction,
   BenchmarkSuggestionContext,
+  useBenchmarkSuggestion,
   useBenchmarkSuggestions,
   type BenchmarkSuggestionCtx,
 } from './BenchmarkSuggestion';
@@ -406,8 +407,11 @@ export default function ProjectionsSection({
     () => (deal?.field_overrides ?? {}) as Record<string, unknown>,
     [deal],
   );
+  // Both resolve to whether the write landed. Editors keep their panel (and
+  // the analyst's typed note) open on `false` instead of closing over a toast
+  // — a failed PATCH used to discard an edited justification silently.
   const applyOverride = useCallback(
-    async (key: string, value: number, note: string) => {
+    async (key: string, value: number, note: string): Promise<boolean> => {
       try {
         await api.deals.update(dealId, {
           field_overrides: { ...overrides, [key]: overrideEnvelope(key, value, note) },
@@ -415,22 +419,26 @@ export default function ProjectionsSection({
         refreshDeal();
         await run();
         toast('Override applied — re-modeled', { type: 'success' });
+        return true;
       } catch {
         toast('Could not apply override', { type: 'error' });
+        return false;
       }
     },
     [overrides, dealId, refreshDeal, run, toast],
   );
   const resetOverride = useCallback(
-    async (key: string) => {
+    async (key: string): Promise<boolean> => {
       const { [key]: _drop, ...rest } = overrides;
       try {
         await api.deals.update(dealId, { field_overrides: rest });
         refreshDeal();
         await run();
         toast('Reset to source — re-modeled', { type: 'success' });
+        return true;
       } catch {
         toast('Could not reset override', { type: 'error' });
+        return false;
       }
     },
     [overrides, dealId, refreshDeal, run, toast],
@@ -984,7 +992,7 @@ export default function ProjectionsSection({
         // the rendered horizon, which IS hold_years (the revenue engine emits
         // one row per modelled year) — never a guess.
         holdYears={holdYearsAssumption ?? years.length}
-        onSaveHoldYears={(v, note) => applyOverride(HOLD_YEARS_KEY, v, note)}
+        onSaveHoldYears={(v, note) => applyOverride(HOLD_YEARS_KEY, v, note).then(() => undefined)}
         running={overrideCtx.running}
         shownForecast={shownForecast}
         forecastCount={forecastCount}
@@ -1002,6 +1010,7 @@ export default function ProjectionsSection({
         dealId={dealId}
         overrides={overrides}
         onApply={applyOverride}
+        onReset={resetOverride}
         running={overrideCtx.running}
         stabilization={stabilization}
         modelYears={years.length}
@@ -2127,8 +2136,9 @@ function SubHeaderGroup({ dim, showPct, benchmark = false }: { dim: boolean; sho
 // override + re-run without prop-drilling through ProjectionsTable/SimpleRow.
 interface OverrideCtx {
   overrides: Record<string, unknown>;
-  apply: (key: string, value: number, note: string) => Promise<void>;
-  reset: (key: string) => Promise<void>;
+  /** Resolve to whether the write landed — callers close their editor only then. */
+  apply: (key: string, value: number, note: string) => Promise<boolean>;
+  reset: (key: string) => Promise<boolean>;
   running: boolean;
 }
 const AssumptionOverrideContext = createContext<OverrideCtx | null>(null);
@@ -2223,8 +2233,8 @@ function AssumptionCell({
     }
     setSaving(true);
     try {
-      await ctx.apply(overrideKey, next, justification);
-      setOpen(false);
+      // Stay open (draft + note intact) when the write failed; the host toasted.
+      if (await ctx.apply(overrideKey, next, justification)) setOpen(false);
     } finally {
       setSaving(false);
     }
@@ -2232,8 +2242,7 @@ function AssumptionCell({
   const reset = async () => {
     setSaving(true);
     try {
-      await ctx.reset(overrideKey);
-      setOpen(false);
+      if (await ctx.reset(overrideKey)) setOpen(false);
     } finally {
       setSaving(false);
     }
@@ -3014,7 +3023,7 @@ function ProjectionsControls({
 // One editable assumption row: label + right-aligned numeric input with affixes.
 // Commits on blur / Enter; pct fields store as a fraction (value/100).
 function AssumptionField({
-  label, value, unit, prefix, suffix, onCommit, disabled, overrideKey,
+  label, value, unit, prefix, suffix, onCommit, disabled, overrideKey, overridden, onReset,
 }: {
   label: string;
   /** null = not set (an opt-in assumption): the input renders blank. */
@@ -3026,6 +3035,10 @@ function AssumptionField({
   disabled?: boolean;
   /** FON-74 — the `field_overrides` key; drives whether Save needs a reason. */
   overrideKey: string;
+  /** An analyst override is stored for this key — shows "Reset to source" when `onReset` is given. */
+  overridden?: boolean;
+  /** Drop the stored override (the source value then drives the model again). */
+  onReset?: () => void;
 }) {
   const display = value == null ? null : unit === 'pct' ? value * 100 : value;
   const fmt = (n: number | null) =>
@@ -3084,6 +3097,18 @@ function AssumptionField({
         />
         {suffix && <span style={{ fontSize: 11, color: '#6b6f76' }}>{suffix}</span>}
       </div>
+      {overridden && onReset && pending == null && (
+        <button
+          type="button"
+          data-testid={`assumption-panel-reset-${overrideKey}`}
+          disabled={disabled}
+          onClick={onReset}
+          title="Remove the analyst override so the source value (portfolio P&L or platform default) drives the model again, and re-run."
+          style={{ fontSize: 10.5, fontWeight: 600, color: '#2f4a8c', background: 'none', border: 'none', padding: 0, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit' }}
+        >
+          Analyst override · Reset to source
+        </button>
+      )}
       {/* FON-74 — the change is held until it is explained. Nothing is written
           and nothing re-runs until Save; Cancel puts the field back. */}
       {pending != null && (
@@ -3233,14 +3258,16 @@ function StabilizationYearField({
 // model (the canonical edit path, shared with the driver cells). Exit cap rate
 // is Investment-owned, so it is shown here linked / read-only.
 function AssumptionsPanel({
-  dealId, overrides, onApply, running, stabilization, modelYears, calendarYears, operatingModel,
+  dealId, overrides, onApply, onReset, running, stabilization, modelYears, calendarYears, operatingModel,
 }: {
   dealId: string;
   /** R-025 — the deal's intended operating model (descriptive; no engine reads it). */
   operatingModel?: string | null;
   overrides: Record<string, unknown>;
   /** FON-74 — `note` is the ANALYST's justification, or '' on an exempt key. */
-  onApply: (key: string, value: number, note: string) => Promise<void>;
+  onApply: (key: string, value: number, note: string) => Promise<boolean>;
+  /** Drop one `field_overrides` entry and re-run — the undo for an applied benchmark. */
+  onReset: (key: string) => Promise<boolean>;
   running: boolean;
   /** The worker's published stabilized-year block (null until a run carries one). */
   stabilization: StabilizedYearBlock | null;
@@ -3254,6 +3281,15 @@ function AssumptionsPanel({
     (typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : ovValue(overrides, 'exit_cap_rate'))
     ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
   const cur = (key: string) => ovValue(overrides, key) ?? ASSUMPTION_DEFAULTS[key];
+  // FF&E reserve: the analyst's override, else the value the loader is on
+  // (its provenance payload, else the benchmark suggestion's "in use"), else
+  // blank — never a number the browser made up.
+  const ffeSrc = useSource('ffe_reserve_pct');
+  const { suggestion: ffeSuggestion } = useBenchmarkSuggestion('ffe_reserve_pct');
+  const ffeReserve: number | null =
+    ovValue(overrides, 'ffe_reserve_pct')
+    ?? (typeof ffeSrc?.value === 'number' ? ffeSrc.value : null)
+    ?? (typeof ffeSuggestion?.current_value === 'number' ? ffeSuggestion.current_value : null);
 
   const cardStyle: CSSProperties = { flex: 1, minWidth: 220, border: '1px solid #e2e1dc', borderRadius: 8, padding: '12px 14px', background: '#fbfbf9' };
   const cardTitle: CSSProperties = { fontSize: 11, fontWeight: 700, color: '#1a2233', marginBottom: 10 };
@@ -3297,7 +3333,7 @@ function AssumptionsPanel({
               // year the stabilized figures are read from and moves no return),
               // so it carries no justification. The software-authored one it
               // used to write is gone: a blank note, never an invented one.
-              onCommit={(year) => onApply('stabilization_year', year, '')}
+              onCommit={(year) => onApply('stabilization_year', year, '').then(() => undefined)}
             />
           </div>
         </div>
@@ -3329,10 +3365,17 @@ function AssumptionsPanel({
         <div style={cardStyle}>
           <div style={cardTitle}>Deal economics</div>
           <div style={rowsWrap}>
-            <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)} />
+            <AssumptionField label="Management fee" unit="pct" suffix="% of rev" overrideKey="mgmt_fee_pct" value={cur('mgmt_fee_pct')} disabled={running} onCommit={(v, note) => onApply('mgmt_fee_pct', v, note)}
+              overridden={'mgmt_fee_pct' in overrides} onReset={() => void onReset('mgmt_fee_pct')} />
             {/* FON-109 — the P&L benchmark's fee / FF&E reserve are suggestions:
                 nothing changes until the analyst applies one (with a note). */}
             <ApplyBenchmarkAction overrideKey="mgmt_fee_pct" />
+            {/* The reserve's own input: shows the value in use, takes an analyst
+                override with its note, and — once an override (an applied
+                benchmark included) exists — offers "Reset to source", the undo
+                this action had nowhere else in the deal UI. */}
+            <AssumptionField label="FF&E reserve" unit="pct" suffix="% of rev" overrideKey="ffe_reserve_pct" value={ffeReserve} disabled={running} onCommit={(v, note) => onApply('ffe_reserve_pct', v, note)}
+              overridden={'ffe_reserve_pct' in overrides} onReset={() => void onReset('ffe_reserve_pct')} />
             <ApplyBenchmarkAction overrideKey="ffe_reserve_pct" label="FF&E reserve" />
             {/* R-025 — the operating model beside the fee it informs. Context
                 only: the engine's fee math does not read it. */}

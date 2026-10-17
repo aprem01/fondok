@@ -16,6 +16,37 @@ const fx = vi.hoisted(() => {
   const runsSpy = vi.fn();
   const compareSpy = vi.fn();
   const xlsxSpy = vi.fn();
+  // A duplicated / newly created deal: every run post-dates the default
+  // cutoff, so the worker names no baseline.
+  const FRESH_RUNS = {
+    deal_id: 'deal-copy',
+    canonical_run_id: 'fresh-head-0000',
+    baseline_before: '2026-10-15T21:40:00+00:00',
+    baseline_run_id: null,
+    runs: [
+      {
+        run_id: 'fresh-head-0000', started_at: '2026-10-17T12:00:00+00:00',
+        completed_at: '2026-10-17T12:00:30+00:00', engines: ['returns'],
+        status: 'complete', is_full_chain: true, is_canonical: true, scenario: null,
+      },
+      {
+        run_id: 'fresh-scen-0000', started_at: '2026-10-17T11:30:00+00:00',
+        completed_at: '2026-10-17T11:30:30+00:00', engines: ['returns'],
+        status: 'complete', is_full_chain: true, is_canonical: false,
+        scenario: { id: 's1', name: 'Downside', is_base: false },
+      },
+      {
+        run_id: 'fresh-prev-0000', started_at: '2026-10-17T11:00:00+00:00',
+        completed_at: '2026-10-17T11:00:30+00:00', engines: ['returns'],
+        status: 'complete', is_full_chain: true, is_canonical: false, scenario: null,
+      },
+      {
+        run_id: 'fresh-partial-00', started_at: '2026-10-17T10:00:00+00:00',
+        completed_at: '2026-10-17T10:00:10+00:00', engines: ['revenue'],
+        status: 'complete', is_full_chain: false, is_canonical: false, scenario: null,
+      },
+    ],
+  };
   const RUNS = (baseline: string | null) => ({
     deal_id: 'deal-1',
     canonical_run_id: 'head-run-0000',
@@ -60,7 +91,9 @@ const fx = vi.hoisted(() => {
       },
     ],
   };
-  return { runsSpy, compareSpy, xlsxSpy, RUNS, COMPARE };
+  // Per-test knobs: a deferred compare (resolved by the test) and the "fresh deal" runs.
+  const knobs: { deferCompare: null | (() => void); fresh: boolean } = { deferCompare: null, fresh: false };
+  return { runsSpy, compareSpy, xlsxSpy, RUNS, FRESH_RUNS, COMPARE, knobs };
 });
 
 vi.mock('@/lib/api', async () => {
@@ -74,13 +107,27 @@ vi.mock('@/lib/api', async () => {
         ...actual.api.engines,
         runs: async (dealId: string, before?: string) => {
           fx.runsSpy(dealId, before);
+          if (fx.knobs.fresh) return fx.FRESH_RUNS;
           return fx.RUNS(
             before && before.startsWith('2026-10-14') ? null : 'b5a08654-52e9-4738-addc-eaf4e1019aae',
           );
         },
-        compare: async (dealId: string, base: string, head: string, opts: { all?: boolean }) => {
+        compare: async (
+          dealId: string, base: string, head: string, opts: { all?: boolean; signal?: AbortSignal },
+        ) => {
           fx.compareSpy(dealId, base, head, !!opts?.all);
-          return fx.COMPARE;
+          if (fx.knobs.deferCompare !== null) {
+            // Resolve when the test says so, or reject like fetch when aborted.
+            await new Promise<void>((resolve, reject) => {
+              fx.knobs.deferCompare = resolve;
+              opts?.signal?.addEventListener('abort', () => {
+                const e = new Error('aborted');
+                e.name = 'AbortError';
+                reject(e);
+              });
+            });
+          }
+          return { ...fx.COMPARE, base: { ...fx.COMPARE.base, run_id: base } };
         },
         downloadCompareXlsx: async (...args: unknown[]) => {
           fx.xlsxSpy(...args);
@@ -97,8 +144,62 @@ describe('RunComparePanel', () => {
     fx.runsSpy.mockClear();
     fx.compareSpy.mockClear();
     fx.xlsxSpy.mockClear();
+    fx.knobs.deferCompare = null;
+    fx.knobs.fresh = false;
   });
   afterEach(() => cleanup());
+
+  // A duplicated deal (Sam's QA copy) or any deal created after the deploy the
+  // default date names: the worker finds no run before the cutoff. The panel
+  // falls back to the newest complete full-chain run that is neither the head
+  // nor a non-Base scenario's latest run — and says so.
+  it('falls back to the newest earlier complete run when nothing predates the default cutoff, and labels it', async () => {
+    fx.knobs.fresh = true;
+    render(<RunComparePanel dealId="deal-copy" />);
+    await waitFor(() => expect(fx.compareSpy).toHaveBeenCalled());
+    // Not the canonical head, not the Downside scenario's run, not the partial chain.
+    expect(fx.compareSpy).toHaveBeenLastCalledWith('deal-copy', 'fresh-prev-0000', 'latest', false);
+    expect((screen.getByTestId('run-compare-base') as HTMLSelectElement).value).toBe('fresh-prev-0000');
+    const note = screen.getByTestId('run-compare-fallback-note');
+    expect(note.textContent).toContain('No complete run finished before 2026-10-15 21:40 UTC');
+    expect(note.textContent).toContain('fresh-pr');
+    expect(screen.queryByText(/no complete run before this date/)).toBeNull();
+    // Moving the date is the analyst's call — no fallback then (worker still names none).
+    fireEvent.change(screen.getByTestId('run-compare-cutoff'), { target: { value: '2026-10-17T10:30' } });
+    await waitFor(() =>
+      expect((screen.getByTestId('run-compare-base') as HTMLSelectElement).value).toBe(''),
+    );
+    expect(screen.queryByTestId('run-compare-fallback-note')).toBeNull();
+    expect(screen.getByText(/no complete run before this date/)).toBeTruthy();
+  });
+
+  // Toggling "Show unchanged" aborts the in-flight compare and starts another.
+  // The aborted request's cleanup must not clear the loading flag the new one
+  // set, or the OLD pair shows for the duration with no "Comparing…" sign.
+  it('keeps "Comparing…" up while a replacement request is in flight after an abort', async () => {
+    render(<RunComparePanel dealId="deal-1" />);
+    await screen.findByTestId('run-compare-table');
+    expect(screen.getByTestId('run-compare-summary').textContent).toContain('2 of 120');
+
+    // Next compares hang until the test releases them.
+    fx.knobs.deferCompare = () => {};
+    fireEvent.click(screen.getByLabelText('Show unchanged'));
+    await waitFor(() => expect(fx.compareSpy).toHaveBeenLastCalledWith(
+      'deal-1', 'b5a08654-52e9-4738-addc-eaf4e1019aae', 'latest', true,
+    ));
+    // Abort the pending one by toggling again — its finally must leave loading alone.
+    fireEvent.click(screen.getByLabelText('Show unchanged'));
+    await waitFor(() => expect(fx.compareSpy).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByTestId('run-compare-summary').textContent).toBe('Comparing…');
+
+    const release = fx.knobs.deferCompare;
+    fx.knobs.deferCompare = null;
+    release?.();
+    await waitFor(() =>
+      expect(screen.getByTestId('run-compare-summary').textContent).toContain('2 of 120'),
+    );
+  });
 
   it('defaults the baseline to the newest run before 2026-10-15T21:40Z and compares with latest', async () => {
     render(<RunComparePanel dealId="deal-1" />);

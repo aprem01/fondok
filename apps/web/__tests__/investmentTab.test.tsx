@@ -250,6 +250,8 @@ vi.mock('@/lib/hooks/useValueTrace', () => ({
 }));
 
 import InvestmentTab, { compCapRangeHint } from '@/components/project/InvestmentTab';
+import { DisplacementStatusContext } from '@/lib/hooks/useDisplacementStatus';
+import type { DisplacementStatus } from '@/lib/api';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
 beforeEach(() => {
@@ -1131,5 +1133,28 @@ describe('InvestmentTab — explicit Year-1 displacement inputs (no budget heuri
       value: 0.12,
       note: 'Brand PIP takes one wing offline for 6 months.',
     });
+  });
+
+  // `displacement_status` is fetched once per deal and is NOT refetched after a
+  // save, and the loader seeds both keys to a number (0.0). With the loader
+  // value first, a just-saved 10% showed as "0.0%" under an Analyst-override
+  // badge until the page remounted. The persisted override must win.
+  it('shows the persisted override over a stale loader value, and the loader value when nothing is overridden', async () => {
+    const stale: DisplacementStatus = {
+      active: false, state: 'off_no_assumption', source: 'pip_document',
+      detail: 'No Year-1 renovation impact — set rooms offline / rate displacement assumptions to model one.',
+      renovation_budget: 7_100_000, renovation_budget_per_key: 71_000,
+      y1_occupancy_displacement_pct: 0, y1_adr_displacement_pct: 0.03,
+    };
+    mockOverrides = { y1_occupancy_displacement_pct: { value: 0.1, note: 'One wing offline' } };
+    render(
+      <DisplacementStatusContext.Provider value={stale}>
+        <InvestmentTab />
+      </DisplacementStatusContext.Provider>,
+    );
+    await waitFor(() => expect(rowValueCell(OCC).textContent).toContain('10.0%'));
+    expect(rowValueCell(OCC).textContent).not.toMatch(/\b0\.0%/);
+    // No override on ADR → the loader's own number is what shows.
+    expect(rowValueCell(ADR).textContent).toContain('3.0%');
   });
 });

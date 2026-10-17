@@ -1619,13 +1619,32 @@ describe('OverviewTab — Current flag vs stored positioning', () => {
     expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('positioning');
   });
 
-  it('pre-fills the tier from the flag only while the deal has none ("Default")', async () => {
+  // Sam 2026-10-15 — the flag's STR scale is a SUGGESTION. The worker records
+  // any tier this PATCH carries as the analyst's (`positioning_source =
+  // 'analyst'`) and then blocks the OM's brand → STR-scale suggestion, so a
+  // deal with no tier must stay at "Default" until the analyst selects one.
+  it('a deal with no tier ("Default"): changing the flag writes ONLY the brand and shows the scale as a suggestion', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     const [flag, tier] = selects();
     expect(tier).toHaveValue('default');
+    // Kimpton is the fixture's flag — its STR scale is offered, not written.
+    expect(screen.getByTestId('positioning-suggestion')).toHaveTextContent('Kimpton Hotels & Restaurants suggests STR Upper Upscale');
     fireEvent.change(flag, { target: { value: 'Hampton by Hilton' } });
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { brand: 'Hampton by Hilton', positioning: 'upper-midscale' });
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { brand: 'Hampton by Hilton' });
+    expect(JSON.stringify(updateSpy.mock.calls)).not.toContain('positioning');
+  });
+
+  it('"Use <scale>" on the suggestion is the explicit selection — it PATCHes positioning alone', async () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.click(screen.getByTestId('positioning-suggestion-apply'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'upper-upscale' }));
+  });
+
+  it('a stored tier shows no suggestion line', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upscale' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('positioning-suggestion')).toBeNull();
   });
 
   it('the Positioning select still changes the tier explicitly', async () => {
@@ -1672,5 +1691,17 @@ describe('OverviewTab — Sam 2026-10-15 positioning source chip', () => {
     mockDealRef.deal = { ...mockDealRef.deal, positioning: 'default', positioning_source: null };
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.queryByTestId('positioning-source')).toBeNull();
+  });
+
+  // The positioning_source columns were added without a backfill, so a tier
+  // stored before them (the existing Kimpton deal) has a null source. The chip
+  // says so instead of asserting a provenance nobody recorded.
+  it('a tier stored before the source was recorded reads "Source not recorded"', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upper-upscale', positioning_source: null, positioning_source_detail: null };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const chip = screen.getByTestId('positioning-source');
+    expect(chip).toHaveAttribute('data-source', 'unrecorded');
+    expect(chip).toHaveTextContent('Source not recorded');
+    expect(chip.getAttribute('title')).toContain('before Fondok recorded where positioning came from');
   });
 });

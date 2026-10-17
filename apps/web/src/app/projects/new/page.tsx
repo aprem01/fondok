@@ -34,8 +34,8 @@ const steps = [
   { n: 1, label: 'Deal Details' },
   { n: 2, label: 'Return Profile' },
   { n: 3, label: 'Documents' },
-  // R-024 — one step: picking a brand pre-fills its default positioning,
-  // which the analyst can still change for this property.
+  // R-024 — one step: picking a brand suggests its STR chain scale as the
+  // positioning; the analyst selects a tier (that one or another) explicitly.
   { n: 4, label: 'Brand and Positioning' },
   { n: 5, label: 'Review' },
 ];
@@ -922,15 +922,14 @@ function Step4({ data, update }: StepProps) {
 
   // Re-clicking the active brand drops back to the agnostic default.
   // Keeps the wizard recoverable without a separate "Clear" affordance.
-  // R-024 — choosing a brand pre-fills its default positioning (the brand's
-  // chain scale); the analyst can still change it below for this property.
+  // R-024 / Sam 2026-10-15 — choosing a brand SUGGESTS its STR chain scale
+  // below; it never writes `positioning`. The worker records any tier the
+  // wizard sends as the analyst's choice (`positioning_source = 'analyst'`),
+  // which would (a) label a catalog prefill nobody chose as "Analyst" and
+  // (b) block the Offering Memorandum's own brand → STR-scale suggestion for
+  // good. So the tier changes only when the analyst clicks a tier card.
   const onBrandClick = (name: string) => {
-    if (data.brand === name) {
-      update({ brand: 'agnostic' });
-      return;
-    }
-    const prefill = brandDefaultPositioning(name);
-    update(prefill ? { brand: name, positioning: prefill } : { brand: name });
+    update({ brand: data.brand === name ? 'agnostic' : name });
   };
 
   return (
@@ -1103,11 +1102,14 @@ function Step4({ data, update }: StepProps) {
 }
 
 function PositioningPicker({ data, update }: StepProps) {
-  const prefill = data.brand === 'agnostic' ? null : brandDefaultPositioning(data.brand);
-  const prefillLabel = prefill ? positioningTiers.find(p => p.id === prefill)?.label : null;
+  // The brand's STR chain scale is a suggestion the analyst applies by
+  // selecting it — the card is marked, never pre-selected (see onBrandClick).
+  const suggested = data.brand === 'agnostic' ? null : brandDefaultPositioning(data.brand);
+  const suggestedLabel = suggested ? positioningTiers.find(p => p.id === suggested)?.label : null;
+  const suggestionPending = !!suggested && data.positioning !== suggested;
   // Anchor each tier to consumer-recognizable brands so the choice is
   // concrete. Examples follow STR's published chain-scale table (the same
-  // source `brandDefaultPositioning` pre-fills from), so a card never names
+  // source `brandDefaultPositioning` suggests from), so a card never names
   // a brand STR places on a different rung.
   const tierExample: Record<string, string> = {
     luxury: 'Ritz-Carlton, Four Seasons, St. Regis.',
@@ -1116,14 +1118,16 @@ function PositioningPicker({ data, update }: StepProps) {
     'upper-midscale': 'Holiday Inn Express, Hampton by Hilton, Holiday Inn.',
     midscale: 'Wingate by Wyndham, Tru by Hilton, Spark by Hilton.',
     economy: 'Motel 6, Days Inn, Super 8.',
-    default: 'No tier chosen — choosing a brand above pre-fills its STR chain scale.',
+    default: 'No tier chosen — the brand above suggests its STR chain scale; an Offering Memorandum\u2019s brand may suggest one too.',
   };
   return (
     <div>
       <h3 className="text-[15px] font-semibold text-ink-900 mb-1">Positioning</h3>
       <p className="text-[12.5px] text-ink-500 mb-3">
-        {prefillLabel
-          ? <>Pre-filled from {data.brand}: <span className="font-medium text-ink-900">{prefillLabel}</span> (the brand&apos;s chain scale). Change it if this property positions differently.</>
+        {suggestedLabel
+          ? suggestionPending
+            ? <>Suggested from {data.brand}: <span className="font-medium text-ink-900">{suggestedLabel}</span> (the brand&apos;s STR chain scale). Select it below to apply it, or choose another tier; until you do, the deal has no tier and an Offering Memorandum may suggest one.</>
+            : <>Selected: <span className="font-medium text-ink-900">{suggestedLabel}</span>, the STR chain scale {data.brand} suggests. Change it if this property positions differently.</>
           : 'Select the market segment for your analysis.'}
       </p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
@@ -1143,11 +1147,16 @@ function PositioningPicker({ data, update }: StepProps) {
         {positioningTiers.map(p => {
           const Icon = iconForPos[p.id] ?? Sparkles;
           const selected = data.positioning === p.id;
+          const isSuggested = suggestionPending && p.id === suggested;
           return (
             <button key={p.id} onClick={() => update({ positioning: p.id })}
+              data-testid={`positioning-tier-${p.id}`}
+              data-suggested={isSuggested ? 'true' : undefined}
               className={cn(
                 'p-5 rounded-lg border-2 text-left transition-colors',
-                selected ? 'border-brand-500 bg-brand-50' : 'border-border bg-white hover:border-ink-300'
+                selected ? 'border-brand-500 bg-brand-50'
+                  : isSuggested ? 'border-dashed border-brand-300 bg-white hover:border-brand-500'
+                    : 'border-border bg-white hover:border-ink-300'
               )}>
               <div className="flex items-center gap-3 mb-2">
                 <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center',
@@ -1157,6 +1166,11 @@ function PositioningPicker({ data, update }: StepProps) {
                 </div>
                 <div className="text-[14px] font-semibold text-ink-900">{p.label}</div>
                 {selected && <Check size={16} className="text-brand-500 ml-auto" />}
+                {isSuggested && (
+                  <span className="ml-auto text-[10.5px] font-semibold text-brand-700 border border-brand-300 rounded-full px-2 py-0.5 whitespace-nowrap">
+                    Suggested from brand
+                  </span>
+                )}
               </div>
               <p className="text-[12px] text-ink-500 leading-relaxed">{p.desc}</p>
               {tierExample[p.id] && (
@@ -1176,6 +1190,12 @@ function PositioningPicker({ data, update }: StepProps) {
 function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => void }) {
   const profile = returnProfiles.find(r => r.id === data.returnProfile);
   const positioning = positioningTiers.find(p => p.id === data.positioning);
+  // A brand's STR scale the analyst did not select stays a suggestion on the
+  // Review step too — the deal is created with no tier.
+  const suggestedTier = data.brand === 'agnostic' ? null : brandDefaultPositioning(data.brand);
+  const suggestedTierLabel = suggestedTier && suggestedTier !== data.positioning
+    ? positioningTiers.find(p => p.id === suggestedTier)?.label
+    : null;
 
   // Per-category counts power the inline checklist summary so the
   // analyst can see what they staged + which years they covered before
@@ -1236,7 +1256,13 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
       value: operatingModelLabel(data.operatingModel) ?? 'Not specified',
       step: 4,
     },
-    { label: 'Positioning', value: positioning?.label || '—', step: 4 },
+    {
+      label: 'Positioning',
+      value: data.positioning === 'default'
+        ? `No tier chosen${suggestedTierLabel ? ` — ${data.brand} suggests ${suggestedTierLabel}; select it on the Brand step to apply` : ''}`
+        : positioning?.label || '—',
+      step: 4,
+    },
   ];
 
   return (

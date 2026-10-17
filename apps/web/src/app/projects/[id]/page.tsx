@@ -38,7 +38,7 @@ import { DataKey } from '@/components/design';
 import { api as workerApi, type ScenarioRecord } from '@/lib/api';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useCurrentRole } from '@/lib/auth';
-import { duplicateDealConfirmText, duplicateDealDoneText } from '@/lib/duplicateDeal';
+import { duplicateDealConfirmText, duplicateDealDoneText, duplicateDealErrorText } from '@/lib/duplicateDeal';
 
 // Heavy tabs (Recharts-bound) lazy-loaded so the initial /projects/[id]
 // JS bundle drops by the size of recharts + each tab's own code.
@@ -213,8 +213,9 @@ export default function ProjectDetailPage() {
       toast(duplicateDealDoneText(res.deal.name), { type: 'success' });
       router.push(`/projects/${res.deal.id}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast(`Duplicate failed: ${msg}`, { type: 'error' });
+      // The worker's reason (409 "documents still being processed…") lives in
+      // the WorkerError body, not its message — say it.
+      toast(duplicateDealErrorText(err), { type: 'error' });
     } finally {
       setDuplicating(false);
     }

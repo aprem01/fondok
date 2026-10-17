@@ -7,10 +7,36 @@
  * carry renders "—" with the worker's reason; nothing is computed or filled
  * in here beyond display formatting.
  */
-import type { RunCompareField, EngineRunSummary } from './api';
+import type { RunCompareField, EngineRunListResponse, EngineRunSummary } from './api';
 
 /** Last deploy before Sam's QA changes — the default "baseline before" cut. */
 export const DEFAULT_BASELINE_CUTOFF = '2026-10-15T21:40';
+
+/**
+ * The baseline the panel falls back to when the worker names none for the
+ * DEFAULT cutoff: the newest complete, full-chain run that is neither the
+ * canonical (head) run nor a non-Base scenario's latest run — the same
+ * eligibility the worker's ``pick_baseline`` applies, minus the date. Every
+ * run on a duplicated deal (and on any deal created after the deploy the
+ * default date names) post-dates the cutoff, so without this the panel opened
+ * with no baseline on exactly the deal Sam QAs on. Null when no such run
+ * exists (one run only). Applied only while the cutoff is the default: a date
+ * the analyst chose keeps its honest "no complete run before this date".
+ */
+export function fallbackBaseline(res: EngineRunListResponse): EngineRunSummary | null {
+  const eligible = res.runs.filter(
+    (r) =>
+      r.status === 'complete' &&
+      r.is_full_chain &&
+      !r.is_canonical &&
+      r.run_id !== res.canonical_run_id &&
+      !!r.completed_at &&
+      (!r.scenario || r.scenario.is_base),
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) => String(b.completed_at).localeCompare(String(a.completed_at)));
+  return eligible[0];
+}
 
 /** ``YYYY-MM-DDTHH:MM`` (UTC, as typed in the picker) → ISO with ``Z``. */
 export function cutoffToIso(local: string): string {

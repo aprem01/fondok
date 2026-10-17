@@ -1520,24 +1520,47 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   label="Current flag" hint="The existing brand; the proposed brand is on the Property rows" value={brand}
                   options={brandFamilies.flatMap((f) => f.brands.map((b) => ({ value: b.name, label: `${b.name} (${brandPositioningLabel(b)})` })))}
                   onChange={(v) => {
-                    // Pre-fill the tier from the flag ONLY while the deal has no
-                    // tier ("Default"). A tier already stored — the wizard sets it
-                    // from the PROPOSED brand, or the analyst chose one — is never
-                    // clobbered by correcting the EXISTING flag: on a re-flag deal
-                    // that silently flipped an upscale subject to the old flag's
-                    // economy scale, which drives the comp-sales chain-scale match
-                    // and the portfolio-library ratios. The Positioning select
-                    // beside this one changes the tier explicitly.
-                    const prefill = positioningId === 'default' ? brandDefaultPositioning(v) : null;
-                    void persist(prefill ? { brand: v, positioning: prefill } : { brand: v });
+                    // Sam 2026-10-15 — the flag never writes the tier. The worker
+                    // records any tier this PATCH carries as the analyst's choice
+                    // (`positioning_source = 'analyst'`), which would label a
+                    // catalog prefill nobody chose as "Analyst" and block the OM's
+                    // brand → STR-scale suggestion for good. The brand's scale is
+                    // shown as a suggestion below while the deal has no tier; the
+                    // Positioning select beside this one changes the tier explicitly.
+                    void persist({ brand: v });
                   }}
                 />
                 <ProfileSelect
-                  label="Positioning" hint="Pre-filled from the brand · editable per property" value={positioningId}
+                  label="Positioning" hint="Chosen per property · a brand's STR scale is only a suggestion" value={positioningId}
                   options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
                   onChange={(v) => void persist({ positioning: v })}
                 />
               </div>
+              {/* The current flag's STR chain scale, offered while the deal has no
+                  tier. Nothing is written until the analyst selects it. */}
+              {(() => {
+                if (positioningId !== 'default') return null;
+                const suggested = brandDefaultPositioning(brand);
+                const label = suggested ? positioningTiers.find((p) => p.id === suggested)?.label : null;
+                if (!suggested || !label) return null;
+                return (
+                  <div
+                    data-testid="positioning-suggestion"
+                    style={{ fontSize: 10.5, color: palette.textFaint, lineHeight: 1.35, overflowWrap: 'anywhere' }}
+                  >
+                    No tier chosen — {brand} suggests STR {label}.{' '}
+                    <button
+                      type="button"
+                      data-testid="positioning-suggestion-apply"
+                      onClick={() => void persist({ positioning: suggested })}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: prov.blue, cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Use {label}
+                    </button>
+                    {' '}(recorded as your choice), or wait for the Offering Memorandum&apos;s brand to suggest one.
+                  </div>
+                );
+              })()}
               {/* Sam 2026-10-15 — where the tier came from stays visible: the
                   OM's brand → STR chain scale (document + page), or Analyst.
                   Changing the select above is the override (worker records it
