@@ -356,3 +356,86 @@ async def test_create_with_default_positioning_has_no_source() -> None:
     deal = await _create_deal(positioning="default")
     assert deal["positioning_source"] is None
     assert (await _get(deal["id"]))["positioning_source"] is None
+
+
+# ──────────────────── best-effort boundary + updated_at ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_catalog_failure_never_blocks_the_om_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A positioning suggestion is best-effort: when the brand catalog cannot
+    be read (missing / malformed ``app/data/brand_chain_scales.json``), the
+    metadata sync logs and returns — it never raises into the extraction
+    pipeline, which would stamp the OM FAILED."""
+    from app.services import brand_chain_scale
+
+    def _broken(_value: object) -> Any:
+        raise FileNotFoundError("app/data/brand_chain_scales.json")
+
+    monkeypatch.setattr(brand_chain_scale, "match_brand", _broken)
+    deal = await _create_deal()
+    doc_id = await _insert_document(deal)
+
+    # Must not raise.
+    await _sync(deal, "Kimpton", "OM", doc_id)
+
+    got = await _get(deal["id"])
+    assert (got["positioning"], got["positioning_source"]) == (None, None)
+    assert await _positioning_audits(deal["id"]) == []
+
+    # And the rest of the sync still runs on the same call: a brand lands.
+    from app.api.documents import _sync_deal_metadata_from_extraction
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as session:
+        await _sync_deal_metadata_from_extraction(
+            session,
+            deal_id=deal["id"],
+            tenant_id=deal["tenant_id"],
+            fields=[
+                {"field_name": "property_overview.brand", "value": "Kimpton", "source_page": 4},
+                {"field_name": "property_overview.submarket", "value": "Miami Beach"},
+            ],
+            doc_type="OM",
+            doc_id=doc_id,
+        )
+    got = await _get(deal["id"])
+    assert got["positioning_source"] is None
+    assert got["city"] == "Miami Beach"
+
+
+@pytest.mark.asyncio
+async def test_positioning_fill_bumps_updated_at() -> None:
+    """The deal row changes when the OM's brand fills the tier, so
+    ``deals.updated_at`` moves — even when no other metadata column does."""
+    from app.database import get_session_factory
+
+    deal = await _create_deal(brand="Kimpton", city="Miami Beach")
+    stale = "2020-01-01 00:00:00"
+    async with get_session_factory()() as session:
+        await session.execute(
+            text("UPDATE deals SET updated_at = :ts WHERE id = :id AND tenant_id = :tenant"),
+            {"ts": stale, "id": deal["id"], "tenant": deal["tenant_id"]},
+        )
+        await session.commit()
+    before = (await _get(deal["id"]))["updated_at"]
+    assert before.startswith("2020-01-01")
+
+    # Brand and city already match → the main sync writes nothing; only the
+    # positioning fill touches the row.
+    await _sync(deal, "Kimpton", "OM", await _insert_document(deal))
+
+    got = await _get(deal["id"])
+    assert got["positioning"] == "upper-upscale"
+    assert got["brand"] == "Kimpton" and got["city"] == "Miami Beach"
+    assert not got["updated_at"].startswith("2020-01-01"), got["updated_at"]
+
+    # A no-op fill (tier already set) leaves the timestamp alone.
+    async with get_session_factory()() as session:
+        await session.execute(
+            text("UPDATE deals SET updated_at = :ts WHERE id = :id AND tenant_id = :tenant"),
+            {"ts": stale, "id": deal["id"], "tenant": deal["tenant_id"]},
+        )
+        await session.commit()
+    await _sync(deal, "Hampton by Hilton", "OM", await _insert_document(deal, "OM_v2.pdf"))
+    assert (await _get(deal["id"]))["updated_at"].startswith("2020-01-01")

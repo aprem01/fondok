@@ -9271,23 +9271,29 @@ async def _suggest_positioning_from_om_brand(
     )
     from .deals import _deals_has_positioning_source
 
-    hit = _om_brand_field(fields)
-    if hit is None:
-        return
-    om_brand, page = hit
-    match = match_brand(om_brand)
-    suggested = match.suggested_positioning
-    if suggested is None or match.brand is None:
-        logger.info(
-            "deal_metadata_sync: no positioning suggestion deal=%s om_brand=%r "
-            "status=%s candidates=%s",
-            deal_id,
-            om_brand,
-            match.status,
-            list(match.candidates)[:5],
-        )
-        return
+    # The brand lookup (``match_brand`` → the lru-cached catalog read of
+    # ``app/data/brand_chain_scales.json``) sits INSIDE the best-effort
+    # boundary: a missing / malformed catalog is logged and the OM's
+    # extraction still completes — a positioning *suggestion* is never a
+    # gate on the document (the pipeline wrapper marks a document FAILED on
+    # any exception that escapes this sync).
     try:
+        hit = _om_brand_field(fields)
+        if hit is None:
+            return
+        om_brand, page = hit
+        match = match_brand(om_brand)
+        suggested = match.suggested_positioning
+        if suggested is None or match.brand is None:
+            logger.info(
+                "deal_metadata_sync: no positioning suggestion deal=%s om_brand=%r "
+                "status=%s candidates=%s",
+                deal_id,
+                om_brand,
+                match.status,
+                list(match.candidates)[:5],
+            )
+            return
         if not await _deals_has_positioning_source(session):
             return
         filename: str | None = None
@@ -9327,11 +9333,18 @@ async def _suggest_positioning_from_om_brand(
         if before is None:
             return
         old_positioning = before._mapping.get("positioning")
+        # The deal row changes, so its modification timestamp moves with it —
+        # same per-dialect clause as the metadata-sync UPDATE below.
+        updated_at_sql = (
+            "updated_at = CURRENT_TIMESTAMP"
+            if str(get_settings().async_database_url).startswith("sqlite")
+            else "updated_at = NOW()"
+        )
         result = await session.execute(
             text(
                 "UPDATE deals SET positioning = :positioning, "
                 "positioning_source = :source, "
-                "positioning_source_detail = :detail "
+                f"positioning_source_detail = :detail, {updated_at_sql} "
                 "WHERE id = :id AND tenant_id = :tenant "
                 "AND (positioning IS NULL OR TRIM(positioning) = '' "
                 "     OR LOWER(positioning) = 'default') "

@@ -31,8 +31,13 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+#: ``scenario.name`` for a run whose scenario row has since been deleted: the
+#: ``engine_run.ran_with_scenario`` audit row still proves it was a scenario
+#: run, but the name went with the row.
+DELETED_SCENARIO_LABEL = "deleted scenario"
 
 #: Two values within this tolerance are "unchanged". Engine outputs are
 #: deterministic, so anything beyond float-formatting noise is a real move.
@@ -463,19 +468,43 @@ async def list_runs(
                 SELECT id, name, is_base, last_run_id
                   FROM scenarios
                  WHERE deal_id = :deal AND tenant_id = :tenant
-                   AND last_run_id IS NOT NULL
                 """
             ),
             {"deal": deal_uuid, "tenant": tenant_id},
         )
     ).fetchall()
+    scenario_by_id: dict[str, dict[str, Any]] = {}
     scenario_by_run: dict[str, dict[str, Any]] = {}
     for r in scen_rows:
         m = r._mapping
-        scenario_by_run[str(m["last_run_id"])] = {
+        scen = {
             "id": str(m["id"]),
             "name": m["name"],
             "is_base": bool(m["is_base"]),
+        }
+        scenario_by_id[scen["id"]] = scen
+        if m["last_run_id"] is not None:
+            scenario_by_run[str(m["last_run_id"])] = scen
+
+    # ``scenarios.last_run_id`` names only a scenario's LATEST run. Every
+    # scenario run also leaves a durable per-run marker — the
+    # ``engine_run.ran_with_scenario`` audit row (``api/scenarios.py``:
+    # resource_id = run_id, payload.metadata.scenario_id) — so an OLDER run
+    # of a non-base scenario is still recognised as a scenario run and never
+    # becomes the default baseline. A scenario deleted since still tags its
+    # runs (labelled as such — its name is gone with the row — and treated
+    # as non-base).
+    run_ids = sorted({str(r._mapping["run_id"]) for r in rows})
+    audit_tags = await _scenario_runs_from_audit(
+        session, tenant_id=tenant_id, deal_uuid=deal_uuid, run_ids=run_ids
+    )
+    for rid, sid in audit_tags.items():
+        if rid in scenario_by_run:
+            continue
+        scenario_by_run[rid] = scenario_by_id.get(sid) or {
+            "id": sid,
+            "name": DELETED_SCENARIO_LABEL,
+            "is_base": False,
         }
 
     canon = set(canonical_engines)
@@ -485,27 +514,21 @@ async def list_runs(
         rid = str(m["run_id"])
         entry = runs.setdefault(
             rid,
-            {"run_id": rid, "_started": [], "_completed": [], "_status": [], "engines": []},
+            {"run_id": rid, "_started": [], "_completed": [], "_rows": [], "engines": []},
         )
         entry["engines"].append(m["engine_name"])
-        entry["_status"].append(m["status"])
+        ct = parse_ts(_iso(m["completed_at"])) if m["completed_at"] is not None else None
+        entry["_rows"].append((m["engine_name"], m["status"], ct))
         st = parse_ts(_iso(m["started_at"]))
         if st:
             entry["_started"].append(st)
-        ct = parse_ts(_iso(m["completed_at"])) if m["completed_at"] is not None else None
         entry["_completed"].append(ct)
 
     out: list[dict[str, Any]] = []
     for rid, e in runs.items():
-        statuses = e.pop("_status")
         started = e.pop("_started")
         completed = e.pop("_completed")
-        if any(s == "running" for s in statuses) or any(c is None for c in completed):
-            status = "running"
-        elif any(s == "failed" for s in statuses):
-            status = "failed" if all(s == "failed" for s in statuses) else "partial"
-        else:
-            status = "complete"
+        status = _run_status(e.pop("_rows"), canon)
         done = [c for c in completed if c is not None]
         scen = scenario_by_run.get(rid)
         engines = sorted(set(e["engines"]))
@@ -527,8 +550,98 @@ async def list_runs(
     return out
 
 
+def _run_status(
+    engine_rows: list[tuple[str, str, datetime | None]], canon: set[str]
+) -> str:
+    """Fold per-engine ``(engine_name, status, completed_at)`` rows into one
+    run status over the CANONICAL engines only.
+
+    Composed views (``cash_flow``) are part of a run and are served, but they
+    never count toward canonical gating (``CANONICAL_ENGINES``), so a failed
+    or still-running view must not turn a complete base chain into
+    ``partial`` / ``running`` — that run is a valid regression baseline. A
+    run with no canonical rows at all (a lone view re-run) folds over what
+    it has.
+    """
+    rows = [r for r in engine_rows if r[0] in canon] or engine_rows
+    statuses = [s for _, s, _ in rows]
+    if any(s == "running" for s in statuses) or any(c is None for _, _, c in rows):
+        return "running"
+    if any(s == "failed" for s in statuses):
+        return "failed" if all(s == "failed" for s in statuses) else "partial"
+    return "complete"
+
+
+def _payload_dict(raw: Any) -> dict[str, Any]:
+    """``audit_log.payload`` as a dict — JSONB arrives as a dict on Postgres
+    and as its JSON text on SQLite / asyncpg-without-codec."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+async def _scenario_runs_from_audit(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    deal_uuid: str,
+    run_ids: list[str],
+) -> dict[str, str]:
+    """``{run_id: scenario_id}`` from the ``engine_run.ran_with_scenario``
+    audit rows of the given runs — tenant-scoped, and the payload's
+    ``deal_id`` must name this deal when present. Read-only; an audit read
+    failure tags nothing (the list still renders, as before this tag source
+    existed)."""
+    if not run_ids:
+        return {}
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    # tenant-scope predicate required by tenant_middleware
+                    """
+                    SELECT resource_id, payload
+                      FROM audit_log
+                     WHERE tenant_id = :tenant
+                       AND action = 'engine_run.ran_with_scenario'
+                       AND resource_id IN :runs
+                    """
+                ).bindparams(bindparam("runs", expanding=True)),
+                {"tenant": tenant_id, "runs": run_ids},
+            )
+        ).fetchall()
+    except Exception:  # a tag source, never a gate on the run list
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        m = r._mapping
+        meta = _payload_dict(m["payload"]).get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        sid = meta.get("scenario_id")
+        if not sid:
+            continue
+        audit_deal = meta.get("deal_id")
+        if audit_deal and str(audit_deal).lower() != str(deal_uuid).lower():
+            continue
+        out[str(m["resource_id"])] = str(sid)
+    return out
+
+
 def pick_baseline(runs: list[dict[str, Any]], before: datetime) -> dict[str, Any] | None:
-    """Newest complete, full-chain, non-scenario run completed before ``before``."""
+    """Newest complete, full-chain, non-scenario run completed before ``before``.
+
+    ``status`` is folded over the canonical engines only (``_run_status``), and
+    ``scenario`` is set for EVERY run made through a scenario — the scenario's
+    latest run (``scenarios.last_run_id``) and its older runs (the
+    ``engine_run.ran_with_scenario`` audit rows) alike.
+    """
     for r in runs:  # newest first
         if r["status"] != "complete" or not r["is_full_chain"]:
             continue

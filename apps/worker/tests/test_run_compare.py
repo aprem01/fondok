@@ -405,3 +405,219 @@ async def test_compare_xlsx_export() -> None:
     assert not any(row[2] == "Equity multiple" for row in rows)
     summary = {row[0].value: row[1].value for row in wb["Summary"].iter_rows(min_row=2)}
     assert summary["Baseline run"] == r1 and summary["Head run"] == r2
+
+
+# ──────────────── baseline pick: older scenario runs + failed views ────────────────
+
+
+async def _full_chain(session, *, deal_id, tenant_id, run_id, ts, extra=()):
+    from app.services.engine_runner import CANONICAL_ENGINES
+
+    for name in CANONICAL_ENGINES:
+        await _insert_row(session, deal_id=deal_id, tenant_id=tenant_id,
+                          run_id=run_id, engine=name,
+                          outputs={"levered_irr": 0.1} if name == "returns" else {},
+                          started=f"{ts}:00+00:00", completed=f"{ts}:30+00:00")
+    for name, status in extra:
+        await _insert_row(session, deal_id=deal_id, tenant_id=tenant_id,
+                          run_id=run_id, engine=name, outputs=None, status=status,
+                          started=f"{ts}:31+00:00", completed=f"{ts}:32+00:00")
+
+
+async def _audit_scenario_run(session, *, tenant_id, deal_id, run_id, scenario_id):
+    """Exactly what ``api/scenarios.py::run_scenario`` writes per scenario run."""
+    from app.audit import log_audit
+
+    await log_audit(
+        session,
+        tenant_id=tenant_id,
+        action="engine_run.ran_with_scenario",
+        resource_type="engine_run",
+        resource_id=run_id,
+        output_payload={"engines": [], "engine_count": 0},
+        tags=["engine_run", "scenario"],
+        metadata={"deal_id": deal_id, "scenario_id": scenario_id},
+    )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_older_scenario_run_is_never_the_default_baseline() -> None:
+    """Sam's QA flow: base chain 10-13, Downside 10-14, Downside again 10-16.
+    ``scenarios.last_run_id`` now names the 10-16 run only, yet the 10-14
+    Downside run must still read as a scenario run — the default baseline
+    before 10-15 21:40 is the 10-13 BASE run, not the older Downside run."""
+    from app.database import get_session_factory
+
+    deal_id, tenant, other_tenant = str(uuid4()), str(uuid4()), str(uuid4())
+    base, downside_old, downside_new, foreign = (str(uuid4()) for _ in range(4))
+    scenario_id = str(uuid4())
+
+    async with get_session_factory()() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant)
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=base,
+                          ts="2026-10-13T10:00")
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=downside_old,
+                          ts="2026-10-14T10:00")
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=downside_new,
+                          ts="2026-10-16T10:00")
+        # A full-chain run the audit trail tags for ANOTHER tenant's scenario
+        # (impossible in practice; proves the audit read is tenant-scoped).
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=foreign,
+                          ts="2026-10-14T12:00")
+        await session.execute(
+            text("INSERT INTO scenarios (id, deal_id, tenant_id, name, is_base, "
+                 "overrides, last_run_id) VALUES (:id, :deal, :t, 'Downside', "
+                 ":b, '[]', :run)"),
+            {"id": scenario_id, "deal": deal_id, "t": tenant, "b": False, "run": downside_new},
+        )
+        await session.commit()
+        await _audit_scenario_run(session, tenant_id=tenant, deal_id=deal_id,
+                                  run_id=downside_old, scenario_id=scenario_id)
+        await _audit_scenario_run(session, tenant_id=tenant, deal_id=deal_id,
+                                  run_id=downside_new, scenario_id=scenario_id)
+        await _audit_scenario_run(session, tenant_id=other_tenant, deal_id=deal_id,
+                                  run_id=foreign, scenario_id=str(uuid4()))
+
+    async with _client() as c:
+        r = await c.get(f"/deals/{deal_id}/engines/runs",
+                        params={"before": "2026-10-15T21:40Z"},
+                        headers={"X-Tenant-Id": tenant})
+        assert r.status_code == 200, r.text
+        body = r.json()
+    by_id = {x["run_id"]: x for x in body["runs"]}
+    # The older Downside run is tagged from the audit trail, by name.
+    assert by_id[downside_old]["scenario"] == {
+        "id": scenario_id, "name": "Downside", "is_base": False,
+    }
+    assert by_id[downside_new]["scenario"]["name"] == "Downside"
+    # Another tenant's audit row never tags this tenant's run.
+    assert by_id[foreign]["scenario"] is None
+    assert by_id[base]["scenario"] is None
+    # Newest qualifying run before the cutoff is the foreign-tagged-but-untagged
+    # full chain (10-14 12:00), NOT the 10-14 Downside run.
+    assert body["baseline_run_id"] == foreign
+
+    # With that run gone, the pick falls back to the 10-13 base run.
+    from app.services.engine_runner import CANONICAL_ENGINES
+    from app.services.run_compare import list_runs, pick_baseline
+
+    async with get_session_factory()() as session:
+        await session.execute(text("DELETE FROM engine_outputs WHERE run_id = :r"), {"r": foreign})
+        await session.commit()
+        runs = await list_runs(session, deal_uuid=deal_id, tenant_id=tenant,
+                               canonical_engines=CANONICAL_ENGINES, canonical_run_id=None)
+    from app.services.run_compare import parse_ts
+
+    picked = pick_baseline(runs, parse_ts("2026-10-15T21:40Z"))
+    assert picked is not None and picked["run_id"] == base
+
+
+@pytest.mark.asyncio
+async def test_deleted_scenario_still_tags_its_runs_as_non_base() -> None:
+    """The audit row outlives the scenario: a run of a since-deleted scenario
+    stays tagged (name unknown) and is skipped by the default pick."""
+    from app.database import get_session_factory
+
+    deal_id, tenant = str(uuid4()), str(uuid4())
+    base, orphan = str(uuid4()), str(uuid4())
+    gone_scenario = str(uuid4())
+
+    async with get_session_factory()() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant)
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=base,
+                          ts="2026-10-13T10:00")
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=orphan,
+                          ts="2026-10-14T10:00")
+        await _audit_scenario_run(session, tenant_id=tenant, deal_id=deal_id,
+                                  run_id=orphan, scenario_id=gone_scenario)
+
+    async with _client() as c:
+        body = (await c.get(f"/deals/{deal_id}/engines/runs",
+                            params={"before": "2026-10-15T21:40Z"},
+                            headers={"X-Tenant-Id": tenant})).json()
+    from app.services.run_compare import DELETED_SCENARIO_LABEL
+
+    by_id = {x["run_id"]: x for x in body["runs"]}
+    assert by_id[orphan]["scenario"] == {
+        "id": gone_scenario, "name": DELETED_SCENARIO_LABEL, "is_base": False,
+    }
+    assert body["baseline_run_id"] == base
+
+
+@pytest.mark.asyncio
+async def test_failed_cash_flow_view_does_not_block_a_complete_base_chain() -> None:
+    """Status folds over the canonical engines only: all eight base engines
+    complete + ``cash_flow`` failed is a complete, full-chain run and a valid
+    baseline. A failed CANONICAL engine still makes the run ``partial``."""
+    from app.database import get_session_factory
+
+    deal_id, tenant = str(uuid4()), str(uuid4())
+    view_failed, canon_failed, view_running = (str(uuid4()) for _ in range(3))
+
+    async with get_session_factory()() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant)
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=view_failed,
+                          ts="2026-10-14T10:00", extra=[("cash_flow", "failed")])
+        # Newer, but a canonical engine failed → partial, never the baseline.
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=canon_failed,
+                          ts="2026-10-15T10:00")
+        await _insert_row(session, deal_id=deal_id, tenant_id=tenant, run_id=canon_failed,
+                          engine="returns", outputs=None, status="failed",
+                          started="2026-10-15T10:00:40+00:00",
+                          completed="2026-10-15T10:00:41+00:00")
+        # Newer still: base chain complete, cash_flow row still running.
+        await _full_chain(session, deal_id=deal_id, tenant_id=tenant, run_id=view_running,
+                          ts="2026-10-15T12:00")
+        await _insert_row(session, deal_id=deal_id, tenant_id=tenant, run_id=view_running,
+                          engine="cash_flow", outputs=None, status="running",
+                          started="2026-10-15T12:00:31+00:00", completed=None)
+        await session.commit()
+
+    async with _client() as c:
+        body = (await c.get(f"/deals/{deal_id}/engines/runs",
+                            params={"before": "2026-10-15T21:40Z"},
+                            headers={"X-Tenant-Id": tenant})).json()
+    by_id = {x["run_id"]: x for x in body["runs"]}
+    assert by_id[view_failed]["status"] == "complete"
+    assert by_id[view_failed]["is_full_chain"] is True
+    assert "cash_flow" in by_id[view_failed]["engines"]
+    assert by_id[canon_failed]["status"] == "partial"
+    assert by_id[view_running]["status"] == "complete"
+    assert by_id[view_running]["completed_at"] is not None
+    assert body["baseline_run_id"] == view_running
+
+
+def test_golden_compare_script_exits_nonzero_when_it_cannot_run() -> None:
+    """``scripts/compare_golden_baseline.py`` is a report (exit 0 with or
+    without differences) but a comparison that could NOT run must not look
+    like "no headline differences" to a caller checking the exit code."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[3] / "scripts" / "compare_golden_baseline.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), "--baseline", "/nonexistent/kimpton-golden.json"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 2, (proc.returncode, proc.stdout[-500:], proc.stderr[-500:])
+    assert "could not complete the comparison" in proc.stdout
+
+
+def test_run_status_folds_over_canonical_rows_only() -> None:
+    from app.services.run_compare import _run_status, parse_ts
+
+    canon = {"revenue", "returns"}
+    done = parse_ts("2026-10-14T10:00:30Z")
+    assert _run_status([("revenue", "complete", done), ("returns", "complete", done),
+                        ("cash_flow", "failed", done)], canon) == "complete"
+    assert _run_status([("revenue", "complete", done), ("returns", "failed", done)],
+                       canon) == "partial"
+    assert _run_status([("revenue", "failed", done), ("returns", "failed", done),
+                        ("cash_flow", "complete", done)], canon) == "failed"
+    assert _run_status([("revenue", "complete", done), ("returns", "running", None)],
+                       canon) == "running"
+    # No canonical rows at all (a lone view re-run): fold over what exists.
+    assert _run_status([("cash_flow", "failed", done)], canon) == "failed"
+    assert _run_status([("cash_flow", "complete", done)], canon) == "complete"

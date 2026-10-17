@@ -26,8 +26,12 @@ The headline section uses the same field list and differ as the live
 (``apps/worker/app/services/run_compare.py``). ``--full`` additionally lists
 every other numeric leaf of the raw engine outputs that moved.
 
-This is a REPORT: it always exits 0. Whether a listed change is expected is a
-human call — compare it to the change you shipped.
+This is a REPORT: it exits 0 whenever the comparison COMPLETED — with or
+without differences. Whether a listed change is expected is a human call —
+compare it to the change you shipped. It exits 2 only when it could not run
+(broken venv, failed migration, import error, missing baseline file), so a
+caller that checks the exit code can tell "could not compare" from "no
+headline differences".
 """
 
 from __future__ import annotations
@@ -224,6 +228,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:  # noqa: BLE001 — a report never fails the caller
+    except Exception as exc:  # noqa: BLE001 — report the failure, then say so via the exit code
         print(f"compare_golden_baseline: could not complete the comparison: {exc!r}")
+        # A completed report exits 0 whatever it found; a comparison that
+        # could NOT run must not look like "no headline differences".
+        sys.exit(2)
     sys.exit(0)

@@ -72,10 +72,18 @@ Example: `GET /deals/<Eshan deal id>/engines/compare?base=b5a08654-52e9-4738-add
 
 ### Caveats
 
-- A scenario records only its **latest** run (`scenarios.last_run_id`). An
-  older run of a non-base scenario looks like an ordinary run in the list.
-  The canonical-run resolver (FON-73) has the same limit. When a deal has
-  scenario activity, check the run's timestamp against the Activity feed.
+- A run is tagged as a scenario run from two sources: the scenario's
+  **latest** run (`scenarios.last_run_id`) and, for every scenario run
+  including older ones, the `engine_run.ran_with_scenario` audit row the
+  scenario runner writes (`resource_id` = run id, `metadata.scenario_id`).
+  So an older Downside run is skipped by the default baseline pick even
+  after the scenario has been re-run. A run of a scenario deleted since is
+  still tagged (shown as "deleted scenario", treated as non-base). The canonical-run
+  resolver (FON-73) still reads only `last_run_id`.
+- A run's status is folded over the eight canonical engines only. The
+  composed `cash_flow` view is listed with the run, but a failed or
+  unfinished view does not make a complete base chain `partial`, so such a
+  run can still be the default baseline.
 - A run made before an engine gained an output field shows that field as
   "not in baseline run" (`added`). That is a schema addition, not a value
   change.
@@ -106,7 +114,11 @@ apps/worker/.venv/bin/python scripts/compare_golden_baseline.py
 #   --write evals/baselines/kimpton-golden-<date>.json   cut a new baseline
 ```
 
-The script is a report and always exits 0. When a change is *intended* to
+The script is a report: it exits 0 when the comparison completed, with or
+without differences, and exits 2 only when it could not run (broken venv,
+failed migration, import error, missing baseline), so a caller checking the
+exit code never mistakes a failed comparison for "no headline differences".
+When a change is *intended* to
 move Kimpton numbers, run it and list every changed value in the change
 description. Then cut a new dated baseline with `--write`, and keep the old
 file so the history stays readable.
