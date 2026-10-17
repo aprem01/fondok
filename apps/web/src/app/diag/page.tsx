@@ -19,7 +19,8 @@ interface Diag {
   health: {
     status?: string;
     version?: string;
-    db?: { status?: string; migrations_dsn?: 'owner' | 'same' };
+    db?: string;
+    db_migrations_dsn?: 'owner' | 'same';
   } | null;
   healthError: string | null;
   dealsCount: number | null;
@@ -203,8 +204,8 @@ function DiagPageInner() {
           <>
             <Kv k="status" v={String(diag.health?.status ?? '?')} />
             <Kv k="version" v={String(diag.health?.version ?? '?')} />
-            <Kv k="db" v={String(diag.health?.db?.status ?? '?')} />
-            <Kv k="db.migrations_dsn" v={String(diag.health?.db?.migrations_dsn ?? '?')} />
+            <Kv k="db" v={String(diag.health?.db ?? '?')} />
+            <Kv k="db_migrations_dsn" v={String(diag.health?.db_migrations_dsn ?? '?')} />
           </>
         )}
       </Section>

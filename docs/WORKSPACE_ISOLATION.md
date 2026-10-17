@@ -95,7 +95,7 @@ default, on only in `tests/conftest.py` and a developer's local `.env`.
 
 `/health` → `auth` reports the flags:
 `{"header_tenant_path_enabled", "jwt_required", "registered_tenant_required", "rls_tenant_guc"}`;
-`/health` → `db.migrations_dsn` reports `"owner"` (a dedicated DDL DSN is set) or
+`/health` → `db_migrations_dsn` reports `"owner"` (a dedicated DDL DSN is set) or
 `"same"` — presence only, never the URL.
 
 ## 4. The registry
@@ -276,7 +276,7 @@ ever changes it must use `settings.sync_migrations_database_url`. The
 `tenant_middleware` listener is attached to the serving engine only; the
 DDL engine is never bound to a session factory, so the tenant GUC hook
 (a `TenantSession` listener) never fires on it and it never serves a
-tenant read. `/health.db.migrations_dsn` reads `"owner"` when the
+tenant read. `/health.db_migrations_dsn` reads `"owner"` when the
 variable is set, `"same"` otherwise.
 
 ### Pieces already in the repo
@@ -364,7 +364,7 @@ Each step is independently reversible; nothing before step 5 changes what
 any user sees.
 
 1. **Set `DATABASE_URL_MIGRATIONS` = the owner DSN** (the value
-   `DATABASE_URL` has today). Redeploy. `/health.db.migrations_dsn`
+   `DATABASE_URL` has today). Redeploy. `/health.db_migrations_dsn`
    reads `"owner"`; startup DDL now runs on the dedicated engine and the
    serving engine is unchanged (it is still the owner).
 2. **Apply `apps/worker/migrations/rls/001_enable_rls.sql` as the owner**

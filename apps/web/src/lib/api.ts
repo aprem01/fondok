@@ -2140,9 +2140,11 @@ export const api = {
     request<{
       status: string;
       version: string;
-      // FON-93 — `migrations_dsn` is "owner" when the worker runs startup DDL
-      // on a dedicated owner DSN (DATABASE_URL_MIGRATIONS), "same" otherwise.
-      db: { status: string; migrations_dsn: 'owner' | 'same' };
+      db: string;
+      // FON-93 — "owner" when the worker runs startup DDL on a dedicated
+      // owner DSN (DATABASE_URL_MIGRATIONS), "same" otherwise. Optional so
+      // a web bundle deployed ahead of the worker still types the old body.
+      db_migrations_dsn?: 'owner' | 'same';
     }>('GET', '/health'),
   admin: {
     /** Tenant-scoped LLM cost + cache hit-rate rollup. Requires

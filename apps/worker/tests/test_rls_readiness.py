@@ -5,8 +5,12 @@ What is provable without Postgres:
 * ``DATABASE_URL_MIGRATIONS`` unset → startup DDL runs on THE serving
   engine (today's behaviour); set → a dedicated engine that
   ``run_startup_migrations`` uses, the session factory never binds to, and
-  ``dispose_migrations_engine`` tears down. ``/health.db.migrations_dsn``
-  reports ``same`` / ``owner`` (presence only).
+  ``dispose_migrations_engine`` tears down. ``/health.db_migrations_dsn``
+  reports ``same`` / ``owner`` (presence only) as a SIBLING of ``db``, which
+  stays the ``"ok"`` / ``"fail"`` string external readers compare against.
+* ``owner_connection()`` builds a ``NullPool`` engine and disposes it before
+  ``plan_tenant_scan`` returns — no owner connection is ever left pooled
+  behind while the worker serves as ``fondok_app``.
 * The GUC hook publishes nothing for ``None`` AND for a blank tenant, so a
   connection with no tenant never calls ``set_config`` with a value the
   policy's ``::uuid`` cast would reject.
@@ -101,6 +105,45 @@ def _use_owner_sqlite(monkeypatch) -> str:
     return url
 
 
+def _spy_engines(monkeypatch) -> list[dict[str, Any]]:
+    """Record every engine ``app.database`` builds and whether it was disposed.
+
+    Wraps the module's ``create_async_engine`` name (so the DDL engine and
+    the ad-hoc engine ``owner_connection()`` builds are both captured, with
+    the kwargs they were built with) and ``AsyncEngine.dispose`` at class
+    level (``AsyncEngine`` has ``__slots__``, so an instance spy is not
+    possible). Each record: ``{"engine", "kwargs", "disposed"}``.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    built: list[dict[str, Any]] = []
+    real_create = database.create_async_engine
+    real_dispose = AsyncEngine.dispose
+
+    def _create(url: str, **kwargs: Any) -> AsyncEngine:
+        engine = real_create(url, **kwargs)
+        built.append({"engine": engine, "kwargs": kwargs, "disposed": False})
+        return engine
+
+    async def _dispose(self: AsyncEngine, *args: Any, **kwargs: Any) -> None:
+        for record in built:
+            if record["engine"] is self:
+                record["disposed"] = True
+        return await real_dispose(self, *args, **kwargs)
+
+    monkeypatch.setattr(database, "create_async_engine", _create)
+    monkeypatch.setattr(AsyncEngine, "dispose", _dispose)
+    return built
+
+
+def _owner_engines(built: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The records ``owner_connection()`` produced: the ``NullPool`` ones
+    (the DDL engine is a small pooled engine, so it is never in this list)."""
+    from sqlalchemy.pool import NullPool
+
+    return [r for r in built if isinstance(r["engine"].pool, NullPool)]
+
+
 # ───────────────────────── migrations engine ─────────────────────────
 
 
@@ -164,13 +207,19 @@ async def test_health_reports_migrations_dsn_presence_only(monkeypatch) -> None:
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         body = (await c.get("/health")).json()
-    assert body["db"] == {"status": "ok", "migrations_dsn": "same"}
+    # ``db`` is the SAME "ok" / "fail" string it has always been — web and
+    # worker deploy independently and runbooks compare ``.db == "ok"``, so
+    # the FON-93 fact is a sibling key, not a reshape of ``db``.
+    assert body["db"] == "ok"
+    assert isinstance(body["db"], str)
+    assert body["db_migrations_dsn"] == "same"
 
     _use_owner_sqlite(monkeypatch)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         body = (await c.get("/health")).json()
-    assert body["db"] == {"status": "ok", "migrations_dsn": "owner"}
-    assert "sqlite" not in json.dumps(body["db"])  # never the URL
+    assert body["db"] == "ok"
+    assert body["db_migrations_dsn"] == "owner"
+    assert "sqlite" not in json.dumps(body)  # never the URL, anywhere in the body
 
 
 # ───────────────────────── GUC hook: None / blank ─────────────────────────
@@ -287,6 +336,7 @@ async def test_plan_falls_back_to_owner_distinct_when_registry_is_empty_or_enfor
     from app.migrations import run_startup_migrations
 
     monkeypatch.setattr(tenant_scan, "per_tenant_scans_active", lambda: True)
+    built = _spy_engines(monkeypatch)
     _use_owner_sqlite(monkeypatch)
     await run_startup_migrations()  # creates the owner file's schema
     async with database.get_migrations_engine().begin() as conn:
@@ -315,9 +365,50 @@ async def test_plan_falls_back_to_owner_distinct_when_registry_is_empty_or_enfor
     assert plan.source == "owner_distinct"
     assert plan.tenants == (TENANT_A, TENANT_B)
 
-    # The discovery read never leaves an owner connection pooled behind.
+    # The discovery read never leaves an owner connection pooled behind:
+    # each tick built ONE ad-hoc NullPool engine (not the DDL engine, which
+    # is pooled and separate) and awaited ``dispose()`` on it before
+    # ``plan_tenant_scan`` returned.
+    owner = _owner_engines(built)
+    assert len(owner) == 2, [r["kwargs"] for r in built]  # one per plan_tenant_scan
+    assert all(r["disposed"] for r in owner)
+    assert all(r["engine"] is not database._migrations_engine for r in owner)
     assert database._migrations_engine is not None  # the DDL engine, separate
+    ddl = [r for r in built if r["engine"] is database._migrations_engine]
+    assert len(ddl) == 1 and ddl[0]["disposed"] is False  # still up until shutdown
     await database.dispose_migrations_engine()
+    assert ddl[0]["disposed"] is True
+
+
+async def test_owner_connection_is_unpooled_and_disposed_even_on_error(monkeypatch) -> None:
+    """``owner_connection()`` on its own: ``None`` and no engine when the owner
+    DSN is unset; otherwise a ``NullPool`` engine whose ``dispose()`` is awaited
+    on normal exit AND when the body raises."""
+    from sqlalchemy.pool import NullPool
+
+    built = _spy_engines(monkeypatch)
+
+    async with database.owner_connection() as conn:
+        assert conn is None
+    assert built == []  # unset → no engine is ever built
+
+    _use_owner_sqlite(monkeypatch)
+    async with database.owner_connection() as conn:
+        assert conn is not None
+        assert (await conn.execute(text("SELECT 1"))).scalar() == 1
+        assert len(built) == 1
+        assert isinstance(built[0]["engine"].pool, NullPool)
+        assert built[0]["disposed"] is False  # alive while the block runs
+    assert built[0]["disposed"] is True
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with database.owner_connection() as conn:
+            assert conn is not None
+            raise RuntimeError("boom")
+    assert len(built) == 2
+    assert isinstance(built[1]["engine"].pool, NullPool)
+    assert built[1]["disposed"] is True
+    assert database._migrations_engine is None  # never touched the DDL engine
 
 
 async def test_plan_degrades_to_cross_tenant_without_owner_dsn_or_on_owner_failure(

@@ -126,11 +126,14 @@ async def health(
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
-        # FON-93 — ``migrations_dsn``: "owner" when DATABASE_URL_MIGRATIONS
-        # (a dedicated owner DSN for startup DDL) is set, "same" when DDL
-        # runs on the serving engine. Presence only; the URL is never
-        # reported.
-        "db": {"status": db_status, "migrations_dsn": migrations_dsn_kind()},
+        # ``db`` stays the "ok" / "fail" string external readers (runbooks,
+        # monitors, an older web bundle) compare against — byte-for-byte
+        # today's shape. The FON-93 fact is a SIBLING key, never a reshape.
+        "db": db_status,
+        # FON-93 — "owner" when DATABASE_URL_MIGRATIONS (a dedicated owner
+        # DSN for startup DDL) is set, "same" when DDL runs on the serving
+        # engine. Presence only; the URL is never reported.
+        "db_migrations_dsn": migrations_dsn_kind(),
         "usali_rules": rules_loaded,
         "structural_recognizer": recognizer_ok,
         "ontology_version": ontology_version,
