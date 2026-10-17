@@ -116,6 +116,7 @@ class InProcessMemoBroadcast(MemoBroadcast):
         )
         async with self._lock:
             self._subs[deal_id].append(q)
+        self._subscriber_attached(deal_id)
         try:
             while True:
                 item = await q.get()
@@ -130,6 +131,16 @@ class InProcessMemoBroadcast(MemoBroadcast):
                     self._subs[deal_id].remove(q)
                 if not self._subs.get(deal_id):
                     self._subs.pop(deal_id, None)
+
+    def _subscriber_attached(self, deal_id: str) -> None:
+        """Hook: a subscriber's queue for ``deal_id`` has just been registered.
+
+        A no-op in production. Tests that drive a publisher and the SSE
+        subscriber from the same event loop override it to signal an
+        ``asyncio.Event`` instead of guessing with ``asyncio.sleep`` how
+        long the subscriber takes to attach (``tests/test_memo_generation.py``).
+        """
+        return None
 
 
 class RedisMemoBroadcast(MemoBroadcast):

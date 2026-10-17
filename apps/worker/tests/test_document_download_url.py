@@ -288,12 +288,25 @@ async def test_signed_route_serves_bytes_with_valid_token(seeded) -> None:
 
 
 async def test_signed_route_403_on_tampered_token(seeded) -> None:
+    """Flipping one hex digit of the token must fail the HMAC compare.
+
+    Flake history (docs/TESTING.md): until 2026-10-17 this built the
+    tampered token as ``("0" if token[-1] != "0" else "1") + token[1:]`` —
+    it inspected the LAST digit but replaced the FIRST, so whenever the
+    first digit already equalled the replacement (1 run in 16) the
+    "tampered" token was byte-identical to the real one and the route
+    correctly served 200. That is what looked like an ordering / load
+    flake; the signing key itself is process-wide and stable. The flip
+    below always changes the digit it inspected, and the assertion
+    pins that.
+    """
     async with await _client() as c:
         body = await _mint(c, seeded)
         parts = urlsplit(body["url"])
         qs = parse_qs(parts.query)
         token = qs["token"][0]
-        flipped = ("0" if token[-1] != "0" else "1") + token[1:]
+        flipped = token[:-1] + ("0" if token[-1] != "0" else "1")
+        assert flipped != token and len(flipped) == len(token)
         bad = f"{parts.path}?token={flipped}&exp={qs['exp'][0]}"
         r = await c.get(bad)
         # Changing ``exp`` without re-signing is just another tamper.
