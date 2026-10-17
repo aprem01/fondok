@@ -150,6 +150,50 @@ def _patch_background_tasks_to_fire(monkeypatch: pytest.MonkeyPatch) -> list[asy
     return spawned
 
 
+def _install_signalling_broadcast(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Install an in-process broadcast whose ``_subscriber_attached`` hook
+    sets an ``asyncio.Event`` per channel.
+
+    The fake analysts below publish on the SAME event loop as the SSE
+    route subscribes, and ``InProcessMemoBroadcast.publish`` delivers only
+    to queues registered at that instant — a publish that lands before
+    ``GET /memo/stream`` attached is silently lost and the stream then
+    waits for its full timeout. Until 2026-10-17 the tests papered over
+    that with ``await asyncio.sleep(0.02-0.05)``, which lost the race
+    whenever the POST → GET → tenant-check (an aiosqlite thread hop) took
+    longer than the nap. ``wait_for_subscriber`` is the explicit
+    synchronisation: it resolves exactly when the route's queue is
+    registered, however slow the host (docs/TESTING.md).
+    """
+    from collections import defaultdict
+
+    from app.streaming import broadcast as broadcast_module
+    from app.streaming.broadcast import InProcessMemoBroadcast
+
+    class _SubscriberSignallingBroadcast(InProcessMemoBroadcast):
+        def __init__(self) -> None:
+            super().__init__()
+            self._attached: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
+
+        def _subscriber_attached(self, deal_id: str) -> None:
+            self._attached[deal_id].set()
+
+        async def wait_for_subscriber(self, channel: str, *, timeout: float = 5.0) -> None:
+            try:
+                await asyncio.wait_for(self._attached[channel].wait(), timeout)
+            except TimeoutError as exc:
+                raise AssertionError(
+                    f"no SSE subscriber attached to {channel!r} within {timeout}s"
+                ) from exc
+
+    bc = _SubscriberSignallingBroadcast()
+    # ``get_broadcast()`` returns the singleton when it is already set, so
+    # both the route and ``_safe_run_analyst_streaming`` pick this one up.
+    # ``_reset_db`` drops it again after the test.
+    monkeypatch.setattr(broadcast_module, "_broadcast_singleton", bc)
+    return bc
+
+
 # ─────────────────── 1. POST /memo/generate → 400 ───────────────────
 
 
@@ -201,6 +245,7 @@ async def test_memo_stream_emits_error_on_generator_failure(
     from app.api import deals as deals_module
 
     spawned = _patch_background_tasks_to_fire(monkeypatch)
+    bc = _install_signalling_broadcast(monkeypatch)
 
     deal_id = uuid4()
     await _insert_deal(deal_id)
@@ -218,9 +263,10 @@ async def test_memo_stream_emits_error_on_generator_failure(
 
     monkeypatch.setattr(deals_module, "_load_deal_payload", fake_load_payload)
 
-    async def boom(_payload: Any) -> None:
-        # Tiny pause so the SSE subscriber attaches first.
-        await asyncio.sleep(0.05)
+    async def boom(payload: Any) -> None:
+        # Raise only once the SSE subscriber is attached, so the
+        # ERROR_SENTINEL the wrapper publishes has a queue to land in.
+        await bc.wait_for_subscriber(f"memo:{payload.deal_id}")
         raise RuntimeError("anthropic 503 service unavailable")
 
     import app.agents.analyst as analyst_mod
@@ -280,6 +326,7 @@ async def test_memo_stream_heartbeats_during_long_runs(
     monkeypatch.setattr(deals_module, "_SSE_TOTAL_TIMEOUT_SECONDS", 5.0)
 
     spawned = _patch_background_tasks_to_fire(monkeypatch)
+    bc = _install_signalling_broadcast(monkeypatch)
 
     deal_id = uuid4()
     await _insert_deal(deal_id)
@@ -297,11 +344,12 @@ async def test_memo_stream_heartbeats_during_long_runs(
     monkeypatch.setattr(deals_module, "_load_deal_payload", fake_load_payload)
 
     async def slow_analyst(payload: Any) -> None:
-        from app.streaming.broadcast import DONE_SENTINEL, get_broadcast
+        from app.streaming.broadcast import DONE_SENTINEL
 
-        bc = get_broadcast()
-        # Simulate a long analyst run: idle long enough for at least
-        # ~10 heartbeat intervals before publishing the terminal event.
+        # Wait for the subscriber, THEN idle: the 0.6s is the behaviour
+        # under test (~10 heartbeat intervals of subscriber idleness), not
+        # a guess at how long the subscriber takes to attach.
+        await bc.wait_for_subscriber(f"memo:{payload.deal_id}")
         await asyncio.sleep(0.6)
         await bc.publish(
             f"memo:{payload.deal_id}",
@@ -386,6 +434,7 @@ async def test_memo_persists_after_successful_run(
     from app.api import deals as deals_module
 
     spawned = _patch_background_tasks_to_fire(monkeypatch)
+    bc = _install_signalling_broadcast(monkeypatch)
 
     deal_id = uuid4()
     await _insert_deal(deal_id)
@@ -408,16 +457,12 @@ async def test_memo_persists_after_successful_run(
         real analyst does on the success path."""
         from datetime import UTC, datetime
 
-        from app.streaming.broadcast import (
-            DONE_SENTINEL,
-            get_broadcast,
-            get_memo_cache,
-        )
+        from app.streaming.broadcast import DONE_SENTINEL, get_memo_cache
 
-        bc = get_broadcast()
         cache = get_memo_cache()
         channel = f"memo:{payload.deal_id}"
-        await asyncio.sleep(0.02)
+        # Explicit sync with the SSE subscriber (see _install_signalling_broadcast).
+        await bc.wait_for_subscriber(channel)
 
         sections = [
             {

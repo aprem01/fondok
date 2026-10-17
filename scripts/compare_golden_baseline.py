@@ -53,31 +53,66 @@ DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-10-16.jso
 FIXTURE_DEAL_ID = "kimpton-angler-2026"
 
 
-def _bootstrap() -> None:
-    db = Path(tempfile.mkdtemp(prefix="fondok-golden-")) / "golden.db"
+# Side-effect contract (docs/TESTING.md, 2026-10-17). This script runs as its
+# own process, so the ``os.environ`` writes in ``_bootstrap`` can never reach
+# the shell that invoked it or a pytest run that follows — environment
+# variables only flow DOWN to children. Its only filesystem footprint is the
+# throwaway directory below (removed on exit since 2026-10-17; before that a
+# ``fondok-golden-*`` directory was left in $TMPDIR on every run, including
+# the run tests/test_run_compare.py spawns inside the suite) plus Python's
+# ``__pycache__``. It never opens ``apps/worker/fondok.db``: DATABASE_URL is
+# pinned before any ``app`` import and ``run_fixture`` verifies the engine
+# really is bound to the throwaway file.
+_TMP: tempfile.TemporaryDirectory[str] | None = None
+
+
+def _bootstrap() -> Path:
+    """Pin the throwaway database + import path for THIS process. Returns
+    the database path so ``run_fixture`` can verify the binding."""
+    global _TMP
+    _TMP = tempfile.TemporaryDirectory(prefix="fondok-golden-")
+    db = Path(_TMP.name) / "golden.db"
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db}"
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-key-not-real")
     for p in (WORKER, REPO / "packages" / "schemas-py"):
         if str(p) not in sys.path:
             sys.path.insert(0, str(p))
+    return db
 
 
-async def run_fixture() -> dict[str, dict[str, Any]]:
+def _cleanup() -> None:
+    global _TMP
+    if _TMP is not None:
+        _TMP.cleanup()
+        _TMP = None
+
+
+async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
     """``{engine: {status, outputs}}`` for one fresh Kimpton chain run."""
     from uuid import uuid4
 
-    from app.database import get_session_factory
+    from app.database import dispose_engine, get_engine, get_session_factory
     from app.migrations import run_startup_migrations
     from app.services.engine_runner import run_all_engines
 
-    await run_startup_migrations()
-    async with get_session_factory()() as session:
-        results = await run_all_engines(
-            session,
-            deal_id=FIXTURE_DEAL_ID,
-            tenant_id=str(uuid4()),
-            run_id=str(uuid4()),
+    bound = get_engine().url.database
+    if bound != str(db):
+        raise RuntimeError(
+            f"golden run is bound to {bound!r}, not its throwaway database {str(db)!r} "
+            "— an app module was imported before _bootstrap() pinned DATABASE_URL"
         )
+    try:
+        await run_startup_migrations()
+        async with get_session_factory()() as session:
+            results = await run_all_engines(
+                session,
+                deal_id=FIXTURE_DEAL_ID,
+                tenant_id=str(uuid4()),
+                run_id=str(uuid4()),
+            )
+    finally:
+        # Close the aiosqlite connections before the directory goes away.
+        await dispose_engine()
     # Round-trip through JSON so the comparison sees exactly what a baseline
     # file holds (and what engine_outputs persists).
     raw = {
@@ -134,8 +169,8 @@ def main() -> int:
     ap.add_argument("--write", type=Path, help="write a NEW baseline file instead of comparing")
     args = ap.parse_args()
 
-    _bootstrap()
-    head = asyncio.run(run_fixture())
+    db = _bootstrap()
+    head = asyncio.run(run_fixture(db))
 
     if args.write:
         from datetime import date
@@ -233,4 +268,6 @@ if __name__ == "__main__":
         # A completed report exits 0 whatever it found; a comparison that
         # could NOT run must not look like "no headline differences".
         sys.exit(2)
+    finally:
+        _cleanup()
     sys.exit(0)
