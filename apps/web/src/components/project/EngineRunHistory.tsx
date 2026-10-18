@@ -18,6 +18,7 @@ import {
   useEngineRunHistory,
 } from '@/lib/hooks/useEngineOutputs';
 import { cn } from '@/lib/format';
+import { isWorkerConnected } from '@/lib/api';
 
 interface Props {
   dealId: string | number;
@@ -32,9 +33,14 @@ export default function EngineRunHistory({ dealId, seedDemo = false }: Props) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const seededRef = useRef(false);
 
-  // Seed demo data exactly once if requested.
+  // Seed demo data exactly once if requested — and only in the worker-less
+  // build. With the service connected the real run history is the only
+  // source: a fresh page load with no in-session run renders nothing here
+  // (EngineHeader already shows the persisted last-run time). Seeding on
+  // prod showed every tester a fabricated "Last run: 3 minutes ago · 8
+  // engines · $0.00 · Run #1" footer (same class as FON-105).
   useEffect(() => {
-    if (!seedDemo || seededRef.current) return;
+    if (!seedDemo || seededRef.current || isWorkerConnected()) return;
     if (history.length > 0) {
       seededRef.current = true;
       return;

@@ -1919,7 +1919,7 @@ function SnapshotTile({
       <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', color: palette.textMuted, textTransform: 'uppercase', lineHeight: 1.3 }}>
         {m.label}
       </span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 16, fontWeight: 600, color: palette.ink, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 16, fontWeight: 600, color: palette.ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
         <ProvenanceDot state={m.state} size={7} />
         {m.value}
       </span>
