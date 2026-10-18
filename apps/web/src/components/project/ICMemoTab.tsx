@@ -1564,9 +1564,9 @@ export default function ICMemoTab({ project }: { project: Project }) {
                       {grp.title}
                     </div>
                     {grp.rows.map(([label, value]) => (
-                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 12.5, height: 34, borderBottom: '1px solid #f7f6f3' }}>
-                        <span style={{ color: '#7c8088' }}>{label}</span>
-                        <span style={{ color: palette.ink, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 12.5, minHeight: 34, padding: '5px 0', borderBottom: '1px solid #f7f6f3' }}>
+                        <span style={{ color: '#7c8088', flex: 1, minWidth: 0, lineHeight: 1.25 }}>{label}</span>
+                        <span style={{ color: palette.ink, fontWeight: 500, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{value}</span>
                       </div>
                     ))}
                     <Link href={`/projects/${dealId}?tab=${grp.tab}&sub=${grp.sub}`} style={{ display: 'inline-block', fontSize: 11, color: LINK, fontWeight: 600, paddingTop: 9, textDecoration: 'none' }}>

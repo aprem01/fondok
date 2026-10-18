@@ -667,7 +667,7 @@ function SummaryStatement({ cf, returns }: { cf: CashFlowStatementOutput; return
             columns={headers}
             gridTemplateColumns={statementGridCols(n)}
             rows={summaryStatementRows(cf, n)}
-            footnote="Every row is a cash_flow engine statement line read by label — a line the engine did not emit shows —. Nothing is re-derived here except the cumulative levered cash flow, which is labelled calculated. Distributions are the Partnership allocation of Net Cash Flow to Equity."
+            footnote="Every row is a line of the Cash Flow engine's statement, read by label — a line the engine did not publish shows —. Nothing is re-derived here except the cumulative levered cash flow, which is labelled calculated. Distributions are the Partnership allocation of Net Cash Flow to Equity."
           />
         </div>
         <div

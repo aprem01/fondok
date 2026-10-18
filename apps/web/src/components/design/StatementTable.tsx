@@ -171,14 +171,19 @@ export function StatementTable({
                     position: 'sticky',
                     left: 0,
                     zIndex: 1,
-                    whiteSpace: 'nowrap',
+                    // The column is a fixed 230px: a label longer than that must
+                    // wrap inside its cell, never run under the first value column
+                    // ("Cumulative levered cash flow (calculated)", Cash Flow tab).
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    lineHeight: 1.25,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 7,
                   }}
                 >
                   {showDots && row.state && <ProvenanceDot state={row.state} size={8} />}
-                  <span>{row.label}</span>
+                  <span style={{ minWidth: 0 }}>{row.label}</span>
                 </div>
                 {row.cells.map((c, ci) => {
                   const color =
