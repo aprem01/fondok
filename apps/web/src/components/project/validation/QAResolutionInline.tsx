@@ -47,6 +47,7 @@ import {
   type BrokerQAPair,
   type BrokerQAVerdict,
   type BrokerQuestion,
+  userMessage,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { ProposedOverridesList } from './ProposedOverridesList';
@@ -150,7 +151,7 @@ export function QAResolutionInline({
         type: 'success',
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       setError(msg);
       setPhase('error');
       // Distinguished surface for the per-deal budget cap.
@@ -181,7 +182,7 @@ export function QAResolutionInline({
           { type: 'success' },
         );
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Apply failed: ${msg}`, { type: 'error' });
       }
     },

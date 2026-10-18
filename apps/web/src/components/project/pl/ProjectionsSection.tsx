@@ -921,7 +921,7 @@ export default function ProjectionsSection({
             <span
               data-testid="noi-pin-notice"
               className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-warn-500/30 bg-warn-50 px-2 py-1 text-[11px] font-medium text-warn-700 max-w-[560px]"
-              title="field_overrides.noi_override_by_year pins the operating NOI path used by the Debt and Returns engines to an analyst-entered schedule (FON-67 reconciliation lever). Clear it to let NOI follow the operating assumptions again."
+              title="An analyst-entered NOI schedule is pinned on this deal, so Debt and Returns read it instead of the operating model. Clear the pin to let NOI follow the operating assumptions again."
             >
               <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
               NOI pinned to an analyst schedule — operating assumption edits won&apos;t move NOI until the pin is cleared

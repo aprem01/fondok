@@ -5,7 +5,7 @@ const features = [
     icon: Workflow,
     title: 'Decision infrastructure',
     body:
-      'Multi-agent pipeline routes each task to the right model — Haiku for classification, Sonnet for extraction, Opus for memo synthesis. Every step is observable, auditable, and costed.',
+      'A multi-agent pipeline routes each task to the right model — classification, extraction and drafting models, each step audited and costed.',
   },
   {
     icon: Hotel,

@@ -9,17 +9,20 @@
 // sets (overview, documents, market, analysis, scenarios, critic findings) were
 // removed 2026-10-14 — nothing imported them, and nothing may again.
 
+// The worker-less demo build's persona. Deliberately neutral: it must never
+// name a real institution or a real person — if Clerk fails to hydrate on a
+// preview deploy, THIS is what every visitor would see in the sidebar.
 export const workspace = {
-  name: 'Brookfield Real Estate',
-  plan: 'Pro Plan',
-  url: 'brookfield',
+  name: 'Demo Workspace',
+  plan: 'Demo',
+  url: 'demo',
 };
 
 export const currentUser = {
-  name: 'Eshan Mehta',
-  role: 'Senior Analyst',
-  initials: 'EM',
-  email: 'eshan@brookfield.com',
+  name: 'Demo Analyst',
+  role: 'Analyst',
+  initials: 'DA',
+  email: 'analyst@example.com',
 };
 
 export type ProjectStatus = 'Draft' | 'In Review' | 'IC Ready' | 'Archived';
@@ -69,60 +72,6 @@ export const projects: Project[] = [
     status: 'Draft', dealStage: 'Under NDA', revpar: 210, irr: 14.3, risk: 'Low',
     aiConfidence: 0, assignee: 'SP', docs: '0/0', noDocs: true, updatedAt: '7d ago',
   },
-];
-
-export const compSets = [
-  {
-    name: 'Chicago Full-Service', properties: 6,
-    description: 'Luxury & full-service hotels in Chicago CBD',
-    usedIn: ['Marriott Magnificent Mile', 'Hyatt Regency Waterfront'],
-    starred: true, updated: 'Dec 15, 2025',
-  },
-  {
-    name: 'Austin Select-Service', properties: 8,
-    description: 'Select-service hotels near downtown Austin',
-    usedIn: ['Hilton Garden Inn Downtown'],
-    hidden: true, updated: 'Dec 10, 2025',
-  },
-  {
-    name: 'Nashville Airport', properties: 5,
-    description: 'Airport hotels serving BNA',
-    hidden: true, updated: 'Dec 1, 2025',
-  },
-];
-
-export const marketDataLib = [
-  { market: 'Chicago, IL', submarket: 'Magnificent Mile/Gold Coast', revpar: 189, adr: 245, occ: 77.1, yoy: 8.2, source: 'STR' },
-  { market: 'Austin, TX', submarket: 'Downtown', revpar: 142, adr: 198, occ: 71.8, yoy: 5.4, source: 'STR' },
-  { market: 'Seattle, WA', submarket: 'Waterfront/Pike Place', revpar: 210, adr: 285, occ: 73.7, yoy: 12.1, source: 'STR' },
-  { market: 'Denver, CO', submarket: 'Airport', revpar: 98, adr: 142, occ: 69.0, yoy: -2.3, source: 'STR' },
-];
-
-export const templates = [
-  { name: 'Standard Full-Service', description: 'Default assumptions for full-service hotel acquisitions',
-    hold: '5 years', ltv: '65%', exitCap: '7.0%', usedIn: 8 },
-  { name: 'Value-Add Select-Service', description: 'For select-service hotels with renovation potential',
-    hold: '7 years', ltv: '60%', exitCap: '7.5%', usedIn: 4 },
-  { name: 'Core Luxury', description: 'Conservative assumptions for core luxury assets',
-    hold: '10 years', ltv: '55%', exitCap: '5.5%', usedIn: 2 },
-];
-
-export const teamMembers = [
-  { name: 'Sarah Chen', email: 'sarah@company.com', role: 'Admin', initials: 'SC' },
-  { name: 'Mike Johnson', email: 'mike@company.com', role: 'Analyst', initials: 'MJ' },
-  { name: 'Alex Wong', email: 'alex@company.com', role: 'Analyst', initials: 'AW' },
-  { name: 'Emily Davis', email: 'emily@company.com', role: 'Principal', initials: 'ED', pending: true },
-];
-
-export const notificationDefaults = {
-  projectStatus: true, documentUploads: true, aiExtraction: true,
-  teamActivity: false, weeklyDigest: true,
-};
-
-export const integrations = [
-  { name: 'STR', description: 'Competitive set and market data', status: 'Coming Soon' },
-  { name: 'Kalibri Labs', description: 'Revenue optimization analytics', status: 'Coming Soon' },
-  { name: 'CoStar', description: 'Commercial real estate data', status: 'Coming Soon' },
 ];
 
 export const dealStages: DealStage[] = ['Teaser', 'Under NDA', 'LOI', 'PSA'];

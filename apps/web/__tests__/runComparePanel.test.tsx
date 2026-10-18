@@ -138,6 +138,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import RunComparePanel from '@/components/project/RunComparePanel';
+import { fmtRunTime } from '@/lib/runCompare';
 
 describe('RunComparePanel', () => {
   beforeEach(() => {
@@ -162,7 +163,8 @@ describe('RunComparePanel', () => {
     expect((screen.getByTestId('run-compare-base') as HTMLSelectElement).value).toBe('fresh-prev-0000');
     const note = screen.getByTestId('run-compare-fallback-note');
     expect(note.textContent).toContain('No complete run finished before 2026-10-15 21:40 UTC');
-    expect(note.textContent).toContain('fresh-pr');
+    expect(note.textContent).toContain(fmtRunTime('2026-10-17T11:00:30+00:00'));
+    expect(note.textContent).not.toContain('fresh-pr');
     expect(screen.queryByText(/no complete run before this date/)).toBeNull();
     // Moving the date is the analyst's call — no fallback then (worker still names none).
     fireEvent.change(screen.getByTestId('run-compare-cutoff'), { target: { value: '2026-10-17T10:30' } });

@@ -1,33 +1,44 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, Loader2, Trash2, ExternalLink, Mail } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { notificationDefaults, integrations } from '@/lib/mockData';
 import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
-import { api, isWorkerConnected, WorkerError } from '@/lib/api';
-import { useCurrentOrg, useOrgMembers } from '@/lib/auth';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
+import { useCurrentOrg, useOrgActions, useOrgMembers } from '@/lib/auth';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
 import { Sparkles, RotateCcw } from 'lucide-react';
 
-const tabs = ['Team', 'Workspace', 'Notifications', 'Integrations'];
+// Notifications and Integrations were tabs over fixtures: toggles that toasted
+// "Preferences saved" without sending anything, and a vendor list relabelled
+// "Enterprise plan". Neither is backed, so neither is offered.
+const tabs = ['Team', 'Workspace'];
 
-// Surface-level email check — good enough to gate the "Send Invite" CTA;
-// the worker will validate server-side once the invites endpoint lands.
+// Surface-level email check — gates the "Send Invite" CTA; Clerk validates
+// server-side when the invitation is created.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Fondok's own contact for enterprise questions — never hard-coded. */
+const SALES_EMAIL = process.env.NEXT_PUBLIC_SALES_EMAIL ?? '';
+
+type InviteRole = 'org:member' | 'org:admin';
+const INVITE_ROLES: { value: InviteRole; label: string }[] = [
+  { value: 'org:member', label: 'Member' },
+  { value: 'org:admin', label: 'Admin' },
+];
 
 export default function SettingsPage() {
   const [tab, setTab] = useState('Team');
-  const [notifs, setNotifs] = useState(notificationDefaults);
   const { toast } = useToast();
   // Real workspace + roster from Clerk (empty + flagged in demo mode).
   const org = useCurrentOrg();
   const { members, loading: membersLoading, demo: membersDemo } = useOrgMembers();
+  const { inviteMember, openOrganizationProfile } = useOrgActions();
   const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
   const [resetting, setResetting] = useState(false);
   const workerConnected = isWorkerConnected();
@@ -36,68 +47,40 @@ export default function SettingsPage() {
   // affordance available to operators while keeping it out of customer view.
   const showDangerZone = process.env.NEXT_PUBLIC_SHOW_DANGER_ZONE === 'true';
 
-  // Invite form state — kept local; no remote invites API today.
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('Analyst');
+  const [inviteRole, setInviteRole] = useState<InviteRole>('org:member');
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
-  // Workspace fields seed from the real Clerk org once it hydrates.
-  // (Renaming an org needs Clerk's admin API — not wired yet — so edits
-  // stay local + toast; the field at least shows the true workspace.)
-  const [workspaceName, setWorkspaceName] = useState('');
-  const [workspaceUrl, setWorkspaceUrl] = useState('');
-  const wsSeeded = useRef(false);
-  useEffect(() => {
-    if (wsSeeded.current) return;
-    const nm = (org.name || '').trim();
-    if (nm) {
-      setWorkspaceName(org.name);
-      setWorkspaceUrl(org.url || '');
-      wsSeeded.current = true;
-    }
-  }, [org.name, org.url]);
-  const [defaultLtv, setDefaultLtv] = useState('65%');
-  const [defaultRate, setDefaultRate] = useState('6.25%');
-
-  // Debounce notification preference toasts so flipping several toggles
-  // back-to-back collapses to a single "Preferences saved" notice.
-  const notifDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const notifFirstRender = useRef(true);
-  useEffect(() => {
-    if (notifFirstRender.current) {
-      notifFirstRender.current = false;
-      return;
-    }
-    if (notifDebounce.current) clearTimeout(notifDebounce.current);
-    notifDebounce.current = setTimeout(() => {
-      toast('Preferences saved', { type: 'success' });
-    }, 500);
-    return () => {
-      if (notifDebounce.current) clearTimeout(notifDebounce.current);
-    };
-  }, [notifs, toast]);
-
-  const onSendInvite = () => {
+  const onSendInvite = async () => {
     const email = inviteEmail.trim();
     if (!EMAIL_RE.test(email)) {
-      toast('Enter a valid email address', { type: 'error' });
+      setInviteError('Enter a valid email address.');
       return;
     }
-    toast(`Invitation sent to ${email}`, { type: 'success' });
-    setInviteEmail('');
+    if (!inviteMember) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      await inviteMember(email, inviteRole);
+      toast(`Invitation sent to ${email}`, { type: 'success' });
+      setInviteEmail('');
+    } catch (err) {
+      // Clerk's error carries a readable `errors[0].longMessage`; fall back to
+      // a plain sentence, never the raw object.
+      const clerkMsg = (err as { errors?: { longMessage?: string; message?: string }[] } | null)?.errors?.[0];
+      setInviteError(clerkMsg?.longMessage ?? clerkMsg?.message ?? 'The invitation could not be sent. Try again.');
+    } finally {
+      setInviting(false);
+    }
   };
 
-  const onContactSales = () => {
-    const url =
-      'mailto:sales@anthropic.com?subject=Fondok+AI+Enterprise+Inquiry';
+  const onContactFondok = () => {
+    if (!SALES_EMAIL) return;
+    const url = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent('Fondok enterprise inquiry')}`;
     // _blank keeps the mail client invocation from replacing the tab in
     // browsers that route the protocol via a web client.
     window.open(url, '_blank');
-  };
-
-  const onSaveDefaults = () => {
-    // No-op persistence today — mock workspace defaults aren't sent anywhere.
-    // Surface a toast so users get feedback that their click registered.
-    toast('Workspace defaults saved', { type: 'success' });
   };
 
   const openResetModal = async () => {
@@ -106,8 +89,7 @@ export default function SettingsPage() {
       const deals = await api.deals.list();
       setConfirmReset({ count: deals.length });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast(`Couldn't list deals: ${msg}`, { type: 'error' });
+      toast(`Couldn't list deals — ${userMessage(err)}`, { type: 'error' });
     }
   };
 
@@ -116,7 +98,7 @@ export default function SettingsPage() {
     try {
       const deals = await api.deals.list();
       if (deals.length === 0) {
-        toast('No worker deals to archive', { type: 'info' });
+        toast('No deals to archive', { type: 'info' });
         setConfirmReset(null);
         setResetting(false);
         return;
@@ -125,19 +107,7 @@ export default function SettingsPage() {
       let failed = 0;
       for (const d of deals) {
         try {
-          // Worker exposes DELETE /deals/{id}; if the endpoint isn't wired
-          // we still surface the failure per-deal rather than aborting.
-          await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/deals/${d.id}`, {
-            method: 'DELETE',
-          }).then((r) => {
-            if (!r.ok) {
-              throw new WorkerError(
-                `DELETE /deals/${d.id} → ${r.status}`,
-                r.status,
-                '',
-              );
-            }
-          });
+          await api.deals.delete(d.id);
           archived += 1;
           toast(`Archived ${d.name || d.id.slice(0, 8)}`, {
             type: 'info',
@@ -145,8 +115,7 @@ export default function SettingsPage() {
           });
         } catch (err) {
           failed += 1;
-          const msg = err instanceof Error ? err.message : String(err);
-          toast(`Couldn't archive ${d.name}: ${msg}`, { type: 'error' });
+          toast(`Couldn't archive ${d.name} — ${userMessage(err)}`, { type: 'error' });
         }
       }
       if (failed === 0) {
@@ -164,6 +133,24 @@ export default function SettingsPage() {
       setConfirmReset(null);
     }
   };
+
+  const orgManaged = (
+    <span className="text-[11.5px] text-ink-500">
+      Managed in your organization settings
+      {openOrganizationProfile && (
+        <>
+          {' · '}
+          <button
+            type="button"
+            onClick={openOrganizationProfile}
+            className="text-brand-700 hover:text-brand-900 font-medium inline-flex items-center gap-1"
+          >
+            Open <ExternalLink size={11} aria-hidden="true" />
+          </button>
+        </>
+      )}
+    </span>
+  );
 
   return (
     <div className="px-8 py-8 max-w-[1100px]">
@@ -188,43 +175,66 @@ export default function SettingsPage() {
             title="Team & roles"
             body={
               <>
-                Invite your colleagues. <span className="font-semibold">Analysts</span> can run models
-                and edit assumptions. <span className="font-semibold">Principals</span> can approve
-                IC memos. <span className="font-semibold">Admins</span> can change workspace settings
-                and manage billing.
+                Invite your colleagues. <span className="font-semibold">Members</span> can run models
+                and edit assumptions. <span className="font-semibold">Admins</span> can also change
+                workspace settings and manage the team.
               </>
             }
           />
-          <Card className="p-5">
-            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
-            <p className="text-[12px] text-ink-500 mb-4">Add new members to your workspace. They'll receive an email invitation.</p>
-            <div className="flex items-center gap-2">
-              <input
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') onSendInvite();
-                }}
-                placeholder="colleague@company.com"
-                type="email"
-                className="flex-1 px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-                className="px-3 py-2 text-[13px] bg-white border border-border rounded-md"
-              >
-                <option>Analyst</option><option>Principal</option><option>Admin</option>
-              </select>
-              <Button variant="primary" onClick={onSendInvite}>Send Invite</Button>
-            </div>
-          </Card>
+          {inviteMember ? (
+            <Card className="p-5" data-testid="settings-invite">
+              <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
+              <p className="text-[12px] text-ink-500 mb-4">Add a colleague to your workspace. They receive an email invitation from Fondok.</p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setInviteError(null); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void onSendInvite();
+                  }}
+                  placeholder="colleague@company.com"
+                  type="email"
+                  aria-label="Colleague's email"
+                  className="flex-1 px-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as InviteRole)}
+                  aria-label="Role"
+                  className="px-3 py-2 text-[13px] bg-white border border-border rounded-md"
+                >
+                  {INVITE_ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <Button variant="primary" onClick={() => void onSendInvite()} disabled={inviting}>
+                  {inviting && <Loader2 size={12} className="animate-spin" />}
+                  {inviting ? 'Sending…' : 'Send Invite'}
+                </Button>
+              </div>
+              {inviteError && (
+                <p className="text-[12px] text-danger-700 mt-2" role="alert">{inviteError}</p>
+              )}
+            </Card>
+          ) : (
+            <Card className="p-5" data-testid="settings-invite-unavailable">
+              <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
+              <p className="text-[12px] text-ink-500">
+                {membersDemo
+                  ? 'Team invitations are sent through your organization once you sign in.'
+                  : 'Invitations are available once your workspace is active.'}
+              </p>
+            </Card>
+          )}
 
           <Card>
-            <div className="px-5 py-4 border-b border-border">
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
               <h3 className="text-[14px] font-semibold text-ink-900">
                 Team Members{!membersLoading && members.length > 0 ? ` (${members.length})` : ''}
               </h3>
+              {openOrganizationProfile && (
+                <Button variant="secondary" size="sm" onClick={openOrganizationProfile}>
+                  Manage roles <ExternalLink size={11} aria-hidden="true" />
+                </Button>
+              )}
             </div>
             {membersLoading ? (
               <div className="px-5 py-6 space-y-3">
@@ -265,11 +275,13 @@ export default function SettingsPage() {
                       <div className="text-[11.5px] text-ink-500">{m.email}</div>
                     </div>
                     <Badge tone={m.role === 'org:admin' ? 'blue' : 'gray'}>{roleLabel}</Badge>
-                    <KebabMenu
-                      items={[
-                        { label: 'Manage in organization', onSelect: () => toast('Roles are managed in your organization settings', { type: 'info' }) },
-                      ]}
-                    />
+                    {openOrganizationProfile && (
+                      <KebabMenu
+                        items={[
+                          { label: 'Manage in organization…', onSelect: openOrganizationProfile },
+                        ]}
+                      />
+                    )}
                   </div>
                 );
               })
@@ -282,51 +294,43 @@ export default function SettingsPage() {
         <div className="space-y-5">
           <IntroCard
             dismissKey="settings-workspace-intro"
-            title="Your firm's defaults"
+            title="Your workspace"
             body={
               <>
-                Workspace name, URL, and the default underwriting assumptions (LTV, interest rate,
-                hold period) that pre-fill every new deal. Setting smart defaults here saves you
-                from re-entering the same numbers on each new deal.
+                Your workspace is the institution Fondok registered for you. Its name and address are
+                managed in your organization settings; the hint preferences below are yours.
               </>
             }
           />
-          <Card className="p-5">
-            <h3 className="text-[14px] font-semibold text-ink-900 mb-4">Workspace Details</h3>
+          <Card className="p-5" data-testid="settings-workspace">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className="text-[14px] font-semibold text-ink-900">Workspace Details</h3>
+              {orgManaged}
+            </div>
             <div className="space-y-4">
-              <Field
-                label="Workspace Name"
-                value={workspaceName}
-                onChange={setWorkspaceName}
-                onBlur={() => toast('Workspace name updated', { type: 'success' })}
-              />
-              <Field
-                label="Workspace URL"
-                value={workspaceUrl}
-                onChange={setWorkspaceUrl}
-                onBlur={() => toast('Workspace URL updated', { type: 'success' })}
-                prefix="fondok.ai/"
-              />
+              <ReadOnlyField label="Workspace Name" value={org.name} />
+              <ReadOnlyField label="Workspace URL" value={org.url && org.url !== 'none' ? org.url : '—'} prefix="fondok.ai/" />
             </div>
-          </Card>
-
-          <Card className="p-5">
-            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Default Assumptions</h3>
-            <p className="text-[12px] text-ink-500 mb-4">Set default values for new underwriting projects.</p>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div>
-                <label className="block text-[12px] font-medium text-ink-700 mb-1.5">Default Hold Period</label>
-                <select defaultValue="5 years" className="w-full px-3 py-2 text-[13px] bg-white border border-border rounded-md">
-                  <option>3 years</option><option>5 years</option><option>7 years</option><option>10 years</option>
-                </select>
-              </div>
-              <Field label="Default LTV" value={defaultLtv} onChange={setDefaultLtv} />
-              <Field label="Default Interest Rate" value={defaultRate} onChange={setDefaultRate} />
-            </div>
-            <Button variant="primary" onClick={onSaveDefaults}>Save Defaults</Button>
           </Card>
 
           <HintsSection />
+
+          {SALES_EMAIL && (
+            <Card className="p-5 bg-brand-50 border-brand-100" data-testid="settings-contact">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-ink-900">Integrations and custom data feeds</h3>
+                  <p className="text-[12px] text-ink-700 mt-1">
+                    Comp sets and market data come from the STR and market studies uploaded on each deal.
+                    For a direct data feed or a custom integration, talk to Fondok.
+                  </p>
+                </div>
+                <Button variant="secondary" onClick={onContactFondok}>
+                  <Mail size={13} aria-hidden="true" /> Contact Fondok
+                </Button>
+              </div>
+            </Card>
+          )}
 
           {workerConnected && showDangerZone && (
             <Card className="p-5 border-danger-500/40">
@@ -402,108 +406,28 @@ export default function SettingsPage() {
           </Card>
         </div>
       )}
-
-      {tab === 'Notifications' && (
-        <>
-        <IntroCard
-          dismissKey="settings-notifications-intro"
-          title="Email notifications"
-          body={
-            <>
-              Pick which events email you. The defaults are sensible for most workflows —
-              status changes, document uploads, AI extraction completion. Toggle anything off
-              if your inbox is getting noisy.
-            </>
-          }
-        />
-        <Card className="p-5">
-          <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Email Notifications</h3>
-          <p className="text-[12px] text-ink-500 mb-5">Choose what updates you want to receive via email.</p>
-          {[
-            { k: 'projectStatus', t: 'Project status changes', d: 'When a project moves to a new status' },
-            { k: 'documentUploads', t: 'Document uploads', d: 'When new documents are uploaded to a project' },
-            { k: 'aiExtraction', t: 'AI extraction complete', d: 'When AI finishes extracting data from documents' },
-            { k: 'teamActivity', t: 'Team member activity', d: 'When team members make significant changes' },
-            { k: 'weeklyDigest', t: 'Weekly digest', d: 'Summary of all project activity' },
-          ].map(n => (
-            <div key={n.k} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-              <div>
-                <div className="text-[13px] font-medium text-ink-900">{n.t}</div>
-                <div className="text-[12px] text-ink-500 mt-0.5">{n.d}</div>
-              </div>
-              <Toggle on={(notifs as any)[n.k]} onChange={v => setNotifs({ ...notifs, [n.k]: v })} />
-            </div>
-          ))}
-        </Card>
-        </>
-      )}
-
-      {tab === 'Integrations' && (
-        <div className="space-y-5">
-          <IntroCard
-            dismissKey="settings-integrations-intro"
-            title="External data sources"
-            body={
-              <>
-                Connect data providers we can pull from. <span className="font-semibold">STR</span> (Smith
-                Travel Research) is the gold standard for hotel performance data — RevPAR, occupancy,
-                comp set benchmarks. Most integrations are gated to Enterprise plans.
-              </>
-            }
-          />
-          <Card className="p-5">
-            <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Data Sources</h3>
-            <p className="text-[12px] text-ink-500 mb-5">Connect external data sources to enhance your underwriting.</p>
-            {integrations.map((i, idx) => (
-              <div key={i.name} className={cn('flex items-center justify-between py-4', idx < integrations.length - 1 && 'border-b border-border')}>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-md bg-brand-50 flex items-center justify-center text-[11px] font-bold text-brand-700">
-                    {i.name.charAt(0)}
-                  </div>
-                  <div>
-                    <div className="text-[13px] font-medium text-ink-900">{i.name}</div>
-                    <div className="text-[11.5px] text-ink-500">{i.description}</div>
-                  </div>
-                </div>
-                <Badge tone="gray">{i.status === 'Coming Soon' ? 'Enterprise plan' : i.status}</Badge>
-              </div>
-            ))}
-          </Card>
-
-          <Card className="p-5 bg-brand-50 border-brand-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-[14px] font-semibold text-ink-900">Enterprise Integrations</h3>
-                <p className="text-[12px] text-ink-700 mt-1">Contact us to discuss custom integrations with your existing systems.</p>
-              </div>
-              <Button variant="secondary" onClick={onContactSales}>Contact Sales</Button>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }
 
-function Field({
-  label, value, onChange, onBlur, prefix,
+function ReadOnlyField({
+  label, value, prefix,
 }: {
   label: string;
   value: string;
-  onChange: (v: string) => void;
-  onBlur?: () => void;
   prefix?: string;
 }) {
   return (
     <div>
       <label className="block text-[12px] font-medium text-ink-700 mb-1.5">{label}</label>
-      <div className="flex items-center bg-white border border-border rounded-md focus-within:ring-2 focus-within:ring-brand-100 focus-within:border-brand-500">
+      <div className="flex items-center bg-ink-50 border border-border rounded-md">
         {prefix && <span className="pl-3 text-[12.5px] text-ink-500">{prefix}</span>}
         <input
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          className="flex-1 px-3 py-2 text-[13px] bg-transparent rounded-md focus:outline-none"
+          readOnly
+          aria-readonly="true"
+          aria-label={label}
+          className="flex-1 px-3 py-2 text-[13px] bg-transparent rounded-md text-ink-700 focus:outline-none"
         />
       </div>
     </div>

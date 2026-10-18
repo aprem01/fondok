@@ -294,18 +294,77 @@ export const INDEX_ASSUMPTIONS: { key: string; label: string; unit: 'growth' | '
   { key: 'index_ari_target', label: 'ADR penetration target (ARI)', unit: 'index' },
 ];
 
-/** "Doc.pdf, p.6 (field)" for a document figure; the inputs for a computed one. */
+/**
+ * "Doc.pdf, p.6" for a document figure; the inputs for a computed one. The
+ * extraction field path is NOT printed — a client reads the document and page.
+ * ``figureSourceTitle`` carries the path for a hover tooltip (audit).
+ */
 export function figureSourceText(f: IndexFigure | undefined | null): string {
+  return figureSource(f, false);
+}
+
+/** The same attribution with each input's extraction field path, for `title=`. */
+export function figureSourceTitle(f: IndexFigure | undefined | null): string {
+  return figureSource(f, true);
+}
+
+function figureSource(f: IndexFigure | undefined | null, withPath: boolean): string {
   if (!f) return '—';
   if (f.source === 'override') return `Your override${f.detail ? ` — ${f.detail}` : ''}`;
   // A stored value the model does not apply — never presented as an active override.
   if (f.source === 'ignored_override') return `Stored override ignored${f.detail ? ` — ${f.detail}` : ''}`;
   const refs = (f.inputs ?? []).map(
-    (r) => `${r.doc_name ?? 'document'}${r.page ? `, p.${r.page}` : ''} (${r.field_name})`,
+    (r) =>
+      `${r.doc_name ?? 'document'}${r.page ? `, p.${r.page}` : ''}${withPath ? ` (${r.field_name})` : ''}`,
   );
   if (f.source === 'document') return refs.join('; ') || 'document';
   if (f.source === 'computed') return `Computed${f.detail ? `: ${f.detail}` : ''} — ${refs.join('; ')}`;
   return f.detail ?? 'No source';
+}
+
+/**
+ * One readable sentence from the worker's by-year "no benchmark" detail.
+ *
+ * The worker phrases it as two clauses with the method label lower-cased and
+ * a doubled full stop — "No market occupancy growth assumption to carry the
+ * str competitive set past Year 1 — No market occupancy growth forecast in
+ * the uploaded reports — enter your own.." — once per year, for occupancy and
+ * ADR. The grid prints it once, above the table, as: "No market occupancy
+ * growth forecast in the uploaded reports — enter one to carry the STR
+ * competitive set past Year 1."
+ */
+export function plainIndexDetail(detail: string): string {
+  const properCase = (s: string) =>
+    s
+      .replace(/\bstr\b/gi, 'STR')
+      .replace(/\bcostar\b/gi, 'CoStar')
+      .replace(/\bcbre\b/gi, 'CBRE')
+      .replace(/\badr\b/g, 'ADR');
+  const m = detail.match(
+    /^No market (occupancy|ADR|adr) growth assumption to carry the (.+?) past Year 1 — No market (?:occupancy|ADR|adr) growth forecast in the uploaded reports — enter your own\.*$/i,
+  );
+  if (m) {
+    const metric = m[1].toLowerCase() === 'adr' ? 'ADR' : 'occupancy';
+    return `No market ${metric} growth forecast in the uploaded reports — enter one to carry the ${properCase(m[2])} past Year 1.`;
+  }
+  // Generic cleaning: proper-case the method label, drop repeated clauses,
+  // collapse a doubled full stop.
+  const clauses = detail.split(' — ').map((c) => properCase(c.trim())).filter(Boolean);
+  const unique = clauses.filter((c, i) => clauses.indexOf(c) === i);
+  return unique.join(' — ').replace(/\.{2,}$/, '.').replace(/([^.])$/, '$1.');
+}
+
+/** Distinct, cleaned reasons across the by-year rows whose benchmark is missing. */
+export function byYearMissingBenchmarkNotes(rows: IndexYearRow[]): string[] {
+  const seen: string[] = [];
+  for (const r of rows) {
+    for (const fig of [r.benchmark_occupancy, r.benchmark_adr]) {
+      if (fig.value != null || !fig.detail) continue;
+      const text = plainIndexDetail(fig.detail);
+      if (!seen.includes(text)) seen.push(text);
+    }
+  }
+  return seen;
 }
 
 /** The accepted target units, for the refusal message. */
@@ -381,7 +440,7 @@ function AssumptionRow({
           {fmtAssumption(figure?.value, unit)}
         </span>
       </td>
-      <td className="py-1.5 pr-3 text-ink-500" data-testid={`index-assumption-source-${overrideKey}`}>
+      <td className="py-1.5 pr-3 text-ink-500" data-testid={`index-assumption-source-${overrideKey}`} title={figureSourceTitle(figure)}>
         {figureSourceText(figure)}
       </td>
       <td className="py-1.5 whitespace-nowrap">
@@ -609,6 +668,13 @@ function IndexByYearGrid({
           {data.by_year_disabled_reason ?? `Targets by year do not feed the ${PL_SUB_LABEL.projections} yet.`}
         </div>
       )}
+      {byYearMissingBenchmarkNotes(rows).length > 0 && (
+        <div className="text-[11px] text-ink-600" data-testid="index-by-year-missing-benchmark">
+          {byYearMissingBenchmarkNotes(rows).map((t) => (
+            <div key={t}>{t}</div>
+          ))}
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]" data-testid="index-by-year-table">
           <thead>
@@ -630,17 +696,17 @@ function IndexByYearGrid({
             {rows.map((r, k) => (
               <tr key={r.year} className="border-b border-border/40 align-top" data-testid={`index-by-year-row-${r.year}`}>
                 <td className="py-1.5 pr-3 whitespace-nowrap text-ink-900 font-medium">{yearLabel(r)}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceText(r.benchmark_occupancy)}>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceTitle(r.benchmark_occupancy)}>
                   <div>{fmtOcc(r.benchmark_occupancy.value)}</div>
                   <div className="text-[10px] text-ink-400 max-w-[200px] truncate" data-testid={`index-by-year-bench-occ-src-${r.year}`}>
-                    {r.benchmark_occupancy.value == null ? r.benchmark_occupancy.detail ?? 'No source' : figureSourceText(r.benchmark_occupancy)}
+                    {r.benchmark_occupancy.value == null ? '—' : figureSourceText(r.benchmark_occupancy)}
                   </div>
                   <BasisLine fig={r.benchmark_occupancy} testId={`index-by-year-bench-occ-basis-${r.year}`} />
                 </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceText(r.benchmark_adr)}>
+                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceTitle(r.benchmark_adr)}>
                   <div>{fmtAdr(r.benchmark_adr.value)}</div>
                   <div className="text-[10px] text-ink-400 max-w-[200px] truncate">
-                    {r.benchmark_adr.value == null ? r.benchmark_adr.detail ?? 'No source' : figureSourceText(r.benchmark_adr)}
+                    {r.benchmark_adr.value == null ? '—' : figureSourceText(r.benchmark_adr)}
                   </div>
                   <BasisLine fig={r.benchmark_adr} testId={`index-by-year-bench-adr-basis-${r.year}`} />
                 </td>

@@ -118,9 +118,9 @@ const TAB_GUIDE: Record<string, { title: string; guide: string; suggestions: str
   },
   'ic-memo': {
     title: TAB_LABEL.icMemo,
-    guide: "The IC-ready one-pager — deal summary, Fondok's recommendation, thesis, highlights, and risks. Configure the detail below, then export the PDF.",
+    guide: "The IC-ready one-pager — deal summary, the model's assessment, your recommendation, thesis, highlights, and risks. Configure the detail below, then download the Excel model.",
     suggestions: [
-      'Why does Fondok recommend proceeding?',
+      'What does the model’s assessment say about this deal, and why?',
       'What are the key risks the IC should know?',
       'Summarize the investment thesis in three sentences.',
     ],
@@ -209,7 +209,7 @@ export default function AtlasCopilot({
       return;
     }
     if (!liveDeal) {
-      setError('Q&A is available on real, worker-connected deals (not the demo deal).');
+      setError('Q&A is available once this deal has been modelled.');
       return;
     }
     setAsking(true);

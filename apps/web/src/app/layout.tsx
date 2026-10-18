@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 // Feature flag: real Clerk auth kicks in only when a real publishable key
 // is present. The `_dummy` suffix is a sentinel for build-time CI checks
 // — any key ending in `_dummy` is treated as unset so the app falls back
-// to the demo persona ("Eshan Mehta · Brookfield Real Estate").
+// to the neutral demo persona ("Demo Analyst · Demo Workspace").
 const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const isClerkConfigured =
   !!clerkKey &&

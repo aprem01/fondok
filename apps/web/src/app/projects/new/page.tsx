@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, brandPositioningLabel, searchBrandFamilies } from '@/lib/mockData';
 import { cn } from '@/lib/format';
-import { api, isWorkerConnected, WizardFile } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { DocumentsStep, WIZARD_CATEGORIES } from '@/components/project/wizard/DocumentsStep';
 import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
@@ -400,7 +400,7 @@ export default function NewProjectPage() {
 
       router.push(`/projects/${created.id}`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       setSubmitError(msg);
       toast(`Couldn't create deal: ${msg}`, { type: 'error' });
       setSubmitting(false);
@@ -982,16 +982,16 @@ function Step4({ data, update }: StepProps) {
       </div>
 
       <div className="text-[12px] font-medium text-ink-700 mb-1.5">Proposed brand</div>
-      {/* R-018 — contextual note on what the proposed brand will drive. */}
+      {/* R-018 — contextual note on what the proposed brand does today. */}
       <div
         role="note"
-        data-testid="brand-wip-note"
+        data-testid="brand-note"
         className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-3 flex gap-2"
       >
         <Info size={14} className="text-brand-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
         <span>
-          This section is a work in progress. The intent is to use the selected brand&apos;s preliminary
-          programming requirements when assessing the property improvement plan and required CapEx.
+          The proposed brand sets the suggested positioning tier (STR chain scale) and labels the renovation
+          plan. Brand programming requirements are not applied to CapEx.
         </span>
       </div>
       <button onClick={() => update({ brand: 'agnostic' })}

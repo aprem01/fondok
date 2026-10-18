@@ -36,7 +36,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Popover } from '@/components/help/Popover';
 import { useToast } from '@/components/ui/Toast';
-import { api, isWorkerConnected, CoverageGap, CoverageResponse } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, CoverageGap, CoverageResponse } from '@/lib/api';
 import { cn } from '@/lib/format';
 
 type Sev = 'error' | 'warn' | 'info';
@@ -203,7 +203,7 @@ export function GapChipsStrip({
       .then((data) => setState({ loading: false, data, error: null }))
       .catch((err: unknown) => {
         if ((err as { name?: string })?.name === 'AbortError') return;
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         setState({ loading: false, data: null, error: msg });
       });
     return () => ctrl.abort();

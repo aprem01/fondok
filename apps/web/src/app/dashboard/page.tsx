@@ -3,14 +3,15 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import {
   FolderKanban, TrendingUp, Building2, Target, Plus,
-  ArrowUpRight, Sparkles, AlertTriangle, Loader2, MapPin,
+  ArrowUpRight, AlertTriangle, Loader2, MapPin,
 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
 import type { PipelineResponse, PipelineDealRow, PipelineSummary } from '@/lib/api';
+import { meetingTargetSub, pipelineHealth } from '@/lib/dashboard';
 import { useCurrentUser } from '@/lib/auth';
 import { fmtCurrency, cn } from '@/lib/format';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -50,13 +51,14 @@ function buildStats(s: PipelineSummary | null): Array<{
       tip: 'Median acquisition basis per hotel room across the pipeline — the yardstick for whether you are buying cheap or rich versus replacement cost.',
     },
     {
-      label: 'Meeting Target', value: withTarget === 0 ? '—' : `${met}/${withTarget}`,
-      sub: withTarget === 0 ? 'set a target IRR' : `deal${withTarget === 1 ? '' : 's'} clearing target`,
+      label: 'Meeting Target', value: withTarget === 0 ? '—' : `${met} of ${withTarget}`,
+      sub: meetingTargetSub(dealCount, withTarget, met),
       icon: Target, tone: 'default',
       tip: 'How many deals with an analyst-set target IRR are currently clearing it. Set a target on a deal to populate this.',
     },
   ];
 }
+
 
 export default function DashboardPage() {
   const user = useCurrentUser();
@@ -80,7 +82,7 @@ export default function DashboardPage() {
       .then((r) => setResp(r))
       .catch((err: unknown) => {
         if ((err as { name?: string })?.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(userMessage(err));
       })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
@@ -92,6 +94,7 @@ export default function DashboardPage() {
     () => (resp?.deals ?? []).slice(0, 5),
     [resp],
   );
+  const health = useMemo(() => pipelineHealth(resp?.deals ?? []), [resp]);
   const dealCount = summary?.deal_count ?? 0;
   // A brand-new user (worker connected, load done, zero deals) can get the
   // guided first-run hero instead of a wall of empty KPIs — but it's opt-out:
@@ -260,18 +263,18 @@ export default function DashboardPage() {
                 <div className="h-3 bg-ink-300/20 rounded animate-pulse" />
                 <div className="h-3 bg-ink-300/20 rounded w-2/3 animate-pulse" />
               </div>
-            ) : summary && Object.keys(summary.deals_by_state || {}).length > 0 ? (
-              <div className="space-y-2.5">
-                {Object.entries(summary.deals_by_state).map(([state, n]) => (
-                  <div key={state} className="flex items-center justify-between text-[12px]">
-                    <span className="text-ink-600 capitalize">{state.toLowerCase()}</span>
-                    <span className="font-semibold tabular-nums text-ink-900">{n}</span>
+            ) : health.length > 0 ? (
+              <div className="space-y-2.5" data-testid="pipeline-health">
+                {health.map((row) => (
+                  <div key={row.label} className="flex items-center justify-between text-[12px]">
+                    <span className="text-ink-600">{row.label}</span>
+                    <span className="font-semibold tabular-nums text-ink-900">{row.n}</span>
                   </div>
                 ))}
-                {summary.median_cap_rate != null && (
+                {summary?.median_cap_rate != null && (
                   <div className="flex items-center justify-between text-[12px] pt-2 border-t border-border">
                     <span className="text-ink-600">Median exit cap</span>
-                    <span className="font-semibold tabular-nums text-ink-900">{pct(summary.median_cap_rate)}</span>
+                    <span className="font-semibold tabular-nums text-ink-900">{pct(summary?.median_cap_rate)}</span>
                   </div>
                 )}
               </div>
@@ -281,17 +284,10 @@ export default function DashboardPage() {
               </div>
             )}
           </Card>
-          <Card className="p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={14} className="text-gold-500" strokeWidth={1.75} />
-              <h3 className="font-display text-[13.5px] font-semibold text-ink-900 tracking-tight">AI Insights</h3>
-            </div>
-            <div className="text-center py-6">
-              <div className="text-[12px] text-ink-500 leading-relaxed">
-                AI-powered insights will appear here once you have active projects with uploaded documents.
-              </div>
-            </div>
-          </Card>
+          {/* The "AI Insights" placeholder card was removed: its condition
+              ("once you have active projects with documents") was met on every
+              workspace while it still showed nothing. A card returns here only
+              when it renders something real (e.g. open diligence items). */}
         </div>
       </div>
     </div>

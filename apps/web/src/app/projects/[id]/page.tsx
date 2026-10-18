@@ -22,7 +22,7 @@ import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner'
 import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { isWorkerConnected } from '@/lib/api';
+import { isWorkerConnected, userMessage } from '@/lib/api';
 import { PROJECT_TABS, TAB_LABEL } from '@/lib/projectTabs';
 import { legacyReturnsRedirect } from '@/lib/returnsSection';
 import DataRoomTab from '@/components/project/DataRoomTab';
@@ -137,7 +137,8 @@ export default function ProjectDetailPage() {
   // + pipeline reflect it. Mock/demo deals just toast.
   const onMarkICReady = async () => {
     if (!workerConnected || isMockId) {
-      toast('Marked as IC Ready', { type: 'success' });
+      // Nothing is persisted on the sample deal — never a success toast.
+      toast('This sample deal can’t be marked IC Ready.', { type: 'info' });
       return;
     }
     try {
@@ -145,7 +146,7 @@ export default function ProjectDetailPage() {
       toast('Marked as IC Ready', { type: 'success' });
       void refreshDeal?.();
     } catch (err) {
-      toast(`Couldn't mark IC Ready: ${err instanceof Error ? err.message : 'Unknown error'}`, { type: 'error' });
+      toast(`Couldn't mark IC Ready — ${userMessage(err)}`, { type: 'error' });
     }
   };
   const onArchive = async () => {
@@ -155,18 +156,18 @@ export default function ProjectDetailPage() {
         toast('Project archived', { type: 'success' });
         router.push('/projects');
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Archive failed: ${msg}`, { type: 'error' });
       }
     } else {
-      toast('Archive available once worker is connected to this deal', {
+      toast('This sample deal can’t be archived.', {
         type: 'info',
       });
     }
   };
   const onDeleteForever = async () => {
     if (!workerConnected || isMockId) {
-      toast('Delete available once worker is connected to this deal', {
+      toast('This sample deal can’t be deleted.', {
         type: 'info',
       });
       return;
@@ -192,7 +193,7 @@ export default function ProjectDetailPage() {
       toast(`"${expected}" permanently deleted`, { type: 'success' });
       router.push('/projects');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       toast(`Delete failed: ${msg}`, { type: 'error' });
     }
   };
@@ -208,7 +209,7 @@ export default function ProjectDetailPage() {
   const duplicateName = (deal?.name || `deal ${rawId}`).trim();
   const onDuplicate = () => {
     if (!workerConnected || isMockId) {
-      toast('Duplicate available once worker is connected to this deal', {
+      toast('This sample deal can’t be duplicated.', {
         type: 'info',
       });
       return;
@@ -414,7 +415,7 @@ export default function ProjectDetailPage() {
       toast(`Duplicated "${s.name}" → ${created.name}`, { type: 'success' });
     } catch (e) {
       toast(
-        `Duplicate failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        `Duplicate failed — ${userMessage(e)}`,
         { type: 'error' },
       );
     }
@@ -437,7 +438,7 @@ export default function ProjectDetailPage() {
     } catch (e) {
       toast(
         `Couldn't remove that override: ${
-          e instanceof Error ? e.message : 'Unknown error'
+          userMessage(e)
         }`,
         { type: 'error' },
       );
@@ -452,7 +453,7 @@ export default function ProjectDetailPage() {
       toast(`Deleted scenario "${s.name}"`, { type: 'info' });
     } catch (e) {
       toast(
-        `Delete failed: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        `Delete failed — ${userMessage(e)}`,
         { type: 'error' },
       );
     }
@@ -470,10 +471,27 @@ export default function ProjectDetailPage() {
   // analyst can confirm the URL is the deal they meant to open — and
   // neither leaks any mock-data names. Mock-id deals (digit-only ``id``)
   // keep the legacy projects[0] fallback so demo URLs continue to work.
-  // Live app: a numeric/mock id is the retired sample deal — the effect above
-  // redirects to /projects; render nothing meanwhile so no read-only fixture flashes.
+  // Live app: a numeric id is not a deal Fondok knows — the sample fixture
+  // exists only in the worker-less build. Say so plainly, with the way back,
+  // instead of a blank frame (the effect above also sends the reader to the
+  // deal list).
   if (isMockId && workerConnected) {
-    return null;
+    return (
+      <div className="px-8 pt-7 pb-8">
+        <Link
+          href="/projects"
+          className="inline-flex items-center gap-1 text-[12px] text-ink-500 hover:text-ink-900 mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded eyebrow normal-case tracking-wide"
+        >
+          <ArrowLeft size={13} aria-hidden="true" /> Back to Projects
+        </Link>
+        <div role="alert" data-testid="deal-not-found" className="rounded-md border border-border bg-white p-5">
+          <div className="text-[14px] font-semibold text-ink-900">This deal was not found</div>
+          <p className="text-[12.5px] text-ink-700 mt-1">
+            It may have been archived, or the link is out of date. Your deals are listed under Projects.
+          </p>
+        </div>
+      </div>
+    );
   }
   if (!isMockId && !projectOrNull) {
     return (
@@ -501,7 +519,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="text-[12.5px] text-ink-700 mt-2">
                     {/^TimeoutError|timed out|timeout/i.test(dealError)
-                      ? 'The worker is busy — your upload is still extracting. Try again in 30 seconds.'
+                      ? 'Fondok is still extracting your upload. Try again in 30 seconds.'
                       : dealError}
                   </div>
                   <div className="mt-3 flex items-center gap-2">
@@ -685,26 +703,32 @@ export default function ProjectDetailPage() {
         <div className="flex items-center gap-5 text-[12.5px] text-ink-600 py-3">
           <div className="flex items-center gap-1.5"><MapPin size={12} className="text-ink-400" aria-hidden="true" /> {project.city}</div>
           <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
-          <div className="flex items-center gap-1.5"><Building2 size={12} className="text-ink-400" aria-hidden="true" /> <span className="tabular-nums">{formatKeys(deal?.keys ?? mockMatch?.keys)}</span> keys · {project.service}</div>
-          <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
-          <div className="flex items-center gap-1.5"><Calendar size={12} className="text-ink-400" aria-hidden="true" /> Created {project.createdAt || 'Apr 2026'}</div>
+          <div className="flex items-center gap-1.5">
+            <Building2 size={12} className="text-ink-400" aria-hidden="true" />{' '}
+            <span className="tabular-nums">{formatKeys(deal?.keys ?? mockMatch?.keys)}</span> keys
+            {/* The service type is optional — omit the segment rather than print a bare dash. */}
+            {project.service && project.service !== '—' ? ` · ${project.service}` : ''}
+          </div>
+          {/* Created date: the deal record's own, or nothing — never a literal. */}
+          {project.createdAt && (
+            <>
+              <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
+              <div className="flex items-center gap-1.5"><Calendar size={12} className="text-ink-400" aria-hidden="true" /> Created {project.createdAt}</div>
+            </>
+          )}
         </div>
 
         {/* Demo-deal banner — numeric (seeded) deal ids render a fixed
             sample dataset regardless of uploads. Without this, uploading
             real docs to a demo deal looks like a broken model (the QA
             "FON-13 regression" was exactly this confusion). */}
-        {isMockId && (
+        {isMockId && !workerConnected && (
           <div className="flex items-start gap-2.5 px-3.5 py-2.5 my-3 rounded-lg bg-warn-50 border border-warn-500/30 text-[12.5px] text-warn-800">
             <AlertTriangle size={15} className="text-warn-600 mt-0.5 shrink-0" aria-hidden="true" />
             <div>
-              <span className="font-semibold">Demo deal — sample data.</span>{' '}
-              This project shows a fixed example dataset to illustrate the product.
-              Documents uploaded here are <strong>not</strong> used to drive the model.{' '}
-              <a href="/projects/new" className="underline font-medium hover:text-warn-900">
-                Create a new project
-              </a>{' '}
-              to analyze your own documents with live extraction.
+              <span className="font-semibold">Sample deal.</span>{' '}
+              This build shows a fixed example dataset to illustrate the product; documents dropped here
+              are not modelled.
             </div>
           </div>
         )}

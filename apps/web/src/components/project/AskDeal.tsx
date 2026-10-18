@@ -5,7 +5,7 @@
  *
  * Sends the user's question to ``POST /deals/{id}/ask``; the worker
  * composes the deal's full Context Data Product (dossier) and hands
- * it to the Researcher agent (Opus 4.7) which returns a single
+ * it to the grounded research agent, which returns a single
  * grounded answer with citations back to the source PDF pages.
  *
  * Citations reuse the ``Citation`` chip component so clicking opens
@@ -18,7 +18,7 @@ import { Sparkles, Send, Loader2, AlertTriangle, MessageSquare } from 'lucide-re
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { api, AskAnswerResult, isWorkerConnected } from '@/lib/api';
+import { api, AskAnswerResult, isWorkerConnected, userMessage } from '@/lib/api';
 import { Citation as CitationChip } from '@/components/citations/Citation';
 
 type AskState =
@@ -57,7 +57,7 @@ export default function AskDeal({ dealId }: { dealId: string }) {
     } catch (err) {
       setState({
         kind: 'error',
-        message: err instanceof Error ? err.message : String(err),
+        message: userMessage(err),
       });
     }
   };

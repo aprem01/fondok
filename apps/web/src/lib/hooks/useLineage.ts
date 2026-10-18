@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
 import type { LineageEdge, LineageNode, LineageRecord, LineageRefusal } from '@/lib/api';
 import { isReasonCode } from '@/lib/ontology/reasons.generated';
 
@@ -279,6 +279,8 @@ export function useLineage(
   const [error, setError] = useState<string | null>(null);
   const [settled, setSettled] = useState(inert || cached !== undefined);
   const [armed, setArmed] = useState(enabled);
+  // Bumped by ``load`` so a retry after a failure refetches instead of no-op-ing.
+  const [retrySeq, setRetrySeq] = useState(0);
   const alive = useRef(true);
 
   useEffect(() => {
@@ -288,7 +290,7 @@ export function useLineage(
     };
   }, []);
 
-  const load = useCallback(() => setArmed(true), []);
+  const load = useCallback(() => { setArmed(true); setRetrySeq((n) => n + 1); }, []);
   useEffect(() => {
     if (enabled) setArmed(true);
   }, [enabled]);
@@ -321,7 +323,7 @@ export function useLineage(
         if (cancelled || !alive.current) return;
         // A genuine failure (network / 5xx / timeout). A 404 never lands
         // here — the api layer turns that into a null record.
-        setError(e instanceof Error ? e.message : String(e));
+        setError(userMessage(e));
         setRecord(null);
       })
       .finally(() => {
@@ -332,7 +334,7 @@ export function useLineage(
     return () => {
       cancelled = true;
     };
-  }, [armed, inert, key, dealId, runId]);
+  }, [armed, inert, key, dealId, runId, retrySeq]);
 
   const walk = useCallback((rootId: string) => walkLineage(record, rootId), [record]);
 

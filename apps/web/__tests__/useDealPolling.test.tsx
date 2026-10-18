@@ -158,12 +158,16 @@ describe('useDeal — refetches the deal row as extraction finishes (E-003 / FON
     expect(statusSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('numeric (mock) ids never hit the worker', async () => {
+  it('numeric (sample) ids never hit the worker — and are "not found" once it is connected', async () => {
     const { result } = renderHook(() => useDeal('7'));
     await tick(0);
     await tick(60_000);
     expect(getSpy).not.toHaveBeenCalled();
     expect(statusSpy).not.toHaveBeenCalled();
-    expect(result.current.fromMock).toBe(true);
+    // With Fondok's service connected a numeric id is not a deal — never the
+    // sample fixture dressed as one.
+    expect(result.current.fromMock).toBe(false);
+    expect(result.current.deal).toBeNull();
+    expect(result.current.error).toMatch(/not found/i);
   });
 });

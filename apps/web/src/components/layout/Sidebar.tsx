@@ -2,13 +2,14 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  LayoutGrid, FolderKanban, Database, Settings, ChevronDown, Building2,
-  Users, UserCog, LogOut, Plus, Check, BookOpen, LineChart, History, Library, Bell,
+  LayoutGrid, FolderKanban, Settings, ChevronDown, Building2,
+  Users, UserCog, LogOut, Check, BookOpen, LineChart, History, Library, Bell,
   DollarSign,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
+import { isWorkerConnected } from '@/lib/api';
 import FondokMark from '@/components/brand/FondokMark';
 import { useToast } from '@/components/ui/Toast';
 import { ShowHintsAgainButton } from '@/components/help/HintOptionsMenu';
@@ -37,13 +38,15 @@ const navItems = [
   // useCurrentRole() below so members don't see the link at all
   // (backend still enforces via require_role("admin")).
   { href: '/admin/cost', label: 'Cost', icon: DollarSign, adminOnly: true },
-  { href: '/data-library', label: 'Data Library', icon: Database },
+  // Data Library was a stub (no backing endpoint); /data-library now redirects
+  // to the backed Portfolio Library under Settings.
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
   // under Settings in concept (it's a tenant-level config surface)
   // but mounted as a top-level nav item so executives who only ever
   // touch digests don't have to dive through Settings to find them.
-  { href: '/pipeline-digests', label: 'Digests', icon: Bell },
+  // Only reachable when Fondok's service is connected (`workerOnly`).
+  { href: '/pipeline-digests', label: 'Digests', icon: Bell, workerOnly: true },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -62,8 +65,8 @@ export default function Sidebar({
   const wsRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
 
-  // Auth-aware user + org. In demo mode these resolve to the static
-  // Brookfield Real Estate / Eshan Mehta persona (mockData.ts). When
+  // Auth-aware user + org. In the worker-less demo build these resolve to
+  // the neutral "Demo Workspace / Demo Analyst" persona (mockData.ts). When
   // Clerk is configured they hydrate from the active session/org.
   const currentUser = useCurrentUser();
   const workspace = useCurrentOrg();
@@ -114,6 +117,7 @@ export default function Sidebar({
       />
     )}
     <aside
+      data-app-sidebar
       className={cn(
         'fixed left-0 top-0 h-screen w-[216px] bg-white border-r hairline flex flex-col z-40 transition-transform',
         'md:translate-x-0',
@@ -132,7 +136,7 @@ export default function Sidebar({
       </div>
 
       {/* Workspace switcher — Clerk OrganizationSwitcher when configured,
-          otherwise the static Brookfield Real Estate pill from mockData.
+          otherwise the neutral demo-workspace pill from mockData.
           The typeof guard defends against a Clerk bundle that loaded but
           where the component export came back undefined (dev-key against
           a prod origin can produce this) — without it, React throws #130
@@ -149,13 +153,12 @@ export default function Sidebar({
           API refuse too — see docs/WORKSPACE_ISOLATION.md §5. Switching
           between organizations the user already belongs to is unchanged.
 
-          Review finding: a bare `'hidden'` class can lose the cascade to
-          Clerk's own runtime (emotion) styles for that button, so the rule
-          is given TWO ways — the appearance `elements` object below (a CSS
-          object Clerk merges into its own emotion styles, so it rides their
-          cascade, with `!important` for good measure) and the
-          `.cl-organizationSwitcherPopoverActionButton__createOrganization`
-          global rule in globals.css (`display: none !important`).
+          The rule is given ONE way — the appearance `elements` object below,
+          a CSS object Clerk merges into its own styles, so it rides their
+          cascade without `!important`. A global `.cl-*` rule in globals.css
+          used to duplicate it and drew Clerk's "structural CSS" console
+          warning; it was removed. The Clerk dashboard toggle ("Allow users
+          to create organizations" → off) is the backstop.
 
           A signed-in user with NO organization has no workspace at all
           under `hidePersonal` (every worker call 409s
@@ -186,7 +189,7 @@ export default function Sidebar({
                 elements: {
                   rootBox: 'w-full',
                   organizationSwitcherPopoverActionButton__createOrganization: {
-                    display: 'none !important',
+                    display: 'none',
                   },
                   organizationSwitcherTrigger:
                     'w-full flex items-center gap-2 px-2 py-2 rounded-md hover:bg-ink-300/20 transition-colors text-left',
@@ -223,24 +226,8 @@ export default function Sidebar({
                 <Check size={13} className="text-brand-500" />
                 <span className="font-medium">{workspace.name}</span>
               </div>
-              <div className="border-t border-border my-1" />
-              {/* Workspace creation is gated behind Clerk Organizations.
-                  In demo mode (no Clerk) we surface an honest toast rather
-                  than mounting a fake create-org dialog. */}
-              <button
-                type="button"
-                onClick={() => {
-                  setWsOpen(false);
-                  toast(
-                    'Workspace creation runs through Clerk Organizations — available on team plans',
-                    { type: 'info' },
-                  );
-                }}
-                className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
-              >
-                <Plus size={13} className="text-ink-500" />
-                Create Workspace
-              </button>
+              {/* A workspace is an institution Fondok registers — there is no
+                  self-serve creation, so no control pretends otherwise. */}
             </div>
           )}
         </div>
@@ -248,7 +235,10 @@ export default function Sidebar({
 
       {/* Nav */}
       <nav className="flex-1 px-3 pt-2" data-tour="sidebar">
-        {navItems.filter(it => !it.adminOnly || currentRole === 'org:admin').map(it => {
+        {navItems
+          .filter(it => !it.adminOnly || currentRole === 'org:admin')
+          .filter(it => !it.workerOnly || isWorkerConnected())
+          .map(it => {
           const isActive = pathname === it.href || (it.href !== '/dashboard' && pathname.startsWith(it.href));
           const Icon = it.icon;
           // Surface tour anchors on the two nav rows the GettingStarted

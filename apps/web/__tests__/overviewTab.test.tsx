@@ -282,7 +282,7 @@ describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
     // Stabilized NOI tile is an honest dash until a Stabilization Year exists (FON-59 #1);
     // the $3.64M reversion figure is no longer shown as stabilized.
     expect(screen.queryByText('$3.64M')).toBeNull();
-    expect(screen.getByText('stabilization year not set')).toBeInTheDocument();
+    expect(screen.getByText('published after the next model run')).toBeInTheDocument();
     expect(screen.getAllByText('19.8%').length).toBeGreaterThan(0); // levered IRR (shown in >1 place)
   });
 });

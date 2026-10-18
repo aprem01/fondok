@@ -67,7 +67,9 @@ export function useDeal(id: string | number | null | undefined): DealState {
   const lastDealFetch = useRef(0);
 
   const idStr = id == null ? '' : String(id);
-  const fromMock = !isWorkerConnected() || /^\d+$/.test(idStr);
+  // Only the worker-less demo build reads mock projects; a numeric id with the
+  // service connected is "not found", never a fixture.
+  const fromMock = !isWorkerConnected();
 
   const fetchOnce = useCallback(
     async (signal?: AbortSignal) => {
@@ -79,10 +81,12 @@ export function useDeal(id: string | number | null | undefined): DealState {
         setLoading(false);
         return;
       }
-      // Numeric ids belong to mockData; the worker only knows UUIDs.
+      // Numeric ids belong to the worker-less demo build; the worker only
+      // knows UUIDs. With Fondok's service connected such an id is simply a
+      // deal that does not exist — never a sample fixture dressed as a deal.
       if (/^\d+$/.test(idStr)) {
-        const mock = mockProjects.find((p) => String(p.id) === idStr);
-        if (mock) setDeal(projectToDeal(mock));
+        setDeal(null);
+        setError('This deal was not found. It may have been archived, or the link is out of date.');
         setLoading(false);
         return;
       }
@@ -105,7 +109,7 @@ export function useDeal(id: string | number | null | undefined): DealState {
         // so downstream callers can still pattern-match on it.
         if (errName === 'TimeoutError') {
           setError(
-            'TimeoutError: The worker is busy — your upload is still extracting. Try again in 30 seconds.',
+            'TimeoutError: Fondok is still extracting your upload. Try again in 30 seconds.',
           );
         } else {
           const msg = err instanceof Error ? err.message : String(err);

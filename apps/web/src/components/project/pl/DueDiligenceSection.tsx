@@ -26,6 +26,7 @@ import { cn } from '@/lib/format';
 import {
   api, isWorkerConnected,
   DueDiligenceCategory, DueDiligencePacket, DueDiligenceQuestion,
+  userMessage,
 } from '@/lib/api';
 
 const CATEGORIES: ReadonlyArray<{ id: 'all' | DueDiligenceCategory; label: string }> = [
@@ -106,7 +107,7 @@ export default function DueDiligenceSection({ dealId }: { dealId: string }) {
         await refresh();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       toast(`Generation failed: ${msg}`, { type: 'error' });
     } finally {
       setGenerating(false);
@@ -170,7 +171,7 @@ export default function DueDiligenceSection({ dealId }: { dealId: string }) {
       setSelected(new Set());
       await refresh();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       toast(`Update failed: ${msg}`, { type: 'error' });
     }
   };

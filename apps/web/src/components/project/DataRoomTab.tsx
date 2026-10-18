@@ -13,7 +13,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import Modal from '@/components/ui/Modal';
-import { engines, templates } from '@/lib/mockData';
+import { engines } from '@/lib/mockData';
+import { docTypeLabel } from '@/lib/docTypeLabels';
 import {
   api,
   isWorkerConnected,
@@ -24,7 +25,7 @@ import {
   ExtractionField,
   EngineName,
   EngineOutputResponse,
-  WorkerError,
+  userMessage,
 } from '@/lib/api';
 import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useDocuments } from '@/lib/hooks/useDocuments';
@@ -120,33 +121,6 @@ const SHOW_ENGINE_STATUS = false;
 // (scoring not yet calibrated for prod). Flip back to true to restore
 // the badge + its deviation accordion. Same escape-hatch as ENGINE_STATUS.
 const SHOW_USALI_BADGE = false;
-
-// Friendly labels for the doc-type breakdown shown in the checklist
-// header. Anything not in this map gets a Title-Cased fallback.
-const DOC_TYPE_LABEL: Record<string, string> = {
-  OM: 'OM',
-  T12: 'T-12',
-  PNL: 'P&L',
-  PNL_MONTHLY: 'Monthly P&L',
-  PNL_YTD: 'YTD P&L',
-  PNL_BENCHMARK: 'P&L Benchmark',
-  STR: 'STR',
-  STR_TREND: 'STR',
-  CBRE_HORIZONS: 'CBRE',
-  BUDGET: 'Budget',
-  DEBT: 'Debt', PARTNERSHIP: 'Partnership / JV', OTHER: 'Other',
-  INSURANCE: 'Insurance',
-  PROPERTY_TAX: 'Prop. Tax',
-  CAPEX: 'CapEx',
-  PROPERTY_INFO: 'Other Property Info',
-  LEASES: 'Leases',
-  CONTRACT: 'Contract',
-  SURVEYS: 'Due Diligence',
-  ROOM_MIX: 'Hotel Program',
-  RENT_ROLL: 'Rent Roll',
-  MARKET_STUDY: 'Market Study',
-  UNKNOWN: 'Uncategorized',
-};
 
 // Canonical Data Room checklist (demo fallback) — mirrors the wizard's
 // COMPLETENESS_CATEGORIES so the two surfaces never drift. Each row
@@ -293,27 +267,10 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // FON-41 testers (E-002): the reason line's click-through opens the field
   // review pre-filtered to "Needs Review"; Back resets it to "All".
   const [reviewFocus, setReviewFocus] = useState<'all' | 'review'>('all');
-  // Browse Templates popover — anchored to whichever button the user clicked.
-  const [templatesAnchor, setTemplatesAnchor] = useState<'empty' | 'inline' | null>(null);
   const { toast } = useToast();
   // Wave 5 RBAC — per-document hard-delete admin gate.
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
-
-  // Close the templates popover on outside click / Escape.
-  useEffect(() => {
-    if (!templatesAnchor) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setTemplatesAnchor(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [templatesAnchor]);
-
-  const onApplyTemplate = (name: string) => {
-    setTemplatesAnchor(null);
-    toast(`Template applied: ${name} (assumptions loaded)`, { type: 'success' });
-  };
   // Track which doc IDs we've already toasted on extraction so we don't
   // re-fire as the polling loop re-emits the same EXTRACTED record.
   const extractionToastedRef = useRef<Set<string>>(new Set());
@@ -384,7 +341,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         );
         refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Couldn’t update classification: ${msg}`, { type: 'error' });
       }
     },
@@ -403,7 +360,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         toast(`Confirmed the category for ${doc?.filename ?? 'the document'}`, { type: 'success' });
         refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Couldn’t confirm the classification: ${msg}`, { type: 'error' });
       }
     },
@@ -424,7 +381,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         );
         refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Couldn’t update year: ${msg}`, { type: 'error' });
       }
     },
@@ -454,7 +411,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         // confidence / value (the poll loop skips already-EXTRACTED docs).
         await refreshExtraction(docId);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Couldn’t ${action} field: ${msg}`, { type: 'error' });
       }
     },
@@ -479,7 +436,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         toast('Reclassified document', { type: 'success' });
         refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         toast(`Couldn’t reclassify: ${msg}`, { type: 'error' });
       } finally {
         setReclassifyingDoc(null);
@@ -736,8 +693,8 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       // FON-41 / R-036 — CapEx counts split by lane (PIP / Historic / Future).
       const sub = effectiveDocSubtype(raw, d.docSubtype);
       const label = sub
-        ? `${sub === 'future' ? 'Future' : sub === 'pip' ? 'PIP' : 'Historic'} ${DOC_TYPE_LABEL[raw] ?? raw}`
-        : DOC_TYPE_LABEL[raw] ?? raw
+        ? `${sub === 'future' ? 'Future' : sub === 'pip' ? 'PIP' : 'Historic'} ${docTypeLabel(raw)}`
+        : docTypeLabel(raw)
         .toLowerCase()
         .split('_')
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -863,7 +820,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   const fullRunDisabled = !liveMode || !hasExtractedDoc || fullRunRunning;
   const fullRunTooltip = !liveMode
     ? isWorkerConnected()
-      ? 'Demo deal — engine outputs are pre-computed. Create a new project to run the full pipeline.'
+      ? 'This sample deal can’t be run — create a deal to run the model on your own documents.'
       : 'Worker not connected — engines are read-only on the demo'
     : !hasExtractedDoc
       ? 'Upload + extract a T-12 and OM first'
@@ -1073,7 +1030,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       await upload(allowed);
     } catch (err) {
       console.error('upload failed', err);
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = userMessage(err);
       toast(`Upload failed: ${msg}`, { type: 'error' });
     }
   };
@@ -1299,26 +1256,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
                 {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
                 {uploading ? 'Uploading…' : 'Choose Files'}
               </Button>
-              <div className="relative">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTemplatesAnchor((cur) => (cur === 'empty' ? null : 'empty'));
-                  }}
-                  aria-haspopup="menu"
-                  aria-expanded={templatesAnchor === 'empty'}
-                >
-                  Browse Templates
-                </Button>
-                {templatesAnchor === 'empty' && (
-                  <TemplatesPopover
-                    onApply={onApplyTemplate}
-                    onClose={() => setTemplatesAnchor(null)}
-                  />
-                )}
-              </div>
             </div>
           </div>
           {docsError && (
@@ -1355,23 +1292,6 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               {uploading ? <Loader2 size={12} className="animate-spin" /> : null}
               {uploading ? 'Uploading…' : 'Choose Files'}
             </Button>
-            <div className="relative">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setTemplatesAnchor((cur) => (cur === 'inline' ? null : 'inline'))}
-                aria-haspopup="menu"
-                aria-expanded={templatesAnchor === 'inline'}
-              >
-                Browse Templates
-              </Button>
-              {templatesAnchor === 'inline' && (
-                <TemplatesPopover
-                  onApply={onApplyTemplate}
-                  onClose={() => setTemplatesAnchor(null)}
-                />
-              )}
-            </div>
           </div>
           {docsError && liveMode && (
             <div className="mt-3 px-3 py-2 rounded-md bg-danger-50 text-danger-700 text-[11.5px] flex items-center gap-2">
@@ -2446,45 +2366,3 @@ function ReviewFieldRow({
   );
 }
 
-
-// Browse Templates popover — anchors to the trigger via absolute positioning.
-// Backdrop catches outside clicks; the parent owns the open/close state so
-// the same component can render under both Browse Templates buttons.
-function TemplatesPopover({
-  onApply,
-  onClose,
-}: {
-  onApply: (name: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <>
-      <div
-        className="fixed inset-0 z-30"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div
-        role="menu"
-        aria-label="Templates"
-        className="absolute right-0 top-full mt-1.5 z-40 w-72 rounded-md border border-border bg-white shadow-card-hover py-1.5"
-      >
-        <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
-          Templates
-        </div>
-        {templates.map((t) => (
-          <button
-            key={t.name}
-            type="button"
-            role="menuitem"
-            onClick={() => onApply(t.name)}
-            className="w-full text-left px-3 py-2 hover:bg-ink-100 focus-visible:outline-none focus-visible:bg-ink-100"
-          >
-            <div className="text-[12.5px] font-medium text-ink-900">{t.name}</div>
-            <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{t.description}</div>
-          </button>
-        ))}
-      </div>
-    </>
-  );
-}

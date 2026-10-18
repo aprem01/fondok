@@ -188,11 +188,8 @@ select {
 }
 
 /* FON-93 — a workspace is an institution Fondok registers; analysts never
-   create one. Clerk's OrganizationSwitcher has no prop to drop its "Create
-   organization" action, so it is hidden by its stable element class as well
-   as through the `appearance.elements` object in Sidebar.tsx (the review
-   found a bare `hidden` class could lose the cascade to Clerk's runtime
-   styles). The Clerk dashboard toggle makes the API refuse too. */
-.cl-organizationSwitcherPopoverActionButton__createOrganization {
-  display: none !important;
-}
+   create one. Clerk's "Create organization" action is hidden through the
+   `appearance.elements` object in Sidebar.tsx (Clerk merges it into its own
+   styles). No global `.cl-*` override lives here: Clerk flags structural
+   `.cl-*` CSS in the console, and the dashboard toggle ("Allow users to
+   create organizations" → off) is the backstop. */

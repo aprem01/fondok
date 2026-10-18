@@ -10,7 +10,7 @@ import {
 import { useParams } from 'next/navigation';
 import { Plus, Trash2 } from 'lucide-react';
 import { useSubTab } from '@/lib/hooks/useSubTab';
-import { api, isWorkerConnected, type ValueState } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, type ValueState } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useToast } from '@/components/ui/Toast';
@@ -247,7 +247,7 @@ export default function PartnershipTab() {
         }, 1500);
       } catch (err) {
         setOverrides(overrides); // rollback
-        const msg = err instanceof Error ? err.message : 'Unknown error';
+        const msg = userMessage(err);
         toast(`Save failed: ${msg}`, { type: 'error' });
       }
     },

@@ -5,7 +5,7 @@ import { useSubTab } from '@/lib/hooks/useSubTab';
 import { Activity } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { useToast } from '@/components/ui/Toast';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
@@ -154,10 +154,15 @@ export default function CashFlowTab() {
   const { sub: tab, setSub: setTab } = useSubTab(SUB_TAB_IDS, 'summary');
   const params = useParams();
   const router = useRouter();
-  const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const [computing, setComputing] = useState(false);
   const { outputs } = useEngineOutputs(dealId);
+  // The same full-chain re-run the stale-run banner posts, for the fallback
+  // card below: every engine republishes together, so the statement lands in
+  // the same snapshot as the returns already on screen.
+  const fullRun = useEngineRun(dealId, 'returns', { runMode: 'all' });
+  const rerunAll = fullRun.run;
+  const rerunning = fullRun.status === 'running' || fullRun.status === 'queued';
 
   // The composed cash-flow statement now comes straight from the worker's
   // ``cash_flow`` engine — no in-browser re-derivation.
@@ -180,10 +185,13 @@ export default function CashFlowTab() {
     router.push(`/projects/${dealId}?tab=${tabId}${sub ? `&sub=${sub}` : ''}`, { scroll: false });
   };
 
-  // Fallback: a deal whose canonical run predates the cash_flow engine has no
-  // statement yet — keep the "Run Model" placeholder so the tab never renders
-  // empty or crashes.
+  // Fallback: a deal whose saved run predates the cash-flow statement has none
+  // to show — even when Overview and the IC memo already carry returns from
+  // that same run. Say exactly that (the stale-run message every tab shares)
+  // and offer the one action that fixes it: re-run the model. Never "run the
+  // P&L first" — the P&L already ran.
   if (!cf) {
+    const hasReturns = returns.leveredIrr != null || returns.equityMultiple != null;
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -209,23 +217,31 @@ export default function CashFlowTab() {
             onRunStart={() => setComputing(true)}
             onRunComplete={() => setComputing(false)}
           />
-          <Card className="p-16 text-center">
+          <Card className="p-16 text-center" data-testid="cashflow-not-published">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Activity size={20} className="text-ink-400" />
             </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">No cash flow output yet</h3>
+            <h3 className="text-[15px] font-semibold text-ink-900">
+              {hasReturns
+                ? 'The cash-flow statement was not published by this saved run'
+                : 'No cash-flow statement yet'}
+            </h3>
             <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              Cash flow depends on the <span className="font-medium">P&amp;L</span> engine. Run the P&amp;L
-              first to populate levered and unlevered schedules.
+              {hasReturns
+                ? 'This deal’s saved model is older than the current version. Re-run the model to publish the levered and unlevered schedules — the returns already on screen are not wrong.'
+                : 'The model has not run on this deal yet. Upload the deal’s documents in the Data Room and the model runs automatically once extraction finishes; you can also run it from the header above.'}
             </p>
-            <Button
-              variant="primary"
-              size="sm"
-              className="mt-4"
-              onClick={() => toast('Nothing is queued yet — add the missing document in the Data Room and the model runs automatically once extraction finishes', { type: 'info' })}
-            >
-              Run Model
-            </Button>
+            {hasReturns && (
+              <Button
+                variant="primary"
+                size="sm"
+                className="mt-4"
+                disabled={computing || rerunning}
+                onClick={() => { void rerunAll(); }}
+              >
+                {computing || rerunning ? 'Re-running…' : 'Re-run models'}
+              </Button>
+            )}
           </Card>
           <EngineRunHistory dealId={dealId} />
         </div>

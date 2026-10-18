@@ -1059,11 +1059,12 @@ describe('DebtTab — R-069 Capital Stack', () => {
     expect(senior).toHaveTextContent('Modelled');
   });
 
-  it('lists Mezzanine and Preferred equity as "not modelled yet" with a dash — no invented amount', () => {
+  it('lists Mezzanine and Preferred equity as not in the capital stack, with a dash — no invented amount', () => {
     render(<DebtTab />);
     for (const id of ['capital-stack-mezzanine', 'capital-stack-preferred-equity']) {
       const row = screen.getByTestId(id);
-      expect(row).toHaveTextContent('not modelled yet');
+      expect(row).toHaveTextContent('Not in this deal’s capital stack');
+      expect(row).not.toHaveTextContent(/not modelled yet/i);
       expect(row).toHaveTextContent('—');
       expect(row).not.toHaveTextContent('$');
     }
@@ -1092,7 +1093,7 @@ describe('DebtTab — R-069 Capital Stack', () => {
     const rows = buildCapitalStack([{ kind: 'mezz', label: 'Mezz Loan', loan_amount: 2_000_000, rate_type: 'fixed', terms_pending: false }]);
     expect(rows.map((r) => r.cls)).toEqual(['Senior debt', 'Mezzanine', 'Preferred equity', 'PACE / C-PACE']);
     expect(rows[1]).toMatchObject({ amount: '$2,000,000', status: 'Modelled', modelled: true });
-    expect(rows[0]).toMatchObject({ amount: '—', status: 'not modelled yet', modelled: false });
+    expect(rows[0]).toMatchObject({ amount: '—', status: 'Not in this deal’s capital stack', modelled: false });
   });
 });
 

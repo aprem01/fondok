@@ -101,6 +101,21 @@ export const HISTORICALS_ALIASES: Readonly<Record<string, string[]>> = {
 };
 
 /**
+ * The undistributed detail lines, keyed by their worksheet row id. The
+ * registry binds these rows with no historical key (the engines read only the
+ * rollup), so ``buildHistYear`` reads them off the extraction through this map
+ * and the worksheet shows them when a statement itemises them. Kept apart
+ * from ``HISTORICALS_ALIASES`` so the pinned drift test on that map holds.
+ */
+export const UNDISTRIBUTED_DETAIL_ALIASES: Readonly<Record<string, string[]>> = {
+  ag: pnlAliases('administrative_general'),
+  sm: pnlAliases('sales_marketing'),
+  pom: pnlAliases('property_operations'),
+  util: pnlAliases('utilities'),
+  it: pnlAliases('information_telecom'),
+};
+
+/**
  * WEB-ONLY aliases — paths the hand-written lists carried that the registry
  * does not (yet). They stay inline so nothing that resolved before stops
  * resolving; the registry builder folds them in as a follow-up. See

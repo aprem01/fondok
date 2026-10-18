@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Plus, Search, ChevronDown, LayoutGrid, List, Building2,
   MapPin, AlertTriangle, Upload, Loader2, RefreshCw,
@@ -11,9 +11,9 @@ import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
-import { cn, fmtDate } from '@/lib/format';
+import { cn, fmtDate, fmtCurrency } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
-import { WorkerDeal, api, isWorkerConnected } from '@/lib/api';
+import { WorkerDeal, PipelineDealRow, api, isWorkerConnected, userMessage } from '@/lib/api';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
@@ -34,7 +34,7 @@ const buildProjectMenu = (
   const liveMode = isWorkerConnected() && !isMock;
   const onArchive = async () => {
     if (!liveMode) {
-      toast('Archive available on worker-backed deals', { type: 'info' });
+      toast('This sample deal can’t be archived.', { type: 'info' });
       return;
     }
     try {
@@ -42,12 +42,12 @@ const buildProjectMenu = (
       toast('Project archived', { type: 'success' });
       onArchived();
     } catch (err) {
-      toast(`Archive failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+      toast(`Archive failed — ${userMessage(err)}`, { type: 'error' });
     }
   };
   const onDeleteForever = async () => {
     if (!liveMode) {
-      toast('Delete available on worker-backed deals', { type: 'info' });
+      toast('This sample deal can’t be deleted.', { type: 'info' });
       return;
     }
     const expected = (name || 'this project').trim();
@@ -67,7 +67,7 @@ const buildProjectMenu = (
       toast(`"${expected}" permanently deleted`, { type: 'success' });
       onArchived();
     } catch (err) {
-      toast(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
+      toast(`Delete failed — ${userMessage(err)}`, { type: 'error' });
     }
   };
   return [
@@ -94,11 +94,14 @@ interface DisplayDeal {
   service: string;
   status: string;
   dealStage: string;
-  revpar: number | null;
+  /** Acquisition basis per key, from the pipeline payload (the same figure the dashboard prints). */
+  pricePerKey: number | null;
+  /** Levered IRR in PERCENT (15.7 = 15.7%), from the pipeline payload. */
   irr: number | null;
   noi: number | null;
   risk: string | null;
-  aiConfidence: number; // 0–100
+  /** 0–100, or null when Fondok has not scored the deal — rendered "—", never 0%. */
+  aiConfidence: number | null;
   assignee: string;
   docs: string;
   updatedAt: string;
@@ -115,7 +118,7 @@ function fromMockProject(p: Project): DisplayDeal {
     service: p.service,
     status: p.status,
     dealStage: p.dealStage,
-    revpar: p.revpar,
+    pricePerKey: null,
     irr: p.irr,
     noi: p.noi ?? null,
     risk: p.risk,
@@ -128,7 +131,12 @@ function fromMockProject(p: Project): DisplayDeal {
   };
 }
 
-function fromWorkerDeal(d: WorkerDeal): DisplayDeal {
+/**
+ * A worker deal row joined with its pipeline row. The deal list and the
+ * dashboard's Recent Projects read the SAME pipeline payload for IRR and
+ * $/Key, so the two surfaces cannot disagree about one deal.
+ */
+function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
   return {
     id: d.id,
     name: d.name,
@@ -137,11 +145,11 @@ function fromWorkerDeal(d: WorkerDeal): DisplayDeal {
     service: d.service ?? '—',
     status: d.status || 'Draft',
     dealStage: d.deal_stage || 'Teaser',
-    revpar: null,
-    irr: null,
-    noi: null,
+    pricePerKey: row?.price_per_key ?? null,
+    irr: row?.levered_irr != null ? row.levered_irr * 100 : null,
+    noi: row?.noi_y1 ?? null,
     risk: d.risk,
-    aiConfidence: Math.round((d.ai_confidence ?? 0) * 100),
+    aiConfidence: d.ai_confidence != null ? Math.round(d.ai_confidence * 100) : null,
     assignee: '—',
     docs: String(d.document_count ?? 0),
     updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
@@ -169,10 +177,24 @@ export default function ProjectsPage() {
   // the platform. The mocks still render in pure-mock fallback mode
   // (no worker URL configured) so the marketing/demo build keeps
   // something on screen.
+  // The pipeline payload carries each deal's headline returns ($/Key, IRR,
+  // NOI) from its latest run — the same payload the dashboard reads. Joined
+  // here by deal id; a deal with no run shows "—" for those cells.
+  const [pipelineRows, setPipelineRows] = useState<Record<string, PipelineDealRow>>({});
+  useEffect(() => {
+    if (fromMock) return;
+    const ctrl = new AbortController();
+    api.deals
+      .pipeline({ sort: 'last_activity_desc', limit: 200 }, ctrl.signal)
+      .then((r) => setPipelineRows(Object.fromEntries(r.deals.map((d) => [d.deal_id, d]))))
+      .catch(() => { /* the list still renders; return cells read "—" */ });
+    return () => ctrl.abort();
+  }, [fromMock, deals.length]);
+
   const display: DisplayDeal[] = useMemo(() => {
     if (fromMock) return mockProjects.map(fromMockProject);
-    return deals.map(fromWorkerDeal);
-  }, [deals, fromMock]);
+    return deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id]));
+  }, [deals, fromMock, pipelineRows]);
 
   const filtered = display.filter((p) =>
     (filter === 'All Status' || p.status === filter) &&
@@ -250,8 +272,8 @@ export default function ProjectsPage() {
           <div className="flex items-start gap-3">
             <AlertTriangle size={16} className="text-danger-700 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="text-[13px] font-semibold text-danger-700">Couldn’t reach the worker</div>
-              <p className="text-[12px] text-danger-700/80 mt-1">{error}</p>
+              <div className="text-[13px] font-semibold text-danger-700">Couldn’t reach Fondok</div>
+              <p className="text-[12px] text-danger-700/80 mt-1">The deal list did not load. {error}</p>
             </div>
             <Button variant="secondary" size="sm" onClick={refresh}><RefreshCw size={12} /> Retry</Button>
           </div>
@@ -340,29 +362,39 @@ export default function ProjectsPage() {
                   <>
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">RevPAR</div>
-                        <div className="text-[14px] font-semibold tabular-nums">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
+                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">$/Key</div>
+                        <div className="text-[14px] font-semibold tabular-nums" title={p.pricePerKey == null ? 'Available after the model runs' : undefined}>
+                          {p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}
+                        </div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">IRR</div>
-                        <div className="text-[14px] font-semibold tabular-nums">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
+                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">Levered IRR</div>
+                        <div className="text-[14px] font-semibold tabular-nums" title={p.irr == null ? 'Available after the model runs' : undefined}>
+                          {p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}
+                        </div>
                       </div>
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">Risk</div>
-                        <div className={cn('text-[12px] font-medium px-1.5 py-0.5 rounded inline-block', riskTone(p.risk))}>
-                          {p.risk ?? '—'}
+                        {p.risk ? (
+                          <div className={cn('text-[12px] font-medium px-1.5 py-0.5 rounded inline-block', riskTone(p.risk))}>
+                            {p.risk}
+                          </div>
+                        ) : (
+                          <div className="text-[12px] text-ink-500">Not rated</div>
+                        )}
+                      </div>
+                    </div>
+                    {p.aiConfidence != null && (
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[11px] text-ink-500">AI Confidence</span>
+                          <span className="text-[11.5px] font-semibold tabular-nums">{p.aiConfidence}%</span>
+                        </div>
+                        <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+                          <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
                         </div>
                       </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-[11px] text-ink-500">AI Confidence</span>
-                        <span className="text-[11.5px] font-semibold tabular-nums">{p.aiConfidence}%</span>
-                      </div>
-                      <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                        <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
-                      </div>
-                    </div>
+                    )}
                   </>
                 )}
 
@@ -387,7 +419,7 @@ export default function ProjectsPage() {
               <MetricLabel label="Stage" tip="Where this deal is in the acquisition process. Teaser → Under NDA → LOI → PSA → Closed." />
             </div>
             <div className="w-20 flex justify-end">
-              <MetricLabel label="RevPAR" tip="Revenue per Available Room — average daily rate × occupancy. The single best yardstick of a hotel's revenue performance." />
+              <MetricLabel label="$/Key" tip="Acquisition basis per hotel room from the latest model run — the yardstick for whether you are buying cheap or rich versus replacement cost." />
             </div>
             <div className="w-24 flex justify-end">
               <MetricLabel label="NOI" tip="Net Operating Income — revenue minus operating expenses, before debt and capex. The truest measure of the hotel's earning power." />
@@ -427,19 +459,27 @@ export default function ProjectsPage() {
               <div className="w-20 flex justify-end">
                 <StatusBadge value={p.dealStage} />
               </div>
-              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.revpar != null ? `$${p.revpar}` : '—'}</div>
+              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
-              <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(2)}%` : '—'}</div>
+              <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}</div>
               <div className="w-16 flex justify-center">
-                <span className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded text-center', riskTone(p.risk))}>{p.risk ?? '—'}</span>
+                {p.risk ? (
+                  <span className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded text-center', riskTone(p.risk))}>{p.risk}</span>
+                ) : (
+                  <span className="text-[11px] text-ink-500">Not rated</span>
+                )}
               </div>
               <div className="w-24">
-                <div className="flex items-center gap-1.5">
-                  <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                    <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
+                {p.aiConfidence != null ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+                      <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
+                    </div>
+                    <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
                   </div>
-                  <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
-                </div>
+                ) : (
+                  <span className="text-[11px] text-ink-500">—</span>
+                )}
               </div>
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>

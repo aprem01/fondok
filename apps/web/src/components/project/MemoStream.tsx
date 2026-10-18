@@ -24,6 +24,7 @@ import { Citation as CitationChip } from '@/components/citations/Citation';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import type { WorkerDocument } from '@/lib/api';
 import { CoachMark } from '@/components/help/CoachMark';
+import { docTypeLabel } from '@/lib/docTypeLabels';
 
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 
@@ -97,7 +98,7 @@ function formatDocTypeLabel(docType: string | null | undefined): string {
   if (t === 'RENT_ROLL') return 'Rent Roll';
   if (t === 'MARKET_STUDY') return 'Market';
   if (t === 'CONTRACT') return 'Contract';
-  return t;
+  return docTypeLabel(t);
 }
 
 export default function MemoStream({ dealId }: { dealId: string }) {
@@ -255,7 +256,7 @@ export default function MemoStream({ dealId }: { dealId: string }) {
         viewKey="memo"
         order={0}
         title="Section-by-section, with citations"
-        body="The memo streams as Opus drafts each section. Every claim cites the source document at a specific page — click any citation to jump back to the original PDF."
+        body="The memo streams as each section drafts. Every claim cites the source document at a specific page — click any citation to jump back to the original PDF."
         side="top"
         learnMoreHref="/methodology#extraction"
       >
@@ -282,7 +283,7 @@ export default function MemoStream({ dealId }: { dealId: string }) {
               )}
             </div>
             <p className="text-[12px] text-ink-500">
-              Opus 4.7 drafts each of {progress.total} sections live. Section{' '}
+              Each of {progress.total} sections drafts live. Section{' '}
               <span className="font-medium tabular-nums text-ink-900">
                 {progress.done}/{progress.total}
               </span>

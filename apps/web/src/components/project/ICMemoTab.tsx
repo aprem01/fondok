@@ -84,6 +84,7 @@ import { History, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { fmtCurrency, fmtPct } from '@/lib/format';
 import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
+import { scenarioReturnsIssue, SCENARIO_ISSUE_LABEL, SCENARIO_NEEDS_RERUN } from '@/lib/scenarioGuards';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
@@ -1736,16 +1737,14 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 {canExport ? 'Base Case · Latest model run' : 'Awaiting model run'}
               </span>
             </div>
-            <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
-              {/* FON-54b (decision D1, 2026-09-09) — Excel stays live; the IC Memo
-                  PDF and Deal Presentation PPTX cards are re-gated to "Coming Soon"
-                  (the same treatment they carried before FON-54 enabled them). The
-                  worker endpoints and `api.exports.download` stay wired — flip
-                  `live` to re-enable a deliverable. */}
+            <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)', gap: 14, alignItems: 'start' }}>
+              {/* The Excel model is the deliverable today. The IC Memo PDF and
+                  Deal Presentation PPTX exports are not shipped, so no card
+                  pretends they are — the plain line beside the Excel card says
+                  what exists. The worker endpoints and `api.exports.download`
+                  stay wired; add a card here when a deliverable is live. */}
               {([
                 { title: 'Excel Model', ext: '.xlsx', body: 'Complete underwriting model with assumptions, calculations and source references.', path: 'excel', live: true },
-                { title: 'IC Memo', ext: '.pdf', body: 'Investment Committee memo based on the configuration above.', path: 'memo.pdf', live: false },
-                { title: 'Deal Presentation', ext: '.pptx', body: 'Presentation-ready summary of the investment case, market, underwriting and returns.', path: 'presentation.pptx', live: false },
               ] as { title: string; ext: string; body: string; path: 'excel' | 'memo.pdf' | 'presentation.pptx'; live: boolean }[]).map(({ title, ext, body, path, live }) => {
                 const busy = exportBusy === path;
                 return (
@@ -1771,28 +1770,21 @@ export default function ICMemoTab({ project }: { project: Project }) {
                           opacity: canExport && exportBusy && !busy ? 0.6 : 1,
                         }}
                       >
-                        {busy ? 'Generating…' : canExport ? `Download ${ext}` : '🔒 Available after model run'}
+                        {busy ? 'Generating…' : canExport ? `Download ${ext}` : 'Available after model run'}
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled
-                        title="Coming Soon"
-                        style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6, border: '1px solid #eae9e4', background: palette.ground, color: '#a8a7a2', cursor: 'default' }}
-                      >
-                        🔒 Coming Soon
-                      </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 );
               })}
-            </div>
-            <div style={{ padding: '0 16px 14px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button disabled style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 6, border: '1px solid #eae9e4', background: palette.ground, color: '#a8a7a2', cursor: 'default' }}>
-                🔒 Share with team · Coming Soon
-              </button>
-              <span style={{ fontSize: 11.5, color: palette.textFaint, fontWeight: 600 }}>Copy secure link · 🔒 Coming Soon</span>
+              <p
+                data-testid="memo-export-note"
+                style={{ fontSize: 12, color: palette.textSecondary, lineHeight: 1.6, margin: 0, padding: '14px 15px' }}
+              >
+                PDF and presentation exports are produced from the Excel model today — download the Excel
+                model and build the committee pack from it. Ask your Fondok contact for a prepared PDF memo
+                or deck.
+              </p>
             </div>
           </div>
 
@@ -2166,7 +2158,7 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
     { key: 'em', label: 'Equity Multiple', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
     { key: 'noi', label: STABILIZED_NOI_LABEL, fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
     { key: 'exit', label: 'Exit Value', fmt: (n) => mm(n), delta: (d) => `${d >= 0 ? '+' : '−'}$${(Math.abs(d) / 1e6).toFixed(2)}M` },
-    { key: 'dscr', label: 'Avg. DSCR', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
+    { key: 'dscr', label: 'DSCR (Y1)', fmt: (n) => `${n.toFixed(2)}x`, delta: (d) => `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}x` },
   ];
 
   const base = rows?.find((r) => r.isBase) ?? rows?.[0] ?? null;
@@ -2190,9 +2182,23 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
           <>
             <div style={{ display: 'grid', gridTemplateColumns: `1.4fr repeat(${cols.length}, 1fr)`, fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.textFaint, textTransform: 'uppercase', padding: '10px 0 8px', borderBottom: '1px solid #f2f1ec' }}>
               <span>Metric</span>
-              {cols.map((c) => (
-                <span key={c.id} style={{ textAlign: 'right' }}>{c.isBase && c.name.toLowerCase() !== 'base' ? `${c.name} (Base)` : c.name}</span>
-              ))}
+              {cols.map((c) => {
+                const issue = scenarioReturnsIssue(c, base);
+                return (
+                  <span key={c.id} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                    <span>{c.isBase && c.name.toLowerCase() !== 'base' ? `${c.name} (Base)` : c.name}</span>
+                    {issue && (
+                      <span
+                        data-testid={`memo-scenario-needs-rerun-${c.id}`}
+                        title={SCENARIO_ISSUE_LABEL[issue]}
+                        style={{ fontSize: 9, letterSpacing: '.04em', color: AMBER, textTransform: 'uppercase' }}
+                      >
+                        {SCENARIO_NEEDS_RERUN}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
             </div>
             {METRICS.map((m) => {
               const baseVal = base ? (base[m.key] as number | null) : null;
@@ -2200,12 +2206,22 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
                 <div key={String(m.key)} style={{ display: 'grid', gridTemplateColumns: `1.4fr repeat(${cols.length}, 1fr)`, alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #f7f6f3', fontSize: 12.5 }}>
                   <span style={{ color: '#7c8088' }}>{m.label}</span>
                   {cols.map((c) => {
-                    const v = c[m.key] as number | null;
+                    // An IRR of exactly 0 against a non-zero Base, or a negative
+                    // multiple, is the solver failing — not a result. Those two
+                    // metrics render as unavailable with the reason; the other
+                    // rows (NOI, exit, DSCR) are still real engine outputs.
+                    const issue = m.key === 'irr' || m.key === 'em' ? scenarioReturnsIssue(c, base) : null;
+                    const v = issue ? null : (c[m.key] as number | null);
                     const d = !c.isBase && v != null && baseVal != null ? v - baseVal : null;
                     const good = d != null && d >= 0;
                     return (
                       <span key={c.id} style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-                        <span style={{ color: c.isBase ? palette.ink : palette.hoverInk, fontWeight: c.isBase ? 600 : 400 }}>{v == null ? '—' : m.fmt(v)}</span>
+                        <span
+                          title={issue ? `${SCENARIO_ISSUE_LABEL[issue]} — re-run the scenario.` : undefined}
+                          style={{ color: c.isBase ? palette.ink : palette.hoverInk, fontWeight: c.isBase ? 600 : 400 }}
+                        >
+                          {v == null ? '—' : m.fmt(v)}
+                        </span>
                         {d != null && Math.abs(d) > 1e-9 && (
                           <span style={{ fontSize: 10.5, color: good ? GREEN : RED }}>{m.delta(d)}</span>
                         )}

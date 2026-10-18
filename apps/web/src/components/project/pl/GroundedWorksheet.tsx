@@ -50,7 +50,7 @@ import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistorical
 import TabLoadingSkeleton from '@/components/project/TabLoadingSkeleton';
 import { baseYearLabel, type HistYear, type PeriodBasis } from '@/components/project/pl/HistoricalsSection';
 import { HScroll } from '@/components/project/pl/HScroll';
-import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, type ReviewRow } from '@/lib/reviewState';
+import { buildReviewState, cellKey, cellsForYear, histHasData, histValue, undistributedItemised, type ReviewRow } from '@/lib/reviewState';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation, formatPeriodBasis } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
@@ -368,7 +368,9 @@ type RenderItem =
   | { type: 'anchor'; row: RowDef }
   | { type: 'input'; row: RowDef; sectionId: string; siblings: string[]; splitDelta: number | null }
   | { type: 'split'; parentId: string; child: SplitChild }
-  | { type: 'curated'; line: CuratedLine };
+  | { type: 'curated'; line: CuratedLine }
+  /** A one-line explanation standing in for detail rows the statement does not itemise. */
+  | { type: 'note'; id: string; text: string };
 
 export default function GroundedWorksheet({
   dealId,
@@ -637,6 +639,15 @@ export default function GroundedWorksheet({
   // The presentation tree: canonical rows in ROWS order, but with per-section
   // reordering, hidden lines, curated memo lines, and split children applied.
   // Subtotals + computed rows stay anchored in their canonical position.
+  // The undistributed detail lines (A&G, Sales & Marketing, Property
+  // Operations, Utilities, IT) are itemised by some statements and carried
+  // only as a rollup by others. When NO historical column itemises them, the
+  // five detail rows would be a block of dashes under a Total Undistributed
+  // that foots — so they collapse to one line that says why, and the total
+  // row stands on its own. Customize mode still lists them so a layout can
+  // be arranged for statements that will itemise.
+  const undistItemised = useMemo(() => undistributedItemised(histYears), [histYears]);
+
   const rendered = useMemo<RenderItem[]>(() => {
     const items: RenderItem[] = [];
     const curatedBySection: Record<string, CuratedLine[]> = {};
@@ -645,6 +656,14 @@ export default function GroundedWorksheet({
     for (const row of ROWS) {
       if (row.kind === 'section') {
         items.push({ type: 'section', id: row.id, label: row.label });
+        if (row.id === 's_undist' && !undistItemised && !customize && histYears.length > 0) {
+          items.push({
+            type: 'note',
+            id: 'undist-not-itemised',
+            text: 'Not itemised in the source statement — the statement carries the undistributed total only.',
+          });
+          continue;
+        }
         const defaults = SECTION_INPUTS[row.id] ?? [];
         const curated = curatedBySection[row.id] ?? [];
         const universe = [...defaults, ...curated.map((c) => c.id)];
@@ -669,7 +688,7 @@ export default function GroundedWorksheet({
       items.push({ type: 'anchor', row });
     }
     return items;
-  }, [wl.layout, customize, modelLive]);
+  }, [wl.layout, customize, modelLive, undistItemised, histYears.length]);
 
   // Design rewire: line-item search + Format toggle filter the rendered rows.
   // Summary collapses to the canonical subtotals/computed anchors (drops the
@@ -680,9 +699,10 @@ export default function GroundedWorksheet({
     // statement's cell carries a comment thread (keyed on its source line).
     const commentFilter = comments.available && comments.filterOn;
     return rendered.filter((item) => {
-      if (format === 'summary' && (item.type === 'input' || item.type === 'split' || item.type === 'curated')) {
+      if (format === 'summary' && (item.type === 'input' || item.type === 'split' || item.type === 'curated' || item.type === 'note')) {
         return false;
       }
+      if (item.type === 'note') return !commentFilter && !q;
       if (commentFilter) {
         if (item.type !== 'input' && item.type !== 'anchor') return false;
         const mk = item.row.metaKey;
@@ -1177,6 +1197,19 @@ export default function GroundedWorksheet({
                           <Plus size={11} /> Add line
                         </button>
                       )}
+                    </td>
+                  </tr>
+                );
+              }
+
+              if (item.type === 'note') {
+                return (
+                  <tr key={`note-${item.id}`} data-testid={`worksheet-note-${item.id}`}>
+                    <td
+                      colSpan={1 + cols.length}
+                      className="pl-9 pr-5 py-1.5 text-[11.5px] italic text-ink-500 bg-bg"
+                    >
+                      {item.text}
                     </td>
                   </tr>
                 );

@@ -17,8 +17,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Download, FileText, Loader2, ShieldCheck } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/format';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
 import type { AssumptionSourcesResponse } from '@/lib/api';
 import { REASONS, isReasonCode, REFUSAL_GLYPH } from '@/lib/ontology/reasons.generated';
 import type { ReasonCode } from '@/lib/ontology/reasons.generated';
@@ -71,6 +72,7 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'benchmark' | 'override'>('all');
+  const [retrySeq, setRetrySeq] = useState(0);
 
   const isMock = /^\d+$/.test(dealId);
   useEffect(() => {
@@ -88,11 +90,11 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
       })
       .catch((e) => {
         if ((e as { name?: string })?.name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(userMessage(e));
       })
       .finally(() => setLoading(false));
     return () => ac.abort();
-  }, [dealId, isMock]);
+  }, [dealId, isMock, retrySeq]);
 
   const rows = useMemo<Row[]>(() => {
     if (!data) return [];
@@ -158,12 +160,18 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
       </Card>
     );
   }
-  if (error || rows.length === 0) {
+  if (error) {
+    return (
+      <Card className="p-6 text-[12.5px] text-ink-500 flex items-center justify-between gap-3" role="alert">
+        <span>Couldn’t load the sources ledger — {error}</span>
+        <Button size="sm" variant="secondary" onClick={() => setRetrySeq((n) => n + 1)}>Try again</Button>
+      </Card>
+    );
+  }
+  if (rows.length === 0) {
     return (
       <Card className="p-6 text-[12.5px] text-ink-500">
-        {error
-          ? `Couldn’t load provenance — ${error}`
-          : 'No assumptions to trace yet — run the engines on this deal first.'}
+        No assumptions to trace yet — run the model on this deal first.
       </Card>
     );
   }

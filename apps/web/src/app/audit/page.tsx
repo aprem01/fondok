@@ -22,7 +22,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { useToast } from '@/components/ui/Toast';
 import { useCurrentUser, useCurrentRole } from '@/lib/auth';
-import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
 import type {
   AuditEntry,
   AuditSeverity,
@@ -100,11 +100,7 @@ export default function AuditExplorerPage() {
         setData(res);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
-        const msg =
-          err instanceof WorkerError
-            ? `${err.message}: ${err.body || ''}`
-            : (err as Error).message;
-        setError(msg);
+        setError(userMessage(err));
       } finally {
         setLoading(false);
       }
@@ -255,13 +251,21 @@ export default function AuditExplorerPage() {
       <div className="mt-6 flex gap-6">
         <div className="flex-1 min-w-0">
           {error ? (
-            <div className="rounded-md border border-warn-200 bg-warn-50 p-4 text-[12.5px] text-warn-900">
-              <ShieldAlert size={14} className="inline mr-1" />
-              Couldn't load audit explorer: {error}
+            <div
+              className="rounded-md border border-warn-200 bg-warn-50 p-4 text-[12.5px] text-warn-900 flex items-center justify-between gap-3"
+              role="alert"
+            >
+              <span>
+                <ShieldAlert size={14} className="inline mr-1" />
+                Couldn’t load the audit explorer — {error}
+              </span>
+              <Button size="sm" variant="secondary" onClick={() => load()}>
+                Try again
+              </Button>
             </div>
           ) : !isWorkerConnected() ? (
             <Card className="p-8 text-center text-[12.5px] text-ink-500">
-              Audit explorer requires the worker to be connected.
+              The audit explorer is available once your deals have been modelled.
             </Card>
           ) : (
             <Card className="overflow-hidden">

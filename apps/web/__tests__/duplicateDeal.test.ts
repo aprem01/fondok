@@ -29,7 +29,9 @@ const dialog = readFileSync(
   join(root, 'src', 'components', 'project', 'DuplicateDealDialog.tsx'),
   'utf8',
 );
-const methodology = readFileSync(join(root, 'src', 'app', 'methodology', 'page.tsx'), 'utf8');
+// The detailed duplicate-deal description lives on the engineering reference
+// (the client page carries the plain-language summary).
+const methodology = readFileSync(join(root, 'src', 'components', 'methodology', 'EngineeringMethodology.tsx'), 'utf8');
 
 describe('duplicate deal confirm copy', () => {
   it('defaults to NOT copying cell comments', () => {
