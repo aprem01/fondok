@@ -89,6 +89,18 @@ def _isolate_env_and_settings_per_module():
         get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_deal_read_cache():
+    """``services.read_cache`` is process-local; a test that seeds a deal with
+    the same ids and timestamps as an earlier one must never be served the
+    earlier test's response, so every test starts with an empty cache."""
+    from app.services.read_cache import reset_read_cache
+
+    reset_read_cache()
+    yield
+    reset_read_cache()
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an event loop for the test session."""

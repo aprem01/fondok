@@ -59,7 +59,7 @@ from typing import Any
 
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
-from .labels import NOI_HEADLINE_LABELS
+from .labels import NOI_HEADLINE_LABELS, line_label, source_display
 from .refusals import (
     collect_refusals,
     distinct_codes,
@@ -688,14 +688,21 @@ def _render_capex_plan(schedule: list[dict[str, Any]] | None) -> str:
     )
 
 
-_SOURCE_DISPLAY = {
-    "analyst_override": ("Override", "override"),
-    "t12_actual": ("T-12", "t12"),
-    "portfolio_pnl": ("Portfolio", "portfolio"),
-    "cbre_horizons": ("CBRE", "cbre"),
-    "pnl_benchmark": ("HOST", "host"),
-    "seed": ("Seed", "seed"),
+#: Source code → CSS chip class. The display WORD comes from
+#: :func:`app.export.labels.source_display` (full vocabulary, ``Other`` when
+#: unknown); codes without their own colour render on the neutral seed chip.
+_SOURCE_TAG_CLASS = {
+    "analyst_override": "override",
+    "t12_actual": "t12",
+    "portfolio_pnl": "portfolio",
+    "cbre_horizons": "cbre",
+    "pnl_benchmark": "host",
+    "seed": "seed",
 }
+
+
+def _source_chip(source: str) -> tuple[str, str]:
+    return source_display(source), _SOURCE_TAG_CLASS.get(source, "seed")
 
 
 def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
@@ -726,7 +733,7 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
         )
         value = line.get("value")
         source = str(line.get("source") or "seed")
-        display, tag_class = _SOURCE_DISPLAY.get(source, (source.title(), "seed"))
+        display, tag_class = _source_chip(source)
         doc = line.get("document_id")
         value_html = (
             _fmt_pct(value)
@@ -917,7 +924,7 @@ def _render_historical_walk(baseline: dict[str, Any] | None) -> str:
             v = year_lookup.get(fy, {}).get(line)
             cells.append(f"<td class='num'>{_fmt_usd(v)}</td>")
         body_rows.append(
-            f"<tr><td>{html.escape(line.replace('_', ' ').title())}</td>"
+            f"<tr><td>{html.escape(line_label(line))}</td>"
             + "".join(cells)
             + "</tr>"
         )
@@ -929,12 +936,12 @@ def _render_historical_walk(baseline: dict[str, Any] | None) -> str:
             pct = d.get("yoy_pct")
             if pct is None:
                 continue
-            line = html.escape(str(d.get("line") or ""))
+            line = html.escape(line_label(d.get("line")))
             yr = d.get("year") or ""
             cls = "ok" if pct > 0 else "warn"
             chips.append(
                 f"<span class='badge {cls}' style='margin-bottom:2pt'>"
-                f"{line.replace('_', ' ').title()} FY{yr}: "
+                f"{line} FY{yr}: "
                 f"{pct*100:+.1f}%</span>"
             )
         walk_chips = (

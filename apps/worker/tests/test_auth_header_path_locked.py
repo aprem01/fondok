@@ -95,12 +95,20 @@ async def test_a_malformed_bearer_is_still_401_not_a_fallthrough(monkeypatch: py
 
 
 async def test_public_routes_stay_public(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Locking the tenant path must not take /health with it."""
+    """Locking the tenant path must not take /health with it — and the public
+    probe must not describe the deployment (auth posture, storage, tenants)."""
     _set_flag(monkeypatch, None)
     async with await _client() as c:
         r = await c.get("/health")
     assert r.status_code == 200
-    assert r.json()["auth"] == {
+    body = r.json()
+    assert {"status", "version", "db", "degraded_reasons"} <= set(body)
+    for leaked in ("auth", "raw_store", "semantic_search", "extraction_cache"):
+        assert leaked not in body, leaked
+    # The posture itself is read from the operator view.
+    from app.api.health import auth_posture
+
+    assert auth_posture() == {
         "header_tenant_path_enabled": False,
         "jwt_required": True,
         # FON-93 posture flags — both default off until Prem flips them.
@@ -114,6 +122,7 @@ async def test_opt_in_restores_the_header_path_for_dev_and_tests(monkeypatch: py
     _set_flag(monkeypatch, "1")
     async with await _client() as c:
         r = await c.get("/deals", headers={"X-Tenant-Id": FORGED})
-        h = await c.get("/health")
     assert r.status_code == 200, r.text
-    assert h.json()["auth"]["header_tenant_path_enabled"] is True
+    from app.api.health import auth_posture
+
+    assert auth_posture()["header_tenant_path_enabled"] is True

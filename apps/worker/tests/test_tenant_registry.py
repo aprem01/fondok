@@ -226,9 +226,18 @@ async def test_enforcement_on_refuses_unregistered_suspended_and_pending(
             "/deals", json={"name": "nope"}, headers=_bearer(_admin_token(_rsa_key, STRANGER_ORG))
         )
         assert w.status_code == 403, w.text
-        # /health stays public and reports the posture.
+        # /health stays public and says nothing about the posture; the
+        # operator view does, for an internal admin only.
         h = await c.get("/health")
-        assert h.json()["auth"]["registered_tenant_required"] is True
+        assert h.status_code == 200 and "auth" not in h.json()
+        await _register(INTERNAL_ORG, "Fondok Internal", "internal")
+        ah = await c.get("/admin/health", headers=_bearer(_admin_token(_rsa_key, INTERNAL_ORG)))
+        assert ah.status_code == 200, ah.text
+        assert ah.json()["auth"]["registered_tenant_required"] is True
+        # An external admin is refused, and told nothing about the posture.
+        ext = await c.get("/admin/health", headers=_bearer(_admin_token(_rsa_key, CUSTOMER_ORG)))
+        assert ext.status_code == 403, ext.text
+        assert "auth" not in ext.text
 
 
 @pytest.mark.asyncio
@@ -642,7 +651,10 @@ async def test_tenant_guc_is_a_noop_on_sqlite_even_when_enabled(_rsa_key, monkey
     async with await _client() as c:
         r = await c.get("/deals", headers=_bearer(_member_token(_rsa_key, CUSTOMER_ORG)))
         assert r.status_code == 200, r.text
-        assert (await c.get("/health")).json()["auth"]["rls_tenant_guc"] is True
+        assert "auth" not in (await c.get("/health")).json()
+        from app.api.health import auth_posture
+
+        assert auth_posture()["rls_tenant_guc"] is True
 
 
 @pytest.mark.asyncio

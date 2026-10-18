@@ -2619,9 +2619,10 @@ def _displacement_status(
         active = True
         state = DISPLACEMENT_ON_SCHEDULE
         periods = "; ".join(schedule_period_label(p) for p in reno_schedule)
-        years = ", ".join(
-            f"Year {y}: occupancy ×{reno_by_year[y].occupancy_factor:.3f}, "
-            f"ADR ×{reno_by_year[y].adr_factor:.3f}"
+        # Factors → the percentage haircut a reviewer reads (×0.875 → −12.5%).
+        years = "; ".join(
+            f"Year {y}: occupancy −{_pct_label(1.0 - reno_by_year[y].occupancy_factor)}, "
+            f"ADR −{_pct_label(1.0 - reno_by_year[y].adr_factor)}"
             for y in sorted(reno_by_year)
         )
         detail = (
@@ -2633,12 +2634,12 @@ def _displacement_status(
         if flat_on or schedule_on:
             superseded: list[str] = []
             if flat_on:
-                superseded.append(f"the Y1 displacement assumptions ({pcts})")
+                superseded.append(f"the Year-1 displacement assumptions ({pcts})")
             if schedule_on:
-                superseded.append("the PIP closure schedule")
+                superseded.append("the renovation closure schedule")
             detail += (
-                f" The schedule wins: {' and '.join(superseded)} "
-                f"{'are' if len(superseded) > 1 else 'is'} not applied on top."
+                f" The renovation schedule takes precedence; {' and '.join(superseded)} "
+                f"{'are' if len(superseded) > 1 else 'is'} not applied in addition."
             )
     elif reno_schedule:
         # Every period lies past the hold — nothing to apply. Say so rather

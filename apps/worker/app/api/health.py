@@ -1,4 +1,14 @@
-"""Health endpoint — DB ping + version + boot-state invariants."""
+"""Health endpoint — DB ping + version + boot-state invariants.
+
+``GET /health`` is unauthenticated, so it carries only what a liveness probe
+needs: ``status``, ``version``, ``db``, the boot invariants (USALI catalog
+size, recognizer, concept-registry version) and ``degraded_reasons``. The
+deployment description — storage bucket/region, auth posture, embeddings
+model, per-tenant cache counters — moved to ``GET /admin/health``
+(:mod:`app.api.admin_health`) on 2026-10-17: it is infrastructure and
+tenant-enumeration disclosure on a public URL. :func:`ops_snapshot` builds
+that block so both routes share one implementation.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +39,11 @@ async def health(
     used to silently produce score=null on every doc; now it shows
     here as ``usali_rules: 0`` and ``status: degraded``).
     """
+    return await public_snapshot(session)
+
+
+async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
+    """The unauthenticated probe body — no infrastructure or tenant detail."""
     db_status = "ok"
     try:
         await session.execute(text("SELECT 1"))
@@ -63,24 +78,62 @@ async def health(
     if isinstance(ontology_version, int) and ontology_version < 0:
         degraded_reasons.append("ontology_invalid")
 
-    # Storage backend snapshot — surfaces which RawStore class the
-    # worker actually instantiated, so a misconfigured S3 cutover
-    # (env var didn't propagate, boto3 missing, etc.) is visible
-    # without tailing Railway logs.
-    raw_store_kind = "unknown"
-    raw_store_bucket: str | None = None
-    raw_store_region: str | None = None
+    # Storage backend probe — a misconfigured S3 cutover (env var didn't
+    # propagate, boto3 missing, etc.) is a degraded reason here; WHICH store,
+    # bucket and region is operator detail served by ``/admin/health``.
+    if _raw_store_snapshot()["kind"].startswith("error:"):
+        degraded_reasons.append("raw_store_init_failed")
+
+    return {
+        "status": "ok" if not degraded_reasons else "degraded",
+        "version": __version__,
+        "db": db_status,
+        # FON-93 — "owner" when DATABASE_URL_MIGRATIONS (a dedicated owner
+        # DSN for startup DDL) is set, "same" when DDL runs on the serving
+        # engine. Presence only; the URL is never reported.
+        "db_migrations_dsn": migrations_dsn_kind(),
+        "usali_rules": rules_loaded,
+        "structural_recognizer": recognizer_ok,
+        "ontology_version": ontology_version,
+        "degraded_reasons": degraded_reasons,
+    }
+
+
+def _raw_store_snapshot() -> dict[str, Any]:
+    """Which RawStore class the worker instantiated (+ bucket / region)."""
     try:
         from ..storage import get_raw_store
 
         store = get_raw_store()
-        raw_store_kind = type(store).__name__
-        raw_store_bucket = getattr(store, "bucket", None)
-        raw_store_region = getattr(store, "region", None)
+        return {
+            "kind": type(store).__name__,
+            "bucket": getattr(store, "bucket", None),
+            "region": getattr(store, "region", None),
+        }
     except Exception as exc:
-        raw_store_kind = f"error:{type(exc).__name__}"
-        degraded_reasons.append("raw_store_init_failed")
+        return {"kind": f"error:{type(exc).__name__}", "bucket": None, "region": None}
 
+
+def auth_posture() -> dict[str, bool]:
+    """The four auth flags. A public worker that honours a bare X-Tenant-Id is
+    a cross-tenant hole (2026-10-06); ``jwt_required`` should read true on
+    every deployed environment and false only on a developer's machine."""
+    settings = get_settings()
+    header_path = bool(getattr(settings, "ALLOW_TENANT_HEADER_WITHOUT_JWT", False))
+    return {
+        "header_tenant_path_enabled": header_path,
+        "jwt_required": not header_path,
+        # FON-93 — should read true on prod once the registry is seeded.
+        "registered_tenant_required": bool(
+            getattr(settings, "REQUIRE_REGISTERED_TENANT", False)
+        ),
+        # FON-93 — true once RLS is applied and the app role is in use.
+        "rls_tenant_guc": bool(getattr(settings, "DB_SET_TENANT_GUC", False)),
+    }
+
+
+async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
+    """The operator blocks ``GET /admin/health`` adds to the public body."""
     # Content-hash extraction cache metrics (Sam cost-opt 2026-07). A
     # per-tenant hit/miss/hit_rate breakdown so ops can eyeball how much
     # LLM spend the cache is deflecting. Process-local — restart zeros
@@ -119,50 +172,22 @@ async def health(
                 else "unavailable"
             ),
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("health: semantic search probe failed: %s", exc)
         semantic_search = {"error": type(exc).__name__}
 
+    read_cache: dict[str, Any] = {}
+    try:
+        from ..services.read_cache import read_cache_stats
+
+        read_cache = read_cache_stats()
+    except Exception as exc:
+        read_cache = {"error": type(exc).__name__}
+
     return {
-        "status": "ok" if not degraded_reasons else "degraded",
-        "version": __version__,
-        # ``db`` stays the "ok" / "fail" string external readers (runbooks,
-        # monitors, an older web bundle) compare against — byte-for-byte
-        # today's shape. The FON-93 fact is a SIBLING key, never a reshape.
-        "db": db_status,
-        # FON-93 — "owner" when DATABASE_URL_MIGRATIONS (a dedicated owner
-        # DSN for startup DDL) is set, "same" when DDL runs on the serving
-        # engine. Presence only; the URL is never reported.
-        "db_migrations_dsn": migrations_dsn_kind(),
-        "usali_rules": rules_loaded,
-        "structural_recognizer": recognizer_ok,
-        "ontology_version": ontology_version,
-        "raw_store": {
-            "kind": raw_store_kind,
-            "bucket": raw_store_bucket,
-            "region": raw_store_region,
-        },
+        "raw_store": _raw_store_snapshot(),
         "extraction_cache": extraction_cache,
+        "read_cache": read_cache,
         "semantic_search": semantic_search,
-        # Auth posture. A public worker that honours a bare X-Tenant-Id is a
-        # cross-tenant hole (2026-10-06); this says, at a glance, whether
-        # that path is open. It should read false on every deployed
-        # environment and true only on a developer's machine.
-        "auth": {
-            "header_tenant_path_enabled": bool(
-                getattr(get_settings(), "ALLOW_TENANT_HEADER_WITHOUT_JWT", False)
-            ),
-            "jwt_required": not bool(
-                getattr(get_settings(), "ALLOW_TENANT_HEADER_WITHOUT_JWT", False)
-            ),
-            # FON-93 — should read true on prod once the registry is seeded.
-            "registered_tenant_required": bool(
-                getattr(get_settings(), "REQUIRE_REGISTERED_TENANT", False)
-            ),
-            # FON-93 — true once RLS is applied and the app role is in use.
-            "rls_tenant_guc": bool(
-                getattr(get_settings(), "DB_SET_TENANT_GUC", False)
-            ),
-        },
-        "degraded_reasons": degraded_reasons,
+        "auth": auth_posture(),
     }

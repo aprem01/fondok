@@ -2286,7 +2286,11 @@ async def get_assumption_sources(
     The web app uses this on Investment / Returns / Overview to
     badge each headline number with its source so reviewers can see
     at a glance which assumptions are grounded in extracted data vs
-    falling back to Kimpton seeds.
+    falling back to seeds. It is fetched on every tab, so the answer is
+    served through :mod:`app.services.read_cache` and re-derived only
+    when the deal's inputs change (deal row / overrides, documents,
+    extraction rows, engine runs, portfolio library) or the safety TTL
+    lapses; concurrent identical requests share one computation.
     """
     # Verify deal exists + tenant authorization.
     row = (
@@ -2303,7 +2307,23 @@ async def get_assumption_sources(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"deal {deal_id} not found",
         )
+    from ..services.read_cache import cached_deal_read
 
+    return await cached_deal_read(
+        session,
+        name="assumption_sources",
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        compute=lambda: _compute_assumption_sources(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        ),
+    )
+
+
+async def _compute_assumption_sources(
+    session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
+) -> AssumptionSourcesResponse:
+    """The uncached provenance map (see :func:`get_assumption_sources`)."""
     # Lazy import to avoid a top-level circular: engine_runner pulls
     # in models from this module via the dossier path.
     from ..services.engine_runner import _load_engine_inputs
@@ -3220,12 +3240,13 @@ async def _load_deal_payload(
     * Fixture documents (Kimpton appendix) are only used as a fallback
       when no real docs are present (the legacy demo path).
 
-    The deal_data / engine_results / variance fields are still served
-    from the Kimpton fixture pending a deal-fetch helper that can
-    rebuild a ``USALIFinancials`` spread from extraction JSON.
+    With a session the payload is built ONLY from the deal's own rows
+    (``_build_real_analyst_fields`` + the parsed source documents); a deal
+    that is not on the tenant raises ``MemoInputMissing(code="deal_not_found")``.
+    The Kimpton fixture is reached solely by the session-less demo /
+    streaming-smoke call, which is the one place it is imported.
     """
     from ..agents.analyst import AnalystInput, AnalystSourceDocument
-    from ..export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
 
     settings = get_settings()
 
@@ -3252,6 +3273,13 @@ async def _load_deal_payload(
                 {"id": deal_id, "tenant": effective_tenant},
             )
         ).first()
+        if deal_row is None:
+            # Not this tenant's deal (or no such deal). The route's
+            # ``_assert_deal_belongs_to_tenant`` already 404s before we get
+            # here; this keeps the loader itself from ever reaching the
+            # fixture branch below for a DB-backed call — the Analyst must
+            # never be fed another hotel's numbers under a real deal id.
+            raise MemoInputMissing("Deal not found.", code="deal_not_found")
         if deal_row is not None:
             docs_total, docs_extracted = await _count_extracted_documents(
                 session, deal_id=deal_id, tenant_id=effective_tenant
@@ -3284,34 +3312,15 @@ async def _load_deal_payload(
                 session, deal_id=deal_id, tenant_id=effective_tenant
             )
 
-    deal = kimpton_deal()
-    deal["id"] = deal_id
-    model = kimpton_model()
-    memo = kimpton_memo()
-
-    if real_source_docs:
-        docs = real_source_docs
-    else:
-        # Fixture fallback — used only by the seed-data demo / streaming
-        # smoke tests where no real documents have been uploaded.
-        docs = []
-        for idx, fname in enumerate(
-            memo.get("appendix", {}).get("documents_reviewed", []), start=1
-        ):
-            docs.append(
-                AnalystSourceDocument(
-                    document_id=f"doc-{idx:02d}",
-                    filename=fname,
-                    doc_type="reference",
-                    page_count=1,
-                    excerpts_by_page={1: f"Reference excerpt for {fname}."},
-                )
-            )
-
-    if real_payload_fields is not None:
+    if session is not None:
         # Real-data path — every numeric input traces back to the deal's
         # extractions / engine runs. If any layer is sparse the Analyst
-        # sees None / empty for that layer rather than a fixture lie.
+        # sees None / empty for that layer rather than a fixture lie. No
+        # fixture object is constructed on this path at all: a real deal
+        # with no parsed source documents gets an EMPTY document list, not
+        # the demo's fictional ``STR_MarketReport_Q1.pdf`` excerpts.
+        if real_payload_fields is None:  # set whenever deal_row exists
+            raise MemoInputMissing("Deal not found.", code="deal_not_found")
         return AnalystInput(
             tenant_id=str(tenant_id),
             deal_id=deal_id,
@@ -3319,12 +3328,31 @@ async def _load_deal_payload(
             normalized_spread=real_payload_fields["normalized_spread"],
             engine_results=real_payload_fields["engine_results"],
             variance_report=real_payload_fields["variance_report"],
-            source_documents=docs,
+            source_documents=real_source_docs,
         )
 
-    # Fixture path (no session): the only remaining DEFAULT_TENANT_ID use —
-    # the seed-data demo / streaming smoke flow has no caller tenant. A
-    # caller that does name a tenant is honoured.
+    # Fixture path (no session): the seed-data demo / streaming smoke flow.
+    # The only place the Kimpton fixture is imported, and the only remaining
+    # DEFAULT_TENANT_ID use — that flow has no caller tenant. A caller that
+    # does name a tenant is honoured.
+    from ..export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
+
+    deal = kimpton_deal()
+    deal["id"] = deal_id
+    model = kimpton_model()
+    memo = kimpton_memo()
+    docs = [
+        AnalystSourceDocument(
+            document_id=f"doc-{idx:02d}",
+            filename=fname,
+            doc_type="reference",
+            page_count=1,
+            excerpts_by_page={1: f"Reference excerpt for {fname}."},
+        )
+        for idx, fname in enumerate(
+            memo.get("appendix", {}).get("documents_reviewed", []), start=1
+        )
+    ]
     return AnalystInput(
         tenant_id=str(tenant_id) if tenant_id else settings.DEFAULT_TENANT_ID,
         deal_id=deal_id,

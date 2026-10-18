@@ -139,7 +139,7 @@ async def test_isolation_check_flags_a_leaking_route() -> None:
 
     @toy.get("/health")
     async def health() -> dict[str, Any]:
-        return {"version": "toy", "db": "ok", "auth": {"jwt_required": False, "header_tenant_path_enabled": True}}
+        return {"version": "toy", "db": "ok"}
 
     @toy.get("/settings/tenant")
     async def settings_tenant(x_tenant_id: str = Header(alias="X-Tenant-Id")) -> dict[str, Any]:
@@ -256,7 +256,7 @@ async def test_rollout_dry_run_prints_the_plan_and_writes_nothing() -> None:
     assert f"source tenant {old_tenant}" in text
     assert deal in text and "Sam's old-org deal" in text
     assert "deals " in text and "rows that would move" in text
-    assert "REQUIRE_REGISTERED_TENANT" in text and "/health.auth.registered_tenant_required" in text
+    assert "REQUIRE_REGISTERED_TENANT" in text and "/admin/health.auth.registered_tenant_required" in text
     assert "Clerk dashboard — BY HAND" in text
 
     after = await _snapshot(engine, [old_tenant])

@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -515,6 +515,33 @@ async def create_scenario(
     return _row_to_record(row)
 
 
+# Registered BEFORE ``GET /{deal_id}/scenarios/{scenario_id}`` — a literal
+# segment must win over the UUID path parameter or "compare" is parsed as
+# a scenario id and the read 422s.
+@router.get(
+    "/{deal_id}/scenarios/compare",
+    response_model=CompareResponse,
+)
+async def compare_scenarios_get(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    scenario_ids: Annotated[
+        list[UUID],
+        Query(min_length=1, max_length=4, description="1 to 4 scenario ids to compare"),
+    ],
+) -> CompareResponse:
+    """Side-by-side compare as a read (``?scenario_ids=a&scenario_ids=b``).
+
+    The IC Memo and Scenarios tabs call compare on VIEW, so the verb is a
+    GET: same response as the POST form below, same tenant guard, same
+    first-view materialisation (see :func:`_compare_scenarios`).
+    """
+    return await _compare_scenarios(
+        session, deal_id=deal_id, tenant_id=tenant_id, scenario_ids=scenario_ids
+    )
+
+
 @router.get(
     "/{deal_id}/scenarios/{scenario_id}",
     response_model=ScenarioRecord,
@@ -833,12 +860,35 @@ async def compare_scenarios(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> CompareResponse:
+    """Side-by-side compare of up to 4 scenarios (body form).
+
+    Kept for the current web client; ``GET …/scenarios/compare`` is the
+    same operation as a read. Idempotent: calling it twice with the same ids
+    returns the same columns and writes nothing the first call did not.
+    """
+    return await _compare_scenarios(
+        session, deal_id=deal_id, tenant_id=tenant_id, scenario_ids=body.scenario_ids
+    )
+
+
+async def _compare_scenarios(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+    scenario_ids: list[UUID],
+) -> CompareResponse:
     """Side-by-side compare of up to 4 scenarios.
 
     Returns the most-recent persisted engine outputs per scenario
     (``engine_outputs`` rows filtered by each scenario's ``last_run_id``).
-    Scenarios that haven't been run yet are auto-run inline so the UI
-    never has to render an empty column.
+    A scenario that has never been run is materialised once, inline, so
+    the UI never renders an empty column; after that first view the call
+    is a pure read (no engine run, no row written). It is therefore
+    idempotent and NOT an analyst write: it writes no audit row and must
+    not be counted as one by a write audit — the engine run it may trigger
+    is the scenario's own first run, which ``POST /scenarios/{id}/run``
+    would otherwise perform.
 
     Tenant-scope guard: every scenario id MUST belong to the requested
     deal AND to the caller's tenant. Cross-tenant ids are rejected with
@@ -869,7 +919,7 @@ async def compare_scenarios(
     base_id = UUID(str(base_row._mapping["id"])) if base_row else None
 
     cells: list[CompareCell] = []
-    for sid in body.scenario_ids:
+    for sid in scenario_ids:
         row = await _load_scenario(
             session, scenario_id=sid, deal_id=deal_id, tenant_id=tenant_id
         )

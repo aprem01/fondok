@@ -83,7 +83,13 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .labels import NOI_HEADLINE_LABELS
+from .labels import (
+    COMP_CAP_METHOD_DISPLAY,
+    COMP_COVERAGE_DISPLAY,
+    NOI_HEADLINE_LABELS,
+    line_label,
+    source_display,
+)
 from .refusals import collect_refusals, dedupe, refuse
 
 # ─────────────────────────── styling helpers ───────────────────────────
@@ -122,14 +128,9 @@ _SOURCE_ROW_FILL: dict[str, PatternFill] = {
     "seed": PatternFill("solid", fgColor="F3F4F6"),             # neutral
 }
 
-_SOURCE_DISPLAY: dict[str, str] = {
-    "t12_actual": "T-12",
-    "portfolio_pnl": "Portfolio",
-    "cbre_horizons": "CBRE",
-    "pnl_benchmark": "HOST",
-    "analyst_override": "Override",
-    "seed": "Seed",
-}
+#: Source code → display word. The full vocabulary lives in
+#: :mod:`app.export.labels`; this alias keeps the module's call sites short.
+_SOURCE_DISPLAY = source_display
 
 
 def _style_header_row(ws: Worksheet, row: int, ncols: int) -> None:
@@ -1242,7 +1243,7 @@ def _build_op_ratio_provenance(wb: Workbook, op_prov: dict[str, Any] | None) -> 
             c.number_format = PCT_FMT
         else:
             c.number_format = USD_FMT
-        ws.cell(row=row, column=3, value=_SOURCE_DISPLAY.get(source, source.title()))
+        ws.cell(row=row, column=3, value=_SOURCE_DISPLAY(source))
         ws.cell(row=row, column=4, value=str(doc))
 
         # Row tint by source
@@ -1424,20 +1425,31 @@ def _build_comparable_sales(wb: Workbook, comp_sales: dict[str, Any] | None) -> 
     row = 2
     median_cap = comp_sales.get("derived_cap_rate_median")
     weighted_cap = comp_sales.get("derived_cap_rate_weighted")
-    method = comp_sales.get("derived_cap_rate_method", "none")
-    coverage = comp_sales.get("coverage_quality", "low")
+    method = str(comp_sales.get("derived_cap_rate_method") or "none").lower()
+    coverage = str(comp_sales.get("coverage_quality") or "low").lower()
 
     ws.cell(row=row, column=1, value="Method").font = Font(bold=True)
-    ws.cell(row=row, column=2, value=method.title())
+    ws.cell(
+        row=row, column=2,
+        value=COMP_CAP_METHOD_DISPLAY.get(method, COMP_CAP_METHOD_DISPLAY["none"]),
+    )
     ws.cell(row=row, column=3, value="Coverage").font = Font(bold=True)
-    ws.cell(row=row, column=4, value=coverage.title())
+    ws.cell(
+        row=row, column=4,
+        value=COMP_COVERAGE_DISPLAY.get(coverage, coverage.title()),
+    )
     row += 1
+    # No derivation (fewer than 3 comps) → the cap cells stay BLANK. A 0%
+    # here would be a placeholder number, not a model output.
+    derived = method != "none"
     ws.cell(row=row, column=1, value="Median Cap").font = Font(bold=True)
-    c = ws.cell(row=row, column=2, value=(median_cap or 0) / 100.0)
-    c.number_format = PCT_FMT
+    if derived and median_cap is not None:
+        c = ws.cell(row=row, column=2, value=float(median_cap) / 100.0)
+        c.number_format = PCT_FMT
     ws.cell(row=row, column=3, value="Weighted Cap").font = Font(bold=True)
-    c = ws.cell(row=row, column=4, value=(weighted_cap or 0) / 100.0)
-    c.number_format = PCT_FMT
+    if derived and weighted_cap is not None:
+        c = ws.cell(row=row, column=4, value=float(weighted_cap) / 100.0)
+        c.number_format = PCT_FMT
     row += 2
 
     # ── Weighting notes callout ─────────────────────────────────────
@@ -1570,7 +1582,7 @@ def _build_historical_baseline(wb: Workbook, baseline: dict[str, Any] | None) ->
         row += 1
         walk_start = row
         for d in walk[:5]:
-            ws.cell(row=row, column=1, value=str(d.get("line", "")).replace("_", " ").title())
+            ws.cell(row=row, column=1, value=line_label(d.get("line")))
             ws.cell(row=row, column=2, value=int(d.get("year") or 0))
             c = ws.cell(row=row, column=3, value=float(d.get("value") or 0))
             c.number_format = USD_FMT
