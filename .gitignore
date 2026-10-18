@@ -23,3 +23,7 @@ docs/data/data2/
 evals/test-results.xml
 .claude/worktrees/
 .gstack/
+
+# worker test scratch (private TMPDIR per pytest run; see docs/TESTING.md)
+apps/worker/.tmp/
+apps/worker/.tmp_*/
