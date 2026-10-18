@@ -50,10 +50,27 @@ async def _table_exists(session: AsyncSession) -> bool:
     """Cheap existence check — returns True only when document_chunks
     is present. SQLite test runs and Postgres deployments without
     pgvector both land here as False; the rest of the module no-ops.
+
+    The probe reads the CATALOG, never the table: ``document_chunks`` is
+    tenant-scoped, so a ``SELECT … FROM document_chunks`` without a
+    ``tenant_id`` predicate is exactly what ``tenant_middleware`` flags
+    as CRITICAL (seen in prod on every ``/admin/health`` after the RLS
+    switch, 2026-10-17). Catalog reads are not tenant-scoped.
     """
     try:
-        await session.execute(text("SELECT 1 FROM document_chunks LIMIT 0"))
-        return True
+        bind = session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            row = await session.execute(
+                text("SELECT to_regclass('public.document_chunks') IS NOT NULL")
+            )
+        else:
+            row = await session.execute(
+                text(
+                    "SELECT COUNT(*) > 0 FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'document_chunks'"
+                )
+            )
+        return bool(row.scalar())
     except Exception:
         return False
 
