@@ -4064,11 +4064,12 @@ async def memo_status(
                 SELECT batch_id, status, error
                   FROM pending_batches
                  WHERE deal_id = :d
+                   AND tenant_id = :t
                  ORDER BY submitted_at DESC
                  LIMIT 1
                 """
             ),
-            {"d": deal_id},
+            {"d": deal_id, "t": str(tenant_id)},
         )
     ).first()
 

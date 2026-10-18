@@ -184,7 +184,7 @@ stays as the explanation of each step.
    (`whsec_…`) into Railway as `CLERK_WEBHOOK_SECRET`. Redeploy. Send the
    dashboard's test event; expect `200 {"ok": true, ...}`.
 7. **Flip `REQUIRE_REGISTERED_TENANT=1`** on Railway. Verify:
-   `/health.auth.registered_tenant_required == true`; a Fondok Internal
+   `/admin/health.auth.registered_tenant_required == true`; a Fondok Internal
    session lists deals; a throwaway Clerk org gets `403
    tenant_not_registered`.
 8. **RLS (later, separate change window)** — §7.
@@ -376,7 +376,7 @@ any user sees.
    queries): no GUC → 0 rows; GUC set → that tenant's rows; after a
    commit `current_setting` reads `''` and the count is 0 again, **not an
    error**.
-4. **Set `DB_SET_TENANT_GUC=1`.** Redeploy. `/health.auth.rls_tenant_guc`
+4. **Set `DB_SET_TENANT_GUC=1`.** Redeploy. `/admin/health.auth.rls_tenant_guc`
    flips; every session publishes the caller's tenant and the three
    scans iterate tenants. The worker is still the owner, so functionally
    nothing changes yet.
@@ -417,7 +417,7 @@ might not match the deploy.
   → `Authorization`; they expire in about a minute). Header mode (local
   only): `--tenant-a` / `--tenant-b` UUIDs against a worker started with
   `ALLOW_TENANT_HEADER_WITHOUT_JWT=1`; the script reads
-  `/health.auth.jwt_required` first and refuses header mode on a worker
+  `/admin/health.auth.jwt_required` first and refuses header mode on a worker
   that requires JWTs.
 * **What it asserts.** Both credentials resolve to distinct tenants; the
   two `GET /deals` lists are disjoint and every row carries its caller's
@@ -477,7 +477,7 @@ guessed) — and, per source tenant, the per-table row counts
 `reassign_default_tenant_rows.py` would move, with a warning when that
 tenant also owns deals you did not list (the fold moves a whole tenant);
 (4) the Clerk dashboard steps; (5) the Railway variables to flip and the
-`/health.auth` fields that must read true afterwards; (6) how to verify.
+`/admin/health.auth` fields that must read true afterwards; (6) how to verify.
 
 `--execute` performs **only the database steps** — the internal-tenant
 upsert and the per-table moves, through the same functions the two
@@ -539,7 +539,7 @@ step 8 changes what any user sees.
    `CLERK_WEBHOOK_SECRET` (`railway variables --set … --service fondok-worker`),
    redeploy, send the dashboard test event → `200 {"ok": true, …}`.
 9. **Prem — flip `REQUIRE_REGISTERED_TENANT=1`** on Railway. Verify
-   `/health.auth.registered_tenant_required: true`.
+   `/admin/health.auth.registered_tenant_required: true`.
 10. **Sam — re-check step 7.** Then, as a throwaway Clerk org (or a user
     with no org), confirm the app shows "No workspace assigned" / the
     worker answers `403 tenant_not_registered`.
