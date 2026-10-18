@@ -60,6 +60,16 @@ test does not touch `document_chunks`. Use the `pgvector/pgvector:pg16` image
 for a full schema. The same variable also enables
 `tests/test_tenant_registry.py::test_factory_sessions_publish_the_guc_on_postgres`.
 
+**Local Postgres only.** Pointed at a remote database (e.g. the Railway public
+proxy, even a throwaway database on that server) the module hangs after the
+first few tests — the module-scoped engine is left `idle in transaction`
+across the ~60 ms round-trips and the next fixture never acquires its
+connection. Seen 2026-10-17 while proving the production RLS switch; the
+local-docker run is unaffected. For a remote proof, run the same checks as a
+standalone script (one connection per step, explicit commits) — that is how
+the production switch was verified — and keep the pytest module for the
+docker loop above.
+
 ### Shell gotcha that produces "sqlite errors everywhere"
 
 `TMPDIR=$PWD/.tmp_fx cmd1 && cmd2` applies `TMPDIR` to **cmd1 only**; `cmd2`
