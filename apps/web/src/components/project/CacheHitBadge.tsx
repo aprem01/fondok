@@ -35,11 +35,9 @@ export function cacheBadgeStateFromError(e: unknown): CacheBadgeState | null {
 export function CacheHitBadge() {
   const [state, setState] = useState<CacheBadgeState>({ kind: 'loading' });
 
+  const connected = isWorkerConnected();
   useEffect(() => {
-    if (!isWorkerConnected()) {
-      setState({ kind: 'error', message: 'worker url not configured' });
-      return;
-    }
+    if (!connected) return;
     const ctrl = new AbortController();
     api.observability
       .cacheStats(100, ctrl.signal)
@@ -49,7 +47,11 @@ export function CacheHitBadge() {
         if (next) setState(next);
       });
     return () => ctrl.abort();
-  }, []);
+  }, [connected]);
+
+  // Without Fondok's service there is nothing to measure — render nothing
+  // rather than an error state carrying a configuration message.
+  if (!connected) return null;
 
   if (state.kind === 'signed_out') {
     return (

@@ -133,6 +133,7 @@ import {
   api,
   isWorkerConnected,
   WorkerError,
+  workerErrorMessage,
   type AskingVsBidResponse,
   type PriceScenario,
   type EngineOutputsResponse,
@@ -423,7 +424,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // reopening-date field) use it to release their guard on a refusal.
   const persist = useCallback(
     async (patch: Parameters<typeof api.deals.update>[1], msg = 'Saved — re-running the model…'): Promise<boolean> => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return false; }
+      if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return false; }
       try {
         await api.deals.update(dealId, patch);
         toast(msg, { type: 'success' });
@@ -431,8 +432,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         scheduleRun();
         return true;
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
         return false;
       }
     },
@@ -442,14 +443,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // ─── FON-68 — return targets (benchmark + pricing hurdles; no re-run) ───
   const persistTarget = useCallback(
     async (patch: { target_irr?: number | null; target_moic?: number | null }) => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
       try {
         await api.deals.update(dealId, patch);
         toast('Target saved — benchmark and pricing hurdle only; the model is unchanged', { type: 'success' });
         void refreshDeal?.();
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [dealId, liveMode, toast, refreshDeal],
@@ -458,15 +459,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // ─── Sam #6 — Market / Submarket (descriptive deal columns; no re-run) ───
   const persistMarket = useCallback(
     async (patch: MarketSubmarketPatch): Promise<boolean> => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return false; }
+      if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return false; }
       try {
         await api.deals.update(dealId, patch);
         toast('Market saved — descriptive only; the model is unchanged', { type: 'success' });
         void refreshDeal?.();
         return true;
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
         return false;
       }
     },
@@ -481,7 +482,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // no engine (it only picks the Overview section set), so no re-run.
   const persistPreset = useCallback(
     async (profileId: string) => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
       const sug = suggestedTarget(returnProfiles.find((p) => p.id === profileId)?.target);
       const patch: { return_profile: string; target_irr?: number } = { return_profile: profileId };
       if (sug) patch.target_irr = sug.pct / 100;
@@ -490,8 +491,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         toast('Target LIRR preset applied — edit the number if needed; the model is unchanged', { type: 'success' });
         void refreshDeal?.();
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [dealId, liveMode, toast, refreshDeal],
@@ -503,7 +504,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // No engine reads it; clearing deletes the key. No re-run.
   const persistYocTarget = useCallback(
     async (v: number | null) => {
-      if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+      if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
       const { [TARGET_YOC_KEY]: _prev, ...rest } = overrides;
       const next = v == null ? rest : { ...rest, [TARGET_YOC_KEY]: overrideEnvelope(TARGET_YOC_KEY, v, '') };
       try {
@@ -511,8 +512,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         toast('Target saved — benchmark only; the model is unchanged', { type: 'success' });
         void refreshDeal?.();
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [dealId, liveMode, toast, refreshDeal, overrides],
@@ -528,13 +529,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // header / rows update.
   const [editing, setEditing] = useState<{ rowId: string; draft: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  // Per-section "Show fields not in documents" toggle (optional empty rows fold away).
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const saveFailed = useCallback((err: unknown) => {
-    const detail = err instanceof WorkerError ? err.body : String(err);
-    toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+    toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
   }, [toast]);
   const saveOverride = useCallback(async (row: RowDef, draft: string) => {
     if (!row.overridePath) return;
-    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
     const value = draft.trim();
     if (!value) { toast(`Enter a ${row.label.toLowerCase()}`, { type: 'error' }); return; }
     // FON-63 — opening a field to inspect it must never mint an override.
@@ -568,7 +571,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   }, [dealId, liveMode, overrides, toast, refreshDeal, saveFailed]);
   const restoreOverride = useCallback(async (row: RowDef) => {
     if (!row.overridePath) return;
-    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
     const { [row.overridePath]: _drop, ...rest } = overrides;
     setSaving(true);
     try {
@@ -584,7 +587,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     }
   }, [dealId, liveMode, overrides, toast, refreshDeal, saveFailed]);
   const renameProject = useCallback(async (draft: string) => {
-    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
     const name = draft.trim();
     if (!name) { toast('Enter a project name', { type: 'error' }); return; }
     // FON-63 — the same guard on the deal column: an unchanged name is not an edit.
@@ -1020,10 +1023,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             : undefined)
         : {
             testId: 'stabilization-needs-rerun',
-            text:
-              'No stabilization block in this deal’s engine output, so every figure '
-              + 'here is a dash. Re-run the model (CAPEX tab → Re-run) to publish '
-              + 'one — Fondok will not stand another projection year in its place.',
+            // The page-level stale-run banner (top of every tab) carries the
+            // Re-run button; this line only says the section is one of the
+            // figures it names. No second CTA, no pointer to another tab.
+            text: 'This deal’s saved run predates the Stabilization section. Re-run the model from the banner at the top of the page to populate it — no other year stands in for it.',
           };
 
     const stabilizationRows = (): RowDef[] => [
@@ -1185,7 +1188,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           value: mm(stabNoi),
           sub: `Stabilization: ${stabYearLabel ?? `Year ${stab?.stabilized_year}`}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
         }
-      : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: 'stabilization year not set' };
+      : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: stab ? 'stabilization year not set' : 'published after the next model run' };
     // FON-59 R-052 — the two IRRs sit side by side, each saying which stack
     // it returns to, so a tester who never uploaded debt reads the right one.
     const leveredTile = { label: 'Levered IRR', value: pctv(leveredIrr, 1), sub: 'equity return, after debt' };
@@ -1241,7 +1244,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       .catch((e: unknown) => {
         if (ac.signal.aborted) return;
         setAskBid(null);
-        setAskBidError(e instanceof WorkerError ? (e.body || e.message) : String(e));
+        setAskBidError(workerErrorMessage(e, 'Could not load the asking vs bidding comparison.'));
       });
     return () => ac.abort();
   }, [dealId, liveMode, cfg, dealTargetIrr, runToken, purchase]);
@@ -1669,7 +1672,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             background: yocBenchmark.status === 'Pass' ? 'oklch(45% 0.12 155 / .1)' : yocBenchmark.status === 'Short' ? 'oklch(56% 0.12 40 / .12)' : palette.hairlineSection,
           }}>{yocBenchmark.status}</span>
           {yocBenchmark.actual == null && (
-            <span style={{ fontSize: 10.5, color: palette.textMuted }}>Actual needs a stabilized year and total capital from the model run</span>
+            <span style={{ fontSize: 10.5, color: palette.textMuted }}>{stab ? 'Actual needs total capital from the model run' : 'Published after the next model run'}</span>
           )}
         </div>
       </div>
@@ -1772,9 +1775,39 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 <span>{s.banner.text}</span>
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '0 32px' }}>
-              {s.rows.map((r) => <OverviewRow key={r.id} row={r} onClick={openProv} />)}
-            </div>
+            {(() => {
+              // Optional rows no document or input has filled — a bare "—" with
+              // nothing to explain it — fold away behind one line, so the first
+              // tab a reader opens is not a column of unexplained dashes. Rows
+              // that carry a reason, an editor or a refusal key stay: they say
+              // why they are empty, or can be filled here.
+              const optionalEmpty = (r: RowDef) =>
+                r.kind === 'awaiting' && r.value === REFUSAL_GLYPH && !r.overridePath && !r.dealField && r.reason == null && !r.reasonKey;
+              // A section with its own banner (Stabilization) already explains
+              // its dashes — nothing folds there.
+              const expanded = !!expandedSections[s.title] || !!s.banner;
+              const hidden = expanded ? [] : s.rows.filter(optionalEmpty);
+              const shown = expanded ? s.rows : s.rows.filter((r) => !optionalEmpty(r));
+              return (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: '0 32px' }}>
+                    {shown.map((r) => <OverviewRow key={r.id} row={r} onClick={openProv} />)}
+                  </div>
+                  {!s.banner && (hidden.length > 0 || (expanded && s.rows.some(optionalEmpty))) && (
+                    <button
+                      type="button"
+                      data-testid={`overview-section-${slug(s.title)}-toggle-empty`}
+                      onClick={() => setExpandedSections((m) => ({ ...m, [s.title]: !expanded }))}
+                      style={{ marginTop: 8, fontSize: 11.5, color: palette.linkBlue, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                    >
+                      {expanded
+                        ? 'Hide fields not in documents'
+                        : `Show ${hidden.length} field${hidden.length === 1 ? '' : 's'} not in documents`}
+                    </button>
+                  )}
+                </>
+              );
+            })()}
           </SectionCard>
         );
       })}

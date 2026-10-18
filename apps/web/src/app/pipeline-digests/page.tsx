@@ -226,7 +226,7 @@ export default function PipelineDigestsPage() {
 
       {!isWorkerConnected() && (
         <Card className="border-warning-300 bg-warning-50 p-4 text-sm text-warning-900">
-          The worker isn't connected. Set ``NEXT_PUBLIC_WORKER_URL`` to manage digests.
+          Digests aren't available right now. Contact your Fondok administrator.
         </Card>
       )}
 

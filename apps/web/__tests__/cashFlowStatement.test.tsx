@@ -218,11 +218,12 @@ describe('CashFlowTab — render', () => {
     expect(screen.getByText('Exit Debt Payoff')).toBeInTheDocument();
   });
 
-  it('renders the Run Model placeholder when no cash_flow output exists', () => {
+  it('renders the not-published card when the saved run carries no cash-flow statement', () => {
     hoisted.outputs = envelope(null);
     render(<CashFlowTab />);
-    expect(screen.getByText('No cash flow output yet')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Run Model' })).toBeInTheDocument();
+    expect(screen.getByTestId('cashflow-not-published')).toBeInTheDocument();
+    expect(screen.getByTestId('cashflow-not-published').textContent).not.toMatch(/Run the P&L first/);
+    expect(screen.queryByRole('button', { name: 'Run Model' })).toBeNull();
     // No statement chrome leaks onto the placeholder.
     expect(screen.queryByText('Cash Flow Bridge')).not.toBeInTheDocument();
   });

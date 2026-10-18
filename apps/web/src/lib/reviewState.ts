@@ -98,9 +98,32 @@ export function histValue(rowId: string, h: HistYear): number | null {
   if (rowId === 'total_rev') {
     return histStatedTotalRevenue(h) ?? histDerivedTotalRevenue(h);
   }
-  const key = HIST_KEY_BY_ROW[rowId];
+  const key = HIST_KEY_BY_ROW[rowId] ?? WEB_HIST_KEY_BY_ROW[rowId];
   if (!key) return null;
   return nOrNull((h as unknown as Record<string, unknown>)[key]);
+}
+
+/**
+ * Worksheet rows the registry binds with NO historical key: the undistributed
+ * detail lines. The web reads them off the extraction (``buildHistYear``) so a
+ * statement that itemises A&G, Sales & Marketing, Property Operations,
+ * Utilities and IT shows them; one that carries only the rollup shows the total
+ * and says the lines are not itemised.
+ */
+export const WEB_HIST_KEY_BY_ROW: Readonly<Record<string, string>> = {
+  ag: 'admin_general',
+  sm: 'sales_marketing',
+  pom: 'property_operations',
+  util: 'utilities',
+  it: 'info_telecom',
+};
+
+/** Row ids of the undistributed detail lines, in worksheet order. */
+export const UNDISTRIBUTED_DETAIL_ROWS: readonly string[] = ['ag', 'sm', 'pom', 'util', 'it'];
+
+/** True when at least one historical column itemises an undistributed line. */
+export function undistributedItemised(years: readonly HistYear[]): boolean {
+  return years.some((y) => UNDISTRIBUTED_DETAIL_ROWS.some((row) => histValue(row, y) != null));
 }
 
 /** The statement's own stated Total Revenue line, or null when it has none. */

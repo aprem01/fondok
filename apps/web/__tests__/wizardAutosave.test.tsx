@@ -236,14 +236,17 @@ describe('R-015 — default Return Profile', () => {
   });
 });
 
-describe('R-018 — brand work-in-progress note', () => {
-  it('shows the exact note at the Proposed brand picker', () => {
+describe('R-018 — brand note says what the proposed brand does today', () => {
+  it('shows the exact note at the Proposed brand picker — never "work in progress"', () => {
     seedDraft({ step: 4, files: [] });
     render(<NewProjectPage />);
     expect(screen.getByRole('heading', { name: 'Brand and Positioning' })).toBeInTheDocument();
-    expect(screen.getByTestId('brand-wip-note').textContent?.replace(/\s+/g, ' ').trim()).toBe(
-      "This section is a work in progress. The intent is to use the selected brand's preliminary programming requirements when assessing the property improvement plan and required CapEx.",
+    const note = screen.getByTestId('brand-note').textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    expect(note).toBe(
+      'The proposed brand sets the suggested positioning tier (STR chain scale) and labels the renovation plan. Brand programming requirements are not applied to CapEx.',
     );
+    expect(note).not.toMatch(/work in progress/i);
+    expect(screen.queryByTestId('brand-wip-note')).toBeNull();
   });
 });
 

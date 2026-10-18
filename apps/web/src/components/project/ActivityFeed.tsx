@@ -8,19 +8,26 @@
  *   actor initials/avatar  ·  one-line summary  ·  relative time  ·  severity badge
  *
  * Clicking a row opens a right-side panel (NOT a modal so the timeline
- * stays visible behind it) with the full before/after JSON diff. Filter
- * chips at the top scope by action / entity_type / severity. The empty
- * state matches Eshan's June 2026 ask for "every change should be one
- * click away."
+ * stays visible behind it) with the full before/after diff. Filter chips at
+ * the top scope by action / entity type / severity.
+ *
+ * Everything a reader sees is a label, never an identifier: the worker's
+ * ``engine_run.kicked_off`` reads "Model run started", an override key path
+ * reads as the assumption's name, ``None`` reads "not set", and record ids
+ * live only in hover titles (lib/auditLabels).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, AlertTriangle, ChevronRight, Filter, Search, X,
+  Activity, AlertTriangle, ChevronRight, Filter, RefreshCw, X,
 } from 'lucide-react';
-import { api, isWorkerConnected, WorkerError } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, technicalDetail } from '@/lib/api';
 import type { AuditEntry, AuditSeverity, DealAuditResponse } from '@/lib/api';
 import { cn } from '@/lib/format';
+import { Button } from '@/components/ui/Button';
+import {
+  actionLabel, entityLabel, humanizeDiffSummary,
+} from '@/lib/auditLabels';
 import RunComparePanel from './RunComparePanel';
 
 interface Props {
@@ -43,9 +50,10 @@ const SEVERITIES: AuditSeverity[] = ['info', 'warning', 'critical'];
 export default function ActivityFeed({ dealId }: Props) {
   const [data, setData] = useState<DealAuditResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; detail: string | null } | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const [selected, setSelected] = useState<AuditEntry | null>(null);
+  const [refreshSeq, setRefreshSeq] = useState(0);
 
   const fetchFeed = useCallback(
     async (signal: AbortSignal) => {
@@ -60,11 +68,7 @@ export default function ActivityFeed({ dealId }: Props) {
         setData(res);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
-        const msg =
-          err instanceof WorkerError
-            ? `${err.message}: ${err.body || ''}`
-            : (err as Error).message;
-        setError(msg);
+        setError({ message: userMessage(err), detail: technicalDetail(err) });
       } finally {
         setLoading(false);
       }
@@ -81,7 +85,7 @@ export default function ActivityFeed({ dealId }: Props) {
       setData(null);
     }
     return () => ctl.abort();
-  }, [fetchFeed]);
+  }, [fetchFeed, refreshSeq]);
 
   const entries = data?.entries ?? [];
 
@@ -92,7 +96,7 @@ export default function ActivityFeed({ dealId }: Props) {
       <div className="rounded-md border border-border bg-white p-8 text-center">
         <Activity className="mx-auto h-8 w-8 text-ink-300" />
         <p className="mt-3 text-[13px] text-ink-500">
-          Activity feed available once the worker is connected.
+          Activity is recorded once this deal has been modelled.
         </p>
       </div>
     );
@@ -100,7 +104,7 @@ export default function ActivityFeed({ dealId }: Props) {
 
   return (
     <>
-    {/* Regression baselines (2026-10-16): baseline run vs. head run. */}
+    {/* Regression baselines: baseline run vs. head run. */}
     <RunComparePanel dealId={dealId} />
     <div className="flex gap-6">
       <div className="flex-1 min-w-0">
@@ -110,21 +114,21 @@ export default function ActivityFeed({ dealId }: Props) {
             <Filter size={11} /> Filter
           </span>
           <FilterSelect
-            label="Action"
+            label="Event"
             value={filters.action}
-            options={uniqueValues(entries, 'action')}
+            options={uniqueValues(entries, 'action').map((v) => ({ value: v, label: actionLabel(v) }))}
             onChange={(v) => setFilters((f) => ({ ...f, action: v }))}
           />
           <FilterSelect
-            label="Entity"
+            label="Record"
             value={filters.entity_type}
-            options={ENTITY_TYPES}
+            options={ENTITY_TYPES.map((v) => ({ value: v, label: entityLabel(v) }))}
             onChange={(v) => setFilters((f) => ({ ...f, entity_type: v }))}
           />
           <FilterSelect
             label="Severity"
             value={filters.severity}
-            options={SEVERITIES}
+            options={SEVERITIES.map((v) => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }))}
             onChange={(v) =>
               setFilters((f) => ({
                 ...f,
@@ -148,8 +152,23 @@ export default function ActivityFeed({ dealId }: Props) {
 
         {/* Body */}
         {error ? (
-          <div className="rounded-md border border-warn-200 bg-warn-50 p-4 text-[12.5px] text-warn-900">
-            Couldn't load activity feed: {error}
+          <div
+            className="rounded-md border border-warn-200 bg-warn-50 p-4 text-[12.5px] text-warn-900"
+            role="alert"
+            data-testid="activity-feed-error"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span>Couldn’t load the activity feed — {error.message}</span>
+              <Button size="sm" variant="secondary" onClick={() => setRefreshSeq((n) => n + 1)}>
+                <RefreshCw size={12} aria-hidden="true" /> Try again
+              </Button>
+            </div>
+            {error.detail && (
+              <details className="mt-2">
+                <summary className="text-[11px] text-warn-900/70 cursor-pointer select-none">Technical detail</summary>
+                <pre className="mt-1 text-[10.5px] text-warn-900/70 whitespace-pre-wrap break-words">{error.detail}</pre>
+              </details>
+            )}
           </div>
         ) : entries.length === 0 && !loading ? (
           <EmptyState />
@@ -190,6 +209,7 @@ function Row({
   isSelected: boolean;
   onClick: () => void;
 }) {
+  const summary = humanizeDiffSummary(entry.diff_summary);
   return (
     <li>
       <button
@@ -205,17 +225,24 @@ function Row({
         <ActorAvatar actor={entry.actor_id} email={entry.actor_email} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-[13px] text-ink-900 truncate">
-              {entry.action}
+            <span
+              className="font-medium text-[13px] text-ink-900 truncate"
+              title={entry.action}
+              data-testid="activity-action"
+            >
+              {actionLabel(entry.action)}
             </span>
             <SeverityBadge severity={entry.severity} />
             <span className="ml-auto text-[11.5px] text-ink-500 tabular-nums">
               {formatRelative(entry.created_at)}
             </span>
           </div>
-          <p className="mt-1 text-[12px] text-ink-500 truncate">
-            {entry.diff_summary
-              || `${entry.resource_type}${entry.resource_id ? ` · ${shortId(entry.resource_id)}` : ''}`}
+          <p
+            className="mt-1 text-[12px] text-ink-500 truncate"
+            title={entry.resource_id ?? undefined}
+            data-testid="activity-summary"
+          >
+            {summary || entityLabel(entry.resource_type)}
           </p>
           {(entry.tags ?? []).length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -224,7 +251,7 @@ function Row({
                   key={t}
                   className="rounded-sm bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-700"
                 >
-                  {t}
+                  {t.replace(/[_-]+/g, ' ')}
                 </span>
               ))}
             </div>
@@ -249,39 +276,34 @@ function DetailPanel({
   entry: AuditEntry;
   onClose: () => void;
 }) {
+  const summary = humanizeDiffSummary(entry.diff_summary);
   return (
     <aside
       className="w-[420px] flex-shrink-0 rounded-md border border-border bg-white"
       role="dialog"
-      aria-label="Audit event details"
+      aria-label="Activity details"
     >
       <div className="flex items-start justify-between border-b border-border px-4 py-3">
         <div>
-          <div className="text-[13px] font-semibold text-ink-900">
-            {entry.action}
+          <div className="text-[13px] font-semibold text-ink-900" title={entry.action}>
+            {actionLabel(entry.action)}
           </div>
-          <div className="mt-0.5 text-[11.5px] text-ink-500">
-            {entry.resource_type}
-            {entry.resource_id ? ` · ${shortId(entry.resource_id)}` : ''}
+          <div className="mt-0.5 text-[11.5px] text-ink-500" title={entry.resource_id ?? undefined}>
+            {entityLabel(entry.resource_type)}
           </div>
         </div>
         <button
           type="button"
           onClick={onClose}
           className="rounded-md p-1 text-ink-500 hover:bg-ink-100"
-          aria-label="Close audit event details"
+          aria-label="Close activity details"
         >
           <X size={14} />
         </button>
       </div>
       <dl className="space-y-3 px-4 py-3 text-[12px]">
-        <Field label="Actor">
-          {entry.actor_email || entry.actor_id || 'system'}
-          {entry.actor_ip && (
-            <span className="ml-2 text-ink-500 tabular-nums">
-              ({entry.actor_ip})
-            </span>
-          )}
+        <Field label="Who">
+          {entry.actor_email || (entry.actor_id ? 'Signed-in user' : 'Fondok')}
         </Field>
         <Field label="When">
           <span className="tabular-nums">
@@ -291,8 +313,8 @@ function DetailPanel({
         <Field label="Severity">
           <SeverityBadge severity={entry.severity} />
         </Field>
-        {entry.diff_summary && (
-          <Field label="Summary">{entry.diff_summary}</Field>
+        {summary && (
+          <Field label="Change">{summary}</Field>
         )}
         {(entry.before || entry.after) && (
           <div>
@@ -309,23 +331,24 @@ function DetailPanel({
             </div>
           </div>
         )}
-        {entry.payload && (
-          <details>
-            <summary className="cursor-pointer text-[11.5px] text-brand-700">
-              Raw payload
-            </summary>
+        <details>
+          <summary className="cursor-pointer text-[11.5px] text-brand-700">
+            Technical detail
+          </summary>
+          <dl className="mt-2 space-y-1.5 text-[11px] text-ink-700">
+            <div><span className="text-ink-500">Event: </span><code className="font-mono">{entry.action}</code></div>
+            <div><span className="text-ink-500">Record: </span><code className="font-mono">{entry.resource_type}{entry.resource_id ? ` · ${entry.resource_id}` : ''}</code></div>
+            {entry.actor_ip && <div><span className="text-ink-500">From: </span><span className="tabular-nums">{entry.actor_ip}</span></div>}
+            {entry.output_hash && (
+              <div><span className="text-ink-500">Output hash: </span><code className="font-mono">{entry.output_hash}</code></div>
+            )}
+          </dl>
+          {entry.payload && (
             <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-ink-50 p-2 text-[11px] text-ink-700">
               {JSON.stringify(entry.payload, null, 2)}
             </pre>
-          </details>
-        )}
-        {entry.output_hash && (
-          <Field label="Output hash">
-            <code className="font-mono text-[10.5px] text-ink-500">
-              {entry.output_hash.slice(0, 16)}…
-            </code>
-          </Field>
-        )}
+          )}
+        </details>
       </dl>
     </aside>
   );
@@ -356,7 +379,7 @@ function FilterSelect({
 }: {
   label: string;
   value: string | undefined;
-  options: string[];
+  options: { value: string; label: string }[];
   onChange: (v: string | undefined) => void;
 }) {
   return (
@@ -369,8 +392,8 @@ function FilterSelect({
       >
         <option value="">All</option>
         {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -404,13 +427,13 @@ function ActorAvatar({
   actor: string | null;
   email: string | null;
 }) {
-  const source = email || actor || 'system';
+  const source = email || (actor ? 'user' : 'Fondok');
   const initials = source
     .split(/[@.\s-]+/)
     .filter(Boolean)
     .map((s) => s[0]?.toUpperCase() ?? '')
     .slice(0, 2)
-    .join('') || 'SY';
+    .join('') || 'FO';
   return (
     <div
       className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-ink-300/40 text-[10.5px] font-semibold text-ink-700"
@@ -426,7 +449,7 @@ function EmptyState() {
     <div className="rounded-md border border-dashed border-border bg-white p-8 text-center">
       <Activity className="mx-auto h-8 w-8 text-ink-300" />
       <p className="mt-3 text-[13px] text-ink-700">
-        Nothing's happened on this deal yet.
+        Nothing&apos;s happened on this deal yet.
       </p>
       <p className="mt-1 text-[12px] text-ink-500">
         Once you start editing assumptions or running scenarios, every change
@@ -447,10 +470,6 @@ function uniqueValues(entries: AuditEntry[], key: keyof AuditEntry): string[] {
   return [...seen].sort();
 }
 
-function shortId(id: string): string {
-  return id.length > 12 ? `${id.slice(0, 8)}…` : id;
-}
-
 function formatRelative(iso: string): string {
   const d = new Date(iso);
   const now = Date.now();
@@ -466,6 +485,3 @@ function formatRelative(iso: string): string {
   if (day < 30) return `${day}d ago`;
   return d.toLocaleDateString();
 }
-
-// Keep imports referenced when minimizers strip unused symbols.
-export { Search };

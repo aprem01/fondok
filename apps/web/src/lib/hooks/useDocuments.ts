@@ -450,7 +450,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   const upload = useCallback(
     async (files: File[]): Promise<WorkerDocument[]> => {
       if (!live) {
-        throw new Error('worker not connected');
+        throw new Error('Fondok’s service isn’t available right now');
       }
       setUploading(true);
       try {
@@ -475,7 +475,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
     async (
       targets: ReadonlyArray<{ id: string; endpoint: ReextractEndpoint }>,
     ): Promise<ReextractOutcome> => {
-      if (!live) throw new Error('worker not connected');
+      if (!live) throw new Error('Fondok’s service isn’t available right now');
       const settledCalls = await Promise.allSettled(
         targets.map((t) =>
           t.endpoint === 'reprocess'

@@ -16,12 +16,24 @@
  */
 
 import { Fragment, useEffect, useState } from 'react';
-import { api, isWorkerConnected, type InvestmentBridgeResponse } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, type InvestmentBridgeResponse } from '@/lib/api';
 import { layoutBridge, type BridgeStep } from '@/lib/investmentBridge';
 import { SectionCard, palette, prov, radius } from '@/components/design';
 
 const mm = (v: number) => `${v < 0 ? '−$' : '$'}${(Math.abs(v) / 1e6).toFixed(2)}M`;
 const money = (v: number) => `${v < 0 ? '−$' : '$'}${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
+
+/**
+ * A leg reason the worker phrases for an analyst, with any parenthesised
+ * engine-field token stripped — "The returns run carries no NOI series
+ * (noi_by_year) — re-run the model" reads without the "(noi_by_year)".
+ */
+export function plainReason(reason: string): string {
+  return reason
+    .replace(/\s*\(([a-z][a-z0-9_]*\.)*[a-z][a-z0-9_]*_[a-z0-9_]*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
 
 export default function InvestmentBridgeTab({ dealId }: { dealId: string }) {
   const isMockId = /^\d+$/.test(dealId);
@@ -38,7 +50,7 @@ export default function InvestmentBridgeTab({ dealId }: { dealId: string }) {
       .then(setData)
       .catch((e: unknown) => {
         if (ac.signal.aborted) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(userMessage(e));
       });
     return () => ac.abort();
   }, [dealId, live]);
@@ -65,9 +77,9 @@ export default function InvestmentBridgeTab({ dealId }: { dealId: string }) {
       </div>
 
       {!live ? (
-        <Notice text="The Investment Bridge reads the live model — open a worker-backed deal." />
+        <Notice text="The Investment Bridge reads the live model — open a deal that has been modelled." />
       ) : error ? (
-        <Notice text={`Could not load the Investment Bridge: ${error}`} />
+        <Notice text={`Could not load the Investment Bridge — ${error}`} />
       ) : !data ? (
         <Notice text="Loading the Investment Bridge…" />
       ) : (
@@ -99,12 +111,12 @@ function BridgeBody({ data }: { data: InvestmentBridgeResponse }) {
     <>
       {/* Summary strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 }}>
-        <Stat label="Equity invested" value={data.equity_invested != null ? mm(data.equity_invested) : '—'} sub="Funded at close · capital.equity_amount" testId="bridge-equity-invested" />
+        <Stat label="Equity invested" value={data.equity_invested != null ? mm(data.equity_invested) : '—'} sub="Funded at close · from Sources & Uses" testId="bridge-equity-invested" />
         <Stat label="Equity returned" value={data.equity_returned != null ? mm(data.equity_returned) : '—'} sub="Σ levered cash flow to equity over the hold" testId="bridge-equity-returned" />
         <Stat label="Equity profit" value={data.equity_profit != null ? mm(data.equity_profit) : '—'} sub={data.hold_years ? `Over the ${data.hold_years}-year hold` : 'Returned less invested'} testId="bridge-equity-profit" />
       </div>
 
-      <SectionCard title="Equity invested → equity returned" note="Click a bar for its engine fields" data-testid="bridge-waterfall">
+      <SectionCard title="Equity invested → equity returned" note="Click a bar to see how it was computed" data-testid="bridge-waterfall">
         <div role="table" aria-label="Investment Bridge" style={{ marginTop: 2 }}>
           {layout.steps.map((s) => (
             <Fragment key={s.key}>
@@ -181,7 +193,7 @@ function BridgeRow({
         {dash ? '—' : mm(step.value as number)}
       </span>
       {dash && step.leg?.reason && (
-        <span data-testid={`bridge-reason-${step.key}`} style={{ fontSize: 11, color: palette.textMuted, maxWidth: 320 }}>{step.leg.reason}</span>
+        <span data-testid={`bridge-reason-${step.key}`} style={{ fontSize: 11, color: palette.textMuted, maxWidth: 320 }}>{plainReason(step.leg.reason)}</span>
       )}
     </div>
   );

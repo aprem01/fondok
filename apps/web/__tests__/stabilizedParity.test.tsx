@@ -309,7 +309,7 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
     // section) and ONLY there — it is never borrowed as "stabilized".
     expect(screen.getAllByText('$3,640,000')).toHaveLength(1);
     // The KPI tile says why it is empty.
-    expect(screen.getByText('stabilization year not set')).toBeInTheDocument();
+    expect(screen.getByText('published after the next model run')).toBeInTheDocument();
   });
 
   it('the Stabilization row explains its dash with a reason code', () => {
@@ -328,9 +328,9 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
     render(<OverviewTab projectId="deal-uuid-1" />);
     const banner = screen.getByTestId('stabilization-needs-rerun');
     expect(banner).toHaveTextContent(/re-run the model/i);
-    expect(banner).toHaveTextContent(/CAPEX tab/);
+    expect(banner).toHaveTextContent(/banner at the top of the page/);
     // It must not imply a number is available somewhere else.
-    expect(banner).toHaveTextContent(/will not stand another projection year/i);
+    expect(banner).toHaveTextContent(/no other year stands in for it/i);
   });
 
   it('IC Memo and Scenario Analysis render a dash rather than another year', async () => {

@@ -43,10 +43,10 @@ export default function Hero() {
         <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-ink-500">
           <span className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-success-500" />
-            132-key Kimpton Angler · Miami Beach
+            Illustrative example — sample 132-key lifestyle hotel
           </span>
           <span className="hidden md:inline text-ink-300">·</span>
-          <span>23.5% IRR base case · 6 IC memo sections · 14 source citations</span>
+          <span>Sample figures: base-case IRR, 6 IC memo sections, 14 source citations</span>
         </div>
       </div>
     </section>

@@ -1484,6 +1484,90 @@ export class WorkerError extends Error {
   }
 }
 
+/**
+ * The plain sentence an analyst reads when a request to Fondok's service
+ * fails. ``WorkerError.message`` is the request line ("GET /audit → 500") and
+ * ``WorkerError.body`` is the raw response text — neither belongs in a toast
+ * or an error card. This maps the failure to copy a client can act on; the
+ * raw line stays available for a collapsed "Technical detail" disclosure via
+ * ``technicalDetail()``.
+ */
+export function userMessage(err: unknown): string {
+  const e = err as { name?: string; status?: unknown; message?: string } | null | undefined;
+  if (!e) return 'Something failed on our side and has been reported.';
+  if (e.name === 'TimeoutError') return "Fondok's service didn't respond. Try again.";
+  if (err instanceof WorkerError || e.name === 'WorkerError') {
+    const status = typeof e.status === 'number' ? e.status : 0;
+    const body = err instanceof WorkerError ? err.body : '';
+    if (status === 0) return "Fondok's service didn't respond. Try again.";
+    if (status === 401 || status === 403) return "You don't have access to this deal.";
+    if (status === 404) return 'This record was deleted or moved.';
+    if (status === 409) return workerDetail(body) ?? 'Someone else changed this — refresh and try again.';
+    if (status === 422) return workerDetail(body) ?? 'The change was not accepted. Check the values and try again.';
+    if (status >= 500) return 'Something failed on our side and has been reported.';
+    return workerDetail(body) ?? 'The request could not be completed. Try again.';
+  }
+  if (err instanceof TypeError && /fetch|network/i.test(String(e.message))) {
+    return "Fondok's service didn't respond. Try again.";
+  }
+  return 'Something failed on our side and has been reported.';
+}
+
+/**
+ * The worker's own ``detail`` sentence, when a response body carries one —
+ * a string, or ``{code, message}`` — with any trailing parenthetical
+ * diagnostics stripped. ``null`` when the body is not a worker detail.
+ */
+export function workerDetail(body: string | null | undefined): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    const d = parsed?.detail;
+    let text: string | null = null;
+    if (typeof d === 'string') text = d;
+    else if (d && typeof d === 'object' && typeof (d as { message?: unknown }).message === 'string') {
+      text = (d as { message: string }).message;
+    }
+    if (!text) return null;
+    // "… (deal 3f2a… not found; traceback …)" → "…"
+    text = text.replace(/\s*\([^()]*(?:traceback|uuid|id=|[0-9a-f]{8}-[0-9a-f]{4})[^()]*\)\s*$/i, '').trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a save / action toast says when the worker refused it: the worker's
+ * ``detail`` sentence when it sent one, else a plain fallback. Never the raw
+ * JSON body and never the request line.
+ */
+export function workerErrorMessage(
+  err: unknown,
+  fallback = 'The change could not be saved. Try again.',
+): string {
+  const name = (err as { name?: string } | null)?.name;
+  if (err instanceof WorkerError || name === 'WorkerError') {
+    return workerDetail((err as WorkerError).body) ?? userMessage(err);
+  }
+  if (name === 'TimeoutError') return userMessage(err);
+  return fallback;
+}
+
+/**
+ * The raw request line + body for a collapsed "Technical detail" disclosure.
+ * ``null`` when the error carries nothing beyond its plain message.
+ */
+export function technicalDetail(err: unknown): string | null {
+  const name = (err as { name?: string } | null)?.name;
+  if (err instanceof WorkerError || name === 'WorkerError') {
+    const w = err as WorkerError;
+    return `${w.message}${w.body ? `\n${w.body}` : ''}`;
+  }
+  if (err instanceof Error) return err.message || null;
+  return null;
+}
+
 /** Thrown when the request exceeds the configured client-side timeout.
  *
  *  Wave 4 reliability fix (Bug #3): the worker can hang under

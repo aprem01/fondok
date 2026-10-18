@@ -404,18 +404,26 @@ export function demandGrowthTile(block: MarketGrowthBlock | null | undefined): G
   };
 }
 
+/**
+ * The "Under Construction" tile: pipeline rooms as a share of existing
+ * inventory. It is NOT a growth rate — the report's own supply-change figure
+ * is the growth figure and lives on the Supply Pipeline card as "Submarket
+ * supply growth" — so the value prints without a sign and the label says
+ * what it is.
+ */
 export function supplyGrowthTile(block: MarketSupplyGrowthBlock | null | undefined): GrowthTile {
   if (!block) return refusedTile(null, null);
   if (block.under_construction_pct == null) return refusedTile(block.reason, block.detail);
   const uc = block.under_construction_rooms?.toLocaleString('en-US') ?? null;
   const fp =
     block.final_planning_pct != null ? ` · final planning ${signedPct1(block.final_planning_pct)}` : '';
+  const share = sharePct1(block.under_construction_pct);
   // The report's own "% of inventory" row vs. rooms ÷ existing inventory —
   // the sub-line says which, because the two are different claims.
   if (block.under_construction_pct_basis === 'reported') {
     const rooms = uc ? `${uc} rooms under construction · ` : '';
     return {
-      value: signedPct1(block.under_construction_pct),
+      value: share,
       sub: `${rooms}${block.under_construction_pct.toFixed(1)}% of inventory as reported${fp}`,
       color: GREEN,
       awaiting: false,
@@ -423,11 +431,56 @@ export function supplyGrowthTile(block: MarketSupplyGrowthBlock | null | undefin
   }
   const existing = block.existing_rooms?.toLocaleString('en-US') ?? '—';
   return {
-    value: signedPct1(block.under_construction_pct),
+    value: share,
     sub: `${uc ?? '—'} rooms under construction ÷ ${existing} existing${fp}`,
     color: GRAY,
     awaiting: false,
   };
+}
+
+/** "5.7%" — a share of inventory, never signed like a growth rate. */
+function sharePct1(pct: number): string {
+  return `${pct < 0 ? '−' : ''}${Math.abs(pct).toFixed(1)}%`;
+}
+
+/**
+ * The same pipeline hotel can arrive from two sheets of one export — one
+ * carrying its status, the other its opening date. Merge rows by normalised
+ * name (+ keys when both state one), keeping every stated attribute, so a
+ * hotel is listed once with its status AND its opening date.
+ */
+export function mergePipelineHotels(hotels: MarketPipelineHotel[]): MarketPipelineHotel[] {
+  const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const out: MarketPipelineHotel[] = [];
+  for (const h of hotels) {
+    const name = norm(h.name);
+    const existing = name
+      ? out.find((o) => norm(o.name) === name && (o.keys == null || h.keys == null || o.keys === h.keys))
+      : undefined;
+    if (!existing) {
+      out.push({ ...h });
+      continue;
+    }
+    existing.keys = existing.keys ?? h.keys ?? null;
+    existing.status = existing.status?.trim() ? existing.status : h.status ?? existing.status ?? null;
+    existing.bucket = existing.bucket ?? h.bucket ?? null;
+    existing.expected_open = existing.expected_open?.trim() ? existing.expected_open : h.expected_open ?? existing.expected_open ?? null;
+    existing.market = existing.market ?? h.market ?? null;
+    existing.submarket = existing.submarket ?? h.submarket ?? null;
+    existing.doc_name = existing.doc_name ?? h.doc_name ?? null;
+    existing.doc_id = existing.doc_id ?? h.doc_id ?? null;
+    existing.page = existing.page ?? h.page ?? null;
+  }
+  return out;
+}
+
+/**
+ * The worker's pipeline-filter note as a reader sees it: sentence case, and
+ * without the row-count diagnostics it appends in parentheses.
+ */
+export function plainPipelineNote(note: string): string {
+  const stripped = note.replace(/\s*\([^()]*rows? carry no market[^()]*\)\s*$/i, '').trim();
+  return stripped ? stripped.charAt(0).toUpperCase() + stripped.slice(1) : stripped;
 }
 
 // ─── §1 Submarket Snapshot ──────────────────────────────────────────────────
@@ -493,7 +546,7 @@ export function SubmarketSnapshot({
       awaiting: derivedComp?.revpar == null,
     },
     { label: 'Demand Growth', ...demandTile },
-    { label: 'Supply Growth', ...supplyTile },
+    { label: 'Under Construction', ...supplyTile },
   ];
   const context = submarketLabel
     ? `${submarketLabel} · competitive-set aggregate`
@@ -1235,7 +1288,7 @@ export function SupplyPipeline({
     : anyReported
       ? 'Shares are the report’s own "% of inventory" figures (no inventory room count is stated).'
       : 'Pipeline shares = rooms ÷ existing submarket inventory.';
-  const hotels = supply?.pipeline_hotels ?? [];
+  const hotels = mergePipelineHotels(supply?.pipeline_hotels ?? []);
   const filter = supply?.pipeline_filter ?? null;
   const bucketLabel = (b: MarketPipelineHotel['bucket'], status: string | null | undefined): string =>
     status?.trim() ||
@@ -1323,7 +1376,7 @@ export function SupplyPipeline({
           {filter && (
             <div data-testid="pipeline-filter" style={{ fontSize: 11, color: palette.textMuted, marginTop: 6, lineHeight: 1.45 }}>
               {filter.note
-                ? filter.note
+                ? plainPipelineNote(filter.note)
                 : `${filter.matched} of ${filter.total} rows in ${filter.doc_name ?? 'the pipeline export'} are in ${
                     filter.terms.length ? filter.terms.join(' / ') : 'the deal market'
                   }; the rest were not counted.`}

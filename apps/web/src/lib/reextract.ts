@@ -125,7 +125,7 @@ export function reextractFailureReason(err: unknown): string {
   if (status === 410) return 'the stored file is gone — re-upload it';
   if (status === 404) return 'the document is no longer on this deal';
   if (status === 401) return 'your session has expired — sign in again';
-  if (status === 0) return 'worker not connected';
+  if (status === 0) return 'Fondok’s service isn’t available right now';
   if (status != null) {
     return status >= 500 ? `the worker returned an error (${status})` : `the request failed (${status})`;
   }

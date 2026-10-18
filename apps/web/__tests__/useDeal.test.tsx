@@ -151,7 +151,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
       status: null,
       loading: false,
       error:
-        'TimeoutError: The worker is busy — your upload is still extracting. Try again in 30 seconds.',
+        'TimeoutError: Fondok is still extracting your upload. Try again in 30 seconds.',
       fromMock: false,
       refresh: vi.fn(),
     });
@@ -159,7 +159,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
     const { container } = render(<ProjectDetailPage />);
 
     expect(container.textContent).toContain(
-      'The worker is busy — your upload is still extracting.',
+      'Fondok is still extracting your upload.',
     );
     expect(container.textContent ?? '').not.toContain('Hilton');
   });

@@ -1,27 +1,24 @@
 'use client';
 
 /**
- * StaleRunBanner — FON-75. Says out loud that this deal's saved run is older
- * than the model that produced it.
+ * StaleRunBanner — says out loud that this deal's saved model is older than
+ * the current version of Fondok.
  *
- * The defect: on 2026-09-12 a healthy deal opened with the whole Stabilization
+ * The defect it exists for: a healthy deal opened with the whole Stabilization
  * section of Overview rendering five dashes. Nothing was broken — the deal's
- * persisted engine output had been written before `expense.stabilization`
- * existed, and no surface said so. A per-section banner shipped for that one
- * block (`stabilization-needs-rerun` in OverviewTab); this is the general net,
- * so the NEXT block addition is covered the day it deploys rather than being
- * noticed one screen at a time.
+ * persisted engine output had been written before that block existed, and no
+ * surface said so.
  *
  * How the worker knows (app/services/run_freshness.py): engine output is
- * persisted with `model_dump_json()` and WITHOUT `exclude_none`, so a field the
- * run knew about is always written — even when its value is null. A key present
- * with value null therefore means "the engine answered: no value" and is NOT
- * stale; a key ABSENT entirely means the run predates the field. Only the
- * second case reaches this banner.
+ * persisted WITHOUT `exclude_none`, so a field the run knew about is always
+ * written — even when null. A key ABSENT entirely means the run predates the
+ * field. Only that case reaches this banner, as `stale_run.missing_blocks`
+ * (`{ engine: [path, …] }`).
  *
- * Same anatomy and the same one-click re-run as EngineFailuresBanner, mounted
- * beside it — one is "a model crashed", this is "a model moved on". Renders
- * nothing when the run is current, which is the overwhelmingly common case.
+ * What the reader sees is ONE line naming the product tabs affected and a
+ * Re-run button. Engine paths never print: a client reads "P&L, CAPEX and
+ * Financing", never `revenue.renovation_displacement_by_year`. The raw paths
+ * stay behind a collapsed "Technical detail" for support, in a data attribute.
  */
 
 import { History, RefreshCw, Loader2 } from 'lucide-react';
@@ -29,29 +26,11 @@ import { Card } from '@/components/ui/Card';
 import type { EngineOutputsResponse } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { REASONS } from '@/lib/ontology/reasons.generated';
+import { engineSectionLabel, engineTabLabel } from '@/lib/fieldLabels';
 
-/**
- * Dotted `engine.path` → the section heading a reader actually recognises.
- *
- * Deliberately small and deliberately incomplete. An unmapped path falls back
- * to the raw dotted path below: printing `revenue.some_new_block` is honest and
- * greppable, whereas guessing a friendly name for a block nobody has named yet
- * would be inventing product copy at render time.
- */
-const SECTION_LABEL: Record<string, string> = {
-  'expense.stabilization': 'Stabilization',
-  'capital.sources': 'Sources & Uses',
-  'capital.uses': 'Sources & Uses',
-  'capital.renovation_breakdown': 'Renovation / CapEx',
-};
-
-/** The section name for one missing path, or the path itself when unmapped. */
+/** The section name for one missing path — never the path itself. */
 export function sectionLabelFor(engine: string, path: string): string {
-  const dotted = `${engine}.${path}`;
-  // A nested path (`stabilization.stabilized_cash_noi`) belongs to the section
-  // its parent block names, so try the parent before falling back.
-  const parent = path.includes('.') ? `${engine}.${path.split('.')[0]}` : null;
-  return SECTION_LABEL[dotted] ?? (parent ? SECTION_LABEL[parent] : undefined) ?? dotted;
+  return engineSectionLabel(engine, path);
 }
 
 /** Unique section names across every stale engine, in a stable order. */
@@ -68,6 +47,47 @@ export function staleSections(
   return seen;
 }
 
+/** Unique product tabs across every stale engine, in a stable order. */
+export function staleTabs(
+  missingBlocks: Record<string, string[]> | undefined,
+): string[] {
+  const seen: string[] = [];
+  for (const [engine, paths] of Object.entries(missingBlocks ?? {})) {
+    if (!(paths ?? []).length) continue;
+    const label = engineTabLabel(engine);
+    if (!seen.includes(label)) seen.push(label);
+  }
+  return seen;
+}
+
+/** Count of individual figures the saved run never published. */
+export function staleFigureCount(
+  missingBlocks: Record<string, string[]> | undefined,
+): number {
+  let n = 0;
+  for (const paths of Object.values(missingBlocks ?? {})) n += (paths ?? []).length;
+  return n;
+}
+
+/** "P&L, CAPEX and Financing" */
+export function joinNatural(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** The one-line headline. Exported so the per-tab notices say the same thing. */
+export function staleRunHeadline(
+  missingBlocks: Record<string, string[]> | undefined,
+): string | null {
+  const count = staleFigureCount(missingBlocks);
+  if (count === 0) return null;
+  const tabs = staleTabs(missingBlocks);
+  const figures = count === 1 ? '1 figure' : `${count} figures`;
+  const where = tabs.length === 1 ? `on ${tabs[0]}` : `across ${joinNatural(tabs)}`;
+  return `This deal’s saved model is older than the current version — ${figures} ${where} show “—” until you re-run.`;
+}
+
 export function StaleRunBanner({
   outputs,
   dealId,
@@ -76,43 +96,53 @@ export function StaleRunBanner({
   dealId: string;
 }) {
   // Re-run the full chain (run-all) so every engine republishes together and
-  // the snapshot stays internally consistent (FON-73).
+  // the snapshot stays internally consistent.
   const { run, status } = useEngineRun(dealId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
 
-  const sections = staleSections(outputs?.stale_run?.missing_blocks);
-  if (sections.length === 0) return null;
+  const missing = outputs?.stale_run?.missing_blocks;
+  const headline = staleRunHeadline(missing);
+  if (!headline) return null;
+  const sections = staleSections(missing);
+  const rawPaths = Object.entries(missing ?? {}).flatMap(([engine, paths]) =>
+    (paths ?? []).map((p) => `${engine}.${p}`),
+  );
 
   return (
     <Card
       className="p-4 mb-5 border-warn-500/40 bg-warn-50"
       role="status"
       data-testid="stale-run-banner"
+      data-stale-paths={rawPaths.join(' ')}
     >
       <div className="flex items-start gap-3">
         <History size={18} className="text-warn-700 flex-shrink-0 mt-0.5" aria-hidden="true" />
         <div className="flex-1 min-w-0">
-          <div className="text-[13.5px] font-semibold text-warn-700">
-            {sections.length === 1
-              ? `This deal’s saved run predates ${sections[0]}`
-              : `This deal’s saved run predates ${sections.length} sections`}
+          <div className="text-[13.5px] font-semibold text-warn-700" data-testid="stale-run-headline">
+            {headline}
           </div>
           <p className="text-[12px] text-warn-700/80 mt-0.5">
-            {REASONS.stale_run.explanation}
+            {REASONS.stale_run.explanation} Nothing already on screen is wrong.
           </p>
-          <p className="text-[12px] text-warn-700/80 mt-1.5">
-            {sections.length === 1 ? 'This section shows ' : 'These sections show '}
-            “—” because the saved run never published{' '}
-            {sections.length === 1 ? 'that figure' : 'those figures'} — not because the
-            data is missing. Nothing already on screen is wrong.
-          </p>
-          <ul className="mt-2 space-y-1" data-testid="stale-run-sections">
-            {sections.map((section) => (
-              <li key={section} className="text-[12px] font-semibold text-warn-700">
-                {section}
-              </li>
-            ))}
-          </ul>
+          <details className="mt-1.5" data-testid="stale-run-technical">
+            <summary className="text-[11px] text-warn-700/70 cursor-pointer select-none">
+              Technical detail
+            </summary>
+            <ul className="mt-1 space-y-0.5" data-testid="stale-run-sections">
+              {sections.map((section) => (
+                <li key={section} className="text-[11.5px] text-warn-700/90">
+                  {section}
+                </li>
+              ))}
+            </ul>
+            <pre
+              className="mt-1 text-[10.5px] text-warn-700/60 whitespace-pre-wrap break-words"
+              title="Engine output blocks the saved run never published"
+              data-testid="stale-run-paths"
+            >
+              {rawPaths.join('\n')}
+            </pre>
+          </details>
         </div>
         <button
           type="button"

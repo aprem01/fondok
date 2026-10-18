@@ -428,7 +428,7 @@ describe('MarketTab — Market Overview awaiting-data em dashes', () => {
     const demandTile = demandLabel.parentElement as HTMLElement;
     expect(within(demandTile).getByText('—')).toBeInTheDocument();
 
-    const supplyTile = screen.getByText('Supply Growth').parentElement as HTMLElement;
+    const supplyTile = screen.getByText('Under Construction').parentElement as HTMLElement;
     expect(within(supplyTile).getByText('—')).toBeInTheDocument();
 
     // The canonical prototype placeholders must never appear as data.

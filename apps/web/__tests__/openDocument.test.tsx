@@ -250,14 +250,14 @@ describe('shortReason', () => {
       'no workspace is assigned to your account — ask Fondok to add you to your institution’s workspace',
     );
     expect(shortReason(new FakeWorkerError('x', 0, 'worker not connected'))).toBe(
-      'worker not connected',
+      'Fondok’s service isn’t available right now',
     );
     expect(shortReason(new FakeWorkerError('x', 500, 'Internal Server Error'))).toBe(
-      'the worker returned an error (500)',
+      'Fondok returned an error (500)',
     );
     const timeout = new Error('slow');
     timeout.name = 'TimeoutError';
-    expect(shortReason(timeout)).toBe('the worker took too long to respond');
+    expect(shortReason(timeout)).toBe('Fondok took too long to respond');
     expect(shortReason(new Error('boom'))).toBe('unexpected error');
     for (const err of [new FakeWorkerError('x', 404, RAW_BODY), new FakeWorkerError('x', 500, RAW_BODY)]) {
       expect(shortReason(err)).not.toContain('doc-1');

@@ -44,7 +44,7 @@ const ALLOW: { file: string; text: string; why: string }[] = [
       + '(engine_runner.STR_MARKET_OVERRIDE_NOTE) to tag existing deals str_comp_set; renaming it would un-tag them',
   },
   {
-    file: 'app/methodology/page.tsx',
+    file: 'components/methodology/EngineeringMethodology.tsx',
     text: '&quot;STR comp-set market rates (Market tab)&quot;',
     why: 'quotes that persisted note verbatim, so an analyst can match it to the audit trail',
   },

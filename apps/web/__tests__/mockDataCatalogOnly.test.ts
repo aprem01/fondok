@@ -18,6 +18,12 @@ const REMOVED_NUMERIC_FIXTURES = [
   'kimptonCriticFindings',
   'kimptonCriticSummary',
   'dashboardStats',
+  'templates',
+  'compSets',
+  'marketDataLib',
+  'teamMembers',
+  'notificationDefaults',
+  'integrations',
 ];
 
 const KEPT_CATALOGS = [
@@ -29,7 +35,6 @@ const KEPT_CATALOGS = [
   'documentChecklist',
   'projectStatuses',
   'engines',
-  'templates',
 ];
 
 describe('lib/mockData carries no numeric deal / market / analysis fixtures', () => {

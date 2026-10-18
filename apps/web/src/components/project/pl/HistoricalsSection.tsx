@@ -30,7 +30,7 @@ import {
 import { useDeal } from '@/lib/hooks/useDeal';
 import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 import {
-  HISTORICALS_ALIASES, PERIOD_ALIASES, isSubordinatePath, pnlAliases,
+  HISTORICALS_ALIASES, UNDISTRIBUTED_DETAIL_ALIASES, PERIOD_ALIASES, isSubordinatePath, pnlAliases,
 } from '@/lib/ontology/adapters';
 import { PERIOD_TYPES } from '@/lib/ontology/concepts.generated';
 import type { ReasonCode } from '@/lib/ontology/reasons.generated';
@@ -65,9 +65,12 @@ export interface HistYear {
   basisReason?: ReasonCode;
   /** Days in the period (365/366 for a calendar year, 365 for T-12). */
   days: number;
-  occupancyPct: number; // 0..1
-  adr: number;          // $
-  revpar: number;       // $
+  /** 0..1 — ``null`` when the statement states no occupancy (renders "—", never 0.0%). */
+  occupancyPct: number | null;
+  /** $ — ``null`` when the statement states no rate. */
+  adr: number | null;
+  /** $ — ``null`` when neither stated nor derivable from occupancy × ADR. */
+  revpar: number | null;
   rooms: number;        // $ (top-of-house)
   fb: number;           // $
   misc: number;         // $
@@ -81,6 +84,14 @@ export interface HistYear {
   other_dept_expense: number | null;
   /** A&G + sales/mkt + utilities + prop_ops + info/telecom rollup. */
   undistributed: number | null;
+  /** The undistributed detail lines, when the statement itemises them. Absent
+   *  / null when it carries only the rollup — the worksheet then shows the
+   *  total and says the lines are not itemised in the source statement. */
+  admin_general?: number | null;
+  sales_marketing?: number | null;
+  property_operations?: number | null;
+  utilities?: number | null;
+  info_telecom?: number | null;
   gop: number | null;
   /** property_tax + insurance + mgmt_fee (institutional fixed-block). */
   fixed_expenses: number | null;
@@ -683,11 +694,27 @@ export function buildHistYear(
     ? (yearNum % 4 === 0 && (yearNum % 100 !== 0 || yearNum % 400 === 0) ? 366 : 365)
     : 365;
 
-  // Occupancy may have come in as a percent (e.g. 73.8) — normalize.
-  const occNorm = occ == null ? 0 : occ > 1.5 ? occ / 100 : occ;
-  const adrNorm = adr ?? 0;
-  const revparNorm = revpar ?? (adrNorm * occNorm);
-  const roomsNorm = rooms ?? (keys > 0 ? revparNorm * keys * days : 0);
+  // Occupancy may have come in as a percent (e.g. 73.8) — normalize. A statement
+  // that states no occupancy / ADR / RevPAR yields ``null`` — never 0, which
+  // the grid used to print as a real "0.0%" beside real ADR and RevPAR.
+  const occNorm = occ == null ? null : occ > 1.5 ? occ / 100 : occ;
+  const adrNorm = adr ?? null;
+  const revparNorm = revpar ?? (adrNorm != null && occNorm != null ? adrNorm * occNorm : null);
+  const roomsNorm = rooms ?? (keys > 0 && revparNorm != null ? revparNorm * keys * days : 0);
+
+  // Undistributed detail lines — present only when the statement itemises them.
+  const pickDetail = (key: string): number | null => {
+    const f = findField(fields, UNDISTRIBUTED_DETAIL_ALIASES[key] ?? []);
+    if (f && typeof f.confidence === 'number') {
+      meta[key] = { confidence: f.confidence, field: f.field_name, docId };
+    }
+    return num(f);
+  };
+  const adminGeneral = pickDetail('ag');
+  const salesMarketing = pickDetail('sm');
+  const propertyOperations = pickDetail('pom');
+  const utilitiesLine = pickDetail('util');
+  const infoTelecom = pickDetail('it');
 
   const per = period ?? unknownPeriod(yearLabel);
   return {
@@ -707,6 +734,11 @@ export function buildHistYear(
     fb_dept_expense: fbDept,
     other_dept_expense: otherDept,
     undistributed,
+    admin_general: adminGeneral,
+    sales_marketing: salesMarketing,
+    property_operations: propertyOperations,
+    utilities: utilitiesLine,
+    info_telecom: infoTelecom,
     gop,
     fixed_expenses: fixedExpenses,
     mgmt_fee: mgmtFee,
@@ -735,7 +767,7 @@ export function emptyFiveYearSkeleton(): HistData {
       periodEnd: null,
       periodLabel: String(y),
       days: y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 366 : 365,
-      occupancyPct: 0, adr: 0, revpar: 0,
+      occupancyPct: null, adr: null, revpar: null,
       rooms: 0, fb: 0, misc: 0,
       rooms_dept_expense: null, fb_dept_expense: null,
       other_dept_expense: null, undistributed: null,
@@ -891,7 +923,7 @@ export default function HistoricalsSection({
                     year: label,
                     ...unknownPeriod(label),
                     days: 365,
-                    occupancyPct: 0, adr: 0, revpar: 0,
+                    occupancyPct: null, adr: null, revpar: null,
                     rooms: 0, fb: 0, misc: 0,
                     rooms_dept_expense: null, fb_dept_expense: null,
                     other_dept_expense: null, undistributed: null,
@@ -910,7 +942,7 @@ export default function HistoricalsSection({
                   year: 'T-12',
                   ...unknownPeriod('T-12'),
                   days: 365,
-                  occupancyPct: 0, adr: 0, revpar: 0,
+                  occupancyPct: null, adr: null, revpar: null,
                   rooms: 0, fb: 0, misc: 0,
                   rooms_dept_expense: null, fb_dept_expense: null,
                   other_dept_expense: null, undistributed: null,
@@ -950,7 +982,7 @@ export default function HistoricalsSection({
         const v = raw ?? 0;
         const totalRev = y.rooms + y.fb + y.misc;
         const avail = keys * y.days;
-        const occRooms = avail * y.occupancyPct;
+        const occRooms = y.occupancyPct == null ? null : avail * y.occupancyPct;
         // Keep numerics as numbers so Excel can re-sum / re-format them.
         // Null source values render as blank cells so analysts can spot
         // unextracted lines vs. legitimate zeros.
@@ -1038,20 +1070,20 @@ function HistoricalsTable({
   // Per-year derived metrics — kept in lockstep with the year list.
   const derived = useMemo(() => years.map(y => {
     const avail = keys * y.days;
-    const occRooms = avail * y.occupancyPct;
+    const occRooms = y.occupancyPct == null ? null : avail * y.occupancyPct;
     const totalRev = y.rooms + y.fb + y.misc;
     return { avail, occRooms, totalRev };
   }), [years, keys]);
 
   const fmt$ = (v: number) => v ? `$${Math.round(v / 1000).toLocaleString('en-US')}` : '—';
-  const fmtPct1 = (v: number) => Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
+  const fmtPct1 = (v: number | null) => v != null && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
   const fmtNum = (v: number) => v ? v.toLocaleString('en-US') : '—';
 
   // PAR / POR / % Rev — operate in raw $.
   const par = (amount: number, avail: number) =>
     avail > 0 && amount > 0 ? `$${Math.round(amount / avail).toLocaleString('en-US')}` : '—';
-  const por = (amount: number, occRooms: number) =>
-    occRooms > 0 && amount > 0 ? `$${Math.round(amount / occRooms).toLocaleString('en-US')}` : '—';
+  const por = (amount: number, occRooms: number | null) =>
+    occRooms != null && occRooms > 0 && amount > 0 ? `$${Math.round(amount / occRooms).toLocaleString('en-US')}` : '—';
   const pctRev = (amount: number, totalRev: number) =>
     totalRev > 0 && amount > 0 ? `${((amount / totalRev) * 100).toFixed(1)}%` : '—';
 
@@ -1163,7 +1195,7 @@ function HistoricalsTable({
             <SpanRow
               label="Occupied Rooms"
               idx={3}
-              render={(_, i) => fmtNum(Math.round(derived[i].occRooms))}
+              render={(_, i) => derived[i].occRooms == null ? '—' : fmtNum(Math.round(derived[i].occRooms as number))}
             />
             <SpanRow label="Occupancy" idx={4} render={(y) => fmtPct1(y.occupancyPct)} />
             <SpanRow
@@ -1267,7 +1299,7 @@ function HistoricalsTable({
                   </div>
                   <div className="mt-3">
                     <Badge tone="gray" uppercase>
-                      {loading ? 'Loading…' : 'Coming with the next deploy'}
+                      {loading ? 'Loading…' : 'Awaiting statements'}
                     </Badge>
                   </div>
                 </td>
@@ -1313,10 +1345,10 @@ function Cells({
   populated: boolean;
   totalRev: number;
   avail: number;
-  occRooms: number;
+  occRooms: number | null;
   fmt$: (v: number) => string;
   par: (amount: number, avail: number) => string;
-  por: (amount: number, occRooms: number) => string;
+  por: (amount: number, occRooms: number | null) => string;
   pctRev: (amount: number, totalRev: number) => string;
 }) {
   const cell = 'px-2 py-2 text-right text-[12px] tabular-nums text-ink-900';

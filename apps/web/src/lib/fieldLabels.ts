@@ -121,3 +121,131 @@ export function humanizeFieldName(raw: string): string {
   const words = base.split(/[_\s]+/).map(humanizeWord).filter(Boolean);
   return words.join(' ').trim() || raw;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Engine output blocks → the product surface a reader recognises.
+//
+// The worker reports a stale run as ``missing_blocks: { engine: [path, …] }``
+// (dotted engine paths). A client never sees those paths: every block maps
+// to the tab that shows it, and — where it helps — to the section name.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Engine name → the product tab that renders its output. */
+export const ENGINE_TAB_LABEL: Record<string, string> = {
+  revenue: 'P&L',
+  expense: 'P&L',
+  fb: 'P&L',
+  capital: 'CAPEX',
+  debt: 'Financing',
+  returns: 'Returns',
+  partnership: 'Partnership',
+  sensitivity: 'Scenario Analysis',
+  cashflow: 'Cash Flow',
+  cash_flow: 'Cash Flow',
+};
+
+/** Engine name → the model's human name ("Revenue model"). */
+export const ENGINE_MODEL_LABEL: Record<string, string> = {
+  revenue: 'Revenue',
+  expense: 'Expense / NOI',
+  fb: 'F&B revenue',
+  capital: 'Sources & Uses',
+  debt: 'Debt',
+  returns: 'Returns',
+  partnership: 'Partnership waterfall',
+  sensitivity: 'Sensitivity',
+  cashflow: 'Cash flow',
+  cash_flow: 'Cash flow',
+};
+
+/**
+ * Dotted ``engine.block`` → the section heading a reader recognises. Every
+ * top-level block the engines publish today is named; a nested path falls
+ * back to its parent block, then to ``<Engine> model``. Never a dotted path.
+ */
+export const ENGINE_SECTION_LABEL: Record<string, string> = {
+  // revenue
+  'revenue.years': 'Future P&L',
+  'revenue.projection_start_year': 'Projection calendar',
+  'revenue.projection_calendar_years': 'Projection calendar',
+  'revenue.renovation_displacement_by_year': 'Renovation displacement',
+  'revenue.index_drivers_by_year': 'Index Analysis',
+  'revenue.assumption_sources': 'Assumption sources',
+  'revenue.inputs': 'Revenue assumptions',
+  // F&B
+  'fb.years': 'F&B revenue',
+  'fb.provenance': 'F&B revenue sources',
+  // expense
+  'expense.years': 'Future P&L',
+  'expense.stabilization': 'Stabilization',
+  'expense.line_methods': 'Expense methods',
+  'expense.benchmark': 'Benchmark column',
+  'expense.inputs': 'Expense assumptions',
+  // capital
+  'capital.sources': 'Sources & Uses',
+  'capital.uses': 'Sources & Uses',
+  'capital.renovation_breakdown': 'Renovation / CapEx',
+  'capital.renovation_base_usd': 'Renovation budget',
+  'capital.renovation_budget_source': 'Renovation budget sources',
+  'capital.senior_loan_fee_usd': 'Senior loan origination fee',
+  'capital.equity_amount': 'Equity',
+  'capital.total_capital_usd': 'Total capitalization',
+  'capital.purchase_price': 'Purchase price',
+  // debt
+  'debt.debt_stack': 'Capital structure',
+  'debt.schedule': 'Debt schedule',
+  'debt.monthly_schedule': 'Debt schedule',
+  'debt.refi_fee_pct': 'Refinancing',
+  'debt.refi_debt_yield_min': 'Refinancing',
+  'debt.refi': 'Refinancing',
+  'debt.covenants': 'Covenants',
+  'debt.stabilized_dscr': 'Stabilized DSCR',
+  'debt.stabilized_debt_yield': 'Stabilized debt yield',
+  'debt.dscr_by_year': 'DSCR by year',
+  'debt.negative_noi_years': 'Debt coverage warnings',
+  // returns
+  'returns.levered_monthly': 'Monthly cash flows',
+  'returns.cash_flows': 'Cash flows to equity',
+  'returns.noi_by_year': 'NOI by year',
+  'returns.exit_noi_basis': 'Exit NOI basis',
+  'returns.exit_noi_period_label': 'Exit NOI basis',
+  'returns.terminal_noi_usd': 'Exit NOI',
+  'returns.gross_sale_price': 'Exit value',
+  'returns.avg_coc': 'Average cash-on-cash',
+  'returns.inputs': 'Returns assumptions',
+  // partnership
+  'partnership.catch_up_amount': 'Waterfall catch-up',
+  'partnership.gp_additional_contributions': 'Additional contributions',
+  'partnership.lp_additional_contributions': 'Additional contributions',
+  'partnership.additional_contributions_by_year': 'Additional contributions',
+  'partnership.tiers': 'Promote tiers',
+  'partnership.waterfall': 'Partnership waterfall',
+  // sensitivity
+  'sensitivity.grids': 'Sensitivity grids',
+  'sensitivity.matrix': 'Sensitivity grids',
+  // cash flow
+  'cash_flow.levered': 'Levered cash flow',
+  'cash_flow.unlevered': 'Unlevered cash flow',
+  'cash_flow.bridge': 'Cash Flow Bridge',
+};
+
+/** The tab a stale engine block belongs to ("P&L"); the engine's model name when unmapped. */
+export function engineTabLabel(engine: string): string {
+  return ENGINE_TAB_LABEL[engine] ?? `${ENGINE_MODEL_LABEL[engine] ?? humanizeWord(engine)} model`;
+}
+
+/**
+ * The section a stale ``engine.path`` belongs to. Never returns a dotted path
+ * or a snake_case token: unmapped blocks read as ``<Engine> model``.
+ */
+export function engineSectionLabel(engine: string, path: string): string {
+  const dotted = `${engine}.${path}`;
+  const direct = ENGINE_SECTION_LABEL[dotted];
+  if (direct) return direct;
+  const head = path.split('.')[0]?.replace(/\[\]$/, '');
+  if (head) {
+    const parent = ENGINE_SECTION_LABEL[`${engine}.${head}`];
+    if (parent) return parent;
+  }
+  return `${ENGINE_MODEL_LABEL[engine] ?? humanizeWord(engine)} model`;
+}

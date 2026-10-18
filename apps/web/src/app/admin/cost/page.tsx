@@ -10,7 +10,7 @@ import { Lock, DollarSign, Bot, Cpu, TrendingUp, RefreshCw } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { api, AdminCostResponse } from '@/lib/api';
+import { api, userMessage, AdminCostResponse } from '@/lib/api';
 import { useCurrentRole, useCurrentUser } from '@/lib/auth';
 import { cn } from '@/lib/format';
 
@@ -35,6 +35,9 @@ export default function AdminCostPage() {
   const isAuthorized = isAdmin && userEmail === 'kpremks@gmail.com';
 
   const [data, setData] = useState<AdminCostResponse | null>(null);
+  // deal id → project name, so the "Top deals by cost" table reads names, not
+  // sliced uuids. Best-effort: a failed deals read leaves the id as fallback.
+  const [dealNames, setDealNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,11 +45,15 @@ export default function AdminCostPage() {
     setLoading(true);
     setError(null);
     try {
-      const r = await api.admin.cost(signal);
+      const [r, deals] = await Promise.all([
+        api.admin.cost(signal),
+        api.deals.list(signal).catch(() => []),
+      ]);
       setData(r);
+      setDealNames(Object.fromEntries(deals.map((d) => [d.id, d.name])));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.toLowerCase().includes('abort')) setError(msg);
+      if ((e as { name?: string } | null)?.name === 'AbortError') return;
+      setError(userMessage(e));
     } finally {
       setLoading(false);
     }
@@ -63,7 +70,7 @@ export default function AdminCostPage() {
   if (!isAdmin) {
     return (
       <div className="px-8 py-8 max-w-[1024px]">
-        <PageHeader eyebrow="Ops" title="Cost Dashboard" subtitle="LLM spend + cache hit rate for this tenant." />
+        <PageHeader eyebrow="Ops" title="Cost Dashboard" subtitle="Model usage and cost for this workspace." />
         <Card className="mt-6 p-10 text-center">
           <Lock className="mx-auto h-10 w-10 text-ink-300" />
           <h2 className="mt-4 text-[15px] font-semibold text-ink-900">Admin only</h2>
@@ -82,7 +89,7 @@ export default function AdminCostPage() {
   if (!isAuthorized) {
     return (
       <div className="px-8 py-8 max-w-[1024px]">
-        <PageHeader eyebrow="Ops" title="Cost Dashboard" subtitle="LLM spend + cache hit rate for this tenant." />
+        <PageHeader eyebrow="Ops" title="Cost Dashboard" subtitle="Model usage and cost for this workspace." />
         <Card className="mt-6 p-10 text-center">
           <Lock className="mx-auto h-10 w-10 text-ink-300" />
           <h2 className="mt-4 text-[15px] font-semibold text-ink-900">Access restricted</h2>
@@ -107,7 +114,7 @@ export default function AdminCostPage() {
       <PageHeader
         eyebrow="Ops"
         title="Cost Dashboard"
-        subtitle="LLM spend + cache hit rate. Data comes from the worker's model_calls table, tenant-scoped to your org."
+        subtitle="Model usage and cost for this workspace, by deal."
         action={
           <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
@@ -118,7 +125,7 @@ export default function AdminCostPage() {
       {error && (
         <Card className="mt-6 p-4 border-danger-500/40 bg-danger-50">
           <div className="text-[12.5px] text-danger-700">
-            Failed to load: <code>{error}</code>
+            Could not load model usage — {error}
           </div>
         </Card>
       )}
@@ -237,7 +244,7 @@ export default function AdminCostPage() {
               <table className="w-full text-[12px]">
                 <thead>
                   <tr className="text-ink-500 border-b border-border">
-                    <th className="text-left font-medium py-1.5">Deal id</th>
+                    <th className="text-left font-medium py-1.5">Deal</th>
                     <th className="text-right font-medium py-1.5">Calls</th>
                     <th className="text-right font-medium py-1.5">Cost</th>
                   </tr>
@@ -245,8 +252,10 @@ export default function AdminCostPage() {
                 <tbody>
                   {data.by_deal.map((d) => (
                     <tr key={d.deal_id} className="border-b border-border/50 last:border-0">
-                      <td className="py-1.5 font-mono text-[11.5px] text-ink-900">
-                        <a href={`/projects/${d.deal_id}`} className="hover:underline">{d.deal_id.slice(0, 8)}…{d.deal_id.slice(-4)}</a>
+                      <td className="py-1.5 text-[12px] text-ink-900">
+                        <a href={`/projects/${d.deal_id}`} className="hover:underline" title={d.deal_id}>
+                          {dealNames[d.deal_id] ?? 'Deal no longer in this workspace'}
+                        </a>
                       </td>
                       <td className="py-1.5 text-right tabular-nums text-ink-700">{fmtNum(d.calls)}</td>
                       <td className="py-1.5 text-right tabular-nums text-ink-900 font-medium">{fmtUSD(d.cost_usd)}</td>
@@ -258,7 +267,7 @@ export default function AdminCostPage() {
           </Card>
 
           <div className="text-[10.5px] text-ink-500 tabular-nums">
-            Generated at {new Date(data.generated_at).toLocaleString()} · tenant {data.tenant_id.slice(0, 8)}…{data.tenant_id.slice(-4)}
+            Generated at {new Date(data.generated_at).toLocaleString()} · this workspace only
           </div>
         </div>
       ) : (

@@ -1,16 +1,16 @@
 const stack = [
   {
-    name: 'Claude Haiku 4.5',
+    name: 'Classification model',
     role: 'Document classifier',
     tag: 'fast',
   },
   {
-    name: 'Claude Sonnet 4.6',
+    name: 'Extraction model',
     role: 'Field extraction',
     tag: 'precise',
   },
   {
-    name: 'Claude Opus 4.7',
+    name: 'Drafting model',
     role: 'IC memo synthesis',
     tag: 'reasoning',
   },

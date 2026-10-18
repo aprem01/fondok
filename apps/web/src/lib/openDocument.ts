@@ -86,13 +86,13 @@ export function resolveDocumentUrl(
  */
 export function shortReason(err: unknown): string {
   const e = (err ?? {}) as { name?: string; status?: unknown };
-  if (e.name === 'TimeoutError') return 'the worker took too long to respond';
+  if (e.name === 'TimeoutError') return 'Fondok took too long to respond';
   if (e.name === 'AbortError') return 'the request was cancelled';
   if (e.name === 'WorkerError' || typeof e.status === 'number') {
     const status = typeof e.status === 'number' ? e.status : -1;
     switch (status) {
       case 0:
-        return 'worker not connected';
+        return 'Fondok’s service isn’t available right now';
       case 401:
         return 'your session has expired — sign in again';
       case 403:
@@ -107,10 +107,10 @@ export function shortReason(err: unknown): string {
       case 410:
         return 'the stored file is gone — re-upload it';
       case 503:
-        return 'document links are not configured on the worker';
+        return 'Document links aren’t available in this deployment';
       default:
         return status >= 500
-          ? `the worker returned an error (${status})`
+          ? `Fondok returned an error (${status})`
           : `the request failed (${status})`;
     }
   }

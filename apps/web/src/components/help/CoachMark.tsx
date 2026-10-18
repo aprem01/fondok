@@ -158,10 +158,26 @@ function compute(
     top = trigger.top + trigger.height / 2 - panel.height / 2;
   }
 
-  left = Math.max(VIEWPORT_PAD, Math.min(vw - panel.width - VIEWPORT_PAD, left));
+  // The fixed app sidebar (`[data-app-sidebar]`) is a permanent obstruction on
+  // the left: a popover clamped to the viewport edge used to land over the
+  // sidebar's account chip whenever its anchor sat near the left column.
+  // Clamp to the sidebar's right edge instead, when one is on screen.
+  const leftBound = Math.max(VIEWPORT_PAD, sidebarRightEdge() + VIEWPORT_PAD);
+  left = Math.max(leftBound, Math.min(vw - panel.width - VIEWPORT_PAD, left));
   top = Math.max(VIEWPORT_PAD, Math.min(vh - panel.height - VIEWPORT_PAD, top));
 
   return { top, left, resolvedSide: side };
+}
+
+/** Right edge (px) of the fixed app sidebar when it is visible on screen, else 0. */
+function sidebarRightEdge(): number {
+  if (typeof document === 'undefined') return 0;
+  const aside = document.querySelector<HTMLElement>('[data-app-sidebar]');
+  if (!aside) return 0;
+  const r = aside.getBoundingClientRect();
+  // Off-canvas (mobile, translated out of view) → no obstruction.
+  if (r.width === 0 || r.right <= 0) return 0;
+  return r.right;
 }
 
 function arrowFor(side: Pos['resolvedSide']): CSSProperties {

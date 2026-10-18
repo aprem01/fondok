@@ -88,7 +88,7 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import {
   api,
   isWorkerConnected,
-  WorkerError,
+  workerErrorMessage,
   type EngineOutputsResponse,
   type ValueState,
   type DebtCovenantStatus,
@@ -296,7 +296,7 @@ export function buildCapitalStack(
       if (fallback != null && (cls === 'Senior debt' || cls === 'PACE / C-PACE')) {
         return { cls, instrument, amount: fallback > 0 ? money(fallback) : '—', status: fallback > 0 ? 'Modelled' : 'Not funded', modelled: true };
       }
-      return { cls, instrument, amount: '—', status: 'not modelled yet', modelled: false };
+      return { cls, instrument, amount: '—', status: 'Not in this deal’s capital stack', modelled: false };
     }
     const amount = t.loan_amount ?? fallback;
     return { cls, instrument: t.label || instrument, amount: has(amount) && amount > 0 ? money(amount) : '—', status: status(t, amount), modelled: true };
@@ -433,7 +433,7 @@ export default function DebtTab() {
   const onSaveOverride = useCallback(
     async (patch: Record<string, number | string | null>, note = '') => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       if (!note.trim() && patchRequiresNote(patch)) {
@@ -450,8 +450,8 @@ export default function DebtTab() {
         rerunTimerRef.current = setTimeout(() => { void fullRun.run(); }, 1200);
       } catch (err) {
         setOverrides(overrides); // rollback
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [overrides, dealId, liveMode, toast, refreshDeal, fullRun],
@@ -1903,7 +1903,7 @@ function RateTypeToggle({
   const begin = (option: string) => {
     const next: 'fixed' | 'floating' = option === 'Floating' ? 'floating' : 'fixed';
     if (next === rateType) { setPending(null); ed.cancel(); return; }
-    if (!editable) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    if (!editable) { toast('This sample deal is read-only.', { type: 'info' }); return; }
     setPending(next);
     ed.start(next === 'fixed' && has(currentRate) ? (currentRate * 100).toFixed(2) : '');
   };
@@ -2062,7 +2062,7 @@ function RefinanceView({
   const bannerBorder = active ? 'oklch(88% 0.05 155)' : palette.border;
 
   const toggle = () => {
-    if (!liveMode) { toast('Editing is disabled on demo deals', { type: 'info' }); return; }
+    if (!liveMode) { toast('This sample deal is read-only.', { type: 'info' }); return; }
     if (active) { void onSaveOverride({ [REFI_KEYS.year]: null }); return; }
     if (refiYearOverride > 0) { void onSaveOverride({ [REFI_KEYS.year]: Math.round(refiYearOverride) }); return; }
     toast('Set a refinance year below to include the refinance.', { type: 'info' });

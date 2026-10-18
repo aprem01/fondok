@@ -107,15 +107,39 @@ export function groupFields(
 }
 
 /** Compact one-line label for a run in the picker. */
+/**
+ * A run as a reader sees it in a picker: "Oct 7, 3:37 PM · complete" /
+ * "Oct 7, 3:37 PM · partial · Downside". The run id is NOT part of the label —
+ * a git-style hash is developer vocabulary; ``runTitle`` carries it for a hover.
+ */
 export function runLabel(r: EngineRunSummary): string {
   const when = r.completed_at ?? r.started_at;
-  const ts = when ? `${when.slice(0, 16).replace('T', ' ')} UTC` : 'time unknown';
+  const ts = when ? fmtRunTime(when) : 'time unknown';
+  const parts: string[] = [ts];
+  if (r.status !== 'complete') parts.push(r.status);
+  else if (!r.is_full_chain) parts.push('partial');
+  else parts.push('complete');
+  if (r.is_canonical) parts.push('current');
+  if (r.scenario && !r.scenario.is_base) parts.push(r.scenario.name);
+  return parts.join(' · ');
+}
+
+/** The run's identifier and flags, for a `title` tooltip beside ``runLabel``. */
+export function runTitle(r: EngineRunSummary): string {
   const tags: string[] = [];
   if (r.is_canonical) tags.push('canonical');
   if (!r.is_full_chain) tags.push('partial chain');
   if (r.status !== 'complete') tags.push(r.status);
   if (r.scenario && !r.scenario.is_base) tags.push(`scenario: ${r.scenario.name}`);
-  return `${ts} · ${r.run_id.slice(0, 8)}${tags.length ? ` (${tags.join(', ')})` : ''}`;
+  const when = r.completed_at ?? r.started_at;
+  return `Run ${r.run_id}${when ? ` · ${when}` : ''}${tags.length ? ` (${tags.join(', ')})` : ''}`;
+}
+
+/** "Oct 7, 3:37 PM" in the viewer's zone. */
+export function fmtRunTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'time unknown';
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 /** A provenance side as one short line ("" when the engine recorded none). */

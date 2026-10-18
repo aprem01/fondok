@@ -7,8 +7,8 @@ import {
 } from 'recharts';
 import type { LucideIcon } from 'lucide-react';
 import {
-  BarChart3, DollarSign, PieChart as PieChartIcon, Layers, History,
-  TrendingUp, Building2, ClipboardList,
+  BarChart3, DollarSign, PieChart as PieChartIcon, Layers,
+  TrendingUp, Building2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -1734,29 +1734,6 @@ function DepartmentalCards({ statement, keys }: { statement: StatementResult; ke
   );
 }
 
-// ─────────────────────────── Historicals (placeholder) ───────────────────────────
-
-function HistoricalsPlaceholder() {
-  return (
-    <Card className="p-8 opacity-90">
-      <SectionCardHeader
-        Icon={History}
-        iconTone="slate"
-        title={`Multi-Year ${PL_SUB_LABEL.historicals}`}
-        subtitle="Amount / % Rev / PAR / POR per year"
-        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
-      />
-      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
-        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
-          Multi-year historical table (Amount / % Rev / PAR / POR per year) coming
-          with the next deploy. The trailing twelve months from your uploaded T-12
-          is anchored in the <span className="font-medium text-ink-700">P&amp;L Summary</span> above.
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 // ─────────────────────────── Competitive Set ───────────────────────────
 
 interface CompSetEntryAPI {
@@ -1959,24 +1936,3 @@ function IndexCard({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-// ─────────────────────────── Due Diligence (placeholder) ───────────────────────────
-
-function DueDiligencePlaceholder() {
-  return (
-    <Card className="p-8 opacity-90">
-      <SectionCardHeader
-        Icon={ClipboardList}
-        iconTone="gold"
-        title="Due Diligence Questions"
-        subtitle="AI-generated, prioritized, source-cited"
-        right={<Badge tone="gray" uppercase>Coming Soon</Badge>}
-      />
-      <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
-        <div className="text-[12.5px] text-ink-500 max-w-2xl mx-auto leading-relaxed">
-          AI-generated due diligence questions for the broker, prioritized and
-          source-cited. Coming with the next deploy.
-        </div>
-      </div>
-    </Card>
-  );
-}

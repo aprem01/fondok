@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Download, GitCompare } from 'lucide-react';
-import { api, WorkerError } from '@/lib/api';
+import { api, userMessage } from '@/lib/api';
 import type { EngineRunListResponse, RunCompareResponse } from '@/lib/api';
 import {
   DEFAULT_BASELINE_CUTOFF,
@@ -34,16 +34,17 @@ import {
   groupFields,
   provenanceText,
   runLabel,
+  runTitle,
+  fmtRunTime,
 } from '@/lib/runCompare';
 
 interface Props {
   dealId: string;
 }
 
+/** The plain sentence for a failed request — never the request line or raw body. */
 function errText(err: unknown): string {
-  return err instanceof WorkerError
-    ? `${err.message}${err.body ? `: ${err.body}` : ''}`
-    : (err as Error).message;
+  return userMessage(err);
 }
 
 export default function RunComparePanel({ dealId }: Props) {
@@ -135,6 +136,8 @@ export default function RunComparePanel({ dealId }: Props) {
   };
 
   const runList = runs?.runs ?? [];
+  const canonicalRun = runList.find((r) => r.run_id === runs?.canonical_run_id) ?? null;
+  const fallbackRun = fallback ? runList.find((r) => r.run_id === fallback) ?? null : null;
   const groups = result ? groupFields(result.fields) : [];
 
   return (
@@ -177,7 +180,7 @@ export default function RunComparePanel({ dealId }: Props) {
                 : 'Select a run'}
             </option>
             {runList.map((r) => (
-              <option key={r.run_id} value={r.run_id}>
+              <option key={r.run_id} value={r.run_id} title={runTitle(r)}>
                 {runLabel(r)}
               </option>
             ))}
@@ -191,9 +194,9 @@ export default function RunComparePanel({ dealId }: Props) {
             className="rounded-md border border-border px-2 py-1 text-[12px] text-ink-900"
             data-testid="run-compare-head"
           >
-            <option value="latest">Latest (canonical)</option>
+            <option value="latest" title={canonicalRun ? runTitle(canonicalRun) : undefined}>{canonicalRun ? `Latest (current) · ${runLabel(canonicalRun)}` : `Latest (current)`}</option>
             {runList.map((r) => (
-              <option key={r.run_id} value={r.run_id}>
+              <option key={r.run_id} value={r.run_id} title={runTitle(r)}>
                 {runLabel(r)}
               </option>
             ))}
@@ -240,7 +243,7 @@ export default function RunComparePanel({ dealId }: Props) {
         <p className="mt-3 text-[12px] text-ink-500" data-testid="run-compare-fallback-note">
           No complete run finished before {cutoff.replace('T', ' ')} UTC on this deal, so the
           baseline defaulted to its newest complete run before the current one
-          ({fallback.slice(0, 8)}). Pick another run or move the date to change it.
+          ({fallbackRun ? runLabel(fallbackRun) : "an earlier run"}). Pick another run or move the date to change it.
         </p>
       )}
 
@@ -249,7 +252,7 @@ export default function RunComparePanel({ dealId }: Props) {
           <div className="mb-2 text-[11.5px] text-ink-500 tabular-nums" data-testid="run-compare-summary">
             {loading
               ? 'Comparing…'
-              : `${result.fields_changed} of ${result.fields_compared} headline fields changed · baseline ${result.base.run_id.slice(0, 8)} → head ${result.head.run_id.slice(0, 8)}`}
+              : `${result.fields_changed} of ${result.fields_compared} headline fields changed · baseline ${fmtRunTime(result.base.completed_at ?? result.base.started_at ?? "")} → head ${fmtRunTime(result.head.completed_at ?? result.head.started_at ?? "")}`}
           </div>
           {result.fields.length === 0 ? (
             <p className="text-[12px] text-ink-700" data-testid="run-compare-empty">

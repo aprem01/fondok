@@ -39,6 +39,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, FileText, Loader2 } from 'lucide-react';
+import { scenarioReturnsIssue, SCENARIO_ISSUE_LABEL, SCENARIO_NEEDS_RERUN } from '@/lib/scenarioGuards';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -630,7 +631,24 @@ function FocusChip({
 // ─────────────────────── base-case assumptions ─────────────────────
 
 function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
-  const groups = [
+  // A read-only panel of inputs the model clearly has. A row the run does not
+  // state as one figure (per-line growth, no single value) is dropped rather
+  // than shown as a dash beside figures the Overview prints.
+  const groups = baseCaseGroups(outputs)
+    .map((g) => ({ ...g, rows: g.rows.filter((r) => r.value !== '—') }))
+    .filter((g) => g.rows.length > 0);
+
+  return (
+    <div
+      style={{ background: '#fff', border: `1px solid ${C.cardBorder}`, borderRadius: 10 }}
+    >
+      {renderBaseCase(groups)}
+    </div>
+  );
+}
+
+function baseCaseGroups(outputs: EngineOutputsResponse | null) {
+  return [
     {
       title: 'Operating',
       link: 'P&L →',
@@ -658,11 +676,13 @@ function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
       ],
     },
   ];
+}
 
+type BaseCaseGroup = ReturnType<typeof baseCaseGroups>[number];
+
+function renderBaseCase(groups: BaseCaseGroup[]) {
   return (
-    <div
-      style={{ background: '#fff', border: `1px solid ${C.cardBorder}`, borderRadius: 10 }}
-    >
+    <>
       <div
         style={{
           padding: '9px 14px',
@@ -746,7 +766,7 @@ function BaseCasePanel({ outputs }: { outputs: EngineOutputsResponse | null }) {
         Base Case is read-only here. Update assumptions in their source tabs; saved
         scenarios automatically re-run against the updated Base.
       </div>
-    </div>
+    </>
   );
 }
 
@@ -987,6 +1007,18 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
   const baseCell = response.scenarios.find((c) => c.scenario_id === baseId);
   const byId = new Map(scenarios.map((s) => [s.id, s]));
 
+  // An IRR of exactly 0 against a non-zero Base, or a negative equity multiple,
+  // is the returns solver failing to converge — not a result. Those cells
+  // render as unavailable with the reason and the column is marked for re-run.
+  const returnsOf = (cell: ScenarioCompareResponse['scenarios'][number]) => ({
+    irr: num(cell.engines.returns?.outputs, ['levered_irr']),
+    em: num(cell.engines.returns?.outputs, ['equity_multiple']),
+  });
+  const baseReturns = baseCell ? returnsOf(baseCell) : null;
+  const issueFor = (cell: ScenarioCompareResponse['scenarios'][number]) =>
+    scenarioReturnsIssue(returnsOf(cell), baseReturns);
+  const baseIssue = baseCell ? issueFor(baseCell) : null;
+
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-[12.5px]">
@@ -1005,6 +1037,15 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
                     </span>
                   )}
                   <span>{cell.scenario_name}</span>
+                  {issueFor(cell) && (
+                    <span
+                      title={SCENARIO_ISSUE_LABEL[issueFor(cell)!]}
+                      data-testid={`scenario-needs-rerun-${cell.scenario_id}`}
+                      className="text-[9px] uppercase tracking-wide bg-warn-50 text-warn-700 px-1 rounded"
+                    >
+                      {SCENARIO_NEEDS_RERUN}
+                    </span>
+                  )}
                   {memoIds.includes(cell.scenario_id) && (
                     <span
                       title="In the IC memo comparison set"
@@ -1020,23 +1061,31 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
         </thead>
         <tbody>
           {KPI_ROWS.map((row) => {
-            const baseVal = baseCell
+            const guarded = row.key === 'irr' || row.key === 'em';
+            const baseVal = baseCell && !(guarded && baseIssue)
               ? row.pick(baseCell.engines as Record<string, EnginePayload>)
               : null;
             return (
               <tr key={row.key} className="border-b border-border last:border-b-0">
                 <td className="px-4 py-2 text-ink-700">{row.label}</td>
                 {response.scenarios.map((cell) => {
-                  const v = row.pick(cell.engines as Record<string, EnginePayload>);
+                  const issue = guarded ? issueFor(cell) : null;
+                  const v = issue ? null : row.pick(cell.engines as Record<string, EnginePayload>);
                   // FON-69 — delta vs Base in the row's NATIVE unit (not % change):
                   // pts for rate rows, x for multiples/ratios, $ for dollar rows.
                   const delta =
                     baseVal !== null && v !== null && !cell.is_base ? v - baseVal : null;
                   return (
                     <td key={cell.scenario_id} className="px-4 py-2 text-right tabular-nums">
-                      <div className="text-ink-900">
+                      <div
+                        className="text-ink-900"
+                        title={issue ? `${SCENARIO_ISSUE_LABEL[issue]} — re-run the scenario.` : undefined}
+                      >
                         {v === null ? '—' : formatKpi(row.format, v)}
                       </div>
+                      {issue && (
+                        <div className="text-[10.5px] text-warn-700">{SCENARIO_ISSUE_LABEL[issue]}</div>
+                      )}
                       {delta !== null && (
                         <div
                           className={cn(
@@ -1113,15 +1162,33 @@ const BASE_RUN_RESOLVERS: Record<
   ltv: (o) =>
     getEngineField<number>(o, 'capital', 'ltv') ??
     engineInputNum(o, 'returns', 'assumptions', 'ltv'),
-  purchase_price: (o) => getEngineField<number>(o, 'capital', 'purchase_price'),
+  // The capital engine publishes the purchase price as a Sources & Uses line
+  // (and on its inputs), not always as a top-level scalar — the same fallback
+  // the Overview's Purchase Price row uses, so the two cannot disagree.
+  purchase_price: (o) =>
+    getEngineField<number>(o, 'capital', 'purchase_price') ??
+    engineInputNum(o, 'capital', 'purchase_price') ??
+    capitalUseAmount(o, /purchase/i),
   hold_years: (o) =>
     getEngineField<number>(o, 'returns', 'hold_years') ??
     engineInputNum(o, 'returns', 'assumptions', 'hold_years'),
   amortization_years: (o) => getEngineField<number>(o, 'debt', 'amortization_years'),
   term_years: (o) => getEngineField<number>(o, 'debt', 'term_years'),
-  revpar_growth: (o) => engineInputNum(o, 'returns', 'assumptions', 'revpar_growth'),
-  expense_growth: (o) => engineInputNum(o, 'expense', 'assumptions', 'expense_growth'),
+  revpar_growth: (o) =>
+    engineInputNum(o, 'returns', 'assumptions', 'revpar_growth') ??
+    engineInputNum(o, 'revenue', 'revpar_growth'),
+  // The expense engine's blanket growth assumption sits directly on its inputs.
+  expense_growth: (o) =>
+    engineInputNum(o, 'expense', 'assumptions', 'expense_growth') ??
+    engineInputNum(o, 'expense', 'expense_growth'),
 };
+
+/** A Sources & Uses line amount by label, from the capital engine's `uses`. */
+function capitalUseAmount(o: EngineOutputsResponse | null, re: RegExp): number | undefined {
+  const uses = getEngineField<Array<{ label?: string; amount?: number }>>(o, 'capital', 'uses') ?? [];
+  const row = uses.find((u) => re.test(String(u?.label ?? '')));
+  return typeof row?.amount === 'number' && Number.isFinite(row.amount) ? row.amount : undefined;
+}
 
 function dash(path: string, v: number | undefined): string {
   return v == null ? '—' : fmtAssumption(path, v);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, isWorkerConnected, WorkerDeal } from '@/lib/api';
+import { api, isWorkerConnected, userMessage, WorkerDeal } from '@/lib/api';
 import { projects as mockProjects, Project } from '@/lib/mockData';
 
 export interface DealsState {
@@ -62,7 +62,7 @@ export function useDeals(): DealsState {
       .catch((err: unknown) => {
         if (localTick !== tick.current) return;
         if ((err as { name?: string })?.name === 'AbortError') return;
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = userMessage(err);
         setError(msg);
       })
       .finally(() => {

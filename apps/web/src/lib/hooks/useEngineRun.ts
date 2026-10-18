@@ -212,28 +212,10 @@ export function useEngineRun(
   );
 
   const run = useCallback(async () => {
-    if (!dealId) {
-      // Two ways we land here: caller is on a route that doesn't carry
-      // a deal id at all, OR caller is on a mock-id project (the demo
-      // deals 1-7 from mockData) and the parent component passed an
-      // empty string. Disambiguate in the message.
-      toast(
-        'This deal is read-only — engine runs need a real worker deal. ' +
-          'Create a new project from the dashboard to run the full pipeline.',
-        { type: 'info' },
-      );
-      return;
-    }
-    if (/^\d+$/.test(dealId)) {
-      // Mock numeric ids slipped through somehow — treat the same way.
-      toast(
-        'Demo deal — engine outputs are pre-computed and cannot be re-run.',
-        { type: 'info' },
-      );
-      return;
-    }
-    if (!isWorkerConnected()) {
-      toast('Worker not connected — engine cannot run', { type: 'info' });
+    if (!dealId || /^\d+$/.test(dealId) || !isWorkerConnected()) {
+      // No deal to run on: a route without a deal id, the worker-less demo
+      // build's sample deal, or no service configured. One honest sentence.
+      toast('The model can only run on a saved deal. Open a deal from Projects to run it.', { type: 'info' });
       return;
     }
     setStatus('running');

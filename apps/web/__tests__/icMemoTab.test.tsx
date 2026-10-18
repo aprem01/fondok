@@ -463,8 +463,9 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
     expect(screen.queryByText(/Preview Memo/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Preview reviewed/)).not.toBeInTheDocument();
     expect(screen.queryByText(/previewed/i)).not.toBeInTheDocument();
-    // The export cards are untouched: Excel live, PDF/PPTX still Coming Soon.
-    expect(screen.getAllByText(/Coming Soon/).length).toBeGreaterThan(0);
+    // Excel is the only export card; no locked "Coming Soon" controls remain.
+    expect(screen.queryByText(/Coming Soon/)).toBeNull();
+    expect(screen.getByTestId('memo-export-note')).toBeInTheDocument();
   });
 
   it('can mark IC Ready with an acknowledged critical without any preview step', () => {

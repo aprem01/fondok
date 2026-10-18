@@ -207,6 +207,38 @@ export function useSignOut(): () => Promise<void> {
   };
 }
 
+/**
+ * Organization actions the Settings page offers — real Clerk calls, or
+ * ``null`` when Clerk is not configured so the page hides the control instead
+ * of mounting a button that toasts success without doing anything.
+ */
+export interface OrgActions {
+  /** Send a Clerk organization invitation. Resolves when Clerk accepted it. */
+  inviteMember: ((emailAddress: string, role: 'org:admin' | 'org:member') => Promise<void>) | null;
+  /** Open Clerk's organization profile (members, roles, name, slug). */
+  openOrganizationProfile: (() => void) | null;
+}
+
+export function useOrgActions(): OrgActions {
+  if (!isClerkConfigured) {
+    return { inviteMember: null, openOrganizationProfile: null };
+  }
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { organization } = useOrganization();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const clerk = useClerk();
+  return {
+    inviteMember: organization
+      ? async (emailAddress, role) => {
+          await organization.inviteMember({ emailAddress, role });
+        }
+      : null,
+    openOrganizationProfile: organization
+      ? () => { clerk.openOrganizationProfile(); }
+      : null,
+  };
+}
+
 export interface OrgMember {
   id: string;
   name: string;

@@ -21,19 +21,11 @@ import { AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import type { EngineName, EngineOutputsResponse } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { ENGINE_MODEL_LABEL } from '@/lib/fieldLabels';
 
-const ENGINE_LABEL: Record<string, string> = {
-  returns: 'Returns',
-  debt: 'Debt',
-  revenue: 'Revenue',
-  expense: 'Expense / NOI',
-  fb: 'F&B revenue',
-  capital: 'Sources & Uses',
-  partnership: 'Partnership waterfall',
-  sensitivity: 'Sensitivity',
-  cashflow: 'Cash flow',
-  cash_flow: 'Cash flow',
-};
+// One registry of engine → human name, shared with the stale-run banner and
+// every other surface that names a model (lib/fieldLabels).
+const ENGINE_LABEL: Record<string, string> = ENGINE_MODEL_LABEL;
 
 /**
  * Engine names the worker writes at the head of a runner-formatted error

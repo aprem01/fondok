@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, cleanup } from '@testing-library/react';
 import React from 'react';
-import MethodologyPage from '@/app/methodology/page';
+import MethodologyPage from '@/components/methodology/EngineeringMethodology';
 import { REASONS, REASON_CODES, REFUSAL_GLYPH, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 vi.mock('next/navigation', () => ({

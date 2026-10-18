@@ -230,8 +230,8 @@ describe('SubmarketSnapshot — one derivation feeds the count and the keys', ()
     const demand = screen.getByText('Demand Growth').parentElement as HTMLElement;
     expect(within(demand).getByText('+4.2%')).toBeInTheDocument();
     expect(within(demand).getByText(`TTM · ${MS_DOC}`)).toBeInTheDocument();
-    const supply = screen.getByText('Supply Growth').parentElement as HTMLElement;
-    expect(within(supply).getByText('+5.0%')).toBeInTheDocument();
+    const supply = screen.getByText('Under Construction').parentElement as HTMLElement;
+    expect(within(supply).getByText('5.0%')).toBeInTheDocument();
     expect(within(supply).getByText('600 rooms under construction ÷ 12,000 existing · final planning +2.5%')).toBeInTheDocument();
   });
 
@@ -252,7 +252,7 @@ describe('SubmarketSnapshot — one derivation feeds the count and the keys', ()
     expect(within(demand).getByText('—')).toBeInTheDocument();
     expect(within(demand).getByText('not in the uploaded reports (no_source)')).toBeInTheDocument();
     expect(within(demand).getByLabelText('No matching field')).toBeInTheDocument();
-    const supply = screen.getByText('Supply Growth').parentElement as HTMLElement;
+    const supply = screen.getByText('Under Construction').parentElement as HTMLElement;
     expect(within(supply).getByText('—')).toBeInTheDocument();
     // Older worker (no comp_set block): the fallback count is the roster rows
     // the keys are summed over — 4 — not a rollup.
@@ -319,7 +319,7 @@ describe('pure helpers', () => {
       under_construction_pct_basis: 'reported',
       final_planning_pct: null,
     });
-    expect(reported.value).toBe('+5.7%');
+    expect(reported.value).toBe('5.7%');
     expect(reported.sub).toBe('1,300 rooms under construction · 5.7% of inventory as reported');
     // Forecast only: the value stays a dash; the sub-line carries the forecast.
     const forecastOnly = demandGrowthTile({
@@ -386,7 +386,7 @@ describe('SupplyPipeline — live CoStar shape: reported share, forecast, filter
         }}
       />,
     );
-    expect(screen.getByTestId('pipeline-filter')).toHaveTextContent('no pipeline rows for Austin in Miami Beach Supply 12.10.25.xlsx');
+    expect(screen.getByTestId('pipeline-filter')).toHaveTextContent('No pipeline rows for Austin in Miami Beach Supply 12.10.25.xlsx');
     expect(screen.queryAllByTestId('pipeline-hotel')).toHaveLength(0);
   });
 });

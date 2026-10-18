@@ -896,9 +896,11 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
   it('shows each assumption with its document + page, a reason, or "Your override"', async () => {
     mockIndexMethodology = methodology();
     render(<IndexAnalysisSection dealId={DEAL} />);
-    expect(await screen.findByTestId('index-assumption-source-index_market_adr_growth')).toHaveTextContent(
-      'Submarket Report.pdf, p.6 (pnl_benchmark.market.adr_change_2026_forecast)',
-    );
+    const adrGrowthSrc = await screen.findByTestId('index-assumption-source-index_market_adr_growth');
+    expect(adrGrowthSrc).toHaveTextContent('Submarket Report.pdf, p.6');
+    // The extraction field path is audit detail: hover only, never printed.
+    expect(adrGrowthSrc.textContent).not.toContain('pnl_benchmark.market.adr_change_2026_forecast');
+    expect(adrGrowthSrc.getAttribute('title')).toContain('pnl_benchmark.market.adr_change_2026_forecast');
     expect(screen.getByTestId('index-assumption-source-index_mpi_target')).toHaveTextContent(
       'STR Trend May 2025.xlsx, p.4',
     );

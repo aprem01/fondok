@@ -37,6 +37,7 @@ import { cn } from '@/lib/format';
 import { formatValue } from '@/lib/format';
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { ProvenanceDot } from '@/components/design';
+import { Button } from '@/components/ui/Button';
 import type { ValueState } from '@/lib/api';
 import type { LineageEdgeRel, LineageNode } from '@/lib/api';
 import { REASONS, REFUSAL_GLYPH, isReasonCode } from '@/lib/ontology/reasons.generated';
@@ -325,7 +326,7 @@ export function LineageDrawer({
 }: LineageDrawerProps) {
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const { record, loading, error, settled, walk } = useLineage(dealId, {
+  const { record, loading, error, settled, walk, load: retryLineage } = useLineage(dealId, {
     runId,
     enabled: open,
   });
@@ -409,8 +410,9 @@ export function LineageDrawer({
           )}
 
           {settled && error && (
-            <div className="px-5 py-6 text-[12.5px] text-ink-500">
-              Couldn’t load lineage — {error}
+            <div className="px-5 py-6 text-[12.5px] text-ink-500 flex items-center justify-between gap-3" role="alert">
+              <span>Couldn’t load lineage — {error}</span>
+              <Button size="sm" variant="secondary" onClick={retryLineage}>Try again</Button>
             </div>
           )}
 

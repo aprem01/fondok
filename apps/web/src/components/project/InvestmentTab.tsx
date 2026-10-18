@@ -68,7 +68,7 @@ import {
 import {
   api,
   isWorkerConnected,
-  WorkerError,
+  workerErrorMessage,
   type TimelineResponse,
   type ValueState,
   type ExitNoiBasis,
@@ -296,7 +296,7 @@ export default function InvestmentTab() {
   const onSaveAssumption = useCallback(
     async (key: string, value: number, note = '') => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       const patch = { [key]: value };
@@ -312,8 +312,8 @@ export default function InvestmentTab() {
         if (invRerunRef.current) clearTimeout(invRerunRef.current);
         invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
@@ -328,7 +328,7 @@ export default function InvestmentTab() {
   const onSaveSchedule = useCallback(
     async (periods: RenovationDisplacementPeriod[] | null, note = '') => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       const patch = { [RENOVATION_SCHEDULE_KEY]: periods };
@@ -344,8 +344,8 @@ export default function InvestmentTab() {
         if (invRerunRef.current) clearTimeout(invRerunRef.current);
         invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
@@ -375,7 +375,7 @@ export default function InvestmentTab() {
   const onSaveExitNoiBasis = useCallback(
     async (choice: ExitNoiBasisChoice) => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       setPendingExitBasis(choice);
@@ -388,8 +388,8 @@ export default function InvestmentTab() {
         invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
         setPendingExitBasis(null);
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, invRun],
@@ -412,7 +412,7 @@ export default function InvestmentTab() {
   const onSaveCloseDate = useCallback(
     async (iso: string, note = '') => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       // The close date IS an engine input — `revenue.py::projection_start_year`
@@ -441,8 +441,8 @@ export default function InvestmentTab() {
         if (invRerunRef.current) clearTimeout(invRerunRef.current);
         invRerunRef.current = setTimeout(() => { void invRun.run(); }, 1200);
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline, invRun],
@@ -457,7 +457,7 @@ export default function InvestmentTab() {
   const onSaveWindowMonths = useCallback(
     async (key: string, months: number, note = '') => {
       if (!liveMode) {
-        toast('Editing is disabled on demo deals', { type: 'info' });
+        toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
       const patch = { [key]: months };
@@ -472,8 +472,8 @@ export default function InvestmentTab() {
         void refreshDeal?.();
         refreshTimeline();
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Save failed: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
     [invOverrides, dealId, liveMode, toast, refreshDeal, refreshTimeline],
@@ -1952,8 +1952,8 @@ function KeysOverride({
         toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
         onSaved();
       } catch (err) {
-        const detail = err instanceof WorkerError ? err.body : String(err);
-        toast(`Failed to save room count: ${detail || 'worker rejected update'}`, { type: 'error' });
+
+        toast(`Couldn’t save the room count — ${workerErrorMessage(err)}`, { type: 'error' });
       }
     },
   });
