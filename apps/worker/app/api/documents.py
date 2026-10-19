@@ -3449,9 +3449,9 @@ async def _run_parse_and_extract_inner(
             return
 
     # Index the parsed pages into the context store (chunks + optional
-    # Voyage embeddings). Best-effort — failures are logged but don't
-    # block the rest of the extract pipeline; chunks can be backfilled
-    # by re-uploading or by a future repair job.
+    # embeddings). Best-effort — failures are logged but don't block the
+    # rest of the extract pipeline; ``services.embedding_repair`` fills
+    # any chunk left without a vector.
     try:
         from ..extraction.context_store import index_parsed_document
         async with factory() as s:
@@ -3512,7 +3512,7 @@ class SearchResponse(BaseModel):
     deal_id: UUID
     query: str
     hits: list[SearchHit] = Field(default_factory=list)
-    # True when Voyage embeddings ran for this query (hybrid ranking).
+    # True when embeddings ran for this query (hybrid ranking).
     # False when only FTS contributed — search still works but recall
     # is lower for semantic-similarity queries.
     embeddings_used: bool = False
@@ -3540,8 +3540,8 @@ async def search_deal_chunks(
 
     Ranking:
         * Always: Postgres FTS via ``plainto_tsquery('english', q)``.
-        * When VOYAGE_API_KEY is set + chunks have been embedded for
-          this deal: hybrid score = 0.6 × cosine + 0.4 × FTS rank.
+        * When OPENAI_API_KEY is set + chunks carry current-model
+          vectors for this deal: hybrid score = 0.6 × cosine + 0.4 × FTS rank.
     """
     from ..extraction import embeddings
     from ..extraction.context_store import search_chunks
@@ -3591,23 +3591,25 @@ async def backfill_embeddings(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
     batch_size: int = 64,
 ) -> BackfillEmbeddingsResponse:
-    """Embed any chunks on this deal that still have NULL embedding.
+    """Embed this deal's chunks that have no vector from the current model.
 
-    Use case: chunks written before VOYAGE_API_KEY was set, or written
-    when a Voyage call failed (the chunking pipeline persists chunks
-    with embedding=NULL on failure so search still works via FTS).
-    This endpoint walks the deal's chunks in batches and writes the
-    missing embeddings back.
+    Use case: chunks written before ``OPENAI_API_KEY`` was set, chunks
+    whose embed batch failed (they are persisted with embedding=NULL so
+    search still works via full text), and chunks embedded by an older
+    model (tagged otherwise in ``embedding_model``). The background
+    ``services.embedding_repair`` loop does the same thing for every
+    tenant; this route runs it now for one deal.
 
-    Idempotent — chunks whose embedding is already populated are
-    skipped silently.
+    Idempotent — chunks that already carry a current-model vector are
+    skipped.
     """
     from ..extraction import embeddings
-    from ..extraction.context_store import _table_exists, _to_vector_literal
+    from ..extraction.context_store import _table_exists
+    from ..services.embedding_repair import count_chunks, embed_pending_chunks
 
     # Verify deal exists + tenant authorization FIRST. Until 2026-10-17 the
     # two "skipped" early returns below ran before this check, so on a
-    # worker without the chunk table or without VOYAGE_API_KEY another
+    # worker without the chunk table or without an embeddings key another
     # tenant's deal id was answered 200 (an empty envelope) instead of 404
     # — found by scripts/isolation_check.py.
     row = (
@@ -3638,7 +3640,7 @@ async def backfill_embeddings(
 
     if not embeddings.is_enabled():
         logger.info(
-            "backfill_embeddings: skipped for deal=%s — VOYAGE_API_KEY not set",
+            "backfill_embeddings: skipped for deal=%s — OPENAI_API_KEY not set",
             deal_id,
         )
         return BackfillEmbeddingsResponse(
@@ -3646,91 +3648,26 @@ async def backfill_embeddings(
             skipped_reason=SEMANTIC_SEARCH_DISABLED_REASON,
         )
 
-    # Total + missing counts (for the response).
-    counts = (
-        await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT COUNT(*) AS total,
-                       SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) AS missing
-                  FROM document_chunks
-                 WHERE deal_id = :deal AND tenant_id = :tenant
-                """
-            ),
-            {"deal": str(deal_id), "tenant": str(tenant_id)},
-        )
-    ).first()
-    total = int(counts._mapping["total"] or 0) if counts else 0
-    missing = int(counts._mapping["missing"] or 0) if counts else 0
-
-    embedded = 0
-    failed = 0
-    batch_size = max(1, min(batch_size, embeddings.VOYAGE_MAX_BATCH))
-
-    while True:
-        rows = (
-            await session.execute(
-                text(
-                    # tenant-scope predicate required by tenant_middleware
-                    """
-                    SELECT id, chunk_text
-                      FROM document_chunks
-                     WHERE deal_id = :deal
-                       AND tenant_id = :tenant
-                       AND embedding IS NULL
-                     ORDER BY document_id, chunk_index
-                     LIMIT :n
-                    """
-                ),
-                {"deal": str(deal_id), "tenant": str(tenant_id), "n": batch_size},
-            )
-        ).fetchall()
-        if not rows:
-            break
-
-        ids = [str(r._mapping["id"]) for r in rows]
-        texts = [r._mapping["chunk_text"] for r in rows]
-
-        try:
-            vectors = await embeddings.embed_batch(texts, input_type="document")
-        except Exception as exc:
-            logger.warning(
-                "backfill_embeddings: Voyage batch failed for deal=%s "
-                "(%s); skipping these %d chunks",
-                deal_id,
-                exc,
-                len(rows),
-            )
-            failed += len(rows)
-            # Mark these specific chunks as "tried" by inserting an
-            # empty-vector-equivalent? No — just break so we don't
-            # loop infinitely. Caller can retry.
-            break
-
-        for cid, vec in zip(ids, vectors, strict=True):
-            await session.execute(
-                text(
-                    "UPDATE document_chunks SET embedding = CAST(:vec AS vector) "
-                    "WHERE id = :id"
-                ),
-                {"id": cid, "vec": _to_vector_literal(vec)},
-            )
-        await session.commit()
-        embedded += len(rows)
-        logger.info(
-            "backfill_embeddings: deal=%s embedded=%d (this batch=%d)",
-            deal_id,
-            embedded,
-            len(rows),
-        )
-
+    total, missing = await count_chunks(
+        session, tenant_id=str(tenant_id), deal_id=str(deal_id)
+    )
+    result = await embed_pending_chunks(
+        session,
+        tenant_id=str(tenant_id),
+        deal_id=str(deal_id),
+        max_chunks=missing,
+        batch_size=batch_size,
+    )
+    logger.info(
+        "backfill_embeddings: deal=%s total=%d missing=%d embedded=%d failed=%d",
+        deal_id, total, missing, result.embedded, result.failed,
+    )
     return BackfillEmbeddingsResponse(
         deal_id=deal_id,
         chunks_total=total,
         chunks_missing=missing,
-        chunks_embedded=embedded,
-        chunks_failed=failed,
+        chunks_embedded=result.embedded,
+        chunks_failed=result.failed,
     )
 
 

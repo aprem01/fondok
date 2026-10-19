@@ -324,7 +324,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ),
     (
         # Chunks come from parsed documents. embedding is nullable so
-        # rows can land before the Voyage embed call (or when VOYAGE_API_KEY
+        # rows can land before the embed call (or when OPENAI_API_KEY
         # is unset). fts is a TSVECTOR generated column — Postgres FTS
         # works regardless of whether embeddings are populated.
         "document_chunks.create_table",
@@ -363,11 +363,22 @@ MIGRATIONS: list[tuple[str, str]] = [
         # Approximate-nearest-neighbor index for the embedding column.
         # IVFFLAT requires a table with rows for the lists parameter to
         # matter, so we use HNSW (works on empty tables, slightly more
-        # memory). cosine distance matches voyage-3's normalized output.
+        # memory). cosine distance matches the embedding model's normalized output.
         "document_chunks.idx_embedding",
         """
         CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
         ON document_chunks USING hnsw (embedding vector_cosine_ops)
+        """,
+    ),
+    (
+        # 2026-10-19 — which model produced ``embedding``. Vectors from
+        # different models are not comparable: search scores only rows
+        # tagged with the current model, and the embedding repair job
+        # re-embeds rows that are NULL or tagged with anything else (the
+        # pre-switch Voyage vectors carry NULL here).
+        "document_chunks.embedding_model",
+        """
+        ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT
         """,
     ),
     (

@@ -486,6 +486,16 @@ class Settings(BaseSettings):
     EXTRACTION_WATCHDOG_TICK_SECONDS: float = Field(default=60.0, gt=0.0)
     EXTRACTION_STUCK_MINUTES: int = Field(default=30, ge=1)
 
+    # ── Embedding repair (2026-10-19) ───────────────────────────────
+    # ``services.embedding_repair`` gives every ``document_chunks`` row a
+    # vector from the current embedding model: first tick at startup,
+    # then every ``EMBEDDING_REPAIR_TICK_SECONDS``, at most
+    # ``EMBEDDING_REPAIR_MAX_CHUNKS_PER_TICK`` chunks per tick. A no-op
+    # without ``OPENAI_API_KEY`` or without the chunk table.
+    EMBEDDING_REPAIR_ENABLED: bool = Field(default=True)
+    EMBEDDING_REPAIR_TICK_SECONDS: float = Field(default=120.0, gt=0.0)
+    EMBEDDING_REPAIR_MAX_CHUNKS_PER_TICK: int = Field(default=1280, ge=1)
+
     # ── Deal read cache (client-readiness sweep, 2026-10-17) ─────────
     # ``GET /analysis/{id}/variance`` and ``GET /deals/{id}/assumption_sources``
     # are served from ``services.read_cache`` while the deal's state

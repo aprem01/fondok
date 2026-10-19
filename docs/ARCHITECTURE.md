@@ -145,8 +145,12 @@ lifecycle is `UPLOADED → CLASSIFYING → EXTRACTING → EXTRACTED` (or `FAILED
   Detailed hotel P&Ls are deep, multi-column workbooks.
 - **chunking.py / compaction.py / context_store.py** — chunk large docs, keep the
   Extractor's context bounded.
-- **embeddings.py** — Voyage embeddings for hybrid (semantic + FTS) retrieval used
-  by the grounded Q&A endpoint (`/deals/{id}/ask`).
+- **embeddings.py** — OpenAI `text-embedding-3-small` (1024 dims) for the hybrid
+  (semantic + FTS) chunk search behind `GET /deals/{id}/search`. Each vector is
+  tagged with its model (`document_chunks.embedding_model`); search only scores
+  current-model rows. `services/embedding_repair.py` fills missing or
+  older-model vectors in the background. Grounded Q&A (`/deals/{id}/ask`)
+  answers from the deal dossier, not from these embeddings.
 - **field_catalog.yaml / registry.py** — canonical field catalog: maps extractor
   paths (`p_and_l_usali.fixed_charges.insurance`, `broker_proforma.*`,
   `in_place_debt.*`) → the canonical keys the engines read.

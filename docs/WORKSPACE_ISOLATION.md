@@ -71,7 +71,7 @@ Shipped 2026-10-14 on `main`; live as soon as the worker deploys.
    but a stranger downloaded a blank workbook / PDF / deck instead of a
    404); `POST …/backfill_embeddings` returned its "skipped" envelope
    before the tenant check on a worker without the chunk table or without
-   `VOYAGE_API_KEY`; and `POST …/memo/{section}/edits` had no ownership
+   an embeddings key; and `POST …/memo/{section}/edits` had no ownership
    gate (the GET did), so a caller could append an edit + audit row
    against a foreign deal id. All three now 404. Locked by
    `tests/test_isolation_scripts.py::test_exports_backfill_and_memo_edit_404_a_foreign_deal`.

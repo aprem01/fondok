@@ -5,16 +5,17 @@ parsing pipeline and the database / search endpoint:
 
   * ``index_parsed_document()`` — called from the parse + extract
     background task. Splits the parsed pages into chunks, embeds
-    them via Voyage if configured, persists to ``document_chunks``.
+    them via OpenAI if configured, persists to ``document_chunks``.
 
   * ``search_chunks()`` — backs the GET /deals/{id}/search endpoint.
     Always runs Postgres FTS; ALSO does vector similarity when
     embeddings exist. Hybrid scoring is a simple weighted blend.
 
 Robustness:
-  * The chunk-write path is best-effort. A failed embed call (Voyage
-    rate-limited, network blip) doesn't block the parse pipeline —
-    chunks land with embedding=NULL and can be backfilled later.
+  * The chunk-write path is best-effort. A failed embed batch (rate
+    limit, network blip — retried first) doesn't block the parse
+    pipeline — its chunks land with embedding=NULL and
+    ``services.embedding_repair`` fills them later.
   * On SQLite the ``document_chunks`` table doesn't exist (the
     pgvector + tsvector types are Postgres-only). All functions
     detect the missing table and no-op gracefully.
@@ -89,8 +90,10 @@ async def index_parsed_document(
     when the document has no text content.
 
     Embedding policy:
-        * If ``embeddings.is_enabled()`` → embed each chunk batch
-          and write the embedding column.
+        * If ``embeddings.is_enabled()`` → embed the chunks batch by
+          batch and write ``embedding`` + ``embedding_model``. A batch
+          that still fails after retries leaves only ITS chunks NULL;
+          ``services.embedding_repair`` fills them on a later tick.
         * Else → write chunks with embedding=NULL. FTS still works.
 
     Idempotency: this function deletes any existing chunks for
@@ -117,22 +120,22 @@ async def index_parsed_document(
     await session.execute(
         text(
             "DELETE FROM document_chunks WHERE deal_id = :deal "
-            "AND document_id = :doc"
+            "AND document_id = :doc AND tenant_id = :tenant"
         ),
-        {"deal": deal_id, "doc": document_id},
+        {"deal": deal_id, "doc": document_id, "tenant": tenant_id},
     )
 
-    # Try to embed. Failures fall through to NULL embeddings — chunks
-    # are still searchable via FTS, and a backfill job can repair later.
+    # Try to embed, batch by batch. A failed batch leaves only its own
+    # chunks NULL — still searchable via FTS, and the embedding repair job
+    # fills them later.
     vectors: list[list[float] | None] = [None] * len(chunks)
     if embeddings.is_enabled():
         try:
             texts = [c.text for c in chunks]
-            embedded = await embeddings.embed_iter(texts, input_type="document")
-            vectors = list(embedded)
+            vectors = await embeddings.embed_iter_partial(texts, input_type="document")
         except Exception as exc:  # noqa: BLE001 — best-effort
             logger.warning(
-                "context_store: Voyage embed failed for doc=%s "
+                "context_store: embedding failed for doc=%s "
                 "(%s); persisting chunks without embeddings",
                 document_id,
                 exc,
@@ -162,15 +165,15 @@ async def index_parsed_document(
                     INSERT INTO document_chunks (
                         id, deal_id, document_id, tenant_id,
                         chunk_index, chunk_text, tokens, source_page,
-                        embedding
+                        embedding, embedding_model
                     ) VALUES (
                         :id, :deal, :doc, :tenant,
                         :idx, :txt, :tokens, :page,
-                        CAST(:vec AS vector)
+                        CAST(:vec AS vector), :model
                     )
                     """
                 ),
-                {**params, "vec": vec_literal},
+                {**params, "vec": vec_literal, "model": embeddings.EMBEDDING_MODEL},
             )
         else:
             await session.execute(
@@ -195,7 +198,7 @@ async def index_parsed_document(
         document_id,
         deal_id,
         inserted,
-        "yes" if any(v is not None for v in vectors) else "no",
+        f"{sum(v is not None for v in vectors)}/{len(vectors)}",
     )
     return inserted
 
@@ -269,8 +272,9 @@ async def search_chunks(
             "source_page": m.get("source_page"),
         }
 
-    # Vector similarity layer — gated on Voyage AND on chunks having
-    # been embedded for this deal.
+    # Vector similarity layer — gated on an embeddings key AND on chunks
+    # embedded by the CURRENT model (vectors from another model live in a
+    # different space and would score as noise).
     vec_scores: dict[str, float] = {}
     if embeddings.is_enabled():
         try:
@@ -285,11 +289,18 @@ async def search_chunks(
                                1 - (embedding <=> CAST(:vec AS vector)) AS score
                           FROM document_chunks
                          WHERE deal_id = :deal{tenant_sql} AND embedding IS NOT NULL
+                           AND embedding_model = :model
                          ORDER BY embedding <=> CAST(:vec AS vector) ASC
                          LIMIT :k
                         """
                     ),
-                    {"deal": deal_id, "vec": vec_literal, "k": k * 3, **tenant_params},
+                    {
+                        "deal": deal_id,
+                        "vec": vec_literal,
+                        "k": k * 3,
+                        "model": embeddings.EMBEDDING_MODEL,
+                        **tenant_params,
+                    },
                 )
             ).fetchall()
             for r in vec_rows:

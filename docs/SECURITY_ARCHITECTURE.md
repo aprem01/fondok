@@ -129,7 +129,8 @@ it MUST go through `list_audit_log`.
   to a per-tenant S3 bucket gated on enterprise contract.
 * **Embedding store** — Postgres `pgvector` extension, co-located.
 * **LLM providers** — Anthropic (Claude Opus 4.7 + Sonnet),
-  OpenAI (Whisper for audio), Voyage AI (embeddings). All
+  OpenAI (embeddings of document text chunks for search,
+  `text-embedding-3-small`; Whisper for audio). All
   invocations leave us-east-1 and return via TLS 1.3; no data is
   written outside us-east-1 by the worker.
 
@@ -147,9 +148,10 @@ it MUST go through `list_audit_log`.
 
 ## 8. LLM data handling
 
-* **No training on customer data** — Anthropic and Voyage AI
-  workspace agreements explicitly exclude our traffic from any model
-  training pipeline. Confirmed annually with the vendor.
+* **No training on customer data** — Anthropic and OpenAI do not use
+  API traffic to train their models under their API terms. Confirmed
+  annually with the vendor. (Voyage AI was the embeddings provider until
+  2026-10-19; it no longer receives any data.)
 * **Prompt caching** — Anthropic's prompt cache is used only for
   the system prompt + USALI catalog payload (both tenant-agnostic).
   Per-deal context is sent uncached on every call so no tenant data

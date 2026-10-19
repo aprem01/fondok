@@ -34,6 +34,12 @@ tempfile.tempdir = _PRIVATE_TMP
 # ``app`` import below, because ``get_settings()`` is lru-cached on first
 # use and ``app.database`` reads it at import.
 os.environ.setdefault("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
+# Tests never call a real embeddings provider (a developer shell may export
+# a key) and never start the background repair loop; embedding tests
+# monkeypatch the client and drive ``embedding_repair.tick_once`` directly.
+os.environ.pop("OPENAI_API_KEY", None)
+os.environ.pop("VOYAGE_API_KEY", None)
+os.environ["EMBEDDING_REPAIR_ENABLED"] = "false"
 
 import pytest  # noqa: E402 — env pinning above must precede every app import
 from sqlalchemy import text  # noqa: E402

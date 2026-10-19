@@ -41,6 +41,7 @@ from .migrations import run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
 from .services.extraction_watchdog import start_watchdog, stop_watchdog
+from .services.embedding_repair import start_embedding_repair, stop_embedding_repair
 from .telemetry import setup_langsmith, setup_telemetry
 from .tenant_middleware import register_tenant_safety_listener
 
@@ -188,6 +189,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         start_watchdog()
     except Exception as exc:
         logger.exception("extraction watchdog start failed: %s", exc)
+    # Embedding repair — fills chunk vectors that are missing or from an
+    # older model. No-op without OPENAI_API_KEY. Never raises out of lifespan.
+    try:
+        start_embedding_repair()
+    except Exception as exc:
+        logger.exception("embedding repair start failed: %s", exc)
     try:
         yield
     finally:
@@ -204,6 +211,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await stop_watchdog()
         except Exception as exc:
             logger.warning("extraction watchdog stop failed: %s", exc)
+        try:
+            await stop_embedding_repair()
+        except Exception as exc:
+            logger.warning("embedding repair stop failed: %s", exc)
         await dispose_engine()
 
 

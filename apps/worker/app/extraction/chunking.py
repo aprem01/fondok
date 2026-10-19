@@ -6,8 +6,8 @@ don't slice mid-sentence) and persisted to ``document_chunks``. The
 chunks become the substrate for:
 
   * Full-text search across all uploaded docs on a deal (always on).
-  * Vector similarity / semantic search (on when Voyage embeddings
-    have been backfilled — gated by ``VOYAGE_API_KEY``).
+  * Vector similarity / semantic search (on when chunks carry
+    embeddings from the current model — gated by ``OPENAI_API_KEY``).
   * Future agent tools that need cited evidence from arbitrary docs
     (the IC memo agent already does this for structured fields; the
     chunk store is the unstructured-text counterpart).
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Iterable, NamedTuple
 
-# voyage-3 maxes out at 32K tokens per input. We target 500 tokens per
+# The embedding model accepts ~8K tokens per input. We target 500 tokens per
 # chunk to keep latency low + maximize the number of distinct semantic
 # units a search query can match against. Overlap = 50 tokens.
 CHUNK_TARGET_TOKENS = 500

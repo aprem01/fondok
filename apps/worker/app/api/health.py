@@ -147,9 +147,9 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
         logger.warning("health: extraction cache metrics failed: %s", exc)
         extraction_cache = {"error": type(exc).__name__}
 
-    # Semantic search (chunk store + Voyage embeddings). Both halves are
+    # Semantic search (chunk store + OpenAI embeddings). Both halves are
     # optional and BOTH fail open — a missing ``document_chunks`` table or an
-    # absent VOYAGE_API_KEY silently degrades /deals/{id}/search to full-text
+    # absent OPENAI_API_KEY silently degrades /deals/{id}/search to full-text
     # only. That is a defensible fallback but an indefensible mystery, so the
     # state is reported rather than inferred from behaviour. Not a degraded
     # reason: full-text-only is a supported mode, not a fault.
@@ -163,7 +163,8 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
         semantic_search = {
             "chunk_store": chunks_on,
             "embeddings": embeddings_on,
-            "model": _emb.VOYAGE_MODEL if embeddings_on else None,
+            "provider": _emb.EMBEDDING_PROVIDER if embeddings_on else None,
+            "model": _emb.EMBEDDING_MODEL if embeddings_on else None,
             "mode": (
                 "hybrid"
                 if chunks_on and embeddings_on
@@ -172,6 +173,12 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
                 else "unavailable"
             ),
         }
+        # The repair loop's counters: how many chunks it embedded / failed
+        # since boot and the last error, so silent degradation (the Voyage
+        # 429s that left 98% of chunks unembedded) is visible here.
+        from ..services.embedding_repair import repair_stats
+
+        semantic_search["repair"] = repair_stats()
     except Exception as exc:
         logger.warning("health: semantic search probe failed: %s", exc)
         semantic_search = {"error": type(exc).__name__}
