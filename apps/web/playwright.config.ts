@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { prodSmokeEnabled } from './e2e/prod/guard';
+import { kimptonSmokeEnabled } from './e2e/kimpton-qa/guard';
 
 /**
  * Playwright configuration — Fondok E2E.
@@ -47,6 +48,15 @@ const WORKER_PORT = 3001;
 const PROD_SMOKE = prodSmokeEnabled();
 
 /**
+ * Same shape as `PROD_SMOKE`, independent flag. Sam's Kimpton QA
+ * regression suite (test matrix: Fondok_Kimpton_Test_Matrix.xlsx) — pins
+ * exact values against her own controlled duplicate deal. See
+ * `e2e/kimpton-qa/guard.ts` for why this is a SEPARATE project from
+ * `prod` rather than an extension of it.
+ */
+const KIMPTON_QA = kimptonSmokeEnabled();
+
+/**
  * An external base URL (a deployed build) means we did not choose its
  * `NEXT_PUBLIC_WORKER_URL`, so the worker-stub project has nothing to point
  * at and is left out of the run rather than failing against a server that
@@ -81,7 +91,7 @@ export default defineConfig({
    * run — it returns before reading a secret unless the prod smoke is opted
    * in — and mints the Clerk Testing Token when it is.
    */
-  globalSetup: ['./e2e/global-setup.ts', './e2e/prod/global-setup.ts'],
+  globalSetup: ['./e2e/global-setup.ts', './e2e/prod/global-setup.ts', './e2e/kimpton-qa/global-setup.ts'],
   // Reporter: list for human reading, html for triage.
   reporter: [
     ['list'],
@@ -105,7 +115,7 @@ export default defineConfig({
       // `e2e/prod/` is excluded here as well as in `worker/`: those specs sign
       // in for real and read production data, so they must never be picked up
       // by a project that points at a dev server.
-      testIgnore: [/e2e[\\/]worker[\\/]/, /e2e[\\/]prod[\\/]/],
+      testIgnore: [/e2e[\\/]worker[\\/]/, /e2e[\\/]prod[\\/]/, /e2e[\\/]kimpton-qa[\\/]/],
       use: {
         ...devices['Desktop Chrome'],
         baseURL: EXTERNAL_BASE_URL ?? `http://localhost:${MOCK_PORT}`,
@@ -124,6 +134,20 @@ export default defineConfig({
               ...devices['Desktop Chrome'],
               // Non-null by construction: `prodSmokeEnabled()` already
               // required this to parse to the production host.
+              baseURL: EXTERNAL_BASE_URL as string,
+            },
+          },
+        ]
+      : []),
+    ...(KIMPTON_QA
+      ? [
+          {
+            name: 'kimpton-qa',
+            testMatch: /e2e[\\/]kimpton-qa[\\/].*\.spec\.ts$/,
+            // Same read-only discipline as prod: one retry for network flake.
+            retries: 1,
+            use: {
+              ...devices['Desktop Chrome'],
               baseURL: EXTERNAL_BASE_URL as string,
             },
           },
