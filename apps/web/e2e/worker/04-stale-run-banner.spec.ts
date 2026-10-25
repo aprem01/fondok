@@ -95,8 +95,16 @@ test.describe('FON-75 — a run that predates a published block', () => {
     // (The wording around it is not pinned here — `__tests__/staleRunBanner
     // .test.tsx` checks the copy against the ReasonCode module, so product
     // prose can change without turning this spec red. See e2e/README.md.)
+    // Since the 2026-10-18 client-readiness sweep the headline names tabs and a
+    // figure count; the section list and the raw engine paths sit behind a
+    // collapsed "Technical detail". What a reader sees first carries no path;
+    // the path exists only inside the technical block, which starts closed.
+    await expect(pageBanner.getByTestId('stale-run-headline')).not.toContainText('expense.stabilization');
+    await expect(pageBanner.getByTestId('stale-run-headline')).not.toContainText(/\b[a-z]+\.[a-z_]+\b/);
     await expect(pageBanner.getByTestId('stale-run-sections')).toContainText('Stabilization');
-    await expect(pageBanner).not.toContainText('expense.stabilization');
+    await expect(pageBanner.getByTestId('stale-run-sections')).not.toContainText('expense.stabilization');
+    await expect(pageBanner.getByTestId('stale-run-technical')).not.toHaveAttribute('open', /.*/);
+    await expect(pageBanner.getByTestId('stale-run-paths')).toContainText('expense.stabilization');
     // And it must offer the fix, not just the diagnosis.
     await expect(pageBanner.getByRole('button', { name: /re-run/i })).toBeVisible();
 

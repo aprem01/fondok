@@ -107,10 +107,11 @@ test.describe('Overview — a Stabilization block with no published year', () =>
     await expect(banner).toBeVisible();
     await expect(banner).toContainText(/re-run the model/i);
     // It must name where the Re-run lives, or it is not an instruction.
-    // (The tab is "CAPEX" since the FON-41 tab renames; its id is still `investment`.)
-    await expect(banner).toContainText(/capex/i);
+    // (Since the 2026-10-18 client-readiness sweep the single Re-run button is
+    // the page-level stale-run banner, so the line points there — not at a tab.)
+    await expect(banner).toContainText(/banner at the top of the page/i);
     // And it must not promise a number it does not have.
-    await expect(banner).toContainText(/will not stand another projection year/i);
+    await expect(banner).toContainText(/no other year stands in for it/i);
   });
 
   /**

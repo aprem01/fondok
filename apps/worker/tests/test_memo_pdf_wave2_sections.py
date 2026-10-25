@@ -351,12 +351,31 @@ def test_memo_pdf_builds_end_to_end_with_all_wave2_sections(
 
     assert out.exists(), "memo pdf not written"
     size = out.stat().st_size
-    # Wave 2 sections add ~30-60KB of vector rendering; a refreshed
-    # memo with every section populated should comfortably clear 50KB.
-    assert size > 50_000, (
-        f"refreshed memo pdf is suspiciously small ({size} bytes) — "
-        "expected the new Wave 2 sections to add meaningful weight"
-    )
+    # Byte size is font-dependent: the same memo is ~56 KB on macOS and
+    # ~40 KB on the Ubuntu CI image (different fonts get embedded), so a
+    # 50 KB floor was red on every CI run from 2026-10-15. Assert what the
+    # test is really about — the Wave 2 sections are IN the document — by
+    # reading the PDF back; keep only a loose floor against an empty file.
+    assert size > 10_000, f"memo pdf is implausibly small ({size} bytes)"
+
+    fitz = pytest.importorskip("fitz", reason="pymupdf reads the PDF back")
+    with fitz.open(out) as doc:
+        pages = doc.page_count
+        text = "\n".join(page.get_text() for page in doc)
+    assert pages >= 3, f"expected a multi-page memo, got {pages} page(s)"
+    for heading in (
+        "Executive Summary",
+        "Revenue Mix (Y1)",
+        "Renovation Plan",
+        "Historical Baseline Walk",
+        "Sources & Uses",
+        "Returns Summary",
+        "Capital Plan (Three-Bucket)",
+        "Pricing Sensitivity (5x5 Grid)",
+        "Max-Price Findings",
+        "Variance Disclosure",
+    ):
+        assert heading in text, f"Wave 2 section {heading!r} missing from the rendered PDF"
 
     with out.open("rb") as fh:
         magic = fh.read(5)
