@@ -80,12 +80,6 @@ const buildProjectMenu = (
   ];
 };
 
-const riskTone = (r: string | null | undefined) =>
-  r === 'Low' ? 'text-success-700 bg-success-50' :
-  r === 'Medium' ? 'text-warn-700 bg-warn-50' :
-  r === 'High' ? 'text-danger-700 bg-danger-50' :
-  'text-ink-500 bg-ink-300/15';
-
 interface DisplayDeal {
   id: string;
   name: string;
@@ -99,7 +93,6 @@ interface DisplayDeal {
   /** Levered IRR in PERCENT (15.7 = 15.7%), from the pipeline payload. */
   irr: number | null;
   noi: number | null;
-  risk: string | null;
   /** 0–100, or null when Fondok has not scored the deal — rendered "—", never 0%. */
   aiConfidence: number | null;
   assignee: string;
@@ -121,7 +114,6 @@ function fromMockProject(p: Project): DisplayDeal {
     pricePerKey: null,
     irr: p.irr,
     noi: p.noi ?? null,
-    risk: p.risk,
     aiConfidence: p.aiConfidence,
     assignee: p.assignee,
     docs: p.docs,
@@ -148,7 +140,6 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
     pricePerKey: row?.price_per_key ?? null,
     irr: row?.levered_irr != null ? row.levered_irr * 100 : null,
     noi: row?.noi_y1 ?? null,
-    risk: d.risk,
     aiConfidence: d.ai_confidence != null ? Math.round(d.ai_confidence * 100) : null,
     assignee: '—',
     docs: String(d.document_count ?? 0),
@@ -360,7 +351,7 @@ export default function ProjectsPage() {
                   </>
                 ) : (
                   <>
-                    <div className="grid grid-cols-3 gap-2 mb-4">
+                    <div className="grid grid-cols-2 gap-2 mb-4">
                       <div>
                         <div className="text-[10px] text-ink-500 uppercase tracking-wide">$/Key</div>
                         <div className="text-[14px] font-semibold tabular-nums" title={p.pricePerKey == null ? 'Available after the model runs' : undefined}>
@@ -372,16 +363,6 @@ export default function ProjectsPage() {
                         <div className="text-[14px] font-semibold tabular-nums" title={p.irr == null ? 'Available after the model runs' : undefined}>
                           {p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">Risk</div>
-                        {p.risk ? (
-                          <div className={cn('text-[12px] font-medium px-1.5 py-0.5 rounded inline-block', riskTone(p.risk))}>
-                            {p.risk}
-                          </div>
-                        ) : (
-                          <div className="text-[12px] text-ink-500">Not rated</div>
-                        )}
                       </div>
                     </div>
                     {p.aiConfidence != null && (
@@ -427,9 +408,6 @@ export default function ProjectsPage() {
             <div className="w-16 flex justify-end">
               <MetricLabel label="IRR" tip="Internal Rate of Return — the annualized return on equity over the hold period. The headline return metric." />
             </div>
-            <div className="w-16 flex justify-center">
-              <MetricLabel label="Risk" tip="Fondok's overall risk grade for the deal — combines market, brand, debt, and execution risk." />
-            </div>
             <div className="w-24 flex justify-end">
               <MetricLabel label="AI Conf." tip="How confident the AI is in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set." />
             </div>
@@ -462,13 +440,6 @@ export default function ProjectsPage() {
               <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}</div>
-              <div className="w-16 flex justify-center">
-                {p.risk ? (
-                  <span className={cn('text-[11.5px] font-medium px-2 py-0.5 rounded text-center', riskTone(p.risk))}>{p.risk}</span>
-                ) : (
-                  <span className="text-[11px] text-ink-500">Not rated</span>
-                )}
-              </div>
               <div className="w-24">
                 {p.aiConfidence != null ? (
                   <div className="flex items-center gap-1.5">
