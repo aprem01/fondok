@@ -1,0 +1,73 @@
+name: Deploy web to the fondok Vercel team
+
+# Fondok-Final/fondok only. The original pipeline (aprem01/fondok → Vercel
+# aprem01s-projects/fondok → fondok-app.vercel.app, and Railway for the
+# worker) is untouched: this workflow refuses to run in that repository.
+#
+# The "fondok" Vercel team is on the Hobby plan, which cannot link a private
+# organization repository directly, so GitHub Actions builds the web app and
+# uploads it with the Vercel CLI. Switching to Pro later = connect the repo in
+# Vercel and delete this file.
+#
+# Secrets (repository settings → Secrets → Actions):
+#   FONDOK_TEAM_VERCEL_TOKEN       a token scoped to the fondok team
+#   FONDOK_TEAM_VERCEL_ORG_ID      team_…  (the fondok team id)
+#   FONDOK_TEAM_VERCEL_PROJECT_ID  prj_…   (the fondok project in that team)
+# Without the token the job logs a notice and skips — it never fails the run.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-fondok-team-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.repository == 'Fondok-Final/fondok'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VERCEL_ORG_ID: ${{ secrets.FONDOK_TEAM_VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.FONDOK_TEAM_VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check the deploy token is configured
+        id: guard
+        run: |
+          if [ -z "${{ secrets.FONDOK_TEAM_VERCEL_TOKEN }}" ]; then
+            echo "::notice::FONDOK_TEAM_VERCEL_TOKEN is not set — skipping the fondok-team deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip == 'false'
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip == 'false'
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        if: steps.guard.outputs.skip == 'false'
+        run: npm install --global vercel@latest
+
+      - name: Pull the project's production settings and environment
+        if: steps.guard.outputs.skip == 'false'
+        run: vercel pull --yes --environment=production --token="${{ secrets.FONDOK_TEAM_VERCEL_TOKEN }}"
+
+      - name: Build
+        if: steps.guard.outputs.skip == 'false'
+        run: vercel build --prod --token="${{ secrets.FONDOK_TEAM_VERCEL_TOKEN }}"
+
+      - name: Deploy to production
+        if: steps.guard.outputs.skip == 'false'
+        run: |
+          URL=$(vercel deploy --prebuilt --prod --token="${{ secrets.FONDOK_TEAM_VERCEL_TOKEN }}")
+          echo "Deployed: $URL"
+          echo "### Deployed to the fondok Vercel team" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
