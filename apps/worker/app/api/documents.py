@@ -9013,6 +9013,10 @@ _PROPERTY_METADATA_FIELD_TO_COL: dict[str, str] = {
     "property_overview.brand": "brand",
     "property_overview.submarket": "city",
     "property_overview.location": "city",
+    # FON-115 — the OM's service level / segment, normalised to the
+    # five-value property-type taxonomy (``services.property_type``);
+    # text that maps to none of the five is dropped, never guessed.
+    "property_overview.property_type": "service",
 }
 
 # Subject-property document types that are allowed to write deal
@@ -9038,7 +9042,7 @@ _OM_CANONICAL_DOC_TYPE = _canonical_doc_type("OM")
 
 # Columns that only the OM may populate (even in fill mode). A P&L's
 # ``property_overview.location`` is not a reliable city source.
-_METADATA_SYNC_OM_ONLY_COLS: frozenset[str] = frozenset({"city"})
+_METADATA_SYNC_OM_ONLY_COLS: frozenset[str] = frozenset({"city", "service"})
 
 # Columns the OM may OVERWRITE when the extracted value differs from the
 # deals row. Everything else is fill-if-empty only, for every doc type.
@@ -9080,6 +9084,13 @@ async def _sync_deal_metadata_from_extraction(
     * **city** — ``property_overview.address`` is never mapped (a street
       address must not land in ``city``). ``submarket`` / ``location``
       may fill an empty ``city`` only, and only from the OM.
+    * **service** (FON-115, Sam 2026-10-20) — OM only, fill-only:
+      ``property_overview.property_type`` normalised to the five-value
+      property-type taxonomy (Full-Service / Select-Service /
+      Limited-Service / Extended-Stay / Resort). A phrase that maps to
+      none of them ("Luxury", "Boutique Lifestyle") leaves ``service``
+      NULL — never a guess or a default. The audit row carries the OM's
+      raw phrase as ``raw_value``.
     * **positioning** (Sam 2026-10-15) — OM only: when the OM's
       ``property_overview.brand`` confidently matches the brand catalog
       (``services.brand_chain_scale``) and STR publishes that brand's chain
@@ -9128,7 +9139,7 @@ async def _sync_deal_metadata_from_extraction(
         row = (
             await session.execute(
                 text(
-                    "SELECT keys, brand, city FROM deals "
+                    "SELECT keys, brand, city, service FROM deals "
                     "WHERE id = :id AND tenant_id = :tenant"
                 ),
                 {"id": deal_id, "tenant": str(tenant_id)},
@@ -9144,6 +9155,8 @@ async def _sync_deal_metadata_from_extraction(
     # column was empty, "overwrite" when the OM replaced a differing
     # value. Keyed identically to ``proposed``.
     modes: dict[str, str] = {}
+    # FON-115 — the OM phrase behind a normalised ``service``, for the audit row.
+    raw_property_type: str | None = None
 
     for f in fields:
         if not isinstance(f, dict):
@@ -9166,6 +9179,21 @@ async def _sync_deal_metadata_from_extraction(
                 continue
             if value <= 0:
                 continue
+        elif col == "service":
+            # FON-115: store the taxonomy value, never the OM's raw phrase.
+            from ..services.property_type import match_property_type
+
+            matched = match_property_type(value)
+            if matched is None:
+                logger.info(
+                    "deal_metadata_sync: property_type %r maps to no taxonomy "
+                    "value — service left as is (deal=%s)",
+                    str(value)[:80],
+                    deal_id,
+                )
+                continue
+            raw_property_type = str(value).strip()
+            value = matched.value
         else:
             value = str(value).strip()
             if not value:
@@ -9255,6 +9283,11 @@ async def _sync_deal_metadata_from_extraction(
                     "doc_type": doc_type,
                     "mode": modes.get(col, "fill"),
                     "rule": "docs > wizard (May 7 scope); FON-84 doc-type gate",
+                    **(
+                        {"raw_value": raw_property_type}
+                        if col == "service" and raw_property_type
+                        else {}
+                    ),
                 },
             )
         await session.commit()

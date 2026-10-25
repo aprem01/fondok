@@ -483,7 +483,7 @@ export default function MethodologyPage() {
               source for the Sources &amp; Uses origination-fee line and the Overview&apos;s Financing Costs.
             </BadgeRow>
             <BadgeRow source="deal_row" name="Deal Details">
-              Entered on the new-deal wizard or the Overview: project name, city, brand, keys, service level,
+              Entered on the new-deal wizard or the Overview: project name, city, brand, keys,
               the reopening date — and the <strong>purchase price</strong>. The wizard&apos;s price field is read
               to whole dollars (&ldquo;$36.4M&rdquo;, &ldquo;36,400,000&rdquo;; a range stores its midpoint and is
               labelled as such). Text that does not read as a price is kept as a note and sends nothing — the
@@ -560,6 +560,16 @@ export default function MethodologyPage() {
             came from — &ldquo;From OM brand&rdquo; with the document and page, or &ldquo;Analyst&rdquo; for a tier
             you chose. A tier you chose is never replaced by an OM. The stored tier is what the model reads for
             the comparable-sales match and for which portfolio ratios may contribute.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="property-type-methodology">
+            <strong>Property type.</strong> A deal&apos;s property type is one of five: Full-Service,
+            Select-Service, Limited-Service, Extended-Stay or Resort. It is read from the Offering Memorandum
+            only, and only when the OM states it plainly (&ldquo;boutique lifestyle full-service&rdquo; reads as
+            Full-Service; &ldquo;luxury&rdquo; on its own names a positioning, not a type, and sets nothing).
+            Nothing is assumed when the OM is silent. The comparable-sales match uses the positioning tier; only
+            a deal with no tier falls back to its property type for an approximate scale &mdash; Full-Service and
+            Resort as Upper Upscale, Select-Service as Upper Midscale, Limited-Service as Midscale. Extended-Stay
+            spans several scales, so it sets no fallback.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="market-submarket-methodology">
             <strong>City, market and submarket.</strong> These are three separate deal fields. City is the

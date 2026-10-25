@@ -123,7 +123,8 @@ async def test_create_deal_persists() -> None:
         assert body["name"] == "Persisted Hotel"
         assert body["city"] == "Miami, FL"
         assert body["keys"] == 150
-        assert body["service"] == "Select Service"
+        # FON-115: stored canonical, whatever spelling the caller used
+        assert body["service"] == "Select-Service"
         assert body["deal_stage"] == "Teaser"
         assert body["return_profile"] == "Value Add"
         assert body["brand"] == "Hilton Garden Inn"

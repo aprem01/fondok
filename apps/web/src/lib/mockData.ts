@@ -51,24 +51,24 @@ export interface Project {
 
 export const projects: Project[] = [
   {
-    id: 9, name: 'Hilton Garden Inn Downtown', city: 'Austin, TX', keys: 186, service: 'Select Service',
+    id: 9, name: 'Hilton Garden Inn Downtown', city: 'Austin, TX', keys: 186, service: 'Select-Service',
     status: 'In Review', dealStage: 'Teaser', revpar: 142, irr: 15.7, risk: 'Medium',
     aiConfidence: 65, assignee: 'JR', docs: '3/3', noi: 2_840_000,
     createdAt: 'Apr 24, 2026', updatedAt: 'just now',
   },
   {
-    id: 7, name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, service: 'Lifestyle',
+    id: 7, name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, service: 'Full-Service',
     status: 'IC Ready', dealStage: 'Under NDA', revpar: 385, irr: 23.48, risk: 'Low',
     aiConfidence: 87, assignee: 'EA', docs: '8/8', noi: 4_281_000,
     createdAt: 'Apr 19, 2026', updatedAt: '1d ago',
   },
   {
-    id: 8, name: 'Marriott Magnificent Mile', city: 'Chicago, IL', keys: 312, service: 'Full Service',
+    id: 8, name: 'Marriott Magnificent Mile', city: 'Chicago, IL', keys: 312, service: 'Full-Service',
     status: 'In Review', dealStage: 'LOI', revpar: 189, irr: 18.2, risk: 'Low',
     aiConfidence: 72, assignee: 'MK', docs: '5/5', noi: 7_120_000, updatedAt: '2d ago',
   },
   {
-    id: 10, name: 'Hyatt Regency Waterfront', city: 'Seattle, WA', keys: 425, service: 'Full Service',
+    id: 10, name: 'Hyatt Regency Waterfront', city: 'Seattle, WA', keys: 425, service: 'Full-Service',
     status: 'Draft', dealStage: 'Under NDA', revpar: 210, irr: 14.3, risk: 'Low',
     aiConfidence: 0, assignee: 'SP', docs: '0/0', noDocs: true, updatedAt: '7d ago',
   },

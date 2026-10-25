@@ -125,7 +125,7 @@ function DiagPageInner() {
         name: `Smoke Test ${new Date().toISOString().slice(11, 19)}`,
         city: 'Miami, FL',
         keys: 132,
-        service: 'Lifestyle',
+        service: 'Full-Service',
       });
       if (cancelRef.current) return;
       setSmoke((s) => ({ ...s, step: 'uploading', dealId: deal.id }));

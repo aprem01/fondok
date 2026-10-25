@@ -18,7 +18,7 @@ def kimpton_deal() -> dict[str, Any]:
         "city": "Miami Beach, FL",
         "location": "Miami Beach, FL",
         "brand": "Kimpton",
-        "service": "Lifestyle Boutique",
+        "service": "Full-Service",
         "keys": 132,
         "year_built": 2015,
     }

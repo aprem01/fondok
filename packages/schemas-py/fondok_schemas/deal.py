@@ -27,12 +27,15 @@ class DealStage(str, Enum):
 
 
 class Service(str, Enum):
-    SELECT_SERVICE = "Select Service"
-    FULL_SERVICE = "Full Service"
-    LIFESTYLE = "Lifestyle"
-    LUXURY = "Luxury"
-    LIMITED_SERVICE = "Limited Service"
-    EXTENDED_STAY = "Extended Stay"
+    """Property type (FON-115, Sam 2026-10-20) — the standard hotel-RE
+    taxonomy. Luxury / Lifestyle are brand-style and live in ``positioning``
+    (STR chain scale) and ``brand``, not here."""
+
+    FULL_SERVICE = "Full-Service"
+    SELECT_SERVICE = "Select-Service"
+    LIMITED_SERVICE = "Limited-Service"
+    EXTENDED_STAY = "Extended-Stay"
+    RESORT = "Resort"
 
 
 class ReturnProfile(str, Enum):

@@ -174,7 +174,7 @@ const ASSUMPTION_LABEL: Record<string, string> = {
   proposed_brand: 'Proposed brand',
   positioning: 'Positioning',
   operating_model: 'Operating model',
-  service: 'Service type',
+  service: 'Property type',
   deal_type: 'Deal type',
   return_profile: 'Return profile',
 };

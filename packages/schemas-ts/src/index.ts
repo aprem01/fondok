@@ -51,13 +51,14 @@ export type DealStatus = z.infer<typeof DealStatus>;
 export const DealStage = z.enum(["Teaser", "Under NDA", "LOI", "PSA"]);
 export type DealStage = z.infer<typeof DealStage>;
 
+// FON-115 — property type (standard hotel-RE taxonomy). Luxury / Lifestyle
+// are positioning / brand concepts, not property types.
 export const Service = z.enum([
-  "Select Service",
-  "Full Service",
-  "Lifestyle",
-  "Luxury",
-  "Limited Service",
-  "Extended Stay",
+  "Full-Service",
+  "Select-Service",
+  "Limited-Service",
+  "Extended-Stay",
+  "Resort",
 ]);
 export type Service = z.infer<typeof Service>;
 

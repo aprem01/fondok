@@ -510,3 +510,76 @@ async def test_sync_is_best_effort_on_unknown_deal() -> None:
     """A deal id that doesn't exist (or isn't a UUID) is a silent no-op."""
     await _run_sync(str(uuid4()), [_field("property_overview.keys", 132)], "OM")
     await _run_sync("not-a-uuid", [_field("property_overview.keys", 132)], "OM")
+
+
+# ───────── FON-115 — property type from the OM (OM-only, fill-only, never guessed) ─────────
+
+
+async def _insert_deal_with_service(service: str | None) -> str:
+    from app.database import get_session_factory
+
+    deal_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO deals (id, tenant_id, name, status, service) "
+                "VALUES (:id, :tenant, 'FON-115 deal', 'Draft', :service)"
+            ),
+            {"id": deal_id, "tenant": _TENANT, "service": service},
+        )
+        await session.commit()
+    return deal_id
+
+
+async def _read_service(deal_id: str) -> str | None:
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT service FROM deals WHERE id = :id"), {"id": deal_id}
+            )
+        ).first()
+    assert row is not None
+    return row._mapping["service"]
+
+
+def _property_type_fields(value: str) -> list[dict[str, Any]]:
+    return [{"field_name": "property_overview.property_type", "value": value, "source_page": 2}]
+
+
+async def test_om_property_type_fills_service_with_the_taxonomy_value() -> None:
+    """The live OM extractor's phrase lands as the canonical type, and the
+    audit row keeps the raw phrase."""
+    deal_id = await _insert_deal_with_service(None)
+    await _run_sync(deal_id, _property_type_fields("Boutique Lifestyle Full-Service"), "OM")
+    assert await _read_service(deal_id) == "Full-Service"
+    rows = [r for r in await _audit_inputs(deal_id) if r.get("column") == "service"]
+    assert len(rows) == 1
+    assert rows[0]["mode"] == "fill"
+    assert rows[0]["new_value"] == "Full-Service"
+    assert rows[0]["raw_value"] == "Boutique Lifestyle Full-Service"
+
+
+@pytest.mark.parametrize("raw", ["Luxury", "Lifestyle", "Boutique", "select or full service"])
+async def test_unmappable_property_type_leaves_service_null(raw: str) -> None:
+    deal_id = await _insert_deal_with_service(None)
+    await _run_sync(deal_id, _property_type_fields(raw), "OM")
+    assert await _read_service(deal_id) is None
+    assert not [r for r in await _audit_inputs(deal_id) if r.get("column") == "service"]
+
+
+@pytest.mark.parametrize("doc_type", ["T12", "PNL", "PROPERTY_INFO", "MARKET_STUDY"])
+async def test_only_the_om_may_set_service(doc_type: str) -> None:
+    deal_id = await _insert_deal_with_service(None)
+    await _run_sync(deal_id, _property_type_fields("Full-Service"), doc_type)
+    assert await _read_service(deal_id) is None
+
+
+async def test_om_never_overwrites_an_existing_service() -> None:
+    deal_id = await _insert_deal_with_service("Select-Service")
+    await _run_sync(deal_id, _property_type_fields("Full-Service Resort"), "OM")
+    assert await _read_service(deal_id) == "Select-Service"
+    assert not [r for r in await _audit_inputs(deal_id) if r.get("column") == "service"]

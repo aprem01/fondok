@@ -22,7 +22,7 @@ from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -180,7 +180,17 @@ class CreateDealBody(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     city: str | None = None
     keys: int | None = Field(default=None, ge=1)
+    # FON-115 — property type; accepted only as one of the five taxonomy
+    # values (spelling tolerant, stored canonical). The wizard sends null:
+    # the OM fills it.
     service: str | None = None
+
+    @field_validator("service")
+    @classmethod
+    def _service_is_a_property_type(cls, v: str | None) -> str | None:
+        from ..services.property_type import validate_property_type_input
+
+        return validate_property_type_input(v)
     # FON-46 — Deal Type set in the onboarding wizard: acquisition /
     # development / redevelopment. Foundational; scopes downstream engines.
     deal_type: str | None = Field(default=None, max_length=40)
@@ -230,7 +240,14 @@ class UpdateDealBody(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     city: str | None = None
     keys: int | None = Field(default=None, ge=1)
-    service: str | None = None
+    service: str | None = None  # FON-115 — taxonomy value or null (clears)
+
+    @field_validator("service")
+    @classmethod
+    def _service_is_a_property_type(cls, v: str | None) -> str | None:
+        from ..services.property_type import validate_property_type_input
+
+        return validate_property_type_input(v)
     status: str | None = None
     deal_stage: str | None = None
     risk: str | None = None
@@ -4438,32 +4455,22 @@ def _chain_scale_for_deal_row(positioning: object, service: object) -> str | Non
 
     The deal's ``positioning`` wins whenever it names a chain scale — it
     is the analyst's per-deal override of the brand's STR scale. Only
-    with no positioning (or the ``default`` sentinel) is ``service``
-    (Full Service / Select Service / Luxury / Resort) mapped onto an
-    approximate bucket, exactly as before. So "Default" positioning is NOT
-    "no chain scale" here (it is for the portfolio P&L library filter —
-    ``engine_runner.chain_scale_from_positioning``); the methodology page
-    ("Brand and positioning") states both.
+    with no positioning (or the ``default`` sentinel) is ``service`` —
+    the FON-115 property type (Full-Service / Select-Service /
+    Limited-Service / Extended-Stay / Resort) — mapped onto an approximate
+    bucket by ``services.property_type.chain_scale_for_property_type``
+    (Extended-Stay maps to none: its brands span economy to upscale). So
+    "Default" positioning is NOT "no chain scale" here (it is for the
+    portfolio P&L library filter — ``engine_runner.chain_scale_from_positioning``);
+    the methodology page ("Brand and positioning") states both.
     """
     from ..services.engine_runner import chain_scale_from_positioning
+    from ..services.property_type import chain_scale_for_property_type
 
     from_positioning = chain_scale_from_positioning(positioning)
     if from_positioning is not None:
         return from_positioning
-    service = (str(service) if service is not None else "").strip().lower()
-    if service in ("luxury", "ultra luxury"):
-        chain_scale: str | None = "luxury"
-    elif service in ("full service", "full-service"):
-        chain_scale = "upper-upscale"
-    elif service in ("select service", "select-service"):
-        chain_scale = "upper-midscale"
-    elif service in ("limited service", "limited-service"):
-        chain_scale = "midscale"
-    elif service == "resort":
-        chain_scale = "upper-upscale"
-    else:
-        chain_scale = None
-    return chain_scale
+    return chain_scale_for_property_type(service)
 
 
 @router.get(

@@ -580,10 +580,16 @@ def test_deal_positioning_wins_over_service_for_the_subject_chain_scale() -> Non
     from app.api.deals import _chain_scale_for_deal_row
 
     # Positioning set → it wins, whatever ``service`` says.
-    assert _chain_scale_for_deal_row("luxury", "Select Service") == "luxury"
-    assert _chain_scale_for_deal_row("Upper Midscale", "Full Service") == "Upper Midscale"
-    # No positioning / the wizard's "default" sentinel → the service bucket.
-    assert _chain_scale_for_deal_row(None, "Full Service") == "upper-upscale"
-    assert _chain_scale_for_deal_row("default", "Select Service") == "upper-midscale"
-    assert _chain_scale_for_deal_row("", "Luxury") == "luxury"
+    assert _chain_scale_for_deal_row("luxury", "Select-Service") == "luxury"
+    assert _chain_scale_for_deal_row("Upper Midscale", "Full-Service") == "Upper Midscale"
+    # No positioning / the wizard's "default" sentinel → the FON-115
+    # property-type bucket (services.property_type).
+    assert _chain_scale_for_deal_row(None, "Full-Service") == "upper-upscale"
+    assert _chain_scale_for_deal_row("default", "Select-Service") == "upper-midscale"
+    assert _chain_scale_for_deal_row("default", "Limited-Service") == "midscale"
+    assert _chain_scale_for_deal_row("default", "Resort") == "upper-upscale"
+    # Extended-Stay has no honest single bucket; "Luxury" is a positioning,
+    # not a property type, and no longer drives the fallback.
+    assert _chain_scale_for_deal_row("default", "Extended-Stay") is None
+    assert _chain_scale_for_deal_row("", "Luxury") is None
     assert _chain_scale_for_deal_row("default", None) is None
