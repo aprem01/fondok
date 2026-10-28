@@ -60,6 +60,9 @@ export interface CoverageFile {
   fields: number;
   /** 0-100 overall extraction confidence. */
   confidence: number;
+  /** FON-22 — this statement drives the model's Year-1 actuals (the worker's
+   *  `primary_financial_source`, ranked the way the engine loaders rank). */
+  primaryFinancialSource?: boolean;
   /** Count of fields still needing review (<85%, not yet accepted). */
   toReview: number;
   /** FON-41 testers (E-002 / R-041): the one-line, data-derived reason the
@@ -1136,6 +1139,15 @@ function CoverageFileRow({
         {file.fields > 0 && (
           <span className="text-ink-500">
             {file.fields} field{file.fields === 1 ? '' : 's'}
+          </span>
+        )}
+        {file.primaryFinancialSource && (
+          <span
+            data-testid="primary-source-badge"
+            title="This statement drives the model's Year-1 actuals. Other statements for the same year are supplemental."
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold border border-brand-100 bg-brand-50 text-brand-700"
+          >
+            Primary source
           </span>
         )}
         {file.confidence > 0 && (

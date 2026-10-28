@@ -806,14 +806,24 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ];
     };
 
-    // FON-59 R-054 — Property Type is the OM's own classification
-    // (`property_overview.property_type` off the market overview), falling
-    // back to the deal row's `service` column (set at creation) only when the
-    // OM did not state one. Never a positioning tier dressed up as a type.
-    const propertyType = meta.property_type ?? (deal?.service?.trim() || null);
+    // FON-115 (Sam QA 2026-10-28) — the row shows the SAME property type the
+    // header does: the deal's taxonomy value (`deals.service`, filled from the
+    // OM and normalised — Full-Service / Select-Service / Limited-Service /
+    // Extended-Stay / Resort). The OM's own phrase ("Boutique Lifestyle
+    // Full-Service") is kept as the explanation, so the page never shows two
+    // different property types. With no taxonomy value the OM phrase stands
+    // alone, labelled as the OM's description. Never a positioning tier.
+    const omPhrase = meta.property_type?.trim() || null;
+    const taxonomyType = deal?.service?.trim() || null;
+    const propertyType = taxonomyType ?? omPhrase;
     const propertyTypeRow = (): RowDef =>
       doc('pType', 'Property Type', propertyType ?? '—', 'Offering Memorandum', 'Property Overview', {
-        sub: 'The asset classification as stated in the offering documents (e.g. "Boutique Lifestyle Full-Service").',
+        sub:
+          taxonomyType && omPhrase && omPhrase.toLowerCase() !== taxonomyType.toLowerCase()
+            ? `Filed as ${taxonomyType} from the Offering Memorandum, which describes the asset as "${omPhrase}".`
+            : taxonomyType
+              ? 'The property type, read from the Offering Memorandum (Full-Service, Select-Service, Limited-Service, Extended-Stay or Resort).'
+              : 'The asset classification as the offering documents describe it; no property type has been filed for this deal yet.',
       });
     // Floors: a structural dash — no floors / stories field exists in the
     // extraction catalog, so the row says so on hover instead of looking broken.

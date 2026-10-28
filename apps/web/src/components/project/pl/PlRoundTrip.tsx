@@ -19,6 +19,7 @@
  */
 
 import { useRef, useState } from 'react';
+import { NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import type { ReactNode } from 'react';
 import { AlertTriangle, Download, Loader2, Upload, X } from 'lucide-react';
 import {
@@ -192,6 +193,10 @@ export function ImportPreviewDialog({
 }) {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // FON-74 — a historical cell corrected from the workbook is the same edit as
+  // "Correct this value" on the grid, so the import carries the analyst's
+  // justification (one note for the batch; the worker stores it on each cell).
+  const [importNote, setImportNote] = useState('');
   const changes = preview.data.changes;
   const nChanges = changes.length;
 
@@ -202,7 +207,7 @@ export function ImportPreviewDialog({
       if (preview.kind === 'historicals') {
         const res = await api.plRoundTrip.applyHistoricals(
           dealId,
-          preview.data.changes.map((c) => ({ cell_id: c.cell_id, new_value: c.new_value, old_value: c.old_value })),
+          preview.data.changes.map((c) => ({ cell_id: c.cell_id, new_value: c.new_value, old_value: c.old_value, note: importNote.trim() })),
         );
         const docIds = [...new Set(preview.data.changes.map((c) => c.document_id))];
         await onApplied(res, docIds);
@@ -338,6 +343,22 @@ export function ImportPreviewDialog({
             </>
           )}
         </div>
+        {preview.kind === 'historicals' && nChanges > 0 && (
+          <div className="px-5 pb-3">
+            <label className="block text-[11px] font-semibold text-ink-700 mb-1" htmlFor="import-note">
+              Why these corrections? <span className="font-normal text-ink-500">(required — saved with each corrected cell)</span>
+            </label>
+            <textarea
+              id="import-note"
+              data-testid="import-note"
+              value={importNote}
+              onChange={(e) => setImportNote(e.target.value)}
+              placeholder={NOTE_PLACEHOLDER}
+              rows={2}
+              className="w-full px-2 py-1 text-[12px] border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          </div>
+        )}
         <footer className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border">
           {error ? (
             <span role="alert" className="inline-flex items-center gap-1.5 text-[11.5px] text-danger-700">
@@ -352,7 +373,8 @@ export function ImportPreviewDialog({
               type="button"
               data-testid="import-apply"
               onClick={apply}
-              disabled={applying || nChanges === 0}
+              disabled={applying || nChanges === 0 || (preview.kind === 'historicals' && !importNote.trim())}
+              title={preview.kind === 'historicals' && !importNote.trim() ? NOTE_REQUIRED_MESSAGE : undefined}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-ink-900 text-white disabled:opacity-40"
             >
               {applying && <Loader2 size={12} className="animate-spin" />}

@@ -295,6 +295,10 @@ class HistApplyChange(BaseModel):
 
     cell_id: Annotated[str, Field(min_length=3, max_length=500)]
     new_value: float
+    #: FON-74 — the analyst's justification; a historical cell corrected from
+    #: the workbook is the same edit as "Correct this value" on the grid, so
+    #: it carries the same note. Blank → the cell is skipped (``note_required``).
+    note: Annotated[str, Field(max_length=2000)] = ""
     #: The value the preview showed as "old" — Apply skips the cell if the
     #: current value no longer matches (someone corrected it in between).
     old_value: Any = None
@@ -339,11 +343,16 @@ async def apply_historicals_import(
             skipped.append({"cell_id": ch.cell_id, "reason": "unchanged"})
             continue
         doc_id, fname = parts
+        if not (ch.note or "").strip():
+            skipped.append({"cell_id": ch.cell_id, "reason": "note_required"})
+            continue
         try:
             await review_extraction_field(
                 deal_id=deal_id,
                 doc_id=UUID(doc_id),
-                body=FieldReviewBody(field_name=fname, action="edit", value=ch.new_value),
+                body=FieldReviewBody(
+                    field_name=fname, action="edit", value=ch.new_value, note=ch.note.strip()
+                ),
                 session=session,
                 auth=auth,
             )

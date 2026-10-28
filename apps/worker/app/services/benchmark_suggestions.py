@@ -18,8 +18,9 @@ The suggested ratio is the SAME number the Future P&L's Benchmark column
 prints for that line (``pnl_benchmark_map.map_benchmark_to_categories`` — line
 total ÷ revenue total, else PAR ÷ PAR, else the printed ratio, else the legacy
 summary alias). Management fee falls back to the legacy
-``pnl_benchmark.mgmt_fee_pct`` alias; FF&E reserve has no per-line mapping and
-reads only ``pnl_benchmark.ffe_reserve_pct``. A value outside the plausibility
+``pnl_benchmark.mgmt_fee_pct`` alias; FF&E reserve reads the per-line
+``pnl_benchmark.peer.ffe_reserve.ratio_pct`` (FON-109, 2026-10-28) and falls
+back to ``pnl_benchmark.ffe_reserve_pct``. A value outside the plausibility
 window the old loader enforced (a departmental ratio in (0, 1); management fee
 and FF&E reserve in (0, 10%)) is not suggested.
 """
@@ -59,7 +60,7 @@ SUGGESTION_SPECS: tuple[_SuggestionSpec, ...] = (
     _SuggestionSpec("mgmt_fee_pct", "Management fee (% of total revenue)",
                     "mgmt_fee", "pnl_benchmark.mgmt_fee_pct", 0.10, "mgmt_fee"),
     _SuggestionSpec("ffe_reserve_pct", "FF&E reserve (% of total revenue)",
-                    None, "pnl_benchmark.ffe_reserve_pct", 0.10, "ffe_reserve"),
+                    "ffe_reserve", "pnl_benchmark.ffe_reserve_pct", 0.10, "ffe_reserve"),
 )
 
 SUGGESTION_KEYS: frozenset[str] = frozenset(s.key for s in SUGGESTION_SPECS)

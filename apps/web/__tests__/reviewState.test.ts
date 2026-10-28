@@ -221,23 +221,34 @@ describe('buildReviewState — one state for the Data Room badge and the workshe
   });
 });
 
-describe('buildHistoricalYears — same-period statements keep separate columns', () => {
-  it('labels the collision "2023" / "2023 (2)" in upload order and keeps both documents reviewable', () => {
+describe('buildHistoricalYears — same-period statements collapse to the primary (FON-22)', () => {
+  it('two annual statements on one fiscal year give ONE column from the fuller extraction, the other listed as supplemental', () => {
     const a = doc('dA', { fiscal_year: 2023, uploaded_at: '2026-01-01T00:00:00Z' });
     const b = doc('dB', { fiscal_year: 2023, uploaded_at: '2026-01-05T00:00:00Z' });
-    const exA = extraction('dA', [field('occupancy', 0.7, 0.95), field('rooms_revenue', 10_000_000, 0.6)]);
+    // dA is the "Detailed" statement (more fields); dB a top-line summary.
+    const exA = extraction('dA', [field('occupancy', 0.7, 0.95), field('rooms_revenue', 10_000_000, 0.6), field('fb_revenue', 3_000_000, 0.9)]);
     const exB = extraction('dB', [field('occupancy', 0.72, 0.95), field('rooms_revenue', 10_500_000, 0.7)]);
     const yrs = buildHistoricalYears([a, b], { dA: exA, dB: exB }, KEYS).filter(histHasData);
-    expect(yrs.map((y) => y.year)).toEqual(['2023', '2023 (2)']);
+    expect(yrs.map((y) => y.year)).toEqual(['2023']);
     expect(yrs[0].docId).toBe('dA');
-    expect(yrs[1].docId).toBe('dB');
-    // Day-count logic still keys off the base year (2023 = 365 days).
-    expect(yrs[1].days).toBe(365);
+    expect(yrs[0].supplementalDocs).toEqual([{ docId: 'dB', filename: expect.any(String), fields: 2 }]);
+    expect(yrs[0].days).toBe(365);
 
     const s = buildReviewState([a, b], { dA: exA, dB: exB }, ROWS, yrs);
     expect(s.byDoc.get('dA')).toBe(1);
-    expect(s.byDoc.get('dB')).toBe(1);
-    expect(s.byCell.get(cellKey('rooms_rev', '2023 (2)'))?.docId).toBe('dB');
+    // The supplemental statement's cells are not on the grid, so nothing to review there.
+    expect(s.byCell.get(cellKey('rooms_rev', '2023'))?.docId).toBe('dA');
+  });
+
+  it('the worker-flagged primary wins even when the other statement has more fields', () => {
+    const a = doc('dA', { fiscal_year: 2023, uploaded_at: '2026-01-01T00:00:00Z', primary_financial_source: true });
+    const b = doc('dB', { fiscal_year: 2023, uploaded_at: '2026-01-05T00:00:00Z' });
+    const exA = extraction('dA', [field('occupancy', 0.7, 0.95), field('rooms_revenue', 10_000_000, 0.9)]);
+    const exB = extraction('dB', [field('occupancy', 0.72, 0.95), field('rooms_revenue', 10_500_000, 0.7), field('fb_revenue', 3_000_000, 0.9)]);
+    const yrs = buildHistoricalYears([a, b], { dA: exA, dB: exB }, KEYS).filter(histHasData);
+    expect(yrs.map((y) => y.year)).toEqual(['2023']);
+    expect(yrs[0].docId).toBe('dA');
+    expect(yrs[0].supplementalDocs?.map((d) => d.docId)).toEqual(['dB']);
   });
 
   it('two T-12s become "T-12" / "T-12 (2)" and annual columns still sort ahead of them', () => {

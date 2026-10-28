@@ -38,12 +38,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTrace } from '@/lib/hooks/useValueTrace';
 import { ProvenanceDot, NO_OP_EDIT_MESSAGE, InlineEditControls, useCancelOnOutside } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
-import {
-  overrideEnvelope,
-  requiresNote,
-  NOTE_PLACEHOLDER,
-  NOTE_REQUIRED_MESSAGE,
-} from '@/lib/overrideNote';
+import { overrideEnvelope, requiresNote, NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { isHistoricalSourceDoc, useHistoricals } from '@/lib/hooks/useHistoricals';
@@ -567,6 +562,7 @@ export default function GroundedWorksheet({
       docId: string,
       field: string,
       value: number,
+      note: string,
       ctx?: Pick<InspectTarget, 'rowId' | 'year' | 'rowLabel' | 'colLabel'>,
     ) => {
       // Snapshot the column BEFORE the save so the note can state exactly
@@ -575,7 +571,7 @@ export default function GroundedWorksheet({
       const before: Record<string, number | null> = {};
       if (col) for (const r of ROWS) if (r.kind !== 'section') before[r.id] = histValue(r.id, col);
       try {
-        await api.documents.reviewField(rawId, docId, { field_name: field, action: 'edit', value });
+        await api.documents.reviewField(rawId, docId, { field_name: field, action: 'edit', value, note });
         // Refetch THIS statement's extraction: the shared store broadcasts it,
         // `useHistoricals` rebuilds the column from the live extractions, and
         // the grid shows the corrected value without a reload.
@@ -884,9 +880,16 @@ export default function GroundedWorksheet({
   // Same-period collisions ("2023" + "2023 (2)") — surfaced on the coverage
   // strip so the analyst knows two statements claim one year (fix the year
   // tag in the Data Room) rather than wondering why a column repeats.
-  const collidedPeriods = Array.from(
-    new Set(histYears.filter((y) => y.year !== baseYearLabel(y.year)).map((y) => baseYearLabel(y.year))),
-  );
+  // FON-22 — two statements on one fiscal year no longer get two columns: the
+  // historicals loader keeps the primary (the one that drives the model) and
+  // lists the rest as supplemental on that column. This chip names both.
+  const collidedPeriods = histYears
+    .filter((y) => (y.supplementalDocs?.length ?? 0) > 0)
+    .map((y) => ({
+      year: y.year,
+      primary: y.docId ? docNameById(y.docId) ?? 'primary statement' : 'primary statement',
+      supplemental: (y.supplementalDocs ?? []).map((d) => d.filename),
+    }));
 
   return (
     <CellCommentsProvider state={comments}>
@@ -1137,11 +1140,12 @@ export default function GroundedWorksheet({
           ))}
           {collidedPeriods.length > 0 && (
             <span
-              title="Two or more statements resolve to the same period, so each gets its own column (e.g. “2023” and “2023 (2)”). Fix the year tag on one of them in the Data Room if that isn’t intended."
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-warn-500/30 bg-warn-50 text-warn-700"
+              title={collidedPeriods.map((c) => `${c.year}: ${c.primary} is the primary statement and drives the model; supplemental — ${c.supplemental.join(', ')}. Change which is primary by re-tagging the year in the Data Room.`).join('\n')}
+              data-testid="historicals-supplemental-chip"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-border bg-surface-2 text-ink-700"
             >
               <AlertTriangle size={10} aria-hidden="true" />
-              {collidedPeriods.join(', ')}: more than one statement — check year tags
+              {collidedPeriods.map((c) => `${c.year}: ${c.primary} (primary) · ${c.supplemental.join(', ')} (supplemental)`).join(' · ')}
             </span>
           )}
           <span className="text-[10.5px] text-ink-400 ml-auto hidden md:inline">
@@ -1342,7 +1346,7 @@ export default function GroundedWorksheet({
           onAccept={inspect.review
             ? () => { const r = inspect.review!; acceptReview(r.docId, r.field); setInspect(null); }
             : undefined}
-          onEdit={(docId, field, value) => { editExtraction(docId, field, value, inspect); setInspect(null); }}
+          onEdit={(docId, field, value, note) => { editExtraction(docId, field, value, note, inspect); setInspect(null); }}
           onReset={inspect.overrideKey && isOverridden(inspect.overrideKey)
             ? () => { reset(inspect.overrideKey!); setInspect(null); }
             : undefined}
@@ -1966,9 +1970,13 @@ function SourcePanel({
   onClose: () => void;
   onReset?: () => void;
   onAccept?: () => void;
-  onEdit?: (docId: string, field: string, value: number) => void;
+  onEdit?: (docId: string, field: string, value: number, note: string) => void;
 }) {
   const [editVal, setEditVal] = useState<string | null>(null);
+  // FON-74 — the justification typed beside the corrected value (required to save).
+
+  const [editNote, setEditNote] = useState('');
+  const [noteError, setNoteError] = useState<string | null>(null);
   const docs = target.docIds
     .map((id) => documents.find((d) => d.id === id))
     .filter((d): d is WorkerDocument => Boolean(d));
@@ -2130,13 +2138,30 @@ function SourcePanel({
                     onKeyDown={(e) => { if (e.key === 'Escape') setEditVal(null); }}
                     className="w-32 px-2 py-1 text-[12.5px] text-right tabular-nums border border-brand-500 rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
                   />
+                  {/* FON-74 (Sam 2026-10-20): a corrected statement value is engine
+                      input, so it carries the same justification as every override. */}
+                  <textarea
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    placeholder={NOTE_PLACEHOLDER}
+                    rows={2}
+                    data-testid="field-correction-note"
+                    className="w-full px-2 py-1 text-[12px] border border-border rounded focus:outline-none focus:ring-2 focus:ring-brand-100"
+                  />
                   <button
                     type="button"
-                    onClick={() => { const n = Number(editVal.replace(/[$,\s]/g, '')); if (Number.isFinite(n)) onEdit(field.docId, field.field_name, n); }}
+                    onClick={() => {
+                      const n = Number(editVal.replace(/[$,\s]/g, ''));
+                      if (!Number.isFinite(n)) return;
+                      if (!editNote.trim()) { setNoteError(NOTE_REQUIRED_MESSAGE); return; }
+                      setNoteError(null);
+                      onEdit(field.docId, field.field_name, n, editNote.trim());
+                    }}
                     className="text-[12px] font-medium px-2.5 py-1 rounded-md bg-brand-600 text-white hover:bg-brand-700"
                   >
                     Save + re-model
                   </button>
+                  {noteError && <span className="text-[11px] text-danger-700 w-full" role="alert">{noteError}</span>}
                   <button type="button" onClick={() => setEditVal(null)} className="text-[12px] text-ink-500 hover:text-ink-900">Cancel</button>
                 </div>
               )}

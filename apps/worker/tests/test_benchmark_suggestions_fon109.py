@@ -430,3 +430,37 @@ def test_suggested_note_without_a_page_says_so() -> None:
     assert suggested_note(line_label="FF&E Reserve", value=0.04, filename=None, page=None) == (
         "Applied CBRE benchmark FF&E Reserve 4% from the uploaded P&L benchmark report (page not stated)"
     )
+
+
+@pytest.mark.asyncio
+async def test_ffe_reserve_is_suggested_from_the_per_line_ratio() -> None:
+    """FON-109 follow-up (Sam QA 2026-10-28): the CBRE/HotStats CSV states the
+    FF&E reserve as ``pnl_benchmark.peer.ffe_reserve.ratio_pct``; only the
+    legacy ``pnl_benchmark.ffe_reserve_pct`` alias was read, so the Future
+    P&L showed no suggestion and no Apply button for FF&E while management
+    fee (mapped per line) worked."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(
+        deal_id, doc_type="PNL_BENCHMARK", filename="CBRE_HotStats.csv",
+        fields=[
+            _row("pnl_benchmark.peer.mgmt_fee.ratio_pct", 3.0, page=1),
+            _row("pnl_benchmark.peer.ffe_reserve.ratio_pct", 4.5, page=1),
+        ],
+    )
+    code, body = await _call("GET", f"/deals/{deal_id}/benchmark-suggestions")
+    assert code == 200, body
+    by_key = {s["key"]: s for s in body["suggestions"]}
+    assert by_key["mgmt_fee_pct"]["suggested_value"] == pytest.approx(0.03)
+    ffe = by_key["ffe_reserve_pct"]
+    assert ffe["suggested_value"] == pytest.approx(0.045)
+    assert ffe["ratio_source"] == "reported"
+    assert ffe["field_name"] == "pnl_benchmark.peer.ffe_reserve.ratio_pct"
+    # The benchmark column lists it under its own category too.
+    from app.services.pnl_benchmark_map import map_benchmark_to_categories
+
+    cats = {c["key"]: c for c in map_benchmark_to_categories({
+        "pnl_benchmark.peer.ffe_reserve.ratio_pct": 4.5,
+    })}
+    assert cats["ffe_reserve"]["ratio"] == pytest.approx(0.045)
+    assert cats["ffe_reserve"]["label"] == "FF&E Reserve"

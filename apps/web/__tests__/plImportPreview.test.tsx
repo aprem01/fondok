@@ -91,9 +91,12 @@ describe('Historical P&L import preview (E-013)', () => {
     expect(within(dialog).getByTestId('import-section-non-numeric-cells')).toHaveTextContent('two hundred');
     expect(within(dialog).getByText(/41 unchanged/)).toBeInTheDocument();
 
+    // FON-74 — a historicals import needs the analyst's justification before Apply.
+    const note = within(dialog).queryByTestId('import-note');
+    if (note) fireEvent.change(note, { target: { value: 'Figures per the signed audit' } });
     fireEvent.click(within(dialog).getByTestId('import-apply'));
     await waitFor(() => expect(applyHist).toHaveBeenCalledWith('deal-1', [
-      { cell_id: 'd2023::rooms_revenue', new_value: 9_900_000, old_value: 9_810_000 },
+      { cell_id: 'd2023::rooms_revenue', new_value: 9_900_000, old_value: 9_810_000, note: 'Figures per the signed audit' },
     ]));
     await waitFor(() => expect(onApplied).toHaveBeenCalledWith(
       { applied: [{ cell_id: 'd2023::rooms_revenue' }], skipped: [] }, ['d2023'],
@@ -123,6 +126,9 @@ describe('Future P&L import preview (E-017)', () => {
     expect(within(dialog).getByTestId('import-section-rejected')).toHaveTextContent('add a Note');
     expect(within(dialog).getByTestId('import-section-computed-cells')).toHaveTextContent('computed — edit the assumption instead');
 
+    // FON-74 — a historicals import needs the analyst's justification before Apply.
+    const note = within(dialog).queryByTestId('import-note');
+    if (note) fireEvent.change(note, { target: { value: 'Figures per the signed audit' } });
     fireEvent.click(within(dialog).getByTestId('import-apply'));
     await waitFor(() => expect(applyProj).toHaveBeenCalledWith('deal-1', [
       { key: 'revpar_growth', new_value: 0.05, note: 'STR forecast', old_value: 0.045 },

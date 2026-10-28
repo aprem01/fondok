@@ -166,6 +166,8 @@ async function correctAtSource(rowLabel: string, value: string) {
   fireEvent.click(screen.getByText('Correct this value →'));
   const input = screen.getByDisplayValue(/^\d+$/) as HTMLInputElement;
   fireEvent.change(input, { target: { value } });
+  // FON-74 — a corrected statement value needs a justification before Save.
+  fireEvent.change(screen.getByTestId('field-correction-note'), { target: { value: 'Ledger shows the restated figure' } });
   fireEvent.click(screen.getByText('Save + re-model'));
 }
 
@@ -190,7 +192,7 @@ describe('Historicals worksheet — a $5 Rooms Revenue correction flows through 
 
     await correctAtSource('Rooms Revenue', '11000005');
 
-    expect(reviewFieldSpy).toHaveBeenCalledWith(DEAL_ID, 'd2023', { field_name: 'rooms_revenue', action: 'edit', value: 11_000_005 });
+    expect(reviewFieldSpy).toHaveBeenCalledWith(DEAL_ID, 'd2023', { field_name: 'rooms_revenue', action: 'edit', value: 11_000_005, note: 'Ledger shows the restated figure' });
     // Contract 1 — the statement's extraction is refetched, not the whole deal.
     expect(refreshSpy).toHaveBeenCalledWith('d2023');
 

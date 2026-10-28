@@ -1273,6 +1273,8 @@ class ExtractionFieldOut(BaseModel):
     # FON-41: "reconciled" when the Summary-sheet reconciler replaced
     # the extracted value with the workbook's own Summary total.
     reviewed: str | None = None
+    # FON-74 — the analyst's justification when ``reviewed == "edited"``.
+    review_note: str | None = None
     # FON-41: set by the Summary-sheet reconciler — ``{field_name,
     # old_value, sheet, row, label, old_source_page, old_raw_text}``:
     # what the extractor read and where, so the Data Room can show the
@@ -7107,6 +7109,17 @@ class FieldReviewBody(BaseModel):
     action: Literal["accept", "edit", "reject"]
     # Required only for ``edit`` — the corrected value.
     value: Any | None = None
+    # FON-74 — required for ``edit``: the analyst's justification. A corrected
+    # statement value IS engine input (it feeds the Year-1 basis), so the same
+    # rule as every other override applies: no note, no save. Stored on the
+    # field as ``review_note`` and in the audit row.
+    note: str | None = Field(default=None, max_length=2000)
+
+
+FIELD_EDIT_NOTE_REQUIRED = (
+    "A justification is required to correct an extracted value — say why your "
+    "number replaces the statement's."
+)
 
 
 @router.patch(
@@ -7201,9 +7214,16 @@ async def review_extraction_field(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="edit requires a value",
             )
+        review_note = (body.note or "").strip()
+        if not review_note:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=FIELD_EDIT_NOTE_REQUIRED,
+            )
         fields[idx]["value"] = body.value
         fields[idx]["confidence"] = 1.0
         fields[idx]["reviewed"] = "edited"
+        fields[idx]["review_note"] = review_note
 
     # Recompute the rolled-up confidence report (mirror the verification
     # promoter): a field at 1.0 drops out of low_confidence_fields.
@@ -7256,9 +7276,19 @@ async def review_extraction_field(
             resource_type="extraction_field",
             resource_id=str(doc_id),
             before={"field": body.field_name, "value": before_value},
-            after={"field": body.field_name, "value": fields[idx]["value"]}
-            if body.action != "reject"
-            else {"field": body.field_name, "rejected": True},
+            after=(
+                {
+                    "field": body.field_name,
+                    "value": fields[idx]["value"],
+                    **(
+                        {"note": fields[idx].get("review_note")}
+                        if body.action == "edit"
+                        else {}
+                    ),
+                }
+                if body.action != "reject"
+                else {"field": body.field_name, "rejected": True}
+            ),
         )
     except Exception:  # noqa: BLE001 — audit is best-effort
         logger.warning("review_extraction_field: audit log failed", exc_info=True)

@@ -116,7 +116,8 @@ async def test_edit_replaces_value_and_promotes() -> None:
     deal_id, doc_id = uuid4(), uuid4()
     await _setup(deal_id, doc_id)
     res = await _call(
-        deal_id, doc_id, field_name="rooms_revenue", action="edit", value=10250000
+        deal_id, doc_id, field_name="rooms_revenue", action="edit", value=10250000,
+        note="Broker's T-12 restates rooms revenue; matches the March 2025 ledger",
     )
     rooms = next(f for f in res.fields if f.field_name == "rooms_revenue")
     assert rooms.value == 10250000
@@ -134,6 +135,61 @@ async def test_edit_without_value_400s() -> None:
     with pytest.raises(HTTPException) as exc:
         await _call(deal_id, doc_id, field_name="rooms_revenue", action="edit")
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("note", [None, "", "   "])
+async def test_edit_without_a_justification_422s(note) -> None:
+    """FON-74 (Sam 2026-10-20): the Historical P&L "Correct this value" editor
+    saved with no note. A corrected statement value is engine input, so it
+    carries the same justification as every override."""
+    from fastapi import HTTPException
+
+    from app.api.documents import FIELD_EDIT_NOTE_REQUIRED
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            deal_id, doc_id, field_name="rooms_revenue", action="edit",
+            value=10250000, note=note,
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == FIELD_EDIT_NOTE_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_edit_stores_the_justification_and_audits_it() -> None:
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    res = await _call(
+        deal_id, doc_id, field_name="rooms_revenue", action="edit",
+        value=10250000, note="  Per the signed 2024 audited statement  ",
+    )
+    rooms = next(f for f in res.fields if f.field_name == "rooms_revenue")
+    assert getattr(rooms, "review_note", None) in ("Per the signed 2024 audited statement", None)
+    factory = get_session_factory()
+    async with factory() as s:
+        row = (
+            await s.execute(
+                text("SELECT fields FROM extraction_results WHERE document_id = :d"),
+                {"d": str(doc_id)},
+            )
+        ).first()
+        fields = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        stored = next(f for f in fields if f["field_name"] == "rooms_revenue")
+        assert stored["review_note"] == "Per the signed 2024 audited statement"
+        # The audit row (best-effort, so asserted loosely) carries the note.
+        rows = (
+            await s.execute(
+                text("SELECT payload, after FROM audit_log WHERE action = 'extraction_field.edit'")
+            )
+        ).fetchall()
+    assert any("Per the signed 2024 audited statement" in json.dumps([r[0], r[1]], default=str) for r in rows), rows
 
 
 @pytest.mark.asyncio

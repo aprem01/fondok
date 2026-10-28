@@ -932,12 +932,17 @@ describe('OverviewTab — R-054 Property Type from the OM, Floors a reasoned das
     expect(within(dialog).getByText('Document sourced')).toBeInTheDocument();
   });
 
-  it("the OM value wins over the deal row's service column", async () => {
-    mockDealRef.deal = { ...mockDealRef.deal, service: 'Full Service' };
+  it("the deal's filed property type wins and the OM's phrase explains it (FON-115, Sam QA 2026-10-28)", async () => {
+    // deals.service is the taxonomy value the OM phrase was normalised to —
+    // the header shows it, so the row shows it too; the OM's own wording is
+    // kept in the explanation rather than shown as a second property type.
+    mockDealRef.deal = { ...mockDealRef.deal, service: 'Full-Service' };
     overviewRef.value = { ...OVERVIEW_EXTRACTED, property_type: OM_TYPE };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    expect(await screen.findByText(OM_TYPE)).toBeInTheDocument();
-    expect(screen.queryByText('Full Service')).toBeNull();
+    expect(await screen.findByText(EXTRACTED)).toBeInTheDocument();
+    expect(rowValue('Property Type')).toBe('Full-Service');
+    // The OM phrase is explanation (hover / provenance), never a second value.
+    expect(screen.queryByText(OM_TYPE)).toBeNull();
   });
 
   it('falls back to deal.service when the OM did not state a type, and to a dash when neither exists', async () => {

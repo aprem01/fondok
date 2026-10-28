@@ -1003,6 +1003,8 @@ export interface ExtractionField {
   raw_text: string | null;
   /** FON-23: "accepted" / "edited" once an analyst has reviewed the field. */
   reviewed?: string | null;
+  /** FON-74 — the analyst's justification when `reviewed === 'edited'`. */
+  review_note?: string | null;
 }
 
 export interface ExtractionConfidenceReport {
@@ -2514,7 +2516,7 @@ export const api = {
     reviewField: (
       dealId: string,
       docId: string,
-      body: { field_name: string; action: 'accept' | 'edit' | 'reject'; value?: unknown },
+      body: { field_name: string; action: 'accept' | 'edit' | 'reject'; value?: unknown; note?: string },
     ) =>
       request<ExtractionResult>(
         'PATCH',
@@ -2744,7 +2746,7 @@ export const api = {
       fd.append('file', file, file.name);
       return request<HistImportPreview>('POST', `/deals/${dealId}/imports/historicals`, undefined, { formData: fd });
     },
-    applyHistoricals: (dealId: string, changes: Array<{ cell_id: string; new_value: number; old_value: unknown }>) =>
+    applyHistoricals: (dealId: string, changes: Array<{ cell_id: string; new_value: number; old_value: unknown; note: string }>) =>
       request<ImportApplyResult>('POST', `/deals/${dealId}/imports/historicals/apply`, { changes }),
     previewProjections: (dealId: string, file: File) => {
       const fd = new FormData();

@@ -1212,6 +1212,14 @@ export function yearGroupClass(i: number, groupStart: boolean): string {
  * source rows. When the record carries no walk for the key the drawer says
  * "No trace available for this cell." — nothing here invents a formula.
  */
+/** Lines the expense engine prices from a ratio: their lineage lives on the
+ *  assumption node (`assumption:<key>`), not on a per-year engine node. */
+const ASSUMPTION_TRACE_FALLBACK: Record<string, string> = {
+  'expense.ffe_reserve': 'assumption:ffe_reserve_pct',
+  'expense.mgmt_fee': 'assumption:mgmt_fee_pct',
+  'expense.incentive_mgmt_fee': 'assumption:incentive_mgmt_fee_pct_of_gop',
+};
+
 export function lineageRequestFor(
   dealId: string,
   engine: string,
@@ -1219,9 +1227,18 @@ export function lineageRequestFor(
   label: string,
   columnLabel: string,
 ): LineageOpenDetail {
+  // FON-109 (Sam QA 2026-10-28): the expense engine publishes year nodes for
+  // NOI and GOP only; a ratio-driven line (FF&E reserve, management fee) is
+  // traced through its assumption node, which the graph does carry.
+  const leaf = path.replace(/^years\[\d+\]\./, '');
+  const assumptionFallback = ASSUMPTION_TRACE_FALLBACK[`${engine}.${leaf}`];
   return {
     dealId,
-    rootId: [`kpi:${engine}.${path}`, `engine:${engine}.${path}`],
+    rootId: [
+      `kpi:${engine}.${path}`,
+      `engine:${engine}.${path}`,
+      ...(assumptionFallback ? [assumptionFallback] : []),
+    ],
     title: `${label} — ${columnLabel}`,
     subtitle: `${engine}.${path} · the inputs, growth and source rows behind this cell`,
     emptyMessage: NO_TRACE_MESSAGE,
@@ -2034,6 +2051,7 @@ function ProjectionsTable({
                 traceEngine="expense"
                 tracePath={(i) => `years[${i}].ffe_reserve`}
                 rowTestId="row-ffe-reserve"
+                benchmarkKey="ffe_reserve"
               />
               <FullRow
                 label={CASH_NOI_LABEL}

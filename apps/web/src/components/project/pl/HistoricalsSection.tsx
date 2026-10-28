@@ -51,6 +51,10 @@ export interface HistYear {
    *  its review cells on it. Never render it as the column header; render
    *  ``periodLabel``. */
   year: string;
+  /** FON-22 — other statements that resolved to this same fiscal year. The
+   *  column is built from the primary (``docId``); these are listed on the
+   *  column, not rendered as a second one. */
+  supplementalDocs?: { docId: string; filename: string; fields: number }[];
   /** FON-41 #4 / FON-61 §2 — what period this column actually IS. Mirrors
    *  the worker registry's ``_doc_scope`` (annual / ttm / ytd / monthly);
    *  ``UNKNOWN`` when nothing resolves it, and then ``basisReason`` says so

@@ -89,6 +89,34 @@ export function buildHistoricalYears(
     // stamp the unique column label.
     const built = buildHistYear(fields, keys, base, doc.id, period);
     if (!built) continue;
+    // FON-22 (Sam QA 2026-10-20/28) — two statements on one fiscal year used
+    // to render as "2024" and "2024 (2)", each fully populated from its own
+    // file, with nothing saying which drove the model. Now one column per
+    // fiscal year: the primary statement wins and the others are listed on
+    // the column as supplemental. Ranking mirrors the worker's primary
+    // source badge — the flagged primary, else the fuller extraction, else
+    // the newer upload (``sorted`` is upload order, so the challenger is
+    // newer). T-12 columns keep their own labels: two trailing periods can
+    // legitimately differ.
+    if (isAnnualLabel(base) && byLabel.has(base)) {
+      const incumbent = byLabel.get(base)!;
+      const incumbentDoc = pnlDocs.find((d) => d.id === incumbent.docId);
+      const incumbentFields = incumbentDoc ? (extractions[incumbentDoc.id]?.fields?.length ?? 0) : 0;
+      const challengerFields = fields.length;
+      const incumbentPrimary = incumbentDoc?.primary_financial_source ?? false;
+      const challengerPrimary = doc.primary_financial_source ?? false;
+      const challengerWins = challengerPrimary !== incumbentPrimary
+        ? challengerPrimary
+        : challengerFields >= incumbentFields;
+      const winner = challengerWins ? built : incumbent;
+      const loserEntry = challengerWins
+        ? { docId: incumbent.docId ?? incumbentDoc?.id ?? '', filename: incumbentDoc?.filename ?? 'statement', fields: incumbentFields }
+        : { docId: doc.id, filename: doc.filename ?? 'statement', fields: challengerFields };
+      winner.year = base;
+      winner.supplementalDocs = [...(incumbent.supplementalDocs ?? []), loserEntry];
+      byLabel.set(base, winner);
+      continue;
+    }
     const label = uniqueYearLabel(base, new Set(byLabel.keys()));
     built.year = label;
     byLabel.set(label, built);

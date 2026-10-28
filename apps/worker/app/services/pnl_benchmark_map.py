@@ -101,6 +101,11 @@ CATEGORY_SPECS: tuple[_CategorySpec, ...] = (
                   "total_revenue", "total_revenue",
                   legacy_field="pnl_benchmark.insurance_pct"),
     _CategorySpec("rent", "Rent", "rent", "total_revenue", "total_revenue"),
+    # FON-109 (Sam QA 2026-10-28): the report's FF&E reserve line
+    # (``pnl_benchmark.peer.ffe_reserve.ratio_pct``) was never mapped, so a
+    # benchmark that states it produced no suggestion and no Apply button.
+    _CategorySpec("ffe_reserve", "FF&E Reserve", "ffe_reserve",
+                  "total_revenue", "total_revenue"),
 )
 
 

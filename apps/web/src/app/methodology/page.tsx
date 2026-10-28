@@ -195,10 +195,25 @@ export default function MethodologyPage() {
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Reading the Future P&L</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
             The P&amp;L tab has two views: <strong>Historical P&amp;L</strong> — the normalised actuals, one
-            column per statement — and <strong>Future P&amp;L</strong>, the forward plan the returns are built
+            column per fiscal year — and <strong>Future P&amp;L</strong>, the forward plan the returns are built
             on. Every projected column is headed by its operating year and calendar year; the first column
             also names the statement period it is anchored on, exactly as the Historical P&amp;L heads that
             column.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="primary-statement-methodology">
+            <strong>One statement per year.</strong> When two statements cover the same fiscal year (a detailed
+            and a summary P&amp;L, say), the Historical P&amp;L shows one column, built from the primary
+            statement, and names the other as supplemental on that column. The primary is the one that drives
+            the model: the statement the Data Room marks &ldquo;Primary source&rdquo; &mdash; a full-year
+            statement ahead of a partial one, then the fuller extraction, then the newer upload. Re-tag a
+            statement&apos;s year in the Data Room to change which is primary.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="correction-note-methodology">
+            <strong>Correcting an extracted value.</strong> A statement figure can be corrected where it is read
+            &mdash; from a flagged cell on the Historical P&amp;L, from the Data Room review list, or by
+            re-importing the exported workbook. Every correction asks why, and the note is kept with the
+            corrected value and in the audit trail, the same as a model override: a corrected statement value
+            is model input.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             <strong>Click any number.</strong> Every projected occupancy, ADR, RevPAR and statement amount opens

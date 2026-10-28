@@ -1,4 +1,5 @@
 'use client';
+import { NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -397,12 +398,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       fieldName: string,
       action: 'accept' | 'edit' | 'reject',
       value?: string,
+      note?: string,
     ) => {
       try {
         await api.documents.reviewField(rawId, docId, {
           field_name: fieldName,
           action,
-          ...(action === 'edit' ? { value } : {}),
+          // FON-74 — a corrected value carries the analyst's justification.
+          ...(action === 'edit' ? { value, note } : {}),
         });
         const verb =
           action === 'accept' ? 'Accepted' : action === 'edit' ? 'Updated' : 'Rejected';
@@ -1324,6 +1327,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               fiscalYear: d.fiscalYear ?? null,
               docSubtype: d.docSubtype ?? null,
               status: d.rawStatus,
+              primaryFinancialSource: d.primaryFinancialSource ?? false,
             }),
           )}
           onOpenReview={openFlaggedReview}
@@ -2106,10 +2110,12 @@ function ReviewFieldRow({
   field: ReviewField;
   gridCols: string;
   highlight?: boolean;
-  onReview: (action: 'accept' | 'edit' | 'reject', value?: string) => Promise<void>;
+  onReview: (action: 'accept' | 'edit' | 'reject', value?: string, note?: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(field.value);
+  // FON-74 — why the corrected value replaces the extracted one (required).
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -2122,10 +2128,10 @@ function ReviewFieldRow({
   const c = confStyle(field.conf);
   const flagged = field.needsReview && !field.resolved;
 
-  const act = async (action: 'accept' | 'edit' | 'reject', v?: string) => {
+  const act = async (action: 'accept' | 'edit' | 'reject', v?: string, why?: string) => {
     setBusy(true);
     try {
-      await onReview(action, v);
+      await onReview(action, v, why);
     } finally {
       setBusy(false);
       setEditing(false);
@@ -2278,12 +2284,22 @@ function ReviewFieldRow({
       >
         {editing ? (
           <>
+            {/* FON-74 (Sam 2026-10-20): the same justification every override carries. */}
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={NOTE_PLACEHOLDER}
+              rows={2}
+              data-testid="review-field-note"
+              style={{ flex: '1 1 220px', fontSize: 12, padding: '4px 6px', border: `1px solid ${palette.disabledBorder}`, borderRadius: 6 }}
+            />
             <button
               type="button"
-              disabled={busy}
-              onClick={() => act('edit', draft)}
+              disabled={busy || !note.trim()}
+              title={note.trim() ? undefined : NOTE_REQUIRED_MESSAGE}
+              onClick={() => act('edit', draft, note.trim())}
               style={{
-                background: palette.inkNavy,
+                background: note.trim() ? palette.inkNavy : palette.disabledBorder,
                 color: '#fff',
                 border: 'none',
                 borderRadius: 6,

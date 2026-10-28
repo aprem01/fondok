@@ -213,9 +213,10 @@ async def test_historical_apply_goes_through_the_review_path() -> None:
     deal_id, d23, _ = await _setup()
     cid = f"{d23}::rooms_revenue"
     body = HistApplyBody(changes=[
-        {"cell_id": cid, "new_value": 9_900_000, "old_value": 9_810_000},
-        {"cell_id": f"{d23}::adr", "new_value": 250, "old_value": 199},  # stale preview
-        {"cell_id": f"{uuid4()}::x", "new_value": 1},
+        {"cell_id": cid, "new_value": 9_900_000, "old_value": 9_810_000,
+         "note": "Workbook: rooms revenue restated per the 2023 audit"},  # FON-74 note
+        {"cell_id": f"{d23}::adr", "new_value": 250, "old_value": 199, "note": "x"},  # stale preview
+        {"cell_id": f"{uuid4()}::x", "new_value": 1, "note": "x"},
     ])
     async with get_session_factory()() as s:
         res = await apply_historicals_import(deal_id=deal_id, body=body, session=s, auth=_auth())
@@ -826,3 +827,27 @@ async def test_projection_by_year_routes_are_tenant_scoped() -> None:
             {"id": str(deal_id), "t": _TENANT},
         )).first()
     assert json.loads(row[0])["index_mpi_target_by_year"] == {"value": [120.0], "note": "n"}
+
+
+
+@pytest.mark.asyncio
+async def test_historical_apply_skips_a_change_without_a_justification() -> None:
+    """FON-74 — the workbook round-trip is the same edit as "Correct this
+    value": no justification, no write; the cell is reported as skipped."""
+    from app.api.pl_roundtrip import HistApplyBody, apply_historicals_import
+    from app.database import get_session_factory
+
+    deal_id, d23, _ = await _setup()
+    cid = f"{d23}::rooms_revenue"
+    body = HistApplyBody(changes=[{"cell_id": cid, "new_value": 9_950_000, "old_value": 9_810_000}])
+    async with get_session_factory()() as s:
+        res = await apply_historicals_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert res["applied"] == []
+    assert [x["reason"] for x in res["skipped"]] == ["note_required"]
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT fields FROM extraction_results WHERE document_id = :d AND tenant_id = :t"),
+            {"d": str(d23), "t": _TENANT},
+        )).first()
+    fields = {f["field_name"]: f for f in json.loads(row[0])}
+    assert "reviewed" not in fields["rooms_revenue"]
