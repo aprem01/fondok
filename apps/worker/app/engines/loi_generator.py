@@ -2,8 +2,8 @@
 
 Last artifact every IC committee asks for: "draft an LOI so we can
 send it Monday". This module fills a standard hospitality LOI template
-with deal metadata + the max-price-for-target-IRR scalar from
-``price_solver``. No LLM call — just templated markdown.
+with deal metadata + the offerable max price from ``price_solver``
+(the deal's own return targets — there is no default hurdle). No LLM call — just templated markdown.
 
 The template is the lowest-common-denominator hospitality LOI body:
 buyer/seller/asset/price/earnest-money/deposit-at-PA/DD/closing/
@@ -46,6 +46,28 @@ DEFAULT_CONTINGENCIES: tuple[str, ...] = (
     "Satisfactory Phase I ESA",
     "Satisfactory PIP estimate",
     "Title commitment review",
+)
+
+
+# ─────────────────────────── refusals ───────────────────────────────
+
+
+class LOIInputMissing(ValueError):
+    """The LOI cannot be drafted honestly from these inputs.
+
+    Raised instead of rendering a document with a fabricated figure in it
+    ("comprising 0 guest rooms", "$0 per key"). The message names the
+    missing input so the route can answer 422 with it verbatim.
+    """
+
+
+LOI_NO_ROOMS_MESSAGE = (
+    "LOI not available: the deal record has no key count — the Property "
+    "clause states the room count, so it cannot be drafted"
+)
+LOI_NO_PRICE_MESSAGE = (
+    "LOI not available: no proposed price — the max-price solve for the "
+    "{hurdle} hurdle did not converge ({status}), and no price override was given"
 )
 
 
@@ -248,22 +270,46 @@ def draft_loi(
 ) -> LOIDraft:
     """Build an :class:`LOIDraft` from deal facts + a max-price result.
 
-    Defaults the proposed price to ``max_price_result.max_price_for_irr``
-    — institutional buyers price to a target IRR, not a target EM. The
-    analyst can override with ``proposed_price_override`` when they want
-    to offer below the cap (negotiation strategy: leave room to come up).
+    Defaults the proposed price to the solver's offerable headline
+    (``max_price_result.max_price`` — the lower of the converged prices for
+    the hurdles that were set). The analyst can override with
+    ``proposed_price_override`` when they want to offer below the cap
+    (negotiation strategy: leave room to come up).
 
-    All optional fields fall back to the module-level defaults defined
-    at the top of this module. The dataclass is fully serialisable so
-    the API layer can ship it straight to JSON; ``rendered_markdown`` is
-    the copy-paste-ready body.
+    Refuses (:class:`LOIInputMissing`) rather than rendering a placeholder:
+    ``rooms`` must be a positive count — the Property clause states it — and
+    a proposed price must exist, i.e. the override is given or the binding
+    hurdle's search converged. A document that says "0 guest rooms" or "$0
+    per key" is never produced.
+
+    All optional terms fall back to the module-level defaults defined at the
+    top of this module (template language, not deal data). The dataclass is
+    fully serialisable so the API layer can ship it straight to JSON;
+    ``rendered_markdown`` is the copy-paste-ready body.
     """
-    proposed_price = (
-        proposed_price_override
-        if proposed_price_override is not None
-        else max_price_result.max_price_for_irr
-    )
-    proposed_price_per_key = proposed_price / rooms if rooms > 0 else 0.0
+    if rooms is None or rooms <= 0:
+        raise LOIInputMissing(LOI_NO_ROOMS_MESSAGE)
+    if proposed_price_override is not None:
+        proposed_price = float(proposed_price_override)
+    elif max_price_result.max_price is not None:
+        proposed_price = float(max_price_result.max_price)
+    else:
+        binding = max_price_result.binding_constraint
+        status = (
+            max_price_result.irr_status
+            if binding == "irr"
+            else max_price_result.em_status
+            if binding == "em"
+            else f"irr {max_price_result.irr_status} / em {max_price_result.em_status}"
+        )
+        raise LOIInputMissing(
+            LOI_NO_PRICE_MESSAGE.format(hurdle=binding.upper(), status=status)
+        )
+    if proposed_price <= 0:
+        raise LOIInputMissing(
+            LOI_NO_PRICE_MESSAGE.format(hurdle="price", status="non-positive price")
+        )
+    proposed_price_per_key = proposed_price / rooms
     deposit_at_pa = proposed_price * DEFAULT_DEPOSIT_AT_PA_PCT
 
     draft = LOIDraft(
@@ -301,6 +347,9 @@ __all__ = [
     "DEFAULT_EXCLUSIVITY_DAYS",
     "DEFAULT_FINANCING_CONTINGENCY",
     "DEFAULT_VALID_UNTIL",
+    "LOI_NO_PRICE_MESSAGE",
+    "LOI_NO_ROOMS_MESSAGE",
     "LOIDraft",
+    "LOIInputMissing",
     "draft_loi",
 ]

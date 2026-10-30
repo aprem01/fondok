@@ -65,21 +65,6 @@ def _is_sqlite(session: AsyncSession) -> bool:
     return session.bind is not None and session.bind.dialect.name == "sqlite"
 
 
-class AnalysisRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    prompt: str | None = None
-    section: str | None = None
-
-
-class AnalysisResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    deal_id: UUID
-    job_id: str
-    status: str = "queued"
-
-
 class VarianceRawFieldOut(BaseModel):
     """One raw broker-field comparison folded into a consolidated flag.
 
@@ -559,32 +544,6 @@ async def load_actuals_before_reserve_noi(
         if stated is not None:
             best, best_rank = stated, rank
     return best
-
-
-@router.post("/{deal_id}/analyze", response_model=AnalysisResponse)
-async def analyze(
-    deal_id: UUID,
-    body: AnalysisRequest,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
-) -> AnalysisResponse:
-    """Stub: kick off an Analyst run for a section or freeform prompt.
-
-    TODO(analysis-job-runner): no backing job runner yet — the returned
-    ``job_id`` is a placeholder. The web app should treat this as
-    fire-and-forget until the deal-scoped Q&A flow is wired (will
-    likely reuse the memo streaming broadcast under a different
-    channel key).
-
-    Tenant-scoped: a cross-tenant ``deal_id`` returns 404 even though
-    the stub never reads any data — keeps the surface area uniform so
-    a future implementation can't accidentally regress to leaking.
-    """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
-    logger.info("analysis(stub): deal=%s section=%s", deal_id, body.section)
-    return AnalysisResponse(deal_id=deal_id, job_id="stub-job")
 
 
 @router.get("/{deal_id}/variance", response_model=VarianceReportResponse)
@@ -2368,12 +2327,18 @@ async def apply_proposed_overrides(
 
 
 class _SensitivityRequest(BaseModel):
-    """POST body for ``/pricing/sensitivity``."""
+    """POST body for ``/pricing/sensitivity``.
+
+    The target hurdle is optional with NO default: an omitted ``target_irr``
+    is read from the deal's Investment Profile. The grid's breakeven sweep is
+    against the levered-IRR hurdle, so a deal with neither a body nor a
+    profile IRR target answers 422 — never a default hurdle (FON-68).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
-    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    target_em: float | None = Field(default=None, ge=0.0, le=20.0)
     cap_axis: list[float] | None = Field(
         default=None,
         description=(
@@ -2412,20 +2377,6 @@ class _SensitivityGridOut(BaseModel):
     cells: list[_SensitivityCellOut]
     breakeven_exit_cap_pct: float | None
     breakeven_noi_multiplier: float | None
-
-
-class _MaxPriceRequest(BaseModel):
-    """LEGACY defaults — retained ONLY for ``export/live_payload.py``, which
-    instantiates this class to drive the exported max-price section. The
-    ``/pricing/max-price`` endpoint no longer uses it (FON-68): it takes
-    ``_MaxPriceTargetsBody`` and never defaults a hurdle. Migrating the
-    export to the deal's targets is a known follow-up.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
-    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
 
 
 class _MaxPriceTargetsBody(BaseModel):
@@ -2535,8 +2486,10 @@ class _LOIRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    target_irr: float = Field(default=0.15, ge=-0.5, le=2.0)
-    target_em: float = Field(default=1.8, ge=0.0, le=20.0)
+    # Optional with NO default — omitted hurdles are read from the deal's
+    # Investment Profile; with neither the LOI refuses (FON-68).
+    target_irr: float | None = Field(default=None, ge=-0.5, le=2.0)
+    target_em: float | None = Field(default=None, ge=0.0, le=20.0)
     buyer: str | None = Field(default=None, max_length=200)
     seller: str | None = Field(default=None, max_length=200)
     earnest_money_pct: float = Field(default=0.01, ge=0.0, le=0.10)
@@ -2646,12 +2599,13 @@ async def _build_pricing_context(
 
 async def _load_asset_facts(
     session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
-) -> tuple[str, str, int]:
-    """Pull ``(asset_name, asset_address, rooms)`` for the LOI body.
+) -> tuple[str | None, str | None, int | None]:
+    """Pull ``(asset_name, asset_address, rooms)`` off the deal row.
 
-    Falls back to placeholders when a deal row is incomplete (defensive
-    — the LOI is meant to be edited anyway, and a missing field should
-    show as ``[TBD]`` not 500).
+    A field the row does not carry comes back as ``None`` — never a
+    placeholder string and never ``0`` keys. Callers decide what a missing
+    fact means: the pricing solvers skip the per-key figure, the LOI refuses
+    (:data:`LOI_MISSING_FACT_MESSAGE`).
     """
     row = (
         await session.execute(
@@ -2663,13 +2617,66 @@ async def _load_asset_facts(
         )
     ).first()
     if row is None:
-        return ("[Asset TBD]", "[Address TBD]", 0)
+        return (None, None, None)
     m = row._mapping
-    name = (m.get("name") or "[Asset TBD]") + ""
-    city = m.get("city") or "[City TBD]"
-    address = f"{city}"  # full street address isn't on the deals row yet
-    rooms = int(m.get("keys") or 0)
-    return (name, address, rooms)
+    name = str(m["name"]).strip() if m.get("name") else None
+    # Full street address isn't on the deals row yet — the city is the
+    # most specific location the deal record states.
+    address = str(m["city"]).strip() if m.get("city") else None
+    raw_keys = m.get("keys")
+    try:
+        rooms = int(raw_keys) if raw_keys is not None else None
+    except (TypeError, ValueError):
+        rooms = None
+    if rooms is not None and rooms <= 0:
+        rooms = None
+    return (name or None, address or None, rooms)
+
+
+#: 422 detail when the LOI cannot name the asset or its key count.
+LOI_MISSING_FACT_MESSAGE = (
+    "LOI not available: the deal record has no {what} — set it on the deal "
+    "before drafting an LOI"
+)
+
+#: 422 detail for the pricing sensitivity grid when no IRR hurdle resolves.
+SENSITIVITY_NO_IRR_TARGET_MESSAGE = (
+    "No target levered IRR set — the sensitivity grid's breakeven sweep is "
+    "against it; set Target Levered IRR on the Investment Profile or pass "
+    "target_irr explicitly"
+)
+
+
+async def _deal_return_targets(
+    session: AsyncSession,
+    *,
+    deal_id: UUID,
+    tenant_id: UUID,
+) -> tuple[float | None, float | None]:
+    """The deal's own ``(target_irr, target_moic)`` from its Investment
+    Profile — ``None`` for a hurdle the analyst never set.
+
+    The ONE source of a return target outside a request body. The pricing
+    routes resolve through :func:`_resolve_return_targets`; the exports
+    (``app.export.live_payload``) read this directly and refuse the
+    pricing section when both are ``None`` — there is no default hurdle
+    anywhere (FON-68).
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT target_irr, target_moic FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return None, None
+    m = row._mapping
+    deal_irr = float(m["target_irr"]) if m.get("target_irr") is not None else None
+    deal_em = float(m["target_moic"]) if m.get("target_moic") is not None else None
+    return deal_irr, deal_em
 
 
 async def _resolve_return_targets(
@@ -2689,20 +2696,9 @@ async def _resolve_return_targets(
     """
     from ..engines.price_solver import NO_TARGET_MESSAGE
 
-    row = (
-        await session.execute(
-            text(
-                "SELECT target_irr, target_moic FROM deals "
-                "WHERE id = :id AND tenant_id = :tenant"
-            ),
-            {"id": str(deal_id), "tenant": str(tenant_id)},
-        )
-    ).first()
-    deal_irr = deal_em = None
-    if row is not None:
-        m = row._mapping
-        deal_irr = float(m["target_irr"]) if m.get("target_irr") is not None else None
-        deal_em = float(m["target_moic"]) if m.get("target_moic") is not None else None
+    deal_irr, deal_em = await _deal_return_targets(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     target_irr = body_irr if body_irr is not None else deal_irr
     target_em = body_em if body_em is not None else deal_em
@@ -2738,11 +2734,24 @@ async def get_pricing_sensitivity(
 
     Read-only: walks the engine chain in memory, flexes per cell, never
     touches ``engine_outputs`` or ``deals``. Tenant-scoped 404 on cross-
-    tenant deal ids.
+    tenant deal ids. The breakeven sweep runs against the resolved levered-
+    IRR hurdle (body, else the deal's Investment Profile); with none → 422.
     """
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    target_irr, _target_em, _source = await _resolve_return_targets(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        body_irr=body.target_irr,
+        body_em=body.target_em,
+    )
+    if target_irr is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=SENSITIVITY_NO_IRR_TARGET_MESSAGE,
+        )
 
     from ..engines.pricing_sensitivity import run_sensitivity_grid
 
@@ -2751,7 +2760,7 @@ async def get_pricing_sensitivity(
     )
     grid = run_sensitivity_grid(
         base_input,
-        target_irr=body.target_irr,
+        target_irr=target_irr,
         cap_axis=body.cap_axis,
         noi_axis=body.noi_axis,
     )
@@ -3112,48 +3121,82 @@ async def get_pricing_loi(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> _LOIOut:
-    """Build an LOI draft using the max-price-for-IRR scalar.
+    """Build an LOI draft priced at the max price for the deal's targets.
 
     The draft is a copy-paste artifact — this endpoint NEVER inserts a
     document or persists any state; the analyst clicks Save in the UI
     to land it in the documents table.
+
+    Refusals (422, never a document with placeholders in it): no return
+    target on the body or the deal; no property name or no key count on
+    the deal record; the solve did not converge for the hurdle the price
+    is taken from (:class:`~app.engines.loi_generator.LOIInputMissing`).
     """
     await _assert_deal_belongs_to_tenant(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
 
-    from ..engines.loi_generator import draft_loi
+    from ..engines.loi_generator import LOIInputMissing, draft_loi
     from ..engines.price_solver import solve_max_price
 
-    base_input = await _build_returns_input_for_deal(
-        session, deal_id=deal_id, tenant_id=tenant_id
+    target_irr, target_em, _source = await _resolve_return_targets(
+        session,
+        deal_id=deal_id,
+        tenant_id=tenant_id,
+        body_irr=body.target_irr,
+        body_em=body.target_em,
     )
     asset_name, asset_address, rooms = await _load_asset_facts(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    missing = [
+        what
+        for what, value in (
+            ("property name", asset_name),
+            ("city", asset_address),
+            ("key count", rooms),
+        )
+        if value is None
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=LOI_MISSING_FACT_MESSAGE.format(what=" / ".join(missing)),
+        )
+    assert asset_name is not None and asset_address is not None and rooms is not None
+
+    base_input = await _build_returns_input_for_deal(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
     mpr = solve_max_price(
         base_input,
-        target_irr=body.target_irr,
-        target_em=body.target_em,
-        rooms=rooms or None,
-    )
-    draft = draft_loi(
-        asset_name=asset_name,
-        asset_address=asset_address,
+        target_irr=target_irr,
+        target_em=target_em,
         rooms=rooms,
-        max_price_result=mpr,
-        buyer=body.buyer,
-        seller=body.seller,
-        earnest_money_pct=body.earnest_money_pct,
-        due_diligence_days=body.due_diligence_days,
-        closing_days_from_pa=body.closing_days_from_pa,
-        financing_contingency=body.financing_contingency,
-        exclusivity_days=body.exclusivity_days,
-        representation=body.representation,
-        valid_until=body.valid_until,
-        contingencies=body.contingencies,
-        proposed_price_override=body.proposed_price_override,
     )
+    try:
+        draft = draft_loi(
+            asset_name=asset_name,
+            asset_address=asset_address,
+            rooms=rooms,
+            max_price_result=mpr,
+            buyer=body.buyer,
+            seller=body.seller,
+            earnest_money_pct=body.earnest_money_pct,
+            due_diligence_days=body.due_diligence_days,
+            closing_days_from_pa=body.closing_days_from_pa,
+            financing_contingency=body.financing_contingency,
+            exclusivity_days=body.exclusivity_days,
+            representation=body.representation,
+            valid_until=body.valid_until,
+            contingencies=body.contingencies,
+            proposed_price_override=body.proposed_price_override,
+        )
+    except LOIInputMissing as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     return _LOIOut(
         deal_id=deal_id,
         buyer=draft.buyer,
