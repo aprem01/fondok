@@ -194,10 +194,13 @@ async def _sources_and_values(deal_id: UUID) -> dict:
             continue
         if isinstance(v, (int, float, str, bool)) or v is None:
             values[k] = v
-    return {
-        "sources": {k: s for k, s in sources.items() if k in values},
-        "values": values,
-    }
+    out_sources = {k: s for k, s in sources.items() if k in values}
+    # C3 (go-live audit) — the endpoint merges the partnership terms view
+    # (carried terms, else the platform suggestions as ``seed``).
+    view = base.get("__partnership_terms__") or {}
+    values.update(view.get("values") or {})
+    out_sources.update(view.get("sources") or {})
+    return {"sources": out_sources, "values": values}
 
 
 @pytest.mark.asyncio

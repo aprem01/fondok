@@ -32,6 +32,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
+
 # Per-test SQLite database BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-run-freshness.db"
 if _TMP_DB.exists():
@@ -53,6 +55,7 @@ def test_absent_block_key_is_reported() -> None:
         "sourced_from_t12": [],
         "provenance": {},
         "line_methods": {},  # E-016 block, present
+        "synthesized_lines": [],  # B3 block, present
     }
     assert missing_block_paths("expense", outputs) == ["stabilization"]
 
@@ -73,6 +76,7 @@ def test_present_null_block_is_not_reported() -> None:
         "sourced_from_t12": [],
         "provenance": {},
         "line_methods": {},  # E-016 block, present
+        "synthesized_lines": [],  # B3 block, present
         "stabilization": None,
     }
     assert missing_block_paths("expense", outputs) == []
@@ -99,6 +103,7 @@ def test_nested_field_absent_from_a_present_block_is_reported_by_path() -> None:
         "sourced_from_t12": [],
         "provenance": {},
         "line_methods": {},  # E-016 block, present
+        "synthesized_lines": [],  # B3 block, present
         "stabilization": block,
     }
     assert missing_block_paths("expense", outputs) == [
@@ -150,9 +155,13 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
     await session.execute(
         text(
             "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
-            "VALUES (:id, :tenant, :name, 132, 36400000, '{}')"
+            "VALUES (:id, :tenant, :name, 132, 36400000, :fo)"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Freshness Test"},
+        # B5 — the deal carries partnership terms so every engine completes.
+        {
+            "id": deal_id, "tenant": tenant_id, "name": "Freshness Test",
+            "fo": json.dumps(kimpton_partnership_field_overrides()),
+        },
     )
     await session.commit()
 

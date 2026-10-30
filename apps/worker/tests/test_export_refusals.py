@@ -40,6 +40,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
+
 # Force a per-test SQLite DB BEFORE app modules import (same pattern as
 # test_live_payload_wave2_3.py, whose snapshot this file compares against).
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-export-refusals.db"
@@ -85,7 +87,7 @@ async def _reset_db() -> None:
 async def _seed_deal(
     session, *, deal_id: str, tenant_id: str,
     name: str = "Harbor House Test", city: str | None = "Tampa, FL",
-    keys: int | None = 150,
+    keys: int | None = 150, field_overrides: dict | None = None,
 ) -> None:
     await session.execute(
         text(
@@ -93,7 +95,7 @@ async def _seed_deal(
             "VALUES (:id, :tenant, :name, :city, :keys, 36400000, :fo)"
         ),
         {"id": deal_id, "tenant": tenant_id, "name": name, "city": city,
-         "keys": keys, "fo": "{}"},
+         "keys": keys, "fo": json.dumps(field_overrides or {})},
     )
 
 
@@ -138,7 +140,10 @@ async def _modeled_payload():
     deal_id, tenant_id = str(uuid4()), str(uuid4())
     base_run, scen_run = str(uuid4()), str(uuid4())
     async with get_session_factory()() as session:
-        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        # B5 — the modelled deal carries partnership terms (the snapshot's
+        # Partnership sheet / memo appendix list a run waterfall).
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id,
+                         field_overrides=kimpton_partnership_field_overrides())
         await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id,
                               run_id=base_run)
         await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id,

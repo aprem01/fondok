@@ -56,9 +56,14 @@ def test_pipeline_gates_attempt_hit_and_learning() -> None:
     """All three gate sites exist in the pipeline body: the attempt is gated
     on the analyst's tag, a hit is rejected by its source type, and learning
     is gated on the classified type."""
-    src = inspect.getsource(docs_module._run_extraction_pipeline_inner)
+    # C7 — the LLM step (sibling reuse + graph) lives in the production
+    # extraction backend the pipeline calls (``_llm_extract``).
+    src = inspect.getsource(docs_module._llm_extract)
     flat = src.replace("\n", "").replace(" ", "")
-    assert "SIBLING_TEMPLATE_REUSE_ENABLEDand_sibling_reuse_allowed(user_provided_doc_type)" in flat
+    assert "SIBLING_TEMPLATE_REUSE_ENABLEDand_sibling_reuse_allowed(request.user_provided_doc_type)" in flat
+    assert "current_extraction_backend().extract(" in inspect.getsource(
+        docs_module._run_extraction_pipeline_inner
+    )
     assert "sibling reuse REJECTED" in src
     assert "fieldsand_sibling_reuse_allowed(classified_doc_type)" in flat
 
