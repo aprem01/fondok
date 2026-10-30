@@ -122,8 +122,10 @@ def kimpton_model() -> dict[str, Any]:
             "year1_cash_on_cash": 0.046,
             "avg_cash_on_cash": 0.0518,
             # FON-118 — returns by exit year (live renames). Year 5 is the deal's
-            # own exit and IS the headline above; Year 1 carries the peak levered
-            # IRR, as the engine finds on the Kimpton seed.
+            # own exit and IS the headline above; Years 1-4 are the shipped Kimpton
+            # schedule (golden run, 2026-10-30) scaled onto this fixture's own
+            # headline, so the rows stay monotone and the peak is Year 1 as the
+            # engine finds on the seed.
             "selected_exit_month": 60,
             "selected_exit_year": 5,
             "peak_levered_exit_year": 1,
@@ -136,7 +138,7 @@ def kimpton_model() -> dict[str, Any]:
                     "terminal_noi_usd": 4_091_000, "gross_sale_price_usd": 58_442_857,
                     "selling_costs_usd": 1_168_857, "transfer_tax_usd": 0.0,
                     "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 33_590_078,
-                    "unlevered_irr": 0.428, "levered_irr": 0.9256, "equity_multiple": 1.55,
+                    "unlevered_irr": 0.3665, "levered_irr": 0.664, "equity_multiple": 1.22,
                 },
                 {
                     "exit_year": 2, "exit_month": 24, "is_selected": False,
@@ -146,7 +148,7 @@ def kimpton_model() -> dict[str, Any]:
                     "terminal_noi_usd": 4_348_000, "gross_sale_price_usd": 62_114_286,
                     "selling_costs_usd": 1_242_286, "transfer_tax_usd": 0.0,
                     "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 37_188_078,
-                    "unlevered_irr": 0.2806, "levered_irr": 0.5153, "equity_multiple": 1.7,
+                    "unlevered_irr": 0.2402, "levered_irr": 0.3836, "equity_multiple": 1.43,
                 },
                 {
                     "exit_year": 3, "exit_month": 36, "is_selected": False,
@@ -156,7 +158,7 @@ def kimpton_model() -> dict[str, Any]:
                     "terminal_noi_usd": 4_622_000, "gross_sale_price_usd": 66_028_571,
                     "selling_costs_usd": 1_320_571, "transfer_tax_usd": 0.0,
                     "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 41_024_078,
-                    "unlevered_irr": 0.2351, "levered_irr": 0.3984, "equity_multiple": 1.85,
+                    "unlevered_irr": 0.2013, "levered_irr": 0.3018, "equity_multiple": 1.65,
                 },
                 {
                     "exit_year": 4, "exit_month": 48, "is_selected": False,
@@ -166,7 +168,7 @@ def kimpton_model() -> dict[str, Any]:
                     "terminal_noi_usd": 4_915_000, "gross_sale_price_usd": 70_214_286,
                     "selling_costs_usd": 1_404_286, "transfer_tax_usd": 0.0,
                     "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 45_126_078,
-                    "unlevered_irr": 0.2131, "levered_irr": 0.343, "equity_multiple": 2.0,
+                    "unlevered_irr": 0.1824, "levered_irr": 0.2624, "equity_multiple": 1.9,
                 },
                 {
                     "exit_year": 5, "exit_month": 60, "is_selected": True,

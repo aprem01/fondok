@@ -371,6 +371,42 @@ def _fon67_input() -> ReturnsEngineInputExt:
     )
 
 
+def _assert_em_follows_refi_included(inp: ReturnsEngineInputExt, out) -> None:
+    """Every interim row's equity multiple is the annual stream through its
+    year + its net proceeds, over equity — with the refi cash-out in it ONLY
+    when ``refi_included`` (the refi month precedes the sale), i.e. on the
+    same rule the row's payoff and IRR use."""
+    hold = inp.assumptions.hold_years
+    ds = list(inp.debt_service_by_year[:hold]) or [inp.annual_debt_service] * hold
+    while len(ds) < hold:
+        ds.append(inp.annual_debt_service)
+    op_cfad = [n - d for n, d in zip(inp.noi_by_year[:hold], ds, strict=True)]
+    for row in out.exit_schedule:
+        if row.is_selected or row.status != "computed" or row.exit_year is None:
+            continue
+        k = row.exit_year
+        assert row.net_proceeds is not None
+        expected = sum(op_cfad[:k]) + row.net_proceeds
+        if row.refi_included:
+            expected += inp.refi_cash_out
+        assert row.equity_multiple == pytest.approx(expected / inp.equity), row.exit_year
+
+
+def test_interim_rows_fold_the_refi_cash_out_only_once_the_refi_month_has_passed() -> None:
+    # Refi at month 30 (refi_time_years 2.5) with the debt engine's refi_year 3:
+    # the Year-2 row (month 24) excludes the cash-out, Year-3 (month 36) includes it.
+    inp = _input(
+        refi_cash_out=5_000_000.0, refi_year=3, refi_time_years=2.5,
+        refi_balance=30_000_000.0, loan_balance_at_exit=30_000_000.0,
+        loan_balance_by_month=[LOAN] * 60,
+    )
+    out = ReturnsEngine().run(inp)
+    rows = {r.exit_year: r for r in out.exit_schedule}
+    assert rows[2].refi_included is False and rows[3].refi_included is True
+    assert rows[2].loan_payoff == LOAN and rows[3].loan_payoff == 30_000_000.0
+    _assert_em_follows_refi_included(inp, out)
+
+
 def test_fon67_52_month_exit_reconciles_and_the_schedule_reads_each_date() -> None:
     out = ReturnsEngine().run(_fon67_input())
     rows = out.exit_schedule
@@ -397,9 +433,17 @@ def test_fon67_52_month_exit_reconciles_and_the_schedule_reads_each_date() -> No
     assert y2.loan_payoff == 23_187_000.0  # loan_balance_by_month[14]
     assert y2.exit_noi_basis == "forward_12m"  # the pin is the selected exit's
     assert y2.terminal_noi == 3_995_804.0  # projected Year 3
-    # Year 3 (month 27): still before the month-30 refinance.
+    # Year 3 (month 27): still before the month-30 refinance — its multiple
+    # must NOT carry the 27.5M cash-out (the debt engine's refi_year is 3).
     y3 = rows[2]
     assert y3.exit_year == 3 and y3.refi_included is False and y3.status == "computed"
+    inp = _fon67_input()
+    senior_ds = inp.debt_service_by_year[0]
+    assert y3.net_proceeds is not None
+    em_without_refi = (sum(inp.noi_by_year[:3]) - 3 * senior_ds + y3.net_proceeds) / inp.equity
+    assert y3.equity_multiple == pytest.approx(em_without_refi)
+    assert y3.equity_multiple < 2.5
+    _assert_em_follows_refi_included(inp, out)
     # Year 4 (month 39): the refinance has happened — payoff is the refi balance.
     y4 = rows[3]
     assert y4.exit_year == 4 and y4.refi_included is True

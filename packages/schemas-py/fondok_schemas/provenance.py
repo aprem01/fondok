@@ -112,7 +112,8 @@ class ValueInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    value: float
+    # None = no value (a refusal carries ``reason`` instead) — Wave 1.
+    value: float | None
     # When this input is an underwriting assumption, the ``__sources__`` key
     # it maps to — lets the UI chain modeled-value provenance back to the
     # assumption badge (seed vs t12_actual vs analyst_override …).
@@ -130,7 +131,8 @@ class ValueTrace(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    value: float
+    # None = no value (a refusal carries ``reason`` instead) — Wave 1.
+    value: float | None
     # Human-readable calculation rationale, e.g.
     # "rooms_revenue = occupied_rooms × ADR". None for directly-sourced values.
     formula: str | None = None

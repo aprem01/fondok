@@ -85,15 +85,15 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .labels import (
+    COMP_CAP_METHOD_DISPLAY,
+    COMP_COVERAGE_DISPLAY,
     EXIT_SCHEDULE_COLUMNS,
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
     EXIT_SCHEDULE_STALE_NOTE,
     EXIT_SCHEDULE_TITLE,
-    exit_row_label,
-    COMP_CAP_METHOD_DISPLAY,
-    COMP_COVERAGE_DISPLAY,
     NOI_HEADLINE_LABELS,
     SOLVER_STATUS_NOTE,
+    exit_row_label,
     line_label,
     source_display,
 )

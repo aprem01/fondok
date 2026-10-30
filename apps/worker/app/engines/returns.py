@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from fondok_schemas.financial import ModelAssumptions
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.reasons import ReasonCode
@@ -23,6 +21,7 @@ from fondok_schemas.underwriting import (
     ReturnsEngineInput,
     ReturnsEngineOutput,
 )
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import BaseEngine
 from .monthly_cashflow import (
@@ -812,7 +811,8 @@ def _exit_row_provenance(
     out: dict[str, ValueTrace] = {}
 
     def _refused(field: str) -> ValueTrace:
-        return ValueTrace(value=0.0, reason=case.reason, note=case.reason_detail)
+        # No value — the reason is the trace (``Traced`` renders nothing).
+        return ValueTrace(value=None, reason=case.reason, note=case.reason_detail)
 
     # terminal_noi
     if case.terminal_noi is None:
@@ -1115,9 +1115,14 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             if ctx.refi_active:
                 cfad_series[payload.refi_year - 1] += payload.refi_cash_out
         else:
-            cfad_series = list(ctx.op_cfad[: exit_year or hold])
-            if ctx.refi_active and payload.refi_year is not None and payload.refi_year <= (exit_year or hold):
-                cfad_series[payload.refi_year - 1] += payload.refi_cash_out
+            # The cash-out enters an interim row's multiple on the SAME rule
+            # its payoff and IRR use — the refinance month precedes the sale
+            # (``refi_included``) — never on the debt engine's year index,
+            # which would credit a month-30 refi to a month-27 sale.
+            k = exit_year or hold
+            cfad_series = list(ctx.op_cfad[:k])
+            if refi_included and payload.refi_year is not None:
+                cfad_series[min(payload.refi_year, k) - 1] += payload.refi_cash_out
 
         # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
         # institutional method): operating cash accrues through the year, the

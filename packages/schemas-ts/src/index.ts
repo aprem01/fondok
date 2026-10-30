@@ -535,7 +535,7 @@ export type RevenueProjectionYear = z.infer<typeof RevenueProjectionYear>;
 // same way. See packages/schemas-py/fondok_schemas/provenance.py.
 export const ValueInput = z.object({
   name: z.string(),
-  value: z.number(),
+  value: z.number().nullable(), // None = no value (a refusal carries `reason`)
   assumption_key: z.string().nullable().optional(),
   source: z.string().nullable().optional(),
   traces_to: z.string().nullable().optional(),
@@ -543,7 +543,7 @@ export const ValueInput = z.object({
 export type ValueInput = z.infer<typeof ValueInput>;
 
 export const ValueTrace = z.object({
-  value: z.number(),
+  value: z.number().nullable(), // None = no value (a refusal carries `reason`)
   formula: z.string().nullable().optional(),
   inputs: z.array(ValueInput).default([]),
   source: z.string().nullable().optional(),
