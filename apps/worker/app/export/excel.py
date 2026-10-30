@@ -85,11 +85,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .labels import (
-    IRR_GRID_NO_TARGET_NOTE,
-    SOLVER_STATUS_NOTE,
     COMP_CAP_METHOD_DISPLAY,
     COMP_COVERAGE_DISPLAY,
+    IRR_GRID_NO_TARGET_NOTE,
     NOI_HEADLINE_LABELS,
+    SOLVER_STATUS_NOTE,
     line_label,
     source_display,
 )
