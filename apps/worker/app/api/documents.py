@@ -9304,28 +9304,19 @@ async def _sync_deal_metadata_from_extraction(
     # apps/worker/app/tenant_middleware.py.
     set_clauses = ", ".join(f"{col} = :{col}" for col in proposed)
     params = {"id": deal_id, "tenant": str(tenant_id), **proposed}
-    try:
-        await session.execute(
-            text(
-                f"UPDATE deals SET {set_clauses}, updated_at = NOW() "
-                "WHERE id = :id AND tenant_id = :tenant"
-            )
-            if not str(get_settings().async_database_url).startswith("sqlite")
-            else text(
-                f"UPDATE deals SET {set_clauses}, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE id = :id AND tenant_id = :tenant"
-            ),
-            params,
-        )
-        await session.commit()
-    except Exception:
-        logger.exception(
-            "deal_metadata_sync: failed to UPDATE deals for deal=%s changes=%s",
-            deal_id,
-            list(proposed.keys()),
-        )
-        return
+    # D2 — CURRENT_TIMESTAMP is the same statement on Postgres and SQLite (no
+    # settings-URL string check), and a failed UPDATE raises: the document's
+    # facts did not land on the deal, which the pipeline must not report as a
+    # completed sync.
+    await session.execute(
+        text(
+            f"UPDATE deals SET {set_clauses}, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :id AND tenant_id = :tenant"
+        ),
+        params,
+    )
+    await session.commit()
 
     # Audit log — one entry per column change so reviewers see
     # provenance ("the PNL filled keys=132" / "the OM overwrote keys
@@ -9483,12 +9474,8 @@ async def _suggest_positioning_from_om_brand(
             return
         old_positioning = before._mapping.get("positioning")
         # The deal row changes, so its modification timestamp moves with it —
-        # same per-dialect clause as the metadata-sync UPDATE below.
-        updated_at_sql = (
-            "updated_at = CURRENT_TIMESTAMP"
-            if str(get_settings().async_database_url).startswith("sqlite")
-            else "updated_at = NOW()"
-        )
+        # CURRENT_TIMESTAMP is the same clause on Postgres and SQLite (D2).
+        updated_at_sql = "updated_at = CURRENT_TIMESTAMP"
         result = await session.execute(
             text(
                 "UPDATE deals SET positioning = :positioning, "

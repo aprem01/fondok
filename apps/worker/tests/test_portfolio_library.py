@@ -710,3 +710,33 @@ async def test_default_positioning_is_not_a_chain_scale_gate() -> None:
             session, str(deal_id_form), tenant_id=_TENANT
         )
     assert base["__sources__"].get("rooms_dept_pct") == SOURCE_PORTFOLIO_PNL
+
+
+@pytest.mark.asyncio
+async def test_delete_reference_lookup_failure_raises_not_deletes(monkeypatch) -> None:
+    """D2: the reference guard's lookup is no longer wrapped in a catch-all —
+    a failed lookup is an error, never read as "not referenced" (which would
+    hard-delete an entry a deal still owns)."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async with _client() as c:
+        r = await c.post(
+            "/portfolio-library",
+            json=_entry_body("Guarded entry", source_document_id=str(uuid4())),
+        )
+        assert r.status_code == 201, r.text
+        entry_id = r.json()["id"]
+
+        real_execute = AsyncSession.execute
+
+        async def _execute(self, statement, *args, **kwargs):
+            if "FROM documents" in str(statement):
+                raise RuntimeError("simulated lookup failure")
+            return await real_execute(self, statement, *args, **kwargs)
+
+        monkeypatch.setattr(AsyncSession, "execute", _execute)
+        with pytest.raises(RuntimeError, match="simulated lookup failure"):
+            await c.delete(f"/portfolio-library/{entry_id}")
+        monkeypatch.setattr(AsyncSession, "execute", real_execute)
+        r = await c.get(f"/portfolio-library/{entry_id}")
+        assert r.status_code == 200, r.text

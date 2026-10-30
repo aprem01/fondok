@@ -583,3 +583,86 @@ async def test_om_never_overwrites_an_existing_service() -> None:
     await _run_sync(deal_id, _property_type_fields("Full-Service Resort"), "OM")
     assert await _read_service(deal_id) == "Select-Service"
     assert not [r for r in await _audit_inputs(deal_id) if r.get("column") == "service"]
+
+
+# ─────────────── D2 — one dialect mechanism; real errors raise ───────────────
+
+
+class _FailingDealUpdate:
+    """Delegates to a real session but makes ``UPDATE deals`` fail, the way a
+    lost connection or a constraint violation would."""
+
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(statement).lstrip().upper().startswith("UPDATE DEALS SET"):
+            raise RuntimeError("simulated database failure on UPDATE deals")
+        return await self._session.execute(statement, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_metadata_sync_update_failure_raises_instead_of_being_logged() -> None:
+    """D2: the deal-row UPDATE no longer hides behind a catch-all — a failed
+    write raises (the pipeline marks the document failed) instead of the
+    sync reporting success with nothing written."""
+    from app.api.documents import _sync_deal_metadata_from_extraction
+    from app.database import get_session_factory
+
+    deal_id = await _insert_deal(keys=None, brand=None, city=None)
+    factory = get_session_factory()
+    async with factory() as session:
+        with pytest.raises(RuntimeError, match="simulated database failure"):
+            await _sync_deal_metadata_from_extraction(
+                _FailingDealUpdate(session),
+                deal_id=deal_id,
+                tenant_id=_TENANT,
+                fields=[_field("property_overview.keys", 140)],
+                doc_type="OM",
+            )
+    assert await _read_deal(deal_id) == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_metadata_sync_writes_on_sqlite_with_the_dialect_neutral_update() -> None:
+    """SQLite behaviour is unchanged: the OM fills an empty key count."""
+    deal_id = await _insert_deal(keys=None, brand=None, city=None)
+    await _run_sync(deal_id, [_field("property_overview.keys", 140)], "OM")
+    keys, _brand, _city = await _read_deal(deal_id)
+    assert keys == 140
+
+
+def test_dialect_helpers_read_the_session_bind() -> None:
+    from types import SimpleNamespace
+
+    from app.database import is_sqlite_session, json_column_bind, session_dialect
+
+    pg = SimpleNamespace(bind=SimpleNamespace(dialect=SimpleNamespace(name="postgresql")))
+    lite = SimpleNamespace(bind=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    assert session_dialect(pg) == "postgresql"
+    assert not is_sqlite_session(pg)
+    assert json_column_bind("fo", pg) == "CAST(:fo AS JSONB)"
+    assert is_sqlite_session(lite)
+    assert json_column_bind("fo", lite) == ":fo"
+    with pytest.raises(RuntimeError):
+        session_dialect(SimpleNamespace(bind=None))
+
+
+def test_no_settings_url_string_check_left_in_the_d2_modules() -> None:
+    """The listed modules branch on the session's dialect (or use dialect-
+    neutral SQL) — never on the settings URL string."""
+    import inspect
+
+    import app.api.deals as deals
+    import app.api.documents as documents
+    import app.api.portfolio_library as portfolio_library
+    import app.audit as audit
+
+    for mod in (deals, documents, portfolio_library, audit):
+        src = inspect.getsource(mod)
+        assert 'async_database_url).startswith("sqlite")' not in src, mod.__name__
+    for mod in (portfolio_library, audit):
+        assert "def _is_sqlite_session" not in inspect.getsource(mod), mod.__name__

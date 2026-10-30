@@ -31,7 +31,7 @@ from ..audit import log_audit
 from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..costs import build_cost_report
-from ..database import get_session
+from ..database import get_session, json_column_bind
 from ..memo_edits import list_edits, record_edit
 from fondok_schemas import LineageRecord, ValueTrace
 from fondok_schemas.reasons import ReasonCode
@@ -5367,22 +5367,13 @@ async def exclude_comp_transaction(
         sorted(current_ids)
     )
 
-    is_sqlite = (
-        session.bind is not None
-        and session.bind.dialect.name == "sqlite"
+    # D2 — the one dialect helper binds the JSONB column; CURRENT_TIMESTAMP
+    # is the same statement on Postgres and SQLite.
+    sql = (
+        f"UPDATE deals SET field_overrides = {json_column_bind('fo', session)}, "
+        "updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = :id AND tenant_id = :tenant"
     )
-    if is_sqlite:
-        sql = (
-            "UPDATE deals SET field_overrides = :fo, "
-            "updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = :id AND tenant_id = :tenant"
-        )
-    else:
-        sql = (
-            "UPDATE deals SET field_overrides = CAST(:fo AS JSONB), "
-            "updated_at = NOW() "
-            "WHERE id = :id AND tenant_id = :tenant"
-        )
     await session.execute(
         text(sql),
         {

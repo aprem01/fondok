@@ -52,7 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_session
+from ..database import get_session, json_column_bind
 from .deals import get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -239,24 +239,6 @@ def _row_to_record(row: Any) -> PortfolioLibraryEntryRecord:
     )
 
 
-def _is_sqlite_session(session: AsyncSession) -> bool:
-    return (
-        session.bind is not None
-        and session.bind.dialect.name == "sqlite"
-    )
-
-
-def _jsonb_bind(key: str, *, is_sqlite: bool) -> str:
-    """SQL fragment binding ``:key`` to a JSON column.
-
-    Postgres needs ``CAST(:key AS JSONB)`` because we always bind a
-    string. SQLite accepts the string directly into a TEXT column.
-    """
-    if is_sqlite:
-        return f":{key}"
-    return f"CAST(:{key} AS JSONB)"
-
-
 # Map PORTFOLIO_PNL extraction field_names → canonical engine ratio keys.
 # Mirrors the ``portfolio_pnl.<field>`` paths defined in
 # ``apps/worker/app/agents/extraction_schemas/portfolio_pnl.md`` (Wave 2
@@ -395,7 +377,6 @@ async def create_entry(
         )
     entry_id = uuid4()
     now = _now()
-    is_sqlite = _is_sqlite_session(session)
     params = {
         "id": str(entry_id),
         "tenant": str(tenant_id),
@@ -434,10 +415,10 @@ async def create_entry(
             ) VALUES (
                 :id, :tenant, :name, :description, :vintage_year,
                 :asset_count, :total_rooms_modeled,
-                {_jsonb_bind("chain_scales_covered", is_sqlite=is_sqlite)},
-                {_jsonb_bind("msa_coverage", is_sqlite=is_sqlite)},
-                {_jsonb_bind("expense_ratios", is_sqlite=is_sqlite)},
-                {_jsonb_bind("revenue_mix", is_sqlite=is_sqlite)},
+                {json_column_bind("chain_scales_covered", session)},
+                {json_column_bind("msa_coverage", session)},
+                {json_column_bind("expense_ratios", session)},
+                {json_column_bind("revenue_mix", session)},
                 :source_document_id, :is_active,
                 :created_at, :updated_at
             )
@@ -484,7 +465,6 @@ async def update_entry(
                 detail=f"portfolio library entry named {body.name!r} already exists",
             )
 
-    is_sqlite = _is_sqlite_session(session)
     set_clauses: list[str] = []
     params: dict[str, Any] = {"id": str(entry_id), "tenant": str(tenant_id)}
 
@@ -506,22 +486,22 @@ async def update_entry(
     if body.chain_scales_covered is not None:
         set_clauses.append(
             "chain_scales_covered = "
-            + _jsonb_bind("chain_scales_covered", is_sqlite=is_sqlite)
+            + json_column_bind("chain_scales_covered", session)
         )
         params["chain_scales_covered"] = json.dumps(list(body.chain_scales_covered))
     if body.msa_coverage is not None:
         set_clauses.append(
-            "msa_coverage = " + _jsonb_bind("msa_coverage", is_sqlite=is_sqlite)
+            "msa_coverage = " + json_column_bind("msa_coverage", session)
         )
         params["msa_coverage"] = json.dumps(list(body.msa_coverage))
     if body.expense_ratios is not None:
         set_clauses.append(
-            "expense_ratios = " + _jsonb_bind("expense_ratios", is_sqlite=is_sqlite)
+            "expense_ratios = " + json_column_bind("expense_ratios", session)
         )
         params["expense_ratios"] = json.dumps(dict(body.expense_ratios))
     if body.revenue_mix is not None:
         set_clauses.append(
-            "revenue_mix = " + _jsonb_bind("revenue_mix", is_sqlite=is_sqlite)
+            "revenue_mix = " + json_column_bind("revenue_mix", session)
         )
         params["revenue_mix"] = json.dumps(dict(body.revenue_mix))
     if body.is_active is not None:
@@ -623,29 +603,27 @@ async def delete_entry(
     record = _row_to_record(row)
 
     # Reference guard — when a deal still owns the source doc we refuse
-    # the hard delete and steer the user to ``/deactivate``. Best-effort:
-    # the documents table may not exist on every test DB, so we degrade
-    # silently when the lookup fails.
+    # the hard delete and steer the user to ``/deactivate``. D2: a failed
+    # lookup raises — it is never read as "not referenced" (that would let a
+    # referenced entry be deleted). Every database, SQLite included, has the
+    # documents table.
     if record.source_document_id is not None:
-        try:
-            ref = (
-                await session.execute(
-                    text(
-                        """
-                        SELECT id FROM documents
-                         WHERE id = :doc
-                           AND tenant_id = :tenant
-                        LIMIT 1
-                        """
-                    ),
-                    {
-                        "doc": str(record.source_document_id),
-                        "tenant": str(tenant_id),
-                    },
-                )
-            ).first()
-        except Exception:
-            ref = None
+        ref = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id FROM documents
+                     WHERE id = :doc
+                       AND tenant_id = :tenant
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "doc": str(record.source_document_id),
+                    "tenant": str(tenant_id),
+                },
+            )
+        ).first()
         if ref is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

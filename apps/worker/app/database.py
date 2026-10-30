@@ -170,6 +170,35 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 TENANT_GUC_SQL = text("SELECT set_config('app.tenant_id', :tenant, true)")
 
 
+# ── D2 (go-live audit) — the ONE dialect check for SQL that differs ──────────
+# Production runs Postgres; tests and local dev run SQLite. Where a statement
+# genuinely differs (a JSONB column bound from a JSON string), the branch is
+# taken off the SESSION's bound dialect — never off the settings URL string
+# and never by catching the error one dialect raises.
+
+
+def session_dialect(session: Any) -> str:
+    """The SQL dialect name of ``session``'s bind (``"postgresql"`` /
+    ``"sqlite"``). Raises when the session is unbound — a programming error,
+    not a dialect."""
+    bind = getattr(session, "bind", None)
+    if bind is None:
+        raise RuntimeError("session_dialect: the session has no bind")
+    return str(bind.dialect.name)
+
+
+def is_sqlite_session(session: Any) -> bool:
+    """True when ``session`` talks to SQLite (tests / local dev)."""
+    return session_dialect(session) == "sqlite"
+
+
+def json_column_bind(key: str, session: Any) -> str:
+    """SQL fragment binding the JSON string ``:key`` to a JSON column:
+    ``CAST(:key AS JSONB)`` on Postgres, the bare parameter on SQLite (a TEXT
+    column)."""
+    return f":{key}" if is_sqlite_session(session) else f"CAST(:{key} AS JSONB)"
+
+
 def _tenant_guc_is_active() -> bool:
     """True when the GUC should be published: flag on AND Postgres."""
     settings = get_settings()

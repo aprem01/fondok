@@ -39,6 +39,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .database import json_column_bind
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,13 +60,6 @@ def _sha256_canonical(payload: Any) -> str:
     """
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
-
-
-def _is_sqlite_session(session: AsyncSession) -> bool:
-    return (
-        session.bind is not None
-        and session.bind.dialect.name == "sqlite"
-    )
 
 
 def build_diff_summary(
@@ -217,22 +212,16 @@ async def log_audit(
 
         sev = severity if severity in _VALID_SEVERITIES else "info"
 
-        is_sqlite = _is_sqlite_session(session)
         # JSONB columns on Postgres want an explicit CAST when we bind a
         # JSON string; SQLite stores them as TEXT and accepts the string
-        # directly. Build the SQL fragments accordingly.
+        # directly (D2: the one dialect helper, ``json_column_bind``).
         before_blob = json.dumps(before, default=str) if before is not None else None
         after_blob = json.dumps(after, default=str) if after is not None else None
         tags_blob = json.dumps(tags, default=str) if tags is not None else None
 
-        if is_sqlite:
-            before_frag = ":before"
-            after_frag = ":after"
-            tags_frag = ":tags"
-        else:
-            before_frag = "CAST(:before AS JSONB)"
-            after_frag = "CAST(:after AS JSONB)"
-            tags_frag = "CAST(:tags AS JSONB)"
+        before_frag = json_column_bind("before", session)
+        after_frag = json_column_bind("after", session)
+        tags_frag = json_column_bind("tags", session)
 
         await session.execute(
             text(
