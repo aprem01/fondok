@@ -591,24 +591,6 @@ class MarketOverview(BaseModel):
     supply_growth: MarketSupplyGrowthBlock | None = None
 
 
-class Comp(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    distance_miles: float | None = None
-    keys: int | None = None
-    chain_scale: str | None = None
-    revpar: float | None = None
-
-
-class CompsResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    deal_id: UUID
-    comps: list[Comp] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 async def _extracted_property_meta(
     session: AsyncSession, *, deal_id: UUID, tenant_id: UUID
 ) -> dict[str, Any]:
@@ -810,33 +792,6 @@ async def market_overview(
         ttm_blend=blocks["ttm_blend"],
         demand_growth=blocks["demand_growth"],
         supply_growth=blocks["supply_growth"],
-    )
-
-
-@router.get("/{deal_id}/comps", response_model=CompsResponse)
-async def market_comps(
-    deal_id: UUID,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
-) -> CompsResponse:
-    """Comp-set endpoint.
-
-    TODO(str-integration): pull comp set from the STR/CoStar feed
-    keyed off the deal's city. Until then we return an empty list +
-    a metadata flag so the UI renders an "awaiting market data" panel
-    rather than a blank page.
-
-    Tenant-scoped: even though the stub returns no data, a cross-tenant
-    ``deal_id`` returns 404 so the surface stays uniform with the
-    future STR-integrated implementation.
-    """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
-    return CompsResponse(
-        deal_id=deal_id,
-        comps=[],
-        metadata={"source": "stub", "awaiting_integration": "str-costar"},
     )
 
 

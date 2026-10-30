@@ -243,7 +243,6 @@ ENDPOINT_CASES: list[EndpointCase] = [
     ),
     # market_router (mounted at /market)
     EndpointCase("GET", "/market", "/{deal_id}/overview"),
-    EndpointCase("GET", "/market", "/{deal_id}/comps"),
     EndpointCase(
         "GET", "/market", "/{deal_id}/transaction-comps", skip_positive=True
     ),
