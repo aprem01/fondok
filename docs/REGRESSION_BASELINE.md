@@ -96,12 +96,16 @@ Example: `GET /deals/<Eshan deal id>/engines/compare?base=b5a08654-52e9-4738-add
 `evals/baselines/kimpton-golden-2026-10-16.json` holds the **full** engine
 outputs (all 9 engines, including provenance) of the Kimpton golden fixture.
 It was generated at commit `f28470d` before any other change. The fixture is
-the Kimpton Angler seed: the non-UUID demo deal id `kimpton-angler-2026`
-loads `_kimpton_assumptions()` defaults only, with no documents and no
-overrides. It is run through `run_all_engines` exactly as
+the Kimpton Angler seed set, `apps/worker/tests/fixtures/kimpton_seed.py`
+(`kimpton_seed()` plus the baseline's deal id `KIMPTON_FIXTURE_DEAL_ID`),
+injected explicitly through `run_all_engines(..., assumptions=...)` — no deal
+row, no documents, no overrides are read. It is run exactly as
 `apps/worker/tests/test_engine_runner.py::test_run_all_engines_kimpton`
 does. The run is deterministic: two runs at `f28470d` produced
-byte-identical output.
+byte-identical output, and the 2026-10-30 move of the seed set out of the
+production loader (which until then applied these values to any deal lacking
+its own, reached through the non-UUID demo id `kimpton-angler-2026`) was
+verified byte-identical with `--full`.
 
 The task named `tests/test_golden_set_regression.py` as the template for this
 run. That suite pins *extraction* fixtures (parse signals and USALI field

@@ -5,11 +5,15 @@ Sam (2026-10-16): "preserve the current Kimpton model outputs so we can
 distinguish expected changes from unintended calculation discrepancies during
 regression testing."
 
-The fixture is the Kimpton Angler seed — the non-UUID demo deal id
-``kimpton-angler-2026``, which loads ``_kimpton_assumptions()`` defaults only
-(no documents, no overrides) — run through ``run_all_engines`` exactly as
+The fixture is the Kimpton Angler seed set in
+``apps/worker/tests/fixtures/kimpton_seed.py`` (``kimpton_seed()``, deal id
+``KIMPTON_FIXTURE_DEAL_ID``), injected explicitly through
+``run_all_engines(..., assumptions=...)`` — nothing is read from a deal row or
+a document — exactly as
 ``apps/worker/tests/test_engine_runner.py::test_run_all_engines_kimpton``
-does, against a throwaway SQLite database.
+does, against a throwaway SQLite database. (Until 2026-10-30 the same values
+were the production loader's defaults, reached through a non-UUID demo deal
+id; that fork is gone and the fixture is the only place they live.)
 
 Usage (from the repo root)::
 
@@ -55,7 +59,24 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "apps" / "worker"
 DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-10-16.json"
-FIXTURE_DEAL_ID = "kimpton-angler-2026"
+
+# The fixture module is pure data (no ``app`` import), so it is safe to import
+# before ``_bootstrap`` pins DATABASE_URL; ``_bootstrap`` re-adds the same
+# paths idempotently for the ``app`` imports that follow.
+if str(WORKER) not in sys.path:
+    sys.path.insert(0, str(WORKER))
+from tests.fixtures.kimpton_seed import (  # noqa: E402
+    KIMPTON_FIXTURE_DEAL_ID,
+    kimpton_seed,
+)
+
+FIXTURE_DEAL_ID = KIMPTON_FIXTURE_DEAL_ID
+FIXTURE_DESCRIPTION = (
+    "Kimpton Angler seed set (apps/worker/tests/fixtures/kimpton_seed.py, "
+    "injected via run_all_engines(assumptions=...); no deal row, no documents, "
+    "no overrides), run through run_all_engines exactly as "
+    "tests/test_engine_runner.py::test_run_all_engines_kimpton does."
+)
 
 
 # Side-effect contract (docs/TESTING.md, 2026-10-17). This script runs as its
@@ -114,6 +135,7 @@ async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
                 deal_id=FIXTURE_DEAL_ID,
                 tenant_id=str(uuid4()),
                 run_id=str(uuid4()),
+                assumptions=kimpton_seed(),
             )
     finally:
         # Close the aiosqlite connections before the directory goes away.
@@ -191,12 +213,7 @@ def main() -> int:
         doc = {
             "schema": "fondok.golden-baseline/1",
             "fixture": FIXTURE_DEAL_ID,
-            "fixture_description": (
-                "Kimpton Angler seed (non-UUID demo deal id -> "
-                "_kimpton_assumptions() defaults only, no documents, no "
-                "overrides), run through run_all_engines exactly as "
-                "tests/test_engine_runner.py::test_run_all_engines_kimpton does."
-            ),
+            "fixture_description": FIXTURE_DESCRIPTION,
             "generated_from_commit": _git_head(),
             "generated_on": date.today().isoformat(),
             "regenerate": "python scripts/compare_golden_baseline.py --write evals/baselines/<name>.json",

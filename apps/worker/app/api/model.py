@@ -34,7 +34,9 @@ from ..engines.timeline import TimelineEvent, build_timeline, parse_iso_date
 from ..services.engine_runner import (
     ENGINE_NAMES,
     ENGINE_REGISTRY,
+    EngineFailure,
     _load_deal_overrides,
+    failures_of,
     get_latest_output,
     get_run_scoped_outputs,
     get_run_status,
@@ -93,7 +95,15 @@ class EngineRunKickoff(BaseModel):
 
 
 class EngineOutputResponse(BaseModel):
-    """Latest persisted row for one engine."""
+    """Latest persisted row for one engine.
+
+    ``failure`` (Wave 0, 2026-10-30) is the typed reason a ``failed`` row did
+    not produce outputs — ``reason`` is a ``ReasonCode`` (``missing_identity_inputs``
+    with ``missing`` naming the deal inputs to enter, ``load_error`` /
+    ``engine_error`` with ``exception_type``, ``engine_skipped``); ``error``
+    keeps the same message as plain text. ``null`` on complete rows and on
+    failed rows written before the column existed.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -104,6 +114,7 @@ class EngineOutputResponse(BaseModel):
     outputs: dict[str, Any] | None = None
     inputs: dict[str, Any] | None = None
     error: str | None = None
+    failure: EngineFailure | None = None
     runtime_ms: int | None = None
     started_at: str | None = None
     completed_at: str | None = None
@@ -131,12 +142,19 @@ class StaleRun(BaseModel):
 
 
 class EngineOutputsResponse(BaseModel):
-    """Map of engine name → latest output for a deal."""
+    """Map of engine name → latest output for a deal.
+
+    ``failures`` (Wave 0, 2026-10-30) lists the typed failure of every engine
+    in the snapshot that did not complete — the stable field the web reads to
+    render "not available" with the reason on Returns / Cash Flow / Scenario
+    instead of a blank or a stale number. Empty when every engine completed.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     deal_id: str
     engines: dict[str, EngineOutputResponse]
+    failures: list[EngineFailure] = []
     # FON-75 — ``None`` whenever the snapshot is current, which is the
     # overwhelmingly common case: a healthy deal's payload gains nothing but
     # an explicit ``"stale_run": null``, and every existing field is untouched.
@@ -144,11 +162,17 @@ class EngineOutputsResponse(BaseModel):
 
 
 class EngineRunStatusResponse(BaseModel):
+    """Every engine row of one run. ``failures`` (Wave 0, 2026-10-30) is the
+    typed failure list — engine, reason code, message, and the missing deal
+    inputs when the code is ``missing_identity_inputs`` — so a run that
+    returned 200 with failed rows is explicit about what did not run and why."""
+
     model_config = ConfigDict(extra="forbid")
 
     deal_id: str
     run_id: str
     engines: list[EngineOutputResponse]
+    failures: list[EngineFailure] = []
 
 
 def _validate_engine_name(name: str) -> None:
@@ -411,6 +435,10 @@ async def preview_returns(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     body = body or ReturnsPreviewBody()
+    # A deal with no key count / purchase price raises
+    # ``MissingIdentityInputsError``; the app-level handler (``app.main``)
+    # answers 422 with the missing fields — one mechanism for every
+    # in-memory chain (this preview, the pricing routes).
     result = await run_returns_preview(
         session,
         deal_id=deal_id,
@@ -458,6 +486,7 @@ async def list_engine_outputs(
     return EngineOutputsResponse(
         deal_id=deal_id,
         engines=engines,
+        failures=[EngineFailure(**f) for f in failures_of(rows)],
         stale_run=StaleRun(missing_blocks=missing) if missing else None,
     )
 
@@ -978,6 +1007,7 @@ async def get_engine_run_status(
         deal_id=deal_id,
         run_id=run_id,
         engines=[EngineOutputResponse(**r) for r in rows],
+        failures=[EngineFailure(**f) for f in failures_of(rows)],
     )
 
 

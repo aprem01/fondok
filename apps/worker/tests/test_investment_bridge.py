@@ -22,6 +22,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-investment-bridge.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
@@ -48,12 +50,13 @@ async def _kimpton_rows() -> dict:
     async with factory() as session:
         await run_all_engines(
             session,
-            deal_id="kimpton-angler-2026",
+            deal_id=KIMPTON_FIXTURE_DEAL_ID,
             tenant_id=tenant_id,
             run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
         return await get_run_scoped_outputs(
-            session, deal_id="kimpton-angler-2026", tenant_id=tenant_id
+            session, deal_id=KIMPTON_FIXTURE_DEAL_ID, tenant_id=tenant_id
         )
 
 

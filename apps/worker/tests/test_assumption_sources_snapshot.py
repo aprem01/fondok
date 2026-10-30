@@ -260,6 +260,15 @@ async def test_endpoint_serves_the_same_two_blocks_plus_the_new_ones() -> None:
         assert code in {c.value for c in ReasonCode}, (key, code)
     # This fixture has no CBRE report, so growth is a seed with a reason.
     assert body["reasons"]["adr_growth"] == "no_document"
+    # 2026-10-30 — the identity inputs have no default: Sam's corpus carries
+    # no key count and no price (its OM has no asking-price row), so neither
+    # is in ``sources`` / ``values`` (the golden pins their absence) and each
+    # says why. Before this they read ``seed`` = 132 / 36,400,000 — the
+    # Kimpton demo property's figures presented as Sam's deal.
+    for key in ("keys", "purchase_price"):
+        assert key not in body["sources"]
+        assert key not in body["values"]
+        assert body["reasons"][key] == "missing_identity_inputs"
 
 
 @pytest.mark.asyncio

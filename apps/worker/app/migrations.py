@@ -726,6 +726,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        # Wave 0 (2026-10-30) — the typed failure behind a ``status='failed'``
+        # row: ``{engine, code, message, missing, exception_type}`` (see
+        # ``engine_runner.EngineFailure``). ``error`` keeps the message text.
+        "engine_outputs.add_failure",
+        "ALTER TABLE engine_outputs ADD COLUMN IF NOT EXISTS failure JSONB",
+    ),
+    (
         "engine_outputs.add_narrative_generated_at",
         """
         ALTER TABLE engine_outputs ADD COLUMN IF NOT EXISTS narrative_generated_at TIMESTAMPTZ
@@ -1769,9 +1776,16 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
             -- columns and engine_narratives crashed with
             -- "no such column: narrative" (hotfix 2026-07-05).
             narrative               TEXT,
-            narrative_generated_at  TEXT
+            narrative_generated_at  TEXT,
+            -- Wave 0 (2026-10-30) — typed failure JSON (see the PG ALTER).
+            failure                 TEXT
         )
         """,
+    ),
+    (
+        # Existing dev databases created before the column (PRAGMA-guarded).
+        "engine_outputs.add_failure",
+        "ALTER TABLE engine_outputs ADD COLUMN failure TEXT",
     ),
     (
         "engine_outputs.idx_deal_engine",

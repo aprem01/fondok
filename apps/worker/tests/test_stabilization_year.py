@@ -25,6 +25,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-stabilization-year.db"
@@ -32,7 +34,7 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
-KIMPTON = "kimpton-angler-2026"
+KIMPTON = KIMPTON_FIXTURE_DEAL_ID
 
 
 @pytest.fixture(autouse=True)
@@ -56,9 +58,9 @@ async def _deal_with_overrides(session, overrides: dict) -> tuple[str, str]:
     await session.execute(
         text(
             """
-            INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides,
                                created_at, updated_at)
-            VALUES (:id, :tenant, :name, 'Draft', :ov, :now, :now)
+            VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :ov, :now, :now)
             """
         ),
         {
@@ -98,9 +100,12 @@ async def _run(overrides: dict | None = None) -> dict:
     factory = get_session_factory()
     async with factory() as session:
         if overrides is None:
-            deal_id, tenant_id = KIMPTON, str(uuid4())
-        else:
-            deal_id, tenant_id = await _deal_with_overrides(session, overrides)
+            # The pure fixture: nothing read from a deal row.
+            return await run_all_engines(
+                session, deal_id=KIMPTON, tenant_id=str(uuid4()),
+                run_id=str(uuid4()), assumptions=kimpton_seed(),
+            )
+        deal_id, tenant_id = await _deal_with_overrides(session, overrides)
         return await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
         )

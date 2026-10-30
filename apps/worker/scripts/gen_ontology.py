@@ -9,7 +9,7 @@ Writes (all under ``apps/web/src/lib/ontology/``):
     concepts.generated.ts   typed CONCEPTS / SOURCES / DOC_TYPES / FAMILIES /
                             PERIOD_TYPES / SUBORDINATE_NAMESPACES /
                             REGISTRY_VERSION
-    reasons.generated.ts    REASONS — the 16 refusal codes with
+    reasons.generated.ts    REASONS — the refusal codes with
                             {label, ui, explanation}
     concepts.snapshot.json  the registry exactly as GET /ontology/concepts
                             serves it

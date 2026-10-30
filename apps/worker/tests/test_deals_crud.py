@@ -113,7 +113,7 @@ async def test_create_deal_persists() -> None:
         UUID(deal_id)
         assert created["name"] == "Persisted Hotel"
         assert created["status"] == "Draft"
-        assert created["ai_confidence"] == 0.0
+        assert created["ai_confidence"] is None  # A11 — NULL until extraction scores it
 
         # Fresh GET — proves it actually landed in the DB.
         r = await client.get(f"/deals/{deal_id}")

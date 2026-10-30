@@ -102,9 +102,9 @@ async def _seed_deal(
 ) -> None:
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, city, keys, field_overrides, "
+            "INSERT INTO deals (id, tenant_id, name, city, keys, purchase_price, field_overrides, "
             "target_irr, target_moic) "
-            "VALUES (:id, :tenant, :name, :city, :keys, :fo, :irr, :moic)"
+            "VALUES (:id, :tenant, :name, :city, :keys, 36400000, :fo, :irr, :moic)"
         ),
         {
             "id": deal_id,

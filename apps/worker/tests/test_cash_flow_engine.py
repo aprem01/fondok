@@ -21,6 +21,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 # Per-test SQLite DB BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-cash-flow-engine.db"
 if _TMP_DB.exists():
@@ -71,13 +73,14 @@ async def _run_kimpton():
     from app.database import get_session_factory
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
     factory = get_session_factory()
     async with factory() as session:
         results = await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            assumptions=kimpton_seed(),
         )
     return results
 

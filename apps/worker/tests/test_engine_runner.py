@@ -19,6 +19,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-engine-runner.db"
@@ -51,7 +53,7 @@ async def test_run_all_engines_kimpton() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import ENGINE_NAMES, run_all_engines
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -62,6 +64,7 @@ async def test_run_all_engines_kimpton() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
     assert set(results) == set(ENGINE_NAMES)
@@ -96,12 +99,12 @@ async def test_run_all_engines_kimpton() -> None:
 
 @pytest.mark.asyncio
 async def test_run_single_engine_returns() -> None:
-    """``run_single_engine('returns', ...)`` walks its deps and lands
+    """``run_single_engine('returns', ..., assumptions=kimpton_seed())`` walks its deps and lands
     a complete output row."""
     from app.database import get_session_factory
     from app.services.engine_runner import run_single_engine
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
 
     factory = get_session_factory()
@@ -111,6 +114,7 @@ async def test_run_single_engine_returns() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             engine_name="returns",
+            assumptions=kimpton_seed(),
         )
 
     assert result["status"] == "complete"
@@ -138,7 +142,7 @@ async def test_engine_failure_doesnt_block_independent_engines() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -149,7 +153,8 @@ async def test_engine_failure_doesnt_block_independent_engines() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
-            overrides={"ltv": 1.5},  # invalid: ltv must be <= 1.0
+            overrides={"ltv": 1.5},  # invalid: ltv must be <= 1.0,
+            assumptions=kimpton_seed(),
         )
 
     assert results["capital"]["status"] == "failed"
@@ -177,7 +182,7 @@ async def test_run_persists_to_db() -> None:
         run_all_engines,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -188,6 +193,7 @@ async def test_run_persists_to_db() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
         rows = await get_run_status(
@@ -229,7 +235,7 @@ async def test_get_latest_outputs_returns_per_engine_map() -> None:
         run_all_engines,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -240,6 +246,7 @@ async def test_get_latest_outputs_returns_per_engine_map() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
         outputs = await get_latest_outputs(
             session, deal_id=deal_id, tenant_id=tenant_id
@@ -273,7 +280,7 @@ async def test_canonical_run_survives_single_engine_rerun() -> None:
         run_single_engine,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_a = str(uuid4())
     run_b = str(uuid4())
@@ -282,7 +289,8 @@ async def test_canonical_run_survives_single_engine_rerun() -> None:
     async with factory() as session:
         # Full chain — the canonical base-case run (all 8 engines).
         await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_a
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_a,
+            assumptions=kimpton_seed(),
         )
         # Later single-engine re-run of returns. It walks its deps, so it
         # persists revenue/fb/expense/capital/debt/returns under run_b —
@@ -293,6 +301,7 @@ async def test_canonical_run_survives_single_engine_rerun() -> None:
             tenant_id=tenant_id,
             engine_name="returns",
             run_id=run_b,
+            assumptions=kimpton_seed(),
         )
 
         canonical = await get_canonical_run_id(
@@ -326,7 +335,7 @@ async def test_canonical_run_none_without_full_chain() -> None:
         run_single_engine,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
 
     factory = get_session_factory()
@@ -338,6 +347,7 @@ async def test_canonical_run_none_without_full_chain() -> None:
             tenant_id=tenant_id,
             engine_name="revenue",
             run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
         canonical = await get_canonical_run_id(
             session, deal_id=deal_id, tenant_id=tenant_id
@@ -368,7 +378,7 @@ async def test_canonical_run_excludes_non_base_scenario() -> None:
         run_all_engines,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     base_run = str(uuid4())
     scenario_run = str(uuid4())
@@ -378,12 +388,14 @@ async def test_canonical_run_excludes_non_base_scenario() -> None:
     async with factory() as session:
         # Base-case full chain first ...
         await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=base_run
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=base_run,
+            assumptions=kimpton_seed(),
         )
         # ... then a LATER non-base scenario full chain (would otherwise win
         # on recency).
         await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=scenario_run
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=scenario_run,
+            assumptions=kimpton_seed(),
         )
         # Record the scenario row pointing at its run (as run_scenario does).
         await session.execute(
@@ -430,7 +442,7 @@ async def test_run_scoped_outputs_canonical_and_fallback() -> None:
         run_single_engine,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     factory = get_session_factory()
 
     # Canonical path — full chain, then a desyncing single-engine re-run.
@@ -438,7 +450,8 @@ async def test_run_scoped_outputs_canonical_and_fallback() -> None:
     run_a = str(uuid4())
     async with factory() as session:
         await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_a, run_id=run_a
+            session, deal_id=deal_id, tenant_id=tenant_a, run_id=run_a,
+            assumptions=kimpton_seed(),
         )
         await run_single_engine(
             session,
@@ -446,6 +459,7 @@ async def test_run_scoped_outputs_canonical_and_fallback() -> None:
             tenant_id=tenant_a,
             engine_name="returns",
             run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
         scoped = await get_run_scoped_outputs(
             session, deal_id=deal_id, tenant_id=tenant_a
@@ -462,6 +476,7 @@ async def test_run_scoped_outputs_canonical_and_fallback() -> None:
             tenant_id=tenant_b,
             engine_name="revenue",
             run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
         scoped = await get_run_scoped_outputs(
             session, deal_id=deal_id, tenant_id=tenant_b
@@ -521,7 +536,7 @@ async def test_canonical_gates_on_base_engines_not_cashflow() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import CANONICAL_ENGINES, get_canonical_run_id
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_base = str(uuid4())
     run_cf = str(uuid4())
@@ -568,14 +583,15 @@ async def test_nine_engine_run_is_canonical() -> None:
         run_all_engines,
     )
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
     factory = get_session_factory()
     async with factory() as session:
         results = await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            assumptions=kimpton_seed(),
         )
         assert "cash_flow" in results
         assert results["cash_flow"]["status"] == "complete"
@@ -604,9 +620,10 @@ async def test_unknown_engine_raises() -> None:
         with pytest.raises(ValueError, match="unknown engine"):
             await run_single_engine(
                 session,
-                deal_id="kimpton-angler-2026",
+                deal_id=KIMPTON_FIXTURE_DEAL_ID,
                 tenant_id=str(uuid4()),
                 engine_name="nope",
+                assumptions=kimpton_seed(),
             )
 
 
@@ -614,16 +631,16 @@ async def test_unknown_engine_raises() -> None:
 #
 # Sam: "S&U separately includes Soft Costs = $528K, Contingency = $528K…
 # expected Total Uses would be $43.6589M rather than the displayed $44.7149M."
-# ``_kimpton_assumptions()`` seeded 528K/528K on EVERY deal (a demo-fixture
+# ``_default_assumptions()`` seeded 528K/528K on EVERY deal (a demo-fixture
 # leftover); the capital engine emitted them as two extra uses and the returns
 # basis carried them. The seed is now 0/0 (the demo export's own fixture in
 # ``tests/fixtures/kimpton_export_payload.py`` is untouched); ``working_capital`` stays at 500K.
 
 
 def test_kimpton_seed_carries_no_universal_soft_costs_or_contingency() -> None:
-    from app.services.engine_runner import _kimpton_assumptions
+    from app.services.engine_runner import _default_assumptions
 
-    seed = _kimpton_assumptions()
+    seed = _default_assumptions()
     assert seed["soft_costs"] == 0.0
     assert seed["contingency"] == 0.0
     # Sam accepted working capital in her expected total — it stays.
@@ -642,9 +659,10 @@ async def test_default_run_emits_no_soft_cost_or_contingency_uses() -> None:
     async with factory() as session:
         results = await run_all_engines(
             session,
-            deal_id="kimpton-angler-2026",
+            deal_id=KIMPTON_FIXTURE_DEAL_ID,
             tenant_id=str(uuid4()),
             run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
 
     cap = results["capital"]["outputs"]
@@ -704,11 +722,11 @@ async def test_override_equal_to_its_source_keeps_the_underlying_badge() -> None
     from app.database import get_session_factory
     from app.services.engine_runner import (
         SOURCE_ANALYST_OVERRIDE,
-        _kimpton_assumptions,
+        _default_assumptions,
         _load_engine_inputs,
     )
 
-    seed = _kimpton_assumptions()
+    seed = _default_assumptions()
     unchanged = seed["exit_cap_rate"]          # re-saved exactly as it was
     changed = seed["hold_years"] + 2           # a real edit
 
@@ -719,9 +737,9 @@ async def test_override_equal_to_its_source_keeps_the_underlying_badge() -> None
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides,
                                    created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :overrides, :now, :now)
                 """
             ),
             {
@@ -770,9 +788,9 @@ async def _deal_with_overrides(session, overrides: dict) -> tuple[str, str]:
     await session.execute(
         text(
             """
-            INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides,
                                created_at, updated_at)
-            VALUES (:id, :tenant, :name, 'Draft', :ov, :now, :now)
+            VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :ov, :now, :now)
             """
         ),
         {
@@ -814,8 +832,9 @@ async def test_default_senior_tranche_carries_the_deals_loan_costs_pct() -> None
     factory = get_session_factory()
     async with factory() as session:
         results = await run_all_engines(
-            session, deal_id="kimpton-angler-2026",
+            session, deal_id=KIMPTON_FIXTURE_DEAL_ID,
             tenant_id=str(uuid4()), run_id=str(uuid4()),
+            assumptions=kimpton_seed(),
         )
     debt = results["debt"]["outputs"]
     assert debt["loan_amount"] == pytest.approx(23_660_000)
@@ -1127,9 +1146,9 @@ async def _str_deal(session, *, overrides: dict, fields: list[dict]) -> tuple[st
     await session.execute(
         text(
             """
-            INSERT INTO deals (id, tenant_id, name, status, keys,
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price,
                                field_overrides, created_at, updated_at)
-            VALUES (:id, :tenant, 'STR Provenance Hotel', 'Draft', 132,
+            VALUES (:id, :tenant, 'STR Provenance Hotel', 'Draft', 132, 36400000,
                     :ov, :now, :now)
             """
         ),

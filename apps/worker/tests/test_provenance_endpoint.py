@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
 
@@ -27,7 +29,7 @@ async def test_run_all_engines_persists_provenance() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import get_latest_outputs, run_all_engines
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -37,7 +39,8 @@ async def test_run_all_engines_persists_provenance() -> None:
         await session.commit()
 
         await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
         outputs = await get_latest_outputs(

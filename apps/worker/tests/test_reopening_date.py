@@ -323,9 +323,9 @@ async def _deal(
     await session.execute(
         text(
             """
-            INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides,
                                reopening_date, created_at, updated_at)
-            VALUES (:id, :tenant, :name, 'Draft', :ov, :reopening, :now, :now)
+            VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :ov, :reopening, :now, :now)
             """
         ),
         {

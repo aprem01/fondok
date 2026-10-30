@@ -34,6 +34,8 @@ from ..audit import log_audit
 from ..database import get_session
 from ..services.engine_runner import (
     ENGINE_NAMES,
+    EngineFailure,
+    failures_of,
     get_canonical_run_id,
     get_latest_outputs,
     get_run_status,
@@ -113,6 +115,10 @@ class ScenarioRunResponse(BaseModel):
 
     Carries the engine output map keyed by engine name + the
     ``run_id`` we stamped into ``scenarios.last_run_id``.
+
+    ``failures`` (Wave 0, 2026-10-30) — the typed failure of every engine
+    that did not complete (engine, reason code, message, missing inputs), so
+    a 200 with failed engines is explicit; empty when all completed.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -122,6 +128,7 @@ class ScenarioRunResponse(BaseModel):
     run_id: UUID
     started_at: datetime
     engines: dict[str, dict[str, Any]]
+    failures: list[EngineFailure] = []
 
 
 class CompareRequest(BaseModel):
@@ -339,48 +346,11 @@ async def _load_scenario(
     return row
 
 
-async def load_scenario_overrides(
-    session: AsyncSession,
-    *,
-    scenario_id: str | UUID,
-    tenant_id: str | UUID,
-) -> dict[str, Any]:
-    """Read the scenario's overrides as a ``{field_path: value}`` dict.
-
-    Returns ``{}`` for non-UUID ids, missing rows, or empty overrides.
-    The engine_runner uses this to merge a scenario's overrides on top
-    of the deal's persisted ``field_overrides`` at run time. We collapse
-    to the same flat ``{path: value}`` shape ``_load_deal_overrides``
-    returns so the engine input loader's existing override-routing loop
-    sees identical input regardless of source.
-    """
-    try:
-        UUID(str(scenario_id))
-    except (ValueError, TypeError):
-        return {}
-    try:
-        row = (
-            await session.execute(
-                # tenant-scope predicate required by tenant_middleware
-                text(
-                    "SELECT overrides FROM scenarios "
-                    "WHERE id = :id AND tenant_id = :tenant"
-                ),
-                {"id": str(scenario_id), "tenant": str(tenant_id)},
-            )
-        ).first()
-    except Exception:
-        return {}
-    if row is None:
-        return {}
-    raw = _coerce_overrides(row._mapping.get("overrides"))
-    out: dict[str, Any] = {}
-    for entry in raw:
-        path = entry.get("field_path")
-        if not isinstance(path, str) or not path:
-            continue
-        out[path] = entry.get("value")
-    return out
+# The run-time scenario-override read lives in
+# ``services.engine_runner._load_scenario_overrides`` (one reader; a DB error
+# or a malformed payload there fails the run ``load_error`` instead of running
+# the Base case). The duplicate ``load_scenario_overrides`` that used to sit
+# here returned ``{}`` on any error and had no callers (D3, 2026-10-30).
 
 
 # ─────────────────────────── routes ───────────────────────────
@@ -847,6 +817,7 @@ async def run_scenario(
         run_id=run_id,
         started_at=started_at,
         engines=results,
+        failures=[EngineFailure(**f) for f in failures_of(results)],
     )
 
 

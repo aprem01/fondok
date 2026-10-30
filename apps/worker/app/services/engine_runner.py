@@ -41,6 +41,8 @@ from fondok_schemas.financial import ModelAssumptions
 from fondok_schemas.partnership import WaterfallTier
 from fondok_schemas.reasons import ReasonCode
 
+from ..alerting import report_alert
+
 # Phase 2.1 — provenance carriers. ``Resolution`` is the registry's own
 # "what resolved, from where" record; ``concept_for_path`` classifies a raw
 # extraction path into (concept, basis, scope). Neither is used to CHOOSE a
@@ -224,9 +226,9 @@ ENGINE_DEPS: dict[str, list[str]] = {
 # an analyst can act on, name the engines that consequently did not run
 # (derived from ``ENGINE_DEPS`` — never hard-coded), and say that the saved
 # assumptions survived (they live in ``deals.field_overrides`` and a failed
-# run never touches them). The raw pydantic text is appended verbatim after
-# ``Technical detail:`` so nothing is lost. Message-only: no validator, engine
-# math or numeric behaviour changes here.
+# run never touches them). The raw pydantic text is NOT echoed to the user
+# (it may quote deal data); it goes to the log and the alert only.
+# Message-only: no validator, engine math or numeric behaviour changes here.
 
 # Reader-facing engine names used INSIDE the stored error text. The web
 # banner recognises these at the head of a runner-formatted error
@@ -242,9 +244,6 @@ _ENGINE_LABELS: dict[str, str] = {
     "partnership": "Partnership",
     "cash_flow": "Cash Flow",
 }
-
-# Literal that separates the human sentence from the raw validator text.
-_TECHNICAL_DETAIL_PREFIX = "Technical detail:"
 
 # What an analyst can actually change when a given (engine, field) rejects a
 # value. The Debt NOI series is the expense engine's NOI path, so a negative
@@ -383,12 +382,11 @@ def _humanize_engine_validation_error(engine_name: str, exc: ValidationError) ->
         kept. Check key count, revenue base, expense base, or a
         starting-occupancy override, then re-run.
 
-        Technical detail: 1 validation error for DebtEngineInputExt ...
-
     One sentence per error entry (from ``loc`` / ``type`` / ``input`` /
     ``ctx``); the downstream list is the transitive dependants of
-    ``engine_name`` in ``ENGINE_DEPS``; the raw pydantic text follows a blank
-    line and ``Technical detail:`` verbatim.
+    ``engine_name`` in ``ENGINE_DEPS``. The raw pydantic text is NOT appended
+    (security review, 2026-10-30: user-facing text carries field names and
+    bounds only); it reaches the log via ``logger.exception`` in the runner.
     """  # noqa: RUF002 - the U+2212 glyph IS the documented output
     label = _ENGINE_LABELS.get(engine_name, engine_name)
     problems: list[str] = []
@@ -419,15 +417,19 @@ def _humanize_engine_validation_error(engine_name: str, exc: ValidationError) ->
             *hints,
         ]
     )
-    return f"{human}\n\n{_TECHNICAL_DETAIL_PREFIX} {exc}"
+    return human
 
 
 def _engine_error_text(engine_name: str, exc: BaseException) -> str:
-    """The ``error`` string persisted on a failed engine row.
+    """The ``error`` string persisted on a failed engine row — USER-FACING.
 
-    pydantic ``ValidationError`` → the plain-language form above; every other
-    exception keeps ``str(exc)`` exactly as before. A bug in the formatter
-    itself must never mask the engine failure, so it falls back to ``str``.
+    pydantic ``ValidationError`` → the plain-language form above (built from
+    the error entries' ``loc`` / ``type`` / ``ctx`` — field names and bounds,
+    never the raw pydantic text). Every other exception → a generic sentence
+    naming the exception TYPE only: ``str(exc)`` can carry a connection string,
+    SQL or a file path and goes to the logger / ``report_alert`` instead
+    (security review, 2026-10-30). A bug in the formatter itself must never
+    mask the engine failure, so it falls back to the generic sentence.
     """
     if isinstance(exc, ValidationError):
         try:
@@ -436,24 +438,131 @@ def _engine_error_text(engine_name: str, exc: BaseException) -> str:
             logger.exception(
                 "could not humanize validation error for engine %s", engine_name
             )
-    return str(exc)
+    label = _ENGINE_LABELS.get(engine_name, engine_name)
+    return (
+        f"{label}: the model raised {type(exc).__name__} and did not produce "
+        f"an output. The failure has been reported; your saved assumptions "
+        f"were kept."
+    )
 
 
-# ──────────────────────────── Kimpton fallback ────────────────────────
+# ─────────────────── Identity inputs + labelled defaults ───────────────────
+
+#: The deal's IDENTITY inputs: the figures that describe THIS property and
+#: have no legitimate industry default. Production carries NO value for
+#: them — they come from the deal row, an extracted OM or an analyst
+#: override, or the dependent engines refuse to run
+#: (``ReasonCode.MISSING_IDENTITY_INPUTS``). Until 2026-10-30 the loader
+#: seeded 132 keys / $36.4M from the Kimpton demo fixture and a deal that
+#: carried neither ran as a 132-key $36.4M hotel; that seed set is now a test
+#: fixture (``tests/fixtures/kimpton_seed.py``) injected through
+#: ``run_all_engines(..., assumptions=...)``.
+IDENTITY_INPUT_KEYS: tuple[str, ...] = ("keys", "purchase_price")
+
+#: Which identity inputs each engine reads DIRECTLY off ``base`` (the
+#: ``base["keys"]`` / ``base["purchase_price"]`` reads in ``_build_input_for``).
+#: :func:`identity_inputs_needed` closes this over ``ENGINE_DEPS`` so an
+#: engine downstream of a refusing engine refuses for the same reason.
+_ENGINE_DIRECT_IDENTITY_INPUTS: dict[str, frozenset[str]] = {
+    "revenue": frozenset({"keys"}),
+    "capital": frozenset({"keys", "purchase_price"}),
+    "returns": frozenset({"purchase_price"}),
+    "sensitivity": frozenset({"purchase_price"}),
+}
 
 
-def _kimpton_assumptions() -> dict[str, Any]:
-    """Default underwriting assumptions matching the Kimpton fixture.
+def identity_inputs_needed(engine_name: str) -> frozenset[str]:
+    """Identity inputs ``engine_name`` needs, directly or through an upstream
+    engine whose output it consumes."""
+    needed: set[str] = set(_ENGINE_DIRECT_IDENTITY_INPUTS.get(engine_name, ()))
+    for dep in ENGINE_DEPS.get(engine_name, ()):
+        needed |= identity_inputs_needed(dep)
+    return frozenset(needed)
 
-    Mirrors ``apps/worker/tests/fixtures/kimpton_export_payload.py`` so a single Run Model
-    click on the demo deal reproduces the headline numbers shown in the
-    seeded UI (~$4.7M Y1 NOI, ~23% levered IRR) — except ``soft_costs`` /
-    ``contingency``, which are 0 here (FON-44, see below) while the demo
-    export keeps its own 528K pair.
+
+def missing_identity_inputs(base: Mapping[str, Any]) -> tuple[str, ...]:
+    """The identity inputs ``base`` does not carry, in declaration order."""
+    return tuple(
+        key for key in IDENTITY_INPUT_KEYS if base.get(key) in (None, "")
+    )
+
+
+class EngineFailure(BaseModel):
+    """Why an engine row landed ``status='failed'`` — typed, persisted.
+
+    ``reason`` is one of the engine-run members of :class:`ReasonCode` (the
+    web reads ``failures: [{engine, reason, message, ...}]``):
+
+    * ``missing_identity_inputs`` — ``missing`` lists the identity inputs the
+      engine needs and the deal does not carry;
+    * ``load_error`` — reading the deal's data failed; ``exception_type`` names
+      the exception; the run was NOT attempted on defaults;
+    * ``engine_skipped`` — an upstream engine did not complete;
+    * ``engine_error`` — the engine raised; ``exception_type`` names it.
+
+    ``message`` is the sentence the UI may print (it is also what the
+    ``error`` column holds). Serialized into ``engine_outputs.failure`` and
+    carried on every run surface (``GET …/engines/run/{run_id}``,
+    ``GET …/engines``, ``POST …/engines/{name}/run``, scenario runs) so the
+    web can render "not available" with the reason instead of a blank.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    engine: str
+    reason: ReasonCode
+    message: str
+    missing: list[str] = []
+    exception_type: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class EngineInputsLoadError(RuntimeError):
+    """Raised by the non-persisting paths (``run_returns_preview``) when the
+    deal's data could not be read; carries the typed ``load_error``
+    :class:`EngineFailure` (``report_alert`` has already fired). The
+    persisting runners record the failure row instead of raising."""
+
+    def __init__(self, failure: EngineFailure) -> None:
+        self.failure = failure
+        super().__init__(failure.message)
+
+
+class MissingIdentityInputsError(LookupError):
+    """Raised by the non-persisting paths (``run_returns_preview``) when the
+    deal lacks an identity input; the persisting runners record an
+    :class:`EngineFailure` row instead of raising."""
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        self.missing = list(missing)
+        super().__init__(_missing_identity_message(missing))
+
+
+def _missing_identity_message(missing: tuple[str, ...] | frozenset[str]) -> str:
+    labels = {"keys": "key count", "purchase_price": "purchase price"}
+    names = [labels.get(k, k) for k in sorted(missing)]
+    return (
+        f"The deal has no {' or '.join(names)}. Enter "
+        f"{'it' if len(names) == 1 else 'them'} on the deal (or upload an OM "
+        f"that carries {'it' if len(names) == 1 else 'them'}) and run the "
+        f"model again — the model never substitutes a placeholder property."
+    )
+
+
+def _default_assumptions() -> dict[str, Any]:
+    """The labelled DEFAULT assumptions — every key the loader may leave on
+    ``SOURCE_SEED`` when no document, deal-row value or override supplies it.
+
+    Each is a suggestion a reader can see as such: the loader badges it
+    ``seed`` and ``_seed_reasons`` says why (``no_document`` / ``no_source``),
+    and the UI / exports carry that provenance. The identity inputs
+    (``IDENTITY_INPUT_KEYS``) are deliberately ABSENT — they have no default.
+    ``soft_costs`` / ``contingency`` are 0 (FON-44: zero uses are omitted;
+    an analyst who carries them enters the amounts explicitly).
     """
     return {
-        "keys": 132,
-        "purchase_price": 36_400_000,
         "starting_occupancy": 0.762,
         "starting_adr": 385.0,
         "occupancy_growth": 0.008,
@@ -475,7 +584,9 @@ def _kimpton_assumptions() -> dict[str, Any]:
         # of the unlevered basis). Zero means the lines are omitted (the
         # capital engine filters zero uses); an analyst who carries them
         # enters the amounts explicitly. ``working_capital`` stays — it is a
-        # real use the source models carry.
+        # real use the source models carry. (The two dollar figures above and
+        # here, renovation budget and working capital, are the remaining
+        # non-ratio defaults; see the go-live plan for their follow-up.)
         "soft_costs": 0.0,
         "contingency": 0.0,
         "working_capital": 500_000,
@@ -493,8 +604,8 @@ def _kimpton_assumptions() -> dict[str, Any]:
         "transfer_tax_pct": 0.0,
         "gp_equity_pct": 0.10,
         "lp_equity_pct": 0.90,
-        # FON-66 — Kimpton Angler benchmark preferred return (10%). The
-        # promote tiers above this live in _KIMPTON_WATERFALL_REFERENCE.
+        # FON-66 — benchmark preferred return (10%). The promote tiers above
+        # this live in _KIMPTON_WATERFALL_REFERENCE.
         "pref_rate": 0.10,
     }
 
@@ -1164,13 +1275,33 @@ async def _load_engine_inputs(
     scenario_id: str | None = None,
     *,
     tenant_id: str | None = None,
+    assumptions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve the underwriting assumptions for ``deal_id``.
 
     Strategy:
-        1. Load the deal row (purchase_price, keys) when present.
-        2. Layer in caller overrides from the API request body.
-        3. Fall back to the Kimpton fixture for everything missing.
+        1. Start from the labelled defaults (``_default_assumptions``) —
+           which carry NO identity input (``IDENTITY_INPUT_KEYS``).
+        2. Load the deal row (purchase_price, keys) when present, then every
+           document-grounded source, then the deal's / scenario's persisted
+           overrides, then the caller overrides from the API request body.
+        3. An identity input still missing at the end is reported under
+           ``__reasons__`` as ``missing_identity_inputs`` and left ABSENT from
+           ``base``; the runners then refuse the dependent engines
+           (``identity_inputs_needed``) instead of running on a seed.
+
+    A failure to READ anything (the deal row, the overrides, an extraction
+    table) propagates: the runners record it as a ``load_error`` failure and
+    alert. Nothing here degrades a read error to "no document".
+
+    ``assumptions`` — the ONE seam for an explicit, complete assumption set
+    (``run_all_engines(..., assumptions=...)``): when given, NOTHING is read
+    from the database — no deal row, no documents, no persisted overrides —
+    and the dict is used as the base verbatim (every key badged ``seed``),
+    with ``overrides`` layered on top exactly as the request body is on the
+    database path. It exists for golden / fixture runs
+    (``tests/fixtures/kimpton_seed.py`` → ``evals/baselines``); production
+    callers never pass it.
 
     Also populates ``base["__sources__"]`` — a parallel dict mapping
     each canonical assumption key to its provenance label (one of the
@@ -1191,11 +1322,8 @@ async def _load_engine_inputs(
     * ``base["__reasons__"]`` — ``{assumption_key: {"code": ReasonCode,
       "detail": str | None}}``: why a key is still a seed
       (``no_document`` / ``no_source`` / ``str_unavailable``), or what the
-      as-of gate did (``not_knowable_as_of`` / ``as_of_unknown``).
-
-    The web app's demo deal id (legacy int 7) does not parse as a UUID
-    and never lands in the deals table; that path uses the pure Kimpton
-    defaults.
+      as-of gate did (``not_knowable_as_of`` / ``as_of_unknown``), or that
+      an identity input is missing (``missing_identity_inputs``).
 
     Wave 3 W3.2: when ``scenario_id`` is set, the scenario's overrides
     merge on top of the deal's persisted ``field_overrides`` and feed
@@ -1204,7 +1332,7 @@ async def _load_engine_inputs(
     base scenario id is byte-identical to running with no scenario_id
     at all (the base scenario carries an empty override list).
     """
-    base = _kimpton_assumptions()
+    base = dict(assumptions) if assumptions is not None else _default_assumptions()
     # Every key starts marked as a seed; later steps overwrite the
     # source label as data sources land. Only the subset of keys the
     # web app surfaces gets badged — extras are tracked anyway so
@@ -1232,12 +1360,10 @@ async def _load_engine_inputs(
     if tenant_id is None:
         raise ValueError("_load_engine_inputs: tenant_id is required")
     effective_tenant = str(tenant_id)
-    try:
-        # Only try DB lookup when the id is a valid UUID. The Kimpton
-        # demo card uses an int-string id which is intentionally
-        # outside the deals table.
-        UUID(deal_id)
-    except (ValueError, TypeError):
+    if assumptions is not None:
+        # The explicit-assumptions seam: the caller supplied the complete set,
+        # so no database read happens. Request-body overrides layer on top
+        # exactly as they do on the database path.
         if overrides:
             base.update(overrides)
             for k in overrides:
@@ -1258,56 +1384,53 @@ async def _load_engine_inputs(
     # ONLY an explicit ``underwriting_as_of`` counts — never
     # ``acquisition_close_date`` (see ``_underwriting_as_of_from``). With no
     # such key the whole gate is inert and every loader behaves as today.
-    as_of_overrides: dict[str, Any] = {}
-    try:
-        as_of_overrides = _normalize_override_shape(
-            await _load_deal_overrides_raw(
-                session, deal_id=deal_id, tenant_id=effective_tenant
+    # B7 (2026-10-30): a failed override read propagates — the run fails
+    # ``load_error``; the gate is never silently switched off.
+    as_of_overrides: dict[str, Any] = _normalize_override_shape(
+        await _load_deal_overrides_raw(
+            session, deal_id=deal_id, tenant_id=effective_tenant
+        )
+    )
+    if scenario_id:
+        as_of_overrides.update(
+            await _load_scenario_overrides(
+                session, scenario_id=scenario_id, tenant_id=effective_tenant
             )
         )
-        if scenario_id:
-            as_of_overrides.update(
-                await _load_scenario_overrides(
-                    session, scenario_id=scenario_id, tenant_id=effective_tenant
-                )
-            )
-    except Exception:  # noqa: BLE001
-        as_of_overrides = {}
     if overrides:
         as_of_overrides.update(overrides)
     underwriting_as_of = _underwriting_as_of_from(as_of_overrides)
 
-    try:
-        # FON-98 — ``reopening_date`` is read only when the live schema has
-        # the column (catalog probe, memoised on the session) so an old DB
-        # keeps serving keys / purchase_price instead of losing the whole row.
-        from ..api.deals import _deals_has_column
+    # FON-98 — ``reopening_date`` is read only when the live schema has
+    # the column (catalog probe, memoised on the session) so an old DB
+    # keeps serving keys / purchase_price instead of losing the whole row.
+    # A4 (2026-10-30): the row read itself is NOT guarded — a failure here
+    # propagates and the run fails ``load_error`` rather than proceeding on
+    # defaults and persisting them as the deal's own figures.
+    from ..api.deals import _deals_has_column
 
-        has_reopening_col = await _deals_has_column(
-            session, "reopening_date", "fondok_deals_has_reopening_date"
+    has_reopening_col = await _deals_has_column(
+        session, "reopening_date", "fondok_deals_has_reopening_date"
+    )
+    reopening_col = ", reopening_date" if has_reopening_col else ""
+    row = (
+        await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                f"""
+                SELECT keys, purchase_price, positioning, brand{reopening_col}
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                """
+            ),
+            {"id": deal_id, "tenant": effective_tenant},
         )
-        reopening_col = ", reopening_date" if has_reopening_col else ""
-        row = (
-            await session.execute(
-                text(
-                    # tenant-scope predicate required by tenant_middleware
-                    f"""
-                    SELECT keys, purchase_price, positioning, brand{reopening_col}
-                      FROM deals
-                     WHERE id = :id AND tenant_id = :tenant
-                    """
-                ),
-                {"id": deal_id, "tenant": effective_tenant},
-            )
-        ).first()
-    except Exception:
-        # The migrations may not have been applied for the test DB;
-        # fall through to defaults silently.
-        row = None
+    ).first()
 
     # Track keys whose values originated on the ``deals`` row so the OM
     # extraction layer below doesn't clobber a user-edited price with the
-    # broker's headline (deals table > OM actuals > Kimpton defaults).
+    # broker's headline (deals table > OM actuals > labelled defaults; the
+    # identity inputs have no default at all).
     deals_table_keys: set[str] = set()
     # Subject chain scale — Wave 4 W4.1 uses this to filter portfolio
     # library entries to the ones whose ``chain_scales_covered`` overlap.
@@ -1539,17 +1662,13 @@ async def _load_engine_inputs(
     # override EQUAL to the selected PIP keeps this label (FON-65 shadow
     # rule) while one that differs badges ``analyst_override``. Precedence
     # and parsing live in ``services.renovation_budget``; this block only
-    # applies the pick. Best-effort — a read failure leaves the OM / seed
-    # grounding exactly as it was.
-    try:
-        from .renovation_budget import load_capex_documents, select_pip_candidate
+    # applies the pick. A read failure propagates (``load_error``) — it must
+    # not leave the model on the OM / seed figure as if no PIP existed.
+    from .renovation_budget import load_capex_documents, select_pip_candidate
 
-        capex_docs = await load_capex_documents(
-            session, deal_id=deal_id, tenant_id=effective_tenant
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("renovation_budget: CAPEX read failed for deal %s", deal_id)
-        capex_docs = []
+    capex_docs = await load_capex_documents(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
     pip_doc = select_pip_candidate(capex_docs)
     if pip_doc is not None and pip_doc.pip_total_usd is not None:
         pip_value = float(pip_doc.pip_total_usd)
@@ -2413,14 +2532,11 @@ async def _load_engine_inputs(
 
         index_rows = None
         if wants_benchmark(base, analyst_override_paths):
-            try:
-                index_rows = await load_index_rows(
-                    session, deal_id=deal_id, tenant_id=effective_tenant
-                )
-            except Exception:
-                logger.exception(
-                    "index methodology: benchmark read failed for deal %s", deal_id
-                )
+            # A benchmark read failure propagates (``load_error``) rather than
+            # silently dropping the analyst's penetration targets.
+            index_rows = await load_index_rows(
+                session, deal_id=deal_id, tenant_id=effective_tenant
+            )
         for key in apply_index_assumptions(
             base,
             sources,
@@ -2478,6 +2594,18 @@ async def _load_engine_inputs(
             grounded=frozenset(source_fields),
         )
     )
+
+    # ── Identity inputs still missing after every source had its say ────
+    # No default exists for them: the key stays ABSENT from ``base`` (so no
+    # engine can read a placeholder) and the reason says so. The runners turn
+    # this into the per-engine ``missing_identity_inputs`` failure.
+    for key in missing_identity_inputs(base):
+        base.pop(key, None)
+        sources.pop(key, None)
+        reasons[key] = _reason(
+            ReasonCode.MISSING_IDENTITY_INPUTS,
+            _missing_identity_message((key,)),
+        )
 
     _resolve_senior_origination_fee(base, sources)
     base["__sources__"] = sources
@@ -2750,26 +2878,23 @@ async def _deal_doc_types(
 ) -> frozenset[str]:
     """Uppercased ``doc_type``s of the deal's EXTRACTED documents.
 
-    Best-effort — an empty set on any failure, which makes every seed read
-    as ``no_document``: the honest answer when we cannot see the deal's
-    documents at all.
+    A read failure propagates (the run fails ``load_error``): "we cannot see
+    the deal's documents" is not the same statement as "no document was
+    uploaded", and only the second may be told to the analyst.
     """
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT DISTINCT UPPER(COALESCE(d.doc_type, '')) AS dt
-                  FROM documents d
-                 WHERE d.deal_id = :deal
-                   AND d.tenant_id = :tenant
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-        return frozenset(str(r[0]) for r in rows.fetchall() if r[0])
-    except Exception:  # noqa: BLE001
-        return frozenset()
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT DISTINCT UPPER(COALESCE(d.doc_type, '')) AS dt
+              FROM documents d
+             WHERE d.deal_id = :deal
+               AND d.tenant_id = :tenant
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
+    return frozenset(str(r[0]) for r in rows.fetchall() if r[0])
 
 
 async def _seed_reasons(
@@ -3837,10 +3962,6 @@ async def _load_source_documents(
     fed it" deep links.
     """
     out: dict[str, str] = {}
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return out
 
     # Build the by-doc-type pick once, then map source-tagged keys
     # onto it. Keeps the SQL count to one round-trip regardless of how
@@ -4077,9 +4198,8 @@ async def _load_t12_revenue_actuals(
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read Year-1 occupancy / ADR / RevPAR off the deal's most recent T-12.
 
-    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
-    when no T-12 has been extracted, when the deal id isn't a UUID, or
-    when the migrations haven't been applied to the test DB.
+    Returns ``{}`` (no overrides — the key keeps its labelled default)
+    when no T-12 has been extracted. A read failure propagates.
 
     Occupancy is normalized to a 0..1 fraction (extractors sometimes emit
     it as a percent like ``70.1`` and sometimes as a ratio like ``0.701``).
@@ -4091,38 +4211,31 @@ async def _load_t12_revenue_actuals(
     A canonical whose value came out of the multi-document MEDIAN carries a
     derived provenance record (no single row owns that number).
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return ({}, {}) if with_provenance else {}
     # The as-of columns feed the shared ranking key (period recency falls
     # through ``period_ending`` → ``report_as_of`` → …), so they are read
     # regardless of ``with_provenance`` — the winner must not depend on the
     # provenance flag. ``_report_as_of_expr`` is schema-probed (NULL
     # stand-ins on a schema without the columns) and memoised per session.
     as_of_expr = await _report_as_of_expr(session)
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields, d.doc_type, er.catalog_version,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr},
-                       d.fiscal_year, d.extracted_period_year
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return ({}, {}) if with_provenance else {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields, d.doc_type, er.catalog_version,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr},
+                   d.fiscal_year, d.extracted_period_year
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
     # even when the monthly was extracted later.
@@ -4248,46 +4361,38 @@ async def _load_t12_expense_actuals(
     """Read Year-1 expense actuals off the deal's most recent T-12 extraction.
 
     Returns ``{}`` (no overrides — engine falls back to USALI ratios) when
-    no T-12 has been extracted, when the deal id isn't a UUID, or when
-    the migrations haven't been applied to the test DB.
+    no T-12 has been extracted. A read failure propagates.
 
     Phase 2.1 — ``with_provenance=True`` returns
     ``(actuals, {canonical: SourceField})``. Selection is unchanged (same
     alias map, same zero-leak guard, same corroboration median), so the
     plain call is byte-identical.
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return ({}, {}) if with_provenance else {}
     # The as-of columns feed the shared ranking key (period recency falls
     # through ``period_ending`` → ``report_as_of`` → …), so they are read
     # regardless of ``with_provenance`` — the winner must not depend on the
     # provenance flag. ``_report_as_of_expr`` is schema-probed (NULL
     # stand-ins on a schema without the columns) and memoised per session.
     as_of_expr = await _report_as_of_expr(session)
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields, d.doc_type, er.catalog_version,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr},
-                       d.fiscal_year, d.extracted_period_year
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return ({}, {}) if with_provenance else {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields, d.doc_type, er.catalog_version,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr},
+                   d.fiscal_year, d.extracted_period_year
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     # Rank-then-merge so an annual T-12's expense lines win over a
     # partial-year YTD extract that's missing some buckets.
@@ -4452,37 +4557,38 @@ async def _load_scenario_overrides(
     flatten here so the engine input loader's existing override-routing
     loop accepts the same shape it already understands.
 
-    Returns ``{}`` for non-UUID ids, missing rows, malformed payloads,
-    or test DBs where the migration hasn't run yet.
+    Returns ``{}`` for a missing row or an empty / NULL column. A DB error
+    propagates and a malformed payload raises ``ValueError`` — the caller
+    (the run) reports a ``load_error``; the scenario is never silently run
+    as the Base case (D3, 2026-10-30).
     """
-    try:
-        UUID(scenario_id)
-    except (ValueError, TypeError):
-        return {}
-    try:
-        row = (
-            await session.execute(
-                # tenant-scope predicate required by tenant_middleware
-                text(
-                    "SELECT overrides FROM scenarios "
-                    "WHERE id = :id AND tenant_id = :tenant"
-                ),
-                {"id": scenario_id, "tenant": str(tenant_id)},
-            )
-        ).first()
-    except Exception:
-        return {}
+    row = (
+        await session.execute(
+            # tenant-scope predicate required by tenant_middleware
+            text(
+                "SELECT overrides FROM scenarios "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": scenario_id, "tenant": str(tenant_id)},
+        )
+    ).first()
     if row is None:
         return {}
     raw = row._mapping.get("overrides")
+    if raw is None:
+        return {}
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        raw = parsed
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"scenarios.overrides on scenario {scenario_id} is not valid JSON: {exc}"
+            ) from exc
     if not isinstance(raw, list):
-        return {}
+        raise ValueError(
+            f"scenarios.overrides on scenario {scenario_id} is not a JSON array "
+            f"(got {type(raw).__name__})"
+        )
     out: dict[str, Any] = {}
     for entry in raw:
         if not isinstance(entry, dict):
@@ -4504,42 +4610,41 @@ async def _load_deal_overrides_raw(
 
     Entries are either a primitive (legacy) or the structured
     ``{value, note, overridden_by, overridden_at}`` record — see
-    ``_normalize_override_shape``. Returns ``{}`` for non-UUID ids, missing
-    rows, or schemas where the migration hasn't run yet (test DBs). Callers
+    ``_normalize_override_shape``. Returns ``{}`` for a missing row or a NULL
+    column. A DB error propagates and a malformed blob raises ``ValueError``
+    — the run reports a ``load_error`` rather than running the Base case
+    with the analyst's overrides silently dropped (D3, 2026-10-30). Callers
     that only need the scalars use :func:`_load_deal_overrides`; the engine
     input loader reads this raw shape so the ``note`` survives (FON-61).
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return {}
-    try:
-        row = (
-            await session.execute(
-                text(
-                    # tenant-scope predicate required by tenant_middleware
-                    "SELECT field_overrides FROM deals "
-                    "WHERE id = :id AND tenant_id = :tenant"
-                ),
-                {"id": deal_id, "tenant": tenant_id},
-            )
-        ).first()
-    except Exception:
-        return {}
+    row = (
+        await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                "SELECT field_overrides FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": deal_id, "tenant": tenant_id},
+        )
+    ).first()
     if row is None:
         return {}
     raw = row._mapping.get("field_overrides")
-    if isinstance(raw, dict):
-        return raw
+    if raw is None:
+        return {}
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        if not isinstance(parsed, dict):
-            return {}
-        return parsed
-    return {}
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"deals.field_overrides on deal {deal_id} is not valid JSON: {exc}"
+            ) from exc
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"deals.field_overrides on deal {deal_id} is not a JSON object "
+            f"(got {type(raw).__name__})"
+        )
+    return raw
 
 
 async def _load_deal_overrides(
@@ -4550,8 +4655,8 @@ async def _load_deal_overrides(
 ) -> dict[str, Any]:
     """Read the deal's `field_overrides` JSONB column.
 
-    Returns ``{}`` for non-UUID ids, missing rows, or schemas where the
-    migration hasn't run yet (test DBs). The column is keyed by canonical
+    Returns ``{}`` for a missing row; a read failure or a malformed blob
+    raises (see :func:`_load_deal_overrides_raw`). The column is keyed by canonical
     extractor field path (e.g. ``property_overview.year_built``) →
     primitive value. See ``_normalize_override_shape`` for the legacy /
     structured shape handling.
@@ -4619,33 +4724,26 @@ async def _load_partnership_terms(
     ``gp_equity_pct`` / ``lp_equity_pct`` / ``pref_rate`` and ``waterfall`` maps
     tier index → ``{hurdle_rate, gp_split, lp_split}`` (the same shape
     ``_build_partnership_waterfall`` already overlays). Empty when no partnership
-    document has been extracted, the deal id isn't a UUID, or the table is
-    missing — the engine then falls back to the Kimpton benchmark seed.
+    document has been extracted — the engine then falls back to the
+    benchmark seed. A read failure propagates.
     """
     scalars: dict[str, float] = {}
     waterfall: dict[int, dict[str, float]] = {}
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return scalars, waterfall
-    try:
-        rows = await session.execute(
-            text(
-                """
-                SELECT er.fields
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type = 'PARTNERSHIP'
-                 ORDER BY er.created_at DESC
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return scalars, waterfall
+    rows = await session.execute(
+        text(
+            """
+            SELECT er.fields
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type = 'PARTNERSHIP'
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     _SCALAR_FIELDS = {
         "partnership.gp_equity_pct": "gp_equity_pct",
@@ -4691,9 +4789,8 @@ async def _load_om_capital_actuals(
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read capital-side broker numbers off the deal's most recent OM.
 
-    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
-    when no OM has been extracted, when the deal id isn't a UUID, or
-    when the migrations haven't been applied to the test DB.
+    Returns ``{}`` (no overrides — the key keeps its labelled default)
+    when no OM has been extracted. A read failure propagates.
 
     Percentage-style keys (``entry_cap_rate``) are normalized from a
     ``0..100`` percent to a ``0..1`` fraction when the broker emitted the
@@ -4704,32 +4801,25 @@ async def _load_om_capital_actuals(
     replaced carries NO source field: the number no longer comes off a
     document, and claiming otherwise would mis-badge the override.
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return ({}, {}) if with_provenance else {}
     as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields, d.doc_type,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type = 'OM'
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return ({}, {}) if with_provenance else {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields, d.doc_type,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr}
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type = 'OM'
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     actuals: dict[str, float] = {}
     provenance: dict[str, SourceField] = {}
@@ -4828,33 +4918,26 @@ async def _load_om_transaction_comps_cap_rate(
     ``as_of_unknown`` — a flag, never a refusal. ``as_of=None`` (no
     underwriting date on the deal) is exactly today's behaviour.
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return (None, None, None) if with_provenance else None
     need_as_of = with_provenance or as_of is not None
     as_of_expr = await _report_as_of_expr(session) if need_as_of else _NO_AS_OF_COLS
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type = 'OM'
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return (None, None, None) if with_provenance else None
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr}
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type = 'OM'
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     # (value, row, source-row mapping)
     cap_rates: list[tuple[float, dict[str, Any], Any]] = []
@@ -4973,35 +5056,28 @@ async def _load_comp_transactions(
     comp appears under both namespaces, the richer ``comparable_sales.*``
     fields win.
 
-    Returns an empty list for non-UUID deal ids and for deals with no
-    OM extraction (degrades gracefully — the engine then reports
+    Returns an empty list for deals with no OM extraction (the engine
+    then reports
     ``coverage_quality="low"`` with no derivation).
     """
     from fondok_schemas.comp_sales import CompTransaction
 
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return []
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields, er.document_id
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type = 'OM'
-                 ORDER BY er.created_at DESC
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return []
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.fields, er.document_id
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type = 'OM'
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     # Each comp is keyed by (document_id, index) so two OMs uploaded
     # for the same deal don't collide on comp #1. ``slot`` is a dict
@@ -5270,9 +5346,8 @@ async def _load_om_debt_actuals(
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read in-place debt terms off the deal's most recent OM extraction.
 
-    Returns ``{}`` (no overrides — engine falls back to the Kimpton seed)
-    when no OM has been extracted, when the deal id isn't a UUID, or
-    when the migrations haven't been applied to the test DB.
+    Returns ``{}`` (no overrides — the key keeps its labelled default)
+    when no OM has been extracted. A read failure propagates.
 
     Percentage-style keys (``interest_rate``, ``ltv``) are normalized
     from ``0..100`` percent to ``0..1`` fraction when the broker emitted
@@ -5282,32 +5357,25 @@ async def _load_om_debt_actuals(
     ``(actuals, {canonical: SourceField})``; an analyst-overridden key
     carries no source field (see ``_load_om_capital_actuals``).
     """
-    try:
-        UUID(deal_id)
-    except (ValueError, TypeError):
-        return ({}, {}) if with_provenance else {}
     as_of_expr = await _report_as_of_expr(session) if with_provenance else _NO_AS_OF_COLS
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields, d.doc_type,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND d.doc_type = 'OM'
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return ({}, {}) if with_provenance else {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields, d.doc_type,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr}
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND d.doc_type = 'OM'
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     actuals: dict[str, float] = {}
     provenance: dict[str, SourceField] = {}
@@ -5422,33 +5490,26 @@ async def _load_cbre_horizons_overrides(
     was not knowable then (``not_knowable_as_of``). A report with no
     ``report_as_of`` LOADS as today and flags ``as_of_unknown``.
     """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return ({}, {}, None) if with_provenance else {}
     need_as_of = with_provenance or as_of is not None
     as_of_expr = await _report_as_of_expr(session) if need_as_of else _NO_AS_OF_COLS
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.fields,
-                       er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND UPPER(COALESCE(d.doc_type, '')) = 'CBRE_HORIZONS'
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return ({}, {}, None) if with_provenance else {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            f"""
+            SELECT er.fields,
+                   er.id AS extraction_result_id, er.document_id,
+                   {as_of_expr}
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND UPPER(COALESCE(d.doc_type, '')) = 'CBRE_HORIZONS'
+             ORDER BY er.created_at DESC
+            """  # as_of_expr is a fixed column literal, never user input
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     # Legacy (1-indexed forecast-year) path
     legacy_adr: dict[int, float] = {}
@@ -5697,32 +5758,25 @@ async def _load_str_segmentation_payload(
     """Read the deal's most recent STR_SEGMENTATION extraction into a
     flat namespace dict shaped as ``{<path>: value}``.
 
-    Returns ``{}`` when no STR_SEGMENTATION extraction exists, when the
-    deal id isn't a UUID, or when the migrations haven't been applied.
+    Returns ``{}`` when no STR_SEGMENTATION extraction exists. A read
+    failure propagates.
     """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return {}
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND UPPER(COALESCE(d.doc_type, '')) = 'STR_SEGMENTATION'
-                 ORDER BY er.created_at DESC
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.fields
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND UPPER(COALESCE(d.doc_type, '')) = 'STR_SEGMENTATION'
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     out: dict[str, Any] = {}
     for r in rows.fetchall():
@@ -6027,30 +6081,23 @@ async def _load_portfolio_library_overrides(
     Returns ``{}`` when no qualifying entries exist — the engine then
     falls through to per-deal PORTFOLIO_PNL docs, then CBRE, etc.
     """
-    try:
-        UUID(tenant_id)
-    except (TypeError, ValueError):
-        return {}
     min_vintage = _current_year_for_library() - _PORTFOLIO_LIBRARY_LOOKBACK_YEARS
-    try:
-        rows = await session.execute(
-            text(
-                """
-                SELECT chain_scales_covered, expense_ratios
-                  FROM portfolio_library
-                 WHERE tenant_id = :tenant
-                   AND is_active = :is_active
-                   AND vintage_year >= :min_vintage
-                """
-            ),
-            {
-                "tenant": tenant_id,
-                "is_active": True,
-                "min_vintage": min_vintage,
-            },
-        )
-    except Exception:
-        return {}
+    rows = await session.execute(
+        text(
+            """
+            SELECT chain_scales_covered, expense_ratios
+              FROM portfolio_library
+             WHERE tenant_id = :tenant
+               AND is_active = :is_active
+               AND vintage_year >= :min_vintage
+            """
+        ),
+        {
+            "tenant": tenant_id,
+            "is_active": True,
+            "min_vintage": min_vintage,
+        },
+    )
 
     normalized_subject = _normalize_chain_scale_for_library(subject_chain_scale)
     per_ratio_values: dict[str, list[float]] = {}
@@ -6137,29 +6184,22 @@ async def _load_per_deal_portfolio_pnl_overrides(
     cover the same ratio we keep the first non-None value (most-recent
     first via ``ORDER BY created_at DESC``).
     """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return {}
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT er.fields
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND UPPER(COALESCE(d.doc_type, '')) = 'PORTFOLIO_PNL'
-                 ORDER BY er.created_at DESC
-                """
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-    except Exception:
-        return {}
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.fields
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND UPPER(COALESCE(d.doc_type, '')) = 'PORTFOLIO_PNL'
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
 
     out: dict[str, float] = {}
     for r in rows.fetchall():
@@ -6199,10 +6239,6 @@ async def _str_documents(
     ``str_forecast_loader``, which owns the STR read. Returns ``[]`` on any
     failure so the STR path degrades exactly as it does today.
     """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return []
     as_of_expr = await _report_as_of_expr(session)
     try:
         rows = await session.execute(
@@ -6299,10 +6335,6 @@ async def _load_str_forecast_for_seed(
         )
         return seed, prov, reason
 
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
 
     if as_of is not None and docs and all(
         _is_after_as_of(d.get("report_as_of"), d.get("report_as_of_precision"), as_of) for d in docs
@@ -6431,7 +6463,19 @@ def _build_input_for(
     base: dict[str, Any],
     accumulated: dict[str, BaseModel],
 ) -> BaseModel:
-    """Materialize the typed Pydantic input for ``engine_name``."""
+    """Materialize the typed Pydantic input for ``engine_name``.
+
+    Raises :class:`MissingIdentityInputsError` (never a bare ``KeyError``)
+    when an identity input this engine reads is absent from ``base`` — the
+    persisting runners refuse before reaching here; the in-memory chains
+    (returns preview, pricing) let it propagate to the app-level handler,
+    which answers 422 with the missing fields.
+    """
+    needed = _ENGINE_DIRECT_IDENTITY_INPUTS.get(engine_name, frozenset()) & set(
+        missing_identity_inputs(base)
+    )
+    if needed:
+        raise MissingIdentityInputsError(tuple(sorted(needed)))
     deal_uuid = _coerce_uuid(deal_id)
 
     if engine_name == "revenue":
@@ -7039,15 +7083,11 @@ def _build_input_for(
 
 
 def _coerce_uuid(value: str) -> UUID:
-    """Best-effort UUID coercion — fall back to a deterministic UUID5
-    for legacy int-string ids (e.g. the Kimpton demo deal '7')."""
-    try:
-        return UUID(value)
-    except (ValueError, TypeError):
-        # Stable derivation so repeat calls produce the same UUID.
-        from uuid import NAMESPACE_URL, uuid5
-
-        return uuid5(NAMESPACE_URL, f"fondok://deal/{value}")
+    """The deal id as a UUID. A deal id IS a UUID: a non-UUID string is a
+    caller bug and raises ``ValueError`` (the API routes 404 unknown ids
+    before any runner is reached). The former uuid5 fallback for demo slugs
+    is gone with the demo fork (2026-10-30)."""
+    return UUID(str(value))
 
 
 # ──────────────────────────── Persistence ─────────────────────────────
@@ -7146,8 +7186,10 @@ async def _persist_failed(
     *,
     row_id: str,
     tenant_id: str,
-    error: str,
+    failure: EngineFailure,
 ) -> None:
+    """Mark the row failed with the typed failure (``failure`` JSON) and its
+    message (``error`` text — the column older readers print)."""
     await session.execute(
         # tenant_id predicate keeps tenant_middleware / Sentry quiet — see
         # apps/worker/app/tenant_middleware.py.
@@ -7156,14 +7198,100 @@ async def _persist_failed(
             UPDATE engine_outputs
                SET status = 'failed',
                    error = :error,
+                   failure = :failure,
                    completed_at = :ts
              WHERE id = :id
                AND tenant_id = :tenant
             """
         ),
-        {"id": row_id, "tenant": str(tenant_id), "error": error, "ts": _now()},
+        {
+            "id": row_id,
+            "tenant": str(tenant_id),
+            "error": failure.message,
+            "failure": _json_dumps(failure.as_dict()),
+            "ts": _now(),
+        },
     )
     await session.commit()
+
+
+async def _persist_failure_row(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    failure: EngineFailure,
+) -> dict[str, Any]:
+    """Insert + fail one engine row in a single step and return the result
+    envelope (``run_single_engine``'s failed shape). Used for the refusals
+    that never reach an engine: missing identity inputs, a loader error, an
+    upstream skip."""
+    row_id = await _persist_status(
+        session,
+        deal_id=str(_coerce_uuid(deal_id)),
+        tenant_id=tenant_id,
+        engine_name=failure.engine,
+        run_id=run_id,
+        inputs=None,
+        started_at=_now(),
+    )
+    await _persist_failed(session, row_id=row_id, tenant_id=tenant_id, failure=failure)
+    return _failed_result(failure, runtime_ms=0)
+
+
+def _failed_result(failure: EngineFailure, *, runtime_ms: int) -> dict[str, Any]:
+    """The API-facing envelope for a failed engine: ``error`` keeps the
+    message (older readers), ``failure`` carries the typed record."""
+    return {
+        "engine": failure.engine,
+        "status": "failed",
+        "error": failure.message,
+        "failure": failure.as_dict(),
+        "runtime_ms": runtime_ms,
+    }
+
+
+def _load_error_failure(engine_name: str, exc: BaseException) -> EngineFailure:
+    """The user-facing ``load_error`` record. Generic text plus the exception
+    TYPE only: ``str(exc)`` can carry a connection string or SQL and goes to
+    the logger / ``report_alert`` (``_report_load_error``), never to the API."""
+    return EngineFailure(
+        engine=engine_name,
+        reason=ReasonCode.LOAD_ERROR,
+        message=(
+            f"The model did not run: reading the deal's data failed "
+            f"({type(exc).__name__}). The failure has been reported; "
+            f"run the model again once it is resolved."
+        ),
+        exception_type=type(exc).__name__,
+    )
+
+
+def _report_load_error(
+    exc: BaseException, *, deal_id: str, tenant_id: str, run_id: str | None
+) -> None:
+    """A4 / B6 / B7 — a loader failure is an infrastructure event: log it and
+    page at error severity. ``report_alert`` never raises."""
+    # The full exception text is for operators only (log + alert); the
+    # persisted / API-facing message carries the type name alone.
+    logger.exception(
+        "engine inputs: loader failed deal=%s run=%s — run marked load_error: %s",
+        deal_id, run_id, exc,
+    )
+    report_alert(
+        severity="error",
+        title="Engine run failure: could not load deal inputs",
+        deal_id=str(deal_id),
+        tenant_id=str(tenant_id),
+        stage="engine.load_inputs",
+        exc=exc,
+        extra={
+            "run_id": run_id,
+            "exception_type": type(exc).__name__,
+            "exception_text": str(exc),
+        },
+    )
 
 
 # ────────────────────────────── Runners ───────────────────────────────
@@ -7220,15 +7348,29 @@ async def run_single_engine(
     accumulated: dict[str, BaseModel] | None = None,
     base_inputs: dict[str, Any] | None = None,
     scenario_id: str | None = None,
+    assumptions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run a single engine and persist the output.
 
-    Returns a serializable dict suitable for the API response.
+    Returns a serializable dict suitable for the API response: on success
+    ``{engine, status: "complete", outputs, summary, runtime_ms}``; on failure
+    ``{engine, status: "failed", error, failure, runtime_ms}`` where
+    ``failure`` is the :class:`EngineFailure` record (also persisted).
+
+    Refusals that never reach the engine, in order:
+
+    * the deal's inputs could not be read → ``load_error`` (+ alert);
+    * an identity input the engine needs is missing →
+      ``missing_identity_inputs`` (the dependency walk is not attempted —
+      every upstream engine needs the same inputs or fewer).
 
     Wave 3 W3.2: ``scenario_id`` (when set) layers a named scenario's
     overrides on top of the deal's persisted ``field_overrides`` before
     the engine input is built. Without ``scenario_id`` the path is
     unchanged.
+
+    ``assumptions`` — the explicit-assumption seam (see
+    :func:`_load_engine_inputs`); fixture / golden runs only.
     """
     if engine_name not in ENGINE_REGISTRY:
         raise ValueError(
@@ -7238,10 +7380,33 @@ async def run_single_engine(
 
     run_id = run_id or str(uuid4())
     accumulated = accumulated if accumulated is not None else {}
-    base_inputs = base_inputs or await _load_engine_inputs(
-        session, deal_id, overrides, scenario_id=scenario_id,
-        tenant_id=tenant_id,
-    )
+    if base_inputs is None:
+        try:
+            base_inputs = await _load_engine_inputs(
+                session, deal_id, overrides, scenario_id=scenario_id,
+                tenant_id=tenant_id, assumptions=assumptions,
+            )
+        except Exception as exc:  # noqa: BLE001 — recorded as the typed load_error
+            # On Postgres the failed statement aborted the transaction; the
+            # failure row below cannot be written until it is rolled back.
+            await session.rollback()
+            _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)
+            return await _persist_failure_row(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                failure=_load_error_failure(engine_name, exc),
+            )
+
+    needed = identity_inputs_needed(engine_name) & set(missing_identity_inputs(base_inputs))
+    if needed:
+        return await _persist_failure_row(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            failure=EngineFailure(
+                engine=engine_name,
+                reason=ReasonCode.MISSING_IDENTITY_INPUTS,
+                message=_missing_identity_message(needed),
+                missing=sorted(needed),
+            ),
+        )
 
     # Some engines need upstream outputs. When called in single-engine
     # mode we transparently run prerequisites first so the user can hit
@@ -7287,34 +7452,30 @@ async def run_single_engine(
         logger.exception(
             "engine %s failed deal=%s runtime=%dms", engine_name, deal_id, runtime_ms
         )
-        try:
-            from ..alerting import report_alert
-
-            report_alert(
-                severity="error",
-                title=f"Engine run failure: {engine_name}",
-                deal_id=str(deal_id),
-                tenant_id=tenant_id,
-                stage=f"engine.{engine_name}",
-                exc=exc,
-                extra={"runtime_ms": runtime_ms, "run_id": run_id},
-            )
-        except Exception:
-            pass
+        # ``report_alert`` never raises (alerting is best-effort by contract).
+        report_alert(
+            severity="error",
+            title=f"Engine run failure: {engine_name}",
+            deal_id=str(deal_id),
+            tenant_id=tenant_id,
+            stage=f"engine.{engine_name}",
+            exc=exc,
+            extra={"runtime_ms": runtime_ms, "run_id": run_id},
+        )
         # E-023 — a pydantic ValidationError lands as a sentence the analyst
         # can act on (which input, which year, what range, what did not run,
-        # assumptions kept) with the raw text after "Technical detail:".
-        # Every other exception is stored exactly as before.
-        error_text = _engine_error_text(engine_name, exc)
-        await _persist_failed(
-            session, row_id=row_id, tenant_id=tenant_id, error=error_text
+        # assumptions kept); the raw text goes to the log and alert only.
+        # Every other exception is stored as its type plus a generic sentence.
+        failure = EngineFailure(
+            engine=engine_name,
+            reason=ReasonCode.ENGINE_ERROR,
+            message=_engine_error_text(engine_name, exc),
+            exception_type=type(exc).__name__,
         )
-        return {
-            "engine": engine_name,
-            "status": "failed",
-            "error": error_text,
-            "runtime_ms": runtime_ms,
-        }
+        await _persist_failed(
+            session, row_id=row_id, tenant_id=tenant_id, failure=failure
+        )
+        return _failed_result(failure, runtime_ms=runtime_ms)
 
     runtime_ms = int((time.monotonic() - t0) * 1000)
     accumulated[engine_name] = output
@@ -7344,58 +7505,105 @@ async def run_all_engines(
     overrides: dict[str, Any] | None = None,
     on_complete: Callable[[str, dict[str, Any]], None] | None = None,
     scenario_id: str | None = None,
+    assumptions: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Run the full 8-engine chain; persist each output as it lands.
+    """Run the full engine chain; persist each output as it lands.
 
     Returns a dict keyed by engine name with the per-engine result
-    dicts (matching ``run_single_engine``'s return shape).
+    dicts (matching ``run_single_engine``'s return shape). Every failed
+    entry carries the typed ``failure`` (:class:`EngineFailure`);
+    :func:`failures_of` collects them for the API's ``failures`` field.
 
-    Failure policy: when an engine fails we mark its row failed AND
-    skip downstream engines that need its output (their rows land with
-    ``status='failed'`` and a ``skipped: <upstream>`` error). Engines
-    independent of the failure keep running so the user sees partial
-    progress instead of a blank page.
+    Failure policy, in order:
+
+    * the deal's inputs could not be read → EVERY engine lands
+      ``load_error`` (nothing can run without a base), ``report_alert``
+      fires once at error severity, and no default is persisted as the
+      deal's own figure;
+    * an identity input is missing → each engine that needs it (directly
+      or through an upstream engine, :func:`identity_inputs_needed`) lands
+      ``missing_identity_inputs`` naming the missing fields; engines that
+      do not need it still run;
+    * an engine fails → its row lands ``engine_error`` and the engines that
+      need its output land ``engine_skipped``; engines independent of the
+      failure keep running so the user sees partial progress.
 
     Wave 3 W3.2: ``scenario_id`` (when set) layers the named scenario's
     overrides on top of the deal's persisted ``field_overrides`` so the
     same run_id chain reflects the scenario-specific assumptions. The
     base scenario carries an empty override list — a run against it is
     byte-identical to a run without ``scenario_id``.
+
+    ``assumptions`` — the explicit-assumption seam: the complete assumption
+    set to run on, with NOTHING read from the deal (see
+    :func:`_load_engine_inputs`). This is how the Kimpton golden fixture
+    (``tests/fixtures/kimpton_seed.py``) is run by
+    ``tests/test_engine_runner.py::test_run_all_engines_kimpton`` and
+    ``scripts/compare_golden_baseline.py``; production callers never pass it.
     """
-    base_inputs = await _load_engine_inputs(
-        session, deal_id, overrides, scenario_id=scenario_id,
-        tenant_id=tenant_id,
-    )
-    accumulated: dict[str, BaseModel] = {}
     results: dict[str, dict[str, Any]] = {}
 
+    def _record(result: dict[str, Any]) -> None:
+        results[result["engine"]] = result
+        if on_complete:
+            on_complete(result["engine"], result)
+
+    try:
+        base_inputs = await _load_engine_inputs(
+            session, deal_id, overrides, scenario_id=scenario_id,
+            tenant_id=tenant_id, assumptions=assumptions,
+        )
+    except Exception as exc:  # noqa: BLE001 — recorded as the typed load_error
+        # On Postgres the failed statement aborted the transaction; the failure
+        # rows below cannot be written until it is rolled back (without this the
+        # INSERTs raise InFailedSQLTransactionError, the background task logs
+        # it, and the run ends with zero rows — the silent failure forbidden).
+        await session.rollback()
+        _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)
+        for name in ENGINE_NAMES:
+            _record(
+                await _persist_failure_row(
+                    session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                    failure=_load_error_failure(name, exc),
+                )
+            )
+        return results
+
+    missing_identity = set(missing_identity_inputs(base_inputs))
+    accumulated: dict[str, BaseModel] = {}
+
     for name in ENGINE_NAMES:
+        needed = identity_inputs_needed(name) & missing_identity
+        if needed:
+            _record(
+                await _persist_failure_row(
+                    session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                    failure=EngineFailure(
+                        engine=name,
+                        reason=ReasonCode.MISSING_IDENTITY_INPUTS,
+                        message=_missing_identity_message(needed),
+                        missing=sorted(needed),
+                    ),
+                )
+            )
+            continue
+
         deps = ENGINE_DEPS[name]
         missing = [d for d in deps if d not in accumulated]
         if missing:
             # Upstream failed — record a skipped row and move on.
-            started_at = _now()
-            row_id = await _persist_status(
-                session,
-                deal_id=str(_coerce_uuid(deal_id)),
-                tenant_id=tenant_id,
-                engine_name=name,
-                run_id=run_id,
-                inputs=None,
-                started_at=started_at,
+            _record(
+                await _persist_failure_row(
+                    session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                    failure=EngineFailure(
+                        engine=name,
+                        reason=ReasonCode.ENGINE_SKIPPED,
+                        message=(
+                            f"skipped: upstream {', '.join(missing)} did not complete"
+                        ),
+                    ),
+                )
             )
-            err = f"skipped: upstream {', '.join(missing)} did not complete"
-            await _persist_failed(
-                session, row_id=row_id, tenant_id=tenant_id, error=err
-            )
-            results[name] = {
-                "engine": name,
-                "status": "failed",
-                "error": err,
-                "runtime_ms": 0,
-            }
-            if on_complete:
-                on_complete(name, results[name])
             continue
 
         result = await run_single_engine(
@@ -7409,9 +7617,7 @@ async def run_all_engines(
             base_inputs=base_inputs,
             scenario_id=scenario_id,
         )
-        results[name] = result
-        if on_complete:
-            on_complete(name, result)
+        _record(result)
 
     # Phase 2.1 — persist this run's value lineage. Best-effort by design:
     # a lineage failure must never fail a model run, and the module is
@@ -7519,8 +7725,22 @@ async def run_returns_preview(
     :func:`_load_engine_inputs` has resolved it. Only the recognized
     :data:`RETURNS_PREVIEW_KEYS` are applied; any other keys in ``overrides``
     are ignored so a sandbox request can't reach unrelated engine inputs.
+
+    Raises :class:`MissingIdentityInputsError` when the deal lacks an
+    identity input, and :class:`EngineInputsLoadError` (carrying the typed
+    ``load_error`` :class:`EngineFailure`, after ``report_alert``) when the
+    deal's data could not be read — nothing is persisted here, so there is
+    no row to mark failed; ``app.main`` turns both into the client answer.
     """
-    base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    try:
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    except Exception as exc:  # surfaced as the typed load_error
+        await session.rollback()
+        _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=None)
+        raise EngineInputsLoadError(_load_error_failure("returns", exc)) from exc
+    missing = missing_identity_inputs(base)
+    if missing:
+        raise MissingIdentityInputsError(missing)
     # Did the sandbox actually MOVE the LTV lever? The Returns tab posts all five
     # keys on every drag, so "ltv is present" is not the question — only a value
     # that differs from the canonical one may release the pinned senior
@@ -7610,7 +7830,7 @@ async def get_latest_output(
                 # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT id, deal_id, tenant_id, run_id, engine_name,
-                       status, inputs, outputs, error,
+                       status, inputs, outputs, error, failure,
                        started_at, completed_at, runtime_ms
                   FROM engine_outputs
                  WHERE deal_id = :deal AND tenant_id = :tenant
@@ -7646,7 +7866,7 @@ async def get_latest_outputs(
             # tenant-scope predicate required by tenant_middleware
             """
             SELECT id, deal_id, tenant_id, run_id, engine_name,
-                   status, inputs, outputs, error,
+                   status, inputs, outputs, error, failure,
                    started_at, completed_at, runtime_ms
               FROM engine_outputs
              WHERE deal_id = :deal AND tenant_id = :tenant
@@ -7678,7 +7898,7 @@ async def get_run_status(
             # tenant-scope predicate required by tenant_middleware
             """
             SELECT id, deal_id, tenant_id, run_id, engine_name,
-                   status, inputs, outputs, error,
+                   status, inputs, outputs, error, failure,
                    started_at, completed_at, runtime_ms
               FROM engine_outputs
              WHERE deal_id = :deal AND run_id = :run AND tenant_id = :tenant
@@ -7867,10 +8087,25 @@ def _row_to_dict(mapping: Any) -> dict[str, Any]:
         "outputs": outputs,
         "summary": summary,
         "error": mapping["error"],
+        # Typed failure (``EngineFailure``) — None on complete / running rows
+        # and on failed rows written before the column existed.
+        "failure": _decode(mapping["failure"]),
         "started_at": _coerce_iso(mapping["started_at"]),
         "completed_at": _coerce_iso(mapping["completed_at"]),
         "runtime_ms": mapping["runtime_ms"],
     }
+
+
+def failures_of(rows: Any) -> list[dict[str, Any]]:
+    """The typed failures among engine-row envelopes (a ``{engine: row}`` map
+    or a list of rows), in the order given. The stable ``failures`` field
+    every run surface carries."""
+    items = rows.values() if isinstance(rows, Mapping) else rows
+    return [
+        dict(r["failure"])
+        for r in items
+        if isinstance(r, Mapping) and isinstance(r.get("failure"), Mapping)
+    ]
 
 
 def _summary_from_dict(engine_name: str, output: dict[str, Any]) -> str:
@@ -7933,6 +8168,13 @@ __all__ = [
     "ENGINE_DEPS",
     "ENGINE_NAMES",
     "ENGINE_REGISTRY",
+    "IDENTITY_INPUT_KEYS",
+    "EngineFailure",
+    "EngineInputsLoadError",
+    "MissingIdentityInputsError",
+    "failures_of",
+    "identity_inputs_needed",
+    "missing_identity_inputs",
     "get_canonical_run_id",
     "get_latest_output",
     "get_latest_outputs",

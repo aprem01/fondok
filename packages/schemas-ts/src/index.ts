@@ -304,6 +304,10 @@ export const ReasonCode = z.enum([
   "engine_skipped",
   "inconclusive",       // USALI scorer < 5 applicable rules
   "not_applicable",
+  // Wave 0 (2026-10-30) — engine-run failures.
+  "missing_identity_inputs", // deal has no keys / purchase price
+  "load_error",              // the loader could not read the deal's data
+  "engine_error",            // the engine raised (bad input, bug)
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -416,6 +420,24 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "This figure does not apply to the deal as configured (for example a tranche that is not funded).",
+  },
+  missing_identity_inputs: {
+    label: "Deal inputs missing",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The deal has no key count and/or no purchase price, so the engines that need them did not run. Enter them on the deal (or upload an OM that carries them) and run the model again; Fondok never substitutes a placeholder property.",
+  },
+  load_error: {
+    label: "Could not read deal data",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Reading the deal's data (its row, overrides or extracted documents) failed, so the model did not run rather than run on defaults. The failure has been reported; run the model again once it is resolved.",
+  },
+  engine_error: {
+    label: "Engine failed",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The engine that produces this figure raised an error (for example an input outside its accepted range), so there is no output to show.",
   },
 };
 

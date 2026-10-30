@@ -11,7 +11,7 @@ export interface ReasonMeta {
   explanation: string;
 }
 
-export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable";
+export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error";
 
 export const REASON_CODES: readonly ReasonCode[] = [
   "no_document",
@@ -29,7 +29,10 @@ export const REASON_CODES: readonly ReasonCode[] = [
   "stale_run",
   "engine_skipped",
   "inconclusive",
-  "not_applicable"
+  "not_applicable",
+  "missing_identity_inputs",
+  "load_error",
+  "engine_error"
 ];
 
 export const REASONS: Record<ReasonCode, ReasonMeta> = {
@@ -112,6 +115,21 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
     "label": "Not applicable",
     "ui": "—",
     "explanation": "This figure does not apply to the deal as configured (for example a tranche that is not funded)."
+  },
+  "missing_identity_inputs": {
+    "label": "Deal inputs missing",
+    "ui": "—",
+    "explanation": "The deal has no key count and/or no purchase price, so the engines that need them did not run. Enter them on the deal (or upload an OM that carries them) and run the model again; Fondok never substitutes a placeholder property."
+  },
+  "load_error": {
+    "label": "Could not read deal data",
+    "ui": "—",
+    "explanation": "Reading the deal's data (its row, overrides or extracted documents) failed, so the model did not run rather than run on defaults. The failure has been reported; run the model again once it is resolved."
+  },
+  "engine_error": {
+    "label": "Engine failed",
+    "ui": "—",
+    "explanation": "The engine that produces this figure raised an error (for example an input outside its accepted range), so there is no output to show."
   }
 };
 
