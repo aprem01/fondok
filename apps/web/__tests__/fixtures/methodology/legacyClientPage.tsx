@@ -239,6 +239,12 @@ export default function LegacyMethodologyClientPage() {
             down to the source rows. When no trace was recorded for a cell the drawer says so; Fondok never
             prints a formula it did not record.
           </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            <strong>One Excel export.</strong> The <em>Export</em> button on the Future P&amp;L and the
+            <em>Editable .xlsx</em> control download the same workbook, built on the server from the
+            published model. A figure the model has not published is a blank cell in it, exactly as it is a
+            dash on screen, never a zero. The Historical P&amp;L workbook is built the same way.
+          </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="benchmark-column-methodology">
             <strong>Benchmark column.</strong> When the deal carries a P&amp;L benchmark report (CBRE or
             HotStats), the Base-year column gains a Benchmark sub-column showing the comparable set&apos;s
