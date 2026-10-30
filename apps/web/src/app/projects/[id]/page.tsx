@@ -125,6 +125,14 @@ export default function ProjectDetailPage() {
     if (workerConnected && isMockId) router.replace('/projects');
   }, [workerConnected, isMockId, router]);
 
+  // FON-79 — a draft has no underwriting to show. It opens in the wizard
+  // (resume), never as a deal page with tabs; the gate below renders no
+  // chrome for it while the redirect happens.
+  const isDraft = deal?.lifecycle === 'draft';
+  useEffect(() => {
+    if (isDraft) router.replace(`/projects/new?draft=${encodeURIComponent(rawId)}`);
+  }, [isDraft, rawId, router]);
+
   // Header kebab actions — Mark IC Ready / Archive Project. Exports live ONLY
   // on the IC Memo tab's 'Export & share' card (authed api.exports.download;
   // Excel live, PDF/PPTX Coming Soon per FON-54). The old kebab Excel/PDF items
@@ -486,6 +494,30 @@ export default function ProjectDetailPage() {
           <p className="text-[12.5px] text-ink-700 mt-1">
             It may have been archived, or the link is out of date. Your deals are listed under Projects.
           </p>
+        </div>
+      </div>
+    );
+  }
+  if (isDraft) {
+    return (
+      <div className="px-8 pt-7 pb-8">
+        <Link
+          href="/projects"
+          className="inline-flex items-center gap-1 text-[12px] text-ink-500 hover:text-ink-900 mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded eyebrow normal-case tracking-wide"
+        >
+          <ArrowLeft size={13} aria-hidden="true" /> Back to Projects
+        </Link>
+        <div role="status" data-testid="deal-is-draft" className="rounded-md border border-border bg-white p-5">
+          <div className="text-[14px] font-semibold text-ink-900">This deal is still a draft</div>
+          <p className="text-[12.5px] text-ink-700 mt-1">
+            Its setup is not finished, so there are no model outputs to show. Opening the setup wizard…
+          </p>
+          <Link
+            href={`/projects/new?draft=${encodeURIComponent(rawId)}`}
+            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-brand-700 hover:text-brand-500 mt-3"
+          >
+            Resume setup
+          </Link>
         </div>
       </div>
     );

@@ -31,10 +31,14 @@ function buildStats(s: PipelineSummary | null): Array<{
   const dealCount = s?.deal_count ?? 0;
   const withTarget = s?.deals_with_target_irr ?? 0;
   const met = s?.deals_meeting_target_irr ?? 0;
+  // FON-79 — drafts are counted BESIDE the pipeline, never inside it; a
+  // worker that does not report the count prints nothing about drafts.
+  const draftCount = typeof s?.draft_count === 'number' ? s.draft_count : null;
+  const draftsSub = draftCount == null ? '' : ` · ${draftCount} ${draftCount === 1 ? 'draft' : 'drafts'}`;
   return [
     {
       label: 'Active Deals', value: String(dealCount),
-      sub: dealCount === 1 ? '1 in pipeline' : `${dealCount} in pipeline`, subTone: 'green',
+      sub: (dealCount === 1 ? '1 in pipeline' : `${dealCount} in pipeline`) + draftsSub, subTone: 'green',
       icon: FolderKanban, tone: 'default',
       tip: 'Hotel deals currently in your tenant that are not archived — the live pipeline the model is tracking.',
     },
@@ -232,7 +236,7 @@ export default function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <div className="text-[13.5px] font-medium text-ink-900 truncate">{d.name}</div>
-                      <StatusBadge value={d.status || 'Draft'} />
+                      {d.status && <StatusBadge value={d.status} />}
                     </div>
                     <div className="flex items-center gap-1 text-[12px] text-ink-500 mt-0.5">
                       <MapPin size={10} /> {d.city || '—'}{d.keys ? ` · ${d.keys} keys` : ''}

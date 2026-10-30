@@ -8,7 +8,7 @@ import {
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge } from '@/components/ui/Badge';
+import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { projectStatuses } from '@/lib/catalogs';
 import { displayConfidence } from '@/lib/project';
@@ -16,12 +16,49 @@ import { formatKeys } from '@/lib/formatKeys';
 import { cn, fmtDate, fmtCurrency } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, PipelineDealRow, api, userMessage } from '@/lib/api';
+import { staleDraftNote } from '@/lib/wizardDraft';
 import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
+
+/** FON-79 — the status filter's entry for lifecycle drafts (a draft has no
+ *  workflow status worth filtering on). */
+const DRAFTS_FILTER = 'Drafts';
+/** The status filter, with Drafts beside All. */
+const FILTER_OPTIONS: string[] = ['All Status', DRAFTS_FILTER, ...projectStatuses.filter((s) => s !== 'All Status')];
+
+/** Where a draft opens: back into the wizard, never the deal page. */
+const resumeHref = (id: string) => `/projects/new?draft=${encodeURIComponent(id)}`;
+
+// FON-79 — a draft's kebab: Resume / Discard draft. Not Archive and not
+// Delete Forever — those are for underwritings, and the worker's draft
+// route refuses an active deal anyway.
+const buildDraftMenu = (
+  id: string,
+  name: string,
+  toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
+  onDiscarded: () => void,
+) => {
+  const onDiscard = async () => {
+    const expected = (name || 'this draft').trim();
+    if (!window.confirm(`Discard the draft "${expected}"? Its uploaded documents are removed too.`)) return;
+    try {
+      await api.deals.discardDraft(id);
+      toast('Draft discarded', { type: 'success' });
+      onDiscarded();
+    } catch (err) {
+      // 409 documents_in_flight — the worker's own sentence names the count.
+      toast(`Couldn't discard — ${userMessage(err)}`, { type: 'error' });
+    }
+  };
+  return [
+    { label: 'Resume', onSelect: () => { window.location.href = resumeHref(id); } },
+    { label: 'Discard draft', onSelect: onDiscard, danger: true },
+  ];
+};
 
 // Per-row kebab actions — every row is a worker-backed deal (the list only
 // renders with a worker configured).
@@ -95,6 +132,11 @@ interface DisplayDeal {
   updatedAt: string;
   /** True only when the worker REPORTS zero documents — unknown is not zero. */
   noDocs: boolean;
+  /** FON-79 — true for the wizard's server-side draft: a DRAFT badge, no
+   *  return cells, Resume / Discard in the kebab, opens in the wizard. */
+  isDraft: boolean;
+  /** "Draft · untouched for N days" once a draft has sat ≥ 30 days; else null. */
+  staleNote: string | null;
 }
 
 /**
@@ -119,12 +161,21 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
     docs: d.document_count != null ? String(d.document_count) : '—',
     updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
     noDocs: d.document_count === 0,
+    isDraft: d.lifecycle === 'draft',
+    staleNote: d.lifecycle === 'draft' ? staleDraftNote(d.updated_at) : null,
   };
 }
 
 export default function ProjectsPage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState<string>('All Status');
+  // `/projects?filter=Drafts` (the wizard's "You have N drafts" chip) opens
+  // the list already narrowed. Read on mount so the server render and the
+  // first client render agree.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('filter');
+    if (wanted && FILTER_OPTIONS.includes(wanted)) setFilter(wanted);
+  }, []);
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const { toast } = useToast();
@@ -151,13 +202,24 @@ export default function ProjectsPage() {
     return () => ctrl.abort();
   }, [workerConfigured, deals.length]);
 
-  const display: DisplayDeal[] = useMemo(
-    () => deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id])),
-    [deals, pipelineRows],
-  );
+  // Drafts sort first within the worker's newest-first order (A.2).
+  const display: DisplayDeal[] = useMemo(() => {
+    const rows = deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id]));
+    return [...rows.filter((p) => p.isDraft), ...rows.filter((p) => !p.isDraft)];
+  }, [deals, pipelineRows]);
+  const draftCount = display.filter((p) => p.isDraft).length;
+  const activeCount = display.filter((p) => !p.isDraft && p.status !== 'Archived').length;
 
+  // A status filter applies to underwritings; a draft shows under All and
+  // under Drafts only — its workflow status is not a thing yet.
+  const matchesFilter = (p: DisplayDeal) =>
+    filter === 'All Status'
+      ? true
+      : filter === DRAFTS_FILTER
+        ? p.isDraft
+        : !p.isDraft && p.status === filter;
   const filtered = display.filter((p) =>
-    (filter === 'All Status' || p.status === filter) &&
+    matchesFilter(p) &&
     (!search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.city || '').toLowerCase().includes(search.toLowerCase()))
   );
 
@@ -165,7 +227,7 @@ export default function ProjectsPage() {
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
         title="Projects"
-        subtitle={`${display.length} total projects · ${display.filter((p) => p.status !== 'Archived').length} active`}
+        subtitle={`${display.length} total projects · ${activeCount} active · ${draftCount} ${draftCount === 1 ? 'draft' : 'drafts'}`}
         action={
           <Link href="/projects/new">
             <Button variant="primary"><Plus size={14} /> New Project</Button>
@@ -205,7 +267,7 @@ export default function ProjectsPage() {
           </button>
           {filterOpen && (
             <div className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
-              {projectStatuses.map(s => (
+              {FILTER_OPTIONS.map(s => (
                 <button key={s} onClick={() => { setFilter(s); setFilterOpen(false); }}
                   className="w-full px-3 py-2 text-[12.5px] hover:bg-ink-300/10 text-left">
                   {s === 'All Status' ? 'All' : s}
@@ -285,7 +347,7 @@ export default function ProjectsPage() {
       ) : view === 'grid' ? (
         <div className="grid grid-cols-3 gap-4">
           {filtered.map(p => (
-            <Link key={p.id} href={`/projects/${p.id}`}>
+            <Link key={p.id} href={p.isDraft ? resumeHref(p.id) : `/projects/${p.id}`} data-testid={p.isDraft ? 'draft-card' : undefined}>
               <Card className="p-5 hover:shadow-md transition-shadow cursor-pointer">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-start gap-3 flex-1">
@@ -303,11 +365,15 @@ export default function ProjectsPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 mb-4">
-                  {p.status && <StatusBadge value={p.status} />}
+                  {p.isDraft ? <DraftBadge /> : p.status && <StatusBadge value={p.status} />}
                   {p.dealStage && <StatusBadge value={p.dealStage} />}
                 </div>
 
-                {p.noDocs ? (
+                {p.isDraft ? (
+                  // A draft has no model outputs: no $/Key, IRR or confidence
+                  // cell — not even a dash, which would read as "pending".
+                  <DraftPanel staleNote={p.staleNote} />
+                ) : p.noDocs ? (
                   <>
                     <div className="bg-warn-50 border border-warn-500/30 rounded-md px-3 py-2 mb-3 flex items-center gap-2">
                       <AlertTriangle size={12} className="text-warn-700" />
@@ -357,6 +423,11 @@ export default function ProjectsPage() {
                   </div>
                   <span className="text-[11px] text-ink-500">{p.docs} docs</span>
                 </div>
+                {p.isDraft && (
+                  <div className="mt-3 flex justify-end" onClick={(e) => e.preventDefault()}>
+                    <KebabMenu items={buildDraftMenu(p.id, p.name, toast, refresh)} />
+                  </div>
+                )}
               </Card>
             </Link>
           ))}
@@ -390,7 +461,8 @@ export default function ProjectsPage() {
             <div className="w-7" aria-hidden="true" />
           </div>
           {filtered.map((p, i) => (
-            <Link key={p.id} href={`/projects/${p.id}`}
+            <Link key={p.id} href={p.isDraft ? resumeHref(p.id) : `/projects/${p.id}`}
+              data-testid={p.isDraft ? 'draft-row' : undefined}
               className={cn(
                 'flex items-center gap-3 px-5 py-3.5 hover:bg-ink-300/10 transition-colors',
                 i < filtered.length - 1 && 'border-b border-border'
@@ -401,32 +473,47 @@ export default function ProjectsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <div className="text-[13.5px] font-medium text-ink-900 truncate">{p.name}</div>
-                  {p.status && <StatusBadge value={p.status} />}
+                  {p.isDraft ? <DraftBadge /> : p.status && <StatusBadge value={p.status} />}
                 </div>
-                <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · <span className="tabular-nums">{formatKeys(p.keys)}</span> keys · {p.service}</div>
+                <div className="text-[12px] text-ink-500 mt-0.5">
+                  {p.city} · <span className="tabular-nums">{formatKeys(p.keys)}</span> keys · {p.service}
+                  {p.staleNote && <span className="text-warn-700"> · {p.staleNote}</span>}
+                </div>
               </div>
               <div className="w-20 flex justify-end">
                 {p.dealStage ? <StatusBadge value={p.dealStage} /> : <span className="text-[11px] text-ink-500">—</span>}
               </div>
-              <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
-              <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
-              <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}</div>
-              <div className="w-24">
-                {p.aiConfidence != null ? (
-                  <div className="flex items-center gap-1.5">
-                    <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                      <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
-                    </div>
-                    <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
+              {p.isDraft ? (
+                // No $/Key · NOI · IRR · AI Conf. for a draft — one span across
+                // the four return columns says why.
+                <div className="w-[21rem] text-right text-[11.5px] text-ink-500 pr-1">Setup not finished — no model outputs</div>
+              ) : (
+                <>
+                  <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
+                  <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
+                  <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}</div>
+                  <div className="w-24">
+                    {p.aiConfidence != null ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
+                          <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
+                        </div>
+                        <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-ink-500">—</span>
+                    )}
                   </div>
-                ) : (
-                  <span className="text-[11px] text-ink-500">—</span>
-                )}
-              </div>
+                </>
+              )}
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <KebabMenu items={buildProjectMenu(p.id, p.name, toast, refresh, isAdmin)} />
+              <KebabMenu
+                items={p.isDraft
+                  ? buildDraftMenu(p.id, p.name, toast, refresh)
+                  : buildProjectMenu(p.id, p.name, toast, refresh, isAdmin)}
+              />
             </Link>
           ))}
         </Card>
@@ -441,3 +528,27 @@ export default function ProjectsPage() {
   );
 }
 
+/** FON-79 — the badge that replaces the status badge on a draft. */
+function DraftBadge() {
+  return (
+    <span data-testid="deal-draft-badge">
+      <Badge tone="slate" dot uppercase>Draft</Badge>
+    </span>
+  );
+}
+
+/** The card body of a draft: what it is, where it opens, and — once it has
+ *  sat for 30 days — how long nobody has touched it. */
+function DraftPanel({ staleNote }: { staleNote: string | null }) {
+  return (
+    <div className="border border-dashed border-ink-300 rounded-md p-4 mb-3" data-testid="draft-panel">
+      <div className="text-[12px] font-medium text-ink-900">Setup not finished</div>
+      <div className="text-[11px] text-ink-500 leading-relaxed mt-0.5">
+        No model outputs until you finish setup. Open the card to resume where you left off.
+      </div>
+      {staleNote && (
+        <div className="text-[11px] text-warn-700 mt-2" data-testid="draft-stale-note">{staleNote}</div>
+      )}
+    </div>
+  );
+}

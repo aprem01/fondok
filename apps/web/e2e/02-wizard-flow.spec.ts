@@ -55,6 +55,24 @@ async function openFinancialsDropzone(page: import('@playwright/test').Page) {
 }
 
 test.describe('wizard end-to-end', () => {
+  // FON-79 — the wizard autosaves. In mock mode there is no worker, so the
+  // save is browser-local (the server-side draft needs a worker that can hold
+  // one — that path is the opt-in live-worker spec). Either way: fill the
+  // name, advance a step, reload → the fields and the step are back.
+  test('a reload keeps the fields and the step', async ({ page }) => {
+    await openDocumentsStep(page, 'Survives Reload');
+    // The debounced save has landed once the header says so.
+    await expect(page.getByTestId('draft-save-status')).toHaveText(/Saved/);
+
+    await page.reload();
+
+    await expect(page.getByTestId('wizard-documents-step')).toBeVisible();
+    await expect(page.getByTestId('draft-restored-banner')).toBeVisible();
+    await page.getByRole('button', { name: /^back$/i }).click();
+    await page.getByRole('button', { name: /^back$/i }).click();
+    await expect(page.getByPlaceholder(DEAL_NAME_PLACEHOLDER)).toHaveValue('Survives Reload');
+  });
+
   test('Next is gated until at least one financial is staged', async ({ page }) => {
     await openDocumentsStep(page, 'Gating Test Deal');
 

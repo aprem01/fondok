@@ -15,6 +15,9 @@ import { humanizeFieldName } from '@/lib/fieldLabels';
 
 const ACTION_LABEL: Record<string, string> = {
   'deal.created': 'Deal created',
+  'deal.draft_created': 'Deal draft started',
+  'deal.activated': 'Deal setup finished',
+  'deal.draft_discarded': 'Deal draft discarded',
   'deal.updated': 'Deal details updated',
   'deal.archived': 'Deal archived',
   'deal.deleted': 'Deal deleted',

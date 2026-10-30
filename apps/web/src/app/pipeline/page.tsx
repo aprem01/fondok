@@ -170,7 +170,12 @@ export default function PipelinePage() {
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
         eyebrow={
-          summary ? `${summary.deal_count} active deals` : 'Loading pipeline'
+          summary
+            ? `${summary.deal_count} active deals${
+              typeof summary.draft_count === 'number'
+                ? ` · ${summary.draft_count} ${summary.draft_count === 1 ? 'draft' : 'drafts'}`
+                : ''}`
+            : 'Loading pipeline'
         }
         title="Pipeline"
         subtitle="Every active deal at a glance — sortable, filterable, with portfolio-level returns at the top."
