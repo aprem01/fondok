@@ -183,6 +183,11 @@ import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 
 beforeEach(() => {
   cleanup();
+  // Routing state is module-level: a routing test that leaves ?sub=index-analysis
+  // behind would open the next test (in shuffled order) on the wrong sub-tab.
+  nav.params = new URLSearchParams('');
+  nav.push.mockClear();
+  nav.replace.mockClear();
   mockOverrides = {};
   mockSources = {};
   mockReasons = {};
