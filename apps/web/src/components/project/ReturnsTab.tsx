@@ -707,15 +707,18 @@ function ReturnsSummary({
   const avgCoc = sb(preview?.avg_coc, head.avgCoc ?? undefined);
   const yearOneCoc = sb(preview?.year_one_coc, head.yearOneCoc ?? undefined);
   const holdYears = sb(preview?.hold_years, head.holdYears ?? undefined);
-  // The hero's period: the selected exit. A mid-year disposition names its
-  // month; a year-end exit reads as the hold it closes. Canonical run only —
-  // the sandbox may have moved the hold.
+  // The hero's period: the selected exit, from the reader. A mid-year
+  // disposition names its month; a year-end exit before the hold's last year
+  // names that year; only an exit at the hold reads "over the N-year hold".
+  // Canonical run only — the sandbox may have moved the hold.
   const irrPeriodSub =
     !sandboxOn && head.selectedExitMonth != null && head.selectedExitYear == null
       ? `Equity IRR to the month-${head.selectedExitMonth} disposition`
-      : holdYears != null
-        ? `Equity IRR over the ${holdYears}-year hold`
-        : 'Equity IRR after debt service';
+      : !sandboxOn && head.selectedExitYear != null && head.selectedExitYear !== holdYears
+        ? `Equity IRR to the Year ${head.selectedExitYear} exit (month ${head.selectedExitMonth})`
+        : holdYears != null
+          ? `Equity IRR over the ${holdYears}-year hold`
+          : 'Equity IRR after debt service';
 
   // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
   // basis. Stabilized NOI is THE stabilized year's NOI before the FF&E reserve,

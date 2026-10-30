@@ -20,7 +20,7 @@
  */
 
 import type { ExitNoiBasis, ReturnsExitScheduleRow } from '@/lib/api';
-import { REASONS, type ReasonCode } from '@/lib/ontology/reasons.generated';
+import { REASONS } from '@/lib/ontology/reasons.generated';
 
 const isFiniteNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isInt = (v: unknown): v is number => isFiniteNum(v) && Number.isInteger(v);
@@ -87,7 +87,7 @@ export interface HeadlineReturns {
   exitCapRate: number | null;
   cashFlows: number[] | null;
   /** The schedule, validated (see `exitSchedule`). Empty when absent. */
-  exitSchedule: ReturnsExitScheduleRow[];
+  exitSchedule: ExitScheduleRow[];
   /** True when the run carries an `exit_schedule` field at all. */
   hasExitSchedule: boolean;
 }
@@ -136,6 +136,17 @@ export function headlineReturns(returnsOutputs: unknown): HeadlineReturns {
 // Exit schedule
 // ────────────────────────────────────────────────────────────────────
 
+/**
+ * One schedule row plus its position in the worker's `exit_schedule` array.
+ * The position — not the position after validation — is `i` in the provenance
+ * key `exit_schedule[i].levered_irr`, so a trace always names the row the
+ * worker traced, even if a malformed entry were ever dropped before it.
+ */
+export interface ExitScheduleRow extends ReturnsExitScheduleRow {
+  /** 0-based index in the worker's array. */
+  index: number;
+}
+
 /** True when `v` is shaped like one `ExitYearReturn` row. */
 function isScheduleRow(v: unknown): v is ReturnsExitScheduleRow {
   if (!v || typeof v !== 'object') return false;
@@ -148,20 +159,24 @@ function isScheduleRow(v: unknown): v is ReturnsExitScheduleRow {
 
 /**
  * The typed exit schedule off the returns engine's `outputs`, in the order
- * the worker emitted it — the position of a row is `i` in the provenance key
- * `exit_schedule[i].levered_irr`. Non-row entries (never expected) are
- * dropped. Empty when the run carries no schedule.
+ * the worker emitted it, each row carrying its original `index` (the `i` in
+ * the provenance key `exit_schedule[i].levered_irr`). Non-row entries (never
+ * expected) are dropped without shifting the indexes that follow. Empty when
+ * the run carries no schedule.
  */
-export function exitSchedule(returnsOutputs: unknown): ReturnsExitScheduleRow[] {
+export function exitSchedule(returnsOutputs: unknown): ExitScheduleRow[] {
   if (!returnsOutputs || typeof returnsOutputs !== 'object') return [];
-  const raw = (returnsOutputs as Record<string, unknown>).exit_schedule;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isScheduleRow);
+  return exitScheduleRows((returnsOutputs as Record<string, unknown>).exit_schedule);
 }
 
-/** The reader for a preview response or any `{ exit_schedule }` carrier. */
-export function exitScheduleRows(rows: unknown): ReturnsExitScheduleRow[] {
-  return Array.isArray(rows) ? rows.filter(isScheduleRow) : [];
+/** The reader for a preview response or any raw `exit_schedule` array. */
+export function exitScheduleRows(rows: unknown): ExitScheduleRow[] {
+  if (!Array.isArray(rows)) return [];
+  const out: ExitScheduleRow[] = [];
+  rows.forEach((r, index) => {
+    if (isScheduleRow(r)) out.push({ ...r, index });
+  });
+  return out;
 }
 
 /** "Year 3" for a year-end row; "Month 52" for an off-cycle selected row. */
@@ -205,11 +220,6 @@ export function exitRowReasonTitle(row: Pick<ReturnsExitScheduleRow, 'status' | 
   if (detail) return `${label} — ${detail}`;
   const meta = row.reason ? (REASONS as Record<string, { explanation: string } | undefined>)[row.reason] : undefined;
   return meta ? `${label} — ${meta.explanation}` : label;
-}
-
-/** Narrow a row's reason to a known code (for consumers that need one). */
-export function knownReasonCode(code: string | null | undefined): ReasonCode | null {
-  return code != null && code in REASONS ? (code as ReasonCode) : null;
 }
 
 export const EXIT_SCHEDULE_TITLE = 'Returns by exit year';

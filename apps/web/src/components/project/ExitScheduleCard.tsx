@@ -19,6 +19,7 @@ import type { ReactNode } from 'react';
 import { fmtPct } from '@/lib/format';
 import type { ReturnsExitScheduleRow } from '@/lib/api';
 import {
+  type ExitScheduleRow,
   EXIT_SCHEDULE_MISSING,
   EXIT_SCHEDULE_PEAK_BADGE,
   EXIT_SCHEDULE_SANDBOX_MISSING,
@@ -120,7 +121,7 @@ export function ExitScheduleTable({
   compact = false,
   traced = true,
 }: {
-  rows: ReturnsExitScheduleRow[];
+  rows: ExitScheduleRow[];
   /** `revenue.projection_calendar_years` — set only with a close date. */
   calendarYears?: readonly number[] | null;
   /** IC memo: fewer columns, tighter type. */
@@ -165,7 +166,7 @@ export function ExitScheduleTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => {
+          {rows.map((row) => {
             const label = exitRowLabel(row);
             const cal = exitRowCalendarYear(row, calendarYears);
             const unavailable = row.status === 'not_available';
@@ -176,6 +177,7 @@ export function ExitScheduleTable({
                 key={`${row.exit_month}-${row.exit_year ?? 'off'}`}
                 data-exit-row={label}
                 data-exit-month={row.exit_month}
+                data-exit-index={row.index}
                 data-selected={row.is_selected ? 'true' : undefined}
                 data-peak={row.is_peak_levered ? 'true' : undefined}
                 data-reason={unavailable ? row.reason ?? 'not_available' : undefined}
@@ -227,7 +229,7 @@ export function ExitScheduleTable({
                   const value = <span data-unavailable={isDash ? 'true' : undefined}>{cell.text}</span>;
                   const body =
                     traced && !isDash && c.field && TRACED_FIELDS.has(c.field) ? (
-                      <Traced engine="returns" path={`exit_schedule[${i}].${c.field}`}>{value}</Traced>
+                      <Traced engine="returns" path={`exit_schedule[${row.index}].${c.field}`}>{value}</Traced>
                     ) : (
                       value
                     );
@@ -262,7 +264,7 @@ export function ExitScheduleCard({
   calendarYears,
   sandbox = false,
 }: {
-  rows: ReturnsExitScheduleRow[] | undefined;
+  rows: ExitScheduleRow[] | undefined;
   calendarYears?: readonly number[] | null;
   sandbox?: boolean;
 }) {

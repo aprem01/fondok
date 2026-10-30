@@ -303,6 +303,15 @@ describe('lib/engines/returns — the one reader', () => {
     expect(exitSchedule({ exit_schedule: [{ exit_month: 'x' }, null, schedule()[4]] })).toHaveLength(1);
   });
 
+  it('a malformed row in the middle is dropped WITHOUT shifting the provenance index of the rows after it', () => {
+    const [y1, , y3, y4, y5] = schedule();
+    const rows = exitSchedule({ exit_schedule: [y1, { status: 'computed' }, y3, y4, y5] });
+    expect(rows.map((r) => r.exit_year)).toEqual([1, 3, 4, 5]);
+    // `index` is the worker's array position — the `i` in exit_schedule[i].levered_irr.
+    expect(rows.map((r) => r.index)).toEqual([0, 2, 3, 4]);
+    expect(exitSchedule(returnsOutputs()).map((r) => r.index)).toEqual([0, 1, 2, 3, 4]);
+  });
+
   it('IRR sentinels are never a rate', () => {
     expect(isIrrSentinel(10.0)).toBe(true);
     expect(isIrrSentinel(-0.9999)).toBe(true);
@@ -375,6 +384,31 @@ describe('Returns — the exit schedule card', () => {
     expect(within(selected).getByText('16.10%')).toBeInTheDocument();
     expect(within(selected).getByText('$21.00M')).toBeInTheDocument();
     expect(within(selected).getByText('Forward 12-month NOI (Year 6)')).toBeInTheDocument();
+  });
+
+  it('rows keep the worker\'s array position for the trace key even when an entry before them is malformed', () => {
+    const [y1, y2, y3, y4, y5] = schedule();
+    outputsRef.value = fullRun({ exit_schedule: [y1, y2, 'garbage', y3, y4, y5] });
+    render(<ReturnsTab />);
+    expect(scheduleRows().map((r) => r.getAttribute('data-exit-index'))).toEqual(['0', '1', '3', '4', '5']);
+    expect(rowByLabel('Year 5')).toHaveAttribute('data-exit-index', '5');
+  });
+
+  it('the hero names the selected exit: the hold, a Year-4 exit, or a month-52 disposition', () => {
+    render(<ReturnsTab />);
+    expect(screen.getByText('Equity IRR over the 5-year hold')).toBeInTheDocument();
+    cleanup();
+    // On-cycle but before the hold's last year (exit_month_override = 48, hold 5).
+    const rows = schedule().map((r) => ({ ...r, is_selected: r.exit_year === 4 }));
+    outputsRef.value = fullRun({ exit_schedule: rows, selected_exit_month: 48, selected_exit_year: 4, levered_irr: 0.248 });
+    render(<ReturnsTab />);
+    expect(screen.getByText('Equity IRR to the Year 4 exit (month 48)')).toBeInTheDocument();
+    expect(screen.queryByText('Equity IRR over the 5-year hold')).toBeNull();
+    expect(exitYearRow().textContent).toContain('Year 4 · month 48');
+    cleanup();
+    outputsRef.value = fullRun({ selected_exit_month: 52, selected_exit_year: null });
+    render(<ReturnsTab />);
+    expect(screen.getByText('Equity IRR to the month-52 disposition')).toBeInTheDocument();
   });
 
   it('the peak row is marked and carries the calendar year from the projection calendar', () => {
