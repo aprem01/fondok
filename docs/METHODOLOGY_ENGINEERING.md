@@ -52,7 +52,8 @@ Key fields named on the old page: `revenue.years[i].adr`,
 `doc_subtype ∈ {pip, historic, future}`, `noi_override_by_year`,
 `field_overrides.worksheet_layout`, `target_irr`, `target_moic`,
 `target_stabilized_yoc`, `return_profile`, `reopening_date`,
-`default_year_3_reopening`, `str_market_id`, `purchase_price`,
+`default_year_3_reopening`, `str_market_id`, `submarket_id`, `market_source`,
+`purchase_price`,
 `property_overview.name`, `index_mpi_target_by_year`,
 `index_ari_target_by_year`, `revenue.index_drivers_by_year`,
 `projection_calendar_years`, `returns.inputs.assumptions`,
@@ -94,3 +95,18 @@ Override rule: `422 override_note_required`.
   removed October 2026.
 - Positioning source columns added 17 October 2026; earlier deals may carry a
   wizard-filled tier labelled as the analyst's.
+- `deals.str_market_id` holds a Fondok taxonomy key, not a vendor id
+  (30 October 2026, FON-96). The CoStar geography export has no CoStar ids,
+  so the loader mints `costar:<slug(market)>` and
+  `costar:<slug(market)>/<slug(submarket)>` and stores them in
+  `str_market_id` / the new `submarket_id`. The column name predates the
+  CoStar list and was kept rather than renamed (a rename is a wider
+  migration); the UI labels say "CoStar market" / "CoStar submarket of
+  <market>" and never print the key. `str_markets.market_type` is `metro`
+  ("City - ST USA") or `regional`; `reference_datasets` records the loaded
+  version, SHA-256, counts and the licence flag. Serving to external
+  workspaces needs that flag AND `MARKET_TAXONOMY_SERVE_EXTERNAL`.
+  `deals.market_source` ∈ {`analyst`, `om_exact_match`} mirrors
+  `positioning_source`; the OM fills an empty market only on an exact,
+  unique match against a metro market name (regional markets are never
+  matched from a city).

@@ -1,16 +1,17 @@
 /**
- * Sam #6 — Market / Submarket in the New Deal wizard.
+ * Sam #6 / FON-96 — Market / Submarket in the New Deal wizard.
  *
  *   - City, Market and Submarket are three separate, clearly labelled fields.
- *   - STR's market list NOT loaded (the state until STR's file arrives):
- *     Market suggests the name-only STR market names, labelled as having no
- *     STR id; Submarket suggests nothing; a typed market is sent with
- *     `str_market_id: null`.
- *   - STR's list loaded: Market suggests STR's markets, a pick resolves to
- *     STR's spelling + id, Submarket suggests only that market's submarkets,
- *     and the id is sent on create.
+ *   - The CoStar list NOT available (withheld by licensing, or not loaded):
+ *     Market suggests the public name-only STR market names, labelled so;
+ *     Submarket suggests nothing; a typed market / submarket is sent with
+ *     null keys.
+ *   - The list available: Market suggests CoStar's markets, a pick resolves
+ *     to the list's spelling + key (hidden — the hint says "CoStar market"),
+ *     Submarket suggests only that market's submarkets ("submarket · market"
+ *     until a market is picked), and both keys are sent on create.
  *
- * Every STR id / name here is a synthetic TEST value — none is real.
+ * Every key / name here is a synthetic TEST value (fictional markets).
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
@@ -26,16 +27,22 @@ vi.mock('next/link', () => ({
 type Row = {
   str_market_id: string; market_name: string; submarket_id: string | null;
   submarket_name: string | null; state: string | null; country: string | null;
+  market_type?: string | null;
 };
 const ref = vi.hoisted(() => ({ rows: [] as Row[] }));
 const worker = vi.hoisted(() => ({
   create: vi.fn(async (body: { name: string }) => ({ id: 'deal-new-1', name: body.name })),
   upload: vi.fn(async () => []),
   list: vi.fn(async () => []),
-  strMarkets: vi.fn(async (params: { q?: string; str_market_id?: string; limit?: number } = {}) => {
+  strMarkets: vi.fn(async (params: {
+    q?: string; str_market_id?: string; market_key?: string; kind?: 'market' | 'submarket'; limit?: number;
+  } = {}) => {
     const q = (params.q ?? '').trim().toLowerCase();
+    const key = params.market_key ?? params.str_market_id;
     return ref.rows
-      .filter((r) => !params.str_market_id || r.str_market_id === params.str_market_id)
+      .filter((r) => !key || r.str_market_id === key)
+      .filter((r) => params.kind !== 'market' || r.submarket_id === null)
+      .filter((r) => params.kind !== 'submarket' || r.submarket_id !== null)
       .filter((r) => !q || `${r.market_name} ${r.submarket_name ?? ''}`.toLowerCase().includes(q))
       .slice(0, params.limit ?? 50);
   }),
@@ -56,7 +63,7 @@ vi.mock('@/components/help/CoachMark', () => ({
 import NewProjectPage from '@/app/projects/new/page';
 import { DRAFT_KEY } from '@/lib/wizardDraft';
 
-const marketInput = () => screen.getByPlaceholderText('STR market, e.g. Chicago, IL') as HTMLInputElement;
+const marketInput = () => screen.getByPlaceholderText('Market, e.g. Chicago, IL') as HTMLInputElement;
 const submarketInput = () => screen.getByPlaceholderText('Submarket') as HTMLInputElement;
 const options = (testId: string) =>
   Array.from(screen.getByTestId(testId).querySelectorAll('option')).map((o) => o.value);
@@ -66,10 +73,14 @@ const seedReviewDraft = (fields: Record<string, string>) =>
     fields: { dealName: 'Market Deal', ...fields },
   }));
 
+const NORTH = 'costar:northhaven-ts-usa';
+const SOUTH = 'costar:southport-tz-usa';
 const STR_ROWS: Row[] = [
-  { str_market_id: 'TEST-M1', market_name: 'Test Market One', submarket_id: null, submarket_name: null, state: 'TS', country: 'Testland' },
-  { str_market_id: 'TEST-M1', market_name: 'Test Market One', submarket_id: 'TEST-S1', submarket_name: 'Test Sub Alpha', state: 'TS', country: 'Testland' },
-  { str_market_id: 'TEST-M2', market_name: 'Test Market Two', submarket_id: 'TEST-S2', submarket_name: 'Test Sub Beta', state: 'TS', country: 'Testland' },
+  { str_market_id: NORTH, market_name: 'Northhaven - TS USA', submarket_id: null, submarket_name: null, state: 'TS', country: 'USA', market_type: 'metro' },
+  { str_market_id: NORTH, market_name: 'Northhaven - TS USA', submarket_id: `${NORTH}/harbor-district`, submarket_name: 'Harbor District', state: 'TS', country: 'USA', market_type: 'metro' },
+  { str_market_id: NORTH, market_name: 'Northhaven - TS USA', submarket_id: `${NORTH}/riverside`, submarket_name: 'Riverside', state: 'TS', country: 'USA', market_type: 'metro' },
+  { str_market_id: SOUTH, market_name: 'Southport - TZ USA', submarket_id: null, submarket_name: null, state: 'TZ', country: 'USA', market_type: 'metro' },
+  { str_market_id: SOUTH, market_name: 'Southport - TZ USA', submarket_id: `${SOUTH}/riverside`, submarket_name: 'Riverside', state: 'TZ', country: 'USA', market_type: 'metro' },
 ];
 
 beforeEach(() => {
@@ -80,28 +91,29 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('Sam #6 — STR market list not loaded (today)', () => {
-  it('Market falls back to the name-only STR market names (no id); Submarket suggests nothing', async () => {
+describe('FON-96 — the CoStar list is not available to this workspace', () => {
+  it('Market falls back to the public name-only STR market names (no key); Submarket suggests nothing', async () => {
     render(<NewProjectPage />);
     await waitFor(() => expect(worker.strMarkets).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText(/no STR id until STR’s market list is loaded/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/the CoStar market list is not available to this workspace/)).toBeInTheDocument());
     expect(options('market-suggestions')).toContain('Chicago, IL');
     expect(options('submarket-suggestions')).toEqual([]);
-    expect(screen.getByText(/No suggestions until STR’s submarket list is loaded/)).toBeInTheDocument();
+    expect(screen.getByText(/No suggestions — the CoStar submarket list is not available/)).toBeInTheDocument();
     expect(marketInput().getAttribute('list')).toBe('wizard-market-suggestions');
 
     fireEvent.change(marketInput(), { target: { value: 'Somewhere Typed' } });
     fireEvent.blur(marketInput());
-    await waitFor(() => expect(screen.getByTestId('market-str-id')).toHaveTextContent('without an STR id'));
+    await waitFor(() => expect(screen.getByTestId('market-str-id')).toHaveTextContent('Analyst-entered · saved as typed'));
+    expect(screen.queryByText(/STR id/)).toBeNull();
   });
 
-  it('sends a typed market and submarket with str_market_id null; city is unchanged', async () => {
+  it('sends a typed market and submarket with null keys; city is unchanged', async () => {
     seedReviewDraft({ city: 'Austin, TX', market: ' Typed  Market ', submarket: ' Typed Sub ' });
     render(<NewProjectPage />);
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({
-      city: 'Austin, TX', market: 'Typed Market', submarket: 'Typed Sub', str_market_id: null,
+      city: 'Austin, TX', market: 'Typed Market', submarket: 'Typed Sub', str_market_id: null, submarket_id: null,
     });
   });
 
@@ -118,38 +130,72 @@ describe('Sam #6 — STR market list not loaded (today)', () => {
     render(<NewProjectPage />);
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
-    expect(worker.create.mock.calls[0][0]).toMatchObject({ market: null, submarket: null, str_market_id: null });
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ market: null, submarket: null, str_market_id: null, submarket_id: null });
   });
 });
 
-describe('Sam #6 — STR market list loaded', () => {
-  it('suggests STR markets, resolves a pick to STR spelling + id, narrows submarkets to it', async () => {
+describe('FON-96 — the CoStar list is available', () => {
+  it('suggests CoStar markets, resolves "City, ST" to the list spelling + key, narrows submarkets to it', async () => {
     ref.rows = STR_ROWS;
     render(<NewProjectPage />);
-    await waitFor(() => expect(screen.getByText('Suggestions: STR market list')).toBeInTheDocument());
-    await waitFor(() => expect(options('market-suggestions')).toEqual(['Test Market One', 'Test Market Two']));
+    await waitFor(() => expect(screen.getByText('Suggestions: CoStar market list')).toBeInTheDocument());
+    await waitFor(() => expect(options('market-suggestions')).toEqual(['Northhaven - TS USA', 'Southport - TZ USA']));
     expect(options('market-suggestions')).not.toContain('Chicago, IL');
+    // With no market picked, submarkets are "submarket · market" so the two
+    // Riversides stay distinguishable.
+    await waitFor(() => expect(options('submarket-suggestions')).toEqual([
+      'Harbor District · Northhaven - TS USA', 'Riverside · Northhaven - TS USA', 'Riverside · Southport - TZ USA',
+    ]));
 
-    fireEvent.change(marketInput(), { target: { value: 'test market one' } });
+    fireEvent.change(marketInput(), { target: { value: 'northhaven, ts' } });
     fireEvent.blur(marketInput());
-    await waitFor(() => expect(marketInput().value).toBe('Test Market One'));
-    expect(screen.getByTestId('market-str-id')).toHaveTextContent('STR id TEST-M1');
-    await waitFor(() => expect(options('submarket-suggestions')).toEqual(['Test Sub Alpha']));
+    await waitFor(() => expect(marketInput().value).toBe('Northhaven - TS USA'));
+    expect(screen.getByTestId('market-str-id')).toHaveTextContent('CoStar market');
+    expect(screen.getByTestId('market-str-id')).not.toHaveTextContent('costar:');
+    await waitFor(() => expect(options('submarket-suggestions')).toEqual(['Harbor District', 'Riverside']));
     expect(submarketInput().getAttribute('list')).toBe('wizard-submarket-suggestions');
 
-    // Typing over the pick drops the id until it resolves again.
+    fireEvent.change(submarketInput(), { target: { value: 'riverside' } });
+    fireEvent.blur(submarketInput());
+    await waitFor(() => expect(submarketInput().value).toBe('Riverside'));
+    expect(screen.getByTestId('submarket-key')).toHaveTextContent('CoStar submarket of Northhaven - TS USA');
+
+    // Typing over the pick drops the key until it resolves again.
     fireEvent.change(marketInput(), { target: { value: 'Not In The List' } });
-    expect(screen.getByTestId('market-str-id')).toHaveTextContent('not in STR’s market list');
+    expect(screen.getByTestId('market-str-id')).toHaveTextContent('Analyst-entered · not in the CoStar list');
   });
 
-  it('sends the STR id on create when the market matches STR’s list', async () => {
+  it('a "submarket · market" pick made before any market sets the market too', async () => {
     ref.rows = STR_ROWS;
-    seedReviewDraft({ market: 'Test Market Two', submarket: 'Test Sub Beta' });
+    render(<NewProjectPage />);
+    await waitFor(() => expect(screen.getByText('Suggestions: CoStar market list')).toBeInTheDocument());
+    fireEvent.change(submarketInput(), { target: { value: 'Riverside · Southport - TZ USA' } });
+    fireEvent.blur(submarketInput());
+    await waitFor(() => expect(submarketInput().value).toBe('Riverside'));
+    expect(marketInput().value).toBe('Southport - TZ USA');
+    expect(screen.getByTestId('market-str-id')).toHaveTextContent('CoStar market');
+    expect(screen.getByTestId('submarket-key')).toHaveTextContent('CoStar submarket of Southport - TZ USA');
+  });
+
+  it('sends both keys on create when market and submarket match the list; an ambiguous submarket sends none', async () => {
+    ref.rows = STR_ROWS;
+    seedReviewDraft({ market: 'Southport, TZ', submarket: 'Riverside' });
     render(<NewProjectPage />);
     fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({
-      market: 'Test Market Two', str_market_id: 'TEST-M2', submarket: 'Test Sub Beta',
+      market: 'Southport - TZ USA', str_market_id: SOUTH, submarket: 'Riverside', submarket_id: `${SOUTH}/riverside`,
+    });
+
+    worker.create.mockClear();
+    cleanup();
+    // A typed submarket that is not one of the picked market's → no key.
+    seedReviewDraft({ market: 'Southport, TZ', submarket: 'Harbor District' });
+    render(<NewProjectPage />);
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({
+      market: 'Southport - TZ USA', str_market_id: SOUTH, submarket: 'Harbor District', submarket_id: null,
     });
   });
 });

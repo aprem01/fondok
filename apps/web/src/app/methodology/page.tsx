@@ -626,11 +626,20 @@ export default function MethodologyPage() {
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="market-submarket-methodology">
             <strong>City, market and submarket.</strong> These are three separate deal fields. City is the
-            property&apos;s city, filled from the OM only while empty. Market and Submarket are your choice on
-            the wizard&apos;s first step and correctable on the Overview; no document writes them and no model
-            reads them, so changing them never re-runs the model. The Market field suggests STR-defined market
-            names; typing a market or submarket that is not suggested is always allowed, and Fondok never invents
-            an STR identifier or a submarket name.
+            property&apos;s city, filled from the OM only while empty. Market and Submarket are chosen on the
+            wizard&apos;s first step and correctable on the Overview; no model reads them, so changing them never
+            re-runs the model. When the CoStar market list is available to your workspace, the Market field
+            suggests CoStar&apos;s markets &mdash; metro markets named by city and state, regional markets named in
+            words &mdash; and the Submarket field suggests that market&apos;s CoStar submarkets, each shown with its
+            market so two submarkets sharing a name stay distinguishable. A pick is recorded as a CoStar market or
+            submarket; typing a market or submarket that is not suggested is always allowed and is recorded as
+            analyst-entered. Whether the list is available depends on CoStar&apos;s licence: until it is confirmed,
+            other workspaces see a public list of STR market names and no submarket suggestions. An Offering
+            Memorandum may fill an empty Market and Submarket only when the city and state it states match exactly
+            one metro market in the list, and its submarket phrase exactly one of that market&apos;s submarkets; a
+            regional market is never inferred from a city, two possible matches fill nothing, and a value you
+            entered is never replaced. The Overview says where the market came from. Fondok never invents a market,
+            a submarket or an identifier, and never shows you a vendor identifier.
           </p>
         </Card>
 

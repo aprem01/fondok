@@ -1578,33 +1578,48 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
 
 // ── Sam #6 — Market / Submarket, editable after creation ─────────────────
 describe('OverviewTab — Sam #6 Market / Submarket', () => {
-  it('shows "—" for a deal with none and saves a typed market with no STR id (no re-run)', async () => {
+  it('shows "—" for a deal with none and saves a typed market with no key (no re-run)', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     const field = screen.getByTestId('market-submarket-field');
     expect(within(field).getByTestId('market-value')).toHaveTextContent('—');
     expect(within(field).getByTestId('submarket-value')).toHaveTextContent('—');
+    expect(within(field).getByTestId('market-source-line')).toHaveTextContent('Not set');
     fireEvent.click(within(field).getByRole('button', { name: 'Edit market and submarket' }));
-    // STR's list is not loaded → name-only fallback, labelled so.
+    // The CoStar list is not available → public name-only fallback, labelled so.
     await waitFor(() =>
-      expect(within(field).getByTestId('market-source-line')).toHaveTextContent('no STR id until STR’s market list is loaded'),
+      expect(within(field).getByTestId('market-source-line')).toHaveTextContent('the CoStar market list is not available to this workspace'),
     );
     fireEvent.change(within(field).getByLabelText('Market'), { target: { value: '  Typed   Market ' } });
     fireEvent.change(within(field).getByLabelText('Submarket'), { target: { value: 'Riverfront' } });
     fireEvent.click(within(field).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
     expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
-      market: 'Typed Market', str_market_id: null, submarket: 'Riverfront',
+      market: 'Typed Market', str_market_id: null, submarket: 'Riverfront', submarket_id: null,
     });
     expect(engineRunSpy).not.toHaveBeenCalled();
   });
 
-  it('renders a saved market with its STR id', () => {
-    mockDealRef.deal = { ...mockDealRef.deal, market: 'Test Market One', submarket: 'Test Sub', str_market_id: 'TEST-M1' };
+  it('renders a saved CoStar market / submarket by label — the key is never shown', () => {
+    mockDealRef.deal = {
+      ...mockDealRef.deal, market: 'Northhaven - TS USA', submarket: 'Riverside',
+      str_market_id: 'costar:northhaven-ts-usa', submarket_id: 'costar:northhaven-ts-usa/riverside',
+      market_source: 'om_exact_match',
+    };
     render(<OverviewTab projectId="deal-uuid-1" />);
     const field = screen.getByTestId('market-submarket-field');
-    expect(within(field).getByTestId('market-value')).toHaveTextContent('Test Market One');
-    expect(within(field).getByTestId('submarket-value')).toHaveTextContent('Test Sub');
-    expect(within(field).getByTestId('market-source-line')).toHaveTextContent('STR id TEST-M1');
+    expect(within(field).getByTestId('market-value')).toHaveTextContent('Northhaven - TS USA');
+    expect(within(field).getByTestId('submarket-value')).toHaveTextContent('Riverside');
+    const line = within(field).getByTestId('market-source-line');
+    expect(line).toHaveTextContent('CoStar market · CoStar submarket of Northhaven - TS USA · matched from the Offering Memorandum');
+    expect(line).not.toHaveTextContent('costar:');
+    expect(line).not.toHaveTextContent('STR id');
+  });
+
+  it('labels a typed market as analyst-entered', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, market: 'Typed Market', submarket: null, str_market_id: null };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const field = screen.getByTestId('market-submarket-field');
+    expect(within(field).getByTestId('market-source-line')).toHaveTextContent('Analyst-entered · not in the CoStar list');
   });
 });
 

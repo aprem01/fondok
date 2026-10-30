@@ -73,13 +73,20 @@ export interface WorkerDeal {
    *  Year 3 from the first full operating year after it instead of from the
    *  acquisition close. NULL = no reopening; absent on older workers. */
   reopening_date?: string | null;
-  /** Sam #6 — STR's market identifier; set only when the market was picked
-   *  from the loaded STR market list (`/reference/str-markets`). NULL for a
+  /** Sam #6 / FON-96 — the picked market's taxonomy key (a Fondok key minted
+   *  from the CoStar market name — never shown as a vendor id); NULL for a
    *  typed market. Absent on older workers. */
   str_market_id?: string | null;
   /** Sam #6 — the deal's market and submarket (names). `city` is separate. */
   market?: string | null;
   submarket?: string | null;
+  /** FON-96 — the picked submarket's taxonomy key; NULL for a typed one. */
+  submarket_id?: string | null;
+  /** FON-96 — `metro` | `regional` for a picked market (joined, read-only). */
+  market_type?: string | null;
+  /** FON-96 — `analyst` | `om_exact_match` | null: where market / submarket came from. */
+  market_source?: string | null;
+  market_source_detail?: Record<string, unknown> | null;
   status: string;
   deal_stage: string | null;
   risk: string | null;
@@ -812,14 +819,17 @@ export interface NewDealBody {
   purchase_price?: number | null;
   /** FON-98 — ISO date of the reopening / re-flag, when the deal has one. */
   reopening_date?: string | null;
-  /** Sam #6 — market / submarket; `str_market_id` only for a picked STR market. */
+  /** Sam #6 / FON-96 — market / submarket; the keys only for a pick from the list. */
   str_market_id?: string | null;
   market?: string | null;
   submarket?: string | null;
+  submarket_id?: string | null;
 }
 
-/** Sam #6 — one row of STR's market / submarket definition list
- *  (`GET /reference/str-markets`). Empty until STR's file is loaded. */
+/** Sam #6 / FON-96 — one row of the market / submarket taxonomy list
+ *  (`GET /reference/str-markets`). `[]` until a list is loaded, or while the
+ *  list is withheld from this workspace (licensing). The FON-96 fields are
+ *  optional: an older worker omits them (feature-detected). */
 export interface StrMarketRecord {
   str_market_id: string;
   market_name: string;
@@ -827,6 +837,14 @@ export interface StrMarketRecord {
   submarket_name: string | null;
   state: string | null;
   country: string | null;
+  /** `metro` | `regional`; null on legacy rows / older workers. */
+  market_type?: string | null;
+  /** Alias of `str_market_id` under its real name (a Fondok taxonomy key). */
+  market_key?: string;
+  /** Alias of `submarket_id`. */
+  submarket_key?: string | null;
+  /** Display text — never the key. */
+  label?: string;
 }
 
 export interface WorkerDocument {
@@ -2403,7 +2421,7 @@ export const api = {
         'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
         | 'target_irr' | 'target_moic' | 'reopening_date'
-        | 'str_market_id' | 'market' | 'submarket'>> & {
+        | 'str_market_id' | 'market' | 'submarket' | 'submarket_id'>> & {
         field_overrides?: Record<string, unknown>;
       },
     ) =>
@@ -3008,12 +3026,19 @@ export const api = {
     /** STR's market / submarket definition list. `[]` until STR's file is
      *  loaded (`apps/worker/scripts/load_str_markets.py`). */
     strMarkets: (
-      params: { q?: string; str_market_id?: string; limit?: number } = {},
+      params: {
+        q?: string; str_market_id?: string; market_key?: string;
+        kind?: 'market' | 'submarket'; limit?: number;
+      } = {},
       signal?: AbortSignal,
     ) => {
       const qs = new URLSearchParams();
       if (params.q && params.q.trim()) qs.set('q', params.q.trim());
-      if (params.str_market_id) qs.set('str_market_id', params.str_market_id);
+      // FON-96 — `market_key` is the new name; the older `str_market_id` is
+      // sent too so a pre-FON-96 worker still narrows.
+      const key = params.market_key ?? params.str_market_id;
+      if (key) { qs.set('market_key', key); qs.set('str_market_id', key); }
+      if (params.kind) qs.set('kind', params.kind);
       if (params.limit != null) qs.set('limit', String(params.limit));
       const tail = qs.toString();
       return request<StrMarketRecord[]>(
