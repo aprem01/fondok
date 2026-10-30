@@ -30,13 +30,15 @@ operator has explicitly turned enforcement on.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import text
 
 from .database import get_engine
@@ -55,6 +57,66 @@ STATUSES: frozenset[str] = frozenset({"active", "suspended", "pending_review"})
 SERVING_STATUS = "active"
 
 
+# ─────────────────────────── data policies ───────────────────────────
+#
+# FON-116 / FON-96 — per-tenant DATA policies (``tenants.data_policies``,
+# JSONB on Postgres, JSON text on SQLite). The first policy is the CoStar
+# licensing gate: a market default DERIVED from a CoStar report (a submarket
+# forecast, a class benchmark) may be offered to a workspace only while its
+# policy says ``allow``. Under ``withhold`` the topline resolvers (the next
+# PR) yield ``withheld_by_policy`` / reason ``license_withheld`` and the UI
+# asks for the growth by hand — the analyst's own uploaded figures are never
+# touched, only the platform-derived default is. This is a policy row, not a
+# code fork: ``is_internal`` never decides it, flipping a tenant is data.
+#
+# ``extra="forbid"`` on purpose: a mistyped key is a 422 at the admin API,
+# never a silently-ignored key that leaves the tenant on ``allow``.
+
+DataPolicyChoice = Literal["allow", "withhold"]
+
+
+class TenantDataPolicies(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    costar_derived_defaults: DataPolicyChoice = "allow"
+
+    @property
+    def withholds_costar(self) -> bool:
+        return self.costar_derived_defaults == "withhold"
+
+    @property
+    def withholds_anything(self) -> bool:
+        return self.withholds_costar
+
+    def as_dict(self) -> dict[str, Any]:
+        return self.model_dump()
+
+
+#: The policy keys the admin surfaces enumerate (health posture, Settings card).
+DATA_POLICY_KEYS: tuple[str, ...] = tuple(TenantDataPolicies.model_fields)
+
+
+def _parse_data_policies(raw: Any) -> TenantDataPolicies:
+    """Decode the stored column. A row written before the column existed
+    (``NULL`` / ``''``) is the default. An unparseable value is logged and
+    read as the default too — it cannot have been written through the typed
+    API, and a broken policy blob must not make every request 500."""
+    if raw is None or raw == "" or raw == {}:
+        return TenantDataPolicies()
+    data: Any = raw
+    if isinstance(raw, (str, bytes)):
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            logger.warning("tenants: data_policies column is not JSON (%r)", raw[:80])
+            return TenantDataPolicies()
+    try:
+        return TenantDataPolicies.model_validate(data or {})
+    except ValidationError as exc:
+        logger.warning("tenants: data_policies column fails validation: %s", exc)
+        return TenantDataPolicies()
+
+
 @dataclass(frozen=True)
 class Tenant:
     id: UUID
@@ -63,6 +125,7 @@ class Tenant:
     kind: str
     status: str
     created_at: datetime | None = None
+    data_policies: TenantDataPolicies = field(default_factory=TenantDataPolicies)
 
     @property
     def is_internal(self) -> bool:
@@ -80,6 +143,7 @@ class Tenant:
             "kind": self.kind,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "data_policies": self.data_policies.as_dict(),
         }
 
 
@@ -124,10 +188,11 @@ def _row_to_tenant(row: Any) -> Tenant:
         kind=str(m["kind"]),
         status=str(m["status"]),
         created_at=created,
+        data_policies=_parse_data_policies(m.get("data_policies")),
     )
 
 
-_SELECT_COLUMNS = "id, clerk_org_id, name, kind, status, created_at"
+_SELECT_COLUMNS = "id, clerk_org_id, name, kind, status, created_at, data_policies"
 
 
 async def get_tenant(
@@ -312,17 +377,78 @@ async def update_tenant(
     return await get_tenant(tenant_id, use_cache=False)
 
 
+# ─────────────────────────── data policies I/O ───────────────────────────
+
+
+async def load_tenant_data_policy(tenant_id: UUID | str) -> TenantDataPolicies:
+    """The data policy the loaders and resolvers must honour for ``tenant_id``.
+
+    Served from the registry cache (``_CACHE_TTL_S``; a write on this replica
+    clears it). A tenant with no registry row — an unregistered org while
+    enforcement is off — gets the default (``allow``). A registry READ
+    FAILURE raises :class:`TenantRegistryUnavailable`: an outage must never
+    read as ``allow`` for a tenant whose row says ``withhold``, so the engine
+    run records a load error instead of running on the wrong policy.
+    """
+    tenant = await get_tenant(tenant_id, raise_on_error=True)
+    return tenant.data_policies if tenant is not None else TenantDataPolicies()
+
+
+async def set_tenant_data_policies(
+    tenant_id: UUID | str, policies: TenantDataPolicies
+) -> Tenant | None:
+    """Replace the policy row for an EXISTING tenant; never inserts.
+
+    Returns the stored row, or ``None`` when there is no registry row for
+    ``tenant_id`` (the admin API maps that to 404 — a workspace must be
+    registered before it can carry a policy). Clears the registry cache so
+    the next ``load_tenant_data_policy`` / read-cache fingerprint sees it.
+    """
+    engine = get_engine()
+    blob = json.dumps(policies.as_dict(), sort_keys=True)
+    # JSONB needs an explicit cast on Postgres; SQLite stores the JSON text.
+    value_frag = ":p" if engine.dialect.name == "sqlite" else "CAST(:p AS JSONB)"
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            text(f"UPDATE tenants SET data_policies = {value_frag} WHERE id = :id"),
+            {"id": str(UUID(str(tenant_id))), "p": blob},
+        )
+        touched = int(result.rowcount or 0)
+    reset_tenant_cache()
+    if touched == 0:
+        return None
+    return await get_tenant(tenant_id, use_cache=False)
+
+
+async def data_policies_posture() -> dict[str, Any]:
+    """The ``data_policies`` block of ``GET /admin/health``: how many
+    registered tenants exist and how many withhold anything. Counts only —
+    no tenant is named."""
+    rows = await list_tenants()
+    return {
+        "tenants_total": len(rows),
+        "tenants_with_withhold": sum(1 for t in rows if t.data_policies.withholds_anything),
+        "keys": list(DATA_POLICY_KEYS),
+    }
+
+
 __all__ = [
+    "DATA_POLICY_KEYS",
     "KINDS",
     "SERVING_STATUS",
     "STATUSES",
+    "DataPolicyChoice",
     "Tenant",
+    "TenantDataPolicies",
     "TenantRegistryUnavailable",
+    "data_policies_posture",
     "get_tenant",
     "is_internal",
     "is_registered",
     "list_tenants",
+    "load_tenant_data_policy",
     "reset_tenant_cache",
+    "set_tenant_data_policies",
     "update_tenant",
     "upsert_tenant",
 ]

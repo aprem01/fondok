@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import AuthContext, require_role
 from ..auth.context import current_tenant_id
 from ..database import get_session
-from ..tenants import get_tenant
+from ..tenants import data_policies_posture, get_tenant
 from .health import ops_snapshot, public_snapshot
 
 logger = logging.getLogger(__name__)
@@ -216,4 +216,6 @@ async def admin_health(
     body = await public_snapshot(session)
     body.update(await ops_snapshot(session))
     body.update(await failure_counts_last_hour(session))
+    # FON-116 — counts only: how many tenants withhold a data default.
+    body["data_policies"] = await data_policies_posture()
     return body

@@ -1386,6 +1386,13 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON tenants (clerk_org_id)
         """,
     ),
+    # FON-116 / FON-96 — per-tenant data policies (the CoStar licensing
+    # gate; see ``app.tenants.TenantDataPolicies``). ``{}`` = every policy
+    # at its default (``allow``); flipping a tenant is a row write.
+    (
+        "tenants.add_data_policies",
+        "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS data_policies JSONB NOT NULL DEFAULT '{}'",
+    ),
 ]
 
 
@@ -2331,6 +2338,12 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_clerk_org_id
         ON tenants (clerk_org_id)
         """,
+    ),
+    # FON-116 — SQLite twin of ``tenants.add_data_policies`` (JSON as TEXT;
+    # PRAGMA-guarded by the ADD COLUMN shim in ``run_startup_migrations``).
+    (
+        "tenants.add_data_policies_sqlite",
+        "ALTER TABLE tenants ADD COLUMN data_policies TEXT NOT NULL DEFAULT '{}'",
     ),
 ]
 

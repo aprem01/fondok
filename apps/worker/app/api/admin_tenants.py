@@ -26,23 +26,34 @@ from __future__ import annotations
 
 import logging
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit import log_audit
 from ..auth import AuthContext, require_role
+from ..database import get_session
 from ..tenants import (
     KINDS,
     STATUSES,
+    DataPolicyChoice,
     Tenant,
+    TenantDataPolicies,
     get_tenant,
     list_tenants,
+    set_tenant_data_policies,
     upsert_tenant,
 )
 from .deals import coerce_org_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+TENANT_DATA_POLICIES_REQUIRE_INTERNAL_TENANT = "tenant_data_policies_require_internal_tenant"
+TENANT_NOT_REGISTERED = "tenant_not_registered"
+DATA_POLICY_CHANGED_ACTION = "tenant.data_policy_changed"
 
 
 class RegisterTenantBody(BaseModel):
@@ -134,6 +145,99 @@ async def register_tenant(
         body.status,
     )
     return stored.as_dict()
+
+
+# ─────────────────────── data policies (FON-116 / FON-96) ───────────────────────
+
+
+class DataPoliciesPatchBody(BaseModel):
+    """A partial update: only the keys present change. ``extra="forbid"`` makes
+    a mistyped key a 422 rather than a silent no-op that leaves the tenant on
+    ``allow``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    costar_derived_defaults: DataPolicyChoice | None = None
+
+
+async def _require_internal_admin(auth: AuthContext) -> Tenant:
+    me = await _caller_tenant(auth)
+    if me is None or not me.is_serving or not me.is_internal:
+        # 403, not 404: the route is not a secret; the target's policy is.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=TENANT_DATA_POLICIES_REQUIRE_INTERNAL_TENANT,
+        )
+    return me
+
+
+def _policy_response(target: Tenant) -> dict[str, Any]:
+    return {"tenant_id": str(target.id), "data_policies": target.data_policies.as_dict()}
+
+
+@router.get("/tenants/{tenant_id}/data_policies")
+async def get_tenant_data_policies(
+    tenant_id: UUID,
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+) -> dict[str, Any]:
+    """The data policies of one registered tenant (internal admins only)."""
+    await _require_internal_admin(auth)
+    target = await get_tenant(tenant_id, use_cache=False)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)
+    return _policy_response(target)
+
+
+@router.patch("/tenants/{tenant_id}/data_policies")
+async def patch_tenant_data_policies(
+    tenant_id: UUID,
+    body: DataPoliciesPatchBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+) -> dict[str, Any]:
+    """Change one registered tenant's data policies (internal admins only).
+
+    Merges the supplied keys onto the stored policy and writes the row.
+    A change is audited as ``tenant.data_policy_changed`` with the full
+    before/after under the ACTING tenant (the internal admin's — under RLS
+    the session's tenant), pointed at the target by ``resource_id``. A
+    PATCH that changes nothing writes nothing and is not audited.
+    """
+    me = await _require_internal_admin(auth)
+    target = await get_tenant(tenant_id, use_cache=False)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)
+    before = target.data_policies
+    after = TenantDataPolicies.model_validate(
+        {**before.as_dict(), **body.model_dump(exclude_none=True)}
+    )
+    if after == before:
+        return _policy_response(target)
+    stored = await set_tenant_data_policies(target.id, after)
+    if stored is None:  # the row vanished between the read and the write
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)
+    await log_audit(
+        session,
+        tenant_id=me.id,
+        actor_id=auth.user_id,
+        action=DATA_POLICY_CHANGED_ACTION,
+        resource_type="tenant",
+        resource_id=target.id,
+        before=before.as_dict(),
+        after=after.as_dict(),
+        metadata={"target_tenant_id": str(target.id), "target_clerk_org_id": target.clerk_org_id},
+        severity="warning",
+        tags=["data_policy"],
+    )
+    await session.commit()
+    logger.info(
+        "admin/tenants: %s changed data policies of tenant=%s %s -> %s",
+        auth.user_id or auth.source,
+        target.id,
+        before.as_dict(),
+        after.as_dict(),
+    )
+    return _policy_response(stored)
 
 
 __all__ = ["router"]

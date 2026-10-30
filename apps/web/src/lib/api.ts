@@ -1908,6 +1908,37 @@ export interface AgentCostsResponse {
   by_agent?: AgentCostEntry[];
 }
 
+/** FON-116 / FON-96 — per-tenant data policies (the CoStar licensing gate).
+ *  ``allow`` = market defaults derived from a CoStar report may be offered to
+ *  the workspace; ``withhold`` = they are refused with reason
+ *  ``license_withheld`` until licensing is confirmed. A policy row, not a
+ *  code fork — flipping a workspace is data. */
+export type DataPolicyChoice = 'allow' | 'withhold';
+export interface TenantDataPolicies {
+  costar_derived_defaults: DataPolicyChoice;
+}
+/** One row of the FON-93 tenant registry (``GET /admin/tenants``). */
+export interface RegisteredTenant {
+  id: string;
+  clerk_org_id: string;
+  name: string;
+  kind: 'internal' | 'external';
+  status: 'active' | 'suspended' | 'pending_review';
+  created_at: string | null;
+  /** Absent on a worker that predates FON-116 — the Settings card hides itself. */
+  data_policies?: TenantDataPolicies;
+}
+export interface AdminTenantsResponse {
+  /** ``all`` for an internal tenant's admin, ``own`` for anyone else. */
+  scope: 'all' | 'own';
+  caller_tenant_id: string;
+  tenants: RegisteredTenant[];
+}
+export interface TenantDataPoliciesResponse {
+  tenant_id: string;
+  data_policies: TenantDataPolicies;
+}
+
 export interface AdminCostResponse {
   tenant_id: string;
   generated_at: string;
@@ -2265,6 +2296,20 @@ export const api = {
      *  ``org:admin`` role on the worker side (gated via require_role). */
     cost: (signal?: AbortSignal) =>
       request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
+    /** FON-93 / FON-116 tenant registry (apps/worker/app/api/admin_tenants.py).
+     *  ``list`` returns every row for an internal tenant's admin, only the
+     *  caller's own row otherwise; ``setDataPolicies`` is internal-admin only
+     *  (403 for an external admin, 404 for an unregistered tenant). */
+    tenants: {
+      list: (signal?: AbortSignal) =>
+        request<AdminTenantsResponse>('GET', '/admin/tenants', undefined, { signal }),
+      setDataPolicies: (tenantId: string, patch: Partial<TenantDataPolicies>) =>
+        request<TenantDataPoliciesResponse>(
+          'PATCH',
+          `/admin/tenants/${encodeURIComponent(tenantId)}/data_policies`,
+          patch,
+        ),
+    },
   },
   /** ``/observability/*`` (apps/worker/app/api/observability.py). Both
    *  endpoints require a signed-in session (``get_current_auth``) and scope
