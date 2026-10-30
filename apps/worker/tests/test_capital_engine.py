@@ -232,3 +232,53 @@ def test_senior_loan_fee_provenance_names_the_debt_tranche_fee():
     assert pct.assumption_key == "debt_stack.tranches.0.upfront_fee_pct"
     assert pct.value == pytest.approx(1.50)
     assert "loan_costs_pct" not in (trace.formula or "")
+
+
+# ── B8 (go-live audit) — the renovation split is a badged platform default ──
+
+
+def test_renovation_split_is_one_badged_platform_default():
+    from app.engines.capital import (
+        RENOVATION_SPLIT_DEFAULT,
+        RENOVATION_SPLIT_DEFAULT_REASON,
+        RENOVATION_SPLIT_DEFAULT_SOURCE,
+    )
+
+    assert RENOVATION_SPLIT_DEFAULT == {"hard": 0.75, "soft": 0.15, "fees": 0.10}
+    assert sum(RENOVATION_SPLIT_DEFAULT.values()) == pytest.approx(1.0)
+    out = CapitalEngine().run(
+        CapitalEngineInput(
+            deal_id=uuid4(), purchase_price=30_000_000, keys=100,
+            renovation_budget=1_000_000,
+        )
+    )
+    b = out.renovation_breakdown
+    assert (b.hard, b.soft, b.fees) == pytest.approx((750_000, 150_000, 100_000))
+    assert b.source == RENOVATION_SPLIT_DEFAULT_SOURCE == "platform_default_renovation_split"
+    assert b.note == RENOVATION_SPLIT_DEFAULT_REASON
+    assert "75% hard costs / 15% soft costs / 10% professional fees" in b.note
+    # The reason travels on every leg's provenance trace.
+    for part in ("hard", "soft", "fees"):
+        assert out.provenance[f"renovation_breakdown.{part}"].note == b.note
+
+
+def test_explicit_renovation_split_is_not_badged_as_default():
+    out = CapitalEngine().run(
+        CapitalEngineInput(
+            deal_id=uuid4(), purchase_price=30_000_000, keys=100,
+            renovation_budget=1_000_000,
+            renovation_hard_pct=0.8, renovation_soft_pct=0.1, renovation_fees_pct=0.1,
+        )
+    )
+    b = out.renovation_breakdown
+    assert b.source == "analyst_override"
+    assert b.note is None
+    assert b.hard == pytest.approx(800_000)
+
+
+def test_renovation_split_source_is_in_the_ontology():
+    from app.ontology.registry import load_registry
+
+    src = load_registry().sources["platform_default_renovation_split"]
+    assert src.kind == "assumption"
+    assert src.badge == "Platform default"

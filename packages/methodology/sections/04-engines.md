@@ -129,6 +129,12 @@ renovation budget default is $5,280,000 (see Section 2 for its precedence). Each
 default used only when no document states the figure, badged Seed with its reason (no document of
 the needed type, or no field that states the figure) wherever it is printed.
 
+<!-- source: apps/worker/app/engines/capital.py (RENOVATION_SPLIT_DEFAULT 0.75 / 0.15 / 0.10, RENOVATION_SPLIT_DEFAULT_SOURCE platform_default_renovation_split, RenovationBreakdown.source / .note) -->
+The renovation budget's breakdown into hard costs, soft costs and professional fees uses the
+platform default split of 75% / 15% / 10% when no itemized renovation budget is on file. The
+breakdown is badged Platform default and carries that reason; it never reads as the deal's own
+breakdown.
+
 :::
 
 ::: card

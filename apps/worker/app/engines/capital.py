@@ -41,6 +41,27 @@ from fondok_schemas.underwriting import (
 from .base import BaseEngine
 
 
+#: B8 (go-live audit) — THE platform renovation cost split, defined once:
+#: 75% hard costs, 15% soft costs, 10% professional fees. It is a labelled
+#: platform default — applied only when the deal has no itemized renovation
+#: budget — and every breakdown it produces says so.
+RENOVATION_SPLIT_DEFAULT: dict[str, float] = {"hard": 0.75, "soft": 0.15, "fees": 0.10}
+#: The provenance label of a split that rides on ``RENOVATION_SPLIT_DEFAULT``
+#: (``sources.platform_default_renovation_split`` in the ontology).
+RENOVATION_SPLIT_DEFAULT_SOURCE = "platform_default_renovation_split"
+#: Why the split is a default — printed on the breakdown and its provenance.
+RENOVATION_SPLIT_DEFAULT_REASON = (
+    "Platform default split — "
+    f"{RENOVATION_SPLIT_DEFAULT['hard']:.0%} hard costs / "
+    f"{RENOVATION_SPLIT_DEFAULT['soft']:.0%} soft costs / "
+    f"{RENOVATION_SPLIT_DEFAULT['fees']:.0%} professional fees; "
+    "no itemized renovation budget on file."
+)
+_RENOVATION_SPLIT_FIELDS: frozenset[str] = frozenset(
+    {"renovation_hard_pct", "renovation_soft_pct", "renovation_fees_pct"}
+)
+
+
 class CapitalEngineInput(InvestmentEngineInput):
     """Investment input plus financing assumptions used to size sources."""
 
@@ -64,13 +85,15 @@ class CapitalEngineInput(InvestmentEngineInput):
 
     # Renovation cost split (FON-71). The renovation budget is one line in
     # the sources & uses, but the Investment tab breaks it into hard costs,
-    # soft costs, and professional fees. These are configurable percentages
-    # (industry-standard 75/20/5 default), applied uniformly — not a per-deal
-    # fixture. A future doc-driven breakdown can override these when a
-    # renovation budget with itemized costs is extracted.
-    renovation_hard_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.75
-    renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.15
-    renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.10
+    # soft costs, and professional fees. B8 (go-live audit) — the defaults are
+    # the ONE platform split ``RENOVATION_SPLIT_DEFAULT`` (75% hard / 15% soft
+    # / 10% fees), and an unset split is badged as that platform default
+    # (``RenovationBreakdown.source`` / ``.note``) rather than read as the
+    # deal's own breakdown. A caller that passes the percentages (an itemized
+    # budget) is badged as an input.
+    renovation_hard_pct: Annotated[float, Field(ge=0.0, le=1.0)] = RENOVATION_SPLIT_DEFAULT["hard"]
+    renovation_soft_pct: Annotated[float, Field(ge=0.0, le=1.0)] = RENOVATION_SPLIT_DEFAULT["soft"]
+    renovation_fees_pct: Annotated[float, Field(ge=0.0, le=1.0)] = RENOVATION_SPLIT_DEFAULT["fees"]
     # FON-71 follow-up — renovation contingency as a percent of the renovation
     # HARD costs (the construction-risk base). When > 0 the contingency dollars
     # fold into the renovation total (base budget + contingency), so the
@@ -80,13 +103,20 @@ class CapitalEngineInput(InvestmentEngineInput):
 
 
 class RenovationBreakdown(BaseModel):
-    """Hard / soft / professional-fee split of the renovation budget."""
+    """Hard / soft / professional-fee split of the renovation budget.
+
+    B8 — ``source`` says where the split percentages came from:
+    :data:`RENOVATION_SPLIT_DEFAULT_SOURCE` (the platform default, ``note``
+    carrying :data:`RENOVATION_SPLIT_DEFAULT_REASON`) or ``analyst_override``
+    (the caller passed the percentages)."""
 
     model_config = ConfigDict(extra="forbid")
 
     hard: Annotated[float, Field(ge=0)]
     soft: Annotated[float, Field(ge=0)]
     fees: Annotated[float, Field(ge=0)]
+    source: str = RENOVATION_SPLIT_DEFAULT_SOURCE
+    note: str | None = None
 
 
 class CapitalEngineOutput(InvestmentEngineOutput):
@@ -227,11 +257,18 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         # Only when there's an actual budget — otherwise leave it None so the
         # UI renders '—' rather than a $0 split.
         reno_breakdown: RenovationBreakdown | None = None
+        split_is_default = not (_RENOVATION_SPLIT_FIELDS & payload.model_fields_set)
         if payload.renovation_budget > 0:
             reno_breakdown = RenovationBreakdown(
                 hard=payload.renovation_budget * payload.renovation_hard_pct,
                 soft=payload.renovation_budget * payload.renovation_soft_pct,
                 fees=payload.renovation_budget * payload.renovation_fees_pct,
+                source=(
+                    RENOVATION_SPLIT_DEFAULT_SOURCE
+                    if split_is_default
+                    else "analyst_override"
+                ),
+                note=RENOVATION_SPLIT_DEFAULT_REASON if split_is_default else None,
             )
 
         # Stamp pct on each line and append totals.
@@ -508,6 +545,7 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 prov[f"renovation_breakdown.{part}"] = ValueTrace(
                     value=getattr(reno_breakdown, part),
                     formula=f"renovation_{part} = renovation_budget × renovation_{part}_pct",
+                    note=reno_breakdown.note,
                     inputs=[
                         ValueInput(
                             name="renovation_budget",
@@ -577,6 +615,9 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
 
 
 __all__ = [
+    "RENOVATION_SPLIT_DEFAULT",
+    "RENOVATION_SPLIT_DEFAULT_REASON",
+    "RENOVATION_SPLIT_DEFAULT_SOURCE",
     "CapitalEngine",
     "CapitalEngineInput",
     "CapitalEngineOutput",

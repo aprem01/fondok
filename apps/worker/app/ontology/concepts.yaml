@@ -3127,6 +3127,12 @@ sources:
     kind: assumption
     doc_types: [STR_SEGMENTATION]
     explanation: Default revenue-segment mix seeded from the deal’s STR Segmentation extraction.
+  platform_default_renovation_split:
+    label: Platform default split
+    badge: Platform default
+    kind: assumption
+    doc_types: []
+    explanation: The renovation budget's hard / soft / professional-fee breakdown at the platform default split (75% / 15% / 10%) — no itemized renovation budget is on file, so this is a suggestion, not the deal's own breakdown.
   pip_om:
     label: PIP (OM)
     badge: PIP OM
