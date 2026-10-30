@@ -165,6 +165,14 @@ describe('deriveEngineStage', () => {
     expect(st.copy).toBe('Finished · 9 of 9 complete · 1:58');
   });
 
+  it('a not_applicable engine (Partnership with no terms) is terminal — the run still finishes', () => {
+    const rows = expected.map((engine) => ({ engine, status: engine === 'partnership' ? 'not_applicable' : 'complete' }));
+    const st = deriveEngineStage({ expected, rows, startedAt, now: startedAt + 60_000 });
+    expect(st.allDone).toBe(true);
+    expect(st.currentEngine).toBeNull();
+    expect(st.failed).toBe(0);
+  });
+
   it('never hard-codes the engine count — uses the kickoff list, else the rows', () => {
     const st = deriveEngineStage({
       expected: [],

@@ -6,6 +6,7 @@ import {
   EngineName,
   EngineOutputResponse,
   EngineStatus,
+  isTerminalEngineStatus,
   isWorkerConnected,
   WorkerError,
 } from '@/lib/api';
@@ -134,16 +135,16 @@ export function useEngineRun(
 
           const allDone =
             res.engines.length > 0 &&
-            res.engines.every(
-              (e) => e.status === 'complete' || e.status === 'failed',
-            );
+            // `not_applicable` is terminal too (and not a failure) — without
+            // it a run whose Partnership has no terms would poll forever.
+            res.engines.every((e) => isTerminalEngineStatus(e.status));
           if (allDone) {
             stopPolling();
             const runtimeMs = Date.now() - runStartedRef.current;
             const completeCount = res.engines.filter(
               (e) => e.status === 'complete',
             ).length;
-            const failedCount = res.engines.length - completeCount;
+            const failedCount = res.engines.filter((e) => e.status === 'failed').length;
 
             // Mark the per-deal run history record complete.
             recordEngineRun(dealId, {

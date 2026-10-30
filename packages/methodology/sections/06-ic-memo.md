@@ -35,6 +35,16 @@ inference.
 :::
 
 ::: card
+#### The Future P&L workbook
+
+The Future P&L has one Excel export, *Editable .xlsx*, built on the server from the published model:
+a figure the model has not published is a blank cell, never a zero. It does not yet carry the
+room-count rows (days, rooms, available and occupied rooms), the % Rev, PAR and POR columns, the Net
+Cash Flow row or the Exit-year forward NOI that the on-screen table shows.
+
+:::
+
+::: card
 #### What a variance flag compares — and what it refuses to
 
 - **Only the broker's own claim is the broker side.** A figure from a T-12 or P&L is an actual, never

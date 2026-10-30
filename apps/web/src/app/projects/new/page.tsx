@@ -620,7 +620,19 @@ export default function NewProjectPage() {
         const r = await strMarkets.resolveSubmarket(data.submarket, marketPick.strMarketId);
         submarketPick = { submarket: r.submarket, submarketKey: r.submarketKey };
       }
-      const { docs: stagedDocs, ...fields } = data;
+      const { docs: stagedDocs, ...typedFields } = data;
+      // FON-96 — the keys Finish just resolved go back into the fields, not
+      // only into this body: if activate then fails, the wizard (and the
+      // draft payload a resume restores) keeps the pick, so the next
+      // autosave cannot downgrade the row to null keys.
+      const resolvedKeys: Partial<WizardFields> = {
+        ...(marketPick.strMarketId ? { market: marketPick.market, strMarketId: marketPick.strMarketId } : {}),
+        ...(marketPick.strMarketId && submarketPick.submarketKey
+          ? { submarket: submarketPick.submarket, submarketId: submarketPick.submarketKey }
+          : {}),
+      };
+      const fields: WizardFields = { ...typedFields, ...resolvedKeys };
+      if (Object.keys(resolvedKeys).length > 0) setData(d => ({ ...d, ...resolvedKeys }));
       const body = dealBodyFromFields(fields, normalizeCity, marketPick, submarketPick);
 
       // FON-79 — Finish on a server-side draft: any file still staged (an
@@ -961,6 +973,12 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
   normalizeCity: (v: string) => string;
   strMarkets: StrMarketSuggestions;
 }) {
+  // FON-96 — the wizard's CURRENT market / submarket, for the async blur
+  // resolutions below: an answer that comes back after the analyst changed
+  // the market (or the text it was asked about) belongs to the old state and
+  // is discarded, never written over the newer pick.
+  const latest = useRef(data);
+  useEffect(() => { latest.current = data; });
   // FON-96 — provenance lines: the key is never shown.
   const marketHint = data.strMarketId
     ? MARKET_PROVENANCE_LABEL.market
@@ -1042,20 +1060,27 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
             onChange={v => update({ market: v, strMarketId: '', submarketId: '' })}
             onBlur={v => {
               void strMarkets.resolve(v).then(async (r) => {
+                // Stale: the Market text moved on while this resolved.
+                if (latest.current.market !== v) return;
                 const patch: Partial<WizardData> = {};
-                if (r.market !== v || (r.strMarketId ?? '') !== data.strMarketId) {
+                if (r.market !== v || (r.strMarketId ?? '') !== latest.current.strMarketId) {
                   patch.market = r.market;
                   patch.strMarketId = r.strMarketId ?? '';
                 }
                 // FON-96 — a submarket typed before the market resolved gets
                 // its key now, so the next autosave carries both keys.
-                if (r.strMarketId && data.submarket.trim() && !data.submarketId) {
-                  const sub = await strMarkets.resolveSubmarket(data.submarket, r.strMarketId);
-                  if (sub.submarketKey) {
+                const typedSub = latest.current.submarket;
+                if (r.strMarketId && typedSub.trim() && !latest.current.submarketId) {
+                  const sub = await strMarkets.resolveSubmarket(typedSub, r.strMarketId);
+                  // Only while the market and the submarket text are still
+                  // what this lookup was about.
+                  const now = latest.current;
+                  if (sub.submarketKey && now.market === v && now.submarket === typedSub && !now.submarketId) {
                     patch.submarket = sub.submarket;
                     patch.submarketId = sub.submarketKey;
                   }
                 }
+                if (latest.current.market !== v) return;
                 if (Object.keys(patch).length > 0) update(patch);
               });
             }}
@@ -1070,15 +1095,22 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
             value={data.submarket}
             onChange={v => update({ submarket: v, submarketId: '' })}
             onBlur={v => {
-              void strMarkets.resolveSubmarket(v, data.strMarketId || null).then((r) => {
+              const marketKeyAtBlur = data.strMarketId || null;
+              const marketAtBlur = data.market;
+              void strMarkets.resolveSubmarket(v, marketKeyAtBlur).then((r) => {
+                // Stale: the market (or the submarket text) changed while
+                // this resolved — the answer is about a market the analyst
+                // has left. Discard it; the newer state resolves on its own.
+                const now = latest.current;
+                if ((now.strMarketId || null) !== marketKeyAtBlur || now.market !== marketAtBlur || now.submarket !== v) return;
                 const patch: Partial<WizardData> = { submarket: r.submarket, submarketId: r.submarketKey ?? '' };
                 // A "{submarket} · {market}" pick made before any market was
                 // chosen names exactly one market — set it too.
-                if (!data.strMarketId && r.marketKey && r.market) {
+                if (!now.strMarketId && r.marketKey && r.market) {
                   patch.market = r.market;
                   patch.strMarketId = r.marketKey;
                 }
-                if (patch.submarket !== v || patch.submarketId !== data.submarketId || patch.market !== undefined) update(patch);
+                if (patch.submarket !== v || patch.submarketId !== now.submarketId || patch.market !== undefined) update(patch);
               });
             }}
             placeholder="Submarket"

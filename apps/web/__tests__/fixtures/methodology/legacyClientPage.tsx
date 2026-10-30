@@ -1063,6 +1063,16 @@ export default function LegacyMethodologyClientPage() {
         </Card>
 
         <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Future P&amp;L workbook</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            The Future P&amp;L has one Excel export, <em>Editable .xlsx</em>, built on the server from the published
+            model: a figure the model has not published is a blank cell, never a zero. It does not yet carry the
+            room-count rows (days, rooms, available and occupied rooms), the % Rev, PAR and POR columns, the Net
+            Cash Flow row or the Exit-year forward NOI that the on-screen table shows.
+          </p>
+        </Card>
+
+        <Card className="p-5 mt-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What a variance flag compares — and what it refuses to</h4>
           <ul className="space-y-2.5 text-[12.5px] text-ink-600 leading-relaxed">
             <li>

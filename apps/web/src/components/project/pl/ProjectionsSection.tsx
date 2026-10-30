@@ -47,7 +47,7 @@
 
 import { useMemo, useState, useEffect, useCallback, useContext, createContext, type ReactNode, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { Sparkles, Download, FileText } from 'lucide-react';
+import { Sparkles, FileText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import {
   ProvenanceDot,
@@ -65,7 +65,6 @@ import {
   NOTE_PLACEHOLDER,
   NOTE_REQUIRED_MESSAGE,
 } from '@/lib/overrideNote';
-import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
@@ -94,7 +93,6 @@ import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDi
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { api } from '@/lib/api';
-import { downloadXlsx, type XlsxCell } from '@/lib/exportXlsx';
 import {
   MethodChip,
   MethodChipContext,
@@ -717,160 +715,7 @@ export default function ProjectionsSection({
     );
   }
 
-  const onExport = async () => {
-    // FON-41 #2 — the export header is the table header. They change together
-    // or the Excel column mapping shifts against what the analyst reviewed.
-    // ``y.year`` (the ordinal) is NEVER printed as a year; the calendar year
-    // is appended only when the deal carries an acquisition close date.
-    const headers: XlsxCell[] = [
-      'Metric',
-      ...years.flatMap((y, i) => {
-        const label = projectionColumnHeading(i, y.calendarYear);
-        return [
-          `${label} Amount`,
-          `${label} % Rev`,
-          `${label} PAR`,
-          `${label} POR`,
-        ];
-      }),
-      ...(() => {
-        const label = exitColumnHeading(exitCalendarYear);
-        return [
-          `${label} Amount`,
-          `${label} % Rev`,
-          `${label} PAR`,
-          `${label} POR`,
-        ] as XlsxCell[];
-      })(),
-    ];
-    const rows: XlsxCell[][] = [headers];
-    const trMap = years.map(y => y.totalRevenue);
-    const arMap = years.map(y => y.availableRooms);
-    const orMap = years.map(y => y.occupiedRooms);
-    // The Exit Year column is display-only on every row but the forward NOI.
-    const EXIT_BLANKS: XlsxCell[] = ['', '', '', ''];
-    // A year the engine did not publish is an EMPTY cell (and empty derived
-    // cells), never a 0 — the sheet says the same thing the table does.
-    const expand = (label: string, vals: (number | undefined)[], asPct = false) => {
-      const cells: XlsxCell[] = [label];
-      vals.forEach((v, i) => {
-        if (v == null) {
-          cells.push('', '', '', '');
-          return;
-        }
-        // Keep numerics as numbers so Excel can re-sum / re-format. The
-        // % Rev / PAR / POR columns stay blank when the row itself is a
-        // percentage (e.g. Occupancy) — those derivations don't apply.
-        const amount = asPct
-          ? Number((v * 100).toFixed(1))
-          : Number(v.toFixed(0));
-        const tr = trMap[i];
-        const ar = arMap[i];
-        const or = orMap[i];
-        const pctRev = tr != null && tr > 0 && !asPct
-          ? Number(((v / tr) * 100).toFixed(1))
-          : '';
-        const par = ar > 0 && !asPct
-          ? Number(((v / ar) * 1000).toFixed(2))
-          : '';
-        const por = or != null && or > 0 && !asPct
-          ? Number(((v / or) * 1000).toFixed(2))
-          : '';
-        cells.push(amount, pctRev, par, por);
-      });
-      cells.push(...EXIT_BLANKS);
-      rows.push(cells);
-    };
-    // Emit a row of pure-numeric values (no % Rev / PAR / POR
-    // derivations) — used for headcount-style rows like Days,
-    // Rooms, and the institutional NOI summary block.
-    const plain = (label: string, vals: (number | undefined)[]) => {
-      if (vals.every(v => v === undefined)) return; // skip if engine didn't emit any year
-      rows.push([
-        label,
-        ...vals.flatMap(v =>
-          [v == null ? '' : Number(v.toFixed(0)), '', '', ''] as XlsxCell[],
-        ),
-        ...EXIT_BLANKS,
-      ]);
-    };
 
-    rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
-    rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
-    rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
-    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms ?? '', '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
-    expand('Occupancy', years.map(y => y.occupancy), true);
-    expand('Average Rate', years.map(y => y.adr));
-    expand('RevPAR', years.map(y => y.revpar));
-
-    // REVENUES — USALI 11th order. Rooms → F&B → Other Operated
-    // Departments (its own line per Sam's P4 ask) → Resort Fees →
-    // Total Revenue.
-    expand('Rooms Revenue', years.map(y => y.roomsRevenue));
-    expand('Food & Beverage Revenue', years.map(y => y.fbRevenue));
-    expand('Other Operated Departments', years.map(y => y.otherOperatedRevenue));
-    if (years.some(y => hasResortFees(y))) {
-      expand('Resort Fees', years.map(y => y.resortFees));
-    }
-    expand('Total Revenue', years.map(y => y.totalRevenue));
-
-    // DEPARTMENTAL EXPENSES — only rendered when the engine emitted
-    // them (real worker deals; not on Kimpton demo or revenue-only
-    // engine output).
-    if (years.some(y => y.deptTotalExpense != null)) {
-      plain('Rooms Departmental Expense', years.map(y => y.deptRoomsExpense));
-      plain('Food & Beverage Departmental Expense', years.map(y => y.deptFbExpense));
-      plain('Other Operated Departmental Expense', years.map(y => y.deptOtherExpense));
-      plain('Total Departmental Expenses', years.map(y => y.deptTotalExpense));
-    }
-
-    // UNDISTRIBUTED EXPENSES
-    if (years.some(y => y.undistTotal != null)) {
-      plain('Administrative & General', years.map(y => y.undistAdminGeneral));
-      plain('Information & Telecom', years.map(y => y.undistInfoTelecom));
-      plain('Sales & Marketing', years.map(y => y.undistSalesMarketing));
-      plain('Property Operations & Maintenance', years.map(y => y.undistPropertyOps));
-      plain('Utilities', years.map(y => y.undistUtilities));
-      plain('Total Undistributed Expenses', years.map(y => y.undistTotal));
-    }
-
-    // SUBTOTALS + FIXED CHARGES + NOI + FCF
-    plain('Gross Operating Profit (GOP)', years.map(y => y.gop));
-    plain('Management Fee', years.map(y => y.mgmtFee));
-    if (years.some(y => y.incentiveMgmtFee != null)) {
-      plain('Incentive Management Fee', years.map(y => y.incentiveMgmtFee));
-    }
-    if (years.some(y => y.fixedTotal != null)) {
-      plain('Property Taxes', years.map(y => y.fixedPropertyTaxes));
-      plain('Insurance', years.map(y => y.fixedInsurance));
-      plain('Equipment Lease / Rent', years.map(y => y.fixedRent));
-      plain('Other Fixed Charges', years.map(y => y.fixedOther));
-      plain('Total Fixed Charges', years.map(y => y.fixedTotal));
-    }
-    // FON-59 #1 / FON-67 #2 — name the basis. `noiInstitutional` is
-    // `noi_institutional ?? noi`; a pre-upgrade run with neither field
-    // confirmed is an after-reserve number and must not claim otherwise.
-    plain(
-      noiBeforeReserveLabel(years.some(y => y.noiBasisConfirmed)),
-      years.map(y => y.noiInstitutional),
-    );
-    plain('FF&E Reserve', years.map(y => y.ffeReserve));
-    plain('Net Cash Flow', years.map(y => y.netCashFlow));
-    // FON-41 #2 — the Exit Year column's one figure: the forward 12-month Cash
-    // NOI the reversion capitalises. Blank on every modelled year, because it
-    // is not one of them.
-    rows.push([
-      FORWARD_NOI_LABEL,
-      ...years.flatMap(() => ['', '', '', ''] as XlsxCell[]),
-      terminalNoi != null ? Number(terminalNoi.toFixed(0)) : '',
-      '', '', '',
-    ]);
-
-    await downloadXlsx(`projections-${dealId || 'deal'}`, [
-      { name: PL_SUB_LABEL.projections, rows },
-    ]);
-    toast(`${PL_SUB_LABEL.projections} exported`, { type: 'success' });
-  };
 
   // The "Show" control trims the columns RENDERED (base year + N forecast
   // years), capped at the engine-provided years. It is a view filter, not an
@@ -950,7 +795,10 @@ export default function ProjectionsSection({
           <CommentedCellsToggle />
           {/* FON-41 E-017 — editable workbook (projection + Assumptions sheet
               with stable override keys); Import previews, Apply saves the
-              assumptions through the field_overrides PATCH, then re-models. */}
+              assumptions through the field_overrides PATCH, then re-models.
+              Wave 3 (C11) — this is the Future P&L's ONE export: the worker's
+              workbook. The separate "Export" button downloaded the very same
+              file, so it is gone rather than presented as a second format. */}
           <PlRoundTripControls
             dealId={dealId}
             kind="projections"
@@ -960,9 +808,6 @@ export default function ProjectionsSection({
               await run();
             }}
           />
-          <Button variant="secondary" size="sm" onClick={onExport}>
-            <Download size={11} /> Export
-          </Button>
         </div>
       </div>
 

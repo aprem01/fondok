@@ -20,7 +20,7 @@
  *     the engine output is present.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
 // Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
@@ -179,6 +179,20 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 }));
 
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
+// C3 (Wave 3) — the partnership terms the deal carries are served through
+// GET /deals/{id}/assumption_sources as `partnership.*` keys; an uncarried
+// term is absent. The web carries no copy and the platform suggests none.
+const sources = vi.hoisted(() => ({
+  payload: null as null | {
+    id: string;
+    sources: Record<string, string>;
+    values: Record<string, number | string | boolean | null>;
+  },
+}));
+const assumptionSourcesSpy = vi.fn(async () => {
+  if (!sources.payload) throw new Error('no payload');
+  return sources.payload;
+});
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -186,7 +200,11 @@ vi.mock('@/lib/api', async () => {
     isWorkerConnected: () => true,
     api: {
       ...actual.api,
-      deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
+      deals: {
+        ...actual.api.deals,
+        update: (...a: unknown[]) => updateSpy(...(a as [])),
+        assumptionSources: () => assumptionSourcesSpy(),
+      },
     },
   };
 });
@@ -200,9 +218,45 @@ vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import PartnershipTab from '@/components/project/PartnershipTab';
+import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
+
+/** Partnership terms the deal CARRIES (a partnership document), as the worker
+ *  publishes them on assumption_sources. The worker suggests none. */
+const CARRIED_TERMS_PAYLOAD = {
+  id: 'deal-uuid-1',
+  sources: {
+    'partnership.pref_rate': 'partnership_doc',
+    'partnership.gp_equity_pct': 'partnership_doc',
+    'partnership.waterfall.tier_count': 'partnership_doc',
+    'partnership.waterfall.0.hurdle_rate': 'partnership_doc',
+    'partnership.waterfall.0.gp_split': 'partnership_doc',
+    'partnership.waterfall.1.hurdle_rate': 'partnership_doc',
+    'partnership.waterfall.1.gp_split': 'partnership_doc',
+  },
+  values: {
+    'partnership.pref_rate': 0.09,
+    'partnership.gp_equity_pct': 0.12,
+    'partnership.waterfall.tier_count': 2,
+    'partnership.waterfall.0.hurdle_rate': 0.13,
+    'partnership.waterfall.0.gp_split': 0.2,
+    'partnership.waterfall.1.hurdle_rate': 0.18,
+    'partnership.waterfall.1.gp_split': 0.35,
+  },
+};
+
+/** Mount the tab the way the deal page does — inside the deal's provenance. */
+function renderWithSources() {
+  return render(
+    <ProvenanceProvider dealId="deal-uuid-1">
+      <PartnershipTab />
+    </ProvenanceProvider>,
+  );
+}
 
 beforeEach(() => {
   cleanup();
+  sources.payload = CARRIED_TERMS_PAYLOAD;
+  assumptionSourcesSpy.mockClear();
   activeOutputs = OUTPUTS;
   updateSpy.mockClear();
   engineRunSpy.mockClear();
@@ -426,14 +480,16 @@ describe('PartnershipTab — Summary equity bridge (FON-66 §1)', () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('PartnershipTab — waterfall table polish (FON-66 §2)', () => {
-  function openWaterfall() {
-    render(<PartnershipTab />);
+  // The worker's two-band reference ladder (C3) gives the table removable tiers.
+  async function openWaterfall() {
+    renderWithSources();
     fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
+    await screen.findByRole('button', { name: 'Remove promote tier 1' });
   }
   const removeBtn = () => screen.getByRole('button', { name: 'Remove promote tier 1' });
 
-  it('Remove is an icon with an accessible label, hidden until the row is hovered', () => {
-    openWaterfall();
+  it('Remove is an icon with an accessible label, hidden until the row is hovered', async () => {
+    await openWaterfall();
     // Not a bordered "Remove" word any more — an icon carrying its own label.
     expect(removeBtn().textContent).toBe('');
     expect(screen.queryByText('Remove')).toBeNull();
@@ -449,14 +505,14 @@ describe('PartnershipTab — waterfall table polish (FON-66 §2)', () => {
     expect(removeBtn().style.opacity).toBe('0');
   });
 
-  it('keyboard focus reveals it too', () => {
-    openWaterfall();
+  it('keyboard focus reveals it too', async () => {
+    await openWaterfall();
     fireEvent.focus(removeBtn());
     expect(removeBtn().style.opacity).toBe('1');
   });
 
-  it('"Add tier" is a row of the table, on the same grid as the tiers', () => {
-    openWaterfall();
+  it('"Add tier" is a row of the table, on the same grid as the tiers', async () => {
+    await openWaterfall();
     const add = screen.getByRole('button', { name: /Add tier/ });
     // Laid out on the tier grid, under the table's own hairline.
     expect(add.style.display).toBe('grid');
@@ -468,13 +524,13 @@ describe('PartnershipTab — waterfall table polish (FON-66 §2)', () => {
     expect(screen.getByTestId('add-tier-note')).toBeInTheDocument();
   });
 
-  it('keeps GP split and LP split as two independently editable columns', () => {
+  it('keeps GP split and LP split as two independently editable columns', async () => {
     // FOUNDER DECISION — Sam's optional "consider presenting each economic
     // split together (20% GP / 80% LP)" is DECLINED: two right-aligned numeric
     // columns scan down a table better than a combined string, and both halves
     // are independently editable, so collapsing them would cost an edit target
     // to save a column.
-    openWaterfall();
+    await openWaterfall();
     expect(screen.getByText('GP split')).toBeInTheDocument();
     expect(screen.getByText('LP split')).toBeInTheDocument();
     expect(screen.queryByText(/\d+%\s*GP\s*\/\s*\d+%\s*LP/)).not.toBeInTheDocument();
@@ -580,9 +636,12 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
     ).toBeGreaterThan(0);
   });
 
-  it('renders the tier table (hurdle, LP / GP split) on the Summary, above the partner-return KPIs', () => {
-    render(<PartnershipTab />);
+  it('renders the tier table (hurdle, LP / GP split) on the Summary, above the partner-return KPIs', async () => {
+    renderWithSources();
     const tiers = screen.getByTestId('summary-waterfall-tiers');
+    // The promote bands — the worker's reference terms, the same ones the
+    // Waterfall sub-tab edits.
+    expect(await within(tiers).findByText('Promote — to 13% LP IRR')).toBeInTheDocument();
 
     // Column heads + the typed structural tiers.
     expect(within(tiers).getByText('Hurdle')).toBeInTheDocument();
@@ -591,12 +650,10 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
     expect(within(tiers).getByText('Tier I — Return of Capital')).toBeInTheDocument();
     expect(within(tiers).getByText('Tier II — Preferred Return')).toBeInTheDocument();
     expect(within(tiers).getByText('Tier III — GP Catch-Up')).toBeInTheDocument();
-    // The promote bands — same seed the Waterfall sub-tab edits.
-    expect(within(tiers).getByText('Promote — to 10% LP IRR')).toBeInTheDocument();
-    expect(within(tiers).getByText('Promote — above 50% LP IRR')).toBeInTheDocument();
-    expect(within(tiers).getByText('Until 15% LP IRR')).toBeInTheDocument();
-    expect(within(tiers).getAllByText('20%').length).toBeGreaterThan(0); // GP split
-    expect(within(tiers).getAllByText('80%').length).toBeGreaterThan(0); // LP split = 100% − GP
+    expect(within(tiers).getByText('Promote — above 18% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Until 13% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getAllByText('35%').length).toBeGreaterThan(0); // GP split
+    expect(within(tiers).getAllByText('65%').length).toBeGreaterThan(0); // LP split = 100% − GP
 
     // ABOVE the partner-return KPIs.
     const partnerReturns = screen.getByText('Partner Returns');
@@ -604,14 +661,15 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
     expect(tiers.compareDocumentPosition(partnerReturns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('is read-only on the Summary — editing stays on the Waterfall sub-tab', () => {
-    render(<PartnershipTab />);
+  it('is read-only on the Summary — editing stays on the Waterfall sub-tab', async () => {
+    renderWithSources();
     const tiers = screen.getByTestId('summary-waterfall-tiers');
+    await within(tiers).findByText('Until 13% LP IRR');
     expect(within(tiers).queryByRole('button', { name: /Add tier/ })).toBeNull();
     expect(within(tiers).queryByRole('button', { name: /Remove promote tier/ })).toBeNull();
     expect(within(tiers).getByText(/Hurdles and splits are edited on the Waterfall sub-tab/)).toBeInTheDocument();
     // Clicking a hurdle on the Summary opens no editor and PATCHes nothing.
-    fireEvent.click(within(tiers).getByText('Until 15% LP IRR'));
+    fireEvent.click(within(tiers).getByText('Until 13% LP IRR'));
     expect(tiers.querySelector('input')).toBeNull();
     expect(updateSpy).not.toHaveBeenCalled();
 
@@ -619,5 +677,133 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
     fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
     expect(screen.getByRole('button', { name: /Add tier/ })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Remove promote tier/ }).length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// C3 (Wave 3) — the web holds no partnership terms and the platform suggests
+// none. The tab reads the terms the deal carries off assumption_sources
+// (`partnership.*`); a term the deal does not carry is absent there and reads
+// "—" (awaiting data), never a browser-side 8% / 10% / promote ladder and
+// never a "Platform default".
+// ─────────────────────────────────────────────────────────────────────────
+/** The KeyRow (label + value) for a label — not the dollar-waterfall row that
+ *  may share its text. */
+function rowFor(label: string): HTMLElement {
+  const rows = screen
+    .getAllByText(label)
+    .map((el) => el.parentElement!.parentElement as HTMLElement)
+    .filter((r) => r.children.length === 2);
+  expect(rows.length, `no key row "${label}"`).toBeGreaterThan(0);
+  return rows[0];
+}
+
+describe('PartnershipTab — partnership terms are the deal\u2019s own or absent (C3)', () => {
+  /** The engine envelope WITHOUT a pref or a GP/LP equity split. */
+  function bareOutputs() {
+    return withPartnershipOutputs({ gp: null, lp: null });
+  }
+
+  it('absent from the payload → Preferred Return, GP ownership and the promote bands are dashes, not literals', async () => {
+    sources.payload = { id: 'deal-uuid-1', sources: {}, values: {} };
+    activeOutputs = bareOutputs();
+    renderWithSources();
+    await waitFor(() => expect(assumptionSourcesSpy).toHaveBeenCalled());
+    const pref = rowFor('Preferred Return');
+    expect(pref).toHaveTextContent('—');
+    expect(pref).not.toHaveTextContent('8%');
+    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('—');
+    expect(rowFor('GP / Sponsor Ownership')).not.toHaveTextContent('10%');
+    expect(rowFor('LP Investor Ownership')).toHaveTextContent('—');
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+    expect(within(tiers).queryByText(/Promote — to 10% LP IRR/)).toBeNull();
+    expect(within(tiers).getByText('— preferred return')).toBeInTheDocument();
+  });
+
+  it('carried terms render as the deal\u2019s own values — no Platform default badge anywhere', async () => {
+    activeOutputs = bareOutputs();
+    renderWithSources();
+    await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
+    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('12%');
+    expect(rowFor('LP Investor Ownership')).toHaveTextContent('88%');
+    expect(screen.getByTestId('summary-waterfall-tiers')).toHaveTextContent('Until 13% LP IRR');
+    expect(screen.queryByText(/platform default/i)).toBeNull();
+  });
+
+  it('GP not carried → GP ownership and LP ownership are both dashes', async () => {
+    activeOutputs = bareOutputs();
+    const { 'partnership.gp_equity_pct': _gs, ...srcs } = CARRIED_TERMS_PAYLOAD.sources;
+    const { 'partnership.gp_equity_pct': _gv, ...vals } = CARRIED_TERMS_PAYLOAD.values;
+    sources.payload = { ...CARRIED_TERMS_PAYLOAD, sources: srcs, values: vals };
+    renderWithSources();
+    await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
+    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('—');
+    expect(rowFor('LP Investor Ownership')).toHaveTextContent('—');
+  });
+
+  it('an engine-published pref wins over the carried term', async () => {
+    activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
+    renderWithSources();
+    await waitFor(() => expect(assumptionSourcesSpy).toHaveBeenCalled());
+    expect(rowFor('Preferred Return')).toHaveTextContent('7%');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wave 3 (B5) — the worker's `not_applicable` partnership row is a neutral
+// state, never a failure: no terms → "No partnership terms on this deal" +
+// the worker's message; half-entered terms → the blocked-run notice with the
+// worker's sentence naming each tier.
+// ─────────────────────────────────────────────────────────────────────────
+describe('PartnershipTab — the engine does not apply (not_applicable)', () => {
+  function withPartnershipRow(row: Record<string, unknown>) {
+    const base = OUTPUTS as unknown as { engines: Record<string, Record<string, unknown>> };
+    return {
+      ...base,
+      engines: { ...base.engines, partnership: { ...base.engines.partnership, outputs: null, ...row } },
+    } as unknown as EngineOutputsResponse;
+  }
+
+  it('no terms → the neutral empty state with the worker\u2019s message; no failure styling', () => {
+    activeOutputs = withPartnershipRow({
+      status: 'not_applicable',
+      error: null,
+      not_applicable: {
+        engine: 'partnership', reason: 'not_applicable', message: 'no partnership terms on this deal',
+        missing: ['split', 'pref_rate', 'tiers'], incomplete: [],
+      },
+    });
+    render(<PartnershipTab />);
+    const card = screen.getByTestId('partnership-not-applicable');
+    expect(card).toHaveTextContent('No partnership terms on this deal');
+    expect(card).toHaveTextContent('no partnership terms on this deal');
+    expect(card.getAttribute('role')).not.toBe('alert');
+    expect(screen.queryByTestId('partnership-terms-incomplete')).toBeNull();
+    expect(screen.queryByText(/didn\u2019t finish|errored|Failed/)).toBeNull();
+    // The sub-tabs stay so the terms can be entered.
+    expect(screen.getByRole('tab', { name: 'Waterfall' })).toBeInTheDocument();
+  });
+
+  it('half-entered tiers → the blocked-run notice naming each tier, verbatim', () => {
+    const message = 'partnership terms incomplete on this deal: Tier 2 has a GP split but no hurdle; Tier 4 has a hurdle but no GP / LP split';
+    activeOutputs = withPartnershipRow({
+      status: 'not_applicable',
+      error: null,
+      not_applicable: {
+        engine: 'partnership', reason: 'awaiting_analyst', message,
+        missing: [], incomplete: ['Tier 2 has a GP split but no hurdle', 'Tier 4 has a hurdle but no GP / LP split'],
+      },
+    });
+    render(<PartnershipTab />);
+    const notice = screen.getByTestId('partnership-terms-incomplete');
+    expect(notice).toHaveTextContent(message);
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(screen.queryByTestId('partnership-not-applicable')).toBeNull();
+  });
+
+  it('a complete run shows neither state', () => {
+    render(<PartnershipTab />);
+    expect(screen.queryByTestId('partnership-not-applicable')).toBeNull();
+    expect(screen.queryByTestId('partnership-terms-incomplete')).toBeNull();
   });
 });

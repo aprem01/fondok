@@ -155,6 +155,8 @@ waterfall is ever applied in their place.
 <!-- source: apps/worker/app/services/engine_runner.py (_default_assumptions carries no partnership term; _partnership_terms_view), apps/worker/app/engines/partnership.py (PartnershipEngine deficit capital call) -->
 Fondok has no default or suggested partnership terms: the Partnership tab shows only the terms you
 or a partnership document have entered, and a term not entered shows a dash awaiting your input.
+When the waterfall is not applicable the tab shows "No partnership terms on this deal" with the
+reason, and a half-entered tier is named in a notice above the tabs; neither is shown as an error.
 A shortfall is funded as a dated pro-rata capital call by ownership split; the preferred return
 accrues on it.
 

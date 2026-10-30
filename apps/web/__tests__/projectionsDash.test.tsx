@@ -3,11 +3,15 @@
  * figure to 0.
  *
  * A revenue year the engine published without ADR / occupancy / F&B / OOD
- * revenue used to render "$0" / "0.0%" in that column and write 0 into the
- * exported workbook. Now the cell reads "—", the derived Occupied Rooms is a
- * dash too, and the xlsx cell (plus its % Rev / PAR / POR derivations) is
- * EMPTY. The Misc. Income row, which the engine never carried, is gone rather
- * than hidden-because-zero.
+ * revenue used to render "$0" / "0.0%" in that column and write 0 into a
+ * browser-built workbook. Now the cell reads "—", the derived Occupied Rooms
+ * is a dash too, and the Misc. Income row, which the engine never carried, is
+ * gone rather than hidden-because-zero.
+ *
+ * Wave 3 (C11) — the Export button hands off to the worker's Future P&L
+ * workbook (``GET /deals/{id}/exports/projections.xlsx``), the ONE export
+ * mechanism; the browser builds no spreadsheet, so the not-available cells the
+ * worker renders are the ones the analyst gets.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -52,7 +56,7 @@ function buildOutputs(): EngineOutputsResponse {
   } as unknown as EngineOutputsResponse;
 }
 
-const fx = vi.hoisted(() => ({ xlsxRows: [] as unknown[][] }));
+const fx = vi.hoisted(() => ({ download: vi.fn(async () => {}) }));
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
@@ -96,17 +100,16 @@ vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }))
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
 vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
-vi.mock('@/lib/exportXlsx', () => ({
-  downloadXlsx: vi.fn(async (_name: string, sheets: { rows: unknown[][] }[]) => {
-    fx.xlsxRows = sheets[0].rows;
-  }),
-}));
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
     ...actual,
     isWorkerConnected: () => true,
-    api: { ...actual.api, deals: { ...actual.api.deals, update: vi.fn(async () => ({ id: 'deal-uuid-1' })) } },
+    api: {
+      ...actual.api,
+      deals: { ...actual.api.deals, update: vi.fn(async () => ({ id: 'deal-uuid-1' })) },
+      plRoundTrip: { ...actual.api.plRoundTrip, download: fx.download },
+    },
   };
 });
 
@@ -114,7 +117,7 @@ import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
 
 beforeEach(() => {
   cleanup();
-  fx.xlsxRows = [];
+  fx.download.mockClear();
 });
 
 /** The visible cells of the table row whose first cell is `label`. */
@@ -150,29 +153,11 @@ describe('Future P&L — a year the engine left blank', () => {
     expect(fb[2 * SUB]).toBe('$3,000,000');
   });
 
-  it('the exported workbook writes EMPTY cells for the blank year — amount and derivations alike', async () => {
+  it('one export control: Editable .xlsx downloads the worker\u2019s Future P&L workbook; no second Export button', async () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /export/i }));
-    await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
-    const byLabel = (label: string) => fx.xlsxRows.find((r) => String(r[0]) === label)!;
-    // Column layout: label, then 4 cells per year (Amount, %Rev, PAR, POR).
-    const yearCells = (row: unknown[], i: number) => row.slice(1 + i * 4, 1 + (i + 1) * 4);
-    for (const label of ['Occupancy', 'Average Rate', 'RevPAR', 'Food & Beverage Revenue']) {
-      const row = byLabel(label);
-      expect(row, label).toBeDefined();
-      expect(yearCells(row, 1), `${label} · blank year`).toEqual(['', '', '', '']);
-      expect(yearCells(row, 0)[0], `${label} · published year`).not.toBe('');
-      expect(yearCells(row, 0)[0], `${label} · published year`).not.toBe(0);
-    }
-    expect(yearCells(byLabel('Other Operated Departments'), 0)).toEqual(['', '', '', '']);
-    expect(yearCells(byLabel('Occupied Rooms'), 1)[0]).toBe('');
-    expect(fx.xlsxRows.some((r) => String(r[0]) === 'Miscellaneous Income')).toBe(false);
-    // No AMOUNT cell is a zero standing in for a missing value. (A derived
-    // % Rev of a published ADR may legitimately round to 0 — that is a
-    // computed ratio, not a coalesced blank, so only amounts are checked.)
-    for (const label of ['Occupancy', 'Average Rate', 'RevPAR', 'Food & Beverage Revenue', 'Other Operated Departments']) {
-      const row = byLabel(label);
-      for (let i = 0; i < HOLD_YEARS; i++) expect(yearCells(row, i)[0], `${label} · year ${i + 1}`).not.toBe(0);
-    }
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Editable \.xlsx/ }));
+    await waitFor(() => expect(fx.download).toHaveBeenCalledTimes(1));
+    expect(fx.download).toHaveBeenCalledWith('deal-uuid-1', 'projections', 'fondok-future-pl-deal-uuid-1.xlsx');
   });
 });

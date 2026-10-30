@@ -1113,7 +1113,29 @@ export type EngineName =
   // distributions), reconciled server-side to the returns engine.
   | 'cash_flow';
 
-export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed';
+/** `not_applicable` (Wave 3, B5): the engine does not apply to the deal as
+ *  configured (Partnership without complete partnership terms). Not a
+ *  failure — never in `failures`; the row carries `not_applicable`. */
+export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed' | 'not_applicable';
+
+/** Why an engine row is `not_applicable` (worker `EngineNotApplicable`).
+ *  `reason` is `not_applicable` (the deal carries none of the terms) or
+ *  `awaiting_analyst` (some are entered; `incomplete` names each half-entered
+ *  item, e.g. "Tier 3 has a GP split but no hurdle"). `message` is the
+ *  sentence the UI prints verbatim. */
+/** An engine row that will not change any more: done, failed, or not
+ *  applicable to the deal. Run polling stops once every row is terminal. */
+export function isTerminalEngineStatus(status: string | null | undefined): boolean {
+  return status === 'complete' || status === 'failed' || status === 'not_applicable';
+}
+
+export interface EngineNotApplicable {
+  engine: string;
+  reason: string;
+  message: string;
+  missing: string[];
+  incomplete: string[];
+}
 
 // ─────────────────── Cash Flow Statement (Move 2) ───────────────────
 //
@@ -1199,6 +1221,8 @@ export interface EngineOutputResponse {
   outputs: Record<string, unknown> | null;
   inputs: Record<string, unknown> | null;
   error: string | null;
+  /** Set only on a `not_applicable` row; absent on older workers. */
+  not_applicable?: EngineNotApplicable | null;
   runtime_ms: number | null;
   started_at: string | null;
   completed_at: string | null;

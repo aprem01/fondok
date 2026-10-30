@@ -147,7 +147,7 @@ function buildOutputs(calendar: number[] | undefined): EngineOutputsResponse {
 }
 
 // ── Mocks ────────────────────────────────────────────────────────────
-const fx = vi.hoisted(() => ({ xlsxRows: [] as unknown[][] }));
+const fx = vi.hoisted(() => ({ download: vi.fn(async () => {}) }));
 
 let CALENDAR_YEARS: number[] | undefined = CALENDAR;
 let FIELD_OVERRIDES: Record<string, unknown> = {};
@@ -197,11 +197,6 @@ vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }))
 vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null }));
 vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
-vi.mock('@/lib/exportXlsx', () => ({
-  downloadXlsx: vi.fn(async (_name: string, sheets: { rows: unknown[][] }[]) => {
-    fx.xlsxRows = sheets[0].rows;
-  }),
-}));
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
@@ -210,6 +205,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...actual.api,
       deals: { ...actual.api.deals, update: vi.fn(async () => ({ id: 'deal-uuid-1' })) },
+      plRoundTrip: { ...actual.api.plRoundTrip, download: fx.download },
     },
   };
 });
@@ -230,7 +226,7 @@ import CashFlowTab from '@/components/project/CashFlowTab';
 
 beforeEach(() => {
   cleanup();
-  fx.xlsxRows = [];
+  fx.download.mockClear();
   CALENDAR_YEARS = CALENDAR;
   FIELD_OVERRIDES = { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } };
 });
@@ -395,38 +391,32 @@ describe('Projections — Base Year IS Year 1, and Cash Flow agrees', () => {
     cleanup();
 
     // (b) Financials → Projections: the FIRST column, which is now named
-    //     "Base Year (Year 1)" and therefore claims the same year.
+    //     "Base Year (Year 1)" and therefore claims the same year. The table
+    //     heading is the contract (the worker's workbook prints the same
+    //     heading from the same calendar — see export_projections).
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /export/i }));
-    await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
-
-    const headers = fx.xlsxRows[0].map((c) => String(c));
-    // The export header IS the table heading (label · calendar year).
-    expect(headers[1]).toBe('Base year (Year 1) · 2025 Amount');
-    expect(headers[5]).toBe('Year 2 · 2026 Amount');
+    const headers = Array.from(document.querySelectorAll('table thead th')).map((th) => (th.textContent ?? '').trim());
+    expect(headers.some((h) => h.startsWith('Base year (Year 1)') && h.includes('2025'))).toBe(true);
+    expect(headers.some((h) => h.startsWith('Year 2') && h.includes('2026'))).toBe(true);
     // No column claims to be "Year 1" twice.
-    expect(headers.filter((h) => h.startsWith('Year 1 '))).toHaveLength(0);
+    expect(headers.filter((h) => /^Year 1\b/.test(h))).toHaveLength(0);
 
-    const noiRow = fx.xlsxRows.find((r) =>
-      String(r[0]).startsWith('NOI (before FF&E reserve)'),
-    )!;
-    expect(noiRow[1]).toBe(NOI_BEFORE[0]);
+    const noiRow = Array.from(document.querySelectorAll<HTMLTableRowElement>('table tbody tr'))
+      .find((r) => (r.cells[0]?.textContent ?? '').trim().startsWith('NOI (before FF&E reserve)'))!;
+    expect(noiRow).toBeDefined();
+    const noiCells = Array.from(noiRow.cells).map((c) => (c.textContent ?? '').trim());
     // Identical to the Cash Flow tab's Year 1 — the off-by-one is closed.
-    expect(`$${Number(noiRow[1]).toLocaleString('en-US')}`).toContain(
-      cashFlowYearOne.replace(/[^\d,]/g, ''),
-    );
+    expect(noiCells.some((c) => c.includes(cashFlowYearOne.replace(/[^\d,]/g, '')))).toBe(true);
     // …and the SECOND Financials column is Year 2's NOI, not Year 1's.
-    expect(noiRow[5]).toBe(NOI_BEFORE[1]);
+    expect(noiCells.some((c) => c.includes(Number(NOI_BEFORE[1]).toLocaleString('en-US')))).toBe(true);
   });
 
-  it('the export header carries the Exit Year column too', async () => {
+  it('one export control: Editable .xlsx downloads the worker\u2019s Future P&L workbook; no second Export button', async () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /export/i }));
-    await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
-    const headers = fx.xlsxRows[0].map((c) => String(c));
-    expect(headers).toHaveLength(1 + (HOLD_YEARS + 1) * 4);
-    expect(headers[headers.length - 4]).toBe('Exit Year · 2030 Amount');
-    const fwd = fx.xlsxRows.find((r) => String(r[0]) === FORWARD_NOI_LABEL)!;
-    expect(fwd[1 + HOLD_YEARS * 4]).toBe(TERMINAL_NOI);
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Editable \.xlsx/ }));
+    await waitFor(() => expect(fx.download).toHaveBeenCalledTimes(1));
+    expect(fx.download).toHaveBeenCalledWith('deal-uuid-1', 'projections', 'fondok-future-pl-deal-uuid-1.xlsx');
   });
+
 });

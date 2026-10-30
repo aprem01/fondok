@@ -134,7 +134,6 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));
 vi.mock('@/lib/hooks/useFlash', () => ({ useFlash: () => false }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: fx.toast }) }));
-vi.mock('@/lib/exportXlsx', () => ({ downloadXlsx: vi.fn(async () => {}) }));
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {

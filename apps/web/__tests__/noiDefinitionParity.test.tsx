@@ -211,7 +211,7 @@ const OUTPUTS = {
 
 // ── Mocks (the union of what the five tabs need) ───────────────────────
 const fx = vi.hoisted(() => ({
-  xlsxRows: [] as unknown[][],
+  download: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -264,6 +264,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...actual.api,
       deals: { ...actual.api.deals, update: vi.fn(async () => ({ id: 'deal-uuid-1' })) },
+      plRoundTrip: { ...actual.api.plRoundTrip, download: fx.download },
       engines: { ...actual.api.engines, timeline: vi.fn(async () => null) },
       scenarios: {
         ...actual.api.scenarios,
@@ -298,11 +299,6 @@ vi.mock('@/components/project/pl/GroundedWorksheet', () => ({
   default: () => null,
   fieldMatchesKey: () => false,
 }));
-vi.mock('@/lib/exportXlsx', () => ({
-  downloadXlsx: vi.fn(async (_name: string, sheets: { rows: unknown[][] }[]) => {
-    fx.xlsxRows = sheets[0].rows;
-  }),
-}));
 
 import InvestmentTab from '@/components/project/InvestmentTab';
 import PLTab from '@/components/project/PLTab';
@@ -315,7 +311,7 @@ const PROJECT = { id: 0, name: 'Kimpton Angler' } as unknown as Project;
 
 beforeEach(() => {
   cleanup();
-  fx.xlsxRows = [];
+  fx.download.mockClear();
 });
 
 /** (c) — no element on screen is labelled with the bare, unqualified word
@@ -355,23 +351,23 @@ describe('Financials — the P&L / Projections surfaces name the basis', () => {
     expectNoBareNoiLabel();
   });
 
-  it('the Projections export labels the NOI row "NOI (before FF&E reserve)" at $2,001,056', async () => {
+  it('the Projections table labels the NOI row "NOI (before FF&E reserve)" at $2,001,056', () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /export/i }));
-
-    await waitFor(() => expect(fx.xlsxRows.length).toBeGreaterThan(0));
-    const labels = fx.xlsxRows.map((r) => String((r[0] as { v?: unknown } | string)?.valueOf?.() ?? r[0]));
-    const noiIdx = fx.xlsxRows.findIndex((r) => {
-      const first = r[0] as { v?: unknown } | string | undefined;
-      const text = typeof first === 'object' && first !== null && 'v' in first ? String(first.v) : String(first);
-      return text === NOI_BEFORE_RESERVE_LABEL;
-    });
-    expect(noiIdx, `no "${NOI_BEFORE_RESERVE_LABEL}" row in ${JSON.stringify(labels)}`).toBeGreaterThan(-1);
-    const noiRow = fx.xlsxRows[noiIdx];
-    const values = noiRow.slice(1).map((c) => (typeof c === 'object' && c !== null && 'v' in (c as object) ? (c as { v: unknown }).v : c));
-    expect(values).toContain(NOI_BEFORE);
-    expect(values).not.toContain(CASH_NOI);
+    const row = Array.from(document.querySelectorAll<HTMLTableRowElement>('table tbody tr'))
+      .find((r) => (r.cells[0]?.textContent ?? '').trim().startsWith(NOI_BEFORE_RESERVE_LABEL));
+    expect(row, `no "${NOI_BEFORE_RESERVE_LABEL}" row`).toBeDefined();
+    const cells = Array.from(row!.cells).map((c) => (c.textContent ?? '').trim());
+    expect(cells.some((c) => c.includes('2,001,056'))).toBe(true);
+    expect(cells.some((c) => c.includes(CASH_NOI.toLocaleString('en-US')))).toBe(false);
     expectNoBareNoiLabel();
+  });
+
+  it('one export control: Editable .xlsx downloads the worker\u2019s Future P&L workbook; no second Export button', async () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Editable \.xlsx/ }));
+    await waitFor(() => expect(fx.download).toHaveBeenCalledTimes(1));
+    expect(fx.download).toHaveBeenCalledWith('deal-uuid-1', 'projections', 'fondok-future-pl-deal-uuid-1.xlsx');
   });
 });
 
