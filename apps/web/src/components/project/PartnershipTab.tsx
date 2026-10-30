@@ -756,7 +756,7 @@ export default function PartnershipTab() {
                   />
                   <KeyRow
                     label="LP Investor Ownership"
-                    dot="calculated"
+                    dot={has(lpPct) ? 'calculated' : 'awaiting_data'}
                     value={pctv(lpPct, 0)}
                     valueColor={prov.gray}
                   />
@@ -962,7 +962,7 @@ export default function PartnershipTab() {
                     value={pctv(gpPct, 0)}
                     valueColor={has(gpPct) ? prov.blue : prov.muted}
                   />
-                  <KeyRow label="LP Investor Ownership" dot="calculated" value={pctv(lpPct, 0)} valueColor={prov.gray} />
+                  <KeyRow label="LP Investor Ownership" dot={has(lpPct) ? 'calculated' : 'awaiting_data'} value={pctv(lpPct, 0)} valueColor={prov.gray} />
                   <KeyRow
                     label="Preferred Return"
                     dot={has(prefRate) ? 'assumption' : 'awaiting_data'}

@@ -739,6 +739,8 @@ describe('PartnershipTab — partnership terms are the deal\u2019s own or absent
     await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
     expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('—');
     expect(rowFor('LP Investor Ownership')).toHaveTextContent('—');
+    // An unknown LP share is awaiting data, not a calculated figure.
+    expect(within(rowFor('LP Investor Ownership')).getByLabelText('Awaiting data')).toBeInTheDocument();
   });
 
   it('an engine-published pref wins over the carried term', async () => {

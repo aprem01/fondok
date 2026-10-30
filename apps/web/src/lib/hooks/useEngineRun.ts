@@ -108,6 +108,15 @@ export function useEngineRun(
         // page numbers refresh without a manual reload.
         notifyEngineOutputsChanged(dealId);
         optsRef.current.onComplete?.(row);
+      } else if (row.status === 'not_applicable') {
+        // Terminal and not a failure: the engine does not apply to the deal
+        // as configured (Partnership without terms). One neutral line, the
+        // worker's own sentence; the tab renders the neutral state.
+        setStatus('not_applicable');
+        const why = row.not_applicable?.message;
+        toast(why ? `${engineName} not applicable · ${why}` : `${engineName} not applicable to this deal`, { type: 'info' });
+        notifyEngineOutputsChanged(dealId);
+        optsRef.current.onComplete?.(row);
       } else if (row.status === 'failed') {
         setStatus('failed');
         const msg = row.error || 'engine failed';
