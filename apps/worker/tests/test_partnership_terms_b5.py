@@ -132,7 +132,7 @@ async def test_partial_terms_name_what_is_missing() -> None:
     assert failure["reason"] == "awaiting_analyst"
     assert failure["missing"] == ["split", "tiers"]
     assert failure["message"] == (
-        "partnership terms incomplete on this deal: no GP / LP equity split, promote tiers"
+        "partnership terms incomplete on this deal: no GP / LP equity split; no promote tiers"
     )
 
 
@@ -295,3 +295,63 @@ async def test_engines_endpoint_exposes_the_not_applicable_record() -> None:
     assert part["failure"] is None
     assert part["not_applicable"]["message"] == "no partnership terms on this deal"
     assert all(f["engine"] != "partnership" for f in body.get("failures", []))
+
+
+# ───────── review fix 2 — a half-entered tier blocks the run, by name ─────────
+
+
+@pytest.mark.asyncio
+async def test_a_half_entered_tier_blocks_the_waterfall_and_is_named() -> None:
+    overrides = kimpton_partnership_field_overrides()
+    overrides["partnership.waterfall.6.gp_split"] = 0.6  # Tier 7: split, no hurdle
+    results, *_ = await _run(overrides)
+    part = results["partnership"]
+    assert part["status"] == "not_applicable"
+    rec = part["not_applicable"]
+    assert rec["reason"] == "awaiting_analyst"
+    assert rec["incomplete"] == ["Tier 7 has a GP split but no hurdle"]
+    assert rec["missing"] == []
+    assert rec["message"] == (
+        "partnership terms incomplete on this deal: Tier 7 has a GP split but no hurdle"
+    )
+
+
+def test_no_complete_tier_names_every_half_entered_tier() -> None:
+    from app.services.engine_runner import partnership_terms
+
+    terms = partnership_terms(
+        {
+            "gp_equity_pct": 0.1,
+            "pref_rate": 0.08,
+            "partnership_waterfall_overrides": {
+                0: {"hurdle_rate": 0.10},
+                2: {"lp_split": 0.8},
+                3: {"hurdle_rate": 0.2, "gp_split": 0.5, "lp_split": 0.6},
+            },
+        }
+    )
+    assert not terms.applicable
+    assert terms.missing == ("tiers",)
+    assert terms.refusal_message() == (
+        "partnership terms incomplete on this deal: no complete promote tier; "
+        "Tier 1 has a hurdle but no GP / LP split; "
+        "Tier 3 has an LP split but no hurdle; "
+        "Tier 4's terms are not valid (the hurdle must be 0–100% and the GP and "
+        "LP splits must sum to 100%)"
+    )
+
+
+def test_removed_tier_with_stale_terms_does_not_block() -> None:
+    from app.services.engine_runner import partnership_terms
+
+    terms = partnership_terms(
+        {
+            "gp_equity_pct": 0.1,
+            "pref_rate": 0.08,
+            "partnership_waterfall_overrides": {
+                0: {"hurdle_rate": 0.10, "gp_split": 0.0},
+                1: {"gp_split": 0.3, "removed": True},
+            },
+        }
+    )
+    assert terms.applicable

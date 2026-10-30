@@ -141,12 +141,14 @@ breakdown.
 ::: card
 #### Partnership — the deal's own terms, or not applicable
 
-<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT 0.10, SUGGESTED_LP_EQUITY_PCT 0.90, SUGGESTED_PREF_RATE 0.10, SUGGESTED_PROMOTE_TIERS, NO_PARTNERSHIP_TERMS_REASON), apps/worker/app/services/engine_runner.py (partnership_terms, _partnership_terms_view, OPTIONAL_WHEN_NOT_APPLICABLE), apps/worker/app/api/deals.py (assumption_sources partnership.*) -->
+<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT 0.10, SUGGESTED_LP_EQUITY_PCT 0.90, SUGGESTED_PREF_RATE 0.10, SUGGESTED_PROMOTE_TIERS, NO_PARTNERSHIP_TERMS_REASON), apps/worker/app/services/engine_runner.py (partnership_terms, _incomplete_tiers, STATUS_NOT_APPLICABLE, _partnership_terms_view, OPTIONAL_WHEN_NOT_APPLICABLE), apps/worker/app/api/deals.py (assumption_sources partnership.*) -->
 The waterfall runs only on partnership terms the deal carries — from an uploaded partnership / JV
 document or entered on the Partnership tab: the GP / LP equity split (one side derives the other),
 the preferred return and at least one promote tier (a hurdle and a split). Without them the
-Partnership engine reports **not applicable — “no partnership terms on this deal”** (or names the
-missing terms when only some are entered); the Partnership sheet of the Excel export states the same
+Partnership engine reports **not applicable — “no partnership terms on this deal”** — a neutral
+status, never an engine error. When only some are entered it names what is missing, and a tier
+entered by half blocks the waterfall and is named (“Tier 3 has a GP split but no hurdle”) rather
+than being dropped from the stack. The Partnership sheet of the Excel export states the same
 reason, and the Cash Flow statement runs without distribution lines and says why. No benchmark
 waterfall is ever applied in their place.
 

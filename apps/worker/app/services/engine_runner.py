@@ -3732,7 +3732,10 @@ class PartnershipTerms:
     """The partnership terms a deal carries, as the engine would run them.
 
     ``missing`` lists the term groups (``split`` / ``pref_rate`` / ``tiers``)
-    the deal does not carry; the engine runs only when it is empty.
+    the deal does not carry (``tiers`` = no COMPLETE promote tier).
+    ``incomplete`` names each half-entered tier ("Tier 3 has a GP split but no
+    hurdle"). The engine runs only when both are empty: a half-entered tier
+    is never silently dropped from the stack.
     """
 
     gp_equity_pct: float | None
@@ -3740,20 +3743,27 @@ class PartnershipTerms:
     pref_rate: float | None
     tiers: tuple[WaterfallTier, ...]
     missing: tuple[str, ...]
+    incomplete: tuple[str, ...] = ()
 
     @property
     def applicable(self) -> bool:
-        return not self.missing
+        return not self.missing and not self.incomplete
 
     @property
     def carries_any(self) -> bool:
-        return len(self.missing) < len(_PARTNERSHIP_TERM_NAMES)
+        return bool(self.incomplete) or len(self.missing) < len(_PARTNERSHIP_TERM_NAMES)
 
     def refusal_message(self) -> str:
         if not self.carries_any:
             return NO_PARTNERSHIP_TERMS_REASON
-        names = [_PARTNERSHIP_TERM_NAMES[m] for m in self.missing]
-        return f"partnership terms incomplete on this deal: no {', '.join(names)}"
+        parts: list[str] = []
+        for m in self.missing:
+            if m == "tiers" and self.incomplete:
+                parts.append("no complete promote tier")
+            else:
+                parts.append(f"no {_PARTNERSHIP_TERM_NAMES[m]}")
+        parts.extend(self.incomplete)
+        return "partnership terms incomplete on this deal: " + "; ".join(parts)
 
 
 def _num_or_none(value: Any) -> float | None:
@@ -3780,12 +3790,9 @@ def partnership_terms(base: Mapping[str, Any]) -> PartnershipTerms:
     elif lp is not None and gp is None:
         gp = round(1.0 - lp, 6)
     pref = _num_or_none(base.get("pref_rate"))
-    tiers = tuple(
-        _build_partnership_waterfall(
-            base.get("partnership_waterfall_overrides"),
-            base.get("partnership_waterfall_tier_count"),
-        )
-    )
+    overrides = base.get("partnership_waterfall_overrides") or {}
+    tier_count = base.get("partnership_waterfall_tier_count")
+    tiers = tuple(_build_partnership_waterfall(overrides, tier_count))
     missing: list[str] = []
     if gp is None:
         missing.append("split")
@@ -3793,7 +3800,52 @@ def partnership_terms(base: Mapping[str, Any]) -> PartnershipTerms:
         missing.append("pref_rate")
     if not tiers:
         missing.append("tiers")
-    return PartnershipTerms(gp, lp, pref, tiers, tuple(missing))
+    return PartnershipTerms(
+        gp, lp, pref, tiers, tuple(missing),
+        incomplete=tuple(_incomplete_tiers(overrides, tier_count)),
+    )
+
+
+def _incomplete_tiers(
+    overrides: Mapping[int, Mapping[str, Any]], tier_count: Any
+) -> list[str]:
+    """Review fix (B5) — every tier index in the walked range (not removed)
+    whose terms are half-entered or invalid, in words. "Tier N" is the tier's
+    index + 1 (the Partnership tab edits tiers by index)."""
+    out: list[str] = []
+    if not overrides:
+        return out
+    count = _resolve_partnership_tier_count(tier_count, overrides)
+    for idx in range(count):
+        ov = overrides.get(idx) or {}
+        if _tier_is_tombstoned(ov):
+            continue
+        has_h = "hurdle_rate" in ov
+        has_gp = "gp_split" in ov
+        has_lp = "lp_split" in ov
+        if not (has_h or has_gp or has_lp):
+            continue
+        name = f"Tier {idx + 1}"
+        if has_h and not (has_gp or has_lp):
+            out.append(f"{name} has a hurdle but no GP / LP split")
+            continue
+        if not has_h:
+            split = (
+                "GP and LP splits" if has_gp and has_lp
+                else "a GP split" if has_gp else "an LP split"
+            )
+            out.append(f"{name} has {split} but no hurdle")
+            continue
+        try:
+            gp = float(ov["gp_split"]) if has_gp else round(1.0 - float(ov["lp_split"]), 6)
+            lp = float(ov["lp_split"]) if has_lp else round(1.0 - gp, 6)
+            WaterfallTier(label="_", hurdle_rate=float(ov["hurdle_rate"]), gp_split=gp, lp_split=lp)
+        except (ValueError, TypeError):
+            out.append(
+                f"{name}'s terms are not valid (the hurdle must be 0–100% and "
+                "the GP and LP splits must sum to 100%)"
+            )
+    return out
 
 
 #: Loader metadata key: the partnership terms VIEW served on
@@ -7880,6 +7932,7 @@ async def run_single_engine(
                     ),
                     message=terms.refusal_message(),
                     missing=list(terms.missing),
+                    incomplete=list(terms.incomplete),
                 ),
             )
 
