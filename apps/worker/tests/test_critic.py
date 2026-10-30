@@ -218,69 +218,66 @@ async def test_grounding_validator_rejects_unknown_rule_ids() -> None:
 
 
 @pytest.mark.asyncio
-async def test_critic_with_evals_mock() -> None:
-    """Full pipeline w/ ``EVALS_MOCK=true`` should still emit deterministic findings."""
-    os.environ["EVALS_MOCK"] = "true"
-    try:
-        from app.agents.critic import CriticInput, run_critic
+async def test_critic_deterministic_pass_without_narrative() -> None:
+    """With the narrative pass off (what the canned extraction backend asks
+    for), the deterministic findings are still emitted."""
+    from app.agents.critic import CriticInput, run_critic
 
-        # Combine TWO triggers so we know the deterministic pass really
-        # runs even when the LLM pass is suppressed.
-        actuals = _financials(
-            period_label="T-12 Actual",
-            rooms_revenue=12_000_000,
-            insurance=400_000,
-            adr=340.0,
-            occupancy=0.76,
-            revpar=258.4,
-            noi=3_500_000,
-        )
-        broker = _financials(
-            period_label="Broker Proforma Year 1",
-            rooms_revenue=12_500_000,
-            insurance=410_000,  # only +2.5% in a coastal market
-            adr=340.0,
-            occupancy=0.76,
-            # Intentionally inconsistent RevPAR to fire the math rule.
-            revpar=300.0,
-            noi=3_600_000,
-        )
-        out = await run_critic(
-            CriticInput(
-                tenant_id="t1",
-                deal_id="44444444-4444-4444-4444-444444444444",
-                t12_actual=actuals,
-                broker_proforma=broker,
-                market_context={
-                    "city": "Tampa, FL",
-                    "location": "Tampa, FL coastal",
-                    "service": "Select Service",
-                },
-                keys=200,
-            ),
-            run_narrative_pass=False,
-        )
-        assert out.success
-        assert out.report is not None
-        assert len(out.report.findings) >= 1
-        # All findings must ground in a known rule_id (validator already
-        # ran inside run_critic, so this is belt-and-suspenders).
-        rule_ids = {f.rule_id for f in out.report.findings}
-        assert rule_ids.issubset(
-            {
-                "MULTI_FIELD_REVPAR_INTERNAL_INCONSISTENCY",
-                "MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE",
-                "MULTI_FIELD_INSURANCE_COASTAL_RISK",
-                "MULTI_FIELD_LABOR_INFLATION_MISSING",
-                "MULTI_FIELD_SEASONAL_PATTERN_MISSING",
-                "MULTI_FIELD_FNB_MARGIN_AGGRESSIVE",
-                "MULTI_FIELD_PIP_TIMING_INCONSISTENT",
-                "MULTI_FIELD_DEBT_YIELD_VS_DSCR_DIVERGENCE",
-                "MULTI_FIELD_REVENUE_GROWTH_WITHOUT_DEMAND_DRIVER",
-            }
-        )
-    finally:
-        os.environ.pop("EVALS_MOCK", None)
+    # Combine TWO triggers so we know the deterministic pass really
+    # runs even when the LLM pass is suppressed.
+    actuals = _financials(
+        period_label="T-12 Actual",
+        rooms_revenue=12_000_000,
+        insurance=400_000,
+        adr=340.0,
+        occupancy=0.76,
+        revpar=258.4,
+        noi=3_500_000,
+    )
+    broker = _financials(
+        period_label="Broker Proforma Year 1",
+        rooms_revenue=12_500_000,
+        insurance=410_000,  # only +2.5% in a coastal market
+        adr=340.0,
+        occupancy=0.76,
+        # Intentionally inconsistent RevPAR to fire the math rule.
+        revpar=300.0,
+        noi=3_600_000,
+    )
+    out = await run_critic(
+        CriticInput(
+            tenant_id="t1",
+            deal_id="44444444-4444-4444-4444-444444444444",
+            t12_actual=actuals,
+            broker_proforma=broker,
+            market_context={
+                "city": "Tampa, FL",
+                "location": "Tampa, FL coastal",
+                "service": "Select Service",
+            },
+            keys=200,
+        ),
+        run_narrative_pass=False,
+    )
+    assert out.success
+    assert out.report is not None
+    assert len(out.report.findings) >= 1
+    # All findings must ground in a known rule_id (validator already
+    # ran inside run_critic, so this is belt-and-suspenders).
+    rule_ids = {f.rule_id for f in out.report.findings}
+    assert rule_ids.issubset(
+        {
+            "MULTI_FIELD_REVPAR_INTERNAL_INCONSISTENCY",
+            "MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE",
+            "MULTI_FIELD_INSURANCE_COASTAL_RISK",
+            "MULTI_FIELD_LABOR_INFLATION_MISSING",
+            "MULTI_FIELD_SEASONAL_PATTERN_MISSING",
+            "MULTI_FIELD_FNB_MARGIN_AGGRESSIVE",
+            "MULTI_FIELD_PIP_TIMING_INCONSISTENT",
+            "MULTI_FIELD_DEBT_YIELD_VS_DSCR_DIVERGENCE",
+            "MULTI_FIELD_REVENUE_GROWTH_WITHOUT_DEMAND_DRIVER",
+        }
+    )
 
 
 @pytest.mark.asyncio

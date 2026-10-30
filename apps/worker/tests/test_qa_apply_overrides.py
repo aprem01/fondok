@@ -32,7 +32,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-qa-apply-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 os.environ["DEFAULT_DEAL_BUDGET_USD"] = "0"
 
 _STORAGE_ROOT = Path(os.environ["DOCUMENT_STORAGE_ROOT"])

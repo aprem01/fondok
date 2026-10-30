@@ -18,8 +18,8 @@ This module asserts:
   list endpoint is polled before extraction settles).
 * Omitting both arrays preserves the legacy ``File[]`` bulk-upload
   contract used by the Data Room drop zone.
-* Pre-classified upload does not crash extraction in the
-  ``EVALS_MOCK=true`` short-circuit (regression guard — the mock path
+* Pre-classified upload does not crash extraction on the canned
+  extraction backend (regression guard — the canned backend
   bypasses the Router so misclassified stays False end-to-end).
 """
 
@@ -42,7 +42,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-upload-metadata-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 
 _STORAGE_ROOT = Path(os.environ["DOCUMENT_STORAGE_ROOT"])
 if _STORAGE_ROOT.exists():

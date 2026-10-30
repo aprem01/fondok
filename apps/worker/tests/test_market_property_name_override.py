@@ -27,7 +27,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-market-property-name.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 from app.api.market import (  # noqa: E402
     PROPERTY_NAME_OVERRIDE_KEY,

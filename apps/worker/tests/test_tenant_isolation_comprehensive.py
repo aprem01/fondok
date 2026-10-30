@@ -50,7 +50,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-tenant-comprehensive-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 # Strict mode in tests — the listener should be SILENT against the
 # current endpoint surface. Any noise indicates an endpoint missing
 # its tenant filter and will surface as a test failure.

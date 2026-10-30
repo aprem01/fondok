@@ -32,7 +32,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-pipeline-digests.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 # Tests drive the scheduler tick by hand — keep the background loop off.
 os.environ["DIGEST_SCHEDULER_ENABLED"] = "False"
 # Force the email backend to log_only for every test (avoids touching

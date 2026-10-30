@@ -41,7 +41,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ.setdefault(
     "DOCUMENT_STORAGE_ROOT", str(Path(tempfile.mkdtemp()) / "fon20-storage")
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 
 
 # ─────────────────────────── helpers ───────────────────────────
@@ -98,7 +97,6 @@ async def _insert_deal(*, tenant_id: str, name: str) -> str:
 
 async def _upload_and_extract(client, *, deal_id: str, tenant: str, name: str) -> str:
     """Upload one PDF and poll ``/extraction`` until the mock run lands."""
-    os.environ["EVALS_MOCK"] = "true"
     from app.storage import reset_raw_store_cache
 
     reset_raw_store_cache()

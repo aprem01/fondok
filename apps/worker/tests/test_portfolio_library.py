@@ -63,7 +63,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-portfolio-library.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 
 _TENANT = "00000000-0000-0000-0000-000000000001"

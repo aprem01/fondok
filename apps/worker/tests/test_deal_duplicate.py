@@ -39,7 +39,6 @@ import pytest
 
 _TMP_DB = Path(tempfile.mkdtemp()) / "deal_duplicate.db"
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DB}")
-os.environ.setdefault("EVALS_MOCK", "true")
 
 PDF_BYTES = b"%PDF-1.4\n% fondok duplicate-deal fixture\n%%EOF\n"
 FILENAME = "Kimpton OM.pdf"

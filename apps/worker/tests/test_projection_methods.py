@@ -27,7 +27,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-projection-methods.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 from app.engines.expense import ExpenseEngine, ExpenseEngineInput  # noqa: E402
 from app.engines.fb_revenue import FBRevenueOutput, FBRevenueYear  # noqa: E402

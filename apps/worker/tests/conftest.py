@@ -95,6 +95,47 @@ def _isolate_env_and_settings_per_module():
         get_settings.cache_clear()
 
 
+# ── C7 — the canned extraction backend (no ``EVALS_MOCK`` env switch) ───────
+# The pipeline's LLM steps go through ``app.api.documents``'s injectable
+# backend. Every test runs on the canned backend that lives in
+# ``evals/mock_extraction.py`` (no tokens, deterministic); a test that drives
+# the real backend — usually with ``_run_graph_extraction`` monkeypatched —
+# opts out with ``@pytest.mark.real_extraction_backend``.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+
+def load_mock_extraction_module():
+    """``evals/mock_extraction.py`` loaded by path (``evals`` is not a
+    package on the worker's import path)."""
+    import importlib.util
+    import sys
+
+    name = "fondok_evals_mock_extraction"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(_REPO_ROOT, "evals", "mock_extraction.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(autouse=True)
+def _canned_extraction_backend(request):
+    from app.api.documents import set_extraction_backend
+
+    if request.node.get_closest_marker("real_extraction_backend"):
+        yield
+        return
+    previous = load_mock_extraction_module().install_mock_extraction_backend()
+    try:
+        yield
+    finally:
+        set_extraction_backend(previous)
+
+
 @pytest.fixture(autouse=True)
 def _reset_deal_read_cache():
     """``services.read_cache`` is process-local; a test that seeds a deal with

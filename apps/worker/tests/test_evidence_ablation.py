@@ -58,7 +58,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-evidence-ablation.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _T12_PAYLOAD = _FIXTURES / "real_payloads" / "anglers_t12_real.json"

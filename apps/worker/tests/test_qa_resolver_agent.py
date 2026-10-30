@@ -31,7 +31,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-qa-resolver.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 # Disable per-deal budget enforcement for these unit tests — the API
 # path test covers that separately.
 os.environ["DEFAULT_DEAL_BUDGET_USD"] = "0"

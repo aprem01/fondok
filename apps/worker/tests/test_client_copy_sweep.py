@@ -26,7 +26,6 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ.setdefault("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
-os.environ.setdefault("EVALS_MOCK", "true")
 
 _TENANT = "aaaaaaaa-0000-0000-0000-00000000c0ff"
 

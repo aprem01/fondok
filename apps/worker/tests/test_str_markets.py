@@ -36,7 +36,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-str-markets.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 #: An INTERNAL tenant (Fondok's own workspace) — always sees the list.
 TENANT = "aaaaaaaa-6666-6666-6666-6666aaaaaaaa"

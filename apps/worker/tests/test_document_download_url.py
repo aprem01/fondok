@@ -28,7 +28,6 @@ import pytest
 
 _TMP_DB = Path(tempfile.mkdtemp()) / "download_url.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 PDF_BYTES = b"%PDF-1.4\n% fondok signed-link test fixture\n%%EOF\n"
 FILENAME = "Miami Beach Offering Memorandum.pdf"

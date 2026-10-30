@@ -167,6 +167,7 @@ async def str_db_env():
     yield factory, tenant_id, deal_id, parsed
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.parametrize("user_provided_doc_type", [None, "STR_TREND"])
 async def test_real_dispatch_prefers_str_trend_template_over_learned_sibling(
     str_db_env, monkeypatch, user_provided_doc_type: str | None
@@ -187,7 +188,6 @@ async def test_real_dispatch_prefers_str_trend_template_over_learned_sibling(
     )
 
     factory, tenant_id, deal_id, parsed = str_db_env
-    monkeypatch.setenv("EVALS_MOCK", "false")
 
     async def _router_must_not_run(*args, **kwargs):
         raise AssertionError("Router LLM must not be reached for an STR trend workbook")

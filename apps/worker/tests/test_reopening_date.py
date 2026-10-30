@@ -38,7 +38,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-reopening-date.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 
 @pytest.fixture(autouse=True)

@@ -36,7 +36,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-extractor-throttle-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 os.environ.pop("EXTRACTOR_MAX_CONCURRENT_DOCS", None)
 os.environ.pop("EXTRACTOR_CHUNK_CONCURRENCY", None)
 

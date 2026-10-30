@@ -829,6 +829,7 @@ async def test_stale_mapping_is_relearned_in_place_under_the_current_version(
     assert hit[2] == "T12"
 
 
+@pytest.mark.real_extraction_backend
 async def test_dispatch_flag_off_passthrough_and_flag_on_hit(
     db_env, monkeypatch
 ) -> None:
@@ -842,7 +843,6 @@ async def test_dispatch_flag_off_passthrough_and_flag_on_hit(
     from app.services.sibling_template import maybe_learn_mapping
 
     factory, tenant_id, deal_id = db_env
-    monkeypatch.setenv("EVALS_MOCK", "false")
 
     fp = compute_template_fingerprint([_page(_pnl_grid())], parser="openpyxl")
     async with factory() as session:

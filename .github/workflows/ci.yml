@@ -224,10 +224,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           # Engines are deterministic; LLM is not invoked in the eval
-          # pipeline, so the API key isn't required here. EVALS_MOCK=true
-          # keeps CI from burning Anthropic tokens.
+          # pipeline, so the API key isn't required here. evals/run.py
+          # installs the canned extraction backend (evals/mock_extraction.py)
+          # through the worker's injection seam — no EVALS_MOCK env switch.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-test-dummy' }}
-          EVALS_MOCK: "true"
         run: uv run --project apps/worker python evals/run.py | tee evals/last-run.txt
 
       - name: Upload JUnit results

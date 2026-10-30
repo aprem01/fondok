@@ -55,7 +55,7 @@ Cross-boundary types live in two mirrored packages:
 ## Tests are part of the PR
 
 - New engine → golden-set fixture under `evals/cases/` covering at least one regression case.
-- New agent → unit test under `apps/worker/tests/` that exercises the node with mocked LLM calls (`EVALS_MOCK=true`).
+- New agent → unit test under `apps/worker/tests/` that exercises the node with mocked LLM calls (the suite runs on the canned extraction backend from `evals/mock_extraction.py`, installed by `tests/conftest.py`).
 - New API route → at least one integration test hitting it through FastAPI's TestClient.
 - New web component with non-trivial logic → unit test or Playwright test (when we add the harness).
 

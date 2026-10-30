@@ -315,13 +315,13 @@ async def test_watchdog_start_is_a_noop_when_disabled(monkeypatch) -> None:
 # ─────────────────────────── pipeline failure paths ───────────────────────────
 
 
+@pytest.mark.real_extraction_backend
 async def test_pipeline_marks_failed_on_cancellation_and_reraises(db_env, monkeypatch) -> None:
     factory, tenant_id, deal_id = db_env
     doc = await _seed_doc(
         factory, tenant_id=tenant_id, deal_id=deal_id,
         status="UPLOADED", status_changed_minutes_ago=1,
     )
-    monkeypatch.setenv("EVALS_MOCK", "false")
 
     async def _cancelled(**kwargs):
         raise asyncio.CancelledError()
@@ -340,13 +340,13 @@ async def test_pipeline_marks_failed_on_cancellation_and_reraises(db_env, monkey
     assert ed["pages"], "parse payload must survive the failure merge"
 
 
+@pytest.mark.real_extraction_backend
 async def test_pipeline_marks_failed_on_unexpected_exception(db_env, monkeypatch) -> None:
     factory, tenant_id, deal_id = db_env
     doc = await _seed_doc(
         factory, tenant_id=tenant_id, deal_id=deal_id,
         status="UPLOADED", status_changed_minutes_ago=1,
     )
-    monkeypatch.setenv("EVALS_MOCK", "false")
 
     async def _boom(**kwargs):
         raise RuntimeError("connection reset by peer")

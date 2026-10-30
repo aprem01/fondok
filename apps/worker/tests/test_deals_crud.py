@@ -27,7 +27,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-deals-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 
 _STORAGE_ROOT = Path(os.environ["DOCUMENT_STORAGE_ROOT"])
 if _STORAGE_ROOT.exists():
@@ -239,7 +238,6 @@ async def test_status_aggregates_from_documents(
     from app.storage import reset_raw_store_cache
 
     reset_raw_store_cache()
-    os.environ["EVALS_MOCK"] = "true"
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -270,7 +268,7 @@ async def test_status_aggregates_from_documents(
             assert r.status_code == 201, r.text
 
         # Right after upload the row sits in the PARSING → UPLOADED →
-        # CLASSIFYING → EXTRACTING → EXTRACTED chain. Under EVALS_MOCK
+        # CLASSIFYING → EXTRACTING → EXTRACTED chain. On the canned backend
         # every step is sub-millisecond so the background task can
         # finish before the next API call lands; in production the
         # LLM calls keep us in 'extracting' for several seconds. Both

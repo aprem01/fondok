@@ -44,7 +44,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-rls-readiness.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DB}")
-os.environ.setdefault("EVALS_MOCK", "true")
 os.environ["DIGEST_SCHEDULER_ENABLED"] = "False"
 os.environ["EXTRACTION_WATCHDOG_ENABLED"] = "False"
 os.environ["EMAIL_BACKEND"] = "log_only"

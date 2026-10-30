@@ -33,7 +33,6 @@ import pytest
 
 _TMP_DB = Path(tempfile.mkdtemp()) / "fondok-tests-tenant-data-policies.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 _TEST_KID = "test-kid-fon116"
 

@@ -7339,8 +7339,9 @@ async def _run_extraction_pipeline(
     still escapes.
 
     On any failure the document row is marked ``FAILED`` and the error
-    is logged. ``EVALS_MOCK=true`` short-circuits the agents so CI can
-    exercise the wiring without spending tokens. ``force=True`` (the
+    is logged. The LLM step goes through the installed
+    :class:`ExtractionBackend` (tests and evals install a canned one).
+    ``force=True`` (the
     ``POST .../extract?force=true`` lever) skips the content-hash cache
     lookup and sibling-template reuse for this run only.
 
@@ -7578,89 +7579,33 @@ async def _run_extraction_pipeline_inner(
                     content_hash,
                     cache_hit_source_id,
                 )
-            elif os.environ.get("EVALS_MOCK", "").lower() in (
-                "1",
-                "true",
-                "yes",
-            ):
-                fields, confidence = _mock_extraction_payload()
-                agent_version = _tag_agent_version("mock-evals")
-                _record_cache_miss(tenant_id)
             else:
-                # ── Sibling-template reuse (TASK T2) ────────────────
-                # Before spending LLM tokens: if a cell-mapping was
-                # learned from a same-template workbook on this tenant
-                # (same ``documents.template_fingerprint``), apply it
-                # deterministically. Gated on coverage + USALI identity
-                # score inside ``try_sibling_reuse``; any gate failure
-                # or exception returns None and we fall through to the
-                # normal LLM chain. Zero LLM cost on a HIT — and zero
-                # schema drift, because the sibling reuses the source
-                # doc's exact field names. ``force`` skips the attempt
-                # entirely (see ``_run_extraction_pipeline_inner``).
-                sibling_hit = None
-                if settings.SIBLING_TEMPLATE_REUSE_ENABLED and _sibling_reuse_allowed(
-                    user_provided_doc_type
-                ) and not force:
-                    from ..services.sibling_template import (
-                        SIBLING_AGENT_VERSION_BASE,
-                        try_sibling_reuse,
-                    )
-
-                    sibling_hit = await try_sibling_reuse(
-                        session,
-                        tenant_id=tenant_id,
-                        doc_id=doc_id,
-                        extraction_data=extraction_data,
-                    )
-                    if sibling_hit is not None and not _sibling_reuse_allowed(sibling_hit[2]):
-                        logger.info(
-                            "sibling reuse REJECTED: doc=%s source_doc_type=%s "
-                            "is template-handled; running the template/router path",
-                            doc_id,
-                            sibling_hit[2],
-                        )
-                        sibling_hit = None
-                if sibling_hit is not None:
-                    fields, confidence, sibling_doc_type = sibling_hit
-                    classified_doc_type = sibling_doc_type
-                    agent_version = _tag_agent_version(
-                        SIBLING_AGENT_VERSION_BASE
-                    )
-                    _record_cache_miss(tenant_id)
-                else:
-                    (
-                        fields,
-                        confidence,
-                        agent_version,
-                        classified_doc_type,
-                    ) = await _run_graph_extraction(
+                # C7 — the LLM extraction step, through the ONE injectable
+                # backend (``current_extraction_backend``). Production runs
+                # ``LLM_EXTRACTION_BACKEND`` (sibling-template reuse, then
+                # the Router → Extractor graph); there is no env switch in
+                # this module. Tests and the evals harness install a canned
+                # backend from ``evals/mock_extraction.py``.
+                (
+                    fields,
+                    confidence,
+                    agent_version_base,
+                    classified_doc_type,
+                ) = await current_extraction_backend().extract(
+                    ExtractionRequest(
+                        session=session,
                         deal_id=deal_id,
                         tenant_id=tenant_id,
-                        storage_key=storage_key,
                         doc_id=doc_id,
+                        storage_key=storage_key,
                         filename=filename,
                         extraction_data=extraction_data,
+                        user_provided_doc_type=user_provided_doc_type,
+                        force=force,
                     )
-                    agent_version = _tag_agent_version(agent_version)
-                    _record_cache_miss(tenant_id)
-                    # Learn a template mapping from this fresh LLM
-                    # extraction so the NEXT same-template sibling can
-                    # skip the LLM. Best-effort + idempotent (one
-                    # mapping per tenant+fingerprint); never raises.
-                    if fields and _sibling_reuse_allowed(classified_doc_type):
-                        from ..services.sibling_template import (
-                            maybe_learn_mapping,
-                        )
-
-                        await maybe_learn_mapping(
-                            session,
-                            tenant_id=tenant_id,
-                            doc_id=doc_id,
-                            doc_type=classified_doc_type,
-                            fields=fields,
-                            extraction_data=extraction_data,
-                        )
+                )
+                agent_version = _tag_agent_version(agent_version_base)
+                _record_cache_miss(tenant_id)
 
             # FON-41 — P&L quality passes, BEFORE the row is persisted so
             # the Data Room, the Historicals grid and the engines all read
@@ -8758,6 +8703,138 @@ def _try_template_extraction(
         return None
 
 
+# ───────────── C7 — the injectable LLM extraction backend ──────────────
+#
+# The extraction pipeline's LLM work — the Router → Extractor graph (with
+# sibling-template reuse in front of it) and the Critic's narrative pass — is
+# reached through ONE backend object. Production uses ``LLM_EXTRACTION_BACKEND``.
+# A caller that must not spend tokens (the worker test suite, the evals
+# harness) installs its own backend with :func:`set_extraction_backend`; the
+# canned one lives in ``evals/mock_extraction.py``. Until 2026-10-30 this was
+# an ``EVALS_MOCK`` environment check inside this module, so a mis-set env var
+# in production would have returned canned numbers as a document's extraction.
+
+
+@dataclass(frozen=True)
+class ExtractionRequest:
+    """Everything an extraction backend needs for one document."""
+
+    session: AsyncSession
+    deal_id: str
+    tenant_id: str
+    doc_id: str
+    storage_key: str | None
+    filename: str
+    extraction_data: dict[str, Any] | None
+    user_provided_doc_type: str | None
+    force: bool
+
+
+#: ``(fields, confidence, agent_version_base, classified_doc_type)`` — the
+#: pipeline tags ``agent_version_base`` with the pipeline version.
+ExtractionResult = tuple[list[dict[str, Any]], dict[str, Any], str, str | None]
+
+
+@dataclass(frozen=True)
+class ExtractionBackend:
+    """The pipeline's LLM steps. ``extract`` turns one document into fields;
+    ``critic_narrative_pass`` says whether the Critic runs its LLM narrative
+    pass after the deterministic checks."""
+
+    name: str
+    extract: Any  # Callable[[ExtractionRequest], Awaitable[ExtractionResult]]
+    critic_narrative_pass: bool = True
+
+
+async def _llm_extract(request: ExtractionRequest) -> ExtractionResult:
+    """Production extraction: sibling-template reuse, else the LLM graph."""
+    session = request.session
+    settings = get_settings()
+    # ── Sibling-template reuse (TASK T2) ────────────────
+    # Before spending LLM tokens: if a cell-mapping was learned from a
+    # same-template workbook on this tenant (same
+    # ``documents.template_fingerprint``), apply it deterministically. Gated
+    # on coverage + USALI identity score inside ``try_sibling_reuse``; any
+    # gate failure or exception returns None and we fall through to the
+    # normal LLM chain. Zero LLM cost on a HIT — and zero schema drift,
+    # because the sibling reuses the source doc's exact field names.
+    # ``force`` skips the attempt entirely (see
+    # ``_run_extraction_pipeline_inner``).
+    sibling_hit = None
+    if settings.SIBLING_TEMPLATE_REUSE_ENABLED and _sibling_reuse_allowed(
+        request.user_provided_doc_type
+    ) and not request.force:
+        from ..services.sibling_template import try_sibling_reuse
+
+        sibling_hit = await try_sibling_reuse(
+            session,
+            tenant_id=request.tenant_id,
+            doc_id=request.doc_id,
+            extraction_data=request.extraction_data,
+        )
+        if sibling_hit is not None and not _sibling_reuse_allowed(sibling_hit[2]):
+            logger.info(
+                "sibling reuse REJECTED: doc=%s source_doc_type=%s "
+                "is template-handled; running the template/router path",
+                request.doc_id,
+                sibling_hit[2],
+            )
+            sibling_hit = None
+    if sibling_hit is not None:
+        from ..services.sibling_template import SIBLING_AGENT_VERSION_BASE
+
+        fields, confidence, sibling_doc_type = sibling_hit
+        return fields, confidence, SIBLING_AGENT_VERSION_BASE, sibling_doc_type
+
+    (
+        fields,
+        confidence,
+        agent_version,
+        classified_doc_type,
+    ) = await _run_graph_extraction(
+        deal_id=request.deal_id,
+        tenant_id=request.tenant_id,
+        storage_key=request.storage_key,
+        doc_id=request.doc_id,
+        filename=request.filename,
+        extraction_data=request.extraction_data,
+    )
+    # Learn a template mapping from this fresh LLM extraction so the NEXT
+    # same-template sibling can skip the LLM. Best-effort + idempotent (one
+    # mapping per tenant+fingerprint); never raises.
+    if fields and _sibling_reuse_allowed(classified_doc_type):
+        from ..services.sibling_template import maybe_learn_mapping
+
+        await maybe_learn_mapping(
+            session,
+            tenant_id=request.tenant_id,
+            doc_id=request.doc_id,
+            doc_type=classified_doc_type,
+            fields=fields,
+            extraction_data=request.extraction_data,
+        )
+    return fields, confidence, agent_version, classified_doc_type
+
+
+LLM_EXTRACTION_BACKEND = ExtractionBackend(name="llm", extract=_llm_extract)
+_extraction_backend: ExtractionBackend = LLM_EXTRACTION_BACKEND
+
+
+def current_extraction_backend() -> ExtractionBackend:
+    """The backend the pipeline runs (``LLM_EXTRACTION_BACKEND`` unless a
+    test / eval harness installed another)."""
+    return _extraction_backend
+
+
+def set_extraction_backend(backend: ExtractionBackend) -> ExtractionBackend:
+    """Install ``backend``; returns the previous one so the caller can
+    restore it. Called by test and eval harnesses only."""
+    global _extraction_backend
+    previous = _extraction_backend
+    _extraction_backend = backend
+    return previous
+
+
 async def _run_graph_extraction(
     *,
     deal_id: str,
@@ -9011,35 +9088,6 @@ async def _run_graph_extraction(
         _extractor_av if isinstance(_extractor_av, str) and _extractor_av else "extractor"
     )
     return fields, confidence, f"router:{route};dt:{doc_type};{extractor_token}", doc_type
-
-
-def _mock_extraction_payload() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Canned fields + confidence for ``EVALS_MOCK=true`` runs."""
-    fields = [
-        {
-            "field_name": "noi_year_1",
-            "value": 1234567.0,
-            "unit": "USD",
-            "source_page": 1,
-            "confidence": 0.92,
-            "raw_text": "Net Operating Income: $1,234,567",
-        },
-        {
-            "field_name": "occupancy_year_1",
-            "value": 0.74,
-            "unit": "ratio",
-            "source_page": 1,
-            "confidence": 0.88,
-            "raw_text": "Occupancy: 74%",
-        },
-    ]
-    confidence = {
-        "overall": 0.9,
-        "by_field": {"noi_year_1": 0.92, "occupancy_year_1": 0.88},
-        "low_confidence_fields": [],
-        "requires_human_review": False,
-    }
-    return fields, confidence
 
 
 # ─────────────────────────── doc → deal metadata sync ───────────────────────────
@@ -10352,9 +10400,9 @@ async def _persist_critic_report(
     minimal financial inputs from the latest extraction results on the
     deal so the Critic has something to read.
 
-    When ``EVALS_MOCK=true`` we skip the LLM narrative pass — the
-    deterministic checks still run so CI exercises the wiring without
-    spending tokens.
+    The LLM narrative pass runs when the installed extraction backend says
+    so (``ExtractionBackend.critic_narrative_pass``); the canned test / eval
+    backend turns it off, and the deterministic checks still run.
     """
     try:
         from ..agents.critic import CriticInput, run_critic
@@ -10375,7 +10423,7 @@ async def _persist_critic_report(
         if broker is None and actuals is None:
             return
 
-        run_narrative = os.environ.get("EVALS_MOCK", "").lower() not in ("1", "true", "yes")
+        run_narrative = current_extraction_backend().critic_narrative_pass
         critic_input = CriticInput(
             tenant_id=tenant_id,
             deal_id=deal_id,

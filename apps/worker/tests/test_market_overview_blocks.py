@@ -25,7 +25,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-market-overview-blocks.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 STR_DOC = "STR Trend - Anglers - Jun 2026.xlsx"
 MS_DOC = "CoStar Submarket Report - South Beach.pdf"

@@ -4,8 +4,9 @@ Exercises the full flow: synthesize a tiny PDF with reportlab, hit the
 upload endpoint, kick the extract endpoint, poll until EXTRACTED, read
 the extraction result.
 
-The tests run with ``EVALS_MOCK=true`` so the agents return canned data
-instead of calling Claude — keeps CI cheap and deterministic.
+The tests run on the canned extraction backend (``evals/mock_extraction.py``,
+installed by ``conftest.py``) so the agents return canned data instead of
+calling Claude — keeps CI cheap and deterministic.
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 
 # Wipe any leftover storage tree.
 import shutil  # noqa: E402
@@ -560,14 +560,13 @@ async def test_upload_pdf(sample_pdf_bytes: bytes, deal_id: str) -> None:
 async def test_extraction_flow_end_to_end(
     sample_pdf_bytes: bytes, deal_id: str
 ) -> None:
-    """Upload → extract → poll → fetch extraction. Uses EVALS_MOCK."""
+    """Upload → extract → poll → fetch extraction (canned extraction backend)."""
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
     from app.storage import reset_raw_store_cache
 
     reset_raw_store_cache()
-    os.environ["EVALS_MOCK"] = "true"
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -811,6 +810,7 @@ async def _seed_extraction_result(
     return ext_id
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_cache_hit_reuses_prior_result_no_llm_call() -> None:
     """Same tenant, same content_hash, same pipeline version →
@@ -828,9 +828,9 @@ async def test_extraction_cache_hit_reuses_prior_result_no_llm_call() -> None:
     from app.config import get_settings
     from app.database import get_session_factory
 
-    # EVALS_MOCK would ALSO short-circuit — clear it so we prove the
-    # cache branch itself is doing the work.
-    os.environ.pop("EVALS_MOCK", None)
+    # The canned backend would ALSO short-circuit — the test runs on the real
+    # backend (``real_extraction_backend``) so the cache branch itself is
+    # proven to do the work.
     docs_module._reset_extraction_cache_metrics()
 
     settings = get_settings()
@@ -912,6 +912,7 @@ async def test_extraction_cache_hit_reuses_prior_result_no_llm_call() -> None:
     assert metrics["per_tenant"][tenant_id]["misses"] == 0
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_cache_miss_on_different_content_hash() -> None:
     """Different content_hash → no cache hit → extractor runs."""
@@ -920,7 +921,6 @@ async def test_extraction_cache_miss_on_different_content_hash() -> None:
     from app.api import documents as docs_module
     from app.config import get_settings
 
-    os.environ.pop("EVALS_MOCK", None)
     docs_module._reset_extraction_cache_metrics()
 
     settings = get_settings()
@@ -983,6 +983,7 @@ async def test_extraction_cache_miss_on_different_content_hash() -> None:
     assert metrics["per_tenant"][tenant_id]["misses"] == 1
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_cache_miss_on_different_agent_version() -> None:
     """Same content_hash but the prior row was written by an OLDER pipeline
@@ -994,7 +995,6 @@ async def test_extraction_cache_miss_on_different_agent_version() -> None:
     from app.api import documents as docs_module
     from app.config import get_settings
 
-    os.environ.pop("EVALS_MOCK", None)
     docs_module._reset_extraction_cache_metrics()
 
     settings = get_settings()
@@ -1054,6 +1054,7 @@ async def test_extraction_cache_miss_on_different_agent_version() -> None:
     assert metrics["per_tenant"][tenant_id]["hits"] == 0
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_cache_isolates_tenants() -> None:
     """A cached extraction on tenant A must NEVER short-circuit an
@@ -1063,7 +1064,6 @@ async def test_extraction_cache_isolates_tenants() -> None:
 
     from app.api import documents as docs_module
 
-    os.environ.pop("EVALS_MOCK", None)
     docs_module._reset_extraction_cache_metrics()
 
     tenant_a = "11111111-1111-1111-1111-111111111111"
@@ -1131,6 +1131,7 @@ async def test_extraction_cache_isolates_tenants() -> None:
     assert tenant_a not in metrics["per_tenant"]
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_cache_disabled_flag_bypasses_lookup() -> None:
     """``EXTRACTION_CACHE_ENABLED=False`` disables the cache entirely —
@@ -1142,7 +1143,6 @@ async def test_extraction_cache_disabled_flag_bypasses_lookup() -> None:
     from app.api import documents as docs_module
     from app.config import Settings, get_settings
 
-    os.environ.pop("EVALS_MOCK", None)
     docs_module._reset_extraction_cache_metrics()
 
     settings = get_settings()
@@ -1212,6 +1212,7 @@ async def test_extraction_cache_disabled_flag_bypasses_lookup() -> None:
 # ─────────────────────────── force re-extract (2026-10-08) ───────────────────────────
 
 
+@pytest.mark.real_extraction_backend
 @pytest.mark.asyncio
 async def test_extraction_force_bypasses_cache_and_sibling_reuse() -> None:
     """``force=True`` (``POST .../extract?force=true``): neither zero-LLM
@@ -1233,7 +1234,6 @@ async def test_extraction_force_bypasses_cache_and_sibling_reuse() -> None:
     from app.config import get_settings
     from app.database import get_session_factory
 
-    os.environ.pop("EVALS_MOCK", None)
     docs_module._reset_extraction_cache_metrics()
 
     settings = get_settings()

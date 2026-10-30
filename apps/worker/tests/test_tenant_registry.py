@@ -22,7 +22,6 @@ import pytest
 
 _TMP_DB = Path(tempfile.mkdtemp()) / "fondok-tests-tenant-registry.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 os.environ.setdefault("ALLOW_TEST_INGEST", "true")
 
 _TEST_KID = "test-kid-fon93"

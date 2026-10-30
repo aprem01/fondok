@@ -53,7 +53,7 @@
 
 1. Read `GET /admin/health` (internal admin JWT). `llm_provider.last_error` names the last refusal from Anthropic — `authentication` (revoked or wrong `ANTHROPIC_API_KEY`), `permission_denied`, `insufficient_credit` (402 or "credit balance is too low") — with `last_error_at`; `extraction_failures_last_hour` and `engine_failures_last_hour` say how wide the blast radius is. The same refusal pages Slack / Sentry once per 10 minutes as `llm_provider_unavailable` (critical).
 2. `authentication` → the key on Railway is dead: rotate it in the Anthropic console, set it through stdin (`printf '%s' "$KEY" | railway variable set --service fondok-worker --stdin ANTHROPIC_API_KEY`), confirm the redeploy with the `build_sha` check above. `insufficient_credit` → top up at console.anthropic.com → Billing; no redeploy needed. Rotated keys are the #1 cause.
-3. Confirm `EVALS_MOCK` is **not** set to `true` in production — that flag short-circuits the LLM and returns canned data.
+3. (Retired 2026-10-30) `EVALS_MOCK` no longer exists: the worker reads no env switch for canned extraction. Canned data reaches the pipeline only when a test or eval harness installs `evals/mock_extraction.py` through `set_extraction_backend`.
 4. Open LangSmith and find the most recent extraction trace:
    - Tool returned but with low confidence → check the input PDF in Postgres `documents` table; OCR may have produced garbage text.
    - Tool errored on JSON parse → schema drift; verify `packages/schemas-py/` matches the prompt's expected fields.

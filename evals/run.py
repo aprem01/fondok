@@ -501,6 +501,25 @@ def emit_junit_xml(summary: RunSummary) -> str:
 # ─────────────────────── orchestration ───────────────────────
 
 
+def install_canned_extraction() -> str:
+    """C7 — install the canned extraction backend (``evals/mock_extraction.py``)
+    through the worker pipeline's injection seam, so nothing this harness runs
+    can reach an LLM extraction (CI runs it without an API key and without an
+    ``EVALS_MOCK`` env switch — the worker no longer reads one). Returns the
+    installed backend's name."""
+    worker = REPO_ROOT / "apps" / "worker"
+    schemas = REPO_ROOT / "packages" / "schemas-py"
+    for p in (worker, schemas, EVALS_ROOT):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    from mock_extraction import install_mock_extraction_backend
+
+    install_mock_extraction_backend()
+    from app.api.documents import current_extraction_backend
+
+    return current_extraction_backend().name
+
+
 def run_all(case_filter: Optional[str] = None) -> RunSummary:
     started = datetime.now(timezone.utc)
     cases = discover_cases()
@@ -541,6 +560,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    backend = install_canned_extraction()
+    sys.stderr.write(f"extraction backend: {backend}\n")
     summary = run_all(case_filter=args.case)
 
     if args.report == "json":

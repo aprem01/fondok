@@ -30,7 +30,6 @@ from openpyxl import load_workbook
 from sqlalchemy import text
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
-os.environ.setdefault("EVALS_MOCK", "true")
 
 from app.engines.expense import ExpenseEngine, ExpenseEngineInput  # noqa: E402
 from app.engines.fb_revenue import FBRevenueOutput, FBRevenueYear  # noqa: E402

@@ -77,7 +77,7 @@ The persona is **Eshan Mehta — Senior Analyst at Brookfield Real Estate (Pro P
 
 1. Use `apps/worker/app/agents/router.py` as the template — it shows the canonical signature, state shape, and how to register with the LangGraph state machine.
 2. Add the new node to `apps/worker/app/graph.py` (both the `add_node` call and any conditional edges).
-3. Add a unit test under `apps/worker/tests/` that exercises the new node in isolation; keep LLM calls behind the `EVALS_MOCK` env so CI stays deterministic.
+3. Add a unit test under `apps/worker/tests/` that exercises the new node in isolation; tests run on the canned extraction backend (`evals/mock_extraction.py`, installed by `tests/conftest.py`) so CI stays deterministic.
 4. If the agent emits a new field, update both `packages/schemas-py/` and `packages/schemas-ts/` in the same PR (lockstep — see `CONTRIBUTING.md`).
 
 ## Adding a new engine

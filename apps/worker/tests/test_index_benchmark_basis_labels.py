@@ -33,7 +33,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-index-basis-labels.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DB}")
-os.environ.setdefault("EVALS_MOCK", "true")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:

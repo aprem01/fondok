@@ -35,7 +35,6 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 os.environ["DOCUMENT_STORAGE_ROOT"] = str(
     Path(tempfile.gettempdir()) / "fondok-tests-isolation-scripts-storage"
 )
-os.environ.setdefault("EVALS_MOCK", "true")
 os.environ.setdefault("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
 _STORAGE_ROOT = Path(os.environ["DOCUMENT_STORAGE_ROOT"])
 if _STORAGE_ROOT.exists():

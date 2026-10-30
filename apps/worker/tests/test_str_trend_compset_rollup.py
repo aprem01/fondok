@@ -31,7 +31,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-compset-rollup.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DB}")
-os.environ.setdefault("EVALS_MOCK", "true")
 
 # Ensure the worker app is importable when pytest is run from the repo
 # root vs from apps/worker.

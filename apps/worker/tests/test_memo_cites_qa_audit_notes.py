@@ -17,7 +17,6 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-memo-cites.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
-os.environ.setdefault("EVALS_MOCK", "true")
 
 
 def test_format_qa_audit_notes_renders_numbered_block() -> None:
