@@ -9138,6 +9138,10 @@ async def _sync_deal_metadata_from_extraction(
       none of them ("Luxury", "Boutique Lifestyle") leaves ``service``
       NULL — never a guess or a default. The audit row carries the OM's
       raw phrase as ``raw_value``.
+    * **market / submarket** (FON-96) — OM only, fill-only: the OM's
+      location phrase must equal exactly one metro market name in the loaded
+      taxonomy list (never a regional market, never two candidates); see
+      :func:`app.services.market_match.match_market_from_om`.
     * **positioning** (Sam 2026-10-15) — OM only: when the OM's
       ``property_overview.brand`` confidently matches the brand catalog
       (``services.brand_chain_scale``) and STR publishes that brand's chain
@@ -9172,6 +9176,20 @@ async def _sync_deal_metadata_from_extraction(
 
     if is_om:
         await _suggest_positioning_from_om_brand(
+            session,
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            fields=fields,
+            doc_type=doc_type,
+            doc_id=doc_id,
+        )
+        # FON-96 — the OM's location phrase may fill an EMPTY market /
+        # submarket, but only on an exact, unique match against the loaded
+        # taxonomy list (services/market_match.py). Best-effort, OM only,
+        # never over an analyst's value; its own audit action.
+        from ..services.market_match import match_market_from_om
+
+        await match_market_from_om(
             session,
             deal_id=deal_id,
             tenant_id=tenant_id,

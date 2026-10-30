@@ -22,7 +22,7 @@ import { DocumentsChecklist } from '@/components/project/wizard/DocumentsCheckli
 import { CoachMark } from '@/components/help/CoachMark';
 import { useNow } from '@/lib/hooks/useNow';
 import { formatElapsed } from '@/lib/progress';
-import { normalizeLocation, locationSuggestions, tidyLocation } from '@/lib/markets';
+import { MARKET_PROVENANCE_LABEL, normalizeLocation, locationSuggestions, tidyLocation } from '@/lib/markets';
 import { useStrMarkets, type StrMarketSuggestions } from '@/lib/hooks/useStrMarkets';
 import { DEAL_TYPE_OPTIONS, dealTypeLabel } from '@/lib/dealTypes';
 import { OPERATING_MODEL_OPTIONS, isOperatingModelId, operatingModelLabel } from '@/lib/operatingModel';
@@ -70,9 +70,10 @@ const INITIAL_FIELDS: WizardFields = {
   // A.6.3 — no Hotel Name field: the Property Name is read from the Offering
   // Memorandum (the methodology says so), never typed in here.
   dealName: '', city: '', keys: '', stage: 'Teaser', price: '',
-  // Sam #6 — Market / Submarket (separate from City). `strMarketId` is STR's
-  // market id, set only by picking a market from STR's loaded list ('' = none).
-  market: '', submarket: '', strMarketId: '',
+  // Sam #6 / FON-96 — Market / Submarket (separate from City). `strMarketId` /
+  // `submarketId` are the taxonomy keys, set only by picking from the loaded
+  // CoStar list ('' = none); never shown.
+  market: '', submarket: '', strMarketId: '', submarketId: '',
   dealType: 'acquisition',
   returnProfile: 'value-add',
   // FON-59 / R-048 — `brand` is the picker state = the analyst's PROPOSED
@@ -133,6 +134,18 @@ const stagedKey = (f: WizardFile) => `${f.file.name}::${f.file.size}::${f.fiscal
  *  still moving through the pipeline. */
 const DRAFT_DOCS_POLL_MS = 3000;
 
+/** FON-96 — what the body says about the submarket: the tidied name and the
+ *  taxonomy key (null for typed text, or until the key has resolved). */
+type SubmarketBodyPick = { submarket: string; submarketKey: string | null };
+
+/** The submarket as the wizard fields hold it. The key lands in
+ *  `fields.submarketId` when the Submarket (or Market) field resolves on
+ *  blur, so the autosave PATCH and the create read one source; Finish
+ *  resolves once more for a draft restored with a typed submarket. */
+function submarketPickFromFields(f: Pick<WizardFields, 'submarket' | 'submarketId'>): SubmarketBodyPick {
+  return { submarket: tidyLocation(f.submarket), submarketKey: f.submarketId || null };
+}
+
 /**
  * The normalized deal columns the wizard sends — the same body for the draft
  * row's PATCH on every autosave, for the draft's create, and for a direct
@@ -143,6 +156,7 @@ function dealBodyFromFields(
   f: WizardFields,
   normalizeCity: (v: string) => string,
   marketPick: { market: string; strMarketId: string | null },
+  submarketPick: SubmarketBodyPick = submarketPickFromFields(f),
 ): DraftDealPatch {
   // Keys is optional — the OM extraction fills `property_overview.keys`.
   // Send null when the analyst hasn't typed a number so the worker schema
@@ -160,7 +174,10 @@ function dealBodyFromFields(
     city: normalizeCity(f.city) || null,
     market: marketPick.market || null,
     str_market_id: marketPick.market ? marketPick.strMarketId : null,
-    submarket: tidyLocation(f.submarket) || null,
+    submarket: submarketPick.submarket || null,
+    // FON-96 — a submarket key only under a picked market; a typed submarket,
+    // or one under a typed market, stores a null key (analyst-entered).
+    submarket_id: submarketPick.submarket && marketPick.strMarketId ? submarketPick.submarketKey : null,
     keys: keysInt,
     service: null,
     deal_type: f.dealType,
@@ -200,6 +217,7 @@ function fieldsFromDeal(deal: WorkerDeal): Partial<WizardFields> {
   if (deal.market) out.market = deal.market;
   if (deal.submarket) out.submarket = deal.submarket;
   if (deal.str_market_id) out.strMarketId = deal.str_market_id;
+  if (deal.submarket_id) out.submarketId = deal.submarket_id;
   if (typeof deal.keys === 'number' && deal.keys > 0) out.keys = String(deal.keys);
   if (deal.deal_stage) out.stage = deal.deal_stage;
   if (deal.deal_type) out.dealType = deal.deal_type;
@@ -595,8 +613,15 @@ export default function NewProjectPage() {
       if (marketPick.market && !marketPick.strMarketId) {
         marketPick = await strMarkets.resolve(data.market);
       }
+      // FON-96 — the submarket carries a key only when it resolves to exactly
+      // one submarket of the picked market; typed text is stored without one.
+      let submarketPick: SubmarketBodyPick = submarketPickFromFields(data);
+      if (submarketPick.submarket && !submarketPick.submarketKey && marketPick.strMarketId) {
+        const r = await strMarkets.resolveSubmarket(data.submarket, marketPick.strMarketId);
+        submarketPick = { submarket: r.submarket, submarketKey: r.submarketKey };
+      }
       const { docs: stagedDocs, ...fields } = data;
-      const body = dealBodyFromFields(fields, normalizeCity, marketPick);
+      const body = dealBodyFromFields(fields, normalizeCity, marketPick, submarketPick);
 
       // FON-79 — Finish on a server-side draft: any file still staged (an
       // upload that failed on add) goes up first, the last columns land, then
@@ -919,7 +944,7 @@ export default function NewProjectPage() {
 
 type WizardData = {
   dealName: string; city: string; keys: string; stage: string; price: string;
-  market: string; submarket: string; strMarketId: string;
+  market: string; submarket: string; strMarketId: string; submarketId: string;
   dealType: string;
   returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; operatingModel: string; brandSearch: string;
   expandedFamilies: string[]; positioning: string; sourcing: string;
@@ -936,12 +961,16 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
   normalizeCity: (v: string) => string;
   strMarkets: StrMarketSuggestions;
 }) {
+  // FON-96 — provenance lines: the key is never shown.
   const marketHint = data.strMarketId
-    ? `STR market · STR id ${data.strMarketId}`
+    ? MARKET_PROVENANCE_LABEL.market
     : data.market.trim()
-      ? (strMarkets.referenceLoaded
-        ? 'Typed — not in STR’s market list, saved without an STR id'
-        : 'Saved as typed, without an STR id (STR’s market list is not loaded yet)')
+      ? (strMarkets.referenceLoaded ? MARKET_PROVENANCE_LABEL.analyst : MARKET_PROVENANCE_LABEL.analystNoList)
+      : null;
+  const submarketHint = data.submarketId
+    ? MARKET_PROVENANCE_LABEL.submarketOf(data.market.trim())
+    : data.submarket.trim()
+      ? (strMarkets.referenceLoaded ? MARKET_PROVENANCE_LABEL.analyst : MARKET_PROVENANCE_LABEL.analystNoList)
       : null;
   return (
     <div>
@@ -1000,23 +1029,37 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
         <datalist id="wizard-city-suggestions" data-testid="city-suggestions">
           {citySuggestions.map(c => <option key={c} value={c} />)}
         </datalist>
-        {/* Sam #6 — Market and Submarket, two fields. Market suggests STR's
-            market list when it is loaded (a pick stores STR's market id),
-            else the name-only STR market names; Submarket suggests only from
-            STR's list. Typing is always allowed (stored with no STR id). */}
+        {/* Sam #6 / FON-96 — Market and Submarket, two fields. Market suggests
+            the CoStar market list when it is available to this workspace (a
+            pick stores the market's taxonomy key — never shown), else the
+            public name-only STR market names; Submarket suggests only from
+            the list, as "submarket · market" until a market is picked. Typing
+            is always allowed (stored with no key, as analyst-entered). */}
         <div className="grid grid-cols-2 gap-4">
           <Field
             label="Market"
             value={data.market}
-            onChange={v => update({ market: v, strMarketId: '' })}
+            onChange={v => update({ market: v, strMarketId: '', submarketId: '' })}
             onBlur={v => {
-              void strMarkets.resolve(v).then((r) => {
+              void strMarkets.resolve(v).then(async (r) => {
+                const patch: Partial<WizardData> = {};
                 if (r.market !== v || (r.strMarketId ?? '') !== data.strMarketId) {
-                  update({ market: r.market, strMarketId: r.strMarketId ?? '' });
+                  patch.market = r.market;
+                  patch.strMarketId = r.strMarketId ?? '';
                 }
+                // FON-96 — a submarket typed before the market resolved gets
+                // its key now, so the next autosave carries both keys.
+                if (r.strMarketId && data.submarket.trim() && !data.submarketId) {
+                  const sub = await strMarkets.resolveSubmarket(data.submarket, r.strMarketId);
+                  if (sub.submarketKey) {
+                    patch.submarket = sub.submarket;
+                    patch.submarketId = sub.submarketKey;
+                  }
+                }
+                if (Object.keys(patch).length > 0) update(patch);
               });
             }}
-            placeholder="STR market, e.g. Chicago, IL"
+            placeholder="Market, e.g. Chicago, IL"
             listId="wizard-market-suggestions"
             help={strMarkets.marketSourceLabel}
             hint={marketHint}
@@ -1025,16 +1068,26 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
           <Field
             label="Submarket"
             value={data.submarket}
-            onChange={v => update({ submarket: v })}
+            onChange={v => update({ submarket: v, submarketId: '' })}
             onBlur={v => {
-              const t = tidyLocation(v);
-              if (t !== v) update({ submarket: t });
+              void strMarkets.resolveSubmarket(v, data.strMarketId || null).then((r) => {
+                const patch: Partial<WizardData> = { submarket: r.submarket, submarketId: r.submarketKey ?? '' };
+                // A "{submarket} · {market}" pick made before any market was
+                // chosen names exactly one market — set it too.
+                if (!data.strMarketId && r.marketKey && r.market) {
+                  patch.market = r.market;
+                  patch.strMarketId = r.marketKey;
+                }
+                if (patch.submarket !== v || patch.submarketId !== data.submarketId || patch.market !== undefined) update(patch);
+              });
             }}
             placeholder="Submarket"
             listId="wizard-submarket-suggestions"
             help={strMarkets.referenceLoaded
-              ? `Suggestions: STR submarkets${data.strMarketId ? ' of the selected market' : ''}. Typing is allowed.`
-              : 'No suggestions until STR’s submarket list is loaded — type it if you know it.'}
+              ? `Suggestions: CoStar submarkets${data.strMarketId ? ' of the selected market' : ' (shown as “submarket · market”)'}. Typing is allowed.`
+              : 'No suggestions — the CoStar submarket list is not available to this workspace. Type it if you know it.'}
+            hint={submarketHint}
+            hintTestId="submarket-key"
           />
         </div>
         <datalist id="wizard-market-suggestions" data-testid="market-suggestions">
@@ -1043,7 +1096,7 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
           ))}
         </datalist>
         <datalist id="wizard-submarket-suggestions" data-testid="submarket-suggestions">
-          {strMarkets.submarketOptions.map(n => <option key={n} value={n} />)}
+          {strMarkets.submarketOptions.map(o => <option key={o.submarketKey} value={o.value}>{o.label}</option>)}
         </datalist>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Keys" value={data.keys} onChange={v => update({ keys: v })} placeholder="auto-detected from OM" type="number"
@@ -1585,8 +1638,8 @@ function Step6({ data, serverDocs, jumpTo }: { data: WizardData; serverDocs: Wor
     { label: 'Deal Name', value: data.dealName || 'Untitled', step: 1 },
     { label: 'Deal Type', value: dealTypeLabel(data.dealType), step: 1 },
     { label: 'City', value: data.city || 'Not specified', step: 1 },
-    { label: 'Market', value: data.market.trim() ? `${data.market.trim()}${data.strMarketId ? ` (STR id ${data.strMarketId})` : ''}` : 'Not specified', step: 1 },
-    { label: 'Submarket', value: data.submarket.trim() || 'Not specified', step: 1 },
+    { label: 'Market', value: data.market.trim() ? `${data.market.trim()}${data.strMarketId ? ' · CoStar market' : ' · analyst-entered'}` : 'Not specified', step: 1 },
+    { label: 'Submarket', value: data.submarket.trim() ? `${data.submarket.trim()}${data.submarketId ? ' · CoStar submarket' : ' · analyst-entered'}` : 'Not specified', step: 1 },
     { label: 'Keys', value: `${data.keys || '—'} keys`, step: 1 },
     // FON-99 — the parsed price, how it was read ("range midpoint"), or the
     // kept-as-a-note text when it could not be read.

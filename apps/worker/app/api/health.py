@@ -184,6 +184,33 @@ def auth_posture() -> dict[str, bool]:
     }
 
 
+async def reference_posture(session: AsyncSession) -> dict[str, Any]:
+    """FON-96 — ``{str_markets: {loaded, version, counts, licence flag …},
+    market_taxonomy_serve_external, external_tenants_served}``. Internal
+    tenants always see the list; ``external_tenants_served`` is the AND of
+    the dataset flag and the setting."""
+    from ..services.str_markets import (
+        count_str_markets,
+        external_serving_enabled,
+        get_reference_dataset,
+    )
+
+    rows = await count_str_markets(session)
+    dataset = await get_reference_dataset(session)
+    served, setting_on, licensed = await external_serving_enabled(session)
+    block: dict[str, Any] = {"loaded": rows > 0, "row_count": rows}
+    if dataset is not None:
+        block.update(dataset.as_dict())
+        block.pop("dataset", None)
+    else:
+        block.update({"version": None, "licensed_for_external": licensed})
+    return {
+        "str_markets": block,
+        "market_taxonomy_serve_external": setting_on,
+        "external_tenants_served": served,
+    }
+
+
 async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
     """The operator blocks ``GET /admin/health`` adds to the public body."""
     # Content-hash extraction cache metrics (Sam cost-opt 2026-07). A
@@ -253,11 +280,22 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
     except Exception as exc:
         llm_provider = {"error": type(exc).__name__}
 
+    # FON-96 — the market / submarket taxonomy list: what is loaded (version,
+    # counts to check against the file's own notes) and the two licensing
+    # switches that decide whether EXTERNAL workspaces are served it.
+    reference: dict[str, Any]
+    try:
+        reference = await reference_posture(session)
+    except Exception as exc:
+        logger.warning("health: reference posture failed: %s", exc)
+        reference = {"error": type(exc).__name__}
+
     return {
         "raw_store": _raw_store_snapshot(),
         "extraction_cache": extraction_cache,
         "read_cache": read_cache,
         "semantic_search": semantic_search,
         "auth": auth_posture(),
+        "reference": reference,
         "llm_provider": llm_provider,
     }

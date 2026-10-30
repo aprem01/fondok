@@ -1614,13 +1614,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                 );
               })()}
             </div>
-            {/* Sam #6 — Market / Submarket (deals.market / deals.submarket, and
-                deals.str_market_id when picked from STR's loaded list). Shown
-                and correctable after creation; feeds no engine (no re-run). */}
+            {/* Sam #6 / FON-96 — Market / Submarket (deals.market / deals.submarket,
+                and the taxonomy keys when picked from the loaded CoStar list).
+                Shown and correctable after creation; feeds no engine (no re-run). */}
             <MarketSubmarketField
               market={deal?.market}
               submarket={deal?.submarket}
               strMarketId={deal?.str_market_id}
+              submarketId={deal?.submarket_id}
+              marketSource={deal?.market_source}
               onSave={persistMarket}
             />
             {/* FON-98 — the reopening / re-flag date (deals.reopening_date).

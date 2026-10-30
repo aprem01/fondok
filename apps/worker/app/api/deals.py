@@ -16,7 +16,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4, uuid5
@@ -228,8 +228,12 @@ class CreateDealBody(BaseModel):
     # ``str_market_id`` is STR's identifier and is accepted ONLY when it is
     # in the loaded ``str_markets`` reference list (422 otherwise — an id is
     # never invented); a typed market is stored with ``str_market_id`` NULL.
-    str_market_id: str | None = Field(default=None, max_length=64)
+    str_market_id: str | None = Field(default=None, max_length=200)
     market: str | None = Field(default=None, max_length=200)
+    # FON-96 — the submarket's taxonomy key; accepted only when it is in the
+    # list AND belongs to ``str_market_id`` (422 ``submarket_not_in_market``).
+    # A typed submarket is stored with ``submarket_id`` NULL.
+    submarket_id: str | None = Field(default=None, max_length=200)
     submarket: str | None = Field(default=None, max_length=200)
     # FON-79 — a ``draft`` is the New Deal wizard's server-side autosave: a
     # real row (it owns documents, it is in the tenant's list) that cannot be
@@ -290,8 +294,11 @@ class UpdateDealBody(BaseModel):
     # Sam #6 — STR market / submarket; null clears. Changing ``market``
     # without sending ``str_market_id`` clears the id (a typed market has
     # none), so a stale STR id can never sit under a different market name.
-    str_market_id: str | None = Field(default=None, max_length=64)
+    str_market_id: str | None = Field(default=None, max_length=200)
     market: str | None = Field(default=None, max_length=200)
+    # FON-96 — same rule for the submarket key: a market change without a
+    # submarket key clears it, a typed submarket has none.
+    submarket_id: str | None = Field(default=None, max_length=200)
     submarket: str | None = Field(default=None, max_length=200)
     # Per-field analyst overrides (canonical extractor field path →
     # primitive value). When present, this dict REPLACES the deal's
@@ -371,6 +378,16 @@ class DealRecord(BaseModel):
     str_market_id: str | None = None
     market: str | None = None
     submarket: str | None = None
+    # FON-96 — the submarket's taxonomy key (NULL for a typed submarket) and
+    # the picked market's type (``metro`` / ``regional``), joined read-only
+    # from the taxonomy list; NULL for a typed market or a key no longer
+    # listed. ``market_source`` mirrors ``positioning_source``: ``analyst``,
+    # ``om_exact_match`` (``market_source_detail`` = document id, page,
+    # matched phrase) or NULL.
+    submarket_id: str | None = None
+    market_type: str | None = None
+    market_source: str | None = None
+    market_source_detail: dict[str, Any] | None = None
     # Sam 2026-10-15 (om-brand-str-scale) — where ``positioning`` came from:
     # ``om_brand_str_scale`` (the OM's brand → its STR chain scale, filled
     # while the deal had no tier), ``analyst`` (wizard / Overview), or NULL
@@ -1021,6 +1038,12 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         str_market_id=row.get("str_market_id"),
         market=row.get("market"),
         submarket=row.get("submarket"),
+        submarket_id=row.get("submarket_id"),
+        market_type=row.get("market_type"),
+        market_source=row.get("market_source"),
+        market_source_detail=_coerce_positioning_source_detail(
+            row.get("market_source_detail")
+        ),
         positioning_source=row.get("positioning_source"),
         positioning_source_detail=_coerce_positioning_source_detail(
             row.get("positioning_source_detail")
@@ -1051,7 +1074,9 @@ _OPERATING_MODEL_CACHE_KEY = "fondok_deals_has_operating_model"
 _REOPENING_DATE_CACHE_KEY = "fondok_deals_has_reopening_date"
 #: Sam #6 — the three market columns, each probed on its own (they are three
 #: separate migrations, so one can exist without the others).
-_MARKET_COLUMNS: tuple[str, ...] = ("str_market_id", "market", "submarket")
+_MARKET_COLUMNS: tuple[str, ...] = ("str_market_id", "market", "submarket", "submarket_id")
+#: FON-96 — market provenance columns, probed together (one migration batch).
+_MARKET_SOURCE_CACHE_KEY = "fondok_deals_has_market_source"
 #: om-brand-str-scale — positioning provenance columns, probed together
 #: (both land in the same migration batch).
 _POSITIONING_SOURCE_CACHE_KEY = "fondok_deals_has_positioning_source"
@@ -1172,6 +1197,24 @@ async def _deal_columns(
             cols = f"{cols}, {col}"
         else:
             cols = f"{cols}, NULL AS {col}"
+    # FON-96 — same contract for the market provenance …
+    if await _deals_has_market_source(session):
+        cols = f"{cols}, market_source, market_source_detail"
+    else:
+        cols = f"{cols}, NULL AS market_source, NULL AS market_source_detail"
+    # … and the picked market's type, joined read-only from the taxonomy
+    # list (``str_markets`` is unscoped reference data; the outer query
+    # carries the tenant predicate). NULL for a typed market, a key that
+    # left the list, or a schema without the column.
+    from ..services.str_markets import has_market_type_column
+
+    if await _deals_has_market_column(session, "str_market_id") and await has_market_type_column(session):
+        cols = (
+            f"{cols}, (SELECT MIN(sm.market_type) FROM str_markets sm "
+            "WHERE sm.str_market_id = deals.str_market_id) AS market_type"
+        )
+    else:
+        cols = f"{cols}, NULL AS market_type"
     # om-brand-str-scale — same contract for the positioning provenance.
     if await _deals_has_positioning_source(session):
         cols = f"{cols}, positioning_source, positioning_source_detail"
@@ -1229,6 +1272,26 @@ async def _deals_has_market_column(session: AsyncSession, column: str) -> bool:
     return await _deals_has_column(session, column, f"fondok_deals_has_{column}")
 
 
+async def _deals_has_market_source(session: AsyncSession) -> bool:
+    """FON-96 — does the live ``deals`` table carry ``market_source`` AND
+    ``market_source_detail``?"""
+    return await _deals_has_column(
+        session, "market_source", _MARKET_SOURCE_CACHE_KEY
+    ) and await _deals_has_column(
+        session, "market_source_detail", f"{_MARKET_SOURCE_CACHE_KEY}_detail"
+    )
+
+
+def analyst_market_source(values: Mapping[str, Any]) -> str | None:
+    """FON-96 — ``market_source`` after an analyst's create / PATCH: ``analyst``
+    while any of market, submarket or their keys is set; NULL once they have
+    cleared all four (no claim on the field — an OM may fill it again), the
+    same shape as :func:`analyst_positioning_source`."""
+    from ..services.market_match import MARKET_SOURCE_ANALYST
+
+    return MARKET_SOURCE_ANALYST if any(values.get(c) is not None for c in _MARKET_COLUMNS) else None
+
+
 def _clean_text(value: Any) -> str | None:
     """Trim; blank → None."""
     if value is None:
@@ -1240,37 +1303,121 @@ def _clean_text(value: Any) -> str | None:
 async def _resolve_market_fields(
     session: AsyncSession,
     *,
+    tenant_id: UUID | str,
     str_market_id: str | None,
     market: str | None,
-) -> tuple[str | None, str | None]:
-    """Sam #6 — validate an STR market id against the loaded reference list.
+    submarket_id: str | None = None,
+    submarket: str | None = None,
+    market_known: bool = False,
+    existing_keys: tuple[str | None, str | None] = (None, None),
+) -> dict[str, str | None]:
+    """Sam #6 / FON-96 — validate the market and submarket keys against the
+    loaded taxonomy list.
 
-    Returns ``(str_market_id, market)``. An id that is not in
-    ``str_markets`` (including when nothing is loaded) is refused with 422 —
-    Fondok never stores an STR identifier it cannot trace to STR's file. A
-    known id with no market name takes STR's name for it.
+    Returns ``{str_market_id, market, submarket_id, submarket, market_type}``.
+    A market key that is not in ``str_markets`` (including when nothing is
+    loaded) is refused with 422 ``unknown_str_market_id`` — Fondok never
+    stores a key it cannot trace to the loaded list; a known key with no
+    market name takes the list's name. A submarket key must be in the list
+    (422 ``unknown_submarket_id``) AND belong to the market key (422
+    ``submarket_not_in_market``); a known key with no submarket name takes the
+    list's name. Typed names without keys pass through tidied.
+
+    ``market_known`` (PATCH, market untouched): the deal's stored market key
+    is not re-validated — a key that left the list on a reload stays on the
+    deal (names stay) — only the submarket's membership is checked.
+
+    Licence gate (FON-96 review F1): a key the caller could not have been
+    served (``may_serve_str_markets`` false — the list is withheld from this
+    workspace) is refused with 422 ``market_list_unavailable`` BEFORE any
+    lookup, whether or not it exists, and the body echoes no name or key —
+    otherwise a withheld tenant could enumerate the list one guess per
+    request. The deal's already-stored keys (``existing_keys``) stay valid
+    regardless, so an unrelated PATCH never breaks on a licence change.
     """
-    from ..services.str_markets import get_str_market
+    from ..services.str_markets import (
+        get_str_market,
+        get_str_submarket,
+        may_serve_str_markets,
+    )
 
     mid = _clean_text(str_market_id)
     name = _clean_text(market)
-    if mid is None:
-        return None, name
-    ref = await get_str_market(session, mid)
-    if ref is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": "unknown_str_market_id",
-                "str_market_id": mid,
-                "message": (
-                    "That STR market id is not in the loaded STR market list. "
-                    "Pick the market from the suggestions, or type it and save "
-                    "it without an id."
-                ),
-            },
-        )
-    return mid, name or ref.market_name
+    sid = _clean_text(submarket_id)
+    sub_name = _clean_text(submarket)
+    market_type: str | None = None
+    new_keys = [
+        k for k, stored in ((mid, existing_keys[0]), (sid, existing_keys[1]))
+        if k is not None and k != stored
+    ]
+    if new_keys:
+        served, _why = await may_serve_str_markets(session, tenant_id)
+        if not served:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "market_list_unavailable",
+                    "message": (
+                        "The market list is not available to this workspace, so a "
+                        "market or submarket can only be saved as typed, without a key."
+                    ),
+                },
+            )
+    if mid is not None:
+        ref = await get_str_market(session, mid)
+        if ref is None and not market_known:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "unknown_str_market_id",
+                    "str_market_id": mid,
+                    "message": (
+                        "That market key is not in the loaded market list. "
+                        "Pick the market from the suggestions, or type it and save "
+                        "it without a key."
+                    ),
+                },
+            )
+        if ref is not None:
+            name = name or ref.market_name
+            market_type = ref.market_type
+    if sid is not None:
+        sub = await get_str_submarket(session, sid)
+        if sub is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "unknown_submarket_id",
+                    "submarket_id": sid,
+                    "message": (
+                        "That submarket key is not in the loaded market list. "
+                        "Pick the submarket from the suggestions, or type it and "
+                        "save it without a key."
+                    ),
+                },
+            )
+        if mid is None or sub.str_market_id != mid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "submarket_not_in_market",
+                    "submarket_id": sid,
+                    "str_market_id": mid,
+                    "message": (
+                        "That submarket belongs to a different market. Pick a "
+                        "submarket of the selected market, or type it and save it "
+                        "without a key."
+                    ),
+                },
+            )
+        sub_name = sub_name or sub.submarket_name
+    return {
+        "str_market_id": mid,
+        "market": name,
+        "submarket_id": sid,
+        "submarket": sub_name,
+        "market_type": market_type,
+    }
 
 
 async def _write_audit(
@@ -1585,15 +1732,12 @@ async def create_deal(
         params["positioning_source"] = positioning_source
         pb_col += ", positioning_source"
         pb_val += ", :positioning_source"
-    # Sam #6 — market / submarket / STR market id, same old-schema contract.
-    mkt_id, mkt_name = await _resolve_market_fields(
-        session, str_market_id=body.str_market_id, market=body.market,
+    # Sam #6 / FON-96 — market / submarket and their keys, same old-schema
+    # contract.
+    market_values: dict[str, str | None] = await _resolve_market_fields(
+        session, tenant_id=tenant_id, str_market_id=body.str_market_id, market=body.market,
+        submarket_id=body.submarket_id, submarket=body.submarket,
     )
-    market_values: dict[str, str | None] = {
-        "str_market_id": mkt_id,
-        "market": mkt_name,
-        "submarket": _clean_text(body.submarket),
-    }
     for col in _MARKET_COLUMNS:
         if await _deals_has_market_column(session, col):
             params[col] = market_values[col]
@@ -1606,6 +1750,16 @@ async def create_deal(
                     col, market_values[col],
                 )
             market_values[col] = None
+    if market_values["str_market_id"] is None:
+        market_values["market_type"] = None
+    # FON-96 — a market / submarket sent at create is the analyst's.
+    market_source: str | None = None
+    if await _deals_has_market_source(session):
+        market_source = analyst_market_source(market_values)
+        params["market_source"] = market_source
+        params["market_source_detail"] = None
+        pb_col += ", market_source, market_source_detail"
+        pb_val += ", :market_source, :market_source_detail"
     # FON-79 — lifecycle / draft_wizard. A draft can only be stored on a
     # schema that can hold one; dropping ``lifecycle`` the way an optional
     # column is dropped would silently turn the wizard's draft into an
@@ -1732,6 +1886,9 @@ async def create_deal(
         str_market_id=market_values["str_market_id"],
         market=market_values["market"],
         submarket=market_values["submarket"],
+        submarket_id=market_values["submarket_id"],
+        market_type=market_values["market_type"],
+        market_source=market_source,
         positioning_source=positioning_source,
         lifecycle=body.lifecycle,
         draft_wizard=body.draft_wizard,
@@ -1965,24 +2122,59 @@ async def update_deal(
             # FON-98 — carry the ISO string through the diff / audit trail;
             # the SET loop below re-binds it for the live dialect.
             changes["reopening_date"] = changes["reopening_date"].isoformat()
-    # Sam #6 — market / submarket / STR market id.
-    if "submarket" in changes:
-        changes["submarket"] = _clean_text(changes["submarket"])
-    if "market" in changes or "str_market_id" in changes:
-        if "market" in changes and "str_market_id" not in changes:
-            # A market change without an id is a typed market: never leave
-            # the previous market's STR id under the new name.
-            changes["str_market_id"] = None
-        mid, name = await _resolve_market_fields(
+    # Sam #6 / FON-96 — market / submarket and their taxonomy keys.
+    market_fields_touched = any(col in changes for col in _MARKET_COLUMNS)
+    if "market" in changes and "str_market_id" not in changes:
+        # A market change without a key is a typed market: never leave the
+        # previous market's key under the new name.
+        changes["str_market_id"] = None
+    if ("market" in changes or "str_market_id" in changes) and "submarket_id" not in changes:
+        # A market change without a submarket key clears the submarket key —
+        # a submarket belongs to exactly one market.
+        changes["submarket_id"] = None
+    if "submarket" in changes and "submarket_id" not in changes:
+        changes["submarket_id"] = None  # a typed submarket has no key
+    if market_fields_touched:
+        existing_mid = existing._mapping.get("str_market_id")
+        existing_sid = existing._mapping.get("submarket_id")
+        market_touched = "str_market_id" in changes
+        resolved = await _resolve_market_fields(
             session,
-            str_market_id=changes.get("str_market_id"),
+            tenant_id=tenant_id,
+            str_market_id=changes["str_market_id"] if market_touched else existing_mid,
             market=changes.get("market"),
+            submarket_id=changes.get("submarket_id", existing_sid),
+            submarket=changes.get("submarket"),
+            market_known=not market_touched,
+            existing_keys=(existing_mid, existing_sid),
         )
-        changes["str_market_id"] = mid
-        # Picking an STR market (id sent, no name) also writes STR's name for
-        # it; clearing only the id leaves the market name as it is.
-        if "market" in changes or mid is not None:
-            changes["market"] = name
+        if market_touched:
+            changes["str_market_id"] = resolved["str_market_id"]
+            # Picking a market (key sent, no name) also writes the list's name
+            # for it; clearing only the key leaves the market name as it is.
+            if "market" in changes or resolved["str_market_id"] is not None:
+                changes["market"] = resolved["market"]
+        if "submarket_id" in changes:
+            changes["submarket_id"] = resolved["submarket_id"]
+            if "submarket" in changes or resolved["submarket_id"] is not None:
+                changes["submarket"] = resolved["submarket"]
+            elif existing_sid is not None and market_touched:
+                # The market moved and the old submarket key went with it —
+                # that submarket's name under another market would be wrong.
+                changes["submarket"] = None
+        if await _deals_has_market_source(session):
+            merged = {
+                col: (changes[col] if col in changes else existing._mapping.get(col))
+                for col in _MARKET_COLUMNS
+            }
+            existing_source = existing._mapping.get("market_source")
+            if market_touched or "market" in changes or existing_source is None:
+                # The market itself changed (or nothing had claimed the field):
+                # the analyst's claim replaces any OM provenance.
+                changes["market_source"] = analyst_market_source(merged)
+                changes["market_source_detail"] = None
+            # A submarket-only edit leaves the market's provenance — and the
+            # OM's document / page / phrase detail — exactly as it is.
     for col in _MARKET_COLUMNS:
         if col in changes and not await _deals_has_market_column(session, col):
             logger.warning(

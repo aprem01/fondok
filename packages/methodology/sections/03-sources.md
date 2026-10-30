@@ -236,12 +236,21 @@ its property type for an approximate scale — Full-Service and Resort as Upper 
 Select-Service as Upper Midscale, Limited-Service as Midscale. Extended-Stay spans several scales,
 so it sets no fallback.
 
-{testid=market-submarket-methodology} **City, market and submarket.** These are three separate deal fields. City is the property's city,
-filled from the OM only while empty. Market and Submarket are your choice on the wizard's first step
-and correctable on the Overview; no document writes them and no model reads them, so changing them
-never re-runs the model. The Market field suggests STR-defined market names; typing a market or
-submarket that is not suggested is always allowed, and Fondok never invents an STR identifier or a
-submarket name.
+{testid=market-submarket-methodology} **City, market and submarket.** These are three separate deal
+fields. City is the property's city, filled from the OM only while empty. Market and Submarket are
+chosen on the wizard's first step and correctable on the Overview; no model reads them, so changing
+them never re-runs the model. When the CoStar market list is available to your workspace, the Market
+field suggests CoStar's markets — metro markets named by city and state, regional markets named in
+words — and the Submarket field suggests that market's CoStar submarkets, each shown with its market
+so two submarkets sharing a name stay distinguishable. A pick is recorded as a CoStar market or
+submarket; typing a market or submarket that is not suggested is always allowed and is recorded as
+analyst-entered. Whether the list is available depends on CoStar's licence: until it is confirmed,
+other workspaces see a public list of STR market names and no submarket suggestions. An Offering
+Memorandum may fill an empty Market and Submarket only when the city and state it states match
+exactly one metro market in the list, and its submarket phrase exactly one of that market's
+submarkets; a regional market is never inferred from a city, two possible matches fill nothing, and
+a value you entered is never replaced. The Overview says where the market came from. Fondok never
+invents a market, a submarket or an identifier, and never shows you a vendor identifier.
 
 {testid=market-data-policy-methodology} **Market defaults may be withheld for a workspace.** A market default derived from a
 licensed vendor's report (a CoStar submarket forecast, for instance) may be withheld for a workspace
@@ -797,23 +806,40 @@ the next OM may suggest again. Only the OM suggests positioning — T-12s, P&Ls,
 STR reports never do. The suggestion is applied when the OM is extracted and takes effect on the
 next model run; deals extracted earlier keep their stored positioning.
 
-{testid=market-submarket-methodology} **City, market and submarket.** These are three separate deal fields. **City** is the property's
-city (optional; filled from the Offering Memorandum only while empty, as above). **Market** and
-**Submarket** are the analyst's choice on the wizard's first step, shown — and correctable at any
-time — on the Overview's Investment Profile card; no document ever writes them, and no engine reads
-them today, so changing them never re-runs the model. How a market is chosen: when STR's own market
-/ submarket definition list has been loaded, the Market field suggests STR's markets and the
-Submarket field suggests that market's STR submarkets. Until it is loaded — which is the case today
-— the Market field suggests a name-only list of STR-defined U.S. market names (shortened to
-principal city + state; no STR identifiers), and the Submarket field suggests nothing, because
-Fondok has no submarket names of its own. Typing a market or submarket that is not suggested is
-always allowed. **What the STR id means:** the deal stores STR's market identifier (`str_market_id`)
-only when the market typed or picked matches exactly one market in STR's loaded list; it is STR's
-own code for that market, copied from STR's file, and the worker refuses any id that is not in the
-loaded list. A typed market, or any market saved while STR's list is not loaded, is stored with no
-STR id and the Overview says so (“Analyst-entered · no STR id”). Fondok never invents an STR
-identifier or a submarket name. STR's list is shared reference data, identical for every workspace
-and holding no deal data; a deal's choice is stored on the deal itself.
+{testid=market-submarket-methodology} **City, market and submarket.** These are three separate deal
+fields. **City** is the property's city (optional; filled from the Offering Memorandum only while
+empty, as above). **Market** and **Submarket** are chosen on the wizard's first step, shown — and
+correctable at any time — on the Overview's Investment Profile card; no engine reads them today, so
+changing them never re-runs the model. **The taxonomy list:** the CoStar geography export (markets
+and submarkets, no vendor ids), loaded by `scripts/load_str_markets.py --format costar-geography
+--version <v>` (dry run by default; `--commit` is refused on any validation problem;
+`--report-orphans` lists deals whose stored key left the list). Fondok mints deterministic taxonomy
+keys from the names — `costar:<slug of market>` for a market, `<market key>/<slug of submarket>` for
+a submarket — because submarket names repeat across markets (the key is (Market, Submarket)); the
+loader refuses a file in which two distinct names collide on one key. The deal stores the keys in
+`str_market_id` and `submarket_id` (the first column name predates the CoStar list and was kept
+rather than renamed — a rename is a wider migration; it holds a Fondok key, not a vendor id;
+decision of 30 October 2026, FON-96) and the keys are hidden everywhere — the UI says “CoStar
+market” / “CoStar submarket of \<market\>”. Each market is `metro` (named “City - ST USA”) or
+`regional` (named in words), recorded in `str_markets.market_type`; `reference_datasets` records the
+loaded version, SHA-256, row counts and the licence flag, and `/admin/health` reports them in its
+`reference` block. **Selection:** a typed market or submarket takes a key only when it matches
+exactly one entry (case- and punctuation-insensitive, “Chicago, IL” ≡ “Chicago - IL USA”); the
+worker refuses a key that is not in the loaded list, and a submarket key that is not under the
+market key (`submarket_not_in_market`); a market change without a submarket key clears the submarket
+key. Typed values are stored with null keys as analyst-entered (`market_source = analyst`).
+**Licensing:** the list is served to an internal workspace always, and to an external workspace only
+when both the loaded dataset's licence flag (`--licensed-external` at load time) and the
+`MARKET_TAXONOMY_SERVE_EXTERNAL` setting are on; otherwise that workspace sees the public 62-name
+STR market list and no submarket suggestions, and the worker refuses a new key from it
+(`market_list_unavailable`) without saying whether the key exists. **Fill from the OM:** after the
+metadata sync, a deal with no market may receive one only when an OM location phrase, normalised,
+equals exactly one metro market name — never a regional market, never two candidates — and a
+submarket only within that market on the same exact rule; recorded as `market_source =
+om_exact_match` (mirrors `positioning_source`) with the document, page and phrase, and audited as
+`deal.market_matched_from_extraction`; a workspace the list is withheld from is never filled. An
+analyst's value is never overwritten. Fondok never invents a market, a submarket or a key, and the
+key is never shown as a vendor identifier.
 
 :::
 
