@@ -509,6 +509,15 @@ class ReturnsEngineInputExt(BaseModel):
 
     deal_id: UUID
     assumptions: ModelAssumptions
+    # Recorded, never computed on: the date the comp-derived exit cap's
+    # five-year comp lookback was measured from, and why
+    # (``underwriting_as_of`` / ``comp_report_as_of`` / ``run_date``). ``None``
+    # when the exit cap did not come from comps. Persisted with the run's
+    # inputs so a re-run diff can explain an exit-cap move.
+    exit_cap_comp_lookback_anchor: str | None = None
+    exit_cap_comp_lookback_anchor_source: (
+        Literal["underwriting_as_of", "comp_report_as_of", "run_date"] | None
+    ) = None
     # FON-63 — NOI may be negative (a ramp / PIP year): the cash flows carry it
     # as-is. Only the exit-year NOI must be positive (see _TerminalNoiCheck).
     year_one_noi: float

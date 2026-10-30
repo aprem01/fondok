@@ -115,6 +115,13 @@ class CompSalesSet(BaseModel):
     subject_market: str | None = None
     subject_chain_scale: str | None = None
     lookback_years: Annotated[int, Field(ge=1, le=20)] = 5
+    # The date the lookback (and recency weights) were measured from, and why:
+    # ``underwriting_as_of`` / ``comp_report_as_of`` (the OM comp table's own
+    # date) / ``run_date`` — the same anchor as the model's exit cap.
+    lookback_anchor: date | None = None
+    lookback_anchor_source: (
+        Literal["underwriting_as_of", "comp_report_as_of", "run_date"] | None
+    ) = None
 
 
 __all__ = [

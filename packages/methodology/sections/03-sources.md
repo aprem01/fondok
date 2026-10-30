@@ -398,14 +398,16 @@ only while "Use STR rates in the model" is on.
 ::: card
 #### Comparable sales and the as-of rule
 
-<!-- source: apps/worker/app/engines/comp_sales.py (select_comps — the one comp selection: analyst exclusions, COMP_LOOKBACK_YEARS 5 measured from the underwriting as-of date; exit_cap_from_comps — the one exit-cap derivation: three or more comps with cap rates 4–11%, median), apps/worker/app/services/engine_runner.py (_load_om_transaction_comps_cap_rate and _build_comp_sales_set share _load_comp_transactions, select_comps and exit_cap_from_comps; NOT_KNOWABLE_AS_OF, AS_OF_UNKNOWN) -->
+<!-- source: apps/worker/app/engines/comp_sales.py (select_comps — the one comp selection: analyst exclusions, COMP_LOOKBACK_YEARS 5 measured from the lookback anchor; exit_cap_from_comps — the one exit-cap derivation: three or more comps with cap rates 4–11%, median), apps/worker/app/services/engine_runner.py (_load_om_transaction_comps_cap_rate and _build_comp_sales_set share _load_comp_transactions, comp_lookback_anchor — underwriting_as_of, else comp_report_as_of, else run_date — select_comps and exit_cap_from_comps; NOT_KNOWABLE_AS_OF, AS_OF_UNKNOWN) -->
 The comparable-sales lookback is five years, measured from the underwriting as-of date when one is
-set, otherwise from today. A report published after the as-of date is refused (reason: not knowable
+set; otherwise from the comp table's own date (the offering memorandum's report date), and from the
+run date only when neither exists. The anchor date and where it came from are recorded on the exit
+cap's provenance and with the run's inputs, so a re-run that moves the exit cap says why. A report published after the as-of date is refused (reason: not knowable
 as of); a report whose date cannot be established is used and flagged (reason: as-of unknown). The
 exit-cap anchor is the median of three or more comparable sales whose cap rates fall between 4%
 and 11%. The Comparable Sales tab and the model read the same comp set through one selection and
 one derivation, so the tab's median and the model's exit cap cannot disagree: a comp you exclude on
-the tab, a comp sold more than five years before the as-of date (or today), and a comp outside the
+the tab, a comp sold more than five years before that anchor date, and a comp outside the
 4–11% band leave both, each with a note on the tab; with fewer than three plausible comps neither
 derives a cap rate and the model stays on its labelled default.
 
@@ -988,8 +990,9 @@ quarter-to-quarter, so a report from the underwriting year is admitted rather th
 {{reason:as_of_unknown}} — a missing date is a caveat, not grounds to withhold a number. The same
 date anchors the comparable-sales engine: the five-year lookback and the recency weighting are
 measured from the underwriting date rather than from today, so re-opening a deal months later does
-not quietly age its comp set out of the window. A deal that has not set an underwriting as-of date
-is unaffected in every respect — the acquisition close date is a modelling input and is never read
+not quietly age its comp set out of the window. Without an underwriting date the lookback is
+measured from the offering memorandum's own report date, and from the run date only when that is
+unknown. A deal that has not set an underwriting as-of date is otherwise unaffected — the acquisition close date is a modelling input and is never read
 as a knowledge horizon.
 
 :::

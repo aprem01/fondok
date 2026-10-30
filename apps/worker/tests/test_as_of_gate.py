@@ -653,3 +653,97 @@ async def test_excluding_a_comp_moves_both_the_tab_median_and_the_model_exit_cap
     model2, tab2 = await _both()
     assert model2 == pytest.approx(0.065)
     assert tab2 == pytest.approx(model2)
+
+
+# ═══════ Lookback anchor — the comp table's own date before the run date ═══════
+
+
+def _comps_with_dates(rows: list[tuple[float, str]]) -> list[dict]:
+    out: list[dict] = []
+    for i, (cap, sold) in enumerate(rows):
+        out += [
+            {"field_name": f"transaction_comps.{i}.cap_rate_pct", "value": cap},
+            {"field_name": f"transaction_comps.{i}.sale_date", "value": sold},
+        ]
+    return out
+
+
+@pytest.mark.asyncio
+async def test_lookback_is_anchored_on_the_comp_report_date_not_today() -> None:
+    """No underwriting as-of: a comp older than five years relative to TODAY
+    but within five years of the OM's own report date stays in — for both the
+    model's exit cap and the comp tab — and the provenance names the anchor."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import EXIT_CAP_LOOKBACK_KEY, _build_comp_sales_set
+
+    today = date.today()
+    report = today - timedelta(days=int(365.25 * 2))
+    within = report - timedelta(days=int(365.25 * 4))  # ~6 yrs before today
+    assert (today - within).days > int(365.25 * 5)
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(
+        deal_id, doc_type="OM",
+        fields=_comps_with_dates([(6.0, within.isoformat()), (7.0, report.isoformat()),
+                                  (8.0, report.isoformat())]),
+        report_as_of=report.isoformat(), precision="day",
+    )
+    base = await _base_for(deal_id)
+    # Three comps qualify only because the old one stays in: median 7%.
+    assert base["__sources__"]["exit_cap_rate"] == "om_comps"
+    assert base["exit_cap_rate"] == pytest.approx(0.07)
+    sf = base["__source_fields__"]["exit_cap_rate"]
+    assert sf["lookback_anchor"] == report.isoformat()
+    assert sf["lookback_anchor_source"] == "comp_report_as_of"
+    assert base[EXIT_CAP_LOOKBACK_KEY] == {
+        "date": report.isoformat(), "source": "comp_report_as_of",
+    }
+    async with get_session_factory()() as session:
+        comp_set = await _build_comp_sales_set(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert comp_set.lookback_anchor == report
+    assert comp_set.lookback_anchor_source == "comp_report_as_of"
+    assert comp_set.derived_cap_rate_median / 100.0 == pytest.approx(base["exit_cap_rate"])
+    assert not any("yrs old" in n for n in comp_set.weighting_notes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "report_as_of", "source"),
+    [
+        ({"underwriting_as_of": _AS_OF}, "2024-01-15", "underwriting_as_of"),
+        ({}, None, "run_date"),
+    ],
+)
+async def test_lookback_anchor_source_is_recorded(overrides, report_as_of, source) -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, overrides=overrides)
+    await _insert_doc(
+        deal_id, doc_type="OM", fields=_comp_fields(3),
+        report_as_of=report_as_of, precision="day" if report_as_of else None,
+    )
+    base = await _base_for(deal_id)
+    sf = base["__source_fields__"]["exit_cap_rate"]
+    assert sf["lookback_anchor_source"] == source
+    expected = _AS_OF if source == "underwriting_as_of" else date.today().isoformat()
+    assert sf["lookback_anchor"] == expected
+
+
+@pytest.mark.asyncio
+async def test_lookback_anchor_is_persisted_on_the_run_inputs() -> None:
+    """The anchor rides on the returns engine's persisted inputs, so a re-run
+    diff can explain an exit-cap move."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import get_run_scoped_outputs, run_all_engines
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(
+        deal_id, doc_type="OM", fields=_comp_fields(3),
+        report_as_of="2024-01-15", precision="day",
+    )
+    async with get_session_factory()() as session:
+        await run_all_engines(session, deal_id=str(deal_id), tenant_id=_TENANT, run_id=str(uuid4()))
+        rows = await get_run_scoped_outputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    inputs = rows["returns"]["inputs"]
+    assert inputs["exit_cap_comp_lookback_anchor"] == "2024-01-15"
+    assert inputs["exit_cap_comp_lookback_anchor_source"] == "comp_report_as_of"

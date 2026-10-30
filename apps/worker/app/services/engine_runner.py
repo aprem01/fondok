@@ -27,6 +27,7 @@ import math
 import statistics
 import time
 from collections.abc import Callable, Mapping
+import dataclasses
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -831,11 +832,14 @@ class SourceField:
     document_id: str | None = None
     extraction_result_id: str | None = None
     as_of: str | None = None
+    #: Extra derivation facts carried on the wire only when set (e.g. the
+    #: comp lookback anchor behind a comp-derived exit cap).
+    extra: tuple[tuple[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """The wire shape of one ``__source_fields__`` entry."""
         r = self.resolution
-        return {
+        return dict(self.extra) | {
             "document_id": self.document_id,
             "extraction_result_id": self.extraction_result_id,
             "field_name": r.field_name,
@@ -2021,6 +2025,12 @@ async def _load_engine_inputs(
         sources["exit_cap_rate"] = SOURCE_OM_COMPS
         if om_comps_prov is not None:
             source_fields["exit_cap_rate"] = om_comps_prov
+            _extra = dict(om_comps_prov.extra)
+            if "lookback_anchor" in _extra:
+                base[EXIT_CAP_LOOKBACK_KEY] = {
+                    "date": _extra["lookback_anchor"],
+                    "source": _extra["lookback_anchor_source"],
+                }
         if om_comps_reason is ReasonCode.AS_OF_UNKNOWN:
             reasons["exit_cap_rate"] = _reason(
                 ReasonCode.AS_OF_UNKNOWN,
@@ -5300,9 +5310,14 @@ async def _load_om_transaction_comps_cap_rate(
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
+    anchor, anchor_source = comp_lookback_anchor(as_of, info)
+    anchor_extra = (
+        ("lookback_anchor", anchor.isoformat()),
+        ("lookback_anchor_source", anchor_source),
+    )
     selection = select_comps(
         transactions,
-        today=as_of or date.today(),
+        today=anchor,
         lookback_years=COMP_LOOKBACK_YEARS,
         exclude_transaction_ids=_comp_exclude_ids(overrides),
     )
@@ -5336,14 +5351,17 @@ async def _load_om_transaction_comps_cap_rate(
             f, m = row
             return _wrap(
                 v,
-                _row_provenance(
-                    canonical="exit_cap_rate",
-                    field=f,
-                    value=v,
-                    doc_type="OM",
-                    document_id=m.get("document_id"),
-                    extraction_result_id=m.get("extraction_result_id"),
-                    as_of=m.get("report_as_of"),
+                dataclasses.replace(
+                    _row_provenance(
+                        canonical="exit_cap_rate",
+                        field=f,
+                        value=v,
+                        doc_type="OM",
+                        document_id=m.get("document_id"),
+                        extraction_result_id=m.get("extraction_result_id"),
+                        as_of=m.get("report_as_of"),
+                    ),
+                    extra=anchor_extra,
                 ),
                 unknown,
             )
@@ -5353,14 +5371,17 @@ async def _load_om_transaction_comps_cap_rate(
     lo_m = lo_row[1] if lo_row is not None else {}
     return _wrap(
         v,
-        _derived_provenance(
-            concept="exit_cap_rate",
-            value=v,
-            doc_type="OM",
-            basis="broker",
-            document_id=lo_m.get("document_id"),
-            extraction_result_id=lo_m.get("extraction_result_id"),
-            as_of=lo_m.get("report_as_of"),
+        dataclasses.replace(
+            _derived_provenance(
+                concept="exit_cap_rate",
+                value=v,
+                doc_type="OM",
+                basis="broker",
+                document_id=lo_m.get("document_id"),
+                extraction_result_id=lo_m.get("extraction_result_id"),
+                as_of=lo_m.get("report_as_of"),
+            ),
+            extra=anchor_extra,
         ),
         unknown,
     )
@@ -5376,6 +5397,29 @@ class _CompRowInfo:
     saw_any_om: bool = False
     gated_count: int = 0
     any_known_as_of: bool = False
+    #: ``report_as_of`` of every admitted OM (the comp tables' own dates).
+    report_dates: list[date] = dataclasses.field(default_factory=list)
+
+
+#: Where the comp lookback window is measured from (most specific first).
+LOOKBACK_ANCHOR_UNDERWRITING = "underwriting_as_of"
+LOOKBACK_ANCHOR_COMP_REPORT = "comp_report_as_of"
+LOOKBACK_ANCHOR_RUN_DATE = "run_date"
+#: Loader metadata key: ``{"date": ISO, "source": <anchor label>}`` of the
+#: comp lookback behind the exit cap; carried onto the returns engine input.
+EXIT_CAP_LOOKBACK_KEY = "__exit_cap_lookback__"
+
+
+def comp_lookback_anchor(as_of: date | None, info: _CompRowInfo) -> tuple[date, str]:
+    """The date the five-year comp lookback is measured from, and why: the
+    deal's underwriting as-of when set; else the comp table's own date (the
+    latest ``report_as_of`` of the OMs the comps came off); today only when
+    neither exists. Shared by the comp tab and the model's exit cap."""
+    if as_of is not None:
+        return as_of, LOOKBACK_ANCHOR_UNDERWRITING
+    if info.report_dates:
+        return max(info.report_dates), LOOKBACK_ANCHOR_COMP_REPORT
+    return date.today(), LOOKBACK_ANCHOR_RUN_DATE
 
 
 async def _load_comp_transactions(
@@ -5446,6 +5490,9 @@ async def _load_comp_transactions(
         if _is_after_as_of(m.get("report_as_of"), m.get("report_as_of_precision"), as_of):
             info.gated_count += 1
             continue
+        _report_date = _as_of_date(m.get("report_as_of"))
+        if _report_date is not None:
+            info.report_dates.append(_report_date)
         raw_fields = m["fields"]
         doc_id = str(m.get("document_id") or "")
         if isinstance(raw_fields, str):
@@ -5681,11 +5728,13 @@ async def _build_comp_sales_set(
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-    # The same comp load (and as-of gate) as the model's exit cap.
-    transactions = await _load_comp_transactions(
-        session, deal_id=deal_id, tenant_id=tenant_id,
-        as_of=_underwriting_as_of_from(overrides),
+    # The same comp load (and as-of gate) and the same lookback anchor as
+    # the model's exit cap.
+    as_of = _underwriting_as_of_from(overrides)
+    transactions, info = await _load_comp_transactions(
+        session, deal_id=deal_id, tenant_id=tenant_id, as_of=as_of, with_rows=True,
     )
+    anchor, anchor_source = comp_lookback_anchor(as_of, info)
     exclude_ids = _comp_exclude_ids(overrides)
 
     comp_set = build_comp_set(
@@ -5695,11 +5744,14 @@ async def _build_comp_sales_set(
         subject_chain_scale=subject_chain_scale,
         lookback_years=lookback_years,
         exclude_transaction_ids=exclude_ids,
-        # ``None`` when the deal has no as-of date → engine default
-        # ``date.today()`` → today's behaviour, unchanged.
-        today=_underwriting_as_of_from(overrides),
+        today=anchor,
     )
-    return comp_set
+    return comp_set.model_copy(
+        update={
+            "lookback_anchor": anchor,
+            "lookback_anchor_source": anchor_source,
+        }
+    )
 
 
 async def _load_om_debt_actuals(
@@ -7265,9 +7317,14 @@ def _build_input_for(
                     **_stabilization_anchor_kwargs(base),
                 )
                 stabilized_year = _stab_idx + 1 if _stab_idx is not None else None
+        _lookback = base.get(EXIT_CAP_LOOKBACK_KEY) or {}
         return ReturnsEngineInputExt(
             deal_id=deal_uuid,
             assumptions=assumptions,
+            # Lookback anchor of the comp-derived exit cap (recorded so a
+            # re-run diff can explain an exit-cap move; never read by math).
+            exit_cap_comp_lookback_anchor=_lookback.get("date"),
+            exit_cap_comp_lookback_anchor_source=_lookback.get("source"),
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
             noi_from_expense_engine=noi_from_expense_engine,
