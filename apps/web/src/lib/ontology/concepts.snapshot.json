@@ -8087,6 +8087,14 @@
       "explanation": "FF&E reserve leg of the capex plan at the default reserve rate.",
       "reason": null
     },
+    "deal_type_default": {
+      "label": "Development hold default",
+      "badge": "Default for development deals — confirm",
+      "kind": "assumption",
+      "doc_types": [],
+      "explanation": "The hold period suggested by the deal type — 7 years for a ground-up development, 6 for an adaptive reuse (5 is the acquisition seed). A suggestion only; the analyst's hold override replaces it.",
+      "reason": null
+    },
     "roi_user": {
       "label": "ROI capex (analyst)",
       "badge": "ROI",

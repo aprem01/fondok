@@ -1341,6 +1341,213 @@ async def test_market_tab_comp_set_rates_are_tagged_as_the_comp_set() -> None:
     assert base["starting_adr"] == pytest.approx(295)
 
 
+# ─────────── FON-118 / FON-44 — deal_type hold default + exit-schedule forwarding ───────────
+
+
+async def _deal_with_type(session, deal_type: str | None, overrides: dict | None = None) -> tuple[str, str]:
+    """Insert a deal row carrying ``deal_type`` (and optional field_overrides)."""
+    import json
+    from datetime import UTC, datetime
+
+    deal_id, tenant_id = str(uuid4()), str(uuid4())
+    await session.execute(
+        text(
+            """
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, deal_type,
+                               field_overrides, created_at, updated_at)
+            VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :deal_type, :ov, :now, :now)
+            """
+        ),
+        {
+            "id": deal_id, "tenant": tenant_id, "name": "Typed Hotel",
+            "deal_type": deal_type, "ov": json.dumps(overrides or {}),
+            "now": datetime.now(UTC),
+        },
+    )
+    await session.commit()
+    return deal_id, tenant_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("deal_type", "expected_hold", "expected_source"),
+    [
+        ("development", 7, "deal_type_default"),
+        ("adaptive_reuse", 6, "deal_type_default"),
+        ("adaptive reuse", 6, "deal_type_default"),
+        ("redevelopment", 6, "deal_type_default"),  # legacy wizard id → adaptive reuse
+        ("acquisition", 5, "seed"),
+        (None, 5, "seed"),
+        ("something_else", 5, "seed"),
+    ],
+)
+async def test_deal_type_hold_default_is_a_labelled_suggestion(
+    deal_type: str | None, expected_hold: int, expected_source: str
+) -> None:
+    """Sam (2026-10-30): 5 years for acquisitions, 6–7 for development. The
+    default is badged ``deal_type_default`` so the UI / exports show it as a
+    suggestion; acquisitions (and an unknown type) keep the seed."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        DEAL_TYPE_KEY,
+        SOURCE_DEAL_ROW,
+        SOURCE_DEAL_TYPE_DEFAULT,
+        _load_engine_inputs,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_type(session, deal_type)
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    sources = base["__sources__"]
+    assert base["hold_years"] == expected_hold
+    assert sources["hold_years"] == expected_source
+    if expected_source == "deal_type_default":
+        assert sources["hold_years"] == SOURCE_DEAL_TYPE_DEFAULT
+    if deal_type:
+        assert base[DEAL_TYPE_KEY] == deal_type
+        assert sources[DEAL_TYPE_KEY] == SOURCE_DEAL_ROW
+    else:
+        assert DEAL_TYPE_KEY not in base
+
+
+@pytest.mark.asyncio
+async def test_analyst_hold_override_beats_the_deal_type_default() -> None:
+    from app.database import get_session_factory
+    from app.services.engine_runner import SOURCE_ANALYST_OVERRIDE, _load_engine_inputs
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_type(
+            session, "development", {"hold_years": 5}
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+
+    assert base["hold_years"] == 5
+    assert base["__sources__"]["hold_years"] == SOURCE_ANALYST_OVERRIDE
+
+
+@pytest.mark.asyncio
+async def test_development_hold_default_reaches_the_returns_engine() -> None:
+    """The default is not a badge only: the chain runs a 7-year hold, the
+    schedule has 7 rows, and the ``development_like`` flag reaches the engine
+    without a stated construction window (so no row is dashed for it)."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    factory = get_session_factory()
+    async with factory() as session:
+        deal_id, tenant_id = await _deal_with_type(session, "development")
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    ret = results["returns"]["outputs"]
+    assert results["returns"]["status"] == "complete"
+    assert ret["hold_years"] == 7
+    assert len(ret["exit_schedule"]) == 7
+    assert ret["selected_exit_year"] == 7
+    assert all(r["reason"] != "under_construction" for r in ret["exit_schedule"])
+
+
+@pytest.mark.asyncio
+async def test_stated_construction_window_dashes_the_development_rows_inside_it() -> None:
+    """A development deal whose Investment timeline states a 24-month
+    renovation window (from close) sells no earlier than month 24: Years 1–2
+    are ``under_construction``; the same window on an acquisition dashes none."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    window = {"renovation_start_offset_months": 0, "renovation_duration_months": 24}
+    factory = get_session_factory()
+    async with factory() as session:
+        dev_id, dev_tenant = await _deal_with_type(session, "development", window)
+        dev = await run_all_engines(
+            session, deal_id=dev_id, tenant_id=dev_tenant, run_id=str(uuid4())
+        )
+        acq_id, acq_tenant = await _deal_with_type(session, "acquisition", window)
+        acq = await run_all_engines(
+            session, deal_id=acq_id, tenant_id=acq_tenant, run_id=str(uuid4())
+        )
+    dev_rows = dev["returns"]["outputs"]["exit_schedule"]
+    assert [r["reason"] for r in dev_rows[:2]] == ["under_construction", "under_construction"]
+    assert all(r["status"] == "computed" for r in dev_rows[2:])
+    acq_rows = acq["returns"]["outputs"]["exit_schedule"]
+    assert all(r["status"] == "computed" for r in acq_rows)
+
+
+def test_deal_type_default_label_is_in_the_ontology_registry() -> None:
+    from app.ontology.registry import get_registry
+    from app.services.engine_runner import SOURCE_DEAL_TYPE_DEFAULT
+
+    assert SOURCE_DEAL_TYPE_DEFAULT in set(get_registry().sources)
+
+
+@pytest.mark.asyncio
+async def test_returns_input_forwards_the_monthly_balances_and_the_refi_balance() -> None:
+    """FON-118 — the returns input carries the debt engine's per-month senior
+    balance (interim payoffs) and, only when a refinance is modelled, its
+    ``balance_at_exit`` as ``refi_balance``. The scalar ``loan_balance_at_exit``
+    the headline reads is untouched."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        ENGINE_REGISTRY,
+        _build_input_for,
+        _load_engine_inputs,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(
+            session, KIMPTON_FIXTURE_DEAL_ID, tenant_id=str(uuid4()),
+            assumptions=kimpton_seed(),
+        )
+    accumulated: dict = {}
+    for name in ("revenue", "fb", "expense", "capital", "debt"):
+        accumulated[name] = ENGINE_REGISTRY[name]().run(
+            _build_input_for(name, KIMPTON_FIXTURE_DEAL_ID, base, accumulated)
+        )
+    debt_out = accumulated["debt"]
+    returns_input = _build_input_for("returns", KIMPTON_FIXTURE_DEAL_ID, base, accumulated)
+
+    assert returns_input.loan_balance_by_month == [
+        m.ending_balance for m in debt_out.monthly_schedule
+    ]
+    assert len(returns_input.loan_balance_by_month) == 60
+    assert returns_input.refi_balance is None  # no refinance on the seed
+    assert returns_input.loan_balance_at_exit == debt_out.balance_at_exit
+    assert returns_input.exit_schedule is True
+    assert returns_input.development_like is False
+    assert returns_input.construction_end_month is None
+
+    # With a refinance on the debt output, its balance_at_exit is the refi balance.
+    accumulated["debt"] = debt_out.model_copy(
+        update={"refi_year": 3, "balance_at_exit": 50_000_000.0}
+    )
+    with_refi = _build_input_for("returns", KIMPTON_FIXTURE_DEAL_ID, base, accumulated)
+    assert with_refi.refi_balance == 50_000_000.0
+    assert with_refi.loan_balance_at_exit == 50_000_000.0
+
+
+def test_construction_end_month_reads_the_stated_window_only() -> None:
+    from app.engines.timeline import RENOVATION_START_OFFSET_MONTHS
+    from app.services.engine_runner import _construction_end_month
+
+    assert _construction_end_month({}) is None
+    assert _construction_end_month({"renovation_start_offset_months": 3}) is None
+    assert _construction_end_month({"renovation_duration_months": 18}) == (
+        RENOVATION_START_OFFSET_MONTHS + 18
+    )
+    assert _construction_end_month(
+        {"renovation_start_offset_months": 6, "renovation_duration_months": 18}
+    ) == 24
+    assert _construction_end_month(
+        {"renovation_start_offset_months": "6", "renovation_duration_months": 18.0}
+    ) == 24
+    assert _construction_end_month({"renovation_duration_months": -4}) is None
+    assert _construction_end_month({"renovation_duration_months": "n/a"}) is None
+
+
 def test_every_str_basis_id_is_in_the_ontology_registry() -> None:
     """A source id the web cannot label is a badge that renders as its own
     underscore-stripped id. The three STR basis ids and the refusal sibling all

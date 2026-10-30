@@ -146,6 +146,7 @@ SOURCE_DISPLAY: dict[str, str] = {
     "pip_document": "PIP document",
     "roi_user": "Analyst (ROI)",
     "capex_ffe_default": "FF&E default",
+    "deal_type_default": "Development hold default",
     "str_segmentation_default": "STR segmentation",
     "str_forecast": "STR forecast",
     "str_subject_ttm": "STR (subject)",

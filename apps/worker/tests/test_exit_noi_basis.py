@@ -163,6 +163,7 @@ def test_runner_coerces_the_override_to_the_allow_list() -> None:
 
     assert _coerce_exit_noi_basis(None) == "forward_12m"
     assert _coerce_exit_noi_basis("stabilized") == "stabilized"
+    assert _coerce_exit_noi_basis("sale_year") == "sale_year"
     assert _coerce_exit_noi_basis({"value": "stabilized", "note": ""}) == "stabilized"
     assert _coerce_exit_noi_basis("trailing_12m") == "forward_12m"
     assert _coerce_exit_noi_basis(3) == "forward_12m"

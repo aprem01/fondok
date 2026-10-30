@@ -259,3 +259,57 @@ async def test_a_doctored_row_is_reported_from_the_persisted_snapshot() -> None:
         )
 
     assert stale_engines(rows) == {"expense": ["stabilization"]}
+
+
+@pytest.mark.asyncio
+async def test_a_returns_row_written_before_the_exit_schedule_is_stale() -> None:
+    """FON-118 — a run persisted before ``returns.exit_schedule`` existed is
+    reported stale for returns (the banner asks to re-run); nothing else is."""
+    from app.database import get_session_factory
+    from app.migrations import run_startup_migrations
+    from app.services.engine_runner import (
+        get_run_scoped_outputs,
+        run_all_engines,
+    )
+    from app.services.run_freshness import stale_engines
+
+    await run_startup_migrations()
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, outputs FROM engine_outputs "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant "
+                    "AND engine_name = 'returns'"
+                ),
+                {"deal": deal_id, "tenant": tenant_id},
+            )
+        ).first()
+        assert row is not None
+        stored = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+        assert "exit_schedule" in stored, "fixture assumption: fresh run has it"
+        for key in ("exit_schedule", "selected_exit_month", "selected_exit_year",
+                    "peak_levered_exit_year"):
+            stored.pop(key)
+        await session.execute(
+            text(
+                "UPDATE engine_outputs SET outputs = :out "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"out": json.dumps(stored), "id": row[0], "tenant": tenant_id},
+        )
+        await session.commit()
+        rows = await get_run_scoped_outputs(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+
+    assert set(stale_engines(rows)) == {"returns"}
+    assert "exit_schedule" in stale_engines(rows)["returns"]

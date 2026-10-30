@@ -105,6 +105,8 @@ from ..engines import (
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from ..engines.stabilization import resolve_stabilized_year_index
+from ..engines.timeline import RENOVATION_START_OFFSET_MONTHS
+from .deal_type import development_hold_default, is_development_like
 from fondok_schemas.underwriting import (
     IndexDriverYear,
     PIPDisplacement,
@@ -619,6 +621,16 @@ def _default_assumptions() -> dict[str, Any]:
 # are grounded in extracted/uploaded data.
 SOURCE_SEED = "seed"
 SOURCE_DEAL_ROW = "deal_row"
+# FON-118 / FON-44 (2026-10-30) — the hold default a development-like deal
+# type carries (7 years ground-up, 6 adaptive reuse; see
+# ``services.deal_type``). A labelled SUGGESTION: the web badges it
+# "Default for development deals — confirm" and every analyst / scenario /
+# request-body ``hold_years`` override overwrites it in the routing loop.
+SOURCE_DEAL_TYPE_DEFAULT = "deal_type_default"
+#: ``deals.deal_type`` parked on ``base`` (a deal COLUMN, like
+#: ``reopening_date``), read by the returns input builder for the
+#: development-like row label and by nothing else.
+DEAL_TYPE_KEY = "deal_type"
 SOURCE_T12_ACTUAL = "t12_actual"
 SOURCE_CBRE_HORIZONS = "cbre_horizons"
 # FON-109 — the loader no longer stamps this: a P&L benchmark is a
@@ -1041,13 +1053,14 @@ STABILIZATION_YEAR_KEY = "stabilization_year"
 #
 # Which NOI the reversion caps. ``forward_12m`` (the default, and the only
 # behavior before FON-44) = the exit year's NOI grown one more year;
-# ``stabilized`` = the stabilized year's NOI grown to the exit year. Arrives
-# as a scalar ``field_overrides.exit_noi_basis`` through the generic routing
-# branch; anything outside this allow-list reads as the default. Note: with
-# ``stabilized`` selected, the stabilization year above DOES move returns —
-# it is display-only on the default basis.
+# ``stabilized`` = the stabilized year's NOI grown to the exit year;
+# ``sale_year`` (FON-44 addition, 2026-10-30) = the sale year's own Cash NOI,
+# not grown. Arrives as a scalar ``field_overrides.exit_noi_basis`` through
+# the generic routing branch; anything outside this allow-list reads as the
+# default. Note: with ``stabilized`` selected, the stabilization year above
+# DOES move returns — it is display-only on the other bases.
 EXIT_NOI_BASIS_KEY = "exit_noi_basis"
-_EXIT_NOI_BASES: frozenset[str] = frozenset({"forward_12m", "stabilized"})
+_EXIT_NOI_BASES: frozenset[str] = frozenset({"forward_12m", "stabilized", "sale_year"})
 
 
 def _coerce_exit_noi_basis(value: Any) -> str:
@@ -1057,6 +1070,36 @@ def _coerce_exit_noi_basis(value: Any) -> str:
     if isinstance(value, str) and value.strip() in _EXIT_NOI_BASES:
         return value.strip()
     return "forward_12m"
+
+
+def _timeline_months(value: Any) -> int | None:
+    """A non-negative whole number of months, or ``None`` (not stated)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        months = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return months if months >= 0 else None
+
+
+def _construction_end_month(base: Mapping[str, Any]) -> int | None:
+    """FON-118 — the last month of the ANALYST-STATED construction window.
+
+    The window exists only when the analyst stated its duration (the
+    Investment timeline override ``renovation_duration_months``); its start
+    is ``renovation_start_offset_months`` or, exactly as the timeline does,
+    the module default when not stated. ``None`` = no window stated, so the
+    returns engine dashes no row for construction — a development deal with
+    no stated window has no construction in the model.
+    """
+    duration = _timeline_months(base.get("renovation_duration_months"))
+    if duration is None:
+        return None
+    start = _timeline_months(base.get("renovation_start_offset_months"))
+    if start is None:
+        start = RENOVATION_START_OFFSET_MONTHS
+    return start + duration
 
 # ──────────────── field_overrides keys that are NOT engine input ──────
 #
@@ -1413,12 +1456,17 @@ async def _load_engine_inputs(
         session, "reopening_date", "fondok_deals_has_reopening_date"
     )
     reopening_col = ", reopening_date" if has_reopening_col else ""
+    # FON-118 — ``deal_type`` the same way (FON-46 column; same probe).
+    has_deal_type_col = await _deals_has_column(
+        session, "deal_type", "fondok_deals_has_deal_type"
+    )
+    deal_type_col = ", deal_type" if has_deal_type_col else ""
     row = (
         await session.execute(
             text(
                 # tenant-scope predicate required by tenant_middleware
                 f"""
-                SELECT keys, purchase_price, positioning, brand{reopening_col}
+                SELECT keys, purchase_price, positioning, brand{reopening_col}{deal_type_col}
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """
@@ -1464,6 +1512,23 @@ async def _load_engine_inputs(
             base[REOPENING_DATE_KEY] = reopening_iso
             deals_table_keys.add(REOPENING_DATE_KEY)
             sources[REOPENING_DATE_KEY] = SOURCE_DEAL_ROW
+        # FON-118 / FON-44 — the deal type (wizard / Investment Profile) and
+        # the hold default it carries. A development-like deal whose hold is
+        # still the seed moves to the labelled default (7 ground-up, 6
+        # adaptive reuse) and is badged ``deal_type_default`` so the UI and
+        # the exports show it as a suggestion. Applied here, BEFORE the
+        # override-routing loops, so a deal / scenario / request-body
+        # ``hold_years`` (and the preview sandbox) overwrite it — the
+        # analyst's number always wins. Acquisitions are untouched.
+        raw_deal_type = mapping.get("deal_type") if has_deal_type_col else None
+        if isinstance(raw_deal_type, str) and raw_deal_type.strip():
+            base[DEAL_TYPE_KEY] = raw_deal_type.strip()
+            deals_table_keys.add(DEAL_TYPE_KEY)
+            sources[DEAL_TYPE_KEY] = SOURCE_DEAL_ROW
+            dev_hold = development_hold_default(raw_deal_type)
+            if dev_hold is not None and sources.get("hold_years") == SOURCE_SEED:
+                base["hold_years"] = dev_hold
+                sources["hold_years"] = SOURCE_DEAL_TYPE_DEFAULT
 
     # Pull Year-1 T-12 expense actuals from the deal's extraction results
     # so the expense engine can ground synthesis on real numbers (Sam QA
@@ -6883,6 +6948,24 @@ def _build_input_for(
                 and base["equity_draw_schedule"]
                 else []
             ),
+            # FON-118 — returns by exit year. The senior's per-month ending
+            # balance prices the payoff of an INTERIM sale; the post-refi
+            # balance once the refi month has passed. The selected exit keeps
+            # ``loan_balance_at_exit`` above, so the headline is unchanged.
+            loan_balance_by_month=[
+                float(m.ending_balance)
+                for m in (getattr(debt_out, "monthly_schedule", None) or [])
+            ],
+            refi_balance=(
+                float(debt_out.balance_at_exit)
+                if getattr(debt_out, "refi_year", None) is not None
+                and getattr(debt_out, "balance_at_exit", None) is not None
+                else None
+            ),
+            # FON-118 — a development-like deal labels the rows inside the
+            # analyst-stated construction window; never changes a number.
+            development_like=is_development_like(base.get(DEAL_TYPE_KEY)),
+            construction_end_month=_construction_end_month(base),
             equity=capital_out.equity_amount,
         )
 
@@ -7805,6 +7888,12 @@ async def run_returns_preview(
         "hold_years": returns_out.hold_years,
         "exit_cap_rate": returns_out.exit_cap_rate,
         "dscr_y1": getattr(debt_out, "year_one_dscr", None),
+        # FON-118 — the sandbox's own returns-by-exit-year table, so a dragged
+        # hold slider shows the rows of the hold it is previewing.
+        "exit_schedule": list(returns_out.exit_schedule),
+        "selected_exit_month": returns_out.selected_exit_month,
+        "selected_exit_year": returns_out.selected_exit_year,
+        "peak_levered_exit_year": returns_out.peak_levered_exit_year,
     }
     if include_sensitivity:
         sens_input = _build_input_for("sensitivity", deal_id, base, accumulated)

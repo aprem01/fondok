@@ -113,6 +113,48 @@ async def test_preview_returns_values_and_persists_nothing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_preview_carries_the_exit_schedule_of_the_previewed_hold() -> None:
+    """FON-118 — a dragged hold slider shows its own returns-by-exit-year
+    table: one row per projection year-end of the sandbox hold, the selected
+    row equal to the sandbox headline, and still nothing persisted."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.migrations import run_startup_migrations
+
+    await run_startup_migrations()
+    tenant = str(uuid4())
+    deal_id = str(uuid4())
+    await _seed_deal(tenant, deal_id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            f"/deals/{deal_id}/engines/returns/preview",
+            json={"overrides": {"hold_years": 6}},
+            headers={"X-Tenant-Id": tenant},
+        )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["hold_years"] == 6
+    rows = data["exit_schedule"]
+    assert len(rows) == 6
+    assert [r["exit_year"] for r in rows] == [1, 2, 3, 4, 5, 6]
+    selected = [r for r in rows if r["is_selected"]]
+    assert len(selected) == 1 and selected[0]["exit_year"] == 6
+    assert selected[0]["levered_irr"] == data["levered_irr"]
+    assert selected[0]["equity_multiple"] == data["equity_multiple"]
+    assert data["selected_exit_month"] == 72 and data["selected_exit_year"] == 6
+    assert data["peak_levered_exit_year"] in {1, 2, 3, 4, 5, 6}
+    for r in rows:
+        assert r["status"] in {"computed", "not_available"}
+        if r["status"] == "computed":
+            assert r["levered_irr"] is not None and abs(r["levered_irr"]) < 10.0
+    assert await _count_engine_outputs(deal_id) == 0
+
+
+@pytest.mark.asyncio
 async def test_preview_override_changes_result() -> None:
     """Flexing the sandbox exit cap moves IRR — proves overrides are applied."""
     from httpx import ASGITransport, AsyncClient
