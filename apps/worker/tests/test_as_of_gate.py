@@ -457,6 +457,11 @@ async def test_comp_lookback_is_measured_from_the_underwriting_date() -> None:
             {"field_name": "transaction_comps.1.property_name", "value": "In window"},
             {"field_name": "transaction_comps.1.cap_rate_pct", "value": 7.0},
             {"field_name": "transaction_comps.1.sale_date", "value": recent_sale},
+            # C12 — a comp set derives an exit cap from 3+ plausible comps.
+            {"field_name": "transaction_comps.2.cap_rate_pct", "value": 7.0},
+            {"field_name": "transaction_comps.2.sale_date", "value": recent_sale},
+            {"field_name": "transaction_comps.3.cap_rate_pct", "value": 7.0},
+            {"field_name": "transaction_comps.3.sale_date", "value": recent_sale},
         ],
         report_as_of="2024-01-15",
         precision="day",
@@ -468,7 +473,7 @@ async def test_comp_lookback_is_measured_from_the_underwriting_date() -> None:
             session, deal_id=str(deal_id), tenant_id=_TENANT
         )
 
-    assert comp_set.total_count == 2
+    assert comp_set.total_count == 4
     notes = " | ".join(comp_set.weighting_notes)
     assert "sale > 5 yrs old" in notes
     # Only the in-window comp survives to the derivation (the comp engine
@@ -540,3 +545,52 @@ async def test_precision_comparisons() -> None:
     assert _is_after_as_of("2025-05-01", "day", as_of) is False
     assert _is_after_as_of("2025-05-02", "day", as_of) is True
     assert _is_after_as_of("2025-05-02", None, as_of) is True
+
+
+# ═══════════ C12 — the model and the Comparable Sales tab agree ════════════
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("caps", "expected"),
+    [
+        # 15% is an IRR read as a cap rate — dropped by BOTH; 3 plausible left.
+        ([6.0, 7.0, 8.0, 15.0], 0.07),
+        # Only two plausible comps — NEITHER derives an exit cap.
+        ([6.0, 7.0, 15.0], None),
+    ],
+)
+async def test_model_exit_cap_and_comp_tab_median_are_one_derivation(
+    caps: list[float], expected: float | None
+) -> None:
+    """The loader's ``exit_cap_rate`` and the comp tab's median come from the
+    same ``exit_cap_from_comps`` call on the same OM rows, so they cannot
+    disagree (C12)."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _build_comp_sales_set
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_doc(
+        deal_id,
+        doc_type="OM",
+        fields=[
+            {"field_name": f"transaction_comps.{i}.cap_rate_pct", "value": cap}
+            for i, cap in enumerate(caps)
+        ],
+    )
+    base = await _base_for(deal_id)
+    factory = get_session_factory()
+    async with factory() as session:
+        comp_set = await _build_comp_sales_set(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+    if expected is None:
+        assert base["__sources__"]["exit_cap_rate"] == "seed"
+        assert comp_set.derived_cap_rate_median is None
+    else:
+        assert base["__sources__"]["exit_cap_rate"] == "om_comps"
+        assert base["exit_cap_rate"] == pytest.approx(expected)
+        assert comp_set.derived_cap_rate_median / 100.0 == pytest.approx(
+            base["exit_cap_rate"]
+        )

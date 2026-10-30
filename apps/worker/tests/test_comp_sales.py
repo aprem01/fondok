@@ -181,15 +181,24 @@ def test_weighted_cap_rate_same_msa_outweighs_recency_when_close() -> None:
         city="Boston",
         chain_scale="economy",
     )
+    # A second off-market comp at 7.5 — C12: a comp set derives an exit cap
+    # only from EXIT_CAP_MIN_COMPS (3) plausible comps.
+    diff2 = _comp(
+        transaction_id="doc:3",
+        cap_rate_pct=7.5,
+        sale_date=date(2025, 6, 1),
+        city="Boston",
+        chain_scale="economy",
+    )
     result = build_comp_set(
         deal_id="deal-1",
-        transactions=[same, diff],
+        transactions=[same, diff, diff2],
         subject_market="Houston, TX",
         subject_chain_scale="upper-upscale",
         today=_TODAY,
     )
-    # Hand-compute: w_same=1.0, w_diff=0.7 → avg = (6.5*1 + 7.5*0.7) / 1.7
-    expected = (6.5 * 1.0 + 7.5 * 0.7) / (1.0 + 0.7)
+    # Hand-compute: w_same=1.0, w_diff=0.7 (x2) → (6.5*1 + 7.5*0.7*2) / 2.4
+    expected = (6.5 * 1.0 + 7.5 * 0.7 * 2) / (1.0 + 0.7 * 2)
     assert result.derived_cap_rate_weighted == pytest.approx(expected, abs=1e-6)
     assert result.derived_cap_rate_method == "weighted"
     # And verify the component weights are what we documented.
@@ -224,24 +233,27 @@ def test_coverage_quality_thresholds() -> None:
 
 def test_lookback_filter_excludes_old_comps() -> None:
     """Comp with sale_date > lookback_years old falls out + emits note."""
-    fresh = _comp(
-        transaction_id="doc:1",
-        cap_rate_pct=7.0,
-        sale_date=date(2024, 1, 1),
-    )
+    fresh = [
+        _comp(
+            transaction_id=f"doc:{i}",
+            cap_rate_pct=7.0,
+            sale_date=date(2024, 1, 1),
+        )
+        for i in (1, 3, 4)
+    ]
     too_old = _comp(
         transaction_id="doc:2",
-        cap_rate_pct=12.0,  # would drag the median up if included
+        cap_rate_pct=10.5,  # plausible — would drag the median up if included
         sale_date=date(2018, 1, 1),  # ~8 yrs before _TODAY
     )
     result = build_comp_set(
         deal_id="deal-1",
-        transactions=[fresh, too_old],
+        transactions=[*fresh, too_old],
         lookback_years=5,
         today=_TODAY,
     )
-    assert result.total_count == 2  # raw count preserves both
-    # Only the fresh comp survived → median = 7.0
+    assert result.total_count == 4  # raw count preserves all
+    # Only the fresh comps survived → median = 7.0
     assert result.derived_cap_rate_median == pytest.approx(7.0)
     # The exclude note explicitly mentions the lookback policy.
     assert any("5 yrs old" in n for n in result.weighting_notes)
@@ -249,11 +261,14 @@ def test_lookback_filter_excludes_old_comps() -> None:
 
 def test_excluded_transaction_ids_filtered_out() -> None:
     """Explicit analyst exclude removes a comp from derivation."""
-    keep = _comp(
-        transaction_id="doc:1",
-        cap_rate_pct=6.0,
-        sale_date=date(2025, 1, 1),
-    )
+    keep = [
+        _comp(
+            transaction_id=f"doc:{i}",
+            cap_rate_pct=6.0,
+            sale_date=date(2025, 1, 1),
+        )
+        for i in (1, 3, 4)
+    ]
     drop = _comp(
         transaction_id="doc:2",
         cap_rate_pct=9.0,
@@ -261,11 +276,11 @@ def test_excluded_transaction_ids_filtered_out() -> None:
     )
     result = build_comp_set(
         deal_id="deal-1",
-        transactions=[keep, drop],
+        transactions=[*keep, drop],
         exclude_transaction_ids=["doc:2"],
         today=_TODAY,
     )
-    # Only the kept comp contributed → median = 6.0
+    # Only the kept comps contributed → median = 6.0
     assert result.derived_cap_rate_median == pytest.approx(6.0)
     assert any("excluded by analyst override" in n for n in result.weighting_notes)
 
@@ -273,25 +288,28 @@ def test_excluded_transaction_ids_filtered_out() -> None:
 def test_chain_scale_adjacent_match_half_weight() -> None:
     """Adjacent chain scales (upscale ↔ upper-upscale) → 0.5 chain-match.
 
-    Set up a single comp where chain is adjacent to subject. Verify the
-    weighted cap rate equals cap_rate (single comp), and that the
-    note set + method reflect the weighted path was used.
+    Set up three identical comps whose chain is adjacent to the subject
+    (three: C12's minimum). Verify the weighted cap rate equals their cap
+    rate, and that the note set + method reflect the weighted path was used.
     """
-    adj = _comp(
-        transaction_id="doc:1",
-        cap_rate_pct=7.25,
-        sale_date=date(2025, 6, 1),
-        city="Houston",
-        chain_scale="upscale",  # adjacent to upper-upscale
-    )
+    adj = [
+        _comp(
+            transaction_id=f"doc:{i}",
+            cap_rate_pct=7.25,
+            sale_date=date(2025, 6, 1),
+            city="Houston",
+            chain_scale="upscale",  # adjacent to upper-upscale
+        )
+        for i in (1, 2, 3)
+    ]
     result = build_comp_set(
         deal_id="deal-1",
-        transactions=[adj],
+        transactions=adj,
         subject_market="Houston, TX",
         subject_chain_scale="upper-upscale",
         today=_TODAY,
     )
-    # Single comp → weighted = its cap_rate
+    # Identical comps → weighted = their cap_rate
     assert result.derived_cap_rate_weighted == pytest.approx(7.25)
     assert result.derived_cap_rate_method == "weighted"
 
@@ -593,3 +611,48 @@ def test_deal_positioning_wins_over_service_for_the_subject_chain_scale() -> Non
     assert _chain_scale_for_deal_row("default", "Extended-Stay") is None
     assert _chain_scale_for_deal_row("", "Luxury") is None
     assert _chain_scale_for_deal_row("default", None) is None
+
+
+# ─────────────── C12 — one exit-cap derivation, shared with the model ───────
+
+
+def test_exit_cap_from_comps_band_minimum_and_median() -> None:
+    """The ONE derivation: implausible comps are dropped and counted, fewer
+    than EXIT_CAP_MIN_COMPS plausible comps derive nothing, otherwise the
+    median (mean of the middle two on an even count) as a fraction."""
+    from app.engines.comp_sales import (
+        EXIT_CAP_COMPS_SOURCE,
+        EXIT_CAP_MIN_COMPS,
+        exit_cap_from_comps,
+    )
+
+    assert EXIT_CAP_MIN_COMPS == 3
+    # 15% (an IRR read as a cap rate) and 2% are dropped; 2 plausible remain.
+    thin = exit_cap_from_comps([7.0, 15.0, 2.0, 0.065], lambda v: v)
+    assert thin.value is None
+    assert thin.implausible_count == 2
+    assert thin.plausible == (0.065, 7.0)
+    odd = exit_cap_from_comps([8.0, 6.0, 7.0, 18.0], lambda v: v)
+    assert odd.value == pytest.approx(0.07)
+    assert odd.median_items == (7.0,)
+    assert odd.source == EXIT_CAP_COMPS_SOURCE == "om_comps"
+    even = exit_cap_from_comps([0.06, 0.07, 0.08, 0.09], lambda v: v)
+    assert even.value == pytest.approx(0.075)
+    assert even.median_items == (0.07, 0.08)
+
+
+def test_comp_set_applies_the_shared_band_and_minimum() -> None:
+    """The tab's median is the model's rule: a 15% comp is dropped (with a
+    note) and two plausible comps derive no exit cap."""
+    txs = [
+        _comp(transaction_id="doc:1", cap_rate_pct=7.0, sale_date=date(2025, 1, 1)),
+        _comp(transaction_id="doc:2", cap_rate_pct=8.0, sale_date=date(2025, 1, 1)),
+        _comp(transaction_id="doc:3", cap_rate_pct=15.0, sale_date=date(2025, 1, 1)),
+    ]
+    result = build_comp_set(deal_id="deal-1", transactions=txs, today=_TODAY)
+    assert result.derived_cap_rate_median is None
+    assert result.derived_cap_rate_weighted is None
+    assert result.derived_cap_rate_method == "none"
+    notes = " | ".join(result.weighting_notes)
+    assert "outside the plausible 4%–11% band" in notes
+    assert "fewer than 3" in notes

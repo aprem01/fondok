@@ -376,12 +376,15 @@ only while "Use STR rates in the model" is on.
 ::: card
 #### Comparable sales and the as-of rule
 
-<!-- source: apps/worker/app/engines/comp_sales.py (lookback_years default 5, measured from the underwriting as-of date), apps/worker/app/services/engine_runner.py (exit-cap median: three or more comps with cap rates 4–11%; NOT_KNOWABLE_AS_OF, AS_OF_UNKNOWN) -->
+<!-- source: apps/worker/app/engines/comp_sales.py (lookback_years default 5, measured from the underwriting as-of date; exit_cap_from_comps — the one exit-cap derivation: three or more comps with cap rates 4–11%, median), apps/worker/app/services/engine_runner.py (_load_om_transaction_comps_cap_rate calls exit_cap_from_comps; NOT_KNOWABLE_AS_OF, AS_OF_UNKNOWN) -->
 The comparable-sales lookback is five years, measured from the underwriting as-of date when one is
 set, otherwise from today. A report published after the as-of date is refused (reason: not knowable
 as of); a report whose date cannot be established is used and flagged (reason: as-of unknown). The
 exit-cap anchor is the median of three or more comparable sales whose cap rates fall between 4%
-and 11%.
+and 11%. The Comparable Sales tab computes its derived median with the same rule — one derivation,
+so the tab's median and the model's exit cap cannot disagree: a comp outside the 4–11% band is
+dropped with a note, and with fewer than three plausible comps the tab derives no cap rate and the
+model stays on its labelled default.
 
 :::
 

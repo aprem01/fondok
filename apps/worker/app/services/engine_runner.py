@@ -104,6 +104,11 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
+from ..engines.comp_sales import (
+    EXIT_CAP_COMPS_SOURCE,
+    cap_rate_fraction,
+    exit_cap_from_comps,
+)
 from ..engines.stabilization import resolve_stabilized_year_index
 from ..engines.timeline import RENOVATION_START_OFFSET_MONTHS
 from ..tenants import TenantDataPolicies, load_tenant_data_policy
@@ -652,7 +657,9 @@ SOURCE_PNL_BENCHMARK = "pnl_benchmark"
 # historical P&L) and ``analyst_override`` (explicit analyst intent).
 # See ``apps/worker/app/services/op_ratio_precedence.py``.
 SOURCE_PORTFOLIO_PNL = "portfolio_pnl"
-SOURCE_OM_COMPS = "om_comps"
+# C12 — the one exit-cap-from-comps provenance label, owned by the comp-sales
+# module that owns the derivation (``exit_cap_from_comps``).
+SOURCE_OM_COMPS = EXIT_CAP_COMPS_SOURCE
 SOURCE_OM_BROKER = "om_broker"
 SOURCE_ANALYST_OVERRIDE = "analyst_override"
 # Wave 2 P2.1 — institutional revenue segmentation. When the deal has
@@ -5000,13 +5007,17 @@ async def _load_om_transaction_comps_cap_rate(
     """Derive a median exit-cap-rate anchor from OM transaction comps.
 
     The Extractor emits ``transaction_comps.<n>.cap_rate_pct`` per
-    broker-published comp. When 3+ comps are present we take the median
-    as the exit-cap-rate prior — gives the deal a market-specific
-    anchor instead of the 7.0% Kimpton seed. Eshan's QA #5: "OM exit-
-    cap median wired up to market.py but never reaches ModelAssumptions."
+    broker-published comp. The value is
+    :func:`app.engines.comp_sales.exit_cap_from_comps` over those rows —
+    the ONE exit-cap derivation (C12), the same function the Comparable
+    Sales tab's ``build_comp_set`` calls: comps outside the plausible band
+    are dropped and, with at least ``EXIT_CAP_MIN_COMPS`` left, their median
+    is the exit cap (badged ``om_comps``). Eshan's QA #5: "OM exit-cap
+    median wired up to market.py but never reaches ModelAssumptions."
 
     Returns the median as a 0..1 fraction (extractor may emit either),
-    or ``None`` when fewer than 3 cap-rate-bearing comps are extracted.
+    or ``None`` when too few plausible comps are extracted (the key then
+    keeps its labelled seed default).
 
     Phase 2.1
     ---------
@@ -5074,22 +5085,10 @@ async def _load_om_transaction_comps_cap_rate(
                 continue
             if not name.endswith(".cap_rate_pct") and not name.endswith(".cap_rate"):
                 continue
-            if not isinstance(value, (int, float)):
+            v = cap_rate_fraction(value)
+            if v is None:
                 continue
-            v = float(value)
-            if v <= 0:
-                continue
-            # Normalize 0..100 percent → 0..1 fraction.
-            if v > 1.0:
-                v = v / 100.0
-            # Sanity bounds (FON-67): hotel exit caps live ~4-11%. The old
-            # 3-15% band let a mis-extracted comp — an IRR (~15-20%) or debt
-            # yield read as a "cap rate" — into the median, which then silently
-            # overrode the 7% seed and collapsed the exit value (a 15% cap on a
-            # $4.4M NOI gives a ~$29.5M sale vs a ~$63M sale at 7%). Anything
-            # outside 4-11% is broken data, not a cap rate.
-            if 0.04 <= v <= 0.11:
-                cap_rates.append((v, f, m))
+            cap_rates.append((v, f, m))
 
     def _wrap(
         value: float | None,
@@ -5098,22 +5097,23 @@ async def _load_om_transaction_comps_cap_rate(
     ) -> Any:
         return (value, prov, reason) if with_provenance else value
 
-    if len(cap_rates) < 3:
-        if gated_count and not cap_rates:
+    # C12 — the ONE exit-cap derivation (plausibility band, minimum count,
+    # median), shared with the Comparable Sales tab's ``build_comp_set``.
+    derivation = exit_cap_from_comps(cap_rates, lambda t: t[0])
+    if derivation.value is None:
+        if gated_count and not derivation.plausible:
             return _wrap(None, None, ReasonCode.NOT_KNOWABLE_AS_OF)
         if not saw_any_om:
             return _wrap(None, None, ReasonCode.NO_DOCUMENT)
         return _wrap(None, None, ReasonCode.NO_SOURCE)
 
-    cap_rates.sort(key=lambda t: t[0])
-    n = len(cap_rates)
     unknown = (
         ReasonCode.AS_OF_UNKNOWN
         if (as_of is not None and not any_known_as_of)
         else None
     )
-    if n % 2:
-        v, f, m = cap_rates[n // 2]
+    if len(derivation.median_items) == 1:
+        v, f, m = derivation.median_items[0]
         prov = (
             _row_provenance(
                 canonical="exit_cap_rate",
@@ -5128,8 +5128,8 @@ async def _load_om_transaction_comps_cap_rate(
             else None
         )
         return _wrap(v, prov, unknown)
-    lo, hi = cap_rates[n // 2 - 1], cap_rates[n // 2]
-    v = (lo[0] + hi[0]) / 2
+    lo, _hi = derivation.median_items
+    v = derivation.value
     prov = (
         _derived_provenance(
             concept="exit_cap_rate",

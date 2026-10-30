@@ -1,9 +1,15 @@
 """Comparable Sales engine — derive an exit cap rate from OM comps.
 
-Wave 3 W3.1. Today the exit cap rate falls through a chain of seeds —
-a deal-row column when present, ``_load_om_transaction_comps_cap_rate``
-(simple median of OM ``transaction_comps.<n>.cap_rate_pct`` rows) when
-3+ comps are extracted, and otherwise the 7.0% Kimpton default.
+Wave 3 W3.1. C12 (go-live audit, 2026-10-30): this module owns the ONE
+derivation of an exit cap rate from comparable sales —
+:func:`exit_cap_from_comps`. The engine loader
+(``engine_runner._load_om_transaction_comps_cap_rate``, which sets the
+model's ``exit_cap_rate`` and badges it :data:`EXIT_CAP_COMPS_SOURCE`) and
+the Comparable Sales tab (:func:`build_comp_set`) both call it, so the
+median the tab shows is computed by the same rules — plausibility band,
+minimum comp count, median — as the figure the model runs on. Fewer than
+:data:`EXIT_CAP_MIN_COMPS` plausible comps derive nothing (the model then
+keeps its labelled ``seed`` default and says so).
 
 This module is the upgrade Sam asked for at the 2026-06-25 call: a
 *transparent* comp-set derivation showing every transaction the engine
@@ -28,9 +34,12 @@ Derivation rules
    appears in ``exclude_transaction_ids``. The analyst made an
    explicit "this comp doesn't reflect the deal" call.
 
-4. **Median** — simple median of the surviving cap rates. Always
-   computed when ≥1 comp survives. The institutional fallback when
-   subject metadata (market / chain scale) isn't supplied.
+4. **Plausibility + median** — :func:`exit_cap_from_comps`: comps whose
+   cap rate falls outside :data:`EXIT_CAP_PLAUSIBLE_RANGE` (4–11%) are
+   dropped as broken data (an IRR or debt yield read as a cap rate); with
+   at least :data:`EXIT_CAP_MIN_COMPS` plausible comps the median of their
+   cap rates is the derived exit cap. The same function sets the model's
+   ``exit_cap_rate`` in the engine loader.
 
 5. **Weighted** — weight each surviving comp by
    ``0.7 * recency_score + 0.2 * market_match + 0.1 * chain_match``.
@@ -59,8 +68,10 @@ before calling in) and a small config and returns the structured set.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import date, timedelta
-from statistics import median
+from typing import Generic, TypeVar
 
 from fondok_schemas.comp_sales import CompSalesSet, CompTransaction
 
@@ -83,6 +94,87 @@ W_CHAIN: float = 0.1
 # Coverage-quality thresholds (qualifying comps after filter).
 COVERAGE_HIGH_MIN: int = 8
 COVERAGE_MEDIUM_MIN: int = 4
+
+
+# ─────────────── C12 — the ONE exit-cap derivation from comps ───────────────
+
+#: Fewest plausible comps that derive an exit cap rate. Below this the comp
+#: set is too thin to anchor the exit on, so nothing is derived.
+EXIT_CAP_MIN_COMPS: int = 3
+#: Plausible hotel exit cap rates, as 0..1 fractions (FON-67). Anything
+#: outside is broken data — an IRR (~15-20%) or a debt yield read as a "cap
+#: rate" — and would silently collapse (or inflate) the exit value.
+EXIT_CAP_PLAUSIBLE_RANGE: tuple[float, float] = (0.04, 0.11)
+#: The provenance label the model's ``exit_cap_rate`` carries when this
+#: derivation set it (``engine_runner.SOURCE_OM_COMPS`` is this string).
+EXIT_CAP_COMPS_SOURCE: str = "om_comps"
+
+_T = TypeVar("_T")
+
+
+def cap_rate_fraction(value: object) -> float | None:
+    """A published cap rate as a 0..1 fraction (the extractor and the comp
+    schema emit either ``7.25`` or ``0.0725``); ``None`` when not a positive
+    number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    if v <= 0:
+        return None
+    return v / 100.0 if v > 1.0 else v
+
+
+@dataclass(frozen=True)
+class ExitCapDerivation(Generic[_T]):
+    """The result of :func:`exit_cap_from_comps`.
+
+    ``value`` is the derived exit cap rate (0..1 fraction) or ``None`` when
+    fewer than :data:`EXIT_CAP_MIN_COMPS` plausible comps exist. ``plausible``
+    are the comps that passed the band, sorted by cap rate; ``median_items``
+    the one (odd count) or two (even count) comps the median sits on — so a
+    caller can cite the row behind the number. ``implausible_count`` is how
+    many comps the band dropped.
+    """
+
+    value: float | None
+    plausible: tuple[_T, ...]
+    median_items: tuple[_T, ...]
+    implausible_count: int
+    source: str = EXIT_CAP_COMPS_SOURCE
+
+
+def exit_cap_from_comps(
+    items: Sequence[_T], cap_rate: Callable[[_T], object]
+) -> ExitCapDerivation[_T]:
+    """THE exit-cap derivation from comparable sales (C12).
+
+    ``cap_rate(item)`` reads each comp's published cap rate (percent or
+    fraction). Comps with no cap rate are ignored; comps outside
+    :data:`EXIT_CAP_PLAUSIBLE_RANGE` are dropped and counted; with at least
+    :data:`EXIT_CAP_MIN_COMPS` plausible comps the result is their median
+    (the mean of the middle two on an even count), as a 0..1 fraction.
+    """
+    lo, hi = EXIT_CAP_PLAUSIBLE_RANGE
+    rated: list[tuple[float, _T]] = []
+    implausible = 0
+    for item in items:
+        v = cap_rate_fraction(cap_rate(item))
+        if v is None:
+            continue
+        if lo <= v <= hi:
+            rated.append((v, item))
+        else:
+            implausible += 1
+    rated.sort(key=lambda t: t[0])
+    plausible = tuple(item for _, item in rated)
+    n = len(rated)
+    if n < EXIT_CAP_MIN_COMPS:
+        return ExitCapDerivation(None, plausible, (), implausible)
+    if n % 2:
+        v, item = rated[n // 2]
+        return ExitCapDerivation(v, plausible, (item,), implausible)
+    (v_lo, i_lo), (v_hi, i_hi) = rated[n // 2 - 1], rated[n // 2]
+    return ExitCapDerivation((v_lo + v_hi) / 2, plausible, (i_lo, i_hi), implausible)
 
 
 # Adjacent-chain-scale graph for the half-weight market match. Stored
@@ -303,10 +395,26 @@ def build_comp_set(
             f"{missing_cap_count} comp(s) excluded: no cap rate published"
         )
 
+    # C12 — the plausibility band, the minimum count and the median are the
+    # ONE derivation the model's exit cap uses too (``exit_cap_from_comps``).
+    derivation = exit_cap_from_comps(qualifying, lambda t: t.cap_rate_pct)
+    if derivation.implausible_count:
+        lo, hi = EXIT_CAP_PLAUSIBLE_RANGE
+        notes.append(
+            f"{derivation.implausible_count} comp(s) excluded: cap rate outside "
+            f"the plausible {lo:.0%}–{hi:.0%} band"
+        )
+    qualifying = list(derivation.plausible)
     coverage = _coverage_quality(len(qualifying))
 
-    if not qualifying:
-        notes.append("0 comps qualified — cannot derive cap rate from comp set")
+    if derivation.value is None:
+        if qualifying:
+            notes.append(
+                f"{len(qualifying)} comp(s) qualified — fewer than "
+                f"{EXIT_CAP_MIN_COMPS}, so no exit cap rate is derived from the comp set"
+            )
+        else:
+            notes.append("0 comps qualified — cannot derive cap rate from comp set")
         return CompSalesSet(
             transactions=transactions,
             total_count=total_count,
@@ -320,8 +428,8 @@ def build_comp_set(
             lookback_years=lookback_years,
         )
 
-    cap_rates = [float(t.cap_rate_pct) for t in qualifying if t.cap_rate_pct is not None]
-    median_cap = float(median(cap_rates))
+    # The schema carries cap rates in percent (0..30).
+    median_cap = derivation.value * 100.0
 
     # ── weighted derivation ──────────────────────────────────────────
     subject_city, subject_state = _split_city_state(subject_market)
@@ -396,6 +504,10 @@ def build_comp_set(
 
 __all__ = [
     "COVERAGE_HIGH_MIN",
+    "EXIT_CAP_COMPS_SOURCE",
+    "EXIT_CAP_MIN_COMPS",
+    "EXIT_CAP_PLAUSIBLE_RANGE",
+    "ExitCapDerivation",
     "COVERAGE_MEDIUM_MIN",
     "RECENCY_LE_2YR",
     "RECENCY_LE_4YR",
@@ -405,4 +517,6 @@ __all__ = [
     "W_MARKET",
     "W_RECENCY",
     "build_comp_set",
+    "cap_rate_fraction",
+    "exit_cap_from_comps",
 ]
