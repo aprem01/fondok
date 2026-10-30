@@ -35,7 +35,6 @@ from ..services.engine_runner import (
     ENGINE_NAMES,
     ENGINE_REGISTRY,
     EngineFailure,
-    MissingIdentityInputsError,
     _load_deal_overrides,
     failures_of,
     get_latest_output,
@@ -436,25 +435,17 @@ async def preview_returns(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
     body = body or ReturnsPreviewBody()
-    try:
-        result = await run_returns_preview(
-            session,
-            deal_id=deal_id,
-            tenant_id=str(tenant_id),
-            overrides=body.overrides,
-            include_sensitivity=body.include_sensitivity,
-        )
-    except MissingIdentityInputsError as exc:
-        # The deal cannot be previewed as it stands: say which inputs are
-        # missing, in the same vocabulary the persisted run failures use.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "reason": "missing_identity_inputs",
-                "missing": exc.missing,
-                "message": str(exc),
-            },
-        ) from exc
+    # A deal with no key count / purchase price raises
+    # ``MissingIdentityInputsError``; the app-level handler (``app.main``)
+    # answers 422 with the missing fields — one mechanism for every
+    # in-memory chain (this preview, the pricing routes).
+    result = await run_returns_preview(
+        session,
+        deal_id=deal_id,
+        tenant_id=str(tenant_id),
+        overrides=body.overrides,
+        include_sensitivity=body.include_sensitivity,
+    )
     return ReturnsPreviewResponse(deal_id=deal_id, **result)
 
 

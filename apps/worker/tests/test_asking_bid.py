@@ -179,7 +179,11 @@ async def test_endpoint_solves_bid_from_deal_target() -> None:
 async def test_endpoint_without_target_returns_no_target() -> None:
     tenant = str(uuid4())
     async with _client() as client:
-        deal_id = await _create(client, tenant)
+        # A priced deal with no target: the asking column is modeled, the
+        # bid column says "no target". (The price is the deal's own —
+        # 2026-10-30: nothing is seeded for a deal without one; see the
+        # next test.)
+        deal_id = await _create(client, tenant, purchase_price=36_400_000)
         r = await client.get(
             f"/analysis/{deal_id}/pricing/asking-vs-bid", headers={"X-Tenant-Id": tenant}
         )
@@ -192,3 +196,20 @@ async def test_endpoint_without_target_returns_no_target() -> None:
     assert body["bidding"]["levered_irr"] is None
     assert body["bidding"]["renovation"] is None
     assert body["asking"]["levered_irr"] is not None
+
+
+async def test_endpoint_refuses_a_deal_without_a_purchase_price() -> None:
+    """No purchase price → no asking column to model. Until 2026-10-30 the
+    pricing chain ran on the seeded $36.4M; it now answers 422 naming the
+    missing input (the app-level ``MissingIdentityInputsError`` handler)."""
+    tenant = str(uuid4())
+    async with _client() as client:
+        deal_id = await _create(client, tenant)  # keys only
+        r = await client.get(
+            f"/analysis/{deal_id}/pricing/asking-vs-bid", headers={"X-Tenant-Id": tenant}
+        )
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["reason"] == "missing_identity_inputs"
+    assert detail["missing"] == ["purchase_price"]
+    assert "36" not in r.text.replace("422", "")  # no seeded price anywhere in the answer

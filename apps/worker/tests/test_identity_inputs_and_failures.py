@@ -534,6 +534,26 @@ def test_kimpton_fixture_defaults_match_production_defaults() -> None:
     )
 
 
+def test_build_input_for_raises_the_typed_error_not_a_key_error() -> None:
+    """The in-memory chains (returns preview, pricing) build inputs directly;
+    a missing identity input must surface as the typed error the app-level
+    handler turns into 422, never a bare ``KeyError`` (a 500)."""
+    from app.services.engine_runner import (
+        MissingIdentityInputsError,
+        _build_input_for,
+        _default_assumptions,
+    )
+
+    base = _default_assumptions()  # no keys, no purchase_price
+    with pytest.raises(MissingIdentityInputsError) as info:
+        _build_input_for("revenue", str(uuid4()), base, {})
+    assert info.value.missing == ["keys"]
+    with pytest.raises(MissingIdentityInputsError) as info:
+        _build_input_for("capital", str(uuid4()), base, {})
+    assert info.value.missing == ["keys", "purchase_price"]
+    assert "36" not in str(info.value)
+
+
 def test_identity_needs_are_transitive_over_engine_deps() -> None:
     from app.services.engine_runner import ENGINE_NAMES, identity_inputs_needed
 

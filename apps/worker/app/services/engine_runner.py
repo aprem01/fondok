@@ -6446,7 +6446,19 @@ def _build_input_for(
     base: dict[str, Any],
     accumulated: dict[str, BaseModel],
 ) -> BaseModel:
-    """Materialize the typed Pydantic input for ``engine_name``."""
+    """Materialize the typed Pydantic input for ``engine_name``.
+
+    Raises :class:`MissingIdentityInputsError` (never a bare ``KeyError``)
+    when an identity input this engine reads is absent from ``base`` — the
+    persisting runners refuse before reaching here; the in-memory chains
+    (returns preview, pricing) let it propagate to the app-level handler,
+    which answers 422 with the missing fields.
+    """
+    needed = _ENGINE_DIRECT_IDENTITY_INPUTS.get(engine_name, frozenset()) & set(
+        missing_identity_inputs(base)
+    )
+    if needed:
+        raise MissingIdentityInputsError(tuple(sorted(needed)))
     deal_uuid = _coerce_uuid(deal_id)
 
     if engine_name == "revenue":

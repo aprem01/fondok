@@ -6,8 +6,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import __version__
 from .alerting import init_sentry
@@ -40,6 +41,7 @@ from .database import dispose_engine, dispose_migrations_engine, get_engine
 from .migrations import run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
+from .services.engine_runner import MissingIdentityInputsError
 from .services.extraction_watchdog import start_watchdog, stop_watchdog
 from .services.embedding_repair import start_embedding_repair, stop_embedding_repair
 from .telemetry import setup_langsmith, setup_telemetry
@@ -218,6 +220,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
 
 
+async def _missing_identity_inputs_response(
+    _request: Request, exc: Exception
+) -> JSONResponse:
+    """422 — the deal cannot be modeled as it stands; say which inputs to enter."""
+    assert isinstance(exc, MissingIdentityInputsError)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": {
+                "reason": "missing_identity_inputs",
+                "missing": exc.missing,
+                "message": str(exc),
+            }
+        },
+    )
+
+
 def create_app() -> FastAPI:
     """Application factory — used by uvicorn and tests."""
     app = FastAPI(
@@ -251,6 +270,15 @@ def create_app() -> FastAPI:
     # routers handle traffic. No-op when OTEL_EXPORTER_OTLP_ENDPOINT
     # is unset, so dev runs aren't affected.
     setup_telemetry(app)
+
+    # Wave 0 (2026-10-30) — a deal with no key count / purchase price has no
+    # default to run on. The persisting runners record a typed
+    # ``missing_identity_inputs`` failure row; the in-memory chains (returns
+    # preview, pricing / asking-vs-bid) raise instead, and THIS is the one
+    # place that turns the raise into the client answer: 422 with the same
+    # vocabulary (``reason``, the ``missing`` fields, the sentence). Routes
+    # need no per-route handling, so no chain can fall through to a 500.
+    app.add_exception_handler(MissingIdentityInputsError, _missing_identity_inputs_response)
 
     app.include_router(health_router.router, tags=["health"])
     app.include_router(deals_router.router, prefix="/deals", tags=["deals"])
