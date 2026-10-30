@@ -19,7 +19,13 @@ Future P&L (``fondok.projections.v1``)
 --------------------------------------
 Sheet ``Future P&L``: engine-computed projection lines (read-only — a changed
 value is reported as "computed — edit the assumption instead"), hidden column A
-holds the engine path. Sheet ``Assumptions``: every analyst-editable Future P&L
+holds the engine path. Each model year is a column GROUP — Amount, % Rev, PAR,
+POR — followed by one display-only Exit Year column (the reversion NOI); the
+hidden row 2 (``fondok_column``) names every column so the importer finds the
+Amount columns by key, not by position. Rows whose column A starts with
+``fondok_readonly:`` (Days, Number of Rooms, Available Rooms, Occupied Rooms,
+Net Cash Flow, the exit NOI) and every column but Amount are display-only and
+never diffed. Sheet ``Assumptions``: every analyst-editable Future P&L
 assumption with its stable ``field_overrides`` key, current value, source,
 method, whether a note is required, and a Note column for the justification.
 Only the Assumptions sheet is importable.
@@ -34,14 +40,17 @@ from __future__ import annotations
 import io
 import math
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+from .refusals import NOT_AVAILABLE_PREFIX, ReasonCode, refuse, unavailable
 
 HIST_FORMAT = "fondok.historicals.v1"
 PROJ_FORMAT = "fondok.projections.v1"
@@ -52,6 +61,12 @@ README_SHEET = "README"
 ID_HEADER = "fondok_id"
 LINE_HEADER = "fondok_line"
 PATH_HEADER = "fondok_path"
+#: Column A of the Future P&L sheet's hidden row 2; the row names each column
+#: (``amount:<i>`` / ``pct_rev:<i>`` / ``par:<i>`` / ``por:<i>`` / ``exit`` /
+#: ``benchmark``). A sheet without it is the earlier positional layout.
+COLUMN_KEY_HEADER = "fondok_column"
+#: Column-A prefix of a display-only Future P&L row the importer never reads.
+READONLY_ROW_PREFIX = "fondok_readonly:"
 
 _HEADER_FILL = PatternFill("solid", fgColor="1A2233")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -847,6 +862,249 @@ def projection_values(
     return n, values
 
 
+# ───────────────────── Future P&L parity (Task 15) ─────────────────────
+#
+# What the retired browser builder (``ProjectionsSection.onExport``) carried
+# beyond the engine lines: the room-count rows, the per-year % Rev / PAR / POR
+# columns, Net Cash Flow and the Exit Year NOI. Every figure is read from an
+# engine output; a figure the run did not publish is a reason, never a 0.
+
+#: The browser builder's Exit Year row label (``FORWARD_NOI_LABEL`` in the
+#: retired web code). Used when the returns engine capped the forward 12 months;
+#: any other basis uses :data:`EXIT_NOI_LABEL`. The engine's own period label
+#: (``exit_noi_period_label``) is appended either way.
+FORWARD_NOI_LABEL = "Forward 12-Month Cash NOI (after FF&E reserve)"
+EXIT_NOI_LABEL = "Exit NOI (after FF&E reserve)"
+EXIT_COLUMN_LABEL = "Exit Year"
+NET_CASH_FLOW_LABEL = "Net Cash Flow"
+#: Shown only when the cash flow's NOI differs from the expense engine's in at
+#: least one year — the deal carries ``noi_override_by_year`` (an analyst pin),
+#: which the returns / cash-flow engines run on and the expense lines do not.
+CASH_FLOW_NOI_PIN_LABEL = "NOI used by the cash flow (analyst pin)"
+#: Comment on a Net Cash Flow cell built on that pinned NOI.
+CASH_FLOW_PIN_NOTE = (
+    "This year's Net Cash Flow is built on the analyst-pinned NOI "
+    "(noi_override_by_year), not the NOI lines above: see the row "
+    f"'{CASH_FLOW_NOI_PIN_LABEL}'. Pinned NOI before the FF&E reserve less FF&E "
+    "Reserve = Net Cash Flow."
+)
+#: The cash flow and the expense engine agree to the cent on an unpinned year.
+_PIN_TOLERANCE = 0.01
+
+#: The room-count rows, in the browser builder's order: (row id, label).
+OPERATING_ROWS: tuple[tuple[str, str], ...] = (
+    ("days", "Days"),
+    ("keys", "Number of Rooms"),
+    ("available_rooms", "Available Rooms"),
+    ("occupied_rooms", "Occupied Rooms"),
+)
+
+#: ``PROJ_LINES`` paths that are rates, not dollars — % Rev / PAR / POR do not
+#: apply to them (a dash, not a number).
+NON_RATIO_PATHS: frozenset[str] = frozenset(
+    {"revenue.occupancy", "revenue.adr", "revenue.revpar"}
+)
+
+#: % Rev denominator for each departmental expense: that department's own
+#: revenue (USALI — the same basis the Benchmark % column states). Every other
+#: dollar line is over Total Revenue (``expense.total_revenue``).
+TOTAL_REVENUE_PATH = "expense.total_revenue"
+PCT_REV_BASIS: dict[str, str] = {
+    "expense.dept_expenses.rooms": "revenue.rooms_revenue",
+    "expense.dept_expenses.food_beverage": "fb.fb_revenue",
+    "expense.dept_expenses.other_operated": "fb.other_revenue",
+}
+
+#: The cash-flow engine's unlevered rows whose sum is the year's Net Cash Flow
+#: (NOI before the reserve, then the reserve as a negative outflow).
+_CF_NOI_ROW = "NOI (before FF&E reserve)"
+_CF_FFE_ROW = "FF&E Reserve"
+
+
+@dataclass(frozen=True)
+class Sourced:
+    """An engine-read figure, or why there is none (``value`` is then None)."""
+
+    value: float | None
+    reason: str | None = None
+    code: ReasonCode = ReasonCode.NO_SOURCE
+
+
+@dataclass(frozen=True)
+class ProjectionExtras:
+    """The parity rows' inputs for ``year_count`` model years."""
+
+    engines: frozenset[str]
+    operating: Mapping[str, tuple[Sourced, ...]]
+    net_cash_flow: tuple[Sourced, ...]
+    #: The cash flow's own NOI before the FF&E reserve, per year, where it
+    #: differs from the expense engine's (an analyst pin); None elsewhere.
+    cash_flow_noi_pin: tuple[float | None, ...]
+    exit_noi: Sourced
+    exit_noi_label: str
+    exit_calendar_year: int | None
+
+
+def _engine_missing(engine: str) -> Sourced:
+    return Sourced(None, f"the {engine} engine has no result on this run",
+                   ReasonCode.ENGINE_SKIPPED)
+
+
+def _trace_inputs(trace: Any) -> dict[str, float | None]:
+    ins = trace.get("inputs") if isinstance(trace, Mapping) else None
+    out: dict[str, float | None] = {}
+    for x in ins if isinstance(ins, list) else ():
+        if isinstance(x, Mapping) and isinstance(x.get("name"), str):
+            out[x["name"]] = to_number(x.get("value"))
+    return out
+
+
+def projection_extras(
+    engine_outputs: Mapping[str, Any], year_count: int
+) -> ProjectionExtras:
+    """Read the parity rows from ``{engine: outputs-dict}``. Nothing is derived
+    here from anything but engine outputs.
+
+    * Days, Number of Rooms and Occupied Rooms — the revenue engine's
+      ``years[i].occupied_rooms`` trace (its value and its ``keys`` / ``days``
+      inputs); Available Rooms — the ``rooms_available`` input of its
+      ``years[i].revpar`` trace. The engine's day count is the one its
+      Available Rooms and RevPAR are built on, so the rows foot.
+    * Net Cash Flow — the cash-flow engine's unlevered ``NOI (before FF&E
+      reserve)`` + ``FF&E Reserve`` rows for operating year ``i + 1``.
+    * Exit NOI — the returns engine's ``terminal_noi`` and its basis label.
+    """
+    engines = frozenset(k for k, v in engine_outputs.items() if isinstance(v, Mapping))
+    rev = engine_outputs.get("revenue") if "revenue" in engines else None
+    prov = rev.get("provenance") if isinstance(rev, Mapping) else None
+
+    operating: dict[str, list[Sourced]] = {rid: [] for rid, _l in OPERATING_ROWS}
+    for i in range(year_count):
+        if rev is None:
+            for rid in operating:
+                operating[rid].append(_engine_missing("revenue"))
+            continue
+        occ_trace = prov.get(f"years[{i}].occupied_rooms") if isinstance(prov, Mapping) else None
+        par_trace = prov.get(f"years[{i}].revpar") if isinstance(prov, Mapping) else None
+        occ_in = _trace_inputs(occ_trace)
+        no_occ = "the revenue run published no occupied-rooms trace for this year"
+        operating["days"].append(_sourced(occ_in.get("days"), no_occ))
+        operating["keys"].append(_sourced(occ_in.get("keys"), no_occ))
+        operating["occupied_rooms"].append(_sourced(
+            to_number(occ_trace.get("value")) if isinstance(occ_trace, Mapping) else None,
+            no_occ,
+        ))
+        operating["available_rooms"].append(_sourced(
+            _trace_inputs(par_trace).get("rooms_available"),
+            "the revenue run published no available-rooms figure (RevPAR trace) for this year",
+        ))
+
+    ncf: list[Sourced] = []
+    pins: list[float | None] = []
+    exp = engine_outputs.get("expense") if "expense" in engines else None
+    exp_years = exp.get("years") if isinstance(exp, Mapping) else None
+    cf = engine_outputs.get("cash_flow") if "cash_flow" in engines else None
+    lines: dict[str, list[Any]] = {}
+    if isinstance(cf, Mapping):
+        for line in cf.get("unlevered") or ():
+            if isinstance(line, Mapping) and isinstance(line.get("values"), list):
+                lines.setdefault(str(line.get("label")), line["values"])
+    for i in range(year_count):
+        pins.append(None)
+        if cf is None:
+            ncf.append(_engine_missing("cash-flow"))
+            continue
+        noi_v = _at(lines.get(_CF_NOI_ROW), i + 1)
+        ffe_v = _at(lines.get(_CF_FFE_ROW), i + 1)
+        if noi_v is None or ffe_v is None:
+            missing = _CF_NOI_ROW if noi_v is None else _CF_FFE_ROW
+            ncf.append(Sourced(
+                None, f"the cash-flow statement has no {missing} for this year"
+            ))
+        else:
+            ncf.append(Sourced(noi_v + ffe_v))
+            # Pinned year: the cash flow's after-reserve NOI is not the
+            # expense engine's. Without an expense NOI there is nothing on
+            # the sheet for it to contradict, so nothing is flagged.
+            ey = exp_years[i] if isinstance(exp_years, list) and i < len(exp_years) else None
+            exp_noi = to_number(ey.get("noi")) if isinstance(ey, Mapping) else None
+            if exp_noi is not None and abs((noi_v + ffe_v) - exp_noi) > _PIN_TOLERANCE:
+                pins[i] = noi_v
+
+    ret = engine_outputs.get("returns") if "returns" in engines else None
+    basis = ret.get("exit_noi_basis") if isinstance(ret, Mapping) else None
+    period = ret.get("exit_noi_period_label") if isinstance(ret, Mapping) else None
+    label = FORWARD_NOI_LABEL if basis in (None, "forward_12m") else EXIT_NOI_LABEL
+    if isinstance(period, str) and period.strip():
+        label = f"{label} — {period.strip()}"
+    if ret is None:
+        exit_noi = Sourced(None, "the returns engine has no result on this run",
+                           ReasonCode.ENGINE_SKIPPED)
+    else:
+        exit_noi = _sourced(
+            to_number(ret.get("terminal_noi")),
+            "the returns engine published no terminal NOI on this run",
+        )
+
+    cal = rev.get("projection_calendar_years") if isinstance(rev, Mapping) else None
+    last = cal[year_count - 1] if isinstance(cal, list) and 0 < year_count <= len(cal) else None
+    return ProjectionExtras(
+        engines=engines,
+        operating={k: tuple(v) for k, v in operating.items()},
+        net_cash_flow=tuple(ncf),
+        cash_flow_noi_pin=tuple(pins),
+        exit_noi=exit_noi,
+        exit_noi_label=label,
+        exit_calendar_year=last + 1 if isinstance(last, int) else None,
+    )
+
+
+def _sourced(value: float | None, reason: str) -> Sourced:
+    return Sourced(value) if value is not None else Sourced(None, reason)
+
+
+def _at(values: list[Any] | None, idx: int) -> float | None:
+    if not isinstance(values, list) or not 0 <= idx < len(values):
+        return None
+    return to_number(values[idx])
+
+
+def _proj_line_label(eng: str, path: str) -> str:
+    return next((lbl for e, p, lbl in PROJ_LINES if e == eng and p == path), path)
+
+
+def _ratio(
+    amount: float | None, amount_label: str, denom: float | None, denom_label: str,
+) -> float | str:
+    """``amount ÷ denom`` or the refusal sentence naming the missing input."""
+    if amount is None:
+        return unavailable(ReasonCode.NO_SOURCE, f"no {amount_label} for this year")
+    if denom is None:
+        return unavailable(ReasonCode.NO_SOURCE, f"no {denom_label} for this year")
+    if denom == 0:
+        return unavailable(ReasonCode.NOT_APPLICABLE, f"{denom_label} is zero for this year")
+    if denom < 0:
+        return unavailable(ReasonCode.NOT_APPLICABLE, f"{denom_label} is negative for this year")
+    return amount / denom
+
+
+def _not_applicable(what: str) -> str:
+    return refuse(ReasonCode.NOT_APPLICABLE, what)
+
+
+def _write(ws: Any, row: int, col: int, value: float | str | None, fmt: str) -> None:
+    c = ws.cell(row=row, column=col, value=value)
+    c.fill = _READONLY_FILL
+    if isinstance(value, (int, float)):
+        c.number_format = fmt
+
+
+_AMOUNT_FMT = "#,##0.####"
+_COUNT_FMT = "#,##0"
+_PCT_FMT = "0.0%"
+_PER_ROOM_FMT = "#,##0.00"
+
+
 def build_projections_workbook(
     *,
     deal_id: str,
@@ -855,6 +1113,7 @@ def build_projections_workbook(
     values: Mapping[str, float | None],
     assumptions: Sequence[Mapping[str, Any]],
     benchmark: Mapping[str, float] | None = None,
+    extras: ProjectionExtras | None = None,
 ) -> bytes:
     """Render the Future P&L + Assumptions workbook.
 
@@ -865,53 +1124,187 @@ def build_projections_workbook(
     "Benchmark %" column AFTER the year columns: the CBRE / HotStats comp-set
     ratio for each mapped line, as a fraction on the same basis the web's
     "% Rev" cell uses. ``None`` (no benchmark on the deal) = no column at all.
+
+    Task 15 — ``extras`` (:func:`projection_extras`) feeds the parity rows the
+    retired browser builder carried: Days / Number of Rooms / Available Rooms /
+    Occupied Rooms first, Net Cash Flow and the Exit Year NOI last, plus a
+    % Rev / PAR / POR column beside every year's Amount. ``None`` = no engine
+    output was supplied, so every one of those cells states it is not
+    available. All of them are display-only and ignored on import.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = PROJ_SHEET
+    n = len(year_headers)
+    if extras is None:
+        extras = projection_extras({}, n)
+
+    def amount_col(i: int) -> int:
+        return 3 + 4 * i
+
+    exit_col = amount_col(n) if n else None
+    bm_col = (
+        (exit_col + 1 if exit_col is not None else 3) if benchmark is not None else None
+    )
+    last_col = bm_col or exit_col or 2
+
     ws.cell(row=1, column=1, value=PATH_HEADER)
     ws.cell(row=1, column=2, value="Line item (computed — read-only)")
+    ws.cell(row=2, column=1, value=COLUMN_KEY_HEADER)
     for i, h in enumerate(year_headers):
-        ws.cell(row=1, column=3 + i, value=h)
-    bm_col = 3 + len(year_headers) if benchmark is not None else None
+        for off, (key, suffix) in enumerate(
+            (("amount", "Amount"), ("pct_rev", "% Rev"), ("par", "PAR"), ("por", "POR"))
+        ):
+            ws.cell(row=1, column=amount_col(i) + off, value=f"{h} {suffix}")
+            ws.cell(row=2, column=amount_col(i) + off, value=f"{key}:{i}")
+    if exit_col is not None:
+        cy = extras.exit_calendar_year
+        ws.cell(row=1, column=exit_col,
+                value=f"{EXIT_COLUMN_LABEL} · {cy}" if cy is not None else EXIT_COLUMN_LABEL)
+        ws.cell(row=2, column=exit_col, value="exit")
     if bm_col is not None:
         ws.cell(row=1, column=bm_col, value=BENCHMARK_HEADER)
-    _style_header(ws, 1, 2 + len(year_headers) + (1 if bm_col is not None else 0))
+        ws.cell(row=2, column=bm_col, value="benchmark")
+    _style_header(ws, 1, last_col)
+    ws.row_dimensions[2].hidden = True
+
     proj_lines = [
         (eng, path, label)
         for eng, path, label in PROJ_LINES
         if f"{eng}.{path}" not in OPTIONAL_PROJ_PATHS
-        or any(
-            values.get(proj_cell_key(eng, path, i)) is not None
-            for i in range(len(year_headers))
-        )
+        or any(values.get(proj_cell_key(eng, path, i)) is not None for i in range(n))
     ]
-    for r_i, (eng, path, label) in enumerate(proj_lines):
-        r = 2 + r_i
+    available = extras.operating.get("available_rooms", ())
+    occupied = extras.operating.get("occupied_rooms", ())
+
+    def _op(seq: Sequence[Sourced], i: int) -> float | None:
+        return seq[i].value if i < len(seq) else None
+
+    def ratio_cells(r: int, i: int, amount: float | None, label: str, pct_basis: str) -> None:
+        eng, sub = pct_basis.split(".", 1)
+        denom = values.get(proj_cell_key(eng, sub, i))
+        c = amount_col(i)
+        _write(ws, r, c + 1, _ratio(amount, label, denom, _proj_line_label(eng, sub)), _PCT_FMT)
+        _write(ws, r, c + 2, _ratio(amount, label, _op(available, i), "Available Rooms"),
+               _PER_ROOM_FMT)
+        _write(ws, r, c + 3, _ratio(amount, label, _op(occupied, i), "Occupied Rooms"),
+               _PER_ROOM_FMT)
+
+    def dash_ratios(r: int, i: int, why: str) -> None:
+        for off in (1, 2, 3):
+            _write(ws, r, amount_col(i) + off, _not_applicable(why), _AMOUNT_FMT)
+
+    def exit_dash(r: int) -> None:
+        if exit_col is not None:
+            _write(ws, r, exit_col, _not_applicable("the Exit Year column carries the exit NOI only"),
+                   _AMOUNT_FMT)
+        if bm_col is not None and ws.cell(row=r, column=1).value.startswith(READONLY_ROW_PREFIX):
+            _write(ws, r, bm_col,
+                   _not_applicable("the benchmark covers P&L expense lines only"), _AMOUNT_FMT)
+
+    r = 3
+    for rid, label in OPERATING_ROWS:
+        ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}{rid}")
+        ws.cell(row=r, column=2, value=label)
+        seq = extras.operating.get(rid, ())
+        for i in range(n):
+            src = seq[i] if i < len(seq) else Sourced(None, "not in the run")
+            _write(ws, r, amount_col(i),
+                   src.value if src.value is not None
+                   else unavailable(src.code, src.reason or "not in the run", rid),
+                   _COUNT_FMT)
+            dash_ratios(r, i, f"{label} is a count, not an amount")
+        exit_dash(r)
+        r += 1
+
+    for eng, path, label in proj_lines:
         ws.cell(row=r, column=1, value=f"{eng}.{path}")
         ws.cell(row=r, column=2, value=label)
-        for i in range(len(year_headers)):
+        dotted = f"{eng}.{path}"
+        for i in range(n):
             v = values.get(proj_cell_key(eng, path, i))
-            c = ws.cell(row=r, column=3 + i, value=v)
-            c.fill = _READONLY_FILL
-            if v is not None:
-                c.number_format = "#,##0.####"
+            _write(ws, r, amount_col(i),
+                   v if v is not None else unavailable(
+                       ReasonCode.NO_SOURCE,
+                       f"the {eng} engine published no {label} for this year", dotted),
+                   _AMOUNT_FMT)
+            if dotted in NON_RATIO_PATHS:
+                dash_ratios(r, i, f"{label} is a rate, not an amount")
+            else:
+                ratio_cells(r, i, v, label, PCT_REV_BASIS.get(dotted, TOTAL_REVENUE_PATH))
+        exit_dash(r)
         if bm_col is not None and benchmark is not None:
-            bv = benchmark.get(f"{eng}.{path}")
-            bc = ws.cell(row=r, column=bm_col, value=bv)
+            bv = benchmark.get(dotted)
+            bc = ws.cell(row=r, column=bm_col, value=bv if bv is not None else refuse(
+                ReasonCode.NO_SOURCE, f"the benchmark publishes no ratio for {label}", dotted))
             bc.fill = _READONLY_FILL
             if bv is not None:
                 bc.number_format = "0.0%"
+        r += 1
+
+    pins = extras.cash_flow_noi_pin
+    pinned = [i < len(pins) and pins[i] is not None for i in range(n)]
+    if any(pinned):
+        ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}cash_flow_noi_pin")
+        ws.cell(row=r, column=2, value=CASH_FLOW_NOI_PIN_LABEL)
+        for i in range(n):
+            if pinned[i]:
+                _write(ws, r, amount_col(i), pins[i], _AMOUNT_FMT)
+                ratio_cells(r, i, pins[i], CASH_FLOW_NOI_PIN_LABEL, TOTAL_REVENUE_PATH)
+            else:
+                _write(ws, r, amount_col(i), _not_applicable(
+                    "no pin this year: the cash flow uses the NOI above"), _AMOUNT_FMT)
+                dash_ratios(r, i, "no pin this year")
+        exit_dash(r)
+        r += 1
+
+    ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}net_cash_flow")
+    ws.cell(row=r, column=2, value=NET_CASH_FLOW_LABEL)
+    for i in range(n):
+        src = extras.net_cash_flow[i] if i < len(extras.net_cash_flow) else Sourced(
+            None, "the cash-flow statement has no figure for this year")
+        amt = src.value
+        _write(ws, r, amount_col(i),
+               amt if amt is not None
+               else unavailable(src.code, src.reason or "not in the run", "net_cash_flow"),
+               _AMOUNT_FMT)
+        if pinned[i]:
+            ws.cell(row=r, column=amount_col(i)).comment = Comment(CASH_FLOW_PIN_NOTE, "Fondok")
+        ratio_cells(r, i, amt, NET_CASH_FLOW_LABEL, TOTAL_REVENUE_PATH)
+    exit_dash(r)
+    r += 1
+
+    ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}exit_noi")
+    ws.cell(row=r, column=2, value=extras.exit_noi_label)
+    for i in range(n):
+        _write(ws, r, amount_col(i),
+               _not_applicable("the exit NOI is not a modelled year's figure"), _AMOUNT_FMT)
+        dash_ratios(r, i, "the exit NOI is not a modelled year's figure")
+    if exit_col is not None:
+        en = extras.exit_noi
+        _write(ws, r, exit_col,
+               en.value if en.value is not None
+               else unavailable(en.code, en.reason or "not in the run", "terminal_noi"),
+               _AMOUNT_FMT)
+    if bm_col is not None:
+        _write(ws, r, bm_col,
+               _not_applicable("the benchmark covers P&L expense lines only"), _AMOUNT_FMT)
+    r += 1
+
     if not year_headers:
-        ws.cell(row=2 + len(proj_lines) + 1, column=2,
+        ws.cell(row=r + 1, column=2,
                 value="No model run yet — run the model to populate the projection.")
     ws.column_dimensions["A"].hidden = True
-    ws.column_dimensions["B"].width = 40
-    for i in range(len(year_headers)):
-        ws.column_dimensions[get_column_letter(3 + i)].width = 16
+    ws.column_dimensions["B"].width = 44
+    for i in range(n):
+        ws.column_dimensions[get_column_letter(amount_col(i))].width = 16
+        for off in (1, 2, 3):
+            ws.column_dimensions[get_column_letter(amount_col(i) + off)].width = 11
+    if exit_col is not None:
+        ws.column_dimensions[get_column_letter(exit_col)].width = 16
     if bm_col is not None:
         ws.column_dimensions[get_column_letter(bm_col)].width = 14
-    ws.freeze_panes = "C2"
+    ws.freeze_panes = "C3"
 
     wa = wb.create_sheet(ASSUMPTION_SHEET)
     for c, h in enumerate(ASSUMPTION_COLUMNS, start=1):
@@ -946,6 +1339,23 @@ def build_projections_workbook(
             "Values use the units in the Unit column (fractions, not percents: 0.045 = 4.5%).",
             "Future P&L cells are computed by the engines; a change there is reported as "
             "'computed — edit the assumption instead' and is never applied.",
+            "Each model year is four columns: Amount, % Rev (share of Total Revenue; a "
+            "departmental expense is over its own department's revenue), PAR (per available "
+            "room) and POR (per occupied room) — all computed from the row's Amount and that "
+            "year's revenue / room counts. Days, Number of Rooms, Available Rooms and Occupied "
+            "Rooms come from the revenue engine; Net Cash Flow (NOI after the FF&E reserve) from "
+            "the cash-flow engine; the Exit Year column holds only the NOI the reversion is "
+            "valued on, from the returns engine, with its basis in the row label.",
+            "Analyst NOI pin: when the deal pins NOI by year (noi_override_by_year), the "
+            "returns and cash-flow engines run on the pinned NOI while the P&L lines above "
+            "show the operating projection. In any year where they differ, the row "
+            f"'{CASH_FLOW_NOI_PIN_LABEL}' shows the cash flow's NOI before the FF&E reserve, "
+            "and that year's Net Cash Flow cell carries a comment: pinned NOI less FF&E Reserve "
+            "= Net Cash Flow. The row is read-only and ignored on import.",
+            "A cell reading 'not available: <reason>' is a figure the model run did not "
+            "produce; '—' means the column does not apply to that row. Neither is ever a 0. "
+            "The % Rev / PAR / POR / Exit Year columns and those rows are read-only and "
+            "ignored on import.",
             "Benchmark % (present only when the deal carries a CBRE / HotStats P&L benchmark) "
             "is the comp-set ratio for the line on the same basis as the model's % Rev — "
             "departmental expense over that department's revenue, everything else over total "
@@ -958,6 +1368,53 @@ def build_projections_workbook(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _year_amount_cells(wp: Any) -> Iterator[tuple[int, str, Any, int, int, Any]]:
+    """``(row, engine path, label, column, year index, period label)`` for every
+    engine-line Amount cell of an uploaded Future P&L sheet.
+
+    Current layout: the hidden row 2 (``fondok_column``) names the columns —
+    only ``amount:<i>`` columns are model-year values; % Rev / PAR / POR, the
+    Exit Year and the Benchmark % columns are never read, and neither is a
+    ``fondok_readonly:`` row. A sheet without that row is the earlier
+    positional layout (one column per year from C, Benchmark % after them).
+    """
+    if wp.cell(row=2, column=1).value == COLUMN_KEY_HEADER:
+        cols: list[tuple[int, int, Any]] = []
+        for c in range(3, wp.max_column + 1):
+            key = wp.cell(row=2, column=c).value
+            if isinstance(key, str) and key.startswith("amount:"):
+                try:
+                    idx = int(key.split(":", 1)[1])
+                except ValueError:
+                    continue
+                head = wp.cell(row=1, column=c).value
+                if isinstance(head, str) and head.endswith(" Amount"):
+                    head = head[: -len(" Amount")]
+                cols.append((c, idx, head))
+        first_row = 3
+    else:
+        cols = []
+        for c in range(3, wp.max_column + 1):
+            head = wp.cell(row=1, column=c).value
+            # FON-97 — the Benchmark % column is not a year: never diffed,
+            # never reported, whatever was typed into it.
+            if isinstance(head, str) and head.strip().lower().startswith("benchmark"):
+                continue
+            cols.append((c, c - 3, head))
+        first_row = 2
+    for r in range(first_row, wp.max_row + 1):
+        path = wp.cell(row=r, column=1).value
+        if (
+            not isinstance(path, str)
+            or path.startswith(READONLY_ROW_PREFIX)
+            or "." not in path
+        ):
+            continue
+        label = wp.cell(row=r, column=2).value
+        for c, idx, head in cols:
+            yield r, path, label, c, idx, head
 
 
 def parse_projections_import(
@@ -1084,35 +1541,30 @@ def parse_projections_import(
 
     if PROJ_SHEET in wb.sheetnames:
         wp = wb[PROJ_SHEET]
-        headers = [wp.cell(row=1, column=c).value for c in range(3, wp.max_column + 1)]
-        for r in range(2, wp.max_row + 1):
-            path = wp.cell(row=r, column=1).value
-            if not isinstance(path, str) or "." not in path:
-                continue
+        for r, path, label, col, year_index, period in _year_amount_cells(wp):
             eng, sub = path.split(".", 1)
-            label = wp.cell(row=r, column=2).value
-            for i in range(len(headers)):
-                # FON-97 — the Benchmark % column is not a year: never diffed,
-                # never reported, whatever was typed into it.
-                h = headers[i]
-                if isinstance(h, str) and h.strip().lower().startswith("benchmark"):
-                    continue
-                ck = proj_cell_key(eng, sub, i)
-                if ck not in current_values:
-                    continue
-                raw = wp.cell(row=r, column=3 + i).value
-                new_val, ok = parse_cell_number(raw)
-                old_val = current_values.get(ck)
-                if ok and same_number(old_val, new_val):
-                    continue
-                computed_edits.append({
-                    "cell_ref": f"{get_column_letter(3 + i)}{r}",
-                    "cell_key": ck, "line_label": label, "year_index": i,
-                    "period_label": headers[i], "old_value": old_val,
-                    "new_value": new_val if ok else str(raw),
-                    "reason": "computed",
-                    "detail": "Computed by the engines — edit the assumption instead.",
-                })
+            ck = proj_cell_key(eng, sub, year_index)
+            if ck not in current_values:
+                continue
+            raw = wp.cell(row=r, column=col).value
+            old_val = current_values.get(ck)
+            # The export wrote "not available: <reason>" where the engine
+            # published nothing; left as written, it is no edit.
+            if old_val is None and isinstance(raw, str) and raw.strip().startswith(
+                NOT_AVAILABLE_PREFIX
+            ):
+                continue
+            new_val, ok = parse_cell_number(raw)
+            if ok and same_number(old_val, new_val):
+                continue
+            computed_edits.append({
+                "cell_ref": f"{get_column_letter(col)}{r}",
+                "cell_key": ck, "line_label": label, "year_index": year_index,
+                "period_label": period, "old_value": old_val,
+                "new_value": new_val if ok else str(raw),
+                "reason": "computed",
+                "detail": "Computed by the engines — edit the assumption instead.",
+            })
 
     return {
         "format": PROJ_FORMAT,
@@ -1130,6 +1582,17 @@ __all__ = [
     "ASSUMPTION_BY_KEY",
     "BENCHMARK_HEADER",
     "BENCHMARK_LINE_PATHS",
+    "COLUMN_KEY_HEADER",
+    "EXIT_COLUMN_LABEL",
+    "EXIT_NOI_LABEL",
+    "FORWARD_NOI_LABEL",
+    "NET_CASH_FLOW_LABEL",
+    "CASH_FLOW_NOI_PIN_LABEL",
+    "OPERATING_ROWS",
+    "READONLY_ROW_PREFIX",
+    "ProjectionExtras",
+    "Sourced",
+    "projection_extras",
 
 
     "BY_YEAR_TARGET_LISTS",

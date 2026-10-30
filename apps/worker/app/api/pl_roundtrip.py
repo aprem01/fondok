@@ -54,6 +54,7 @@ from ..export.pl_workbooks import (
     HistCell,
     HistColumn,
     HistCurrent,
+    ProjectionExtras,
     WorkbookFormatError,
     benchmark_column_values,
     build_historicals_workbook,
@@ -62,6 +63,7 @@ from ..export.pl_workbooks import (
     parse_historicals_import,
     parse_projections_import,
     split_projection_method_key,
+    projection_extras,
     projection_values,
     same_number,
     split_hist_cell_id,
@@ -388,7 +390,7 @@ async def apply_historicals_import(
 
 async def _projection_state(
     session: AsyncSession, deal_id: UUID, tenant: str
-) -> tuple[list[str], dict[str, float | None]]:
+) -> tuple[list[str], dict[str, float | None], ProjectionExtras]:
     from ..services.engine_runner import get_run_scoped_outputs
 
     envelopes = await get_run_scoped_outputs(
@@ -406,7 +408,7 @@ async def _projection_state(
         label = "Base year (Year 1)" if i == 0 else f"Year {i + 1}"
         cy = cal[i] if isinstance(cal, list) and i < len(cal) else None
         headers.append(f"{label} · {cy}" if isinstance(cy, int) else label)
-    return headers, values
+    return headers, values, projection_extras(outputs, n)
 
 
 async def _assumption_state(
@@ -596,7 +598,7 @@ async def export_projections(
 
     tenant = str(auth.tenant_id)
     await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant)
-    headers, values = await _projection_state(session, deal_id, tenant)
+    headers, values, extras = await _projection_state(session, deal_id, tenant)
     cur, srcs, overrides, specs = await _assumption_state(session, deal_id, tenant)
 
     saved_periods = _schedule_periods(overrides)
@@ -648,6 +650,7 @@ async def export_projections(
         values=values,
         assumptions=rows,
         benchmark=benchmark,
+        extras=extras,
     )
     await log_audit(
         session,
@@ -676,7 +679,7 @@ async def preview_projections_import(
     tenant = str(auth.tenant_id)
     await _assert_deal_belongs_to_tenant(session, deal_id=deal_id, tenant_id=tenant)
     data = await _read_upload(file)
-    _headers, values = await _projection_state(session, deal_id, tenant)
+    _headers, values, _extras = await _projection_state(session, deal_id, tenant)
     cur, _srcs, _ov, _specs = await _assumption_state(session, deal_id, tenant)
     try:
         return parse_projections_import(
