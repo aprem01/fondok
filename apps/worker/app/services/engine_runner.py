@@ -5257,13 +5257,15 @@ async def _load_om_transaction_comps_cap_rate(
 ) -> float | None | tuple[float | None, SourceField | None, ReasonCode | None]:
     """Derive a median exit-cap-rate anchor from OM transaction comps.
 
-    The Extractor emits ``transaction_comps.<n>.cap_rate_pct`` per
-    broker-published comp. The value is
-    :func:`app.engines.comp_sales.exit_cap_from_comps` over those rows —
-    the ONE exit-cap derivation (C12), the same function the Comparable
-    Sales tab's ``build_comp_set`` calls: comps outside the plausible band
-    are dropped and, with at least ``EXIT_CAP_MIN_COMPS`` left, their median
-    is the exit cap (badged ``om_comps``). Eshan's QA #5: "OM exit-cap
+    The Extractor emits ``comparable_sales.<n>.*`` / ``transaction_comps.<n>.*``
+    per broker-published comp. The comps come from the same
+    :func:`_load_comp_transactions` and
+    :func:`app.engines.comp_sales.select_comps` as the Comparable Sales tab
+    (analyst exclusions, five-year lookback), and the value is
+    :func:`app.engines.comp_sales.exit_cap_from_comps` — the ONE exit-cap
+    derivation (C12): comps outside the plausible band are dropped and, with
+    at least ``EXIT_CAP_MIN_COMPS`` left, their median is the exit cap
+    (badged ``om_comps``). Eshan's QA #5: "OM exit-cap
     median wired up to market.py but never reaches ModelAssumptions."
 
     Returns the median as a 0..1 fraction (extractor may emit either),
@@ -5285,61 +5287,25 @@ async def _load_om_transaction_comps_cap_rate(
     ``as_of_unknown`` — a flag, never a refusal. ``as_of=None`` (no
     underwriting date on the deal) is exactly today's behaviour.
     """
-    need_as_of = with_provenance or as_of is not None
-    as_of_expr = await _report_as_of_expr(session) if need_as_of else _NO_AS_OF_COLS
-    rows = await session.execute(
-        text(
-            # tenant-scope predicate required by tenant_middleware
-            f"""
-            SELECT er.fields,
-                   er.id AS extraction_result_id, er.document_id,
-                   {as_of_expr}
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND er.tenant_id = :tenant
-               AND d.tenant_id = :tenant
-               AND d.doc_type = 'OM'
-             ORDER BY er.created_at DESC
-            """  # as_of_expr is a fixed column literal, never user input
-        ),
-        {"deal": deal_id, "tenant": tenant_id},
-    )
+    from app.engines.comp_sales import COMP_LOOKBACK_YEARS, select_comps
 
-    # (value, row, source-row mapping)
-    cap_rates: list[tuple[float, dict[str, Any], Any]] = []
-    saw_any_om = False
-    gated_count = 0
-    any_known_as_of = False
-    for r in rows.fetchall():
-        m = r._mapping
-        saw_any_om = True
-        if _as_of_date(m.get("report_as_of")) is not None:
-            any_known_as_of = True
-        if _is_after_as_of(m.get("report_as_of"), m.get("report_as_of_precision"), as_of):
-            gated_count += 1
-            continue
-        raw_fields = m["fields"]
-        if isinstance(raw_fields, str):
-            try:
-                raw_fields = json.loads(raw_fields)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        if not isinstance(raw_fields, list):
-            continue
-        for f in raw_fields:
-            if not isinstance(f, dict):
-                continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not name.startswith("transaction_comps."):
-                continue
-            if not name.endswith(".cap_rate_pct") and not name.endswith(".cap_rate"):
-                continue
-            v = cap_rate_fraction(value)
-            if v is None:
-                continue
-            cap_rates.append((v, f, m))
+    # Review fix (C12) — the ONE comp load and the ONE selection the
+    # Comparable Sales tab uses: both OM comp namespaces, the as-of gate, the
+    # analyst's excluded comps and the five-year lookback (measured from the
+    # underwriting as-of date, else today — the tab's anchor), then the one
+    # derivation. The tab's median and this exit cap cannot disagree.
+    transactions, info = await _load_comp_transactions(
+        session, deal_id=deal_id, tenant_id=tenant_id, as_of=as_of, with_rows=True
+    )
+    overrides = await _load_deal_overrides(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
+    selection = select_comps(
+        transactions,
+        today=as_of or date.today(),
+        lookback_years=COMP_LOOKBACK_YEARS,
+        exclude_transaction_ids=_comp_exclude_ids(overrides),
+    )
 
     def _wrap(
         value: float | None,
@@ -5348,53 +5314,68 @@ async def _load_om_transaction_comps_cap_rate(
     ) -> Any:
         return (value, prov, reason) if with_provenance else value
 
-    # C12 — the ONE exit-cap derivation (plausibility band, minimum count,
-    # median), shared with the Comparable Sales tab's ``build_comp_set``.
-    derivation = exit_cap_from_comps(cap_rates, lambda t: t[0])
+    derivation = exit_cap_from_comps(selection.qualifying, lambda t: t.cap_rate_pct)
     if derivation.value is None:
-        if gated_count and not derivation.plausible:
+        if info.gated_count and not derivation.plausible:
             return _wrap(None, None, ReasonCode.NOT_KNOWABLE_AS_OF)
-        if not saw_any_om:
+        if not info.saw_any_om:
             return _wrap(None, None, ReasonCode.NO_DOCUMENT)
         return _wrap(None, None, ReasonCode.NO_SOURCE)
 
     unknown = (
         ReasonCode.AS_OF_UNKNOWN
-        if (as_of is not None and not any_known_as_of)
+        if (as_of is not None and not info.any_known_as_of)
         else None
     )
-    if len(derivation.median_items) == 1:
-        v, f, m = derivation.median_items[0]
-        prov = (
-            _row_provenance(
-                canonical="exit_cap_rate",
-                field=f,
-                value=v,
-                doc_type="OM",
-                document_id=m.get("document_id"),
-                extraction_result_id=m.get("extraction_result_id"),
-                as_of=m.get("report_as_of"),
-            )
-            if with_provenance
-            else None
-        )
-        return _wrap(v, prov, unknown)
-    lo, _hi = derivation.median_items
     v = derivation.value
-    prov = (
+    if not with_provenance:
+        return v
+    if len(derivation.median_items) == 1:
+        row = info.cap_rows.get(derivation.median_items[0].transaction_id or "")
+        if row is not None:
+            f, m = row
+            return _wrap(
+                v,
+                _row_provenance(
+                    canonical="exit_cap_rate",
+                    field=f,
+                    value=v,
+                    doc_type="OM",
+                    document_id=m.get("document_id"),
+                    extraction_result_id=m.get("extraction_result_id"),
+                    as_of=m.get("report_as_of"),
+                ),
+                unknown,
+            )
+    # An even count averages two comps (or the row is unknown): a derived
+    # record naming the document, no single field.
+    lo_row = info.cap_rows.get(derivation.median_items[0].transaction_id or "")
+    lo_m = lo_row[1] if lo_row is not None else {}
+    return _wrap(
+        v,
         _derived_provenance(
             concept="exit_cap_rate",
             value=v,
             doc_type="OM",
             basis="broker",
-            document_id=lo[2].get("document_id"),
-            extraction_result_id=lo[2].get("extraction_result_id"),
-            as_of=lo[2].get("report_as_of"),
-        )
-        if with_provenance
-        else None
+            document_id=lo_m.get("document_id"),
+            extraction_result_id=lo_m.get("extraction_result_id"),
+            as_of=lo_m.get("report_as_of"),
+        ),
+        unknown,
     )
-    return _wrap(v, prov, unknown)
+
+
+@dataclass
+class _CompRowInfo:
+    """What the exit-cap loader needs beyond the comps themselves: the
+    extraction row behind each comp's cap rate (for provenance) and the
+    as-of gate's bookkeeping (for the reason codes)."""
+
+    cap_rows: dict[str, tuple[dict[str, Any], Any]]
+    saw_any_om: bool = False
+    gated_count: int = 0
+    any_known_as_of: bool = False
 
 
 async def _load_comp_transactions(
@@ -5402,7 +5383,9 @@ async def _load_comp_transactions(
     *,
     deal_id: str,
     tenant_id: str,
-) -> list[Any]:
+    as_of: date | None = None,
+    with_rows: bool = False,
+) -> Any:
     """Build the list of ``CompTransaction`` rows for a deal.
 
     Reads OM extraction results and assembles per-comp records keyed
@@ -5415,14 +5398,27 @@ async def _load_comp_transactions(
     Returns an empty list for deals with no OM extraction (the engine
     then reports
     ``coverage_quality="low"`` with no derivation).
+
+    Review fix (C12) — this is the ONE comp load behind both the Comparable
+    Sales tab and the model's exit cap. ``as_of`` (the deal's underwriting
+    date) drops every OM dated strictly after it — a comp table published
+    later was not knowable then. ``with_rows=True`` returns
+    ``(transactions, _CompRowInfo)`` for the exit-cap provenance.
     """
     from fondok_schemas.comp_sales import CompTransaction
 
+    as_of_expr = (
+        await _report_as_of_expr(session)
+        if (as_of is not None or with_rows)
+        else _NO_AS_OF_COLS
+    )
     rows = await session.execute(
         text(
             # tenant-scope predicate required by tenant_middleware
-            """
-            SELECT er.fields, er.document_id
+            f"""
+            SELECT er.fields, er.document_id,
+                   er.id AS extraction_result_id,
+                   {as_of_expr}
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
@@ -5430,10 +5426,11 @@ async def _load_comp_transactions(
                AND d.tenant_id = :tenant
                AND d.doc_type = 'OM'
              ORDER BY er.created_at DESC
-            """
+            """  # as_of_expr is a fixed column literal, never user input
         ),
         {"deal": deal_id, "tenant": tenant_id},
     )
+    info = _CompRowInfo(cap_rows={})
 
     # Each comp is keyed by (document_id, index) so two OMs uploaded
     # for the same deal don't collide on comp #1. ``slot`` is a dict
@@ -5442,8 +5439,15 @@ async def _load_comp_transactions(
     comps: dict[tuple[str, int], dict[str, Any]] = {}
 
     for r in rows.fetchall():
-        raw_fields = r._mapping["fields"]
-        doc_id = str(r._mapping.get("document_id") or "")
+        m = r._mapping
+        info.saw_any_om = True
+        if _as_of_date(m.get("report_as_of")) is not None:
+            info.any_known_as_of = True
+        if _is_after_as_of(m.get("report_as_of"), m.get("report_as_of_precision"), as_of):
+            info.gated_count += 1
+            continue
+        raw_fields = m["fields"]
+        doc_id = str(m.get("document_id") or "")
         if isinstance(raw_fields, str):
             try:
                 raw_fields = json.loads(raw_fields)
@@ -5555,6 +5559,9 @@ async def _load_comp_transactions(
                 if field_canonical == "cap_rate_pct" and 0 < fv <= 1.0:
                     fv = fv * 100.0
                 slot[field_canonical] = fv
+                if field_canonical == "cap_rate_pct":
+                    # The row behind this comp's cap rate (provenance).
+                    slot["_cap_row"] = (f, m)
             elif field_canonical == "sale_date":
                 if isinstance(value, str):
                     try:
@@ -5579,6 +5586,8 @@ async def _load_comp_transactions(
         # OMs uploaded for the same deal don't collide.
         doc_tail = (doc_id or "doc")[:8] or "doc"
         transaction_id = f"{doc_tail}:{idx}"
+        if "_cap_row" in slot:
+            info.cap_rows[transaction_id] = slot["_cap_row"]
         try:
             out.append(
                 CompTransaction(
@@ -5617,7 +5626,23 @@ async def _load_comp_transactions(
             -(t.sale_date.toordinal() if t.sale_date else 0),
         )
     )
-    return out
+    return (out, info) if with_rows else out
+
+
+def _comp_exclude_ids(overrides: Mapping[str, Any]) -> list[str]:
+    """The analyst's comp exclude list (``comp_sales.exclude_transaction_ids``
+    — a list, or the JSON-array string the OverridePanel writes)."""
+    raw = overrides.get("comp_sales.exclude_transaction_ids")
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x is not None]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed if x is not None]
+    return []
 
 
 async def _build_comp_sales_set(
@@ -5653,30 +5678,15 @@ async def _build_comp_sales_set(
     """
     from app.engines.comp_sales import build_comp_set
 
-    transactions = await _load_comp_transactions(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
     overrides = await _load_deal_overrides(
         session, deal_id=deal_id, tenant_id=tenant_id
     )
-
-    # Pull comp_sales overrides off the persisted map (analyst exclude
-    # list + manual cap pin).
-    exclude_ids_raw = overrides.get("comp_sales.exclude_transaction_ids")
-    if isinstance(exclude_ids_raw, list):
-        exclude_ids = [str(x) for x in exclude_ids_raw if x is not None]
-    elif isinstance(exclude_ids_raw, str):
-        try:
-            parsed = json.loads(exclude_ids_raw)
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
-        exclude_ids = (
-            [str(x) for x in parsed if x is not None]
-            if isinstance(parsed, list)
-            else []
-        )
-    else:
-        exclude_ids = []
+    # The same comp load (and as-of gate) as the model's exit cap.
+    transactions = await _load_comp_transactions(
+        session, deal_id=deal_id, tenant_id=tenant_id,
+        as_of=_underwriting_as_of_from(overrides),
+    )
+    exclude_ids = _comp_exclude_ids(overrides)
 
     comp_set = build_comp_set(
         deal_id=deal_id,

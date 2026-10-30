@@ -594,3 +594,62 @@ async def test_model_exit_cap_and_comp_tab_median_are_one_derivation(
         assert comp_set.derived_cap_rate_median / 100.0 == pytest.approx(
             base["exit_cap_rate"]
         )
+
+
+@pytest.mark.asyncio
+async def test_excluding_a_comp_moves_both_the_tab_median_and_the_model_exit_cap() -> None:
+    """Review fix (C12) — one comp selection: an analyst-excluded comp and a
+    comp sold more than five years before the as-of leave BOTH the tab's
+    median and the model's exit cap."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _build_comp_sales_set
+
+    as_of = date(2024, 6, 30)
+    recent = (as_of - timedelta(days=365)).isoformat()
+    stale = (as_of - timedelta(days=int(365.25 * 7))).isoformat()
+    fields: list[dict] = []
+    for i, (cap, sold) in enumerate(
+        [(6.0, recent), (6.5, recent), (7.0, recent), (9.0, recent), (10.5, stale)]
+    ):
+        fields += [
+            {"field_name": f"transaction_comps.{i}.cap_rate_pct", "value": cap},
+            {"field_name": f"transaction_comps.{i}.sale_date", "value": sold},
+        ]
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, overrides={"underwriting_as_of": as_of.isoformat()})
+    doc_id = await _insert_doc(
+        deal_id, doc_type="OM", fields=fields,
+        report_as_of="2024-01-15", precision="day",
+    )
+
+    async def _both() -> tuple[float, float]:
+        base = await _base_for(deal_id)
+        async with get_session_factory()() as session:
+            comp_set = await _build_comp_sales_set(
+                session, deal_id=str(deal_id), tenant_id=_TENANT
+            )
+        assert base["__sources__"]["exit_cap_rate"] == "om_comps"
+        return base["exit_cap_rate"], comp_set.derived_cap_rate_median / 100.0
+
+    # The stale 10.5% comp is out of both: median of 6.0 / 6.5 / 7.0 / 9.0.
+    model, tab = await _both()
+    assert model == pytest.approx(0.0675)
+    assert tab == pytest.approx(model)
+
+    # The analyst excludes the 9.0% comp (``<doc-tail>:3``): both move to 6.5%.
+    async with get_session_factory()() as session:
+        await session.execute(
+            text("UPDATE deals SET field_overrides = :fo WHERE id = :id"),
+            {
+                "id": str(deal_id),
+                "fo": json.dumps({
+                    "underwriting_as_of": as_of.isoformat(),
+                    "comp_sales.exclude_transaction_ids": [f"{str(doc_id)[:8]}:3"],
+                }),
+            },
+        )
+        await session.commit()
+    model2, tab2 = await _both()
+    assert model2 == pytest.approx(0.065)
+    assert tab2 == pytest.approx(model2)

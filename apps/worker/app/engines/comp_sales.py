@@ -294,13 +294,75 @@ def _split_city_state(subject_market: str | None) -> tuple[str | None, str | Non
 # ────────────────────────── main entrypoint ──────────────────────────
 
 
+#: The comp-sales lookback (years) — the tab's and the model's (C12).
+COMP_LOOKBACK_YEARS: int = 5
+
+
+@dataclass(frozen=True)
+class CompSelection:
+    """The comps a derivation may use, and what was dropped and why."""
+
+    qualifying: tuple[CompTransaction, ...]
+    excluded_count: int
+    too_old_count: int
+    missing_date_count: int
+    missing_cap_count: int
+
+
+def select_comps(
+    transactions: Sequence[CompTransaction],
+    *,
+    today: date,
+    lookback_years: int = COMP_LOOKBACK_YEARS,
+    exclude_transaction_ids: Sequence[str] | None = None,
+) -> CompSelection:
+    """THE comp selection (review fix to C12) — called by
+    :func:`build_comp_set` (the Comparable Sales tab) and by the engine
+    loader for the model's exit cap, so both derive from the same comps.
+
+    Drops, in order: comps the analyst excluded (``transaction_id`` in
+    ``exclude_transaction_ids``), comps sold more than ``lookback_years``
+    before ``today`` (a comp with no sale date is kept and counted), and comps
+    with no published cap rate.
+    """
+    exclude_set = set(exclude_transaction_ids or [])
+    after_exclude: list[CompTransaction] = []
+    excluded_count = 0
+    for t in transactions:
+        if t.transaction_id and t.transaction_id in exclude_set:
+            excluded_count += 1
+            continue
+        after_exclude.append(t)
+    cutoff = today - timedelta(days=int(365.25 * lookback_years))
+    after_lookback: list[CompTransaction] = []
+    too_old_count = 0
+    missing_date_count = 0
+    for t in after_exclude:
+        if t.sale_date is None:
+            missing_date_count += 1
+            after_lookback.append(t)
+            continue
+        if t.sale_date < cutoff:
+            too_old_count += 1
+            continue
+        after_lookback.append(t)
+    qualifying = tuple(t for t in after_lookback if t.cap_rate_pct is not None)
+    return CompSelection(
+        qualifying=qualifying,
+        excluded_count=excluded_count,
+        too_old_count=too_old_count,
+        missing_date_count=missing_date_count,
+        missing_cap_count=len(after_lookback) - len(qualifying),
+    )
+
+
 def build_comp_set(
     deal_id: str,
     transactions: list[CompTransaction],
     *,
     subject_chain_scale: str | None = None,
     subject_market: str | None = None,
-    lookback_years: int = 5,
+    lookback_years: int = COMP_LOOKBACK_YEARS,
     exclude_transaction_ids: list[str] | None = None,
     today: date | None = None,
 ) -> CompSalesSet:
@@ -343,38 +405,19 @@ def build_comp_set(
         analyst-readable filter notes.
     """
     today = today or date.today()
-    exclude_set = set(exclude_transaction_ids or [])
     total_count = len(transactions)
-
-    # ── (3) explicit analyst exclude ─────────────────────────────────
-    after_exclude: list[CompTransaction] = []
-    excluded_count = 0
-    for t in transactions:
-        if t.transaction_id and t.transaction_id in exclude_set:
-            excluded_count += 1
-            continue
-        after_exclude.append(t)
-
-    # ── (1) lookback filter ──────────────────────────────────────────
-    cutoff = today - timedelta(days=int(365.25 * lookback_years))
-    after_lookback: list[CompTransaction] = []
-    too_old_count = 0
-    missing_date_count = 0
-    for t in after_exclude:
-        if t.sale_date is None:
-            missing_date_count += 1
-            after_lookback.append(t)
-            continue
-        if t.sale_date < cutoff:
-            too_old_count += 1
-            continue
-        after_lookback.append(t)
-
-    # ── (2) cap-rate-presence filter ─────────────────────────────────
-    qualifying: list[CompTransaction] = [
-        t for t in after_lookback if t.cap_rate_pct is not None
-    ]
-    missing_cap_count = len(after_lookback) - len(qualifying)
+    # Review fix (C12) — the ONE comp selection the model's exit cap uses too.
+    selection = select_comps(
+        transactions,
+        today=today,
+        lookback_years=lookback_years,
+        exclude_transaction_ids=exclude_transaction_ids,
+    )
+    qualifying = list(selection.qualifying)
+    excluded_count = selection.excluded_count
+    too_old_count = selection.too_old_count
+    missing_date_count = selection.missing_date_count
+    missing_cap_count = selection.missing_cap_count
 
     notes: list[str] = []
     if excluded_count:
@@ -503,7 +546,9 @@ def build_comp_set(
 
 
 __all__ = [
+    "COMP_LOOKBACK_YEARS",
     "COVERAGE_HIGH_MIN",
+    "CompSelection",
     "EXIT_CAP_COMPS_SOURCE",
     "EXIT_CAP_MIN_COMPS",
     "EXIT_CAP_PLAUSIBLE_RANGE",
@@ -519,4 +564,5 @@ __all__ = [
     "build_comp_set",
     "cap_rate_fraction",
     "exit_cap_from_comps",
+    "select_comps",
 ]
