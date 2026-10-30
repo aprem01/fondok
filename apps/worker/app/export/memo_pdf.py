@@ -149,7 +149,7 @@ def _fmt_int(
     if v is None:
         return refuse(code, "no value on the export payload", concept)
     try:
-        return f"{int(round(float(v))):,}"
+        return f"{round(float(v)):,}"
     except (TypeError, ValueError):
         return refuse(code, f"value {v!r} is not a number", concept)
 
@@ -1281,7 +1281,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     rec = header.get("recommendation", "")
     confidence = _as_float(appendix.get("ai_confidence"))
     confidence_badge = (
-        f"AI Confidence: {int(round(confidence * 100))}%"
+        f"AI Confidence: {round(confidence * 100)}%"
         if confidence is not None
         else "AI Confidence: " + unavailable(
             ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"

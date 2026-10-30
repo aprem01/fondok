@@ -1914,9 +1914,7 @@ def _build_named_scenarios(
             col += 1
             # Delta column (blank for the base scenario itself); stated only
             # when both sides exist and the base is non-zero.
-            if s is base:
-                ws.cell(row=row, column=col, value=None)
-            elif v is None or base_val is None or base_val == 0:
+            if s is base or v is None or base_val is None or base_val == 0:
                 ws.cell(row=row, column=col, value=None)
             else:
                 c = ws.cell(row=row, column=col, value=(v - base_val) / abs(base_val))

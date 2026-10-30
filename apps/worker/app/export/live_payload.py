@@ -2,7 +2,7 @@
 
 The export builders (:mod:`app.export.excel` / ``memo_pdf`` / ``presentation``)
 consume a ``(deal, model, memo)`` triple. This module is the ONLY source of
-that triple in production (the Kimpton test fixture under ``tests/fixtures``
+that triple in production (the test fixture under ``tests/fixtures``
 mirrors the shape for builder tests) — assembled from a live deal by reading:
 
     * the deal row (name / city / keys / brand / service / stage / confidence),
@@ -400,7 +400,7 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
 
 
 def _benchmark_default_note(stack: dict[str, Any]) -> str | None:
-    """``"Benchmark SOFR 4.30% is Fondok’s flat SOFR assumption, …"`` when a
+    """``"Benchmark SOFR 4.30% is Fondok's flat SOFR assumption, ..."`` when a
     priced floating tranche ran on the engine's default index; else ``None``.
 
     Reads the tranche echo the debt engine persists (``benchmark_is_default``

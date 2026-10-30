@@ -43,7 +43,7 @@ NOI_HEADLINE_LABELS: tuple[str, ...] = (
 #: engine's flat SOFR default (a floating tranche with no analyst index
 #: assumption). Same words the Debt tab shows next to the Benchmark row.
 BENCHMARK_DEFAULT_NOTE = (
-    "Fondok’s flat SOFR assumption, not market data — enter the index you "
+    "Fondok’s flat SOFR assumption, not market data — enter the index you "  # noqa: RUF001 — the Debt tab's exact copy
     "underwrite to"
 )
 

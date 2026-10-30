@@ -905,7 +905,7 @@ export default function MethodologyPage() {
               The Op-Ratio Provenance sheet and memo section are always produced for a modelled deal; when
               every ratio is a hotel-type seed they say so (&ldquo;all operating ratios are hotel-type defaults;
               no T-12 was provided&rdquo;). Wherever an exported debt figure rides on Fondok&apos;s flat SOFR
-              assumption, the export prints the same note the Debt tab shows. The unsourced brand recovery
+              assumption, the export prints the same note the Financing tab shows. The unsourced brand recovery
               multiplier table is no longer printed.
             </li>
           </ul>

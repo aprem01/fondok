@@ -137,7 +137,7 @@ def kimpton_model() -> dict[str, Any]:
             "lp_distributions_usd": 32_677_264,
             "gp_distributions_usd": 8_733_561,
         },
-        # The sensitivity ENGINE output (engines/sensitivity.py shape) — what
+        # The sensitivity ENGINE output (engines/sensitivity.py shape) - what
         # the IC deck's heat-map reads. Rows = exit cap, cols = RevPAR growth.
         "sensitivity_engine": _sensitivity_engine_output(),
         "scenario_outputs": [
@@ -573,7 +573,7 @@ def kimpton_model() -> dict[str, Any]:
             "subject_chain_scale": "luxury",
             "lookback_years": 5,
         },
-        # str_forecast: 24 historical + 24 forecast months × 3 scenarios (W3.3).
+        # str_forecast: 24 historical + 24 forecast months x 3 scenarios (W3.3).
         "str_forecast": {
             "deal_id": "kimpton-angler-2026",
             "coverage_quality": "high",
@@ -827,7 +827,7 @@ def _amortizing_schedule(
 
 
 def _sensitivity_engine_output() -> dict[str, Any]:
-    """A ``SensitivityOutput``-shaped block: 5×5 levered IRR over exit cap ×
+    """A ``SensitivityOutput``-shaped block: 5x5 levered IRR over exit cap x
     RevPAR growth, base cell in the middle (test data)."""
     rows = [0.060, 0.065, 0.070, 0.075, 0.080]
     cols = [0.01, 0.02, 0.03, 0.04, 0.05]

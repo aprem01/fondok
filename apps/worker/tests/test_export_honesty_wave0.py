@@ -42,7 +42,6 @@ from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode  # noqa: E402
 from app.export.labels import (  # noqa: E402
     BENCHMARK_DEFAULT_NOTE,
     OP_RATIO_ALL_SEED_NOTE,
-    PRICING_NO_TARGET_NOTE,
 )
 from app.export.refusals import NOT_AVAILABLE_PREFIX  # noqa: E402
 from tests.fixtures.kimpton_export_payload import (  # noqa: E402
@@ -90,7 +89,7 @@ def test_deck_sensitivity_slide_reads_the_engine_output(tmp_path: Path) -> None:
     text_blob = _pptx_text(out)
     # The grid's title names the engine's axes and metric, and the base cell
     # value from the fixture's engine block is on the slide.
-    assert "Levered IRR — Exit Cap × RevPAR Growth" in text_blob
+    assert "Levered IRR — Exit Cap × RevPAR Growth" in text_blob  # noqa: RUF001 — the slide's title
     assert "23.5%" in text_blob  # fixture base cell 0.2348
     assert "Source: sensitivity engine" in text_blob
     assert "Sensitivity analysis not available" not in text_blob
@@ -110,7 +109,7 @@ def test_deck_without_sensitivity_output_states_why(tmp_path: Path) -> None:
         "division by zero"
     ) in text_blob
     # No synthesized axes from the old builder.
-    assert "Exit Cap × RevPAR Growth" not in text_blob
+    assert "Exit Cap × RevPAR Growth" not in text_blob  # noqa: RUF001
 
     model.pop("sensitivity_engine")
     out2 = build_pptx(kimpton_deal(), model, kimpton_memo(), tmp_path / "deck-none.pptx")
@@ -118,8 +117,9 @@ def test_deck_without_sensitivity_output_states_why(tmp_path: Path) -> None:
 
 
 def test_deck_carries_no_kimpton_next_steps_and_no_default_verdict(tmp_path: Path) -> None:
-    from app.export import build_pptx
     from pptx import Presentation
+
+    from app.export import build_pptx
 
     deal = {"id": "x", "name": "Harbor House", "city": "Tampa, FL", "brand": "", "keys": 150}
     memo = {"header": {"subject_property": "Harbor House"}, "sections": [], "appendix": {}}

@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001, RUF003
+# ruff: noqa: RUF001
 """IC presentation deck builder (PowerPoint .pptx).
 
 8 slides following an institutional-investor template:
@@ -95,7 +95,7 @@ def _fmt_int(v: float | int | None, concept: str | None = None) -> str:
     if v is None:
         return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
     try:
-        return f"{int(round(float(v))):,}"
+        return f"{round(float(v)):,}"
     except (TypeError, ValueError):
         return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
 
@@ -353,7 +353,7 @@ def _slide_exec_summary(prs: Presentation, memo: dict[str, Any], model: dict[str
     appendix = memo.get("appendix") or {}
     confidence = appendix.get("ai_confidence")
     confidence_txt = (
-        f"{int(round(float(confidence) * 100))}%"
+        f"{round(float(confidence) * 100)}%"
         if confidence is not None
         else unavailable(
             ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"

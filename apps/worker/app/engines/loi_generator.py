@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 
 from .price_solver import MaxPriceResult
 
-
 # ─────────────────────────── defaults ──────────────────────────────
 
 
@@ -52,7 +51,7 @@ DEFAULT_CONTINGENCIES: tuple[str, ...] = (
 # ─────────────────────────── refusals ───────────────────────────────
 
 
-class LOIInputMissing(ValueError):
+class LOIInputMissing(ValueError):  # noqa: N818 — parallels MemoInputMissing
     """The LOI cannot be drafted honestly from these inputs.
 
     Raised instead of rendering a document with a fabricated figure in it
