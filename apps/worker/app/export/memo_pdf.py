@@ -405,6 +405,10 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
                 segments = list(segs)
         else:
             segments = list(seg_by_year)
+    # A9 — which segment figures are platform defaults (live_payload).
+    segment_provenance = model.get("segment_provenance")
+    if not isinstance(segment_provenance, dict):
+        segment_provenance = None
 
     # ── PIP displacement ─────────────────────────────────────────────
     pip = model.get("pip_displacement")
@@ -471,6 +475,7 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "segments": segments,
+        "segment_provenance": segment_provenance,
         "pip": pip_summary,
         "capex_schedule": capex_schedule,
         "op_ratio_provenance": op_prov,
@@ -483,11 +488,16 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _render_revenue_mix(segments: list[dict[str, Any]] | None) -> str:
+def _render_revenue_mix(
+    segments: list[dict[str, Any]] | None,
+    provenance: dict[str, Any] | None = None,
+) -> str:
     """Render the Year-1 demand-segment mix table.
 
     Highlights any segment whose ``channel_cost_pct`` >= 15% (the OTA-heavy
-    flag Sam asks IC analysts to surface in the memo body).
+    flag Sam asks IC analysts to surface in the memo body). A9 — when any
+    segment figure rides on a platform default, the ``provenance`` note
+    ("Platform default — no segmentation data on file: …") prints under it.
     """
     if not segments:
         return ""
@@ -525,6 +535,12 @@ def _render_revenue_mix(segments: list[dict[str, Any]] | None) -> str:
         else ""
     )
 
+    note = (provenance or {}).get("note")
+    source_note = (
+        f"<div class='callout'><strong>Source:</strong> {html.escape(str(note))}</div>"
+        if note
+        else ""
+    )
     return (
         "<h2>Revenue Mix (Y1)</h2>"
         + ota_note
@@ -533,6 +549,7 @@ def _render_revenue_mix(segments: list[dict[str, Any]] | None) -> str:
         "<th style='text-align:right'>Net Revenue</th>"
         "<th style='text-align:right'>Channel Cost</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
+        + source_note
     )
 
 
@@ -1386,7 +1403,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     rec_badge_class = "ok" if "PROCEED" in rec.upper() else "warn"
 
     # Wave 2 conditional section HTML.
-    segments_html = _render_revenue_mix(wave2["segments"])
+    segments_html = _render_revenue_mix(wave2["segments"], wave2.get("segment_provenance"))
     pip_html = _render_pip_plan(wave2["pip"])
     capex_html = _render_capex_plan(wave2["capex_schedule"])
     op_ratio_html = _render_op_ratio_provenance(wave2["op_ratio_provenance"])

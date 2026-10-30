@@ -329,6 +329,7 @@ _BENCHMARK_LABELS: frozenset[str] = frozenset(
         "pnl_benchmark",
         "portfolio_pnl",
         "str_forecast",
+        # Legacy (pre-2026-10-30 runs) — see engine_runner A9.
         "str_segmentation_default",
         "capex_ffe_default",
     }
@@ -346,6 +347,8 @@ _DOCUMENT_LABELS: frozenset[str] = frozenset(
         "portfolio_pnl",
         "pnl_benchmark",
         "cbre_horizons",
+        # A9 — a segment field the deal's STR Segmentation report states.
+        "str_segmentation",
     }
 )
 # A label that IS a refusal — the assumption could not be grounded.

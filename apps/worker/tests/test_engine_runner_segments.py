@@ -5,8 +5,9 @@ and the revenue engine's ``segments`` input. The pure engine math is
 covered in ``test_revenue_segmentation.py``; here we pin the data flow:
 
 * STR_SEGMENTATION extraction → ``base["segments"]`` populated with
-  the five-segment dict + every field tagged
-  ``SOURCE_STR_SEGMENTATION_DEFAULT``.
+  the five-segment dict; each field badged ``SOURCE_STR_SEGMENTATION``
+  when the report states it and ``SOURCE_PLATFORM_DEFAULT_SEGMENTATION``
+  when a platform default filled it (A9).
 * When the extraction carries a channel_mix block, transient splits
   into BAR / OTA / Corporate using the report's shares.
 * When the extraction omits channel_mix, the engine falls back to the
@@ -178,10 +179,11 @@ async def test_str_segmentation_extraction_seeds_segments_with_provenance() -> N
     """A vanilla STR Segmentation extraction (transient + group, no
     channel mix) populates ``base['segments']`` with the five-segment
     default split (BAR 60% / OTA 30% / Corp 10% within transient), and
-    every segment field gets tagged with the canonical provenance."""
+    each segment field is badged by where it came from (A9)."""
     from app.database import get_session_factory
     from app.services.engine_runner import (
-        SOURCE_STR_SEGMENTATION_DEFAULT,
+        SOURCE_PLATFORM_DEFAULT_SEGMENTATION,
+        SOURCE_STR_SEGMENTATION,
         _load_engine_inputs,
     )
 
@@ -230,12 +232,29 @@ async def test_str_segmentation_extraction_seeds_segments_with_provenance() -> N
     assert by_name["transient_bar"]["adr"] == pytest.approx(260.0)
     assert by_name["group"]["adr"] == pytest.approx(235.0)
 
-    # Provenance map — every segment field tagged with the canonical
-    # STR-segmentation source label so the UI badge renders "STR Segmentation".
+    # Provenance map (A9) — the report's own figures are grounded; every
+    # platform default (channel costs, the 60/30/10 transient split, the
+    # corporate / contract ADR ratios, the missing contract bucket) says so.
+    # No field carries the old STR-flavoured ``str_segmentation_default``.
     sources = base.get("__sources__", {})
-    assert sources["segments.transient_bar.mix_pct"] == SOURCE_STR_SEGMENTATION_DEFAULT
-    assert sources["segments.transient_ota.channel_cost_pct"] == SOURCE_STR_SEGMENTATION_DEFAULT
-    assert sources["segments.group.adr"] == SOURCE_STR_SEGMENTATION_DEFAULT
+    grounded, default = SOURCE_STR_SEGMENTATION, SOURCE_PLATFORM_DEFAULT_SEGMENTATION
+    assert grounded == "str_segmentation"
+    assert default == "platform_default_segmentation"
+    assert sources["segments.group.mix_pct"] == grounded
+    assert sources["segments.group.adr"] == grounded
+    assert sources["segments.transient_bar.adr"] == grounded
+    assert sources["segments.transient_ota.adr"] == grounded
+    assert sources["segments.transient_bar.mix_pct"] == default
+    assert sources["segments.transient_ota.mix_pct"] == default
+    assert sources["segments.corporate.mix_pct"] == default
+    assert sources["segments.contract.mix_pct"] == default
+    assert sources["segments.corporate.adr"] == default
+    assert sources["segments.contract.adr"] == default
+    for seg in ("transient_bar", "transient_ota", "corporate", "group", "contract"):
+        assert sources[f"segments.{seg}.channel_cost_pct"] == default
+        # adr_growth is None (inherits the property's) → the property's label.
+        assert sources[f"segments.{seg}.adr_growth"] == sources["adr_growth"]
+    assert "str_segmentation_default" not in set(sources.values())
 
 
 async def test_channel_mix_extraction_splits_transient_using_report_shares() -> None:
@@ -280,6 +299,41 @@ async def test_channel_mix_extraction_splits_transient_using_report_shares() -> 
     assert by_name["transient_ota"]["mix_pct"] == pytest.approx(0.24, abs=1e-6)
     assert by_name["corporate"]["mix_pct"] == pytest.approx(0.00, abs=1e-6)
     assert by_name["group"]["mix_pct"] == pytest.approx(0.20, abs=1e-6)
+    # A9 — the block's shares cover all transient demand (50 + 30 + 20), so
+    # the whole transient split is the report's (grounded), not a default.
+    sources = base["__sources__"]
+    for seg in ("transient_bar", "transient_ota", "corporate"):
+        assert sources[f"segments.{seg}.mix_pct"] == "str_segmentation"
+    assert sources["segments.corporate.adr"] == "platform_default_segmentation"
+
+
+async def test_partial_channel_block_badges_the_assumed_shares_as_default() -> None:
+    """A9 — a channel block that states only the OTA share: OTA is grounded,
+    the corporate share (assumed 0) and BAR (the remainder) are platform
+    defaults."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Partial Channel Demo", keys=150, purchase=30_000_000)
+    await _insert_str_segmentation_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "str_segmentation.ttm.transient.mix_pct", "value": 0.70},
+            {"field_name": "str_segmentation.ttm.group.mix_pct", "value": 0.30},
+            {"field_name": "str_segmentation.ttm.channel_mix.ota_pct", "value": 0.25},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+    sources = base["__sources__"]
+    assert sources["segments.transient_ota.mix_pct"] == "str_segmentation"
+    assert sources["segments.corporate.mix_pct"] == "platform_default_segmentation"
+    assert sources["segments.transient_bar.mix_pct"] == "platform_default_segmentation"
+    # No segment ADR on the report → every ADR is a platform ratio.
+    for seg in ("transient_bar", "transient_ota", "corporate", "group", "contract"):
+        assert sources[f"segments.{seg}.adr"] == "platform_default_segmentation"
 
 
 async def test_analyst_override_on_segment_channel_cost_beats_str_seed() -> None:

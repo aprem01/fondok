@@ -3121,12 +3121,24 @@ sources:
     kind: override
     doc_types: []
     explanation: Set by an analyst with a justification note. Wins over every other source.
-  str_segmentation_default:
-    label: STR segmentation
+  str_segmentation:
+    label: STR Segmentation report
     badge: STR Seg
-    kind: assumption
+    kind: grounded
     doc_types: [STR_SEGMENTATION]
-    explanation: Default revenue-segment mix seeded from the deal’s STR Segmentation extraction.
+    explanation: Stated by the deal's STR Segmentation report — a demand-segment mix, the transient channel split, or a segment ADR.
+  platform_default_segmentation:
+    label: Platform default segmentation
+    badge: Platform default — no segmentation data on file
+    kind: assumption
+    doc_types: []
+    explanation: A segment-model figure the deal's STR Segmentation report does not state, filled by a platform default — channel costs, the 60/30/10 transient split, or a segment ADR at its ratio to the property ADR. A suggestion, not the deal's data.
+  str_segmentation_default:
+    label: Segment default (legacy run)
+    badge: Segment default
+    kind: assumption
+    doc_types: []
+    explanation: Runs saved before 2026-10-30 tagged every segment field with this one label, platform defaults included. Re-run the model to see which segment figures the STR Segmentation report states and which are platform defaults.
   platform_default_renovation_split:
     label: Platform default split
     badge: Platform default

@@ -124,19 +124,23 @@ from fondok_schemas.underwriting import (
 logger = logging.getLogger(__name__)
 
 
-# Wave 2 P2.1 — institutional channel-cost defaults per demand segment.
-# These become the engine defaults when an STR_SEGMENTATION extraction
-# exists for the deal; analyst overrides via ``field_overrides`` win.
+# Wave 2 P2.1 / A9 (go-live audit) — the PLATFORM defaults the segment model
+# fills in where an STR Segmentation report is silent. None of these is deal
+# data: every segment field they set is badged
+# ``SOURCE_PLATFORM_DEFAULT_SEGMENTATION`` ("Platform default — no
+# segmentation data on file"); a field the report does state is badged
+# ``SOURCE_STR_SEGMENTATION`` (grounded) and an analyst override wins over
+# both.
 #
+# Channel cost per demand segment (share of gross segment revenue):
 #   transient_bar   2%  — direct + brand.com — credit-card fees only
-#   transient_ota  20%  — OTA / opaque — the big one, IC always asks
+#   transient_ota  20%  — OTA / opaque commissions
 #   corporate       8%  — LRA / RFP rates — commissions + TMC fees
 #   group           5%  — conferences / weddings — commissions + attrition
 #   contract        2%  — crew / sports / airline — low-rate baseline
-#
-# Sources: STR Market Segmentation Practice Guide (2024); CBRE Hotels
-# Insights "OTA Commission Drag on Independent Hotels" (Q4 2024).
-_INSTITUTIONAL_CHANNEL_COST_DEFAULTS: dict[str, float] = {
+# STR Segmentation reports carry no channel costs, so these always apply
+# unless the analyst overrides them.
+_PLATFORM_CHANNEL_COST_DEFAULTS: dict[str, float] = {
     "transient_bar": 0.02,
     "transient_ota": 0.20,
     "corporate": 0.08,
@@ -144,18 +148,23 @@ _INSTITUTIONAL_CHANNEL_COST_DEFAULTS: dict[str, float] = {
     "contract": 0.02,
 }
 
-# Default per-segment ADR ratios applied to the property-overall ADR
-# when the STR Segmentation report doesn't break ADR down by segment.
-# Corporate trades at ~10% below BAR (LRA discount), group ~8% below
-# (volume + attrition allowances), contract ~35% below (low-rate steady
-# demand). These come from STR Hotel News Now's 2024 segment ADR survey
-# and match what Eshan signed off on for the Kimpton fixture.
-_DEFAULT_SEGMENT_ADR_RATIO: dict[str, float] = {
+# Per-segment ADR as a ratio of the property-overall ADR, used where the
+# report states no segment ADR (corporate ~10% below BAR for the LRA discount,
+# group ~8% below for volume / attrition allowances, contract ~35% below).
+_PLATFORM_SEGMENT_ADR_RATIO: dict[str, float] = {
     "transient_bar": 1.00,
     "transient_ota": 1.00,
     "corporate": 0.90,
     "group": 0.92,
     "contract": 0.65,
+}
+
+# The split of transient demand into BAR / OTA / corporate when the report
+# carries no channel-mix block.
+_PLATFORM_TRANSIENT_CHANNEL_SPLIT: dict[str, float] = {
+    "transient_bar": 0.60,
+    "transient_ota": 0.30,
+    "corporate": 0.10,
 }
 
 
@@ -662,12 +671,18 @@ SOURCE_PORTFOLIO_PNL = "portfolio_pnl"
 SOURCE_OM_COMPS = EXIT_CAP_COMPS_SOURCE
 SOURCE_OM_BROKER = "om_broker"
 SOURCE_ANALYST_OVERRIDE = "analyst_override"
-# Wave 2 P2.1 — institutional revenue segmentation. When the deal has
-# an STR_SEGMENTATION extraction the loader seeds a default
-# ``segments: list[RevenueSegment]`` on the revenue engine input and
-# tags each segment field with this provenance label so the UI badge
-# shows "STR Segmentation" instead of "seed".
-SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"
+# Wave 2 P2.1 / A9 (go-live audit) — institutional revenue segmentation. When
+# the deal has an STR_SEGMENTATION extraction the loader builds a
+# ``segments: list[RevenueSegment]`` on the revenue engine input and badges
+# EACH segment field by where it came from: ``SOURCE_STR_SEGMENTATION`` when
+# the report states it (grounded), ``SOURCE_PLATFORM_DEFAULT_SEGMENTATION``
+# when a platform default filled it (channel costs, the 60/30/10 transient
+# split, the per-segment ADR ratios). Until 2026-10-30 every field — invented
+# or not — carried ``str_segmentation_default``, a label that read as STR
+# data; it is kept only so runs persisted before then still resolve.
+SOURCE_STR_SEGMENTATION = "str_segmentation"
+SOURCE_PLATFORM_DEFAULT_SEGMENTATION = "platform_default_segmentation"
+SOURCE_STR_SEGMENTATION_DEFAULT = "str_segmentation_default"  # legacy only
 # Wave 2 P2.4 — structured PIP displacement (``pip_displacement.*``).
 # Wave 2 P2.5 — capex three-bucket (``capex_plan.*``). ``SOURCE_PIP_USER``
 # covers analyst override on both the PIP-displacement and PIP-cost legs;
@@ -2703,6 +2718,13 @@ async def _load_engine_inputs(
         )
 
     _resolve_senior_origination_fee(base, sources)
+    # A9 — a segment's un-overridden ``adr_growth`` is ``None`` (it inherits
+    # the property's ADR growth), so it carries the property key's FINAL
+    # label — resolved only now, after every override.
+    for seg_name in _SEGMENT_NAMES:
+        seg_key = f"segments.{seg_name}.adr_growth"
+        if seg_key in sources and sources[seg_key] != SOURCE_ANALYST_OVERRIDE:
+            sources[seg_key] = sources.get("adr_growth", SOURCE_SEED)
     base["__sources__"] = sources
     base["__source_fields__"] = {
         key: sf.as_dict() for key, sf in source_fields.items()
@@ -4042,6 +4064,8 @@ _SOURCE_TO_DOC_TYPES: dict[str, tuple[str, ...]] = {
     SOURCE_OM_COMPS: ("OM",),
     SOURCE_OM_BROKER: ("OM",),
     SOURCE_PARTNERSHIP_DOC: ("PARTNERSHIP",),
+    # A9 — a segment field the STR Segmentation report states.
+    SOURCE_STR_SEGMENTATION: ("STR_SEGMENTATION",),
     # FON-101 — coarse fallback only; ``source_fields.renovation_budget``
     # names the exact PIP / CapEx document the loader selected.
     SOURCE_PIP_DOCUMENT: ("CAPEX",),
@@ -5944,6 +5968,7 @@ def _build_segments_from_str(
     payload: dict[str, Any],
     overall_adr: float,
     overrides: Mapping[str, Mapping[str, float]] | None = None,
+    adr_growth_source: str = SOURCE_SEED,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Translate an STR_SEGMENTATION extraction into a default list of
     ``RevenueSegment``-shaped dicts plus a provenance map.
@@ -5959,66 +5984,108 @@ def _build_segments_from_str(
     so the assumption-source map matches the override-routing path
     naming.
 
-    ``overrides`` (if provided) lets the analyst's persisted segment-field
-    overrides take priority; they're applied AFTER the seed so analyst
-    intent wins regardless of seed source.
+    A9 (go-live audit) — each field is badged by where it came from:
+
+    * ``SOURCE_STR_SEGMENTATION`` (grounded) when the report states it: a
+      demand mix the report carries, the transient channel split when the
+      report's channel-mix block carries the shares it needs, a segment ADR
+      the report states;
+    * ``SOURCE_PLATFORM_DEFAULT_SEGMENTATION`` when a platform default filled
+      it: every channel cost, the 60/30/10 transient split, a segment ADR at
+      its ratio to the property ADR, a demand bucket the report omits (0);
+    * ``SOURCE_ANALYST_OVERRIDE`` when ``overrides`` set it — applied AFTER
+      the seed so analyst intent wins regardless of seed source;
+    * ``adr_growth`` (never set here: ``None`` inherits the property's ADR
+      growth) carries ``adr_growth_source``, the property ``adr_growth``'s
+      own label.
     """
     period_prefix = _select_segmentation_period(payload)
-
-    # Mix shares (room-night basis)
-    if period_prefix:
-        transient_mix = _seg_pct(payload.get(f"{period_prefix}.transient.mix_pct")) or 0.0
-        group_mix = _seg_pct(payload.get(f"{period_prefix}.group.mix_pct")) or 0.0
-        contract_mix = _seg_pct(payload.get(f"{period_prefix}.contract.mix_pct")) or 0.0
-    else:
+    if not period_prefix:
         # No useful STR Segmentation data — return empty so the engine
         # stays on the legacy single-line path.
         return [], {}
 
-    # When mix shares already saturate room nights, leave the contract
-    # bucket empty (most real reports don't break out contract demand).
+    grounded = SOURCE_STR_SEGMENTATION
+    default = SOURCE_PLATFORM_DEFAULT_SEGMENTATION
+
+    # Mix shares (room-night basis). Transient is always stated (it selected
+    # the period); a group / contract bucket the report omits is 0.
+    transient_mix = _seg_pct(payload.get(f"{period_prefix}.transient.mix_pct")) or 0.0
+    group_stated = _seg_pct(payload.get(f"{period_prefix}.group.mix_pct"))
+    contract_stated = _seg_pct(payload.get(f"{period_prefix}.contract.mix_pct"))
+    group_mix = group_stated or 0.0
+    contract_mix = contract_stated or 0.0
+
     declared_total = transient_mix + group_mix + contract_mix
     if declared_total <= 0:
         return [], {}
 
-    # Channel mix WITHIN transient demand: if the report carries the
-    # Direct / OTA / Brand / Voice block, use it to split transient
-    # into BAR / OTA / Corporate; otherwise fall back to a 60/30/10
-    # default (institutional default for lifestyle / select-service).
-    ota_pct: float | None = None
-    corporate_within_transient_pct: float | None = None
-    if period_prefix:
-        ota_pct = _seg_pct(payload.get(f"{period_prefix}.channel_mix.ota_pct"))
-        corporate_within_transient_pct = _seg_pct(
-            payload.get(f"{period_prefix}.channel_mix.corporate_pct")
-        )
-
-    if ota_pct is not None or corporate_within_transient_pct is not None:
+    # Channel mix WITHIN transient demand: the report's Direct / OTA / Brand
+    # / Voice block splits transient into BAR / OTA / Corporate; BAR is the
+    # remainder (Voice + Direct + Brand.com — a CC-fee-only channel). Without
+    # the block the platform split applies.
+    ota_pct = _seg_pct(payload.get(f"{period_prefix}.channel_mix.ota_pct"))
+    corp_in_t_pct = _seg_pct(payload.get(f"{period_prefix}.channel_mix.corporate_pct"))
+    mix_source: dict[str, str] = {
+        "group": grounded if group_stated is not None else default,
+        "contract": grounded if contract_stated is not None else default,
+    }
+    if ota_pct is not None or corp_in_t_pct is not None:
         ota = ota_pct or 0.0
-        corp_in_t = corporate_within_transient_pct or 0.0
-        # BAR = whatever remains; Voice + Direct + Brand.com all roll up
-        # into BAR for the engine's purposes (CC-fee-only channel).
+        corp_in_t = corp_in_t_pct or 0.0
         bar = max(0.0, 1.0 - ota - corp_in_t)
         transient_bar_mix = transient_mix * bar
         transient_ota_mix = transient_mix * ota
         corporate_mix = transient_mix * corp_in_t
+        # When the block's stated channel shares cover all of transient
+        # demand, an omitted channel IS 0 and every split is the report's.
+        # Otherwise an omitted share is 0 by assumption, and BAR (the
+        # remainder) is only stated when both shares are.
+        stated_channels = [
+            v
+            for v in (
+                _seg_pct(payload.get(f"{period_prefix}.channel_mix.{ch}_pct"))
+                for ch in ("direct", "ota", "brand", "voice", "corporate")
+            )
+            if v is not None
+        ]
+        block_complete = sum(stated_channels) >= 0.995
+        mix_source["transient_ota"] = (
+            grounded if ota_pct is not None or block_complete else default
+        )
+        mix_source["corporate"] = (
+            grounded if corp_in_t_pct is not None or block_complete else default
+        )
+        mix_source["transient_bar"] = (
+            grounded
+            if block_complete or (ota_pct is not None and corp_in_t_pct is not None)
+            else default
+        )
     else:
-        # 60/30/10 default within transient.
-        transient_bar_mix = transient_mix * 0.60
-        transient_ota_mix = transient_mix * 0.30
-        corporate_mix = transient_mix * 0.10
+        split = _PLATFORM_TRANSIENT_CHANNEL_SPLIT
+        transient_bar_mix = transient_mix * split["transient_bar"]
+        transient_ota_mix = transient_mix * split["transient_ota"]
+        corporate_mix = transient_mix * split["corporate"]
+        for name in split:
+            mix_source[name] = default
 
-    # Per-segment ADRs: prefer the segment-level numbers when the report
-    # carries them; otherwise apply default ratios to the property
-    # overall ADR.
-    def _adr_for(seg_name: str, str_field: str | None) -> float:
-        if period_prefix and str_field is not None:
+    # Per-segment ADRs: the report's segment ADR when it states one; else the
+    # platform ratio to the property-overall ADR. Corporate is never stated.
+    adr_source: dict[str, str] = {}
+
+    def _adr_for(str_field: str | None, *seg_names: str) -> float:
+        if str_field is not None:
             extracted = payload.get(f"{period_prefix}.{str_field}.adr_usd")
             if isinstance(extracted, (int, float)) and extracted > 0:
+                for n in seg_names:
+                    adr_source[n] = grounded
                 return float(extracted)
-        return overall_adr * _DEFAULT_SEGMENT_ADR_RATIO[seg_name]
+        for n in seg_names:
+            adr_source[n] = default
+        return overall_adr * _PLATFORM_SEGMENT_ADR_RATIO[seg_names[0]]
 
-    transient_adr = _adr_for("transient_bar", "transient")
+    transient_adr = _adr_for("transient", "transient_bar", "transient_ota")
+    corporate_adr = _adr_for(None, "corporate")
     group_adr = _adr_for("group", "group")
     contract_adr = _adr_for("contract", "contract")
 
@@ -6027,31 +6094,31 @@ def _build_segments_from_str(
             "name": "transient_bar",
             "mix_pct": transient_bar_mix,
             "adr": transient_adr,
-            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["transient_bar"],
+            "channel_cost_pct": _PLATFORM_CHANNEL_COST_DEFAULTS["transient_bar"],
         },
         {
             "name": "transient_ota",
             "mix_pct": transient_ota_mix,
             "adr": transient_adr,
-            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["transient_ota"],
+            "channel_cost_pct": _PLATFORM_CHANNEL_COST_DEFAULTS["transient_ota"],
         },
         {
             "name": "corporate",
             "mix_pct": corporate_mix,
-            "adr": overall_adr * _DEFAULT_SEGMENT_ADR_RATIO["corporate"],
-            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["corporate"],
+            "adr": corporate_adr,
+            "channel_cost_pct": _PLATFORM_CHANNEL_COST_DEFAULTS["corporate"],
         },
         {
             "name": "group",
             "mix_pct": group_mix,
             "adr": group_adr,
-            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["group"],
+            "channel_cost_pct": _PLATFORM_CHANNEL_COST_DEFAULTS["group"],
         },
         {
             "name": "contract",
             "mix_pct": contract_mix,
             "adr": contract_adr,
-            "channel_cost_pct": _INSTITUTIONAL_CHANNEL_COST_DEFAULTS["contract"],
+            "channel_cost_pct": _PLATFORM_CHANNEL_COST_DEFAULTS["contract"],
         },
     ]
 
@@ -6083,6 +6150,15 @@ def _build_segments_from_str(
             for s in segments:
                 s["mix_pct"] = s["mix_pct"] / total_mix
 
+    seed_source: dict[str, dict[str, str]] = {
+        s["name"]: {
+            "mix_pct": mix_source[s["name"]],
+            "adr": adr_source[s["name"]],
+            "channel_cost_pct": default,
+            "adr_growth": adr_growth_source,
+        }
+        for s in segments
+    }
     sources_by_field: dict[str, str] = {}
     for s in segments:
         for field in _SEGMENT_FIELDS:
@@ -6090,7 +6166,7 @@ def _build_segments_from_str(
             if overrides and s["name"] in overrides and field in overrides[s["name"]]:
                 sources_by_field[key] = SOURCE_ANALYST_OVERRIDE
             else:
-                sources_by_field[key] = SOURCE_STR_SEGMENTATION_DEFAULT
+                sources_by_field[key] = seed_source[s["name"]][field]
 
     return segments, sources_by_field
 

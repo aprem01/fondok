@@ -220,14 +220,22 @@ def classify_state(
 
     if label in _NEEDS_REVIEW_LABELS:
         return "needs_review"
+    # A9 (go-live audit) — a platform default is an assumption whatever its
+    # prefix: ``platform_default_*``, and any ``*_default`` label (checked
+    # BEFORE the ``str_`` document prefix, which used to read the legacy
+    # ``str_segmentation_default`` as STR document data).
+    if label and (
+        label in _ASSUMPTION_LABELS
+        or label.endswith("_default")
+        or label.startswith("platform_default")
+    ):
+        return "assumption"
     if label and (
         label in _DOCUMENT_LABELS
         or label.startswith("om_")
         or label.startswith("str_")
     ):
         return "document_sourced"
-    if label and (label in _ASSUMPTION_LABELS or label.endswith("_default")):
-        return "assumption"
     if trace.formula:
         return "calculated"
     if _has_cross_engine_link(trace):

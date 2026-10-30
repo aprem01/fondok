@@ -264,6 +264,9 @@ def _aggregate_wave2_3_for_excel(model: dict[str, Any]) -> dict[str, Any]:
         segments_by_year = rev.get("segments_by_year") or rev.get("segment_breakdown")
     if not segments_by_year or not isinstance(segments_by_year, list):
         segments_by_year = None
+    segment_provenance = model.get("segment_provenance")
+    if not isinstance(segment_provenance, dict):
+        segment_provenance = None
 
     # ── PIP displacement ─────────────────────────────────────────────
     pip = model.get("pip_displacement")
@@ -344,6 +347,7 @@ def _aggregate_wave2_3_for_excel(model: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "segments_by_year": segments_by_year,
+        "segment_provenance": segment_provenance,
         "pip": pip,
         "capex_schedule": capex_schedule,
         "op_ratio_provenance": op_prov,
@@ -1136,12 +1140,20 @@ def _build_market_comps(wb: Workbook, model: dict[str, Any]) -> None:
 # ──────────────────────── Wave 2/3 sheet builders ──────────────────────
 
 
-def _build_revenue_mix(wb: Workbook, segments_by_year: list[dict[str, Any]] | None) -> bool:
+def _build_revenue_mix(
+    wb: Workbook,
+    segments_by_year: list[dict[str, Any]] | None,
+    provenance: dict[str, Any] | None = None,
+) -> bool:
     """Segment-by-year revenue mix table (5 segments × hold years).
 
     Cols per segment: Mix %, ADR, Gross Rev, Channel Cost %, Net Rev.
     Includes a Total row and an OTA-flag highlight when any segment
     carries ≥15% channel cost. Returns True iff the sheet rendered.
+
+    A9 — ``provenance`` (``model["segment_provenance"]``): when any segment
+    figure rides on a platform default, a "Source" row under the table names
+    them ("Platform default — no segmentation data on file: …").
     """
     if not segments_by_year:
         return False
@@ -1224,6 +1236,12 @@ def _build_revenue_mix(wb: Workbook, segments_by_year: list[dict[str, Any]] | No
     _write_value(ws, row, 7, _sum_strict(*total_net), USD_FMT, concept="segment.net_total",
                  missing="a year's net revenue total is not stated")
     _style_total_row(ws, row, len(headers))
+
+    note = (provenance or {}).get("note")
+    if note:
+        row += 2
+        ws.cell(row=row, column=1, value="Source").font = Font(bold=True)
+        _write_note(ws, row, 2, str(note))
 
     _autosize(ws, [24, 8, 12, 14, 18, 16, 18])
     _freeze_top(ws, row=2)
@@ -2203,7 +2221,7 @@ def _build_excel_sheets(
     sections_included.append("Market Comps")
 
     # Wave 2/3 sheets — only when data present.
-    if _build_revenue_mix(wb, wave["segments_by_year"]):
+    if _build_revenue_mix(wb, wave["segments_by_year"], wave.get("segment_provenance")):
         sections_included.append("Revenue Mix")
     if _build_renovation_plan(wb, wave["pip"]):
         sections_included.append("Renovation Plan")

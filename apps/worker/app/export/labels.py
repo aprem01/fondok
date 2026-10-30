@@ -183,7 +183,12 @@ SOURCE_DISPLAY: dict[str, str] = {
     "roi_user": "Analyst (ROI)",
     "capex_ffe_default": "FF&E default",
     "deal_type_default": "Development hold default",
-    "str_segmentation_default": "STR segmentation",
+    "str_segmentation": "STR Segmentation report",
+    "platform_default_segmentation": "Platform default — no segmentation data on file",
+    "platform_default_renovation_split": "Platform default split",
+    # Legacy label (runs persisted before 2026-10-30, when every segment
+    # field — platform defaults included — carried it). Not STR data.
+    "str_segmentation_default": "Segment default (legacy run)",
     "str_forecast": "STR forecast",
     "str_subject_ttm": "STR (subject)",
     "str_comp_set": "STR (comp set)",

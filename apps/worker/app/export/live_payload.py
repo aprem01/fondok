@@ -1396,6 +1396,49 @@ def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: A9 — the segment model's fields, in the order the exports name them.
+_SEGMENT_ORDER: tuple[str, ...] = (
+    "transient_bar", "transient_ota", "corporate", "group", "contract",
+)
+_SEGMENT_FIELD_LABELS: dict[str, str] = {
+    "mix_pct": "mix",
+    "adr": "ADR",
+    "channel_cost_pct": "channel cost",
+}
+SEGMENT_PLATFORM_DEFAULT_BADGE = "Platform default — no segmentation data on file"
+
+
+def _build_segment_provenance(base: dict[str, Any]) -> dict[str, Any] | None:
+    """A9 — which revenue-segment figures the deal's STR Segmentation report
+    states and which a platform default filled, from the loader's
+    ``__sources__`` (``segments.<name>.<field>``). ``None`` when the run has
+    no segment model. ``note`` is the sentence the Revenue Mix sheet and the
+    memo print under the table whenever any figure is a platform default."""
+    sources = base.get("__sources__") if isinstance(base.get("__sources__"), dict) else {}
+    defaults: list[str] = []
+    grounded: list[str] = []
+    for seg in _SEGMENT_ORDER:
+        for field, label in _SEGMENT_FIELD_LABELS.items():
+            src = sources.get(f"segments.{seg}.{field}")
+            if src is None:
+                continue
+            name = f"{seg.replace('_', ' ')} {label}"
+            if src in ("platform_default_segmentation", "str_segmentation_default"):
+                defaults.append(name)
+            elif src == "str_segmentation":
+                grounded.append(name)
+    if not defaults and not grounded:
+        return None
+    out: dict[str, Any] = {
+        "platform_default_fields": defaults,
+        "str_segmentation_fields": grounded,
+        "note": None,
+    }
+    if defaults:
+        out["note"] = f"{SEGMENT_PLATFORM_DEFAULT_BADGE}: " + ", ".join(defaults) + "."
+    return out
+
+
 async def _pricing_sheets(
     session: AsyncSession,
     deal_id: str,
@@ -1731,6 +1774,10 @@ async def _assemble_live_payload(
             model["capex_schedule"] = capex
         # B2 — always present for a modelled deal (says so when all-seed).
         model["op_ratio_provenance"] = _build_op_ratio_provenance(engine_base)
+        # A9 — the segment model's platform defaults are badged in words.
+        segment_provenance = _build_segment_provenance(engine_base)
+        if segment_provenance:
+            model["segment_provenance"] = segment_provenance
 
         grid, max_price, pricing_unavailable, grid_unavailable = await _pricing_sheets(
             session, deal_id, tenant_id, rooms=keys

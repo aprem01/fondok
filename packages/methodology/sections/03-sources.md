@@ -112,6 +112,28 @@ operating NOI. Setting ADR growth explicitly takes direct control.
 
 :::
 
+::: badge {source=str_segmentation name="STR Segmentation"}
+A demand-segment figure the deal's STR Segmentation report states: a segment's share of room nights,
+the transient channel split when the report's channel-mix block carries it, or a segment ADR.
+
+:::
+
+::: badge {source=platform_default_segmentation name="Platform default — no segmentation data on file"}
+A segment-model figure the STR Segmentation report does not state, filled by a platform default:
+every channel cost (BAR 2%, OTA 20%, corporate 8%, group 5%, contract 2%), the 60/30/10 BAR / OTA /
+corporate split of transient demand when the report has no channel-mix block, and a segment ADR at
+its ratio to the property ADR (corporate 90%, group 92%, contract 65%). A suggestion, never labelled
+as STR data; the Revenue Mix sheet and the memo name these figures under the table. Runs saved
+before 30 October 2026 carry the older “Segment default” badge on every segment figure.
+
+:::
+
+::: badge {source=platform_default_renovation_split name="Platform default split"}
+The renovation budget's breakdown into hard costs, soft costs and professional fees at the platform
+default 75% / 15% / 10% — no itemized renovation budget is on file.
+
+:::
+
 ::: badge {source=index_assumption name="Index Analysis Assumption"}
 Index Analysis indexes the subject against one of three benchmarks, chosen on Market Comps → Index
 Analysis: the **STR competitive set** (the default), a **market or chain-scale benchmark** from the
@@ -557,6 +579,28 @@ loader failure). The model stays on the T-12 base and says so — the STR seed i
 An analyst RevPAR-growth override derives ADR growth — (1 + RevPAR growth) ÷ (1 + occupancy growth)
 − 1 — with the occupancy path held, so the lever moves operating NOI. Setting ADR growth explicitly
 takes direct control.
+
+:::
+
+::: badge {source=str_segmentation name="STR Segmentation"}
+A demand-segment figure the deal's STR Segmentation report states: a segment's share of room nights,
+the transient channel split when the report's channel-mix block carries it, or a segment ADR.
+
+:::
+
+::: badge {source=platform_default_segmentation name="Platform default — no segmentation data on file"}
+A segment-model figure the STR Segmentation report does not state, filled by a platform default:
+every channel cost (BAR 2%, OTA 20%, corporate 8%, group 5%, contract 2%), the 60/30/10 BAR / OTA /
+corporate split of transient demand when the report has no channel-mix block, and a segment ADR at
+its ratio to the property ADR (corporate 90%, group 92%, contract 65%). A suggestion, never labelled
+as STR data; the Revenue Mix sheet and the memo name these figures under the table. Runs saved
+before 30 October 2026 carry the older “Segment default” badge on every segment figure.
+
+:::
+
+::: badge {source=platform_default_renovation_split name="Platform default split"}
+The renovation budget's breakdown into hard costs, soft costs and professional fees at the platform
+default 75% / 15% / 10% — no itemized renovation budget is on file.
 
 :::
 
