@@ -38,6 +38,7 @@ import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
+import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, holdDefaultBadge } from '@/lib/engines/returns';
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import RenovationBudgetSources from './RenovationBudgetSources';
@@ -144,11 +145,13 @@ function overrideScalar(overrides: Record<string, unknown>, key: string): unknow
 const EXIT_NOI_BASIS_OPTIONS: { value: ExitNoiBasisChoice; label: string }[] = [
   { value: 'forward_12m', label: 'Forward 12-month (default)' },
   { value: 'stabilized', label: 'Stabilized NOI' },
+  // FON-118 / FON-44 §3.1 — the exit year's own Cash NOI, not grown.
+  { value: 'sale_year', label: 'Sale-year NOI (not grown)' },
 ];
 
 /** The selectable basis a stored / echoed value names, or null. */
 function asBasisChoice(v: unknown): ExitNoiBasisChoice | null {
-  return v === 'forward_12m' || v === 'stabilized' ? v : null;
+  return v === 'forward_12m' || v === 'stabilized' || v === 'sale_year' ? v : null;
 }
 
 function ExitNoiBasisSelect({
@@ -235,6 +238,9 @@ export default function InvestmentTab() {
   // provenance map (`assumption_sources`). Resolved here, above the
   // engine-unavailable early return, so the hook order is stable.
   const renoSource = useSource('renovation_budget');
+  // FON-44 §3.2 — the hold the deal type set is a labelled default until the
+  // analyst confirms or overrides it (pattern: STABILIZATION_DEFAULT_BADGE).
+  const holdDealTypeBadge = holdDefaultBadge(useSource('hold_years')?.source);
   // FON-89 — the worker's Year-1 displacement verdict (on / off and why),
   // printed verbatim under the Renovation Budget basis. Null until the
   // provenance payload lands or on a worker that does not emit it. Its
@@ -870,6 +876,9 @@ export default function InvestmentTab() {
                 id: 'holdYears', label: 'Hold Period', kind: 'input',
                 state: overridden('hold_years') ? 'assumption' : 'assumption',
                 overridden: overridden('hold_years'),
+                note: holdDealTypeBadge && !overridden('hold_years')
+                  ? `${holdDealTypeBadge}. ${HOLD_DEAL_TYPE_DEFAULT_EXPLANATION}`
+                  : undefined,
                 value: (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     {holdYearsNote && (

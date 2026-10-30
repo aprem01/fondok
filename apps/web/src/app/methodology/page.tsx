@@ -147,6 +147,12 @@ export default function MethodologyPage() {
             The horizon is the hold period plus one <strong>Exit Year</strong> column, which carries only the
             forward twelve-month NOI the sale is valued on.
           </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            Every projection year-end is also evaluated as a sale date — the <strong>Returns by exit year</strong>
+            table on the Returns summary — on this same projection: the operating years are not re-projected
+            for a shorter hold. Years beyond the hold are not projected, so they are not shown; a longer hold
+            is a different underwriting, not a row.
+          </p>
         </Card>
 
         <Card className="p-5 mb-4" data-testid="methodology-line-methods">
@@ -277,19 +283,51 @@ export default function MethodologyPage() {
           </p>
         </Card>
 
-        <Card className="p-5 mb-4">
+        <Card className="p-5 mb-4" data-testid="methodology-exit-basis">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-3">What the exit is valued on</h4>
           <p className="text-[12.5px] text-ink-500 leading-relaxed">
             The sale capitalises the <strong>forward twelve-month Cash NOI</strong> — the after-reserve basis
             — at the exit cap rate. That forward figure is the last hold year&apos;s Cash NOI grown at the
             RevPAR growth rate; the Exit Year column shows this and nothing else. On CAPEX → Exit you can switch
-            the basis to <strong>Stabilized NOI</strong>, and an analyst-entered terminal NOI beats either
-            basis. Wherever the exit NOI is printed its label names the basis and period it was taken on.
+            the basis to <strong>Stabilized NOI</strong> (the stabilized year&apos;s Cash NOI grown to the exit)
+            or to <strong>Sale-year NOI</strong> — the exit year&apos;s own Cash NOI, not grown — and an
+            analyst-entered terminal NOI beats any basis. Wherever the exit NOI is printed its label names the
+            basis and period it was taken on.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            In the Returns by exit year table the forward twelve-month basis follows one rule for the interim
+            years: the exit NOI is the <strong>next projected year&apos;s Cash NOI</strong> where the projection
+            has it, and the final year is grown at the RevPAR growth rate because no later year is projected.
+            A pinned (analyst-entered) terminal NOI applies to the selected exit only; every row names its own
+            basis and period beside its exit NOI.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
             The entry cap rate is struck on NOI <em>before</em> the reserve while the exit is struck on Cash NOI
             <em> after</em> it. Both are defensible conventions; Fondok keeps both and names each one wherever it
             prints it, never a bare &ldquo;NOI&rdquo;.
+          </p>
+        </Card>
+
+        <Card className="p-5 mb-4" data-testid="methodology-returns-by-exit-year">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-3">Returns by exit year</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            The Returns summary carries one row for every projection year-end, each answering &ldquo;what if
+            the deal were sold then?&rdquo; on the same projection. A row sells at that year-end on the basis
+            above, applies the same selling costs and transfer tax, pays off the loan balance at that date, and
+            includes the refinance only if it precedes the sale. Each row shows the exit NOI with its basis, the
+            gross sale, the payoff, the net proceeds to equity, the unlevered and levered IRR and the equity
+            multiple. The row with the highest levered IRR is marked <strong>Peak levered IRR</strong>; the
+            deal&apos;s own exit — the hold, or the disposition month when one is set — is marked
+            <strong> Selected exit</strong>, and the headline figures above the table are that row&apos;s figures.
+          </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
+            A row that cannot be a sale shows a dash with its reason, never a zero: <em>capital still
+            deploying</em> (an equity draw or deferred capital lands after that year-end, so a sale before
+            completion is not modelled); the <em>construction window</em> you stated on a development deal has
+            not closed; the <em>exit NOI is not positive</em>, so there is no sale value; or the cash flows have
+            one sign and <em>no IRR</em> exists. A development deal that states no construction window and
+            schedules no draws has no construction in the model, and its rows are computed. LP and GP returns
+            are reported at the selected exit only.
           </p>
         </Card>
 
@@ -701,7 +739,7 @@ export default function MethodologyPage() {
               ['Expense', 'USALI departmental and undistributed lines, management fee, FF&E reserve and fixed charges, to gross operating profit, NOI and net cash flow.'],
               ['Capital', 'Purchase price, closing costs, renovation budget and working capital, plus the senior origination fee owned by the Financing tab — the Sources & Uses.'],
               ['Debt', 'The senior and PACE tranches from your entered terms — fixed or floating, amortising or interest-only, maturity — with the monthly schedule, DSCR, debt yield, LTV and LTC, covenants and refinancing.'],
-              ['Returns', 'Levered and unlevered IRR, equity multiple, cash-on-cash, and the sale value from the exit cap rate and exit NOI. A loss-making deal is reported honestly — a negative IRR or a multiple below one is never floored.'],
+              ['Returns', 'Levered and unlevered IRR, equity multiple, cash-on-cash, the sale value from the exit cap rate and exit NOI, and the returns schedule by exit year. A loss-making deal is reported honestly — a negative IRR or a multiple below one is never floored.'],
               ['Sensitivity', 'IRR and equity multiple across exit cap, hold, growth and other pairs.'],
               ['Partnership', 'The GP / LP waterfall with preferred return, catch-up and promote tiers. A shortfall is funded as a dated pro-rata capital call that adds to unreturned capital, and is reported as additional contributions.'],
             ].map(([name, desc]) => (
@@ -1173,7 +1211,9 @@ export default function MethodologyPage() {
             It lists each headline output that moved, grouped by model: occupancy, ADR, RevPAR, revenue, expense
             lines, management fee, FF&amp;E reserve, gross operating profit and both NOI figures for each year;
             purchase price, total capitalisation, equity and renovation; loan amount and DSCR by year; levered and
-            unlevered IRR, equity multiple, exit value and exit NOI; the stabilization block; and LP and GP IRR.
+            unlevered IRR, equity multiple, exit value and exit NOI; the selected exit month, the peak levered exit
+            year and each exit-year row&apos;s IRRs, equity multiple and net proceeds; the stabilization block; and
+            LP and GP IRR.
             Each row shows both values, the absolute change and the percentage change, with each side&apos;s
             source. The same table exports to Excel. Comparing never re-runs or edits the model.
           </p>
@@ -1199,7 +1239,7 @@ export default function MethodologyPage() {
                 <li>Purchase price and the acquisition close date.</li>
                 <li>Every financing term, covenant threshold and refinancing assumption.</li>
                 <li>Return targets and the return profile.</li>
-                <li>Renovation displacement, the stabilization year and the exit NOI basis.</li>
+                <li>Renovation displacement, the stabilization year, the hold period and the exit NOI basis.</li>
                 <li>Any assumption override, each with a justification note.</li>
                 <li>The IC recommendation and the diligence status of each flag.</li>
               </ul>
@@ -1219,6 +1259,13 @@ export default function MethodologyPage() {
               </ul>
             </div>
           </div>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-4" data-testid="methodology-hold-defaults">
+            <strong className="text-ink-700">Hold period defaults.</strong> Until you set the hold, the model
+            applies a labelled default by deal type: 5 years for an acquisition, 7 years for a ground-up
+            development and 6 years for an adaptive reuse. A development or adaptive-reuse hold is badged
+            &ldquo;Default for development deals — confirm&rdquo; wherever it is printed, with the reason, so a
+            default is never mistaken for a figure from the deal. Your hold period override replaces it.
+          </p>
         </Card>
       </Section>
 

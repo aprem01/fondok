@@ -53,6 +53,17 @@ import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceExplanation, sourceLabel, valueStateForSource } from '@/lib/provenance';
+import {
+  HOLD_DEAL_TYPE_DEFAULT_EXPLANATION,
+  IRR_SENTINEL_NOTE,
+  exitScheduleRows,
+  headlineReturns,
+  holdDefaultBadge,
+  irrValue,
+  selectedExitLabel,
+  selectedExitTitle,
+} from '@/lib/engines/returns';
+import { ExitScheduleCard } from './ExitScheduleCard';
 import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
 import {
@@ -74,13 +85,6 @@ type SubTab = ReturnsViewId;
 const SUB_TAB_IDS = RETURNS_VIEW_IDS;
 
 type EngineOutputs = ReturnType<typeof useEngineOutputs>['outputs'];
-
-/** FON-44 (R-059) — the returns engine's Exit NOI basis/period label, or
- *  undefined on a run that predates it (callers keep today's wording). */
-function exitNoiPeriodLabel(outputs: EngineOutputs): string | undefined {
-  const label = getEngineField<string>(outputs, 'returns', 'exit_noi_period_label');
-  return typeof label === 'string' && label.trim() ? label.trim() : undefined;
-}
 
 // ── Formatting helpers (canonical: money() / mm() / pct() / x()) ──
 const money = (v: number) =>
@@ -682,20 +686,36 @@ function ReturnsSummary({
     sandboxOn && previewValue != null ? previewValue : canonical;
 
   // ── Hero row (4 navy tiles) — WORKER outputs only, no client TS fallback. ──
-  const irr = sb(preview?.levered_irr, getEngineField<number>(outputs, 'returns', 'levered_irr'));
-  const mult = sb(
-    preview?.equity_multiple,
-    getEngineField<number>(outputs, 'returns', 'equity_multiple'),
-  );
+  // FON-118 — every headline figure comes through the ONE reader
+  // (`lib/engines/returns.ts`); the headline IS the selected row of the exit
+  // schedule, and nothing here derives a return or an exit year.
+  const head = headlineReturns(getEngineField<unknown>(outputs, 'returns'));
+  // A sentinel (the monthly solver's 10.0 / −0.9999) is never printed as a
+  // rate — on the canonical run or the sandbox preview.
+  const irrRaw = sandboxOn && preview?.levered_irr != null ? preview.levered_irr : head.leveredIrr;
+  const irr = irrValue(irrRaw) ?? undefined;
+  const irrUnavailable =
+    irr != null
+      ? undefined
+      : irrRaw != null
+        ? IRR_SENTINEL_NOTE
+        : head.leveredIrrNote ?? awaitingRun('returns.levered_irr');
+  const mult = sb(preview?.equity_multiple, head.equityMultiple ?? undefined);
   // Canonical headline shows the HOLD-AVERAGE cash-on-cash (``avg_coc``), not
   // year 1 — both exist on the returns engine (returns.py). year_one_coc feeds
   // the sublabel only.
-  const avgCoc = sb(preview?.avg_coc, getEngineField<number>(outputs, 'returns', 'avg_coc'));
-  const yearOneCoc = sb(
-    preview?.year_one_coc,
-    getEngineField<number>(outputs, 'returns', 'year_one_coc'),
-  );
-  const holdYears = sb(preview?.hold_years, getEngineField<number>(outputs, 'returns', 'hold_years'));
+  const avgCoc = sb(preview?.avg_coc, head.avgCoc ?? undefined);
+  const yearOneCoc = sb(preview?.year_one_coc, head.yearOneCoc ?? undefined);
+  const holdYears = sb(preview?.hold_years, head.holdYears ?? undefined);
+  // The hero's period: the selected exit. A mid-year disposition names its
+  // month; a year-end exit reads as the hold it closes. Canonical run only —
+  // the sandbox may have moved the hold.
+  const irrPeriodSub =
+    !sandboxOn && head.selectedExitMonth != null && head.selectedExitYear == null
+      ? `Equity IRR to the month-${head.selectedExitMonth} disposition`
+      : holdYears != null
+        ? `Equity IRR over the ${holdYears}-year hold`
+        : 'Equity IRR after debt service';
 
   // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
   // basis. Stabilized NOI is THE stabilized year's NOI before the FF&E reserve,
@@ -729,22 +749,28 @@ function ReturnsSummary({
 
   // ── Secondary row (3 white cards). Equity Profit + Initial Equity read off
   // the canonical levered cash-flow series so they reconcile to the bridge. ──
-  const flows = sb(preview?.cash_flows, getEngineField<number[]>(outputs, 'returns', 'cash_flows'));
-  const exitValue = sb(
-    preview?.exit_value,
-    getEngineField<number>(outputs, 'returns', 'gross_sale_price'),
-  );
-  const exitCap = sb(
-    preview?.exit_cap_rate,
-    getEngineField<number>(outputs, 'returns', 'exit_cap_rate'),
-  );
+  const flows = sb(preview?.cash_flows, head.cashFlows ?? undefined);
+  const exitValue = sb(preview?.exit_value, head.grossSalePrice ?? undefined);
+  const exitCap = sb(preview?.exit_cap_rate, head.exitCapRate ?? undefined);
   // FON-44 (R-059) — the basis + period of the NOI the exit capitalizes, in
   // the ONE spelling the Overview's Exit row uses (`exitNoiLabel`): the run's
   // own label when it carries one, else the pre-R-059 forward-12 wording that
   // every such run ran on. Canonical run only: a sandbox preview can move the
   // hold, and with it the period, so the caption is withheld while a preview
   // is showing — never a basis the preview may not have used.
-  const exitNoiCaption = sandboxOn ? undefined : exitNoiLabel(exitNoiPeriodLabel(outputs));
+  const exitNoiCaption = sandboxOn ? undefined : exitNoiLabel(head.exitNoiPeriodLabel);
+  // FON-118 — the schedule by exit year. The canonical run's rows, or — while
+  // a sandbox preview is showing — the preview's own rows and nothing else
+  // (a preview from a worker build without them says so; the canonical table
+  // is never shown under a sandbox case). `undefined` = none on this run.
+  const calendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  const scheduleRows = sandboxOn
+    ? preview?.exit_schedule != null
+      ? exitScheduleRows(preview.exit_schedule)
+      : undefined
+    : head.hasExitSchedule
+      ? head.exitSchedule
+      : undefined;
   // FON-98 — the stabilized year's anchor, as the Overview states it, under the
   // Yield on Cost tile; the Sam #7 exception note travels with it.
   const yocAnchor = sandboxOn ? null : stabilizationAnchorCaption(stab);
@@ -792,9 +818,9 @@ function ReturnsSummary({
               engine="returns"
               path="levered_irr"
               flashKey={irr}
-              sub={holdYears != null ? `Equity IRR over the ${holdYears}-year hold` : 'Equity IRR after debt service'}
+              sub={irrPeriodSub}
               value={fmtP(irr)}
-              unavailable={irr == null ? awaitingRun('returns.levered_irr') : undefined}
+              unavailable={irrUnavailable}
             />
           </CoachMark>
           <ReturnsKpi
@@ -888,6 +914,8 @@ function ReturnsSummary({
           unavailable={initialEquity == null ? awaitingRun('returns.cash_flows') : undefined}
         />
       </div>
+
+      <ExitScheduleCard rows={scheduleRows} calendarYears={calendarYears} sandbox={sandboxOn} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
         <ExitAssumptionsCard outputs={outputs} onEdit={onEditInvestment} />
@@ -999,9 +1027,14 @@ function SandboxChip({ variant = 'white' }: { variant?: 'white' | 'navy' }) {
 // tag, "Source unknown" — exactly as the Overview's assumption rows do. They
 // are never hard-coded "linked" (go-live Wave 0, B1). ──
 function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEdit: () => void }) {
-  const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
-  const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const head = headlineReturns(getEngineField<unknown>(outputs, 'returns'));
+  const holdYears = head.holdYears ?? undefined;
+  const exitCap = head.exitCapRate ?? undefined;
   const holdSource = useSource('hold_years');
+  // FON-44 §3.2 — a hold the deal type set (7 development / 6 adaptive reuse)
+  // is a labelled default: badged, with the reason, until the analyst confirms
+  // or overrides it. Pattern: STABILIZATION_DEFAULT_BADGE (lib/engines/noi.ts).
+  const holdBadge = holdDefaultBadge(holdSource?.source);
   const exitCapSource = useSource('exit_cap_rate');
   const taggedRow = (resolved: { source: string } | null) => {
     const src = resolved?.source || null;
@@ -1015,9 +1048,9 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
   };
   const holdTag = taggedRow(holdSource);
   const exitCapTag = taggedRow(exitCapSource);
-  const grossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
-  const sellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
-  const exitNoiPeriod = exitNoiPeriodLabel(outputs);
+  const grossSale = head.grossSalePrice ?? undefined;
+  const sellingCosts = head.sellingCosts ?? undefined;
+  const exitNoiPeriod = head.exitNoiPeriodLabel ?? undefined;
   // Net Sale Proceeds here is GROSS − SELLING (computed client-side) so the
   // three visible rows foot. (The engine's ``net_proceeds`` is net-to-equity —
   // gross less selling, transfer tax AND the loan payoff — which would not
@@ -1044,17 +1077,22 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
       label: 'Hold Period',
       value: holdYears != null ? `${holdYears} years` : '—',
       ...holdTag,
+      source: holdBadge ?? holdTag.source,
+      title: holdBadge ? HOLD_DEAL_TYPE_DEFAULT_EXPLANATION : holdTag.title,
       weight: 400,
       sourceKey: 'hold_years',
     },
     {
+      // FON-118 — the selected exit the engine published, never "Year {hold}"
+      // (wrong for a mid-year disposition). A run that predates it is a dash
+      // naming the field.
       label: 'Exit Year',
-      value: holdYears != null ? `Year ${holdYears}` : '—',
+      value: selectedExitLabel(head) ?? '—',
       source: 'Calculated',
       state: 'calculated',
       color: prov.gray,
       weight: 400,
-      title: 'Acquisition date plus hold period',
+      title: selectedExitTitle(head),
     },
     {
       label: 'Exit Cap Rate',

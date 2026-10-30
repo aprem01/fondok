@@ -3376,6 +3376,9 @@ export interface ReturnsPreviewResponse {
   total_capital?: number | null;
   noi_by_year?: number[] | null;
   cash_flows?: number[] | null;
+  /** FON-118 — the sandbox case's own returns by exit year, so a dragged hold
+   *  slider shows its own table. Absent on a worker build that predates it. */
+  exit_schedule?: ReturnsExitScheduleRow[] | null;
   /** Serialized sensitivity engine grid — present only when requested. */
   sensitivity: Record<string, unknown> | null;
 }
@@ -3756,17 +3759,57 @@ export interface DebtNoiShortfallExtras {
   noi_warning?: string | null;
 }
 
-/** FON-44 — which NOI the reversion capitalizes. */
-export type ExitNoiBasis = 'forward_12m' | 'stabilized' | 'override';
+/** FON-44 — which NOI the reversion capitalizes. `sale_year` (FON-118) is
+ *  the exit year's own Cash NOI, not grown. */
+export type ExitNoiBasis = 'forward_12m' | 'stabilized' | 'sale_year' | 'override';
 
 /** The analyst-selectable subset, saved as `field_overrides.exit_noi_basis`. */
 export type ExitNoiBasisChoice = Exclude<ExitNoiBasis, 'override'>;
 
-/** FON-44 additions on the returns engine output. */
+/** One row of the returns engine's schedule by exit year (FON-118 / FON-44).
+ *  Mirrors `fondok_schemas.underwriting.ExitYearReturn` field-for-field. A
+ *  `not_available` row carries `reason` (+ `reason_detail`) and null figures —
+ *  it is rendered as a dash with the reason, never as 0. */
+export interface ReturnsExitScheduleRow {
+  /** 1..hold; null for an off-cycle selected row (a mid-year disposition). */
+  exit_year: number | null;
+  exit_month: number;
+  /** The deal's own exit — the headline. */
+  is_selected: boolean;
+  is_peak_levered: boolean;
+  status: 'computed' | 'not_available';
+  /** A `ReasonCode`; typed loosely so a code this bundle's registry predates
+   *  still renders (as its raw code) rather than failing the row. */
+  reason: ReasonCode | string | null;
+  reason_detail: string | null;
+  exit_noi_basis: ExitNoiBasis | null;
+  exit_noi_period_label: string;
+  terminal_noi: number | null;
+  gross_sale_price: number | null;
+  selling_costs: number | null;
+  transfer_tax: number | null;
+  loan_payoff: number | null;
+  refi_included: boolean;
+  net_proceeds: number | null;
+  levered_irr: number | null;
+  unlevered_irr: number | null;
+  equity_multiple: number | null;
+}
+
+/** FON-44 / FON-118 additions on the returns engine output. */
 export interface ReturnsExitNoiExtras {
   exit_noi_basis?: ExitNoiBasis;
   /** The basis AND the period, e.g. "forward 12-month, Year 6". */
   exit_noi_period_label?: string;
+  /** Every projection year-end evaluated as a sale date, plus the selected
+   *  exit when it is off-cycle. Absent on a run that predates it. */
+  exit_schedule?: ReturnsExitScheduleRow[];
+  /** The headline's exit, so no consumer derives "Exit Year = hold". */
+  selected_exit_month?: number | null;
+  /** Null when the selected exit is off-cycle (not a projection year-end). */
+  selected_exit_year?: number | null;
+  /** Max levered IRR among computed rows (earliest on ties); null if none. */
+  peak_levered_exit_year?: number | null;
 }
 
 /** One priced/pending tranche in the debt stack (subset the Debt tab reads).

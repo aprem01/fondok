@@ -84,6 +84,8 @@ import { History, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { fmtCurrency, fmtPct } from '@/lib/format';
 import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
+import { EXIT_SCHEDULE_MISSING, EXIT_SCHEDULE_TITLE, headlineReturns } from '@/lib/engines/returns';
+import { ExitScheduleTable } from '@/components/project/ExitScheduleCard';
 import { scenarioReturnsIssue, SCENARIO_ISSUE_LABEL, SCENARIO_NEEDS_RERUN } from '@/lib/scenarioGuards';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -171,8 +173,11 @@ function extractMetrics(
   const noi = y1exp ? num(y1exp.noi_institutional) ?? num(y1exp.noi) : null;
   const capRate = noi != null && purchasePrice ? noi / purchasePrice : null;
 
-  const leveredIrr = num(g<number>('returns', 'levered_irr'));
-  const equityMultiple = num(g<number>('returns', 'equity_multiple'));
+  // FON-118 — the returns headline through the ONE reader (sentinel-free; the
+  // headline is the selected row of the exit schedule). Nothing derived here.
+  const returnsHead = headlineReturns(g<unknown>('returns'));
+  const leveredIrr = returnsHead.leveredIrr;
+  const equityMultiple = returnsHead.equityMultiple;
   const revpar = y1rev ? num(y1rev.revpar) : null;
   const totalRevenue = y1rev ? num(y1rev.total_revenue) : null;
 
@@ -194,12 +199,12 @@ function extractMetrics(
     adr: y1rev ? num(y1rev.adr) : null,
     occupancy: y1rev ? num(y1rev.occupancy) : null,
     leveredIrr,
-    unleveredIrr: num(g<number>('returns', 'unlevered_irr')),
+    unleveredIrr: returnsHead.unleveredIrr,
     equityMultiple,
     dscr: num(g<number>('debt', 'year_one_dscr')),
     debtYield: num(g<number>('debt', 'year_one_debt_yield')),
     equity: num(g<number>('capital', 'equity_amount')),
-    holdYears: num(g<number>('returns', 'hold_years')),
+    holdYears: returnsHead.holdYears,
     renovation: num(renovationUse?.amount),
     revenueCagr: num(g<number>('revenue', 'total_revenue_cagr')),
     totalRevenue,
@@ -207,7 +212,7 @@ function extractMetrics(
     loanAmount: num(g<number>('capital', 'debt_amount')),
     interestRate: num(g<number>('debt', 'interest_rate')),
     noiMargin: noi != null && totalRevenue ? noi / totalRevenue : null,
-    exitValue: num(g<number>('returns', 'gross_sale_price')),
+    exitValue: returnsHead.grossSalePrice,
     hasModel: leveredIrr != null || equityMultiple != null || revpar != null,
   };
 }
@@ -683,6 +688,10 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const variance = useVariance(dealId);
 
   const metrics = useMemo(() => extractMetrics(outputs, deal, project), [outputs, deal, project]);
+  // FON-118 — the compact returns-by-exit-year table under the Returns group.
+  // Same rows the Returns section prints; the headline above is unchanged.
+  const returnsHead = useMemo(() => headlineReturns(getEngineField<unknown>(outputs, 'returns')), [outputs]);
+  const projectionCalendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
   const rec = useMemo(() => buildRecommendation(metrics), [metrics]);
 
   // ── Export deliverables (FON-54; PDF/PPTX re-gated FON-54b) — render the LIVE deal via the worker's
@@ -1582,6 +1591,21 @@ export default function ICMemoTab({ project }: { project: Project }) {
                     </Link>
                   </div>
                 ))}
+              </div>
+              {/* FON-118 — returns by exit year, compact. A run without the
+                  schedule names the missing field; no row is borrowed. */}
+              <div data-testid="ic-memo-exit-schedule" style={{ borderTop: '1px solid #f2f1ec', padding: '11px 16px 12px' }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.07em', color: palette.textFaint, textTransform: 'uppercase', marginBottom: 6 }}>
+                  {EXIT_SCHEDULE_TITLE}
+                </div>
+                {returnsHead.hasExitSchedule ? (
+                  <ExitScheduleTable rows={returnsHead.exitSchedule} calendarYears={projectionCalendarYears} compact traced={false} />
+                ) : (
+                  <div title={EXIT_SCHEDULE_MISSING} data-unavailable="true" style={{ fontSize: 12, color: palette.textMuted, lineHeight: 1.5 }}>
+                    <span style={{ color: palette.textFaint, marginRight: 6 }}>—</span>
+                    <span>{EXIT_SCHEDULE_MISSING}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

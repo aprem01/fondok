@@ -1028,11 +1028,33 @@ describe('InvestmentTab — Exit NOI basis (FON-44 / R-059)', () => {
 
   const select = () => screen.getByTestId('exit-noi-basis') as HTMLSelectElement;
 
-  it('defaults to Forward 12-month and offers Stabilized NOI', () => {
+  it('defaults to Forward 12-month and offers Stabilized NOI and Sale-year NOI', () => {
     render(<InvestmentTab />);
     expect(select().value).toBe('forward_12m');
     const labels = Array.from(select().options).map((o) => o.textContent);
-    expect(labels).toEqual(['Forward 12-month (default)', 'Stabilized NOI']);
+    expect(labels).toEqual(['Forward 12-month (default)', 'Stabilized NOI', 'Sale-year NOI (not grown)']);
+  });
+
+  // FON-118 / FON-44 §3.1 — the third basis round-trips like the other two.
+  it('saves exit_noi_basis = sale_year with NO note and reads it back from the override and the run', async () => {
+    render(<InvestmentTab />);
+    fireEvent.change(select(), { target: { value: 'sale_year' } });
+    expect(select().value).toBe('sale_year');
+    await vi.waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.exit_noi_basis).toBe('sale_year');
+    cleanup();
+
+    mockOverrides = { exit_noi_basis: 'sale_year' };
+    render(<InvestmentTab />);
+    expect(select().value).toBe('sale_year');
+    cleanup();
+    mockOverrides = {};
+
+    withReturnsOutputs({ exit_noi_basis: 'sale_year', exit_noi_period_label: 'Sale-year NOI (Year 5)' });
+    render(<InvestmentTab />);
+    expect(select().value).toBe('sale_year');
+    expect(screen.getByText('Exit NOI (Sale-year NOI (Year 5))')).toBeInTheDocument();
   });
 
   it('saves exit_noi_basis with NO note, shows it at once, and debounces the run-all', async () => {

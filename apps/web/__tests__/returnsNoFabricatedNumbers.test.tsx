@@ -62,6 +62,23 @@ function fullRun(): EngineOutputsResponse {
         exit_cap_rate: 0.07,
         noi_by_year: [3_000_000, 3_100_000, 3_200_000, 3_300_000, 3_400_000],
         cash_flows: [-19_000_000, 1_400_000, 1_500_000, 1_600_000, 1_700_000, 22_700_000],
+        // FON-118 — a complete run carries its exit schedule; the headline is
+        // the selected (Year 5) row.
+        selected_exit_month: 60,
+        selected_exit_year: 5,
+        peak_levered_exit_year: 5,
+        exit_schedule: [1, 2, 3, 4, 5].map((k) => ({
+          exit_year: k, exit_month: 12 * k, is_selected: k === 5, is_peak_levered: k === 5,
+          status: 'computed', reason: null, reason_detail: null,
+          exit_noi_basis: 'forward_12m',
+          exit_noi_period_label: k === 5 ? 'Forward 12-month NOI (Year 6)' : `Forward 12-month NOI (Year ${k + 1}, projected)`,
+          terminal_noi: 3_000_000 + 160_000 * k, gross_sale_price: k === 5 ? 52_000_000 : 44_000_000 + 1_600_000 * k,
+          selling_costs: k === 5 ? 1_040_000 : 880_000 + 32_000 * k, transfer_tax: 0, loan_payoff: 25_000_000 - 200_000 * k,
+          refi_included: false, net_proceeds: k === 5 ? 21_000_000 : 15_000_000 + 1_200_000 * k,
+          // The selected row IS the headline — same figures as the scalars above.
+          levered_irr: k === 5 ? 0.2301 : 0.15 + 0.016 * k, unlevered_irr: 0.10 + 0.012 * k,
+          equity_multiple: k === 5 ? 2.37 : 1.2 + 0.234 * k,
+        })),
       }, { assumptions: { ...FULL_ASSUMPTIONS } }),
       capital: row('capital', { total_capital: 44_000_000 }),
       // THE stabilized year (expense.stabilization) — the Yield on Cost tile
@@ -191,11 +208,12 @@ beforeEach(() => {
 describe('Returns Summary — a complete run shows only engine figures', () => {
   it('renders the engine values, no "—" and no zero placeholders', () => {
     render(<ReturnsTab />);
-    expect(screen.getByText('23.01%')).toBeInTheDocument();   // returns.levered_irr
-    expect(screen.getByText('2.37x')).toBeInTheDocument();    // returns.equity_multiple
+    // The hero tile AND the schedule's selected row print the headline (FON-118).
+    expect(screen.getAllByText('23.01%').length).toBeGreaterThanOrEqual(1);   // returns.levered_irr
+    expect(screen.getAllByText('2.37x').length).toBeGreaterThanOrEqual(1);    // returns.equity_multiple
     expect(screen.getByText('8.12%')).toBeInTheDocument();    // returns.avg_coc
     expect(screen.getByText('7.73%')).toBeInTheDocument();    // YoC = 3.4M ÷ 44M
-    expect(screen.getByText('$52.00M')).toBeInTheDocument();  // returns.gross_sale_price
+    expect(screen.getAllByText('$52.00M').length).toBeGreaterThanOrEqual(1);  // returns.gross_sale_price
     expect(screen.getByText('$19.00M')).toBeInTheDocument();  // initial equity = −cash_flows[0]
     expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
     expect(screen.queryByText('0.00x')).not.toBeInTheDocument();
@@ -210,8 +228,8 @@ describe('Returns Summary — a run missing a headline field names it instead of
     expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
     expect(screen.getByText('Awaiting model run — returns.avg_coc is not on this run')).toBeInTheDocument();
     // The other tiles are untouched.
-    expect(screen.getByText('23.01%')).toBeInTheDocument();
-    expect(screen.getByText('2.37x')).toBeInTheDocument();
+    expect(screen.getAllByText('23.01%').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('2.37x').length).toBeGreaterThanOrEqual(1);
   });
 
   it('equity_multiple absent → "—" + "returns.equity_multiple", never 0.00x', () => {

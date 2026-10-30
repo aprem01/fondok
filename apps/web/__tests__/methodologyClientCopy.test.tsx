@@ -84,6 +84,40 @@ describe('/methodology — client copy discipline', () => {
     expect(text).not.toMatch(/Walkthrough video|Loom|coming soon|work in progress/i);
   });
 
+  // FON-118 / FON-44 — returns by exit year, the sale-year basis and the hold
+  // defaults are described for the analyst, as labelled defaults they can
+  // override — never as facts about the deal.
+  it('describes returns by exit year, the sale-year basis and the hold defaults', () => {
+    render(<MethodologyPage />);
+    const card = screen.getByTestId('methodology-returns-by-exit-year');
+    expect(card).toHaveTextContent('Returns by exit year');
+    expect(card).toHaveTextContent(/every projection year-end/i);
+    expect(card).toHaveTextContent(/refinanc/i);
+    expect(card).toHaveTextContent(/capital still deploying/i);
+    expect(card).toHaveTextContent(/construction window/i);
+    expect(card).toHaveTextContent(/exit NOI (is )?not positive/i);
+    expect(card).toHaveTextContent(/Peak levered IRR/);
+    expect(card).toHaveTextContent(/Selected exit/);
+    expect(card).toHaveTextContent(/LP and GP returns/i);
+
+    const basis = screen.getByTestId('methodology-exit-basis');
+    expect(basis).toHaveTextContent('Sale-year NOI');
+    expect(basis).toHaveTextContent(/not grown/i);
+    expect(basis).toHaveTextContent(/next projected year/i);
+    expect(basis).toHaveTextContent(/pinned|analyst-entered terminal NOI/i);
+
+    const hold = screen.getByTestId('methodology-hold-defaults');
+    expect(hold).toHaveTextContent(/5 years/);
+    expect(hold).toHaveTextContent(/7 years/);
+    expect(hold).toHaveTextContent(/6 years/);
+    expect(hold).toHaveTextContent('Default for development deals — confirm');
+    expect(hold).toHaveTextContent(/override/i);
+
+    const text = visibleText();
+    expect(text).toMatch(/returns schedule by exit year/i);
+    expect(text).toMatch(/selected exit month/i);
+  });
+
   it('the dash table shows every reason by its label and explanation, never its code', () => {
     render(<MethodologyPage />);
     const table = screen.getByTestId('reason-code-table');

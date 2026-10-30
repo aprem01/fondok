@@ -94,6 +94,7 @@ import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
+import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, headlineReturns, holdDefaultBadge } from '@/lib/engines/returns';
 import { sourceLabel } from '@/lib/provenance';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
 import {
@@ -355,6 +356,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // document · analyst override), off the deal's provenance map; the
   // Renovation KPI tile names it after the per-key figure.
   const renoSource = useSource('renovation_budget');
+  const holdDealTypeBadge = holdDefaultBadge(useSource('hold_years')?.source);
   const traceGet = useCallback(
     (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string) => {
       const g = engine === 'capital' ? capitalTrace
@@ -678,19 +680,23 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wLtc = cap('ltc');
   const wLoanAmount = dbt('loan_amount') ?? wDebtAmount;
   const wInterestRate = dbt('interest_rate');
-  const wExitCap = ret('exit_cap_rate');
-  const wTerminalNoi = ret('terminal_noi_usd') ?? ret('terminal_noi');
+  // FON-118 — every returns figure comes through the ONE reader
+  // (`lib/engines/returns.ts`): the headline is the selected row of the exit
+  // schedule, sentinels are withheld, and nothing here derives a return.
+  const returnsHead = headlineReturns(getEngineField<unknown>(outputs, 'returns'));
+  const wExitCap = returnsHead.exitCapRate ?? undefined;
+  const wTerminalNoi = returnsHead.terminalNoi ?? undefined;
   // FON-44 (R-059) — the basis + period the reversion NOI was taken on. Older
   // runs carry neither → the row keeps today's forward-12 wording.
-  const wExitNoiBasis = getEngineField<string>(outputs, 'returns', 'exit_noi_basis');
-  const wExitNoiPeriodLabel = getEngineField<string>(outputs, 'returns', 'exit_noi_period_label');
-  const wGrossSale = ret('gross_sale_price');
-  const wSellingCosts = ret('selling_costs');
-  const wHoldYears = ret('hold_years');
-  const wLeveredIrr = ret('levered_irr');
+  const wExitNoiBasis = returnsHead.exitNoiBasis ?? undefined;
+  const wExitNoiPeriodLabel = returnsHead.exitNoiPeriodLabel ?? undefined;
+  const wGrossSale = returnsHead.grossSalePrice ?? undefined;
+  const wSellingCosts = returnsHead.sellingCosts ?? undefined;
+  const wHoldYears = returnsHead.holdYears ?? undefined;
+  const wLeveredIrr = returnsHead.leveredIrr ?? undefined;
   // FON-59 R-052 — the asset return before debt. Testers are told not to
   // upload debt, so this is the figure they can hold steady across runs.
-  const wUnleveredIrr = ret('unlevered_irr');
+  const wUnleveredIrr = returnsHead.unleveredIrr ?? undefined;
 
   // Derived (all engine-sourced or engine-arithmetic — never fabricated).
   const purchase = wPurchase ?? findUse(/purchase/i);
@@ -1055,7 +1061,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const exitRows = (): RowDef[] => [
-      lnk('hold', 'Hold Period', has(holdYears) ? `${holdYears} years` : '—', '→ CAPEX (exit)', 'investment', { reasonKey: 'hold_years' }),
+      // FON-44 §3.2 — a hold the deal type set is a labelled default, inline
+      // like the Stabilization Year's "(default)", until confirmed/overridden.
+      lnk('hold', 'Hold Period',
+        has(holdYears) ? `${holdYears} years${holdDealTypeBadge ? ` — ${holdDealTypeBadge}` : ''}` : '—',
+        '→ CAPEX (exit)', 'investment',
+        { reasonKey: 'hold_years', sub: holdDealTypeBadge ? HOLD_DEAL_TYPE_DEFAULT_EXPLANATION : undefined }),
       cal('exitDate', 'Exit Date', fmtISODate(timeline?.exit_date), { formula: 'Acquisition Date + Hold Period' }),
       // FON-59 R-058 — testers asked for "Exit NOI" in this section. It IS the
       // forward 12-month cash NOI the reversion capitalizes
@@ -1067,7 +1078,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           ? 'The NOI the exit value capitalizes — the stabilized year\u2019s NOI grown to exit, after the FF&E reserve.'
           : wExitNoiBasis === 'override'
             ? 'The NOI the exit value capitalizes — your Exit NOI override.'
-            : 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
+            : wExitNoiBasis === 'sale_year'
+              ? 'The NOI the exit value capitalizes — the exit year\u2019s own Cash NOI, not grown, after the FF&E reserve.'
+              : 'The NOI the exit value capitalizes — the 12 months after the hold, after the FF&E reserve. Not the stabilized year.',
       }),
       lnk('exitCap', 'Exit Cap Rate', pctv(exitCap), '→ CAPEX (exit)', 'investment', { reasonKey: 'exit_cap_rate' }),
       cal('exitValue', 'Gross Exit Value', money(grossExit), { bold: true, trace: { engine: 'returns', path: 'gross_sale_price' }, formula: 'Exit NOI ÷ Exit Cap Rate', inputs: [{ name: exitNoiLabel(wExitNoiPeriodLabel), from: 'P&L → Future P&L', kind: 'linked' }, { name: 'Exit Cap Rate', from: 'CAPEX assumption', kind: 'input' }] }),
@@ -1176,7 +1189,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState]);
+  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {
