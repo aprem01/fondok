@@ -85,13 +85,15 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .labels import (
+    IRR_GRID_NO_TARGET_NOTE,
+    SOLVER_STATUS_NOTE,
     COMP_CAP_METHOD_DISPLAY,
     COMP_COVERAGE_DISPLAY,
     NOI_HEADLINE_LABELS,
     line_label,
     source_display,
 )
-from .refusals import collect_refusals, dedupe, refuse, unavailable
+from .refusals import as_float, collect_refusals, dedupe, refuse, sum_strict, unavailable
 
 # ─────────────────────────── styling helpers ───────────────────────────
 
@@ -196,21 +198,8 @@ def _apply_color_scale(
 _NA_FONT = Font(italic=True, color="92400E", size=9)
 
 
-def _as_float(v: Any) -> float | None:
-    """``None`` stays ``None`` — a missing payload number is never read as 0."""
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _sum_strict(values: list[float | None]) -> float | None:
-    """A total only when every component is present (go-live rule 1)."""
-    if any(v is None for v in values):
-        return None
-    return float(sum(values))  # type: ignore[arg-type]
+_as_float = as_float
+_sum_strict = sum_strict
 
 
 def _write_value(
@@ -297,6 +286,10 @@ def _aggregate_wave2_3_for_excel(model: dict[str, Any]) -> dict[str, Any]:
     pricing_unavailable = model.get("pricing_unavailable")
     if not isinstance(pricing_unavailable, str) or not pricing_unavailable.strip():
         pricing_unavailable = None
+    # ── EM-only deal: no IRR grid, stated; the max price still renders.
+    grid_unavailable = model.get("sensitivity_grid_unavailable")
+    if not isinstance(grid_unavailable, str) or not grid_unavailable.strip():
+        grid_unavailable = None
 
     # ── Historical baseline ─────────────────────────────────────────
     baseline = model.get("historical_baseline")
@@ -345,6 +338,7 @@ def _aggregate_wave2_3_for_excel(model: dict[str, Any]) -> dict[str, Any]:
         "sensitivity_grid": grid,
         "max_price": max_price,
         "pricing_unavailable": pricing_unavailable,
+        "grid_unavailable": grid_unavailable,
         "historical_baseline": baseline,
         "comp_sales": comp_sales,
         "str_forecast": str_forecast,
@@ -641,7 +635,7 @@ def _su_table(
         )
         return row + 1
     amounts = [_as_float(x.get("amount")) for x in lines]
-    total = _sum_strict(amounts)
+    total = _sum_strict(*amounts)
     first = row
     for x, amt in zip(lines, amounts, strict=True):
         ws.cell(row=row, column=1, value=str(x.get("label", "")))
@@ -775,7 +769,7 @@ def _build_debt_schedule(wb: Workbook, model: dict[str, Any]) -> None:
         # Beginning balance is the prior month's ending balance (the loan
         # amount for month 1) — both engine figures, nothing solved here.
         beg = prev_end if prev_end is not None else (
-            _sum_strict([end, principal])
+            _sum_strict(*[end, principal])
         )
         ws.cell(row=row, column=1, value=int(m["month"])).number_format = INT_FMT
         _write_value(ws, row, 2, beg, USD_FMT, concept="debt.schedule.beg_balance",
@@ -1141,7 +1135,7 @@ def _build_revenue_mix(wb: Workbook, segments_by_year: list[dict[str, Any]] | No
             row += 1
         # Year total — only when every segment's figure is stated.
         ws.cell(row=row, column=1, value=f"Total Y{year}")
-        yg, yn = _sum_strict(year_gross), _sum_strict(year_net)
+        yg, yn = _sum_strict(*year_gross), _sum_strict(*year_net)
         _write_value(ws, row, 5, yg, USD_FMT, concept="segment.gross_total",
                      missing="a segment carries no gross revenue")
         _write_value(ws, row, 7, yn, USD_FMT, concept="segment.net_total",
@@ -1153,9 +1147,9 @@ def _build_revenue_mix(wb: Workbook, segments_by_year: list[dict[str, Any]] | No
 
     # Grand total across all years
     ws.cell(row=row, column=1, value="GRAND TOTAL")
-    _write_value(ws, row, 5, _sum_strict(total_gross), USD_FMT, concept="segment.gross_total",
+    _write_value(ws, row, 5, _sum_strict(*total_gross), USD_FMT, concept="segment.gross_total",
                  missing="a year's gross revenue total is not stated")
-    _write_value(ws, row, 7, _sum_strict(total_net), USD_FMT, concept="segment.net_total",
+    _write_value(ws, row, 7, _sum_strict(*total_net), USD_FMT, concept="segment.net_total",
                  missing="a year's net revenue total is not stated")
     _style_total_row(ws, row, len(headers))
 
@@ -1284,7 +1278,7 @@ def _build_capital_plan(wb: Workbook, schedule: list[dict[str, Any]] | None) -> 
         roi_lift = _as_float(y.get("roi_noi_lift_usd"))
         total = _as_float(y.get("total_capex_usd"))
         if total is None:
-            total = _sum_strict([pip_v, non_v, roi_inv])
+            total = _sum_strict(*[pip_v, non_v, roi_inv])
 
         ws.cell(row=row, column=1, value=f"Year {year_label}")
         for col, key, val, what in (
@@ -1311,7 +1305,7 @@ def _build_capital_plan(wb: Workbook, schedule: list[dict[str, Any]] | None) -> 
     ws.cell(row=row, column=1, value="Total")
     for col, key in ((2, "pip_usd"), (3, "non_pip_usd"), (4, "roi_investment_usd"),
                      (5, "roi_noi_lift_usd"), (6, "total_capex_usd")):
-        _write_value(ws, row, col, _sum_strict(cols[key]), USD_FMT, concept=f"capex.{key}.total",
+        _write_value(ws, row, col, _sum_strict(*cols[key]), USD_FMT, concept=f"capex.{key}.total",
                      missing="a year's figure is not stated, so the total is not")
     _style_total_row(ws, row, len(headers))
 
@@ -1404,10 +1398,8 @@ def _max_price_cell(
     if status == "converged" and price is not None:
         c = ws.cell(row=row, column=col, value=price)
         c.number_format = USD_FMT
-    elif status == "unreachable":
-        _write_note(ws, row, col, "no price down to half the basis clears this hurdle")
-    elif status == "above_ceiling":
-        _write_note(ws, row, col, "clears the hurdle even at twice the basis")
+    elif status in SOLVER_STATUS_NOTE:
+        _write_note(ws, row, col, SOLVER_STATUS_NOTE[status])
     else:
         _write_value(ws, row, col, None, None, concept=f"max_price.{hurdle}",
                      missing=f"the {hurdle.upper()} search did not converge ({status})",
@@ -1415,15 +1407,21 @@ def _max_price_cell(
 
 
 def _build_sensitivity_grid(
-    wb: Workbook, grid: dict[str, Any] | None, unavailable_reason: str | None = None
+    wb: Workbook,
+    grid: dict[str, Any] | None,
+    max_price: dict[str, Any] | None = None,
+    pricing_unavailable: str | None = None,
+    grid_unavailable: str | None = None,
 ) -> bool:
-    """Pricing Sensitivity — 5×5 IRR grid + 5×5 EM grid + max-price summary.
+    """Pricing Sensitivity — max-price summary + 5×5 IRR grid + 5×5 EM grid.
 
-    Solved only against the deal's own return targets (A3). When the deal
-    carries none, the sheet is one sentence — ``unavailable_reason`` — and
-    no solver output. IRR grid carries a 3-color scale conditional format;
-    DSCR-breach cells get a red fill + ``!`` cell comment + red border. EM
-    grid gets its own color scale.
+    Solved only against the deal's own return targets (A3). The max-price
+    block is sourced from the solver independently of the grid: an EM-only
+    deal gets its solved EM price and, in place of the grid, the stated
+    reason (``grid_unavailable``). A deal with no target at all gets one
+    sentence (``pricing_unavailable``) and no solver output. IRR grid
+    carries a 3-color scale conditional format; DSCR-breach cells get a red
+    fill + ``!`` cell comment + red border. EM grid gets its own color scale.
     """
     cells = (grid or {}).get("cells") or []
     cells = [
@@ -1432,55 +1430,24 @@ def _build_sensitivity_grid(
         and c.get("exit_cap_pct") is not None
         and c.get("noi_multiplier") is not None
     ]
-    if not cells:
-        if not unavailable_reason:
-            return False
-        ws = wb.create_sheet("Pricing Sensitivity")
-        ws["A1"] = "PRICING TO TARGET"
-        _style_header_row(ws, 1, 4)
-        _write_note(ws, 2, 1, unavailable_reason)
-        _autosize(ws, [90])
-        return True
-    assert grid is not None
+    if not cells and not max_price and not pricing_unavailable and not grid_unavailable:
+        return False
 
     ws = wb.create_sheet("Pricing Sensitivity")
-    # The deal's own IRR hurdle (the live payload sets it from the
-    # Investment Profile); ``None`` means no hurdle to name in the header.
-    target_irr = _as_float(grid.get("target_irr"))
+    if not cells and not max_price:
+        ws["A1"] = "PRICING TO TARGET"
+        _style_header_row(ws, 1, 4)
+        _write_note(ws, 2, 1, pricing_unavailable or grid_unavailable or "")
+        _autosize(ws, [90])
+        return True
 
-    cap_axis = sorted({round(float(c["exit_cap_pct"]), 6) for c in cells})
-    noi_axis = sorted(
-        {round(float(c["noi_multiplier"]), 4) for c in cells},
-        reverse=True,
-    )
-    cell_lookup = {
-        (
-            round(float(c["exit_cap_pct"]), 6),
-            round(float(c["noi_multiplier"]), 4),
-        ): c
-        for c in cells
-    }
+    cap_axis = sorted({round(float(c["exit_cap_pct"]), 6) for c in cells}) if cells else []
+    width = max(len(cap_axis) + 2, 6)
 
-    # ── Max-Price summary at top ────────────────────────────────────
+    # ── Max-Price summary at top (independent of the grid) ──────────
     ws["A1"] = "MAX-PRICE FINDINGS"
-    _style_header_row(ws, 1, len(cap_axis) + 2)
+    _style_header_row(ws, 1, width)
     row = 2
-    max_price = grid.get("max_price") if isinstance(grid.get("max_price"), dict) else None
-    # Breakeven ``None`` is the engine's own statement that the crossing is
-    # outside the grid — printed as such, never as 0.
-    ws.cell(row=row, column=1, value="Breakeven Exit Cap").font = Font(bold=True)
-    be_cap = _as_float(grid.get("breakeven_exit_cap_pct"))
-    if be_cap is not None:
-        ws.cell(row=row, column=2, value=be_cap).number_format = PCT_FMT
-    else:
-        _write_note(ws, row, 2, "outside grid")
-    ws.cell(row=row, column=4, value="Breakeven NOI Multiplier").font = Font(bold=True)
-    be_noi = _as_float(grid.get("breakeven_noi_multiplier"))
-    if be_noi is not None:
-        ws.cell(row=row, column=5, value=be_noi).number_format = MULT_FMT
-    else:
-        _write_note(ws, row, 5, "outside grid")
-    row += 1
     if max_price:
         ws.cell(row=row, column=1, value="Max Price for IRR target").font = Font(bold=True)
         _max_price_cell(ws, row, 2, max_price, hurdle="irr")
@@ -1501,7 +1468,56 @@ def _build_sensitivity_grid(
             ).upper(),
         )
         row += 1
-    row += 1
+    else:
+        _write_value(
+            ws, row, 1, None, None, concept="max_price",
+            missing="no max-price solve on the export payload",
+            code=ReasonCode.ENGINE_SKIPPED,
+        )
+        row += 1
+
+    if not cells:
+        # EM-only deal: the grid's breakeven sweep needs an IRR hurdle.
+        row += 1
+        ws.cell(row=row, column=1, value="IRR SENSITIVITY GRID")
+        _style_header_row(ws, row, width)
+        row += 1
+        _write_note(ws, row, 1, grid_unavailable or IRR_GRID_NO_TARGET_NOTE)
+        _autosize(ws, [26] + [14] * (width - 1))
+        _freeze_top(ws, row=2)
+        return True
+    assert grid is not None
+
+    # The deal's own IRR hurdle (the live payload sets it from the
+    # Investment Profile); ``None`` means no hurdle to name in the header.
+    target_irr = _as_float(grid.get("target_irr"))
+    noi_axis = sorted(
+        {round(float(c["noi_multiplier"]), 4) for c in cells},
+        reverse=True,
+    )
+    cell_lookup = {
+        (
+            round(float(c["exit_cap_pct"]), 6),
+            round(float(c["noi_multiplier"]), 4),
+        ): c
+        for c in cells
+    }
+
+    # Breakeven ``None`` is the engine's own statement that the crossing is
+    # outside the grid — printed as such, never as 0.
+    ws.cell(row=row, column=1, value="Breakeven Exit Cap").font = Font(bold=True)
+    be_cap = _as_float(grid.get("breakeven_exit_cap_pct"))
+    if be_cap is not None:
+        ws.cell(row=row, column=2, value=be_cap).number_format = PCT_FMT
+    else:
+        _write_note(ws, row, 2, "outside grid")
+    ws.cell(row=row, column=4, value="Breakeven NOI Multiplier").font = Font(bold=True)
+    be_noi = _as_float(grid.get("breakeven_noi_multiplier"))
+    if be_noi is not None:
+        ws.cell(row=row, column=5, value=be_noi).number_format = MULT_FMT
+    else:
+        _write_note(ws, row, 5, "outside grid")
+    row += 2
 
     # ── IRR grid header ─────────────────────────────────────────────
     irr_header = (
@@ -2113,10 +2129,13 @@ def _build_excel_sheets(
         sections_included.append("Capital Plan")
     if _build_op_ratio_provenance(wb, wave["op_ratio_provenance"]):
         sections_included.append("Op-Ratio Provenance")
-    # Glue the max-price summary into the sensitivity grid sheet too.
-    if wave["sensitivity_grid"] and wave["max_price"]:
-        wave["sensitivity_grid"]["max_price"] = wave["max_price"]
-    if _build_sensitivity_grid(wb, wave["sensitivity_grid"], wave["pricing_unavailable"]):
+    if _build_sensitivity_grid(
+        wb,
+        wave["sensitivity_grid"],
+        wave["max_price"],
+        wave["pricing_unavailable"],
+        wave["grid_unavailable"],
+    ):
         sections_included.append("Pricing Sensitivity")
     if _build_comparable_sales(wb, wave["comp_sales"]):
         sections_included.append("Comparable Sales")

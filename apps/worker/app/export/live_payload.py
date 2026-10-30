@@ -65,11 +65,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .labels import (
     BENCHMARK_DEFAULT_NOTE,
     CASH_NOI,
+    IRR_GRID_NO_TARGET_NOTE,
     OP_RATIO_ALL_SEED_NOTE,
     PRICING_NO_TARGET_NOTE,
     noi_before_reserve_label,
 )
-from .refusals import collect_refusals, dedupe, refuse
+from .refusals import as_float, collect_refusals, dedupe, refuse, sum_strict
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +78,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────── small helpers ───────────────────────────
 
 
-def _num(value: Any) -> float | None:
-    """Coerce a JSON scalar to float, or None when absent / non-numeric."""
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+_num = as_float
 
 
 def _outputs(snapshot: dict[str, dict[str, Any]], engine: str) -> dict[str, Any]:
@@ -106,15 +100,7 @@ def _inputs(snapshot: dict[str, dict[str, Any]], engine: str) -> dict[str, Any]:
     return inp if isinstance(inp, dict) else {}
 
 
-def _sum_strict(*values: float | None) -> float | None:
-    """Sum when EVERY component is present; ``None`` if any is missing.
-
-    A total built over a missing component would silently read the gap as
-    zero — the go-live rule is that a sum is only stated when every part is.
-    """
-    if any(v is None for v in values):
-        return None
-    return float(sum(values))  # type: ignore[arg-type]
+_sum_strict = sum_strict
 
 
 def _set(target: dict[str, Any], key: str, value: Any) -> None:
@@ -1363,9 +1349,9 @@ async def _pricing_sheets(
     tenant_id: str,
     *,
     rooms: int | None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-    """``(sensitivity_grid, max_price, unavailable_reason)`` — the Pricing
-    panel's math, solved ONLY against the deal's own return targets.
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None, str | None]:
+    """``(sensitivity_grid, max_price, pricing_unavailable, grid_unavailable)``
+    — the Pricing panel's math, solved ONLY against the deal's own targets.
 
     Targets come from :func:`app.api.analysis._deal_return_targets` — the
     same Investment Profile read the in-app ``/pricing/*`` routes resolve
@@ -1373,8 +1359,10 @@ async def _pricing_sheets(
     solve are skipped and ``unavailable_reason`` carries the canonical
     sentence (:data:`PRICING_NO_TARGET_NOTE`); there is no default hurdle
     (FON-68 / A3). The grid additionally needs the levered-IRR hurdle (its
-    breakeven sweep is against it) — with only an equity-multiple target the
-    grid is omitted and ``max_price`` solves the EM constraint alone.
+    breakeven sweep is against it) — with only an equity-multiple target
+    ``max_price`` solves the EM constraint alone and ``grid_unavailable``
+    carries :data:`IRR_GRID_NO_TARGET_NOTE` so every export states why the
+    grid is missing instead of dropping it.
 
     The LOI is never shipped in an LP-facing export: its parties / EMD / DD
     terms are template placeholders, not deal data.
@@ -1389,7 +1377,7 @@ async def _pricing_sheets(
         )
     except Exception:  # noqa: BLE001
         logger.debug("live export: return-target read failed", exc_info=True)
-        return None, None, "Pricing to target not available: the deal's return targets could not be read"
+        return None, None, "Pricing to target not available: the deal's return targets could not be read", None
 
     if target_irr is None and target_em is None:
         refuse(
@@ -1397,7 +1385,7 @@ async def _pricing_sheets(
             "no return target set on this deal",
             "pricing.return_target",
         )
-        return None, None, PRICING_NO_TARGET_NOTE
+        return None, None, PRICING_NO_TARGET_NOTE, None
 
     try:
         base_input = await _build_returns_input_for_deal(
@@ -1405,10 +1393,18 @@ async def _pricing_sheets(
         )
     except Exception:  # noqa: BLE001
         logger.debug("live export: pricing base input failed", exc_info=True)
-        return None, None, "Pricing to target not available: the engine chain could not be built for this deal"
+        return None, None, "Pricing to target not available: the engine chain could not be built for this deal", None
 
     grid_d: dict[str, Any] | None = None
-    if target_irr is not None:
+    grid_unavailable: str | None = None
+    if target_irr is None:
+        refuse(
+            ReasonCode.AWAITING_ANALYST,
+            "no IRR target set on this deal — the sensitivity grid needs one",
+            "pricing.target_irr",
+        )
+        grid_unavailable = IRR_GRID_NO_TARGET_NOTE
+    else:
         try:
             grid = run_sensitivity_grid(base_input, target_irr=target_irr)
             grid_d = asdict(grid)
@@ -1438,7 +1434,7 @@ async def _pricing_sheets(
         logger.debug("live export: max-price solve failed", exc_info=True)
         mp_d = None
 
-    return grid_d, mp_d, None
+    return grid_d, mp_d, None, grid_unavailable
 
 
 def _build_sensitivity_engine(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -1676,7 +1672,7 @@ async def _assemble_live_payload(
         # B2 — always present for a modelled deal (says so when all-seed).
         model["op_ratio_provenance"] = _build_op_ratio_provenance(engine_base)
 
-        grid, max_price, pricing_unavailable = await _pricing_sheets(
+        grid, max_price, pricing_unavailable, grid_unavailable = await _pricing_sheets(
             session, deal_id, tenant_id, rooms=keys
         )
         if grid:
@@ -1685,6 +1681,8 @@ async def _assemble_live_payload(
             model["max_price"] = max_price
         if pricing_unavailable:
             model["pricing_unavailable"] = pricing_unavailable
+        if grid_unavailable:
+            model["sensitivity_grid_unavailable"] = grid_unavailable
 
     # ── Deal dict (title + property/market slides). String-safe values with
     # ── "—" for absent fields so the deck never shows "None" or a fixture

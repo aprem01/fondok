@@ -59,13 +59,25 @@ from typing import Any
 
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
-from .labels import NOI_HEADLINE_LABELS, line_label, source_display
+from .labels import (
+    NOI_HEADLINE_LABELS,
+    SOLVER_STATUS_NOTE,
+    line_label,
+    source_display,
+)
 from .refusals import (
+    as_float,
     collect_refusals,
     distinct_codes,
+    fmt_int,
+    fmt_mult,
+    fmt_pct,
+    fmt_usd,
+    fmt_usd_m,
     reason_explanation,
     reason_label,
     refuse,
+    sum_strict,
     unavailable,
 )
 
@@ -73,102 +85,15 @@ from .refusals import (
 # so module import doesn't blow up when system libs are missing.
 
 
-# ─────────────────────── formatters (Phase 4.2) ───────────────────────
-#
-# A ``None`` reaching a formatter means the payload omitted the key rather
-# than carrying a zero (``live_payload``'s no-fake-data contract), so the
-# default code is ``no_source``. A caller that knows better — an engine that
-# was skipped, an analyst decision not yet made — passes ``code``. The
-# rendered string is unchanged in every branch: ``refuse`` returns the same
-# ``"—"`` these functions returned as a literal.
-
-
-def _fmt_usd(
-    v: float | int | None,
-    scale: int = 1,
-    *,
-    code: ReasonCode = ReasonCode.NO_SOURCE,
-    concept: str | None = None,
-) -> str:
-    if v is None:
-        return refuse(code, "no value on the export payload", concept)
-    try:
-        return f"${float(v) / scale:,.0f}"
-    except (TypeError, ValueError):
-        return refuse(code, f"value {v!r} is not a number", concept)
-
-
-def _fmt_usd_m(
-    v: float | int | None,
-    *,
-    code: ReasonCode = ReasonCode.NO_SOURCE,
-    concept: str | None = None,
-) -> str:
-    if v is None:
-        return refuse(code, "no value on the export payload", concept)
-    try:
-        return f"${float(v) / 1_000_000:.2f}M"
-    except (TypeError, ValueError):
-        return refuse(code, f"value {v!r} is not a number", concept)
-
-
-def _fmt_pct(
-    v: float | None,
-    *,
-    code: ReasonCode = ReasonCode.NO_SOURCE,
-    concept: str | None = None,
-) -> str:
-    if v is None:
-        return refuse(code, "no value on the export payload", concept)
-    try:
-        return f"{float(v) * 100:.2f}%"
-    except (TypeError, ValueError):
-        return refuse(code, f"value {v!r} is not a number", concept)
-
-
-def _fmt_mult(
-    v: float | None,
-    *,
-    code: ReasonCode = ReasonCode.NO_SOURCE,
-    concept: str | None = None,
-) -> str:
-    if v is None:
-        return refuse(code, "no value on the export payload", concept)
-    try:
-        return f"{float(v):.2f}x"
-    except (TypeError, ValueError):
-        return refuse(code, f"value {v!r} is not a number", concept)
-
-
-def _fmt_int(
-    v: float | int | None,
-    *,
-    code: ReasonCode = ReasonCode.NO_SOURCE,
-    concept: str | None = None,
-) -> str:
-    if v is None:
-        return refuse(code, "no value on the export payload", concept)
-    try:
-        return f"{round(float(v)):,}"
-    except (TypeError, ValueError):
-        return refuse(code, f"value {v!r} is not a number", concept)
-
-
-def _as_float(v: Any) -> float | None:
-    """``None`` stays ``None`` — a missing payload number is never read as 0."""
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _sum_strict(values: list[float | None]) -> float | None:
-    """A total only when every component is present (go-live rule 1)."""
-    if any(v is None for v in values):
-        return None
-    return float(sum(values))  # type: ignore[arg-type]
+# Formatters / numeric helpers are the shared refusal-aware ones in
+# :mod:`app.export.refusals` (memo precision: 2 dp percentages, $x.xxM).
+_fmt_usd = fmt_usd
+_fmt_usd_m = fmt_usd_m
+_fmt_pct = fmt_pct
+_fmt_mult = fmt_mult
+_fmt_int = fmt_int
+_as_float = as_float
+_sum_strict = sum_strict
 
 
 CSS = """
@@ -517,6 +442,11 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
     pricing_unavailable = model.get("pricing_unavailable")
     if not isinstance(pricing_unavailable, str) or not pricing_unavailable.strip():
         pricing_unavailable = None
+    # ── EM-only deal: the grid has no IRR hurdle to sweep; the max price
+    # still renders (solved against the EM target).
+    grid_unavailable = model.get("sensitivity_grid_unavailable")
+    if not isinstance(grid_unavailable, str) or not grid_unavailable.strip():
+        grid_unavailable = None
 
     # ── Historical baseline + walk ───────────────────────────────────
     baseline = model.get("historical_baseline")
@@ -541,6 +471,7 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
         "sensitivity_grid": grid,
         "max_price": max_price,
         "pricing_unavailable": pricing_unavailable,
+        "grid_unavailable": grid_unavailable,
         "historical_baseline": baseline,
         "loi": loi,
     }
@@ -705,7 +636,7 @@ def _render_capex_plan(schedule: list[dict[str, Any]] | None) -> str:
         roi_lift = _as_float(y.get("roi_noi_lift_usd"))
         total = _as_float(y.get("total_capex_usd"))
         if total is None:
-            total = _sum_strict([pip_v, non_v, roi_inv])
+            total = _sum_strict(*[pip_v, non_v, roi_inv])
         for key, val in (
             ("pip_usd", pip_v), ("non_pip_usd", non_v), ("roi_investment_usd", roi_inv),
             ("roi_noi_lift_usd", roi_lift), ("total_capex_usd", total),
@@ -723,7 +654,7 @@ def _render_capex_plan(schedule: list[dict[str, Any]] | None) -> str:
     rows.append(
         "<tr class='total'><td>Total</td>"
         + "".join(
-            f"<td class='num'>{_fmt_usd(_sum_strict(cols[key]), concept=f'capex.{key}.total')}</td>"
+            f"<td class='num'>{_fmt_usd(_sum_strict(*cols[key]), concept=f'capex.{key}.total')}</td>"
             for key in ("pip_usd", "non_pip_usd", "roi_investment_usd",
                         "roi_noi_lift_usd", "total_capex_usd")
         )
@@ -862,18 +793,25 @@ def _cell_class(
     return "cell-red"
 
 
-def _render_sensitivity_grid(grid: dict[str, Any] | None) -> str:
+def _render_sensitivity_grid(
+    grid: dict[str, Any] | None, unavailable_reason: str | None = None
+) -> str:
     """Render the 5x5 pricing sensitivity grid with green/amber/red cells.
 
     Rows = NOI multiplier (high -> low, top-down). Columns = exit cap
     (low -> high, left-to-right). Each cell shows IRR over EM with the
-    going-in cap rate as a subscript caption.
+    going-in cap rate as a subscript caption. With no grid but a stated
+    reason (an EM-only deal), the section is that sentence.
     """
-    if not grid:
-        return ""
-    cells = grid.get("cells") or []
+    cells = (grid or {}).get("cells") or []
     if not cells:
-        return ""
+        if not unavailable_reason:
+            return ""
+        return (
+            "<h2>Pricing Sensitivity</h2>"
+            f"<div class='callout warn'>{html.escape(unavailable_reason)}</div>"
+        )
+    assert grid is not None
 
     # The deal's own IRR hurdle (the live payload sets it from the
     # Investment Profile); ``None`` leaves the cells uncoloured.
@@ -972,10 +910,8 @@ def _render_max_price_callout(max_price: dict[str, Any] | None) -> str:
         price = _as_float(max_price.get(price_key))
         if status == "converged" and price is not None:
             value = _fmt_usd(price, concept=f"max_price.{label.lower()}")
-        elif status == "unreachable":
-            value = "no price down to half the basis clears this hurdle"
-        elif status == "above_ceiling":
-            value = "clears the hurdle even at twice the basis"
+        elif status in SOLVER_STATUS_NOTE:
+            value = SOLVER_STATUS_NOTE[status]
         else:
             value = unavailable(
                 ReasonCode.ENGINE_SKIPPED,
@@ -1338,7 +1274,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
             )
         sources_rows += (
             f"<tr class='total'><td>Total</td>"
-            f"<td class='num'>{_fmt_usd(_sum_strict(amounts), concept='sources.total')}</td></tr>"
+            f"<td class='num'>{_fmt_usd(_sum_strict(*amounts), concept='sources.total')}</td></tr>"
         )
 
     # Returns mini table
@@ -1382,7 +1318,9 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     pip_html = _render_pip_plan(wave2["pip"])
     capex_html = _render_capex_plan(wave2["capex_schedule"])
     op_ratio_html = _render_op_ratio_provenance(wave2["op_ratio_provenance"])
-    sensitivity_html = _render_sensitivity_grid(wave2["sensitivity_grid"])
+    sensitivity_html = _render_sensitivity_grid(
+        wave2["sensitivity_grid"], wave2["grid_unavailable"]
+    )
     max_price_html = _render_max_price_callout(wave2["max_price"])
     pricing_unavailable_html = _render_pricing_unavailable(wave2["pricing_unavailable"])
     historical_html = _render_historical_walk(wave2["historical_baseline"])

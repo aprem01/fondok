@@ -487,6 +487,59 @@ async def test_live_payload_without_a_return_target_refuses_pricing(tmp_path: Pa
     assert "Pricing Sensitivity (5x5 Grid)" not in html_str
 
 
+@pytest.mark.asyncio
+async def test_live_payload_em_only_target_keeps_max_price_and_states_grid_reason(
+    tmp_path: Path,
+) -> None:
+    """A deal with ONLY a target equity multiple: the max price is solved
+    against that EM target and rendered everywhere; the IRR grid is replaced
+    by a stated reason in the payload, the workbook and the memo."""
+    from openpyxl import load_workbook
+
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.export.labels import IRR_GRID_NO_TARGET_NOTE
+    from app.export.live_payload import load_live_payload
+    from app.export.memo_pdf import _render_html
+    from app.services.engine_runner import run_all_engines
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id, target_moic=_TARGET_MOIC)
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
+        await session.commit()
+        _deal, model, memo = await load_live_payload(session, deal_id, tenant_id)
+
+    assert "pricing_unavailable" not in model
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == IRR_GRID_NO_TARGET_NOTE
+    mp = model["max_price"]
+    assert mp["target_irr"] is None and mp["target_em"] == _TARGET_MOIC
+    assert mp["irr_status"] == "not_requested" and mp["binding_constraint"] == "em"
+    assert mp["max_price_for_em"] > 0 and mp["max_price"] == mp["max_price_for_em"]
+    assert mp["final_price_per_key"] == pytest.approx(mp["max_price_for_em"] / 150)
+
+    out = build_excel(deal_id, model, tmp_path / "em-only.xlsx")
+    wb = load_workbook(out, read_only=True)
+    assert "Pricing Sensitivity" in wb.sheetnames
+    vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value is not None]
+    wb.close()
+    assert "MAX-PRICE FINDINGS" in vals and "Max Price for EM target" in vals
+    assert str(mp["max_price_for_em"]) in vals
+    assert "not available: no IRR target set on this deal" in vals  # the IRR price cell
+    assert IRR_GRID_NO_TARGET_NOTE in vals
+    assert not any(v.startswith("LEVERED IRR") for v in vals)
+
+    html_str = _render_html(memo, model)
+    assert "Max-Price Findings" in html_str
+    assert f"Max price for {_TARGET_MOIC:.2f}x EM" in html_str
+    assert "Max price for" in html_str and "IRR:</strong>" not in html_str
+    assert IRR_GRID_NO_TARGET_NOTE in html_str
+    assert "Pricing Sensitivity (5x5 Grid)" not in html_str
+
+
 # ─────────────────── 3. transaction comps → Market Comps rows ───────────────────
 
 

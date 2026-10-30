@@ -321,6 +321,69 @@ def test_debt_schedule_sheet_prints_the_engine_schedule(tmp_path: Path) -> None:
     assert "60" in vals and "Totals" in vals
 
 
+def test_pricing_sheet_renders_max_price_without_a_grid_and_states_why(tmp_path: Path) -> None:
+    """EM-only payload shape: max_price present, grid absent, reason present —
+    the workbook keeps the solved EM price and prints the reason; the memo
+    section is the same sentence."""
+    from app.export import build_excel
+    from app.export.labels import IRR_GRID_NO_TARGET_NOTE
+    from app.export.memo_pdf import _render_max_price_callout, _render_sensitivity_grid
+
+    max_price = {
+        "target_irr": None, "target_em": 1.9, "max_price_for_irr": None,
+        "max_price_for_em": 38_500_000.0, "binding_constraint": "em",
+        "final_price_per_key": 256_666.67, "max_price": 38_500_000.0,
+        "irr_status": "not_requested", "em_status": "converged",
+    }
+    model = {"deal_name": "H", "max_price": max_price,
+             "sensitivity_grid_unavailable": IRR_GRID_NO_TARGET_NOTE}
+    vals = _sheet_values(build_excel("x", model, tmp_path / "em.xlsx"), "Pricing Sensitivity")
+    assert "MAX-PRICE FINDINGS" in vals and ("38500000" in vals or "38500000.0" in vals)
+    assert IRR_GRID_NO_TARGET_NOTE in vals
+    assert f"{NOT_AVAILABLE_PREFIX}: no IRR target set on this deal" in vals
+    assert not any(v.startswith("LEVERED IRR") or v == "EQUITY MULTIPLE" for v in vals)
+    assert "0" not in vals and "0.0" not in vals
+
+    assert IRR_GRID_NO_TARGET_NOTE in _render_sensitivity_grid(None, IRR_GRID_NO_TARGET_NOTE)
+    assert _render_sensitivity_grid(None, None) == ""
+    callout = _render_max_price_callout(max_price)
+    assert "Max price for 1.90x EM:</strong> $38,500,000" in callout
+    assert "IRR:</strong>" not in callout
+    # A non-converged search is described, never priced at the bracket end.
+    unreachable = dict(max_price, em_status="unreachable", max_price=None, max_price_for_em=None)
+    assert "no price down to half the basis clears this hurdle" in _render_max_price_callout(unreachable)
+
+
+def test_sensitivity_axis_ticks_do_not_collide_on_rate_axes() -> None:
+    from app.export.presentation import _fmt_sens_axis
+
+    rates = [0.0600, 0.0650, 0.0700, 0.0750, 0.0800]
+    for variable in ("exit_cap_rate", "interest_rate", "ltv"):
+        ticks = [_fmt_sens_axis(variable, v) for v in rates]
+        assert len(set(ticks)) == len(ticks), (variable, ticks)
+    assert _fmt_sens_axis("interest_rate", 0.0675) == "6.75%"
+    assert _fmt_sens_axis("revpar_growth", 0.03) == "3.0%"
+    assert _fmt_sens_axis("hold_years", 7.0) == "7"
+    assert _fmt_sens_axis("purchase_price", 36_400_000.0) == "$36.4M"
+
+
+def test_export_helpers_exist_once() -> None:
+    """One implementation each — the builders bind precision, never re-define."""
+    import inspect
+
+    from app.export import excel, live_payload, memo_pdf, presentation, refusals
+
+    for mod in (excel, memo_pdf, presentation, live_payload):
+        src = inspect.getsource(mod)
+        for name in ("def _as_float", "def _sum_strict", "def _num(", "def _fmt_usd(",
+                     "def _fmt_pct(", "def _fmt_mult(", "def _fmt_usd_m("):
+            if mod is presentation and name.startswith("def _fmt"):
+                continue  # one-line precision wrappers over the shared helpers
+            assert name not in src, (mod.__name__, name)
+    assert memo_pdf._fmt_pct is refusals.fmt_pct and excel._as_float is refusals.as_float
+    assert live_payload._num is refusals.as_float
+
+
 # ═════════════════ A3 / A8 / C8 — the routes ═════════════════
 
 

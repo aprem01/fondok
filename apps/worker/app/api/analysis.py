@@ -1,10 +1,10 @@
-"""AI analysis endpoints (memo drafting, variance, deal-level Q&A).
+"""AI analysis endpoints (variance, broker Q&A, pricing).
 
-The variance endpoint is the only one wired to real data right now —
-``POST /analysis/{deal_id}/analyze`` is intentionally a stub that
-returns a queued ``job_id`` so existing clients don't break, but the
-underlying free-form analysis flow is future work and there is no
-backing job runner yet (TODO(analysis-job-runner)).
+Every route here answers from the deal's own data or refuses with a
+reason; there is no stub route (the former ``POST /analysis/{id}/analyze``
+placeholder job was removed for go-live) and no default return hurdle —
+the pricing routes resolve the deal's Investment Profile targets and 422
+without one (FON-68).
 
 ``GET /analysis/{deal_id}/variance`` runs the **deterministic** part
 of the Variance agent on read — it pulls the latest extraction
@@ -2479,9 +2479,14 @@ class _MaxPriceGridOut(BaseModel):
 
 
 class _LOIRequest(BaseModel):
-    """POST body for ``/pricing/loi``. Every field is optional; the
-    engine fills sensible defaults so the analyst's one-click path
-    produces a copy-paste-ready draft.
+    """POST body for ``/pricing/loi``.
+
+    The return hurdles are optional with NO default — omitted, they are
+    read from the deal's Investment Profile, and with none anywhere the
+    route refuses (422). The remaining fields are template LOI terms
+    (parties, earnest money, due-diligence and closing periods,
+    exclusivity, contingencies); their defaults are standard hospitality
+    LOI language, not deal data, and the analyst edits them in the panel.
     """
 
     model_config = ConfigDict(extra="forbid")

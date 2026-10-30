@@ -33,7 +33,16 @@ from pptx.enum.text import PP_ALIGN
 from pptx.slide import Slide
 from pptx.util import Inches, Pt
 
-from .refusals import collect_refusals, refuse, unavailable
+from .refusals import (
+    collect_refusals,
+    fmt_int,
+    fmt_mult,
+    fmt_pct,
+    fmt_usd,
+    fmt_usd_m,
+    refuse,
+    unavailable,
+)
 
 # ─────────────────────────── palette ───────────────────────────
 SLATE = RGBColor(0x1F, 0x29, 0x37)
@@ -50,54 +59,28 @@ AMBER_50 = RGBColor(0xFF, 0xFB, 0xEB)
 RED_50 = RGBColor(0xFE, 0xE2, 0xE2)
 
 
-# A ``None`` reaching a formatter means the payload omitted the key rather
-# than carrying a zero, so the default code is ``no_source``; ``concept`` names
-# what the dash stands for so the Refusals channel can list it.
+# Formatters are the shared refusal-aware ones in :mod:`app.export.refusals`,
+# bound to the deck's precision (1 dp percentages, $x.xM).
 
 
 def _fmt_usd(v: float | int | None, concept: str | None = None) -> str:
-    if v is None:
-        return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
-    try:
-        return f"${float(v):,.0f}"
-    except (TypeError, ValueError):
-        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
+    return fmt_usd(v, concept=concept)
 
 
 def _fmt_usd_m(v: float | int | None, concept: str | None = None) -> str:
-    if v is None:
-        return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
-    try:
-        return f"${float(v) / 1_000_000:.1f}M"
-    except (TypeError, ValueError):
-        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
+    return fmt_usd_m(v, decimals=1, concept=concept)
 
 
 def _fmt_pct(v: float | None, concept: str | None = None) -> str:
-    if v is None:
-        return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
-    try:
-        return f"{float(v) * 100:.1f}%"
-    except (TypeError, ValueError):
-        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
+    return fmt_pct(v, decimals=1, concept=concept)
 
 
 def _fmt_mult(v: float | None, concept: str | None = None) -> str:
-    if v is None:
-        return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
-    try:
-        return f"{float(v):.2f}x"
-    except (TypeError, ValueError):
-        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
+    return fmt_mult(v, concept=concept)
 
 
 def _fmt_int(v: float | int | None, concept: str | None = None) -> str:
-    if v is None:
-        return refuse(ReasonCode.NO_SOURCE, "no value on the export payload", concept)
-    try:
-        return f"{round(float(v)):,}"
-    except (TypeError, ValueError):
-        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
+    return fmt_int(v, concept=concept)
 
 
 def _fmt_thousands(v: float | int | None, concept: str | None = None) -> str:
@@ -612,14 +595,21 @@ _SENS_METRIC_LABEL: dict[str, str] = {
 
 
 def _fmt_sens_axis(variable: str | None, value: float | None) -> str:
-    """Axis tick for a sensitivity variable, in that variable's own unit."""
+    """Axis tick for a sensitivity variable, in that variable's own unit.
+
+    Rates / LTV ticks are 50bp or finer apart, so they carry two decimals
+    (``6.50%`` / ``6.75%``); growth ticks are whole points apart (one
+    decimal); hold years are integers; prices / loans are $M.
+    """
     if value is None:
         return refuse(ReasonCode.NO_SOURCE, "axis value missing on the sensitivity output", "sensitivity")
     if variable == "hold_years":
         return f"{value:.0f}"
     if variable in ("purchase_price", "loan_amount"):
         return f"${value / 1_000_000:.1f}M"
-    return f"{value * 100:.1f}%" if variable == "exit_cap_rate" else f"{value * 100:.0f}%"
+    if variable in ("exit_cap_rate", "interest_rate", "ltv"):
+        return f"{value * 100:.2f}%"
+    return f"{value * 100:.1f}%"
 
 
 def _fmt_sens_metric(metric: str | None, value: float | None) -> str:

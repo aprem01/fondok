@@ -57,6 +57,20 @@ PRICING_NO_TARGET_NOTE = (
     "Pricing to target not available: no return target set on this deal"
 )
 
+#: The IRR sensitivity grid when the deal has an equity-multiple target only
+#: (the grid's breakeven sweep is against the IRR hurdle). The max-price
+#: block still renders — it is solved against the EM target.
+IRR_GRID_NO_TARGET_NOTE = (
+    "IRR sensitivity grid not available: no IRR target set on this deal"
+)
+
+#: What an export prints for a max-price search that did not converge
+#: (``price_solver.SolveStatus``) — never the bracket end as a price.
+SOLVER_STATUS_NOTE: dict[str, str] = {
+    "unreachable": "no price down to half the basis clears this hurdle",
+    "above_ceiling": "clears the hurdle even at twice the basis",
+}
+
 
 def noi_before_reserve_label(*, basis_confirmed: bool) -> str:
     """The proforma row label for a before-reserve NOI series."""
