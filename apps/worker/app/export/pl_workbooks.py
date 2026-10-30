@@ -1286,6 +1286,9 @@ def build_projections_workbook(
                en.value if en.value is not None
                else unavailable(en.code, en.reason or "not in the run", "terminal_noi"),
                _AMOUNT_FMT)
+    if bm_col is not None:
+        _write(ws, r, bm_col,
+               _not_applicable("the benchmark covers P&L expense lines only"), _AMOUNT_FMT)
     r += 1
 
     if not year_headers:

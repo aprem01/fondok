@@ -466,3 +466,32 @@ def test_ratio_message_names_zero_and_negative_denominators_apart() -> None:
         "not available: Total Revenue is zero for this year")
     assert _ratio(5.0, "X", -3.0, "Total Revenue") == (
         "not available: Total Revenue is negative for this year")
+
+
+@pytest.mark.asyncio
+async def test_with_a_benchmark_column_every_parity_row_reads_a_dash_never_blank() -> None:
+    """The methodology card: a Benchmark % with no published ratio shows a dash,
+    never an empty cell — including the exit NOI row."""
+    from app.export.pl_workbooks import (
+        FORWARD_NOI_LABEL,
+        build_projections_workbook,
+        projection_extras,
+        projection_values,
+    )
+
+    out = await _kimpton_outputs()
+    count, values = projection_values(out)
+    data = build_projections_workbook(
+        deal_id="deal-1", deal_name="Kimpton", year_headers=_headers(count),
+        values=values, assumptions=_assumptions(),
+        extras=projection_extras(out, count),
+        benchmark={"expense.dept_expenses.rooms": 0.25},
+    )
+    ws = load_workbook(io.BytesIO(data))["Future P&L"]
+    rows, cols = _grid(ws)
+    bm = next(c for name, c in cols.items() if "Benchmark" in name)
+    ret = out["returns"]
+    fwd_label = f"{FORWARD_NOI_LABEL} — {ret['exit_noi_period_label']}"
+    for label in ("Days", "Number of Rooms", "Available Rooms", "Occupied Rooms",
+                  "Net Cash Flow", fwd_label):
+        assert ws.cell(row=rows[label], column=bm).value == "—", label
