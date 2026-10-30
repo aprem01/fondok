@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { api, AskAnswerResult, isWorkerConnected, userMessage } from '@/lib/api';
 import { Citation as CitationChip } from '@/components/citations/Citation';
+import { MethodologyCitationChip } from '@/components/citations/MethodologyCitationChip';
 
 type AskState =
   | { kind: 'idle' }
@@ -164,18 +165,22 @@ export default function AskDeal({ dealId }: { dealId: string }) {
                   <span className="text-[10.5px] uppercase tracking-wider text-ink-500 font-semibold">
                     Citations:
                   </span>
-                  {r.citations.map((c, i) => (
-                    <CitationChip
-                      key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
-                      data={{
-                        documentId: c.document_id ?? '',
-                        page: c.page ?? 1,
-                        field: c.field ?? undefined,
-                        excerpt: c.excerpt ?? undefined,
-                      }}
-                      label={`p.${c.page ?? '—'}`}
-                    />
-                  ))}
+                  {r.citations.map((c, i) =>
+                    c.methodology_section ? (
+                      <MethodologyCitationChip key={`methodology:${c.methodology_section}:${i}`} section={c.methodology_section} />
+                    ) : (
+                      <CitationChip
+                        key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
+                        data={{
+                          documentId: c.document_id ?? '',
+                          page: c.page ?? 1,
+                          field: c.field ?? undefined,
+                          excerpt: c.excerpt ?? undefined,
+                        }}
+                        label={`p.${c.page ?? '—'}`}
+                      />
+                    ),
+                  )}
                 </div>
               )}
             </Card>

@@ -22,6 +22,14 @@ COPY packages/schemas-py /workspace/packages/schemas-py
 # image never carried the rules CSV).
 COPY evals /workspace/evals
 
+# FON-120 — the methodology package (one source for the Methodology page, the
+# admin detail, the engineering reference and the text Atlas reads). Resolved
+# at runtime via Path(__file__).resolve().parents[4] / "packages" /
+# "methodology" (app/methodology/loader.py). Without it /health reports
+# methodology_sections=0 + degraded_reasons=[methodology_missing], GET
+# /methodology is 503 and Atlas answers without the methodology block.
+COPY packages/methodology /workspace/packages/methodology
+
 WORKDIR /workspace/apps/worker
 
 COPY apps/worker/pyproject.toml apps/worker/uv.lock* ./

@@ -10,6 +10,7 @@ import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
 import { wizardDocSubtype, type DocSubtype } from './docSubtype';
 import type { DraftWizardPayload } from './wizardDraft';
+import type { MethodologyLevel, MethodologyLevelResponse } from './methodology/types';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -2363,6 +2364,15 @@ export const api = {
         ),
     },
   },
+  /** ``GET /methodology?level=…`` (apps/worker/app/api/methodology.py, FON-120).
+   *  ``conceptual`` needs a signed-in session; ``detailed`` and ``engineering``
+   *  need an admin of an internal tenant and 403 otherwise. The detailed
+   *  level is deliberately NOT in the web bundle — /methodology/detail reads
+   *  it from here at runtime. */
+  methodology: {
+    level: (level: MethodologyLevel, signal?: AbortSignal) =>
+      request<MethodologyLevelResponse>('GET', `/methodology?level=${level}`, undefined, { signal }),
+  },
   /** ``/observability/*`` (apps/worker/app/api/observability.py). Both
    *  endpoints require a signed-in session (``get_current_auth``) and scope
    *  to the CALLER's tenant, so they MUST go through ``request`` for the
@@ -3392,6 +3402,9 @@ export interface AskCitationResult {
   page: number | null;
   field: string | null;
   excerpt: string | null;
+  /** FON-120 — set when the answer rests on the Methodology block rather
+   *  than a document: the section id (`/methodology#<id>`). */
+  methodology_section?: string | null;
 }
 
 export interface AskAnswerResult {

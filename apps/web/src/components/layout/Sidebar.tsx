@@ -41,6 +41,10 @@ const navItems = [
   // Data Library was a stub (no backing endpoint); /data-library now redirects
   // to the backed Portfolio Library under Settings.
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
+  // FON-120 — the detailed methodology (formulas, defaults, precedence with
+  // values). Hidden from members here; the page re-checks the role and the
+  // worker enforces the stricter internal-admin gate on the content itself.
+  { href: '/methodology/detail', label: 'Methodology · Detail', icon: BookOpen, adminOnly: true },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
   // under Settings in concept (it's a tenant-level config surface)
   // but mounted as a top-level nav item so executives who only ever
@@ -239,7 +243,13 @@ export default function Sidebar({
           .filter(it => !it.adminOnly || currentRole === 'org:admin')
           .filter(it => !it.workerOnly || isWorkerConnected())
           .map(it => {
-          const isActive = pathname === it.href || (it.href !== '/dashboard' && pathname.startsWith(it.href));
+          // Longest matching href wins, so /methodology/detail lights its own
+          // row and not the Methodology row above it.
+          const isActive =
+            pathname === it.href ||
+            (it.href !== '/dashboard' &&
+              pathname.startsWith(it.href + '/') &&
+              !navItems.some((o) => o.href !== it.href && o.href.startsWith(it.href + '/') && pathname.startsWith(o.href)));
           const Icon = it.icon;
           // Surface tour anchors on the two nav rows the GettingStarted
           // sidebar points its "Show me" pulse at (replaces AppTour).

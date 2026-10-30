@@ -29,9 +29,14 @@ const dialog = readFileSync(
   join(root, 'src', 'components', 'project', 'DuplicateDealDialog.tsx'),
   'utf8',
 );
-// The detailed duplicate-deal description lives on the engineering reference
-// (the client page carries the plain-language summary).
-const methodology = readFileSync(join(root, 'src', 'components', 'methodology', 'EngineeringMethodology.tsx'), 'utf8');
+// The detailed duplicate-deal description lives on the engineering level of
+// the methodology package (the client level carries the plain-language
+// summary) — FON-120: one source, packages/methodology/sections/01-extraction.md.
+// Markdown wraps at ~100 columns, so compare on whitespace-normalised text.
+const methodology = readFileSync(
+  join(root, '..', '..', 'packages', 'methodology', 'sections', '01-extraction.md'),
+  'utf8',
+).replace(/\s+/g, ' ');
 
 describe('duplicate deal confirm copy', () => {
   it('defaults to NOT copying cell comments', () => {
@@ -95,9 +100,9 @@ describe('duplicate deal confirm copy', () => {
   });
 
   it('the methodology page describes the per-copy choice', () => {
-    expect(methodology).toContain('Also copy P&amp;L cell comments');
+    expect(methodology).toContain('Also copy P&L cell comments');
     expect(methodology).toContain('off by default');
-    expect(methodology).toContain('carrying the source deal&apos;s id');
+    expect(methodology).toContain("carrying the source deal's id");
   });
 });
 

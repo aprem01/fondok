@@ -120,6 +120,11 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
     ontology_version = startup.get("ontology_version")
     if isinstance(ontology_version, int) and ontology_version < 0:
         degraded_reasons.append("ontology_invalid")
+    # FON-120 — methodology package boot invariant (the USALI precedent):
+    # None = not probed yet, 0 = missing or invalid in this image.
+    methodology_sections = startup.get("methodology_sections")
+    if isinstance(methodology_sections, int) and methodology_sections <= 0:
+        degraded_reasons.append("methodology_missing")
 
     # Storage backend probe — a misconfigured S3 cutover (env var didn't
     # propagate, boto3 missing, etc.) is a degraded reason here; WHICH store,
@@ -141,6 +146,7 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
         "usali_rules": rules_loaded,
         "structural_recognizer": recognizer_ok,
         "ontology_version": ontology_version,
+        "methodology_sections": methodology_sections,
         "degraded_reasons": degraded_reasons,
     }
 

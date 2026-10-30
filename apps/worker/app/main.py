@@ -26,6 +26,7 @@ from .api import due_diligence as due_diligence_router
 from .api import export as export_router
 from .api import health as health_router
 from .api import market as market_router
+from .api import methodology as methodology_router
 from .api import model as model_router
 from .api import observability as observability_router
 from .api import ontology as ontology_router
@@ -62,6 +63,7 @@ _STARTUP_STATE: dict[str, object] = {
     "usali_rules_loaded": None,  # int count, -1 on load error, None pre-boot
     "structural_recognizer_available": None,  # bool, None pre-boot
     "ontology_version": None,  # int registry version, -1 on load error, None pre-boot
+    "methodology_sections": None,  # int section count, 0 when the package is missing/invalid, None pre-boot
 }
 
 
@@ -151,6 +153,28 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.exception("ontology: concept registry failed to load: %s", exc)
         _STARTUP_STATE["ontology_version"] = -1  # -1 signals error
+    # FON-120 — the methodology package (packages/methodology, copied into the
+    # image like evals/). Same precedent as the USALI catalog: a missing or
+    # invalid package must not crash the deploy but MUST be visible —
+    # /health reports ``methodology_sections`` and appends
+    # ``methodology_missing`` when it is zero. Atlas and GET /methodology
+    # read the same loaded package.
+    try:
+        from .methodology import load_at_startup as load_methodology
+
+        n_sections = load_methodology()
+        _STARTUP_STATE["methodology_sections"] = n_sections
+        if n_sections == 0:
+            logger.error(
+                "STARTUP DEGRADED: methodology package missing or invalid. "
+                "Check packages/methodology is present in the image. "
+                "GET /methodology is 503 and Atlas answers without the methodology block until fixed."
+            )
+        else:
+            logger.info("methodology: %d sections loaded at startup", n_sections)
+    except Exception as exc:
+        logger.exception("methodology: package load failed: %s", exc)
+        _STARTUP_STATE["methodology_sections"] = 0
     # Structural recognizer importability probe — caught the
     # post-USALI-v4 deploy where the recognizer module shipped but
     # imports were failing silently in a swallowed try block.
@@ -307,6 +331,9 @@ def create_app() -> FastAPI:
         model_router.engines_router, prefix="/deals", tags=["engines"]
     )
     app.include_router(market_router.router, prefix="/market", tags=["market"])
+    # FON-120 — the methodology package by level (conceptual: any signed-in
+    # caller; detailed / engineering: admin of an internal tenant).
+    app.include_router(methodology_router.router, tags=["methodology"])
     app.include_router(analysis_router.router, prefix="/analysis", tags=["analysis"])
     # /deals/{id}/dossier + /deals/{id}/ask — Context Data Product surface.
     app.include_router(dossier_router.router, prefix="/deals", tags=["dossier"])
