@@ -530,7 +530,7 @@ class Settings(BaseSettings):
     # construction; the log names the FIELD so the operator can fix the
     # source — the value itself is never written anywhere.
     @model_validator(mode="after")
-    def _strip_whitespace(self) -> "Settings":
+    def _strip_whitespace(self) -> Settings:
         for name in type(self).model_fields:
             value = getattr(self, name, None)
             if isinstance(value, SecretStr):

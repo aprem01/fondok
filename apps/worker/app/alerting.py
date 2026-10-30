@@ -27,6 +27,12 @@ Sites that should call ``report_alert`` directly:
   * All-documents-failed batch — error (Sam relies on per-doc OCR)
   * Engine root NOI calculation crash — error
   * Extractor retries exhausted on a single doc — warning
+  * LLM provider refused the key / credit (``app.llm``) — critical,
+    ``kind="llm_provider_unavailable"``, deduped to one per 10 minutes
+
+``kind`` is a stable machine-readable label (snake_case) for an alert
+family; it becomes the Sentry tag ``fondok.kind`` and a Slack field so a
+page can be routed or muted by what it is rather than by its title text.
 """
 
 from __future__ import annotations
@@ -164,12 +170,14 @@ def report_alert(
     stage: str | None = None,
     exc: BaseException | None = None,
     extra: dict[str, Any] | None = None,
+    kind: str | None = None,
 ) -> None:
     """Single entrypoint for high-severity events.
 
     Sends to Sentry (capture_exception when ``exc`` present, else
     capture_message) AND posts a one-line Slack alert when severity
-    >= ``SLACK_ALERT_MIN_SEVERITY``.
+    >= ``SLACK_ALERT_MIN_SEVERITY``. ``kind`` labels the alert family
+    (see the module docstring).
 
     Never raises out — alerting must be best-effort.
     """
@@ -178,6 +186,7 @@ def report_alert(
         "deal_id": deal_id,
         "tenant_id": tenant_id,
         "stage": stage,
+        "kind": kind,
         **(extra or {}),
     }
 
@@ -191,6 +200,8 @@ def report_alert(
                     scope.set_tag("fondok.tenant_id", tenant_id)
                 if stage:
                     scope.set_tag("fondok.stage", stage)
+                if kind:
+                    scope.set_tag("fondok.kind", kind)
                 for k, v in (extra or {}).items():
                     scope.set_extra(k, v)
                 if exc is not None:
@@ -229,6 +240,8 @@ def _maybe_slack(
     }.get(severity, ":information_source:")
 
     fields = []
+    if payload.get("kind"):
+        fields.append({"title": "Kind", "value": payload["kind"], "short": True})
     if payload.get("deal_id"):
         fields.append({"title": "Deal", "value": payload["deal_id"], "short": True})
     if payload.get("tenant_id"):

@@ -236,10 +236,21 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
     except Exception as exc:
         read_cache = {"error": type(exc).__name__}
 
+    # Last provider refusal (dead key / no credit) — type + time, never the
+    # message. Written by ``app.llm.record_provider_error`` (2026-10-30).
+    llm_provider: dict[str, Any]
+    try:
+        from ..llm import llm_provider_status
+
+        llm_provider = llm_provider_status()
+    except Exception as exc:
+        llm_provider = {"error": type(exc).__name__}
+
     return {
         "raw_store": _raw_store_snapshot(),
         "extraction_cache": extraction_cache,
         "read_cache": read_cache,
         "semantic_search": semantic_search,
         "auth": auth_posture(),
+        "llm_provider": llm_provider,
     }

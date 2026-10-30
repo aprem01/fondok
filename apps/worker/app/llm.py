@@ -22,10 +22,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import SystemMessage
 
 from .config import get_settings
@@ -100,6 +105,148 @@ def _normalize(raw: str) -> Provider:
             raw,
         )
     return "anthropic"
+
+
+# ─────────────────── provider availability monitor ───────────────────
+#
+# Go-live audit D.4 (2026-10-30). A revoked ANTHROPIC_API_KEY, a workspace
+# the key may not use, or an exhausted credit balance used to surface only
+# as every extraction failing — one generic error per document and nothing
+# that said "the provider is refusing us". Every ChatAnthropic built here
+# now carries ``ProviderErrorMonitor`` as an inheritable callback, so any
+# call path (invoke / ainvoke / structured output / streaming, in every
+# agent) that ends in such a refusal lands in ``record_provider_error``:
+#
+#   * ``report_alert(severity="critical", kind="llm_provider_unavailable")``
+#     at most once per ``PROVIDER_ALERT_DEDUPE_SECONDS`` per process — a
+#     burst of 40 failing chunks is one page, not forty;
+#   * ``last_error`` / ``last_error_at`` kept in module state and served on
+#     ``GET /admin/health`` as ``llm_provider``, so the operator reading
+#     "every extraction failed" sees WHY in the same screen.
+#
+# Rate limits (429), overloads (529), timeouts and request-shape 400s are
+# not provider-unavailable: the SDK retries the former and the latter are
+# our bug, not the key's. They never page from here.
+
+PROVIDER_ALERT_DEDUPE_SECONDS = 600.0
+
+ProviderErrorKind = Literal["authentication", "permission_denied", "insufficient_credit"]
+
+_PROVIDER_LOCK = threading.Lock()
+_PROVIDER_STATE: dict[str, Any] = {
+    "last_error": None,        # "<kind> (<ExceptionType> <status>)" — never the message
+    "last_error_at": None,     # ISO-8601 UTC
+    "_last_alert_monotonic": None,
+}
+
+_CREDIT_PHRASES = ("credit balance", "insufficient credit", "insufficient_credit")
+
+
+def classify_provider_error(exc: BaseException) -> ProviderErrorKind | None:
+    """``"authentication"`` / ``"permission_denied"`` / ``"insufficient_credit"``
+    when ``exc`` means the provider will refuse EVERY call until an operator
+    acts; ``None`` for anything else (transient, request-shaped, ours)."""
+    try:
+        import anthropic
+    except ImportError:  # pragma: no cover — the SDK is a hard dependency
+        return None
+    if isinstance(exc, anthropic.AuthenticationError):
+        return "authentication"
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return "permission_denied"
+    if isinstance(exc, anthropic.APIStatusError):
+        if getattr(exc, "status_code", None) == 402:
+            return "insufficient_credit"
+        # Anthropic reports an exhausted balance as a 400 invalid_request_error
+        # whose message starts "Your credit balance is too low …".
+        haystack = f"{getattr(exc, 'message', '')} {getattr(exc, 'body', '')}".lower()
+        if any(phrase in haystack for phrase in _CREDIT_PHRASES):
+            return "insufficient_credit"
+    return None
+
+
+def record_provider_error(
+    exc: BaseException,
+    *,
+    now: datetime | None = None,
+    monotonic: float | None = None,
+) -> bool:
+    """Classify ``exc``; on a provider refusal update the module state and
+    alert (deduped). Returns True when an alert was raised for this call,
+    False when ``exc`` was not a provider refusal OR the alert was deduped
+    (the state is updated either way). ``now`` / ``monotonic`` are
+    injectable clocks for tests. Never raises."""
+    kind = classify_provider_error(exc)
+    if kind is None:
+        return False
+    status = getattr(exc, "status_code", None)
+    label = f"{kind} ({type(exc).__name__}{f' {status}' if status is not None else ''})"
+    at = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+    tick = time.monotonic() if monotonic is None else monotonic
+    with _PROVIDER_LOCK:
+        _PROVIDER_STATE["last_error"] = label
+        _PROVIDER_STATE["last_error_at"] = at
+        last = _PROVIDER_STATE["_last_alert_monotonic"]
+        deduped = last is not None and (tick - last) < PROVIDER_ALERT_DEDUPE_SECONDS
+        if not deduped:
+            _PROVIDER_STATE["_last_alert_monotonic"] = tick
+    logger.error("llm: provider unavailable — %s%s", label, " (alert deduped)" if deduped else "")
+    if deduped:
+        return False
+    try:
+        from . import alerting
+
+        alerting.report_alert(
+            severity="critical",
+            kind="llm_provider_unavailable",
+            title=f"LLM provider unavailable: {label}",
+            stage="llm",
+            exc=exc,
+            extra={"error_kind": kind, "error_type": type(exc).__name__, "status_code": status},
+        )
+    except Exception as alert_exc:  # alerting is best-effort
+        logger.warning("llm: provider alert failed (%s)", alert_exc)
+    return True
+
+
+def llm_provider_status() -> dict[str, str | None]:
+    """The ``llm_provider`` block of ``GET /admin/health``."""
+    with _PROVIDER_LOCK:
+        return {
+            "last_error": _PROVIDER_STATE["last_error"],
+            "last_error_at": _PROVIDER_STATE["last_error_at"],
+        }
+
+
+def reset_provider_state() -> None:
+    """Tests only — module state is process-wide."""
+    with _PROVIDER_LOCK:
+        _PROVIDER_STATE.update(
+            {"last_error": None, "last_error_at": None, "_last_alert_monotonic": None}
+        )
+
+
+class ProviderErrorMonitor(BaseCallbackHandler):
+    """LangChain callback that forwards every LLM error to
+    :func:`record_provider_error`. Inline (same thread as the call) so the
+    state is written before the exception reaches the agent; the exception
+    itself is untouched."""
+
+    run_inline = True
+    raise_error = False
+
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kwargs: Any,
+    ) -> None:
+        record_provider_error(error)
+
+
+_PROVIDER_MONITOR = ProviderErrorMonitor()
 
 
 def _resolve_max_retries(role: Role, override: int | None) -> int:
@@ -182,6 +329,9 @@ def build_llm(
         "max_tokens": max_tokens,
         "timeout": timeout,
         "max_retries": resolved_retries,
+        # Provider refusals (dead key / no credit) page once and show on
+        # /admin/health — see the monitor section above.
+        "callbacks": [_PROVIDER_MONITOR],
     }
     # Opus 4.7 rejects the temperature parameter; set only on others.
     if temperature is not None and "opus-4-7" not in model:
@@ -371,6 +521,7 @@ async def invoke_with_escalation(
         "max_tokens": max_tokens,
         "timeout": timeout,
         "max_retries": _resolve_max_retries(role, None),
+        "callbacks": [_PROVIDER_MONITOR],
     }
     if temperature is not None and "opus-4-7" not in escalation_model:
         kwargs["temperature"] = temperature
@@ -642,7 +793,9 @@ def build_agent_system_blocks(
 
 
 __all__ = [
+    "PROVIDER_ALERT_DEDUPE_SECONDS",
     "Provider",
+    "ProviderErrorMonitor",
     "Role",
     "brand_catalog_as_prompt_block",
     "build_agent_system_blocks",
@@ -650,6 +803,10 @@ __all__ = [
     "build_structured_llm",
     "cached_system_message",
     "cached_system_message_blocks",
+    "classify_provider_error",
     "extraction_schema_block",
     "invoke_with_escalation",
+    "llm_provider_status",
+    "record_provider_error",
+    "reset_provider_state",
 ]
