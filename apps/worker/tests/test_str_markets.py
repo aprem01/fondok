@@ -503,6 +503,10 @@ async def test_typeahead_kinds_keys_labels_and_ranking(tmp_path: Path) -> None:
         assert len(rows) == 9
         assert rows[0]["market_key"] == NORTH and rows[0]["submarket_key"] is None
 
+        # LIKE wildcards typed by the analyst are literal characters.
+        for probe in ("%", "_", "north%", "%_%", "\\"):
+            assert (await c.get("/reference/str-markets", headers=H, params={"q": probe})).json() == [], probe
+
 
 @pytest.mark.asyncio
 async def test_licensing_gate_internal_sees_external_needs_both_switches(tmp_path: Path) -> None:
@@ -527,9 +531,8 @@ async def test_licensing_gate_internal_sees_external_needs_both_switches(tmp_pat
         # Both on → served.
         _serve_external(True)
         assert len((await c.get("/reference/str-markets", headers=HX)).json()) == 9
-        # A caller with no registry row is treated as external: served under
-        # the same two switches, never more than a registered client.
-        assert len((await c.get("/reference/str-markets", headers=HU)).json()) == 9
+        # A caller with no registry row is closed whatever the switches say.
+        assert (await c.get("/reference/str-markets", headers=HU)).json() == []
         # Flip the setting back off → withheld again, internal unaffected.
         _serve_external(False)
         assert (await c.get("/reference/str-markets", headers=HX)).json() == []
@@ -537,14 +540,66 @@ async def test_licensing_gate_internal_sees_external_needs_both_switches(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_external_tenant_may_still_store_a_key_it_was_served(tmp_path: Path) -> None:
-    """Storing a legitimately picked key is validated against the table only,
-    never against the caller's kind (design B.2)."""
+async def test_withheld_tenant_cannot_store_or_probe_a_key(tmp_path: Path) -> None:
+    """Review F1 — the licence gate must not be an oracle: a withheld tenant
+    sending a key gets one answer whether the key exists or not, and no name."""
     await _load_costar(tmp_path)
     async with _client() as c:
-        r = await c.post("/deals", headers=HX, json={"name": "ext", "str_market_id": NORTH})
+        for headers in (HX, HU):
+            for key in (NORTH, "costar:nowhere-xx-usa"):
+                r = await c.post("/deals", headers=headers, json={"name": "probe", "str_market_id": key})
+                assert r.status_code == 422, r.text
+                assert r.json()["detail"]["code"] == "market_list_unavailable"
+                assert "Northhaven" not in r.text and "costar:" not in r.text
+            r = await c.post("/deals", headers=headers, json={
+                "name": "probe", "submarket_id": f"{NORTH}/riverside",
+            })
+            assert r.status_code == 422 and r.json()["detail"]["code"] == "market_list_unavailable"
+            assert "Riverside" not in r.text
+        # A typed market is still fine for a withheld tenant.
+        r = await c.post("/deals", headers=HX, json={"name": "typed", "market": "Northhaven, TS"})
+        assert r.status_code == 201 and r.json()["str_market_id"] is None
+        deal_id = r.json()["id"]
+        r = await c.patch(f"/deals/{deal_id}", headers=HX, json={"str_market_id": NORTH})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "market_list_unavailable"
+        assert "Northhaven - TS USA" not in r.text
+        # Internal: 200 / 201 as before.
+        r = await c.post("/deals", headers=H, json={"name": "int", "str_market_id": NORTH})
+        assert r.status_code == 201 and r.json()["market"] == "Northhaven - TS USA"
+        # An unknown key for an internal caller is still the specific refusal.
+        r = await c.post("/deals", headers=H, json={"name": "int", "str_market_id": "costar:nowhere-xx-usa"})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "unknown_str_market_id"
+
+
+@pytest.mark.asyncio
+async def test_stored_keys_stay_valid_when_the_licence_closes(tmp_path: Path) -> None:
+    await _load_costar(tmp_path, licensed_external=True)
+    _serve_external(True)
+    async with _client() as c:
+        r = await c.post("/deals", headers=HX, json={
+            "name": "ext", "str_market_id": NORTH, "submarket_id": f"{NORTH}/riverside",
+        })
         assert r.status_code == 201, r.text
-        assert r.json()["market"] == "Northhaven - TS USA"
+        deal_id = r.json()["id"]
+    _serve_external(False)
+    async with _client() as c:
+        assert (await c.get("/reference/str-markets", headers=HX)).json() == []
+        # Unrelated edits, and re-sending the keys already on the deal, pass.
+        r = await c.patch(f"/deals/{deal_id}", headers=HX, json={"name": "renamed"})
+        assert r.status_code == 200, r.text
+        r = await c.patch(f"/deals/{deal_id}", headers=HX, json={
+            "market": "Northhaven - TS USA", "str_market_id": NORTH,
+            "submarket": "Riverside", "submarket_id": f"{NORTH}/riverside",
+        })
+        assert r.status_code == 200, r.text
+        assert (r.json()["str_market_id"], r.json()["submarket_id"]) == (NORTH, f"{NORTH}/riverside")
+        r = await c.patch(f"/deals/{deal_id}", headers=HX, json={"submarket": "Typed over"})
+        assert r.status_code == 200 and r.json()["submarket_id"] is None
+        assert r.json()["str_market_id"] == NORTH
+        # A NEW key is refused without naming anything.
+        r = await c.patch(f"/deals/{deal_id}", headers=HX, json={"submarket_id": f"{NORTH}/harbor-district"})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "market_list_unavailable"
+        assert "Harbor" not in r.text
 
 
 @pytest.mark.asyncio
@@ -861,7 +916,7 @@ async def test_orphan_report_lists_deals_whose_keys_left_the_list(tmp_path: Path
         kept = (await c.post("/deals", headers=H, json={
             "name": "kept", "str_market_id": NORTH, "submarket_id": f"{NORTH}/riverside",
         })).json()
-        gone = (await c.post("/deals", headers=HX, json={
+        gone = (await c.post("/deals", headers=H, json={
             "name": "gone", "str_market_id": SOUTH, "submarket_id": f"{SOUTH}/old-town",
         })).json()
         typed = (await c.post("/deals", headers=H, json={"name": "typed", "market": "Typed"})).json()
@@ -874,7 +929,7 @@ async def test_orphan_report_lists_deals_whose_keys_left_the_list(tmp_path: Path
     assert smaller.problems == []
     orphans = await loader.report_orphans(get_engine(), smaller)
     assert [o["deal_id"] for o in orphans] == [gone["id"]]
-    assert orphans[0]["tenant_id"] == EXTERNAL
+    assert orphans[0]["tenant_id"] == TENANT
     assert orphans[0]["market_key"] == SOUTH and orphans[0]["market_key_in_list"] is True
     assert orphans[0]["submarket_key"] == f"{SOUTH}/old-town" and orphans[0]["submarket_key_in_list"] is False
     assert orphans[0]["market"] == "Southport - TZ USA" and orphans[0]["submarket"] == "Old Town"
@@ -884,8 +939,51 @@ async def test_orphan_report_lists_deals_whose_keys_left_the_list(tmp_path: Path
     # Applying the smaller file never touches the deal: names and keys stay.
     await loader.plan_and_apply(get_engine(), smaller, commit=True, dataset_version="v2")
     async with _client() as c:
-        got = (await c.get(f"/deals/{gone['id']}", headers=HX)).json()
+        got = (await c.get(f"/deals/{gone['id']}", headers=H)).json()
         assert (got["str_market_id"], got["submarket_id"], got["submarket"]) == (
             SOUTH, f"{SOUTH}/old-town", "Old Town",
         )
         assert got["market_type"] == "metro"  # the market itself is still listed
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_load_clears_the_dataset_row(tmp_path: Path) -> None:
+    from app.database import get_engine, get_session_factory
+
+    await _load_costar(tmp_path, licensed_external=True)
+    async with get_session_factory()() as s:
+        assert (await s.execute(text("SELECT COUNT(*) FROM reference_datasets"))).scalar() == 1
+    parsed = loader.parse_csv(_csv(tmp_path, GOOD_CSV))
+    done = await loader.plan_and_apply(get_engine(), parsed, commit=True)
+    assert done["applied"] is True and done.get("dataset_row_cleared") is True
+    async with get_session_factory()() as s:
+        assert (await s.execute(text("SELECT COUNT(*) FROM str_markets"))).scalar() == 4
+        # The version / licence row never describes rows it did not load.
+        assert (await s.execute(text("SELECT COUNT(*) FROM reference_datasets"))).scalar() == 0
+    async with _client() as c:
+        body = (await c.get("/admin/health", headers=H)).json()
+        assert body["reference"]["str_markets"]["loaded"] is True
+        assert body["reference"]["str_markets"]["version"] is None
+        assert body["reference"]["str_markets"]["licensed_for_external"] is False
+
+
+@pytest.mark.asyncio
+async def test_commit_with_a_licence_flag_fails_loudly_without_the_dataset_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.database import get_engine, get_session_factory
+
+    real = loader._table_exists
+
+    async def no_dataset_table(conn, table="str_markets"):
+        return False if table == "reference_datasets" else await real(conn, table)
+
+    monkeypatch.setattr(loader, "_table_exists", no_dataset_table)
+    parsed = loader.parse_costar_geography(_csv(tmp_path, COSTAR_CSV, "geo.csv"))
+    with pytest.raises(RuntimeError, match="reference_datasets table is missing"):
+        await loader.plan_and_apply(
+            get_engine(), parsed, commit=True, dataset_version="v", licensed_external=True,
+        )
+    async with get_session_factory()() as s:
+        # The transaction rolled back: nothing written.
+        assert (await s.execute(text("SELECT COUNT(*) FROM str_markets"))).scalar() == 0

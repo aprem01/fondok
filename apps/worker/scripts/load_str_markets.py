@@ -490,10 +490,22 @@ async def plan_and_apply(
                 for r in parsed.rows
             ],
         )
-        if dataset_version and await _table_exists(conn, "reference_datasets"):
+        has_dataset_table = await _table_exists(conn, "reference_datasets")
+        if (dataset_version or licensed_external) and not has_dataset_table:
+            # Loud, inside the transaction: the version / licence flag would be
+            # silently dropped otherwise, and the gate reads that flag.
+            raise RuntimeError(
+                "reference_datasets table is missing — cannot record the dataset "
+                "version / licence flag; run the startup migrations first. Nothing written."
+            )
+        if has_dataset_table:
+            # The row describes the rows now in the table and nothing else: a
+            # load without --version (legacy str-csv) clears it.
             await conn.execute(
                 text("DELETE FROM reference_datasets WHERE dataset = :d"), {"d": DATASET_NAME}
             )
+            summary["dataset_row_cleared"] = True
+        if dataset_version:
             await conn.execute(
                 text(
                     """
@@ -619,7 +631,11 @@ def _print(summary: dict[str, Any], parsed: ParseResult, commit: bool) -> None:
     if summary["applied"]:
         print(
             "applied: str_markets replaced"
-            + (" · reference_datasets row written" if summary.get("dataset_row_written") else "")
+            + (
+                " · reference_datasets row written" if summary.get("dataset_row_written")
+                else " · reference_datasets row cleared (no --version)" if summary.get("dataset_row_cleared")
+                else ""
+            )
         )
     elif commit:
         print("NOT applied")
@@ -695,6 +711,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.format == "costar-geography" and not args.version:
         parser.error("--version <label> is required with --format costar-geography")
+    if (args.licensed_external or args.licence_note) and not args.version:
+        parser.error("--licensed-external / --licence-note need --version <label> (the dataset row carries them)")
     sys.exit(asyncio.run(_main(args)))
 
 

@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -70,13 +70,20 @@ loader = _load_script()
 async def _reset_db(tmp_path: Path) -> None:
     from app.database import get_engine, get_session_factory
     from app.migrations import run_startup_migrations
+    from app.tenants import reset_tenant_cache, upsert_tenant
 
     await run_startup_migrations()
     async with get_session_factory()() as session:
-        for tbl in ("audit_log", "documents", "deals", "str_markets", "reference_datasets"):
+        for tbl in ("audit_log", "documents", "deals", "str_markets", "reference_datasets", "tenants"):
             with contextlib.suppress(Exception):
                 await session.execute(text(f"DELETE FROM {tbl}"))
         await session.commit()
+    # An INTERNAL workspace: the list (and storing its keys) is always served.
+    reset_tenant_cache()
+    await upsert_tenant(
+        tenant_id=UUID(TENANT), clerk_org_id="org_test_internal_om_match",
+        name="Fondok Internal (test)", kind="internal", status="active",
+    )
     p = tmp_path / "geo.csv"
     p.write_text(COSTAR_CSV, encoding="utf-8")
     parsed = loader.parse_costar_geography(p)
@@ -346,3 +353,21 @@ async def test_nothing_loaded_or_no_columns_writes_nothing_and_never_raises() ->
         assert (await _deal(deal["id"]))["market"] is None
     finally:
         await run_startup_migrations()
+
+
+@pytest.mark.asyncio
+async def test_a_submarket_only_edit_keeps_the_om_provenance_detail() -> None:
+    deal = await _create_deal()
+    await _run_sync(deal["id"], [_field("property_overview.location", "Northhaven, TS")])
+    before = await _deal(deal["id"])
+    assert before["market_source"] == "om_exact_match" and before["market_source_detail"]
+    async with _client() as c:
+        r = await c.patch(f"/deals/{deal['id']}", headers=H, json={"submarket_id": f"{NORTH}/riverside"})
+        assert r.status_code == 200, r.text
+        assert r.json()["submarket"] == "Riverside"
+        assert r.json()["market_source"] == "om_exact_match"
+        assert r.json()["market_source_detail"] == before["market_source_detail"]
+        # Touching the market itself hands the field to the analyst.
+        r = await c.patch(f"/deals/{deal['id']}", headers=H, json={"str_market_id": SOUTH})
+        assert r.status_code == 200, r.text
+        assert r.json()["market_source"] == "analyst" and r.json()["market_source_detail"] is None

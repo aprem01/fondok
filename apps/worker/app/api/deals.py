@@ -1303,11 +1303,13 @@ def _clean_text(value: Any) -> str | None:
 async def _resolve_market_fields(
     session: AsyncSession,
     *,
+    tenant_id: UUID | str,
     str_market_id: str | None,
     market: str | None,
     submarket_id: str | None = None,
     submarket: str | None = None,
     market_known: bool = False,
+    existing_keys: tuple[str | None, str | None] = (None, None),
 ) -> dict[str, str | None]:
     """Sam #6 / FON-96 — validate the market and submarket keys against the
     loaded taxonomy list.
@@ -1324,14 +1326,43 @@ async def _resolve_market_fields(
     ``market_known`` (PATCH, market untouched): the deal's stored market key
     is not re-validated — a key that left the list on a reload stays on the
     deal (names stay) — only the submarket's membership is checked.
+
+    Licence gate (FON-96 review F1): a key the caller could not have been
+    served (``may_serve_str_markets`` false — the list is withheld from this
+    workspace) is refused with 422 ``market_list_unavailable`` BEFORE any
+    lookup, whether or not it exists, and the body echoes no name or key —
+    otherwise a withheld tenant could enumerate the list one guess per
+    request. The deal's already-stored keys (``existing_keys``) stay valid
+    regardless, so an unrelated PATCH never breaks on a licence change.
     """
-    from ..services.str_markets import get_str_market, get_str_submarket
+    from ..services.str_markets import (
+        get_str_market,
+        get_str_submarket,
+        may_serve_str_markets,
+    )
 
     mid = _clean_text(str_market_id)
     name = _clean_text(market)
     sid = _clean_text(submarket_id)
     sub_name = _clean_text(submarket)
     market_type: str | None = None
+    new_keys = [
+        k for k, stored in ((mid, existing_keys[0]), (sid, existing_keys[1]))
+        if k is not None and k != stored
+    ]
+    if new_keys:
+        served, _why = await may_serve_str_markets(session, tenant_id)
+        if not served:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "market_list_unavailable",
+                    "message": (
+                        "The market list is not available to this workspace, so a "
+                        "market or submarket can only be saved as typed, without a key."
+                    ),
+                },
+            )
     if mid is not None:
         ref = await get_str_market(session, mid)
         if ref is None and not market_known:
@@ -1704,7 +1735,7 @@ async def create_deal(
     # Sam #6 / FON-96 — market / submarket and their keys, same old-schema
     # contract.
     market_values: dict[str, str | None] = await _resolve_market_fields(
-        session, str_market_id=body.str_market_id, market=body.market,
+        session, tenant_id=tenant_id, str_market_id=body.str_market_id, market=body.market,
         submarket_id=body.submarket_id, submarket=body.submarket,
     )
     for col in _MARKET_COLUMNS:
@@ -2109,11 +2140,13 @@ async def update_deal(
         market_touched = "str_market_id" in changes
         resolved = await _resolve_market_fields(
             session,
+            tenant_id=tenant_id,
             str_market_id=changes["str_market_id"] if market_touched else existing_mid,
             market=changes.get("market"),
             submarket_id=changes.get("submarket_id", existing_sid),
             submarket=changes.get("submarket"),
             market_known=not market_touched,
+            existing_keys=(existing_mid, existing_sid),
         )
         if market_touched:
             changes["str_market_id"] = resolved["str_market_id"]
@@ -2134,8 +2167,14 @@ async def update_deal(
                 col: (changes[col] if col in changes else existing._mapping.get(col))
                 for col in _MARKET_COLUMNS
             }
-            changes["market_source"] = analyst_market_source(merged)
-            changes["market_source_detail"] = None
+            existing_source = existing._mapping.get("market_source")
+            if market_touched or "market" in changes or existing_source is None:
+                # The market itself changed (or nothing had claimed the field):
+                # the analyst's claim replaces any OM provenance.
+                changes["market_source"] = analyst_market_source(merged)
+                changes["market_source_detail"] = None
+            # A submarket-only edit leaves the market's provenance — and the
+            # OM's document / page / phrase detail — exactly as it is.
     for col in _MARKET_COLUMNS:
         if col in changes and not await _deals_has_market_column(session, col):
             logger.warning(

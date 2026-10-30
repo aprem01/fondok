@@ -256,6 +256,16 @@ async def _extra_cols(session: AsyncSession) -> str:
 
 # ─────────────────────────── reads ───────────────────────────
 
+#: The LIKE wildcards in a typed search term are literal characters: a "%"
+#: or "_" the analyst types must not match everything / any character.
+LIKE_ESCAPE_SQL = "ESCAPE '\\'"
+
+
+def like_escape(term: str) -> str:
+    """Escape ``\``, ``%`` and ``_`` for a ``LIKE … ESCAPE '\'`` pattern."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 
 async def search_str_markets(
     session: AsyncSession,
@@ -278,25 +288,26 @@ async def search_str_markets(
         return []
     where: list[str] = []
     params: dict[str, Any] = {"limit": max(1, min(int(limit), 500))}
-    needle = (q or "").strip().lower()
+    needle = like_escape((q or "").strip().lower())
     prefix_rank = ""
     if needle:
         params["q"] = f"%{needle}%"
         params["qp"] = f"{needle}%"
+        e = LIKE_ESCAPE_SQL
         if kind == "market":
             where.append(
-                "(LOWER(market_name) LIKE :q OR LOWER(COALESCE(state, '')) LIKE :q "
-                "OR LOWER(str_market_id) LIKE :q)"
+                f"(LOWER(market_name) LIKE :q {e} OR LOWER(COALESCE(state, '')) LIKE :q {e} "
+                f"OR LOWER(str_market_id) LIKE :q {e})"
             )
-            prefix_rank = "CASE WHEN LOWER(market_name) LIKE :qp THEN 0 ELSE 1 END"
+            prefix_rank = f"CASE WHEN LOWER(market_name) LIKE :qp {e} THEN 0 ELSE 1 END"
         else:
             where.append(
-                "(LOWER(market_name) LIKE :q OR LOWER(COALESCE(submarket_name, '')) LIKE :q "
-                "OR LOWER(COALESCE(state, '')) LIKE :q OR LOWER(str_market_id) LIKE :q "
-                "OR LOWER(COALESCE(submarket_id, '')) LIKE :q)"
+                f"(LOWER(market_name) LIKE :q {e} OR LOWER(COALESCE(submarket_name, '')) LIKE :q {e} "
+                f"OR LOWER(COALESCE(state, '')) LIKE :q {e} OR LOWER(str_market_id) LIKE :q {e} "
+                f"OR LOWER(COALESCE(submarket_id, '')) LIKE :q {e})"
             )
             prefix_rank = (
-                "CASE WHEN LOWER(COALESCE(submarket_name, market_name)) LIKE :qp THEN 0 ELSE 1 END"
+                f"CASE WHEN LOWER(COALESCE(submarket_name, market_name)) LIKE :qp {e} THEN 0 ELSE 1 END"
             )
     if str_market_id:
         where.append("str_market_id = :mid")
@@ -453,15 +464,18 @@ async def external_serving_enabled(session: AsyncSession) -> tuple[bool, bool, b
 
 async def may_serve_str_markets(session: AsyncSession, tenant_id: UUID | str) -> tuple[bool, str]:
     """May the list be served to ``tenant_id``? ``(True, "internal")`` for a
-    registered internal tenant; for anyone else ``(True, "external_licensed")``
-    only when both licensing switches are on, otherwise ``(False, <why>)``.
-    A tenant with no registry row is treated as external (closed)."""
+    registered internal tenant; for a registered external tenant
+    ``(True, "external_licensed")`` only when both licensing switches are on;
+    otherwise ``(False, <why>)``. A caller with NO registry row is closed
+    (``withheld_unregistered``) whatever the switches say — default closed."""
     from ..tenants import get_tenant
 
     tenant = None
     with contextlib.suppress(Exception):
         tenant = await get_tenant(tenant_id)
-    if tenant is not None and tenant.is_internal:
+    if tenant is None:
+        return False, "withheld_unregistered"
+    if tenant.is_internal:
         return True, "internal"
     served, setting_on, licensed = await external_serving_enabled(session)
     if served:
@@ -490,6 +504,7 @@ __all__ = [
     "has_reference_datasets_table",
     "has_str_markets_table",
     "infer_market_type",
+    "like_escape",
     "market_key",
     "may_serve_str_markets",
     "metro_name_state",
