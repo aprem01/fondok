@@ -186,6 +186,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS submarket TEXT",
     ),
     (
+        # FON-96 — the deal's submarket taxonomy key (``str_markets.submarket_id``
+        # of the picked submarket; NULL for a typed submarket). ``str_market_id``
+        # keeps holding the market key — since the CoStar geography export it
+        # is a Fondok-minted taxonomy key (``costar:<slug>``), not a vendor id
+        # (docs/METHODOLOGY_ENGINEERING.md). Nullable, additive; probed.
+        "deals.add_submarket_id",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS submarket_id TEXT",
+    ),
+    (
+        # FON-96 — where ``market`` / ``submarket`` came from, mirroring
+        # ``positioning_source``: ``analyst`` (wizard / Overview — an OM never
+        # overwrites it) or ``om_exact_match`` (the OM's location phrase equalled
+        # exactly one metro market name; ``market_source_detail`` carries the
+        # document id, page and matched phrase). NULL = no claim on the field.
+        "deals.add_market_source",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS market_source TEXT",
+    ),
+    (
+        "deals.add_market_source_detail",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS market_source_detail JSONB",
+    ),
+    (
         # Sam 2026-10-15 (om-brand-str-scale) — where ``deals.positioning``
         # came from: ``om_brand_str_scale`` (the OM's brand matched the brand
         # catalog and the deal had no tier, so its STR chain scale was
@@ -1359,6 +1381,50 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON str_markets (str_market_id)
         """,
     ),
+    # FON-96 — the CoStar geography export carries no vendor ids, so the
+    # loader mints taxonomy keys (``costar:<slug>`` / ``…/<slug>``) into the
+    # same ``str_market_id`` / ``submarket_id`` columns and ``id`` becomes the
+    # key itself. Three additive columns describe each row: ``market_type``
+    # (``metro`` = a "City - ST USA" market, ``regional`` = named in words),
+    # ``source`` (``costar_geography_export``), ``dataset_version``.
+    (
+        "str_markets.add_market_type",
+        "ALTER TABLE str_markets ADD COLUMN IF NOT EXISTS market_type TEXT",
+    ),
+    (
+        "str_markets.add_source",
+        "ALTER TABLE str_markets ADD COLUMN IF NOT EXISTS source TEXT",
+    ),
+    (
+        "str_markets.add_dataset_version",
+        "ALTER TABLE str_markets ADD COLUMN IF NOT EXISTS dataset_version TEXT",
+    ),
+    # FON-96 — one row per loaded reference dataset (today only
+    # ``str_markets``): which file version is in the table, its SHA-256, the
+    # counts the operator checks against the file's own notes, and the
+    # licence flag that (with ``MARKET_TAXONOMY_SERVE_EXTERNAL``) gates serving
+    # the list to external workspaces. Written by the loader in the same
+    # transaction as the table replace. NOT tenant-scoped — reference
+    # metadata, no customer data (listed beside ``str_markets`` in
+    # ``app/tenant_middleware.py``).
+    (
+        "reference_datasets.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS reference_datasets (
+            dataset                TEXT PRIMARY KEY,
+            version                TEXT NOT NULL,
+            source_sha256          TEXT NOT NULL,
+            row_count              INTEGER NOT NULL,
+            market_count           INTEGER,
+            submarket_count        INTEGER,
+            state_count            INTEGER,
+            licensed_for_external  BOOLEAN NOT NULL DEFAULT FALSE,
+            licence_note           TEXT,
+            loaded_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            loaded_by              TEXT
+        )
+        """,
+    ),
     # ─────────────── FON-93 — tenant registry (workspace isolation) ───────
     # ``id`` is the UUIDv5 the worker derives from the Clerk org id — the
     # same value every tenant-scoped table stores in ``tenant_id`` — so a
@@ -1496,6 +1562,20 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.add_submarket_sqlite",
         "ALTER TABLE deals ADD COLUMN submarket TEXT",
+    ),
+    (
+        # FON-96 — SQLite mirror of the submarket key / market provenance
+        # ALTERs (JSON is TEXT here, as for ``positioning_source_detail``).
+        "deals.add_submarket_id_sqlite",
+        "ALTER TABLE deals ADD COLUMN submarket_id TEXT",
+    ),
+    (
+        "deals.add_market_source_sqlite",
+        "ALTER TABLE deals ADD COLUMN market_source TEXT",
+    ),
+    (
+        "deals.add_market_source_detail_sqlite",
+        "ALTER TABLE deals ADD COLUMN market_source_detail TEXT",
     ),
     (
         # om-brand-str-scale — SQLite mirror of the positioning_source ALTERs.
@@ -2308,6 +2388,38 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE INDEX IF NOT EXISTS idx_str_markets_market
         ON str_markets (str_market_id)
+        """,
+    ),
+    # FON-96 — SQLite mirrors of the str_markets ALTERs (PRAGMA-guarded) and
+    # of reference_datasets (BOOLEAN → INTEGER 0/1, TIMESTAMPTZ → TEXT).
+    (
+        "str_markets.add_market_type_sqlite",
+        "ALTER TABLE str_markets ADD COLUMN market_type TEXT",
+    ),
+    (
+        "str_markets.add_source_sqlite",
+        "ALTER TABLE str_markets ADD COLUMN source TEXT",
+    ),
+    (
+        "str_markets.add_dataset_version_sqlite",
+        "ALTER TABLE str_markets ADD COLUMN dataset_version TEXT",
+    ),
+    (
+        "reference_datasets.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS reference_datasets (
+            dataset                TEXT PRIMARY KEY,
+            version                TEXT NOT NULL,
+            source_sha256          TEXT NOT NULL,
+            row_count              INTEGER NOT NULL,
+            market_count           INTEGER,
+            submarket_count        INTEGER,
+            state_count            INTEGER,
+            licensed_for_external  INTEGER NOT NULL DEFAULT 0,
+            licence_note           TEXT,
+            loaded_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            loaded_by              TEXT
+        )
         """,
     ),
     # FON-93 — SQLite mirror of the Postgres tenant registry.

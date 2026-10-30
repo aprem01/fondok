@@ -378,6 +378,16 @@ class Settings(BaseSettings):
     # ``docs/WORKSPACE_ISOLATION.md`` for the rollout order.
     DB_SET_TENANT_GUC: bool = Field(default=False)
 
+    # ── FON-96: market / submarket taxonomy licensing gate ───────────
+    # The CoStar geography export behind ``str_markets`` is licensed vendor
+    # data. ``GET /reference/str-markets`` serves it to an INTERNAL tenant
+    # always; an EXTERNAL tenant gets rows only when BOTH this setting and
+    # the loaded dataset's ``reference_datasets.licensed_for_external`` flag
+    # (set by ``scripts/load_str_markets.py --licensed-external``) are true.
+    # OFF by default — flip only after CoStar confirms the licence. Surfaced
+    # in ``GET /admin/health`` under ``reference``.
+    MARKET_TAXONOMY_SERVE_EXTERNAL: bool = Field(default=False)
+
     # Clerk → worker webhook (``POST /webhooks/clerk``). The Svix signing
     # secret from the Clerk dashboard (``whsec_…``). Unset: the endpoint
     # refuses every delivery with 503 — it never accepts an unsigned body.
