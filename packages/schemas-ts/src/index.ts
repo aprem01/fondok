@@ -483,6 +483,174 @@ export const InvestmentEngineOutput = z.object({
 });
 export type InvestmentEngineOutput = z.infer<typeof InvestmentEngineOutput>;
 
+// ─────────── FON-116 / FON-117 — topline drivers (benchmark × penetration × ramp) ───────────
+// Mirror of fondok_schemas.underwriting.{ClassBucket, BenchmarkLevel, GrowthSource,
+// GrowthYear, BenchmarkYear, ToplineReference, ToplineDrivers, IndexDriverYear}.
+
+export const ClassBucket = z.enum([
+  'luxury_upper_upscale',
+  'upscale_upper_midscale',
+  'midscale_economy',
+  'all',
+]);
+export type ClassBucket = z.infer<typeof ClassBucket>;
+
+export const BenchmarkLevel = z.enum(['comp_set', 'submarket', 'market', 'none']);
+export type BenchmarkLevel = z.infer<typeof BenchmarkLevel>;
+
+export const GrowthSource = z.enum([
+  'analyst_override',
+  'cbre_horizons',
+  'costar_submarket_forecast',
+  'carried_forward',
+  'withheld_by_policy',
+  'unavailable',
+]);
+export type GrowthSource = z.infer<typeof GrowthSource>;
+
+export const BenchmarkBasis = z.enum(['actual', 'forecast', 'assumption']);
+export type BenchmarkBasis = z.infer<typeof BenchmarkBasis>;
+
+export const PenetrationSource = z.enum(['default', 'analyst_override']);
+export type PenetrationSource = z.infer<typeof PenetrationSource>;
+
+export const RampSource = z.enum(['default', 'analyst_override', 'undefined']);
+export type RampSource = z.infer<typeof RampSource>;
+
+/** How the ramp applied to ONE model year — see the Python docstring. */
+export const ToplineRampState = z.enum([
+  'ramped',
+  'stabilized',
+  'no_ramp',
+  'undefined_for_stabilization_year',
+  'stabilization_after_hold',
+]);
+export type ToplineRampState = z.infer<typeof ToplineRampState>;
+
+/** `flat_no_growth`: the year had no growth figure for the metric — held, never seeded. */
+export const IndexDriverStatus = z.enum([
+  'driven',
+  'no_target',
+  'benchmark_unavailable',
+  'scalar_year1_only',
+  'flat_no_growth',
+]);
+export type IndexDriverStatus = z.infer<typeof IndexDriverStatus>;
+
+export const IndexTargetSource = z.enum(['by_year', 'scalar']);
+export type IndexTargetSource = z.infer<typeof IndexTargetSource>;
+
+const GrowthFraction = z.number().min(-0.5).max(0.5);
+const PenetrationPoints = z.number().min(25).max(250);
+const RampFraction = z.number().gt(0).max(1.5);
+
+/** Growth applied INTO one model year, per metric, with its source. */
+export const GrowthYear = z.object({
+  year: z.number().int().min(1),
+  calendar_year: z.number().int().nullable().optional(),
+  occupancy_growth: GrowthFraction.nullable().optional(),
+  adr_growth: GrowthFraction.nullable().optional(),
+  occupancy_source: GrowthSource,
+  adr_source: GrowthSource,
+  class_bucket: ClassBucket.nullable().optional(),
+  bucket_label: z.string().nullable().optional(),
+  doc_name: z.string().nullable().optional(),
+  page: z.number().int().nullable().optional(),
+  report_date: z.string().nullable().optional(),
+  label: z.string(),
+  reason: ReasonCode.nullable().optional(),
+});
+export type GrowthYear = z.infer<typeof GrowthYear>;
+
+/** The benchmark level for one model year (Year 1 actual, later years grown). */
+export const BenchmarkYear = z.object({
+  year: z.number().int().min(1),
+  calendar_year: z.number().int().nullable().optional(),
+  occupancy: z.number().gt(0).max(1).nullable().optional(),
+  adr: z.number().positive().nullable().optional(),
+  revpar: z.number().nonnegative().nullable().optional(),
+  basis: BenchmarkBasis.nullable().optional(),
+  level: BenchmarkLevel,
+  label: z.string(),
+  doc_name: z.string().nullable().optional(),
+  page: z.number().int().nullable().optional(),
+});
+export type BenchmarkYear = z.infer<typeof BenchmarkYear>;
+
+/** The subject's own T-12 — a reference row; it moves no number. */
+export const ToplineReference = z.object({
+  occupancy: z.number().min(0).max(1).nullable().optional(),
+  adr: z.number().positive().nullable().optional(),
+  revpar: z.number().nonnegative().nullable().optional(),
+  period_label: z.string().nullable().optional(),
+  doc_name: z.string().nullable().optional(),
+});
+export type ToplineReference = z.infer<typeof ToplineReference>;
+
+/**
+ * The subject's topline basis: benchmark × stabilized penetration × ramp per
+ * model year (topline-growth-plan.md §2.1 / §2.4). `ramp_by_year` null = the
+ * engine's default ramp for S ([0.85, 0.95] for S = 3, [0.85] for S = 2,
+ * undefined for years 3..S−1 when S ≥ 4).
+ */
+export const ToplineDrivers = z.object({
+  methodology_version: z.number().int().min(2).default(2),
+  benchmark_level: BenchmarkLevel,
+  benchmark_label: z.string(),
+  benchmark_fallback_reason: z.string().nullable().optional(),
+  benchmark_by_year: z.array(BenchmarkYear).default([]),
+  growth_by_year: z.array(GrowthYear).default([]),
+  stabilization_year: z.number().int().min(1),
+  penetration_occ: PenetrationPoints.default(100),
+  penetration_adr: PenetrationPoints.default(100),
+  penetration_occ_source: PenetrationSource.default('default'),
+  penetration_adr_source: PenetrationSource.default('default'),
+  ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
+  ramp_source: RampSource.default('default'),
+  penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),
+  penetration_adr_by_year: z.array(PenetrationPoints.nullable()).default([]),
+  t12_reference: ToplineReference.nullable().optional(),
+});
+export type ToplineDrivers = z.infer<typeof ToplineDrivers>;
+
+/** One model year's occupancy / ADR record (`revenue.topline_by_year[i]`). */
+export const IndexDriverYear = z.object({
+  year: z.number().int().min(1),
+  calendar_year: z.number().int().nullable().optional(),
+  method: z.string().nullable().optional(),
+  benchmark_occupancy: z.number().nullable().optional(),
+  benchmark_adr: z.number().nullable().optional(),
+  benchmark_occupancy_source: z.string().nullable().optional(),
+  benchmark_adr_source: z.string().nullable().optional(),
+  benchmark_doc: z.string().nullable().optional(),
+  benchmark_page: z.number().int().nullable().optional(),
+  mpi_target: z.number().nullable().optional(),
+  ari_target: z.number().nullable().optional(),
+  mpi_target_source: IndexTargetSource.nullable().optional(),
+  ari_target_source: IndexTargetSource.nullable().optional(),
+  rgi_derived: z.number().nullable().optional(),
+  occupancy: z.number().nullable().optional(),
+  adr: z.number().nullable().optional(),
+  occupancy_status: IndexDriverStatus.default('no_target'),
+  adr_status: IndexDriverStatus.default('no_target'),
+  reason: z.string().nullable().optional(),
+  // FON-116 / FON-117 — topline methodology v2.
+  benchmark_level: BenchmarkLevel.nullable().optional(),
+  ramp_pct: z.number().nullable().optional(),
+  ramp_state: ToplineRampState.nullable().optional(),
+  penetration_occ_source: PenetrationSource.nullable().optional(),
+  penetration_adr_source: PenetrationSource.nullable().optional(),
+  occupancy_growth_applied: z.number().nullable().optional(),
+  adr_growth_applied: z.number().nullable().optional(),
+  occupancy_growth_source: GrowthSource.nullable().optional(),
+  adr_growth_source: GrowthSource.nullable().optional(),
+  growth_label: z.string().nullable().optional(),
+  t12_occupancy: z.number().nullable().optional(),
+  t12_adr: z.number().nullable().optional(),
+  capped_95: z.boolean().default(false),
+});
+export type IndexDriverYear = z.infer<typeof IndexDriverYear>;
+
 export const RevenueEngineInput = z.object({
   deal_id: z.string().uuid(),
   keys: z.number().int().positive(),
@@ -493,6 +661,12 @@ export const RevenueEngineInput = z.object({
   fb_revenue_per_occupied_room: z.number().nonnegative().default(0),
   other_revenue_pct_of_rooms: z.number().min(0).max(1).default(0),
   hold_years: z.number().int().min(1).max(20),
+  // FON-116 / FON-117 — per-year growth (index y−1 = growth INTO year y; null =
+  // held flat, `flat_no_growth`; the whole list null = the scalar) and the
+  // topline basis (null = legacy path).
+  occupancy_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
+  adr_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
+  topline: ToplineDrivers.nullable().optional(),
 });
 export type RevenueEngineInput = z.infer<typeof RevenueEngineInput>;
 
@@ -544,6 +718,10 @@ export const RevenueEngineOutput = z.object({
   years: z.array(RevenueProjectionYear),
   total_revenue_cagr: z.number(),
   provenance: ProvenanceMap.default({}),
+  // FON-116 / FON-117 — one record per model year, and the topline method the
+  // run used (2 = benchmark × penetration × ramp; 1 = legacy scalar / driver).
+  topline_by_year: z.array(IndexDriverYear).default([]),
+  topline_methodology_version: z.number().int().min(1).default(1),
 });
 export type RevenueEngineOutput = z.infer<typeof RevenueEngineOutput>;
 

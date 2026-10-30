@@ -1448,3 +1448,45 @@ async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
 
     assert base["occupancy_growth"] == pytest.approx(0.002)
     assert base["__sources__"]["occupancy_growth"] == "analyst_override"
+
+
+# ─────────── FON-116 / FON-117 (topline PR 2) — the loader's constant growth list ───────────
+
+
+def test_loader_feeds_the_scalar_growth_as_a_constant_per_year_list() -> None:
+    """The revenue input the loader builds carries today's scalar growth as a
+    per-year list (index y−1 = growth INTO year y; Year 1 has none) and no
+    ``topline`` yet — the resolvers are the next PR."""
+    from app.services.engine_runner import _build_input_for, _constant_growth_by_year
+
+    base = kimpton_seed()
+    revenue_input = _build_input_for("revenue", KIMPTON_FIXTURE_DEAL_ID, base, {})
+    assert revenue_input.topline is None
+    assert revenue_input.occupancy_growth_by_year == [None, 0.008, 0.008, 0.008, 0.008]
+    assert revenue_input.adr_growth_by_year == [None, 0.04, 0.04, 0.04, 0.04]
+    assert revenue_input.occupancy_growth == 0.008 and revenue_input.adr_growth == 0.04
+    assert _constant_growth_by_year(0.03, 1) == [None]
+    assert _constant_growth_by_year(0.03, 0) == []
+
+
+def test_constant_growth_list_feed_equals_the_scalar_path_exactly() -> None:
+    """Byte-identity: the engine run on the loader's input equals the run on
+    the same input with the lists removed — figures, records AND traces."""
+    from app.engines.revenue import RevenueEngine
+    from app.services.engine_runner import _build_input_for
+
+    listed = _build_input_for("revenue", KIMPTON_FIXTURE_DEAL_ID, kimpton_seed(), {})
+    scalar = listed.model_copy(
+        update={"occupancy_growth_by_year": None, "adr_growth_by_year": None}
+    )
+    assert scalar.occupancy_growth_by_year is None and listed.occupancy_growth_by_year is not None
+    out_listed = RevenueEngine().run(listed)
+    out_scalar = RevenueEngine().run(scalar)
+    assert out_listed.model_dump_json() == out_scalar.model_dump_json()
+    assert out_listed.topline_methodology_version == 1
+    # The traces still name the scalar assumption the list restates.
+    occ = out_listed.provenance["years[2].occupancy"]
+    assert occ.formula == (
+        "occupancy = min(0.95, starting_occupancy × (1 + occupancy_growth) ^ years_compounded)"
+    )
+    assert {i.name: i.assumption_key for i in occ.inputs}["occupancy_growth"] == "occupancy_growth"

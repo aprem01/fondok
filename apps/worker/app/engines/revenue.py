@@ -32,9 +32,27 @@ them to every year the schedule touches. The schedule is then the ONLY
 displacement applied: the scalar ``y1_*_displacement_pct`` and the structured
 ``pip_displacement`` are ignored rather than stacked (never double-applied).
 An empty schedule (the default) leaves every output byte-identical.
+
+FON-116 / FON-117 — topline methodology v2 (``docs/plans/go-live-2026-10-30/
+topline-growth-plan.md`` §2.4). When ``RevenueEngineInput.topline`` is set,
+each year's un-displaced occupancy / ADR is ``benchmark × penetration ÷ 100``
+where the penetration is the stabilized index ``P`` × the year's ramp ``r_y``
+before stabilization (or a per-year override), occupancy held under
+:data:`OCCUPANCY_CAP` and flagged ``capped_95``; a metric with no benchmark
+runs on the subject's own starting level × growth with
+``benchmark_unavailable`` and is NOT penetrated. Growth is one step per year
+(``occupancy_growth_by_year`` / ``adr_growth_by_year``; ``None`` = held flat,
+``flat_no_growth``); a constant list equal to the scalar assumption evaluates
+to exactly the scalar expression, so with ``topline=None`` and the loader's
+constant list every golden figure and trace is byte-identical. The output
+carries one ``topline_by_year`` record per model year and the
+``topline_methodology_version`` the run used.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
@@ -46,12 +64,255 @@ from fondok_schemas.underwriting import (
     RevenueEngineOutput,
     RevenueProjectionYear,
     SegmentYear,
+    ToplineDrivers,
 )
 
 from .base import BaseEngine
 from .timeline import parse_iso_date
 
 DAYS_PER_YEAR = 365
+
+# ──────── FON-116 / FON-117 — topline methodology (benchmark × penetration × ramp) ────────
+
+#: The topline method this engine implements: the subject's occupancy / ADR are
+#: benchmark × stabilized penetration × ramp per model year, with per-year
+#: growth lists (``topline-growth-plan.md`` §2.4). Emitted on the output as
+#: ``topline_methodology_version`` for a run ``RevenueEngineInput.topline``
+#: drove; a run on the legacy scalar / Index Analysis driver path reports
+#: :data:`LEGACY_TOPLINE_METHODOLOGY_VERSION`, so "0 headline changes" is never
+#: claimed across methods (``scripts/compare_golden_baseline.py`` prints when
+#: the two differ).
+TOPLINE_METHODOLOGY_VERSION = 2
+LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
+
+#: The occupancy ceiling every projected year is held under — the same 0.95
+#: the compounding path has always applied; under the topline it is surfaced
+#: on the year's record as ``capped_95`` instead of binding silently.
+OCCUPANCY_CAP = 0.95
+
+#: Stabilized penetration when the analyst set none: parity with the benchmark.
+DEFAULT_PENETRATION_INDEX = 100.0
+
+#: The default ramp (fraction of the stabilized penetration for years 1..S−1)
+#: is DEFINED for stabilization in Year 3 ([0.85, 0.95]) and Year 2 ([0.85])
+#: only. For S ≥ 4 Years 1–2 keep those two fractions and Years 3..S−1 are
+#: undefined: they run at 100 % and the record says
+#: ``undefined_for_stabilization_year`` — no interpolation is invented
+#: (open decision 8.3 of the plan).
+_DEFAULT_RAMP_Y1 = 0.85
+_DEFAULT_RAMP_Y2 = 0.95
+_TOPLINE_METHOD = "benchmark_penetration_ramp"
+
+
+def default_ramp_by_year(stabilization_year: int) -> list[float | None]:
+    """Default ramp fractions for years ``1..S−1`` (index ``y − 1``).
+
+    ``[]`` for S ≤ 1, ``[0.85]`` for S = 2, ``[0.85, 0.95]`` for S = 3 and
+    ``[0.85, 0.95, None, …]`` for S ≥ 4 — ``None`` = undefined for that year.
+    """
+    n = max(0, stabilization_year - 1)
+    defined: list[float | None] = [_DEFAULT_RAMP_Y1, _DEFAULT_RAMP_Y2][:n]
+    return defined + [None] * (n - len(defined))
+
+
+def _compound(value: float, steps: Sequence[float | None]) -> float:
+    """``value`` grown by one growth step per year, ``None`` = held flat.
+
+    Consecutive equal steps are applied as one power — ``value × (1 + g) ^ n``
+    — which is exactly the expression the scalar path has always evaluated, so
+    a constant list reproduces the scalar projection to the last bit; a
+    varying list is the product of those runs.
+    """
+    out = value
+    i = 0
+    n_steps = len(steps)
+    while i < n_steps:
+        g = steps[i]
+        j = i + 1
+        while j < n_steps and steps[j] == g:
+            j += 1
+        out = out * (1.0 + (g if g is not None else 0.0)) ** (j - i)
+        i = j
+    return out
+
+
+def _growth_into(
+    by_year: Sequence[float | None] | None, scalar: float, year: int
+) -> tuple[float | None, bool]:
+    """``(growth applied INTO model year ``year``, came-from-the-list)``.
+
+    With no list the scalar carries every year (legacy). With a list, index
+    ``year − 1`` is the figure; ``None`` — or a list that ends before the year
+    — is "no growth figure": the metric is held flat, never seeded.
+    """
+    if by_year is None:
+        return scalar, False
+    idx = year - 1
+    return (by_year[idx] if 0 <= idx < len(by_year) else None), True
+
+
+@dataclass
+class _ToplinePlan:
+    """What the topline resolved for every model year, before displacement.
+
+    ``occ_drivers`` / ``adr_drivers`` hold benchmark × penetration ÷ 100 per
+    year (index ``y − 1``; ``None`` = that metric has no benchmark for the year
+    and runs on the subject's own level × growth). ``records`` is the per-year
+    provenance the engine fills with the figures that ran.
+    """
+
+    occ_drivers: list[float | None] = field(default_factory=list)
+    adr_drivers: list[float | None] = field(default_factory=list)
+    records: dict[int, IndexDriverYear] = field(default_factory=dict)
+
+
+def _ramp_for_year(
+    topline: ToplineDrivers, year: int, hold_years: int
+) -> tuple[float | None, str, str | None]:
+    """``(ramp fraction, ramp state, note)`` for one model year — §2.4.
+
+    * ``y ≥ S`` → no ramp, ``stabilized``.
+    * ``y < S`` with a fraction → ``P × r_y``, ``ramped``; when the hold ends
+      before S the LAST projected year is ``stabilization_after_hold`` — it
+      still runs at its ramp and the projection never reaches 100 %.
+    * ``y < S`` without a fraction → 100 %: ``undefined_for_stabilization_year``
+      when the default ramp is in use and undefined for the year (S ≥ 4, years
+      3..S−1), ``no_ramp`` when the analyst's ramp has no entry for the year.
+    """
+    s = topline.stabilization_year
+    if year >= s:
+        return None, "stabilized", None
+    ramp = topline.ramp_by_year if topline.ramp_by_year is not None else default_ramp_by_year(s)
+    r = ramp[year - 1] if 0 <= year - 1 < len(ramp) else None
+    if r is None:
+        if topline.ramp_by_year is None and s >= 4 and year >= 3:
+            return None, "undefined_for_stabilization_year", (
+                f"Year {year}: the default ramp is defined for stabilization in Year 3 "
+                f"(85 % / 95 %) only — with stabilization in Year {s} the ramp for "
+                f"Years 3–{s - 1} is undefined, so the year runs at 100 % of the "
+                f"stabilized penetration. Enter the ramp for Years 3–{s - 1}."
+            )
+        return None, "no_ramp", (
+            f"Year {year}: no ramp entered for the year — it runs at 100 % of the "
+            "stabilized penetration."
+        )
+    if s > hold_years and year == hold_years:
+        return r, "stabilization_after_hold", (
+            f"Stabilization (Year {s}) is after the hold; Year {hold_years} runs at "
+            f"ramp {r:g} and the projection never reaches the stabilized penetration."
+        )
+    return r, "ramped", None
+
+
+def _plan_topline(
+    payload: RevenueEngineInput, calendar_years: Sequence[int]
+) -> _ToplinePlan:
+    """Resolve §2.4 for every model year: the per-year driver values the loop
+    applies and the provenance record each year is echoed on.
+
+    ``pen_y = V_y`` (per-year override) | ``P × r_y`` (y < S, ramp defined) |
+    ``P``; ``occupancy = benchmark × pen ÷ 100`` (the loop applies the 0.95
+    cap and flags it), ``adr = benchmark × pen ÷ 100``. A metric with no
+    benchmark for the year is NOT penetrated: ``None`` here, and the loop runs
+    the subject's own level × growth for it.
+    """
+    topline = payload.topline
+    assert topline is not None
+    plan = _ToplinePlan(
+        occ_drivers=[None] * payload.hold_years,
+        adr_drivers=[None] * payload.hold_years,
+    )
+    bench_by_year = {b.year: b for b in topline.benchmark_by_year}
+    growth_by_year = {g.year: g for g in topline.growth_by_year}
+    t12 = topline.t12_reference
+    metric_label = {"occupancy": "occupancy", "adr": "ADR"}
+
+    def _override(lst: Sequence[float | None], year: int) -> float | None:
+        return lst[year - 1] if 0 <= year - 1 < len(lst) else None
+
+    for y in range(1, payload.hold_years + 1):
+        bench = bench_by_year.get(y)
+        ramp, ramp_state, ramp_note = _ramp_for_year(topline, y, payload.hold_years)
+        gy = growth_by_year.get(y)
+        notes: list[str] = []
+        rec = IndexDriverYear(
+            year=y,
+            calendar_year=(
+                bench.calendar_year
+                if bench is not None and bench.calendar_year is not None
+                else (gy.calendar_year if gy is not None and gy.calendar_year is not None else None)
+                or (calendar_years[y - 1] if y - 1 < len(calendar_years) else None)
+            ),
+            method=_TOPLINE_METHOD,
+            benchmark_level=topline.benchmark_level,
+            benchmark_doc=bench.doc_name if bench is not None else None,
+            benchmark_page=bench.page if bench is not None else None,
+            ramp_pct=ramp,
+            ramp_state=ramp_state,
+            t12_occupancy=t12.occupancy if t12 is not None else None,
+            t12_adr=t12.adr if t12 is not None else None,
+            growth_label=gy.label if gy is not None else None,
+            occupancy_growth_source=gy.occupancy_source if gy is not None else None,
+            adr_growth_source=gy.adr_source if gy is not None else None,
+        )
+        if topline.benchmark_level == "none":
+            notes.append(
+                "No benchmark — projecting from the subject's T-12"
+                + (f" ({topline.benchmark_fallback_reason})" if topline.benchmark_fallback_reason else "")
+                + "."
+            )
+        for metric, target_attr, source_attr in (
+            ("occupancy", "mpi_target", "mpi_target_source"),
+            ("adr", "ari_target", "ari_target_source"),
+        ):
+            b_value = getattr(bench, metric) if bench is not None else None
+            if b_value is None:
+                setattr(rec, f"{metric}_status", "benchmark_unavailable")
+                if topline.benchmark_level != "none":
+                    notes.append(
+                        f"Subject T-12 (starting_{metric}) — no benchmark for "
+                        f"{metric_label[metric]} at the {topline.benchmark_level} level"
+                        + ("" if bench is None else f" for Year {y}")
+                        + "; penetration and ramp are not applied to it."
+                    )
+                continue
+            p = topline.penetration_occ if metric == "occupancy" else topline.penetration_adr
+            p_source = (
+                topline.penetration_occ_source if metric == "occupancy" else topline.penetration_adr_source
+            )
+            by_year = (
+                topline.penetration_occ_by_year if metric == "occupancy" else topline.penetration_adr_by_year
+            )
+            v = _override(by_year, y)
+            if v is not None:
+                pen = v
+                setattr(rec, source_attr, "by_year")
+            else:
+                pen = p * ramp if ramp is not None else p
+                setattr(rec, source_attr, "scalar")
+                setattr(rec, f"penetration_{'occ' if metric == 'occupancy' else 'adr'}_source", p_source)
+            driver = b_value * pen / 100.0
+            setattr(rec, target_attr, pen)
+            setattr(rec, f"benchmark_{metric}", b_value)
+            setattr(rec, f"benchmark_{metric}_source", bench.label if bench is not None else None)
+            setattr(rec, f"{metric}_status", "driven")
+            if metric == "occupancy":
+                plan.occ_drivers[y - 1] = driver
+                if driver > OCCUPANCY_CAP:
+                    rec.capped_95 = True
+                    notes.append(
+                        f"Occupancy capped at {OCCUPANCY_CAP:.0%}: benchmark × penetration "
+                        f"= {driver:.4f}."
+                    )
+            else:
+                plan.adr_drivers[y - 1] = driver
+        if rec.mpi_target is not None and rec.ari_target is not None:
+            rec.rgi_derived = rec.mpi_target * rec.ari_target / 100.0
+        if ramp_note:
+            notes.append(ramp_note)
+        rec.reason = " ".join(notes) if notes else None
+        plan.records[y] = rec
+    return plan
 
 
 def projection_start_year(close_date: str | None) -> int | None:
@@ -425,8 +686,11 @@ def _rate_trace(
     y1_driver: IndexDriverYear | None,
     anchor: tuple[float, int],
     growth_key: str,
-    growth: float,
+    growth_scalar: float,
+    growth_steps: Sequence[tuple[int, float | None]],
+    growth_from_list: bool,
     cap: float | None,
+    y1_cap: float | None,
     y1_displacement_key: str,
     y1_displacement: float,
     pip: PIPDisplacement | None,
@@ -461,7 +725,10 @@ def _rate_trace(
             )
             inputs.extend(drv_inputs)
             notes.append(note)
-            return term
+            # FON-116 — under the topline Year 1 is held under the occupancy
+            # ceiling like every other year (the legacy driver path never
+            # capped Year 1 and keeps that expression).
+            return f"min({y1_cap}, {term})" if y1_cap is not None else term
         inputs.append(
             ValueInput(name=starting_key, value=starting_value, assumption_key=starting_key)
         )
@@ -552,9 +819,46 @@ def _rate_trace(
                 f"Anchored on Year {anchor_year}, the last year an Index Analysis "
                 f"driver set ({anchor_value:.6g})."
             )
-        inputs.append(ValueInput(name=growth_key, value=growth, assumption_key=growth_key))
-        inputs.append(ValueInput(name="years_compounded", value=float(year - anchor_year)))
-        grown = f"{base} × (1 + {growth_key}) ^ years_compounded"
+        # FON-116 — growth is one step per year. With no per-year list, or a
+        # list that restates the scalar assumption for every step, the trace
+        # names that assumption and the power (the expression the engine
+        # evaluated); a varying list names every year's step so the lineage
+        # walk reaches ``*_growth_by_year``. A step with no figure is held
+        # flat and said so — it is never a seeded rate.
+        constant = (not growth_from_list) or all(g == growth_scalar for _, g in growth_steps)
+        if constant:
+            inputs.append(
+                ValueInput(name=growth_key, value=growth_scalar, assumption_key=growth_key)
+            )
+            inputs.append(ValueInput(name="years_compounded", value=float(year - anchor_year)))
+            grown = f"{base} × (1 + {growth_key}) ^ years_compounded"
+        else:
+            terms: list[str] = []
+            flat_years: list[int] = []
+            for step_year, g in growth_steps:
+                name = f"{growth_key}_y{step_year}"
+                inputs.append(
+                    ValueInput(
+                        name=name,
+                        value=g if g is not None else 0.0,
+                        assumption_key=f"{growth_key}_by_year",
+                    )
+                )
+                terms.append(f"(1 + {name})")
+                if g is None:
+                    flat_years.append(step_year)
+            grown = f"{base} × " + " × ".join(terms)
+            notes.append(
+                f"Per-year {growth_key} applied into each of Years "
+                f"{growth_steps[0][0]}–{growth_steps[-1][0]}."
+                + (
+                    " Year(s) " + ", ".join(str(fy) for fy in flat_years)
+                    + " held flat — no growth figure for that year (growth 0 is the "
+                    "absence of growth, not a seeded rate)."
+                    if flat_years
+                    else ""
+                )
+            )
         formula = f"{metric} = min({cap}, {grown})" if cap is not None else f"{metric} = {grown}"
         if pip_out_year_factor is not None:
             name, factor = pip_out_year_factor
@@ -615,22 +919,72 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # baseline; a later driven year becomes the anchor the following
         # undriven years compound from. Both lists empty → the legacy
         # expressions below run unchanged (byte-identical goldens).
-        occ_drivers = list(payload.occupancy_by_year_override or [])
-        adr_drivers = list(payload.adr_by_year_override or [])
+        # FON-41 #2 — the projection calendar (read by the per-year records
+        # below and echoed on the output; nothing in the math reads it).
+        calendar_years = projection_calendar_years(
+            payload.acquisition_close_date, payload.hold_years
+        )
+        # FON-116 / FON-117 — the topline (benchmark × penetration × ramp)
+        # resolves every year's driver value up front; the legacy Index
+        # Analysis drivers arrive as lists. The two are mutually exclusive
+        # (input validator), so from here on one list per metric drives.
+        topline_plan = (
+            _plan_topline(payload, calendar_years) if payload.topline is not None else None
+        )
+        if topline_plan is not None:
+            occ_drivers = topline_plan.occ_drivers
+            adr_drivers = topline_plan.adr_drivers
+        else:
+            occ_drivers = list(payload.occupancy_by_year_override or [])
+            adr_drivers = list(payload.adr_by_year_override or [])
 
         def _driver(lst: list[float | None], year: int) -> float | None:
             return lst[year - 1] if 0 <= year - 1 < len(lst) else None
 
+        # Under the topline Year 1 is held under the occupancy ceiling like
+        # every other year (and says ``capped_95``); the legacy driver path
+        # never capped Year 1 and keeps that expression.
+        y1_cap = OCCUPANCY_CAP if topline_plan is not None else None
         if _driver(occ_drivers, 1) is not None:
             baseline_occ = _driver(occ_drivers, 1)  # type: ignore[assignment]
+            if y1_cap is not None:
+                baseline_occ = min(y1_cap, baseline_occ)
         if _driver(adr_drivers, 1) is not None:
             baseline_adr = _driver(adr_drivers, 1)  # type: ignore[assignment]
         # (anchor value, anchor year) the undriven out-years compound from.
         occ_anchor: tuple[float, int] = (baseline_occ, 1)
         adr_anchor: tuple[float, int] = (baseline_adr, 1)
         # The drivers' provenance, echoed on the output with the resulting
-        # figures filled in per year.
-        drivers_by_year = {d.year: d.model_copy() for d in payload.index_drivers_by_year}
+        # figures filled in per year: the topline's records, or the legacy
+        # Index Analysis records the runner built.
+        legacy_drivers_by_year = {
+            d.year: d.model_copy() for d in payload.index_drivers_by_year
+        }
+        drivers_by_year = (
+            topline_plan.records if topline_plan is not None else legacy_drivers_by_year
+        )
+        # FON-116 — growth INTO each year per metric (scalar, or the per-year
+        # list; ``None`` = held flat). Index ``y − 1`` = model year ``y``.
+        occ_growth = [
+            _growth_into(payload.occupancy_growth_by_year, payload.occupancy_growth, y)
+            for y in range(1, payload.hold_years + 1)
+        ]
+        adr_growth = [
+            _growth_into(payload.adr_growth_by_year, payload.adr_growth, y)
+            for y in range(1, payload.hold_years + 1)
+        ]
+
+        def _steps(
+            growth: list[tuple[float | None, bool]], from_year: int, to_year: int
+        ) -> list[tuple[int, float | None]]:
+            """``(year, growth into year)`` for the years after ``from_year``
+            up to ``to_year`` — what ``to_year`` compounds by."""
+            return [(k, growth[k - 1][0]) for k in range(from_year + 1, to_year + 1)]
+
+        # FON-116 — one record per model year on the output
+        # (``topline_by_year``): the driver record where one exists, else a
+        # plain record the loop fills with the year's figures and statuses.
+        topline_records: dict[int, IndexDriverYear] = {}
         resort_fees = payload.starting_resort_fees
         y1_occ_disp = payload.y1_occupancy_displacement_pct
         y1_adr_disp = payload.y1_adr_displacement_pct
@@ -749,30 +1103,31 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 # before a driver re-anchors them, so the trace names them.
                 occ_anchor_from = occ_anchor
                 adr_anchor_from = adr_anchor
+                # FON-116 — an undriven year compounds its anchor (the
+                # un-displaced Year-1 baseline, or the last driven year) by
+                # one growth step per year since; ``_compound`` evaluates a
+                # constant run as the ``× (1 + g) ^ n`` the scalar path
+                # always has, so the goldens are byte-identical.
                 occ_d = _driver(occ_drivers, y)
                 if occ_d is not None:
-                    base_occ_y = min(0.95, occ_d)
+                    base_occ_y = min(OCCUPANCY_CAP, occ_d)
                     occ_anchor = (base_occ_y, y)
-                elif occ_anchor[1] == 1:
-                    base_occ_y = min(
-                        0.95,
-                        baseline_occ * (1.0 + payload.occupancy_growth) ** (y - 1),
-                    )
                 else:
                     base_occ_y = min(
-                        0.95,
-                        occ_anchor[0]
-                        * (1.0 + payload.occupancy_growth) ** (y - occ_anchor[1]),
+                        OCCUPANCY_CAP,
+                        _compound(
+                            occ_anchor[0],
+                            [g for _, g in _steps(occ_growth, occ_anchor[1], y)],
+                        ),
                     )
                 adr_d = _driver(adr_drivers, y)
                 if adr_d is not None:
                     base_adr_y = adr_d
                     adr_anchor = (base_adr_y, y)
-                elif adr_anchor[1] == 1:
-                    base_adr_y = baseline_adr * (1.0 + payload.adr_growth) ** (y - 1)
                 else:
-                    base_adr_y = adr_anchor[0] * (1.0 + payload.adr_growth) ** (
-                        y - adr_anchor[1]
+                    base_adr_y = _compound(
+                        adr_anchor[0],
+                        [g for _, g in _steps(adr_growth, adr_anchor[1], y)],
                     )
                 if pip_v2 is not None and y == 2:
                     occ = base_occ_y * y2_occ_recovery_factor
@@ -814,11 +1169,6 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 gross_total = 0.0
                 net_total = 0.0
                 for seg in payload.segments:
-                    seg_g = (
-                        seg.adr_growth
-                        if seg.adr_growth is not None
-                        else payload.adr_growth
-                    )
                     if y == 1:
                         if pip_v2 is not None:
                             # Y1 segment ADR uses wing_by_wing drag (if
@@ -836,7 +1186,15 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                             # its own anchor with same displacement %.
                             seg_adr_yn = seg.adr * (1.0 - y1_adr_disp)
                     else:
-                        seg_adr_grown = seg.adr * (1.0 + seg_g) ** (y - 1)
+                        # The per-segment ``adr_growth`` override wins; else
+                        # the segment reads ADR growth from the per-year list
+                        # (or the scalar) exactly as the single line does.
+                        if seg.adr_growth is not None:
+                            seg_adr_grown = seg.adr * (1.0 + seg.adr_growth) ** (y - 1)
+                        else:
+                            seg_adr_grown = _compound(
+                                seg.adr, [g for _, g in _steps(adr_growth, 1, y)]
+                            )
                         if pip_v2 is not None:
                             seg_adr_yn = seg_adr_grown * effective_revpar_index
                         elif y in sched_by_year:
@@ -996,10 +1354,29 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     ),
                 )
             # FON-95 part 2 — echo the driver record with the figures that ran.
+            # FON-116 — and build the year's ``topline_by_year`` record: the
+            # driver record when one exists, else a plain record. An undriven
+            # metric carries the growth step that moved it (``None`` = held
+            # flat → ``flat_no_growth``; Year 1 has no step).
             drv_out = drivers_by_year.get(y)
-            if drv_out is not None:
-                drv_out.occupancy = occ
-                drv_out.adr = adr
+            rec_out = drv_out if drv_out is not None else IndexDriverYear(
+                year=y,
+                calendar_year=calendar_years[y - 1] if y - 1 < len(calendar_years) else None,
+            )
+            rec_out.occupancy = occ
+            rec_out.adr = adr
+            if y >= 2:
+                for metric, lst, growth in (
+                    ("occupancy", occ_drivers, occ_growth),
+                    ("adr", adr_drivers, adr_growth),
+                ):
+                    if _driver(lst, y) is not None:
+                        continue
+                    g, from_list = growth[y - 1]
+                    setattr(rec_out, f"{metric}_growth_applied", g)
+                    if from_list and g is None:
+                        setattr(rec_out, f"{metric}_status", "flat_no_growth")
+            topline_records[y] = rec_out
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
             if use_resort_fee_buildup:
                 prov[f"years[{idx}].resort_fees"] = ValueTrace(
@@ -1153,8 +1530,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 y1_driver=drivers_by_year.get(1),
                 anchor=occ_anchor_from,
                 growth_key="occupancy_growth",
-                growth=payload.occupancy_growth,
-                cap=0.95,
+                growth_scalar=payload.occupancy_growth,
+                growth_steps=_steps(occ_growth, occ_anchor_from[1], y),
+                growth_from_list=payload.occupancy_growth_by_year is not None,
+                cap=OCCUPANCY_CAP,
+                y1_cap=y1_cap,
                 y1_displacement_key="y1_occupancy_displacement_pct",
                 y1_displacement=y1_occ_disp,
                 pip=pip_v2,
@@ -1179,8 +1559,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 y1_driver=drivers_by_year.get(1),
                 anchor=adr_anchor_from,
                 growth_key="adr_growth",
-                growth=payload.adr_growth,
+                growth_scalar=payload.adr_growth,
+                growth_steps=_steps(adr_growth, adr_anchor_from[1], y),
+                growth_from_list=payload.adr_growth_by_year is not None,
                 cap=None,
+                y1_cap=None,
                 y1_displacement_key="y1_adr_displacement_pct",
                 y1_displacement=y1_adr_disp,
                 pip=pip_v2,
@@ -1265,9 +1648,6 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # Nothing in the math above reads it; it exists so the statement can
         # print "Year 1 — 2025" instead of printing the ordinal as a year.
         start_year = projection_start_year(payload.acquisition_close_date)
-        calendar_years = projection_calendar_years(
-            payload.acquisition_close_date, len(years)
-        )
 
         return RevenueEngineOutput(
             deal_id=payload.deal_id,
@@ -1276,9 +1656,18 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             projection_start_year=start_year,
             projection_calendar_years=calendar_years,
             provenance=apply_states(prov),
+            # The legacy Index Analysis echo — empty under the topline (nothing
+            # legacy drove the run); the API and the Index Analysis grid read it.
             index_drivers_by_year=[
-                drivers_by_year[k] for k in sorted(drivers_by_year)
+                legacy_drivers_by_year[k] for k in sorted(legacy_drivers_by_year)
             ],
+            # FON-116 — one record per model year, and the method that ran.
+            topline_by_year=[topline_records[k] for k in sorted(topline_records)],
+            topline_methodology_version=(
+                TOPLINE_METHODOLOGY_VERSION
+                if topline_plan is not None
+                else LEGACY_TOPLINE_METHODOLOGY_VERSION
+            ),
             renovation_displacement_by_year=[
                 sched_by_year[k] for k in sorted(sched_by_year)
             ],
@@ -1286,7 +1675,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
 
 
 __all__ = [
+    "LEGACY_TOPLINE_METHODOLOGY_VERSION",
+    "OCCUPANCY_CAP",
+    "TOPLINE_METHODOLOGY_VERSION",
     "RevenueEngine",
+    "default_ramp_by_year",
     "projection_calendar_years",
     "projection_start_year",
     "renovation_displacement_factors",

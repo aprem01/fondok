@@ -3101,6 +3101,18 @@ _OVERRIDE_INDEX_BY_YEAR_KEYS: frozenset[str] = frozenset({
 })
 
 
+def _constant_growth_by_year(growth: float, hold_years: int) -> list[float | None]:
+    """The scalar growth assumption as the revenue engine's per-year list:
+    index ``y − 1`` is the growth applied INTO model year ``y``, so entry 0
+    (Year 1 — nothing is grown into Year 1) is ``None`` and every later year
+    carries the same figure. FON-116 / FON-117 topline PR 2; the growth
+    resolver (next PR) replaces this with the per-year resolution."""
+    n = max(0, int(hold_years))
+    if n == 0:
+        return []
+    return [None] + [float(growth)] * (n - 1)
+
+
 def _coerce_driver_list(raw: Any) -> list[float | None] | None:
     """``base["index_*_by_year"]`` → the revenue input's per-year override list,
     or ``None`` when nothing is driven (so the engine runs its legacy path)."""
@@ -6510,6 +6522,17 @@ def _build_input_for(
             starting_adr=base["starting_adr"],
             occupancy_growth=base["occupancy_growth"],
             adr_growth=base["adr_growth"],
+            # FON-116 / FON-117 (topline PR 2) — the engine compounds by ONE
+            # growth step per year. Until the growth resolver lands (next PR)
+            # the loader restates today's scalar growth as a constant per-year
+            # list, which the engine evaluates as the same ``× (1 + g) ^ n``
+            # — every golden figure and trace is byte-identical.
+            occupancy_growth_by_year=_constant_growth_by_year(
+                base["occupancy_growth"], base["hold_years"]
+            ),
+            adr_growth_by_year=_constant_growth_by_year(
+                base["adr_growth"], base["hold_years"]
+            ),
             fb_revenue_per_occupied_room=base["fb_revenue_per_occupied_room"],
             other_revenue_pct_of_rooms=base["other_revenue_pct_of_rooms"],
             # Sam QA #11: when the deal has an extracted T-12 with a

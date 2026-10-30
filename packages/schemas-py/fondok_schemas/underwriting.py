@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .financial import ModelAssumptions, USALIFinancials
 from .provenance import ValueTrace
+from .reasons import ReasonCode
 
 
 # ─────────────── Revenue Segmentation (Wave 2 P2.1) ───────────────
@@ -374,8 +375,172 @@ class InvestmentEngineOutput(BaseModel):
 # ─────────────── Revenue Engine ───────────────
 
 
-IndexDriverStatus = Literal["driven", "no_target", "benchmark_unavailable", "scalar_year1_only"]
+#: FON-116 / FON-117 — ``flat_no_growth``: the year had no growth figure for
+#: that metric, so the metric was HELD (growth 0 is the absence of growth, not
+#: a number); never a seeded rate.
+IndexDriverStatus = Literal[
+    "driven", "no_target", "benchmark_unavailable", "scalar_year1_only", "flat_no_growth"
+]
 IndexTargetSource = Literal["by_year", "scalar"]
+
+
+# ─────────── FON-116 / FON-117 — topline drivers (benchmark × penetration × ramp) ───────────
+
+#: CoStar class bucket the subject's growth / benchmark series is read from
+#: (``topline-growth-plan.md`` §2.1). ``all`` = the overall series.
+ClassBucket = Literal["luxury_upper_upscale", "upscale_upper_midscale", "midscale_economy", "all"]
+#: Which benchmark level the resolver landed on; ``none`` = no benchmark at all.
+BenchmarkLevel = Literal["comp_set", "submarket", "market", "none"]
+#: Where one year's growth figure for one metric came from. ``unavailable`` is
+#: first-class: the metric is held flat and the UI says why.
+GrowthSource = Literal[
+    "analyst_override",
+    "cbre_horizons",
+    "costar_submarket_forecast",
+    "carried_forward",
+    "withheld_by_policy",
+    "unavailable",
+]
+BenchmarkBasis = Literal["actual", "forecast", "assumption"]
+PenetrationSource = Literal["default", "analyst_override"]
+RampSource = Literal["default", "analyst_override", "undefined"]
+#: How the ramp was applied to ONE model year (``IndexDriverYear.ramp_state``):
+#: ``ramped`` — ``P × r_y`` (y < S, ramp defined); ``stabilized`` — y ≥ S, full
+#: penetration; ``no_ramp`` — y < S but the analyst's ramp has no entry for the
+#: year (100 %); ``undefined_for_stabilization_year`` — y < S and the DEFAULT
+#: ramp is undefined for the year (S ≥ 4, years 3..S−1 → 100 %, no
+#: interpolation invented); ``stabilization_after_hold`` — the hold ends before
+#: S, so this (last) year still runs at its ramp and never reaches 100 %.
+ToplineRampState = Literal[
+    "ramped", "stabilized", "no_ramp", "undefined_for_stabilization_year", "stabilization_after_hold"
+]
+
+#: Growth fraction per year, as the engine accepts it (−50 %..+50 %, like the
+#: scalar ``occupancy_growth`` / ``adr_growth``).
+GrowthFraction = Annotated[float, Field(ge=-0.50, le=0.50)]
+#: Stabilized penetration in index points — the same band ``validate_index_target``
+#: accepts for the Index Analysis targets (100 = parity with the benchmark).
+PenetrationPoints = Annotated[float, Field(ge=25.0, le=250.0)]
+#: Ramp fraction for a pre-stabilization year (``0 < r ≤ 1.5``).
+RampFraction = Annotated[float, Field(gt=0.0, le=1.5)]
+
+
+class GrowthYear(BaseModel):
+    """Growth applied INTO one model year, per metric, with its source.
+
+    ``occupancy_growth`` / ``adr_growth`` ``None`` = not available for that
+    metric (the engine holds the metric flat and stamps ``flat_no_growth``).
+    ``label`` is the one line the UI prints, e.g. "Forecast · CoStar Miami
+    Beach submarket 2027 · <doc> p.25 · Luxury & Upper Upscale".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    calendar_year: int | None = None
+    occupancy_growth: GrowthFraction | None = None
+    adr_growth: GrowthFraction | None = None
+    occupancy_source: GrowthSource
+    adr_source: GrowthSource
+    class_bucket: ClassBucket | None = None
+    bucket_label: str | None = None
+    doc_name: str | None = None
+    page: int | None = None
+    report_date: str | None = None
+    label: str
+    reason: ReasonCode | None = None
+
+
+class BenchmarkYear(BaseModel):
+    """The benchmark level (comp set / submarket / market) for one model year.
+
+    Year 1 is the level's reported figure (basis ``actual``); later years are
+    Year 1 grown by the resolved growth (``forecast`` when the growth year is a
+    document forecast, ``assumption`` when carried forward). A metric whose
+    growth is unavailable for the year is ``None`` — the engine then holds the
+    subject's figure for that metric rather than inventing a benchmark.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    calendar_year: int | None = None
+    occupancy: Annotated[float, Field(gt=0.0, le=1.0)] | None = None
+    adr: Annotated[float, Field(gt=0.0)] | None = None
+    revpar: Annotated[float, Field(ge=0.0)] | None = None
+    basis: BenchmarkBasis | None = None
+    level: BenchmarkLevel
+    label: str
+    doc_name: str | None = None
+    page: int | None = None
+
+
+class ToplineReference(BaseModel):
+    """The subject's own T-12 figures — a REFERENCE row. Passed through to
+    ``topline_by_year[*].t12_*``; it moves no number."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    occupancy: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    adr: Annotated[float, Field(gt=0.0)] | None = None
+    revpar: Annotated[float, Field(ge=0.0)] | None = None
+    period_label: str | None = None
+    doc_name: str | None = None
+
+
+class ToplineDrivers(BaseModel):
+    """FON-116 / FON-117 — the subject's topline basis: benchmark × stabilized
+    penetration × ramp, per model year (``topline-growth-plan.md`` §2.1, §2.4).
+
+    Built by the loader's resolvers; consumed by ``RevenueEngine`` as::
+
+        pen_y = V_y                 if a per-year override is set
+              = P × r_y             if y < S and the ramp defines r_y
+              = P                   otherwise (y ≥ S, or no ramp for the year)
+        occ_y = min(0.95, B_occ,y × pen_occ,y ÷ 100)
+        adr_y = B_adr,y × pen_adr,y ÷ 100
+
+    ``ramp_by_year`` index ``y − 1`` is the fraction for year ``y`` (years
+    1..S−1). ``None`` for the whole list = the engine's default ramp for S
+    ([0.85, 0.95] for S = 3, [0.85] for S = 2, UNDEFINED for years 3..S−1 when
+    S ≥ 4 — those years run at 100 % and say so). ``None`` for one entry = no
+    ramp for that year (100 %). ``penetration_*_by_year`` index ``y − 1`` is
+    the per-year override for year ``y`` (``None`` = formula). ``growth_by_year``
+    is the per-year growth PROVENANCE (sources / labels); the growth figures the
+    engine compounds a benchmark-less metric with are
+    ``RevenueEngineInput.occupancy_growth_by_year`` / ``adr_growth_by_year`` —
+    the input validator refuses the two disagreeing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    methodology_version: Annotated[int, Field(ge=2)] = 2
+    benchmark_level: BenchmarkLevel
+    benchmark_label: str
+    benchmark_fallback_reason: str | None = None
+    benchmark_by_year: list[BenchmarkYear] = Field(default_factory=list)
+    growth_by_year: list[GrowthYear] = Field(default_factory=list)
+    #: 1-based stabilization year S (the analyst's, else the Year-3 default).
+    stabilization_year: Annotated[int, Field(ge=1)]
+    penetration_occ: PenetrationPoints = 100.0
+    penetration_adr: PenetrationPoints = 100.0
+    penetration_occ_source: PenetrationSource = "default"
+    penetration_adr_source: PenetrationSource = "default"
+    ramp_by_year: list[RampFraction | None] | None = None
+    ramp_source: RampSource = "default"
+    penetration_occ_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
+    penetration_adr_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
+    t12_reference: ToplineReference | None = None
+
+    @model_validator(mode="after")
+    def _benchmark_years_are_unique(self) -> "ToplineDrivers":
+        years = [b.year for b in self.benchmark_by_year]
+        if len(set(years)) != len(years):
+            raise ValueError("benchmark_by_year carries the same model year twice")
+        gyears = [g.year for g in self.growth_by_year]
+        if len(set(gyears)) != len(gyears):
+            raise ValueError("growth_by_year carries the same model year twice")
+        return self
 
 
 class IndexDriverYear(BaseModel):
@@ -425,6 +590,36 @@ class IndexDriverYear(BaseModel):
     occupancy_status: IndexDriverStatus = "no_target"
     adr_status: IndexDriverStatus = "no_target"
     reason: str | None = None
+
+    # FON-116 / FON-117 — topline methodology v2 (``RevenueEngineOutput.
+    # topline_by_year``). Every field below is ``None`` / ``False`` on a record
+    # the legacy Index Analysis seam built, so persisted records still parse.
+    #: Which benchmark level the year's benchmark came from.
+    benchmark_level: BenchmarkLevel | None = None
+    #: The ramp fraction applied this year (``None`` = no ramp: stabilized,
+    #: undefined, or not applicable) and how it was applied.
+    ramp_pct: float | None = None
+    ramp_state: ToplineRampState | None = None
+    #: Where the STABILIZED penetration ``P`` for each metric came from (the
+    #: effective ``mpi_target`` / ``ari_target`` above is ``P × r_y`` or the
+    #: per-year override — ``*_target_source`` says which).
+    penetration_occ_source: PenetrationSource | None = None
+    penetration_adr_source: PenetrationSource | None = None
+    #: Growth applied INTO this year per metric (``None`` = not applicable —
+    #: the year was benchmark-driven — or held flat, see ``*_status``), and
+    #: its source / label when the loader supplied them (``ToplineDrivers.
+    #: growth_by_year``).
+    occupancy_growth_applied: float | None = None
+    adr_growth_applied: float | None = None
+    occupancy_growth_source: GrowthSource | None = None
+    adr_growth_source: GrowthSource | None = None
+    growth_label: str | None = None
+    #: The subject's T-12 reference figures — a reference row, never an input.
+    t12_occupancy: float | None = None
+    t12_adr: float | None = None
+    #: True when ``benchmark × penetration ÷ 100`` exceeded the 0.95 occupancy
+    #: ceiling and the year runs at the cap (visible, not silent).
+    capped_95: bool = False
 
 
 class RevenueEngineInput(BaseModel):
@@ -523,6 +718,53 @@ class RevenueEngineInput(BaseModel):
     adr_by_year_override: list[Annotated[float, Field(gt=0)] | None] | None = None
     index_drivers_by_year: list[IndexDriverYear] = Field(default_factory=list)
 
+    # FON-116 / FON-117 — per-year growth. Index ``y - 1`` holds the growth
+    # applied INTO model year ``y`` (entry 0, Year 1, is unused); ``None`` for
+    # an entry — or a list shorter than the hold — means NO growth figure for
+    # that year: the metric is held flat and the year is stamped
+    # ``flat_no_growth``. ``None`` for the whole list runs the scalar
+    # ``occupancy_growth`` / ``adr_growth`` for every year (legacy path). A
+    # constant list equal to the scalar is byte-identical to the scalar path.
+    # Segments read ADR growth from ``adr_growth_by_year`` the same way
+    # (``RevenueSegment.adr_growth`` stays the per-segment override).
+    occupancy_growth_by_year: list[GrowthFraction | None] | None = None
+    adr_growth_by_year: list[GrowthFraction | None] | None = None
+    # FON-116 / FON-117 — the topline basis (benchmark × penetration × ramp).
+    # ``None`` runs the legacy path above. Mutually exclusive with the legacy
+    # per-year drivers: one mechanism sets a year's occupancy / ADR.
+    topline: ToplineDrivers | None = None
+
+    @model_validator(mode="after")
+    def _topline_excludes_legacy_drivers(self) -> "RevenueEngineInput":
+        if self.topline is None:
+            return self
+        if (
+            self.occupancy_by_year_override
+            or self.adr_by_year_override
+            or self.index_drivers_by_year
+        ):
+            raise ValueError(
+                "topline and the legacy per-year drivers (occupancy_by_year_override / "
+                "adr_by_year_override / index_drivers_by_year) are mutually exclusive"
+            )
+        # The growth figures the engine compounds with must be the figures the
+        # growth provenance describes — the two never drift apart.
+        for gy in self.topline.growth_by_year:
+            idx = gy.year - 1
+            for lst, want, metric in (
+                (self.occupancy_growth_by_year, gy.occupancy_growth, "occupancy"),
+                (self.adr_growth_by_year, gy.adr_growth, "adr"),
+            ):
+                if lst is None:
+                    continue
+                got = lst[idx] if 0 <= idx < len(lst) else None
+                if got != want:
+                    raise ValueError(
+                        f"{metric}_growth_by_year[{idx}] = {got!r} disagrees with "
+                        f"topline.growth_by_year year {gy.year} ({want!r})"
+                    )
+        return self
+
     @model_validator(mode="after")
     def _check_segment_mix_sums_to_one(self) -> "RevenueEngineInput":
         if not self.segments:
@@ -587,6 +829,18 @@ class RevenueEngineOutput(BaseModel):
     # on (benchmark, target, derived RGI, resulting occupancy / ADR, status).
     # Empty when no penetration target drove the run.
     index_drivers_by_year: list[IndexDriverYear] = Field(default_factory=list)
+    # FON-116 / FON-117 — ONE record per model year saying how its occupancy /
+    # ADR were set: benchmark × penetration × ramp (methodology v2), the legacy
+    # Index Analysis driver, or the starting assumption compounded at the
+    # year's growth (legacy / benchmark-less), with every status the Future
+    # P&L renders (``capped_95``, ``flat_no_growth``, ``benchmark_unavailable``,
+    # the ramp state) and the T-12 reference figures. Always populated.
+    topline_by_year: list[IndexDriverYear] = Field(default_factory=list)
+    # The topline method THIS run used: 2 when ``RevenueEngineInput.topline``
+    # drove it (benchmark × penetration × ramp), 1 for the legacy scalar /
+    # Index Analysis driver path. Persisted outputs that predate the field read
+    # as 1. ``compare_golden_baseline.py`` prints loudly when it moves.
+    topline_methodology_version: Annotated[int, Field(ge=1)] = 1
     # Sam, 2026-10-15 — per-year provenance of the renovation displacement
     # schedule (which periods, how many months, the resulting occupancy / ADR
     # factors). One entry per model year the schedule touches; EMPTY when no
