@@ -176,4 +176,4 @@ async def test_deals_create_endpoint() -> None:
         assert r.status_code == 201
         body = r.json()
         assert body["name"] == "Test Hotel"
-        assert body["status"] == "Draft"
+        assert body["status"] == "In Review"  # FON-79 — "Draft" is a lifecycle draft

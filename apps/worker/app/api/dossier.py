@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
 from ..dossier import DealDossier, build_dossier
-from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, assert_deal_active, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -112,11 +112,9 @@ async def ask_deal(
     have enough material yet (e.g. no extracted documents).
 
     Tenant-scoped: cross-tenant access returns 404 via the deal-belongs
-    gate.
+    gate; a lifecycle draft is 409 ``deal_is_draft`` (FON-79).
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     dossier = await build_dossier(
         session,
         deal_id=deal_id,

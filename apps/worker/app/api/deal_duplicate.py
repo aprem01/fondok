@@ -96,26 +96,17 @@ from ..database import get_session
 from .deals import (
     DealRecord,
     _deal_columns,
+    _in_flight_statuses,
     _row_to_record,
+    assert_deal_active,
     get_tenant_id,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-def _in_flight_statuses() -> frozenset[str]:
-    """Document statuses owned by a running background task. Copying such a
-    row would strand the copy mid-pipeline (no task drives it), so we refuse.
-
-    This is the pipeline's own set, not a re-declaration: ``api.documents``
-    defines it and the watchdog / ``/extract`` / ``/reprocess`` guards read
-    it. Imported lazily (``documents`` imports ``deals``, as this module does;
-    the watchdog takes the same route) and read at call time.
-    """
-    from . import documents as _documents
-
-    return frozenset(_documents.DOC_PROCESSING_STATUSES)
-
+# ``_in_flight_statuses`` (the pipeline's own ``DOC_PROCESSING_STATUSES``) is
+# shared with ``DELETE /deals/{id}/draft`` and lives in ``api.deals``.
 
 COPIED_COMMENT_PREFIX = "[Copied from "
 
@@ -272,6 +263,9 @@ async def duplicate_deal(
     include_comments = bool(body.include_cell_comments) if body else False
     skipped: list[str] = list(SKIPPED_TABLES)
 
+    # FON-79 — a lifecycle draft is 409 ``deal_is_draft`` (404 for a stranger,
+    # as below): there is no underwriting to copy yet.
+    await assert_deal_active(session, deal_id=src, tenant_id=tenant)
     source = (
         await session.execute(
             text("SELECT * FROM deals WHERE id = :id AND tenant_id = :tenant"),
@@ -330,6 +324,10 @@ async def duplicate_deal(
         "name": new_name,
         "created_at": now,
         "updated_at": now,
+        # FON-79 — the copy is born active (the source is, see the guard
+        # above) but nobody pressed Finish on it: no activated_at, no wizard.
+        "activated_at": None,
+        "draft_wizard": None,
     }
     await _insert_row(
         session,

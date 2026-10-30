@@ -30,7 +30,7 @@ from ..audit import log_audit
 from ..database import get_session
 from ..export import build_excel, build_memo_pdf, build_pptx
 from ..export.live_payload import load_live_payload
-from .deals import get_tenant_id
+from .deals import assert_deal_active, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,6 +85,8 @@ async def _load_payload(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=DEAL_NOT_FOUND_DETAIL,
         )
+    # FON-79 — a lifecycle draft has no outputs to export: 409 ``deal_is_draft``.
+    await assert_deal_active(session, deal_id=deal_uuid, tenant_id=tenant_id)
     return await load_live_payload(session, str(deal_uuid), str(tenant_id))
 
 

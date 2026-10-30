@@ -57,6 +57,7 @@ from .pipeline import (
     apply_sort,
     build_pipeline_snapshot,
     build_summary,
+    count_drafts,
 )
 
 logger = logging.getLogger(__name__)
@@ -353,7 +354,10 @@ async def build_digest_payload(
     )
 
     if schedule.get("include_kpi_summary", True):
-        summary = build_summary(filtered)
+        # FON-79 — drafts are not in the snapshot (filtered or not), so the
+        # count comes from the same live query the pipeline endpoint uses.
+        draft_count = await count_drafts(session, tenant_id=tenant_id)
+        summary = build_summary(filtered, draft_count=draft_count)
         payload.kpi_block = summary
 
     if schedule.get("include_recently_mutated", True):

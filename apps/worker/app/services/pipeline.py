@@ -252,6 +252,36 @@ def _row_from_deal(
     }
 
 
+async def _deals_has_lifecycle(session: AsyncSession) -> bool:
+    """FON-79 — does the live ``deals`` table carry ``lifecycle``? Same probe
+    and cache key as ``api/deals.py`` so one session answers once."""
+    from .schema_probe import table_has_column
+
+    return await table_has_column(
+        session, "deals", "lifecycle", cache_key="fondok_deals_has_lifecycle"
+    )
+
+
+async def count_drafts(session: AsyncSession, *, tenant_id: UUID | str) -> int:
+    """FON-79 — how many lifecycle drafts this tenant has. Read live (not
+    from the 60 s snapshot cache): a draft's autosaves never invalidate the
+    cache, and the count must move the moment a draft is created,
+    activated or discarded. One indexed COUNT (``idx_deals_tenant_lifecycle``).
+    An un-migrated schema holds no drafts."""
+    if not await _deals_has_lifecycle(session):
+        return 0
+    row = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) FROM deals "
+                "WHERE tenant_id = :tenant AND lifecycle = 'draft'"
+            ),
+            {"tenant": str(tenant_id)},
+        )
+    ).scalar()
+    return int(row or 0)
+
+
 async def build_pipeline_snapshot(
     session: AsyncSession, *, tenant_id: UUID
 ) -> list[dict[str, Any]]:
@@ -269,16 +299,24 @@ async def build_pipeline_snapshot(
             return snapshot
 
     # 1) Pull every deal for the tenant. Excludes Archived rows so the
-    # pipeline view focuses on active capital allocation.
+    # pipeline view focuses on active capital allocation, and (FON-79)
+    # lifecycle drafts — a half-built wizard has no run, no target and no
+    # state worth counting; ``count_drafts`` reports them beside the rows.
+    draft_clause = (
+        "AND lifecycle != 'draft'"
+        if await _deals_has_lifecycle(session)
+        else ""
+    )
     deal_rows = await session.execute(
         text(
-            """
+            f"""
             SELECT id, tenant_id, name, city, keys, brand, deal_stage,
                    status, state, purchase_price, target_irr,
                    created_at, updated_at
               FROM deals
              WHERE tenant_id = :tenant
                AND COALESCE(status, '') != 'Archived'
+               {draft_clause}
             """
         ),
         {"tenant": tenant_id_str},
@@ -443,8 +481,15 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return float(s[lo]) * (1 - frac) + float(s[hi]) * frac
 
 
-def build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Portfolio-level KPIs over the filtered row set."""
+def build_summary(
+    rows: list[dict[str, Any]], *, draft_count: int = 0
+) -> dict[str, Any]:
+    """Portfolio-level KPIs over the filtered row set.
+
+    FON-79 — ``draft_count`` is the tenant's lifecycle drafts, counted by
+    :func:`count_drafts` outside the row set; it is printed beside the
+    statistics ("12 active deals · 3 drafts"), never inside them.
+    """
     irrs = [r["levered_irr"] for r in rows if r.get("levered_irr") is not None]
     ems = [r["equity_multiple"] for r in rows if r.get("equity_multiple") is not None]
     per_keys = [
@@ -472,4 +517,5 @@ def build_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "deals_meeting_target_irr": len(deals_meeting_target),
         "deals_with_target_irr": len(deals_with_target),
         "deals_by_state": deals_by_state,
+        "draft_count": int(draft_count),
     }

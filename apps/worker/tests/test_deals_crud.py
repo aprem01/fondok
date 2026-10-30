@@ -112,7 +112,10 @@ async def test_create_deal_persists() -> None:
         deal_id = created["id"]
         UUID(deal_id)
         assert created["name"] == "Persisted Hotel"
-        assert created["status"] == "Draft"
+        # FON-79 — a direct create is an underwriting under review; "Draft"
+        # is reserved for lifecycle drafts (tests/test_deals_drafts.py).
+        assert created["status"] == "In Review"
+        assert created["lifecycle"] == "active"
         assert created["ai_confidence"] is None  # A11 — NULL until extraction scores it
 
         # Fresh GET — proves it actually landed in the DB.
