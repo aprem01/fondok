@@ -2398,6 +2398,20 @@ def _in_flight_statuses() -> frozenset[str]:
     return frozenset(_documents.DOC_PROCESSING_STATUSES)
 
 
+def _documents_in_flight_error(count: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "documents_in_flight",
+            "count": count,
+            "message": (
+                f"{count} document(s) are still being processed. Wait for "
+                "extraction to finish, then delete the deal."
+            ),
+        },
+    )
+
+
 async def _count_documents_in_flight(
     session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> int:
@@ -2591,17 +2605,7 @@ async def discard_draft(
         session, deal_id=deal_id_str, tenant_id=tenant_id_str
     )
     if in_flight:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "documents_in_flight",
-                "count": in_flight,
-                "message": (
-                    f"{in_flight} document(s) are still being processed. Wait "
-                    "for extraction to finish, then discard the draft."
-                ),
-            },
-        )
+        raise _documents_in_flight_error(in_flight)
 
     deleted_counts, orphan_keys = await _cascade_delete_deal(
         session, deal_id=deal_id_str, tenant_id=tenant_id_str
@@ -2680,6 +2684,14 @@ async def hard_delete_deal(
             detail=f"deal {deal_id} not found",
         )
     deal_name = existing._mapping.get("name")
+    # Same rule as discard: a background parse / extract still owns one of
+    # the documents — deleting the deal under it would make the task fail on
+    # Postgres or re-insert orphans on SQLite.
+    in_flight = await _count_documents_in_flight(
+        session, deal_id=deal_id_str, tenant_id=tenant_id_str
+    )
+    if in_flight:
+        raise _documents_in_flight_error(in_flight)
 
     deleted_counts, orphan_keys = await _cascade_delete_deal(
         session, deal_id=deal_id_str, tenant_id=tenant_id_str
@@ -4810,9 +4822,9 @@ async def post_memo_edit(
     # and get 201. The rows carried the CALLER's tenant, so the owner never
     # saw them, but a write against another institution's deal must 404
     # like every other deal route (found by scripts/isolation_check.py).
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    # FON-79 — a draft has no memo to edit: 409 ``deal_is_draft``, which also
+    # keeps ``memo_edits`` (kept by the delete cascade) empty for every draft.
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
 
     tenant_id_str = str(tenant_id)
     actor_id = "system"  # TODO: thread through Clerk user once auth lands

@@ -1033,3 +1033,67 @@ async def test_digest_kpi_block_carries_the_live_draft_count() -> None:
     assert payload.kpi_block["draft_count"] == 2
     assert payload.deal_count == 1
     assert active["id"]  # the one counted deal
+
+
+# ─────────────────────────── re-review additions ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_memo_edit_on_a_draft_is_409_and_works_on_an_underwriting() -> None:
+    """A draft has no memo to edit, so ``memo_edits`` — the one child table
+    the cascade keeps — is empty for every draft by construction."""
+    body = {"new_body": "Revised thesis.", "original_body": "Thesis.", "comment": "tighten"}
+    async with _client() as client:
+        draft = await _create_draft(client)
+        r = await client.post(f"/deals/{draft['id']}/memo/thesis/edits", json=body, headers=HDR_A)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "deal_is_draft"
+        assert await _count("memo_edits", draft["id"]) == 0
+
+        active = await _create(client, name="Active Hotel")
+        r = await client.post(f"/deals/{active['id']}/memo/thesis/edits", json=body, headers=HDR_A)
+        assert r.status_code == 201, r.text
+        assert r.json()["new_body"] == "Revised thesis."
+        # A stranger still gets 404, never the 409.
+        r = await client.post(f"/deals/{draft['id']}/memo/thesis/edits", json=body, headers=HDR_B)
+        assert r.status_code == 404, r.text
+    assert await _count("memo_edits", active["id"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_refuses_while_a_document_is_in_flight() -> None:
+    """Same guard as discard: 409 ``documents_in_flight`` with the count, and
+    nothing is deleted until the pipeline has let go of the row."""
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    async with _client() as client:
+        active = await _create(client, name="Doomed Hotel")
+        _doc, storage_key = await _seed_document_with_object(active["id"])
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                text("UPDATE documents SET status = 'PARSING' WHERE deal_id = :d AND tenant_id = :t"),
+                {"d": active["id"], "t": TENANT_A},
+            )
+            await session.commit()
+        r = await client.delete(f"/deals/{active['id']}/hard", headers=HDR_A)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "documents_in_flight"
+        assert r.json()["detail"]["count"] == 1
+        assert await _count("documents", active["id"]) == 1
+        assert await _count("deals", active["id"], column="id") == 1
+        assert _object_exists(storage_key)
+        assert await _audit_rows(active["id"], "deal.hard_deleted") == []
+
+        async with factory() as session:
+            await session.execute(
+                text("UPDATE documents SET status = 'EXTRACTED' WHERE deal_id = :d AND tenant_id = :t"),
+                {"d": active["id"], "t": TENANT_A},
+            )
+            await session.commit()
+        r = await client.delete(f"/deals/{active['id']}/hard", headers=HDR_A)
+        assert r.status_code == 204, r.text
+    assert await _count("deals", active["id"], column="id") == 0
+    assert not _object_exists(storage_key)
