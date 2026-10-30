@@ -81,6 +81,9 @@ class AskCitation(BaseModel):
     page: int | None = None
     field: str | None = None
     excerpt: str | None = None
+    #: FON-120 — ``(methodology, <section id>)`` when the answer rests on the
+    #: Methodology block; the web renders it as a link to ``/methodology#<id>``.
+    methodology_section: str | None = None
 
 
 class AskResponse(BaseModel):
@@ -164,6 +167,7 @@ async def ask_deal(
                 page=c.page,
                 field=c.field,
                 excerpt=c.excerpt,
+                methodology_section=c.methodology_section,
             )
             for c in out.citations
         ],

@@ -20,6 +20,7 @@ import {
 import { api, isWorkerConnected } from '@/lib/api';
 import type { AskAnswerResult } from '@/lib/api';
 import { Citation as CitationChip } from '@/components/citations/Citation';
+import { MethodologyCitationChip } from '@/components/citations/MethodologyCitationChip';
 import { cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 
@@ -368,18 +369,22 @@ export default function AtlasCopilot({
               {answer.citations.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1 items-baseline">
                   <span className="text-[9.5px] uppercase tracking-wide text-fondok-text-muted">Sources:</span>
-                  {answer.citations.map((c, i) => (
-                    <CitationChip
-                      key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
-                      data={{
-                        documentId: c.document_id ?? '',
-                        page: c.page ?? 1,
-                        field: c.field ?? undefined,
-                        excerpt: c.excerpt ?? undefined,
-                      }}
-                      label={`p.${c.page ?? '—'}`}
-                    />
-                  ))}
+                  {answer.citations.map((c, i) =>
+                    c.methodology_section ? (
+                      <MethodologyCitationChip key={`methodology:${c.methodology_section}:${i}`} section={c.methodology_section} />
+                    ) : (
+                      <CitationChip
+                        key={`${c.document_id ?? 'unknown'}:${c.page ?? 0}:${i}`}
+                        data={{
+                          documentId: c.document_id ?? '',
+                          page: c.page ?? 1,
+                          field: c.field ?? undefined,
+                          excerpt: c.excerpt ?? undefined,
+                        }}
+                        label={`p.${c.page ?? '—'}`}
+                      />
+                    ),
+                  )}
                 </div>
               )}
             </div>

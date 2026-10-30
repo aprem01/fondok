@@ -66,10 +66,22 @@ Rules:
   the dossier. 0.9+ = directly cited from extracted fields; 0.7 =
   derived from extracted data; 0.5 = inferred from partial data;
   <0.5 = guessing because the dossier is sparse — say so plainly.
+* When asked HOW a figure is calculated — which inputs, which
+  precedence, which default, why a value is a dash — answer from the
+  METHODOLOGY block in this system prompt and cite it as
+  ``(methodology, <section id>)``: a citation with
+  ``document_id="methodology"`` and ``methodology_section`` set to the
+  section id printed in the block's ``### <id> — …`` heading. Never
+  derive or restate a formula, default or precedence rule the block
+  does not state; if the block does not cover the question, say so.
+  A number still comes from the dossier, never from the methodology.
 
 Output: one structured ``ResearcherAnswer``. No prose outside the
 schema.
 """
+
+#: ``document_id`` of a citation that points at the Methodology block.
+METHODOLOGY_DOCUMENT_ID = "methodology"
 
 
 # ─────────────────────── envelopes ───────────────────────
@@ -82,6 +94,9 @@ class _CitationEnv(BaseModel):
     page: Annotated[int, Field(ge=1)] | None = None
     field: Annotated[str, Field(max_length=200)] | None = None
     excerpt: Annotated[str, Field(max_length=1000)] | None = None
+    # FON-120 — ``(methodology, <section id>)``: set when the claim rests on
+    # the Methodology block rather than a document.
+    methodology_section: Annotated[str, Field(min_length=1, max_length=80)] | None = None
 
 
 class _ResearcherAnswer(BaseModel):
@@ -102,6 +117,10 @@ class ResearcherCitation(BaseModel):
     page: int | None = None
     field: str | None = None
     excerpt: str | None = None
+    #: FON-120 — the methodology section id the claim rests on
+    #: (``document_id`` is then ``"methodology"``); the web links it to
+    #: ``/methodology#<id>``.
+    methodology_section: str | None = None
 
 
 class ResearcherInput(BaseModel):
@@ -257,10 +276,34 @@ def _to_uuid(value: str) -> UUID:
 
 
 def _project_citations(
-    cites: list[_CitationEnv], doc_ids: set[str]
+    cites: list[_CitationEnv],
+    doc_ids: set[str],
+    methodology_sections: set[str] | None = None,
 ) -> list[ResearcherCitation]:
+    """Keep document citations that name a dossier document and methodology
+    citations that name a section the block actually carried; drop the rest.
+    A methodology citation never carries a page."""
     out: list[ResearcherCitation] = []
+    known_sections = methodology_sections or set()
     for c in cites:
+        if c.methodology_section is not None or c.document_id == METHODOLOGY_DOCUMENT_ID:
+            section = c.methodology_section
+            if section not in known_sections:
+                logger.debug(
+                    "researcher: dropping methodology citation to unknown section=%s",
+                    section,
+                )
+                continue
+            out.append(
+                ResearcherCitation(
+                    document_id=METHODOLOGY_DOCUMENT_ID,
+                    page=None,
+                    field=c.field,
+                    excerpt=c.excerpt,
+                    methodology_section=section,
+                )
+            )
+            continue
         # Drop citations that point at unknown documents.
         if doc_ids and c.document_id not in doc_ids:
             logger.debug(
@@ -280,6 +323,21 @@ def _project_citations(
         except (ValidationError, ValueError) as exc:
             logger.debug("researcher: dropping malformed citation (%s)", exc)
     return out
+
+
+def build_methodology_system_block(question: str) -> tuple[str, list[str]]:
+    """The Methodology block for ``question`` (FON-120, PR C-3) and the
+    section ids it carries. Selected by ``packages/methodology/index.yaml``
+    keywords — always the reasons and lineage sections — and capped at the
+    package's ``atlas.max_chars``. Empty when the package is not loaded
+    (``/health`` then reports ``methodology_missing``)."""
+    from ..methodology import build_selection, get_package
+
+    pkg = get_package()
+    if pkg is None:
+        return "", []
+    sel = build_selection(question, pkg)
+    return sel.text, sel.section_ids
 
 
 @trace_agent("Researcher")
@@ -316,6 +374,14 @@ async def run_researcher(payload: ResearcherInput) -> ResearcherOutput:
         agent_instructions=SYSTEM_PROMPT,
     )
     rules_as_prompt_block()  # warm the catalog cache
+    # FON-120 — the Methodology block goes AFTER the four cached blocks and is
+    # itself not a cache breakpoint: it varies with the question (keyword
+    # selection), so marking it would only miss; placed behind the boundary
+    # it leaves the cached prefix (instructions, USALI rules, brand catalog,
+    # schema addendum) untouched and costs only its own ~6–8k tokens.
+    methodology_text, methodology_section_ids = build_methodology_system_block(payload.question)
+    if methodology_text:
+        system_blocks = [*system_blocks, (methodology_text, False)]
 
     llm = build_structured_llm(
         role="analyst",
@@ -375,7 +441,7 @@ async def run_researcher(payload: ResearcherInput) -> ResearcherOutput:
         )
 
     doc_ids = {d.document_id for d in payload.dossier.documents}
-    citations = _project_citations(envelope.citations, doc_ids)
+    citations = _project_citations(envelope.citations, doc_ids, set(methodology_section_ids))
     runtime_ms = int((time.monotonic() - t0) * 1000)
     logger.info(
         "researcher: deal=%s answered in %dms (chars=%d cites=%d conf=%.2f)",
@@ -400,7 +466,9 @@ async def run_researcher(payload: ResearcherInput) -> ResearcherOutput:
 
 
 __all__ = [
+    "METHODOLOGY_DOCUMENT_ID",
     "ResearcherCitation",
+    "build_methodology_system_block",
     "ResearcherInput",
     "ResearcherOutput",
     "run_researcher",
