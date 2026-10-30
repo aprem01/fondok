@@ -31,6 +31,9 @@ export interface DocumentsChecklistProps {
   /** Accepted for API parity (the previous rail mirrored the active
    *  category from the sidebar). Unused in the collapsed rail. */
   activeCategory?: WizardCategory | null;
+  /** FON-79 — the slot of each document already uploaded to the deal's
+   *  server-side draft; counted like a staged file. */
+  uploadedCategories?: WizardCategory[];
 }
 
 export function DocumentsChecklist(_props: DocumentsChecklistProps) {
@@ -38,6 +41,9 @@ export function DocumentsChecklist(_props: DocumentsChecklistProps) {
   for (const c of WIZARD_CATEGORIES) counts[c.id] = 0;
   for (const f of _props.files) {
     if (counts[f.category] !== undefined) counts[f.category] += 1;
+  }
+  for (const cat of _props.uploadedCategories ?? []) {
+    if (counts[cat] !== undefined) counts[cat] += 1;
   }
 
   const data = readinessFromWizardFiles(WIZARD_CATEGORIES, counts);

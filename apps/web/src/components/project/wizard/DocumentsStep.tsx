@@ -35,6 +35,7 @@ import {
   FileText,
   Hammer,
   Info,
+  Loader2,
   Plus,
   Receipt,
   ShieldCheck,
@@ -44,12 +45,21 @@ import {
   Wrench,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
 import type {
   WizardCategory,
   WizardFile,
   WizardUserDocType,
+  WorkerDocument,
 } from '@/lib/api';
+import { docStatusLabel, docTypeLabel } from '@/lib/docTypeLabels';
+import { isProcessingStatus } from '@/lib/progress';
+import {
+  hasFinancialStatement,
+  wizardCategoryForDocument,
+  wizardDocType,
+} from '@/lib/wizardDocuments';
 import {
   DOC_SUBTYPES_BY_DOC_TYPE,
   DOC_SUBTYPE_HELP,
@@ -493,7 +503,24 @@ export interface DocumentsStepProps {
   /** Active sub-stage — exposed so the right-rail can mirror the
    *  current selection without owning the state. */
   onStageChange?: (stage: WizardCategory) => void;
+  /** FON-79 — documents already uploaded to the deal's server-side draft.
+   *  Listed in the slot each belongs to (``wizardCategoryForDocument``) with
+   *  the Data Room's status word; they count toward the sidebar dots, the
+   *  readiness ring and the financials gate. */
+  serverDocs?: WorkerDocument[];
+  /** FON-79 — called with each batch of newly added files once the draft
+   *  exists, so they upload on add (one call per drop / pick). The files stay
+   *  in ``files`` until the page removes them after the upload lands. */
+  onUploadNow?: (added: WizardFile[]) => void;
+  /** FON-79 — true while a staged file is on its way up (row shows "Uploading…"). */
+  isUploading?: (file: WizardFile) => boolean;
+  /** FON-79 — remove an uploaded document (``DELETE /deals/{id}/documents/{doc}``). */
+  onRemoveServerDoc?: (doc: WorkerDocument) => void;
+  /** FON-79 — re-tag an uploaded document's statement type / year. */
+  onRetagServerDoc?: (doc: WorkerDocument, patch: { doc_type?: string; fiscal_year?: number }) => void;
 }
+
+const EMPTY_SERVER_DOCS: WorkerDocument[] = [];
 
 const dedupeKey = (f: WizardFile) =>
   `${f.file.name}::${f.file.size}::${f.fiscal_year ?? ''}::${f.category}`;
@@ -511,6 +538,11 @@ export function DocumentsStep({
   onUnsupportedFile,
   showGateWarning = false,
   onStageChange,
+  serverDocs = EMPTY_SERVER_DOCS,
+  onUploadNow,
+  isUploading,
+  onRemoveServerDoc,
+  onRetagServerDoc,
 }: DocumentsStepProps) {
   // Default landing stage: Offering Memorandum. Natural reading order —
   // when a broker sends a deal an analyst opens the OM first. Financials
@@ -542,6 +574,19 @@ export function DocumentsStep({
     return m;
   }, [files]);
 
+  // FON-79 — uploaded documents, by the slot each belongs to.
+  const serverDocsByCategory = useMemo(() => {
+    const m = {} as Record<WizardCategory, WorkerDocument[]>;
+    for (const c of WIZARD_CATEGORIES) m[c.id] = [];
+    m.auto = [];
+    for (const d of serverDocs) {
+      const cat = wizardCategoryForDocument(d);
+      if (m[cat]) m[cat].push(d);
+      else m.auto.push(d);
+    }
+    return m;
+  }, [serverDocs]);
+
   // R-026 — files dropped in the "Drop everything here" zone. Not a slot:
   // they upload untagged and the Router assigns each one's category.
   const autoFiles = useMemo(() => files.filter((f) => f.category === 'auto'), [files]);
@@ -552,8 +597,9 @@ export function DocumentsStep({
   // Their category is assigned only after upload, so the wizard cannot
   // know one of them is a financial — and Prem's locked Wave 1 rule is
   // "financials required, no shell deals" (2026-06-27). Put the T-12 / P&L
-  // in Financial Statements; drop everything else in the zone.
-  const canContinue = (filesByCategory.financials?.length ?? 0) > 0;
+  // in Financial Statements; drop everything else in the zone. FON-79: a
+  // document already uploaded as a financial statement clears it too.
+  const canContinue = hasFinancialStatement(files, serverDocs);
   useEffect(() => {
     onCanContinueChange(canContinue);
   }, [canContinue, onCanContinueChange]);
@@ -581,6 +627,7 @@ export function DocumentsStep({
 
       const existing = new Set(files.map(dedupeKey));
       const next: WizardFile[] = [...files];
+      const added: WizardFile[] = [];
       for (const file of filtered) {
         const docType =
           meta.user_doc_type !== undefined
@@ -595,10 +642,14 @@ export function DocumentsStep({
         if (existing.has(dedupeKey(candidate))) continue;
         existing.add(dedupeKey(candidate));
         next.push(candidate);
+        added.push(candidate);
       }
       onChange(next);
+      // FON-79 — once the deal exists as a draft, a batch goes up as soon as
+      // it lands: one upload call per drop / pick.
+      if (added.length && onUploadNow) onUploadNow(added);
     },
-    [files, onChange, onUnsupportedFile],
+    [files, onChange, onUnsupportedFile, onUploadNow],
   );
 
   const removeAt = useCallback(
@@ -651,8 +702,11 @@ export function DocumentsStep({
 
       <AutoClassifyZone
         files={autoFiles}
+        serverDocs={serverDocsByCategory.auto}
         onAdd={(fs) => addFiles(fs, 'auto', { user_doc_type: null })}
         onRemove={removeAt}
+        isUploading={isUploading}
+        onRemoveServerDoc={onRemoveServerDoc}
       />
 
       <div className="grid grid-cols-12 gap-5">
@@ -666,7 +720,7 @@ export function DocumentsStep({
             role="list"
           >
             {WIZARD_CATEGORIES.map((spec) => {
-              const count = filesByCategory[spec.id].length;
+              const count = filesByCategory[spec.id].length + serverDocsByCategory[spec.id].length;
               const active = spec.id === stage;
               const covered = count > 0;
               // Status dot IS the status. Green = covered, red = not yet
@@ -753,9 +807,13 @@ export function DocumentsStep({
             <CategoryPanel
               spec={activeSpec}
               files={filesByCategory[activeSpec.id]}
+              serverDocs={serverDocsByCategory[activeSpec.id]}
               onAdd={(fs, meta) => addFiles(fs, activeSpec.id, meta ?? {})}
               onRemove={removeAt}
               onUpdate={updateFile}
+              isUploading={isUploading}
+              onRemoveServerDoc={onRemoveServerDoc}
+              onRetagServerDoc={onRetagServerDoc}
             />
           </div>
 
@@ -825,12 +883,19 @@ export function DocumentsStep({
  */
 export function AutoClassifyZone({
   files,
+  serverDocs = EMPTY_SERVER_DOCS,
   onAdd,
   onRemove,
+  isUploading,
+  onRemoveServerDoc,
 }: {
   files: WizardFile[];
+  /** FON-79 — uploaded documents the worker has not classified yet. */
+  serverDocs?: WorkerDocument[];
   onAdd: (files: File[]) => void;
   onRemove: (file: WizardFile) => void;
+  isUploading?: (file: WizardFile) => boolean;
+  onRemoveServerDoc?: (doc: WorkerDocument) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
@@ -900,12 +965,17 @@ export function AutoClassifyZone({
           </p>
         </div>
       </div>
-      {files.length > 0 && (
+      {(files.length > 0 || serverDocs.length > 0) && (
         <ul
           className="mt-2.5 space-y-1.5"
           role="list"
           aria-label="Files to classify automatically"
         >
+          {serverDocs.map((d) => (
+            <li key={`srv:${d.id}`}>
+              <ServerDocRow doc={d} onRemove={onRemoveServerDoc} />
+            </li>
+          ))}
           {files.map((f) => (
             <li
               key={dedupeKey(f)}
@@ -916,7 +986,11 @@ export function AutoClassifyZone({
                 <div className="text-[12.5px] font-medium text-ink-900 truncate">{f.file.name}</div>
                 <div className="text-[11px] text-ink-500 tabular-nums">{formatBytes(f.file.size)}</div>
               </div>
-              <span className="text-[11px] text-ink-500 italic">Category assigned on upload</span>
+              {isUploading?.(f) ? (
+                <UploadingChip />
+              ) : (
+                <span className="text-[11px] text-ink-500 italic">Category assigned on upload</span>
+              )}
               <button
                 type="button"
                 onClick={() => onRemove(f)}
@@ -938,12 +1012,17 @@ export function AutoClassifyZone({
 function CategoryPanel({
   spec,
   files,
+  serverDocs = EMPTY_SERVER_DOCS,
   onAdd,
   onRemove,
   onUpdate,
+  isUploading,
+  onRemoveServerDoc,
+  onRetagServerDoc,
 }: {
   spec: WizardCategorySpec;
   files: WizardFile[];
+  serverDocs?: WorkerDocument[];
   onAdd: (
     files: File[],
     meta?: {
@@ -953,6 +1032,9 @@ function CategoryPanel({
   ) => void;
   onRemove: (file: WizardFile) => void;
   onUpdate: (file: WizardFile, patch: Partial<WizardFile>) => void;
+  isUploading?: (file: WizardFile) => boolean;
+  onRemoveServerDoc?: (doc: WorkerDocument) => void;
+  onRetagServerDoc?: (doc: WorkerDocument, patch: { doc_type?: string; fiscal_year?: number }) => void;
 }) {
   const Icon = spec.Icon;
   // Required-for-IC cue lives on the sidebar dot — drop it from the
@@ -998,7 +1080,7 @@ function CategoryPanel({
         <DropZone spec={spec} onFiles={(fs) => onAdd(fs)} />
       )}
 
-      {files.length === 0 ? (
+      {files.length === 0 && serverDocs.length === 0 ? (
         // Quiet empty-state — one line, no callout. The dropzone above
         // already explains "what to do here".
         <p className="mt-3 text-[11px] text-ink-500">
@@ -1010,6 +1092,16 @@ function CategoryPanel({
           role="list"
           aria-label={`Selected ${spec.label} files`}
         >
+          {serverDocs.map((d) => (
+            <li key={`srv:${d.id}`}>
+              <ServerDocRow
+                doc={d}
+                spec={spec}
+                onRemove={onRemoveServerDoc}
+                onRetag={onRetagServerDoc}
+              />
+            </li>
+          ))}
           {files.map((f) => (
             <li key={dedupeKey(f)}>
               <FileRow
@@ -1017,6 +1109,7 @@ function CategoryPanel({
                 file={f}
                 onRemove={onRemove}
                 onUpdate={onUpdate}
+                uploading={isUploading?.(f) ?? false}
               />
             </li>
           ))}
@@ -1135,11 +1228,14 @@ function FileRow({
   file,
   onRemove,
   onUpdate,
+  uploading = false,
 }: {
   spec: WizardCategorySpec;
   file: WizardFile;
   onRemove: (file: WizardFile) => void;
   onUpdate: (file: WizardFile, patch: Partial<WizardFile>) => void;
+  /** FON-79 — the file is on its way to the draft; it cannot be removed yet. */
+  uploading?: boolean;
 }) {
   const IconForExt = file.file.name.toLowerCase().endsWith('.xlsx')
     ? FileSpreadsheet
@@ -1159,14 +1255,17 @@ function FileRow({
           {formatBytes(file.file.size)}
         </div>
       </div>
-      {spec.showYearTagging && (
+      {uploading && <UploadingChip />}
+      {/* While the file is on its way up its tag and year already travelled
+          with it — the uploaded row offers them again, wired to reclassify. */}
+      {!uploading && spec.showYearTagging && (
         <YearField
           value={file.fiscal_year ?? null}
           onChange={(yr) => onUpdate(file, { fiscal_year: yr })}
           fileKey={dedupeKey(file)}
         />
       )}
-      {spec.picker && (
+      {!uploading && spec.picker && (
         <>
           <label className="sr-only" htmlFor={`type-${dedupeKey(file)}`}>
             {spec.picker.label}
@@ -1191,7 +1290,7 @@ function FileRow({
           </select>
         </>
       )}
-      {spec.lanePicker && (file.user_doc_type ?? '').toUpperCase() === 'CAPEX' && (
+      {!uploading && spec.lanePicker && (file.user_doc_type ?? '').toUpperCase() === 'CAPEX' && (
         // FON-41 / R-036 + the PIP lane — which CapEx lane this file goes
         // up under. Defaults to the slot's pin; a change rides the upload
         // as ``user_doc_subtypes[i]`` (lib/docSubtype.wizardDocSubtype).
@@ -1210,14 +1309,121 @@ function FileRow({
           ))}
         </select>
       )}
-      <button
-        type="button"
-        onClick={() => onRemove(file)}
-        aria-label={`Remove ${file.file.name}`}
-        className="p-1 rounded text-ink-400 hover:text-danger-700 hover:bg-danger-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500"
-      >
-        <Trash2 size={13} aria-hidden="true" />
-      </button>
+      {!uploading && (
+        <button
+          type="button"
+          onClick={() => onRemove(file)}
+          aria-label={`Remove ${file.file.name}`}
+          className="p-1 rounded text-ink-400 hover:text-danger-700 hover:bg-danger-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500"
+        >
+          <Trash2 size={13} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function UploadingChip() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] text-brand-700"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 size={11} className="animate-spin" aria-hidden="true" /> Uploading…
+    </span>
+  );
+}
+
+// ─────────────────────── uploaded document row (FON-79) ───────────────────────
+
+const STATUS_TONE: Record<string, 'green' | 'blue' | 'red' | 'gray'> = {
+  Extracted: 'green',
+  Processing: 'blue',
+  Failed: 'red',
+  Pending: 'gray',
+};
+
+/**
+ * A document already on the deal's server-side draft. Reads the row the
+ * worker returned — the Data Room's status word, the analyst's own tag (or
+ * the worker's classification), the year — and offers Remove plus, on the
+ * slots that tag files, the same statement-type / year controls a staged
+ * file has, wired to reclassification. Nothing here is invented: a row with
+ * no type reads "Uncategorized", a row with no year shows none.
+ */
+function ServerDocRow({
+  doc,
+  spec,
+  onRemove,
+  onRetag,
+}: {
+  doc: WorkerDocument;
+  spec?: WizardCategorySpec;
+  onRemove?: (doc: WorkerDocument) => void;
+  onRetag?: (doc: WorkerDocument, patch: { doc_type?: string; fiscal_year?: number }) => void;
+}) {
+  const IconForExt = doc.filename.toLowerCase().endsWith('.xlsx') ? FileSpreadsheet : FileText;
+  const status = docStatusLabel(doc.status);
+  const type = wizardDocType(doc);
+  // No re-tag while the pipeline is reading the file: the tag it was uploaded
+  // with is what the Router is checking against right now. Once it settles
+  // (Extracted / Failed / Pending) the controls return.
+  const processing = isProcessingStatus(doc.status);
+  const canRetagType = !!spec?.picker && !!onRetag && !processing;
+  const canRetagYear = !!spec?.showYearTagging && !!onRetag && !processing;
+  return (
+    <div
+      className="rounded-md border border-border bg-ink-50/40 px-3 py-2.5 flex items-center gap-3 flex-wrap"
+      data-testid="wizard-uploaded-doc"
+    >
+      <IconForExt size={14} className="text-ink-700 flex-shrink-0" aria-hidden="true" />
+      <div className="flex-1 min-w-0">
+        <div className="text-[12.5px] font-medium text-ink-900 truncate">{doc.filename}</div>
+        <div className="text-[11px] text-ink-500 tabular-nums">
+          {doc.size_bytes != null ? formatBytes(doc.size_bytes) : 'Uploaded'}
+          {!canRetagType && type ? ` · ${docTypeLabel(type)}` : ''}
+          {!canRetagYear && typeof doc.fiscal_year === 'number' ? ` · ${doc.fiscal_year}` : ''}
+          {doc.error_message ? ` · ${doc.error_message}` : ''}
+        </div>
+      </div>
+      <Badge tone={STATUS_TONE[status] ?? 'gray'} dot uppercase>{status}</Badge>
+      {canRetagYear && (
+        <YearField
+          value={doc.fiscal_year ?? null}
+          onChange={(yr) => { if (yr != null) onRetag?.(doc, { fiscal_year: yr }); }}
+          fileKey={`srv-${doc.id}`}
+        />
+      )}
+      {canRetagType && spec?.picker && (
+        <>
+          <label className="sr-only" htmlFor={`type-srv-${doc.id}`}>{spec.picker.label}</label>
+          <select
+            id={`type-srv-${doc.id}`}
+            value={type ?? ''}
+            onChange={(e) => { if (e.target.value) onRetag?.(doc, { doc_type: e.target.value }); }}
+            aria-label={`Set ${spec.picker.label.toLowerCase()} for ${doc.filename}`}
+            className="px-2 py-1 text-[12px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
+          >
+            {spec.picker.options.map((t) => (
+              <option key={t.label} value={t.value} title={t.help}>{t.label}</option>
+            ))}
+            {type && !spec.picker.options.some((t) => t.value === type) && (
+              <option value={type}>{docTypeLabel(type)}</option>
+            )}
+          </select>
+        </>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove(doc)}
+          aria-label={`Remove ${doc.filename}`}
+          className="p-1 rounded text-ink-400 hover:text-danger-700 hover:bg-danger-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500"
+        >
+          <Trash2 size={13} aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

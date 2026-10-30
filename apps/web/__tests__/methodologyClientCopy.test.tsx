@@ -78,6 +78,20 @@ describe('/methodology — client copy discipline', () => {
     expect(rule).toHaveTextContent(/exported workbook leaves the same cell empty/);
   });
 
+  // FON-79 — a deal in draft has no model outputs; Finish activates it. Said
+  // at the conceptual level, in §1, beside the dash rule. The Hotel Name field
+  // is gone from the wizard: the property's name is read from the OM.
+  it('says a draft has no model outputs until Finish, and that the property name is read from the OM', () => {
+    render(<MethodologyPage />);
+    const section = document.getElementById('extraction');
+    expect(section).not.toBeNull();
+    expect(section).toHaveTextContent(/still a draft/);
+    expect(section).toHaveTextContent(/has no model outputs/);
+    expect(section).toHaveTextContent(/until Finish turns it into a live deal/);
+    expect(section).toHaveTextContent(/property's name is one of the things read from the Offering Memorandum/);
+    expect(section).toHaveTextContent(/the wizard does not ask for it/);
+  });
+
   it('has no unrecorded-video placeholder and no "coming soon"', () => {
     render(<MethodologyPage />);
     const text = visibleText();

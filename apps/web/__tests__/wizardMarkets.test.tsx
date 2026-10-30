@@ -98,7 +98,7 @@ describe('Sam #6 — STR market list not loaded (today)', () => {
   it('sends a typed market and submarket with str_market_id null; city is unchanged', async () => {
     seedReviewDraft({ city: 'Austin, TX', market: ' Typed  Market ', submarket: ' Typed Sub ' });
     render(<NewProjectPage />);
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({
       city: 'Austin, TX', market: 'Typed Market', submarket: 'Typed Sub', str_market_id: null,
@@ -108,7 +108,7 @@ describe('Sam #6 — STR market list not loaded (today)', () => {
   it('sends the acquisition stage the wizard collected as deal_stage (go-live checklist)', async () => {
     seedReviewDraft({ stage: 'LOI' });
     render(<NewProjectPage />);
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ deal_stage: 'LOI' });
   });
@@ -116,7 +116,7 @@ describe('Sam #6 — STR market list not loaded (today)', () => {
   it('sends null market / submarket when left blank', async () => {
     seedReviewDraft({});
     render(<NewProjectPage />);
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ market: null, submarket: null, str_market_id: null });
   });
@@ -146,7 +146,7 @@ describe('Sam #6 — STR market list loaded', () => {
     ref.rows = STR_ROWS;
     seedReviewDraft({ market: 'Test Market Two', submarket: 'Test Sub Beta' });
     render(<NewProjectPage />);
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({
       market: 'Test Market Two', str_market_id: 'TEST-M2', submarket: 'Test Sub Beta',

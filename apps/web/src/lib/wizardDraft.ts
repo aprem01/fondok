@@ -11,11 +11,38 @@
  * Everything lives in `localStorage` (this browser only; nothing is sent to
  * the worker) and every access is wrapped in try/catch — private windows /
  * blocked storage simply mean no autosave, never a broken wizard.
+ *
+ * FON-79 — once the wizard has a Deal Name and the worker can hold a draft,
+ * the deal row on the worker is the truth (``lib/hooks/useServerDraft``).
+ * This module then keeps only the POINTER to that row
+ * (``{draftDealId, savedAt}``) so the wizard can reopen the right draft
+ * without a round trip. The local draft above stays for the pre-name phase
+ * and for a worker that cannot hold drafts.
  */
 
 export const DRAFT_KEY = 'fondok:new-deal-draft:v1';
+export const DRAFT_POINTER_KEY = 'fondok:new-deal-draft-id:v1';
 export const DEFAULT_RETURN_PROFILE_KEY = 'fondok:wizard:default-return-profile:v1';
 export const DRAFT_DEBOUNCE_MS = 500;
+/** A draft nobody has touched for this many days carries a note on its
+ *  Projects card (go-live plan A.6.2: a nudge, never an automatic deletion). */
+export const STALE_DRAFT_DAYS = 30;
+
+/** The wizard's resume payload as stored on the worker (``deals.draft_wizard``):
+ *  the analyst's text as typed — a price range, a market without an id, UI
+ *  state — so resume is lossless. The normalized deal columns travel beside
+ *  it on every save, never instead of it. */
+export interface DraftWizardPayload<F extends Record<string, unknown> = Record<string, unknown>> {
+  v: 1;
+  step: number;
+  fields: F;
+}
+
+/** The browser's pointer to the server-side draft. */
+export interface DraftPointer {
+  draftDealId: string;
+  savedAt: number;
+}
 
 /** A staged file as remembered by the draft (no bytes). */
 export interface DraftFileRef {
@@ -77,6 +104,56 @@ export function clearDraft(): void {
   } catch {
     /* storage unavailable — nothing to clear */
   }
+}
+
+export function loadDraftPointer(): DraftPointer | null {
+  try {
+    const raw = storage()?.getItem(DRAFT_POINTER_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<DraftPointer>;
+    if (!p || typeof p.draftDealId !== 'string' || !p.draftDealId.trim() || typeof p.savedAt !== 'number') {
+      return null;
+    }
+    return { draftDealId: p.draftDealId, savedAt: p.savedAt };
+  } catch {
+    return null;
+  }
+}
+
+export function saveDraftPointer(draftDealId: string, savedAt: number = Date.now()): boolean {
+  try {
+    const s = storage();
+    if (!s) return false;
+    s.setItem(DRAFT_POINTER_KEY, JSON.stringify({ draftDealId, savedAt } satisfies DraftPointer));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearDraftPointer(): void {
+  try {
+    storage()?.removeItem(DRAFT_POINTER_KEY);
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+}
+
+/** Whole days since ``updatedAt`` (an ISO timestamp), or null when it does
+ *  not parse — the card then shows no note rather than a made-up age. */
+export function daysUntouched(updatedAt: string | null | undefined, now: number = Date.now()): number | null {
+  if (!updatedAt) return null;
+  const t = new Date(updatedAt).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((now - t) / 86_400_000));
+}
+
+/** "Draft · untouched for 31 days" once a draft has sat for ``STALE_DRAFT_DAYS``
+ *  or longer; null before that. The number is the draft's own age. */
+export function staleDraftNote(updatedAt: string | null | undefined, now: number = Date.now()): string | null {
+  const days = daysUntouched(updatedAt, now);
+  if (days == null || days < STALE_DRAFT_DAYS) return null;
+  return `Draft · untouched for ${days} days`;
 }
 
 export function loadDefaultReturnProfile(): string | null {

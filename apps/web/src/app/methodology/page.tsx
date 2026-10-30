@@ -38,7 +38,7 @@ export default function MethodologyPage() {
         id="extraction"
         number="1"
         title="What Fondok reads from your documents"
-        intro="Every uploaded document moves through the same stages: it is read, filed by type, its figures are extracted and checked, and the result is reconciled against the statement's own totals. Nothing is typed in by Fondok — a figure the documents do not state stays a dash."
+        intro="Every uploaded document moves through the same stages: it is read, filed by type, its figures are extracted and checked, and the result is reconciled against the statement's own totals. Nothing is typed in by Fondok — a figure the documents do not state stays a dash. A deal that is still a draft — its setup in the New Deal wizard not yet finished — has no model outputs: its documents are read and extracted as they are added, but nothing is projected, exported or written into a memo until Finish turns it into a live deal. The property's name is one of the things read from the Offering Memorandum; the wizard does not ask for it."
       >
         <Stages>
           <Stage
