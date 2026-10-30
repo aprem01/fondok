@@ -10,19 +10,23 @@ $0. A payload from a run that predates the schedule says so.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok-tests-exports-exit.db")
+# Per-test SQLite database BEFORE app modules import (the export modules pull
+# the settings in); in the temp dir, never inside the worktree.
+_TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-exports-exit.db"
+os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_TMP_DB}")
 
-from fondok_schemas.reasons import REASON_META, REFUSAL_GLYPH, ReasonCode
+from fondok_schemas.reasons import REASON_META, REFUSAL_GLYPH, ReasonCode  # noqa: E402
 
-from app.export.labels import (
+from app.export.labels import (  # noqa: E402
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
     EXIT_SCHEDULE_STALE_NOTE,
     EXIT_SCHEDULE_TITLE,
 )
-from app.export.refusals import NOT_AVAILABLE_PREFIX, collect_refusals
-from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
+from app.export.refusals import NOT_AVAILABLE_PREFIX, collect_refusals  # noqa: E402
+from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model  # noqa: E402
 
 # Raw engine rows exactly as ``ReturnsEngineOutputExt.exit_schedule`` dumps.
 _ENGINE_ROWS = [
