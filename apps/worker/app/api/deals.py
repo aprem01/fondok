@@ -11,6 +11,7 @@ LangGraph runtime and the streaming broadcast.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -22,12 +23,12 @@ from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
-from ..auth import AuthContext, require_role
+from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session
@@ -230,6 +231,20 @@ class CreateDealBody(BaseModel):
     str_market_id: str | None = Field(default=None, max_length=64)
     market: str | None = Field(default=None, max_length=200)
     submarket: str | None = Field(default=None, max_length=200)
+    # FON-79 — a ``draft`` is the New Deal wizard's server-side autosave: a
+    # real row (it owns documents, it is in the tenant's list) that cannot be
+    # run, exported or memo'd until ``POST /deals/{id}/activate``. ``active``
+    # is today's direct create. ``draft_wizard`` is the wizard's resume
+    # payload ``{v, step, fields}`` — the analyst's text as typed — and is
+    # accepted only on a draft.
+    lifecycle: Literal["draft", "active"] = "active"
+    draft_wizard: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _draft_wizard_only_on_a_draft(self) -> CreateDealBody:
+        if self.draft_wizard is not None and self.lifecycle != "draft":
+            raise ValueError("draft_wizard is accepted only when lifecycle is 'draft'")
+        return self
 
 
 class UpdateDealBody(BaseModel):
@@ -283,6 +298,11 @@ class UpdateDealBody(BaseModel):
     # current overrides — clients send the full merged map. Engines pick
     # these up via the OM-actuals loader on next run.
     field_overrides: dict[str, Any] | None = None
+    # FON-79 — the wizard's resume payload, written on every autosave of a
+    # draft. 409 ``deal_not_draft`` on an active deal: an underwriting has no
+    # wizard to resume. ``lifecycle`` itself is never patched — activate is
+    # the one way out of ``draft``.
+    draft_wizard: dict[str, Any] | None = None
 
 
 class Gate1Body(BaseModel):
@@ -375,6 +395,15 @@ class DealRecord(BaseModel):
     # "No documents uploaded" only when a deal genuinely has none (FON-35).
     # Defaults to 0 on endpoints that don't join the documents table.
     document_count: int = 0
+    # FON-79 — ``draft`` (the wizard has not pressed Finish) or ``active``.
+    # Orthogonal to ``status`` and ``state``. ``activated_at`` is when Finish
+    # was pressed (NULL for a draft and for a direct active create).
+    # ``draft_wizard`` is the resume payload: returned by the create response
+    # and by ``GET /deals/{id}?include=draft_wizard``; NULL everywhere else
+    # (list responses stay small) and once the deal is active.
+    lifecycle: str = "active"
+    activated_at: datetime | None = None
+    draft_wizard: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -669,6 +698,10 @@ class PipelineSummary(BaseModel):
     deals_meeting_target_irr: int = 0
     deals_with_target_irr: int = 0
     deals_by_state: dict[str, int] = Field(default_factory=dict)
+    # FON-79 — lifecycle drafts in this tenant. Counted BESIDE the rows, never
+    # inside them: a draft has no run, no target and no state worth counting,
+    # so it is excluded from ``deal_count`` and every median above.
+    draft_count: int = 0
 
 
 class PipelineResponse(BaseModel):
@@ -866,6 +899,41 @@ def _coerce_overrides(value: Any) -> dict[str, Any]:
     )
 
 
+def _coerce_draft_wizard(value: Any) -> dict[str, Any] | None:
+    """Normalize a ``draft_wizard`` column read (JSONB on Postgres, TEXT on
+    SQLite; the driver may hand back a parsed object or a JSON string).
+
+    NULL is "no resume payload". Anything that is not a JSON object is a
+    corrupt row the caller sees (500 naming the column) — the analyst's
+    half-built deal must not silently come back empty.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            logger.exception("deals.draft_wizard is not valid JSON")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "deals.draft_wizard is not valid JSON "
+                    f"({type(exc).__name__}); the row needs repair."
+                ),
+            ) from exc
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=(
+            "deals.draft_wizard is not a JSON object "
+            f"(found {type(value).__name__}); the row needs repair."
+        ),
+    )
+
+
 def _coerce_dt_optional(value: Any) -> datetime | None:
     """Like ``_coerce_dt`` but returns None for null/missing values."""
     if value is None:
@@ -962,6 +1030,9 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         validation_started_at=_coerce_dt_optional(row.get("validation_started_at")),
         validation_complete_at=_coerce_dt_optional(row.get("validation_complete_at")),
         document_count=int(row.get("document_count") or 0),
+        lifecycle=row.get("lifecycle") or "active",
+        activated_at=_coerce_dt_optional(row.get("activated_at")),
+        draft_wizard=_coerce_draft_wizard(row.get("draft_wizard")),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
     )
@@ -984,6 +1055,10 @@ _MARKET_COLUMNS: tuple[str, ...] = ("str_market_id", "market", "submarket")
 #: om-brand-str-scale — positioning provenance columns, probed together
 #: (both land in the same migration batch).
 _POSITIONING_SOURCE_CACHE_KEY = "fondok_deals_has_positioning_source"
+#: FON-79 — the three draft columns, each probed on its own (three separate
+#: migrations). ``lifecycle`` and ``activated_at`` are read on every deal
+#: read; ``draft_wizard`` only on request (see ``_deal_columns``).
+_LIFECYCLE_COLUMNS: tuple[str, ...] = ("lifecycle", "draft_wizard", "activated_at")
 
 
 async def _deals_has_column(
@@ -992,39 +1067,19 @@ async def _deals_has_column(
     """Does the live ``deals`` table carry ``column``?
 
     Same contract as :func:`_deals_has_proposed_brand` (catalog introspection,
-    any failure answers False, memoised on ``session.info``).
+    any failure answers False, memoised on ``session.info``) — the probe
+    itself is :func:`app.services.schema_probe.table_has_column`, shared with
+    ``services/pipeline.py``; this wrapper adds the log line.
     """
-    try:
-        cached = session.info.get(cache_key)
-    except Exception:
-        cached = None
-    if isinstance(cached, bool):
-        return cached
-    try:
-        is_sqlite = (
-            session.bind is not None and session.bind.dialect.name == "sqlite"
-        )
-        if is_sqlite:
-            rows = await session.execute(text("PRAGMA table_info(deals)"))
-            have = {str(r[1]).lower() for r in rows.fetchall()}
-        else:
-            rows = await session.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'deals'"
-                )
-            )
-            have = {str(r[0]).lower() for r in rows.fetchall()}
-        answer = column in have
-    except Exception:
-        answer = False
-    if not answer:
+    from ..services.schema_probe import table_has_column
+
+    already_known = isinstance(session.info.get(cache_key), bool)
+    answer = await table_has_column(session, "deals", column, cache_key=cache_key)
+    if not answer and not already_known:
         logger.warning(
             "deals: %s column absent — reading NULL and skipping writes "
             "until the startup migration runs", column,
         )
-    with contextlib.suppress(Exception):
-        session.info[cache_key] = answer
     return answer
 
 
@@ -1085,9 +1140,17 @@ async def _deals_has_proposed_brand(session: AsyncSession) -> bool:
     return answer
 
 
-async def _deal_columns(session: AsyncSession) -> str:
+async def _deal_columns(
+    session: AsyncSession, *, include_draft_wizard: bool = False
+) -> str:
     """``_DEAL_COLUMNS`` plus ``proposed_brand`` — real when the column
-    exists, a NULL stand-in otherwise."""
+    exists, a NULL stand-in otherwise.
+
+    FON-79: ``lifecycle`` / ``activated_at`` always ride along (``'active'``
+    / NULL on an un-migrated schema); ``draft_wizard`` only when
+    ``include_draft_wizard`` — the resume payload is one row's worth of
+    wizard state and is never part of a list response.
+    """
     cols = (
         f"{_DEAL_COLUMNS}, proposed_brand"
         if await _deals_has_proposed_brand(session)
@@ -1117,7 +1180,35 @@ async def _deal_columns(session: AsyncSession) -> str:
             f"{cols}, NULL AS positioning_source, "
             "NULL AS positioning_source_detail"
         )
+    # FON-79 — same contract for the lifecycle columns.
+    if await _deals_has_lifecycle_column(session, "lifecycle"):
+        cols = f"{cols}, lifecycle"
+    else:
+        cols = f"{cols}, 'active' AS lifecycle"
+    if await _deals_has_lifecycle_column(session, "activated_at"):
+        cols = f"{cols}, activated_at"
+    else:
+        cols = f"{cols}, NULL AS activated_at"
+    if include_draft_wizard and await _deals_has_lifecycle_column(session, "draft_wizard"):
+        cols = f"{cols}, draft_wizard"
+    else:
+        cols = f"{cols}, NULL AS draft_wizard"
     return cols
+
+
+async def _deals_has_lifecycle_column(session: AsyncSession, column: str) -> bool:
+    """FON-79 — does the live ``deals`` table carry ``column`` (one of
+    ``_LIFECYCLE_COLUMNS``)?"""
+    return await _deals_has_column(session, column, f"fondok_deals_has_{column}")
+
+
+async def _deals_can_hold_a_draft(session: AsyncSession) -> bool:
+    """FON-79 — ``lifecycle`` AND ``draft_wizard`` exist, so a draft row can
+    be stored as a draft. Without them a "draft" create would silently land
+    as an underwriting, which is refused instead (503 ``drafts_unavailable``)."""
+    return await _deals_has_lifecycle_column(
+        session, "lifecycle"
+    ) and await _deals_has_lifecycle_column(session, "draft_wizard")
 
 
 async def _deals_has_positioning_source(session: AsyncSession) -> bool:
@@ -1243,6 +1334,90 @@ async def _assert_deal_belongs_to_tenant(
         )
 
 
+#: FON-79 — the two refusal codes a client dispatches on.
+DEAL_IS_DRAFT_CODE = "deal_is_draft"
+DEAL_NOT_DRAFT_CODE = "deal_not_draft"
+
+
+def _deal_is_draft_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": DEAL_IS_DRAFT_CODE,
+            "message": (
+                "This deal is still a draft. Finish setting it up before "
+                "running, exporting or generating a memo for it."
+            ),
+        },
+    )
+
+
+def _deal_not_draft_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": DEAL_NOT_DRAFT_CODE,
+            "message": "This deal is not a draft.",
+        },
+    )
+
+
+async def _read_lifecycle(
+    session: AsyncSession,
+    *,
+    deal_id: str | UUID,
+    tenant_id: str | UUID,
+) -> str | None:
+    """``'draft'`` / ``'active'`` for a deal on this tenant, None when the
+    deal is not on this tenant. An un-migrated schema reads ``'active'``."""
+    lifecycle_expr = (
+        "lifecycle"
+        if await _deals_has_lifecycle_column(session, "lifecycle")
+        else "'active'"
+    )
+    row = (
+        await session.execute(
+            text(
+                f"""
+                SELECT {lifecycle_expr} AS lifecycle
+                  FROM deals
+                 WHERE id = :id AND tenant_id = :tenant
+                 LIMIT 1
+                """
+            ),
+            {"id": str(deal_id), "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return None
+    return str(row._mapping.get("lifecycle") or "active")
+
+
+async def assert_deal_active(
+    session: AsyncSession,
+    *,
+    deal_id: str | UUID,
+    tenant_id: str | UUID,
+) -> None:
+    """FON-79 — the guard that keeps a draft from being mistaken for an
+    underwriting: 404 when the deal is not on this tenant (the same answer
+    :func:`_assert_deal_belongs_to_tenant` gives, so a stranger learns
+    nothing), 409 ``deal_is_draft`` when it is a lifecycle draft.
+
+    Applied to every route that runs, exports, memos, asks, duplicates,
+    transitions or gates a deal. GETs stay open: the wizard and the Data
+    Room read a draft.
+    """
+    lifecycle = await _read_lifecycle(session, deal_id=deal_id, tenant_id=tenant_id)
+    if lifecycle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    if lifecycle == "draft":
+        raise _deal_is_draft_error()
+
+
 async def _load_field_overrides(
     session: AsyncSession,
     *,
@@ -1285,8 +1460,23 @@ async def _load_field_overrides(
 async def list_deals(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    lifecycle: Literal["draft", "active", "all"] = "all",
 ) -> list[DealRecord]:
-    """Return all deals for the current tenant, newest first."""
+    """Return all deals for the current tenant, newest first.
+
+    FON-79 — ``?lifecycle=draft|active`` narrows to one lifecycle; the
+    default ``all`` keeps the pre-drafts contract (the web splits
+    client-side). ``draft_wizard`` is never part of a list row.
+    """
+    params: dict[str, Any] = {"tenant": str(tenant_id)}
+    lifecycle_clause = ""
+    if lifecycle != "all":
+        if await _deals_has_lifecycle_column(session, "lifecycle"):
+            lifecycle_clause = " AND lifecycle = :lifecycle"
+            params["lifecycle"] = lifecycle
+        elif lifecycle == "draft":
+            # An un-migrated schema holds no drafts: every row is active.
+            return []
     rows = await session.execute(
         text(
             f"""
@@ -1295,11 +1485,11 @@ async def list_deals(
                      WHERE d.deal_id = deals.id
                        AND d.tenant_id = deals.tenant_id) AS document_count
               FROM deals
-             WHERE tenant_id = :tenant
+             WHERE tenant_id = :tenant{lifecycle_clause}
              ORDER BY created_at DESC
             """
         ),
-        {"tenant": str(tenant_id)},
+        params,
     )
     return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
 
@@ -1310,10 +1500,19 @@ async def create_deal(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
-    """Insert a new deal row + audit log entry."""
+    """Insert a new deal row + audit log entry.
+
+    FON-79 — ``lifecycle='draft'`` creates the wizard's server-side draft
+    (``status='Draft'``, audit ``deal.draft_created``); the default
+    ``active`` is today's direct create, now ``status='In Review'`` so the
+    word "Draft" means one thing from go-live (A.6.1).
+    """
     tenant_id_str = str(tenant_id)
     deal_id = uuid4()
     now = _now()
+    is_draft = body.lifecycle == "draft"
+    status_value = "Draft" if is_draft else "In Review"
+    is_sqlite = session.bind is not None and session.bind.dialect.name == "sqlite"
 
     params = {
         "id": str(deal_id),
@@ -1323,7 +1522,7 @@ async def create_deal(
         "keys": body.keys,
         "service": body.service,
         "deal_type": body.deal_type,
-        "status": "Draft",
+        "status": status_value,
         "deal_stage": body.deal_stage,
         "risk": None,
         # A11 — NULL until extraction produces a confidence; never 0.0 (which
@@ -1405,6 +1604,35 @@ async def create_deal(
                     col, market_values[col],
                 )
             market_values[col] = None
+    # FON-79 — lifecycle / draft_wizard. A draft can only be stored on a
+    # schema that can hold one; dropping ``lifecycle`` the way an optional
+    # column is dropped would silently turn the wizard's draft into an
+    # underwriting, so that case is refused instead.
+    if await _deals_has_lifecycle_column(session, "lifecycle"):
+        params["lifecycle"] = body.lifecycle
+        pb_col += ", lifecycle"
+        pb_val += ", :lifecycle"
+    if await _deals_has_lifecycle_column(session, "draft_wizard"):
+        params["draft_wizard"] = (
+            json.dumps(body.draft_wizard) if body.draft_wizard is not None else None
+        )
+        pb_col += ", draft_wizard"
+        pb_val += ", :draft_wizard" if is_sqlite else ", CAST(:draft_wizard AS JSONB)"
+    if is_draft and not await _deals_can_hold_a_draft(session):
+        logger.error(
+            "deals.create: draft refused — lifecycle / draft_wizard columns "
+            "absent on this schema (startup migration not applied)"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "drafts_unavailable",
+                "message": (
+                    "Drafts cannot be saved until the database migration has "
+                    "run. Try again shortly."
+                ),
+            },
+        )
 
     await session.execute(
         text(
@@ -1430,8 +1658,9 @@ async def create_deal(
         tenant_id=tenant_id_str,
         deal_id=str(deal_id),
         actor_id="system",
-        action="deal.created",
+        action="deal.draft_created" if is_draft else "deal.created",
         payload={
+            "lifecycle": body.lifecycle,
             "name": body.name,
             "city": body.city,
             "keys": body.keys,
@@ -1465,11 +1694,17 @@ async def create_deal(
         )
     await session.commit()
     # Wave 3 W3.5 — invalidate the pipeline-view cache so a freshly
-    # created deal shows up immediately on the analyst's next visit.
-    from ..services.pipeline import invalidate as _pipeline_invalidate
-    _pipeline_invalidate(tenant_id)
+    # created deal shows up immediately on the analyst's next visit. A
+    # draft is not in the snapshot (``draft_count`` is read live), so its
+    # create leaves the cache alone.
+    if not is_draft:
+        from ..services.pipeline import invalidate as _pipeline_invalidate
+        _pipeline_invalidate(tenant_id)
 
-    logger.info("deals.create: deal=%s tenant=%s name=%r", deal_id, tenant_id_str, body.name)
+    logger.info(
+        "deals.create: deal=%s tenant=%s name=%r lifecycle=%s",
+        deal_id, tenant_id_str, body.name, body.lifecycle,
+    )
     return DealRecord(
         id=deal_id,
         tenant_id=tenant_id,
@@ -1477,7 +1712,7 @@ async def create_deal(
         city=body.city,
         keys=body.keys,
         service=body.service,
-        status="Draft",
+        status=status_value,
         deal_stage=body.deal_stage,
         risk=None,
         ai_confidence=None,
@@ -1496,6 +1731,8 @@ async def create_deal(
         market=market_values["market"],
         submarket=market_values["submarket"],
         positioning_source=positioning_source,
+        lifecycle=body.lifecycle,
+        draft_wizard=body.draft_wizard,
         created_at=now,
         updated_at=now,
     )
@@ -1538,6 +1775,7 @@ async def get_pipeline(
         apply_sort,
         build_pipeline_snapshot,
         build_summary,
+        count_drafts,
     )
 
     # Clamp pagination so a forgotten limit query-arg can't bring back
@@ -1567,7 +1805,10 @@ async def get_pipeline(
         deal_stage=deal_stage,
         target_met=target_met,
     )
-    summary_dict = build_summary(filtered)
+    # FON-79 — drafts are not in the snapshot; their count is read live and
+    # printed beside the statistics, never inside them.
+    draft_count = await count_drafts(session, tenant_id=tenant_id)
+    summary_dict = build_summary(filtered, draft_count=draft_count)
     sorted_rows = apply_sort(filtered, sort)
     page = sorted_rows[offset : offset + limit]
 
@@ -1609,17 +1850,35 @@ async def get_pipeline(
     )
 
 
+#: FON-79 — the one ``?include=`` token ``GET /deals/{id}`` understands.
+_GET_DEAL_INCLUDES: frozenset[str] = frozenset({"draft_wizard"})
+
+
 @router.get("/{deal_id}", response_model=DealRecord)
 async def get_deal(
     deal_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    include: str | None = None,
 ) -> DealRecord:
+    """One deal. FON-79 — ``?include=draft_wizard`` adds the wizard's resume
+    payload (the only way to read it back); unknown tokens are 422."""
+    wanted = {p.strip() for p in (include or "").split(",") if p.strip()}
+    unknown = sorted(wanted - _GET_DEAL_INCLUDES)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "unknown_include",
+                "include": unknown,
+                "message": f"include accepts {sorted(_GET_DEAL_INCLUDES)}",
+            },
+        )
     row = (
         await session.execute(
             text(
                 f"""
-                SELECT {await _deal_columns(session)}
+                SELECT {await _deal_columns(session, include_draft_wizard="draft_wizard" in wanted)}
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """
@@ -1633,6 +1892,21 @@ async def get_deal(
             detail=f"deal {deal_id} not found",
         )
     return _row_to_record(dict(row._mapping))
+
+
+def _changes_for_audit(changes: dict[str, Any]) -> dict[str, Any]:
+    """The PATCH diff as the audit row records it. FON-79 — the wizard's
+    resume payload is the analyst's text as typed and arrives on every
+    autosave; the trail keeps its shape (``v`` / ``step``), not its text."""
+    if "draft_wizard" not in changes:
+        return changes
+    wizard = changes["draft_wizard"]
+    summary = (
+        {"v": wizard.get("v"), "step": wizard.get("step")}
+        if isinstance(wizard, dict)
+        else None
+    )
+    return {**changes, "draft_wizard": summary}
 
 
 @router.patch("/{deal_id}", response_model=DealRecord)
@@ -1661,6 +1935,11 @@ async def update_deal(
         )
 
     changes = body.model_dump(exclude_unset=True)
+    # FON-79 — the wizard's resume payload belongs to a draft only. (On an
+    # un-migrated schema every row reads ``active``, so the same 409.)
+    existing_lifecycle = str(existing._mapping.get("lifecycle") or "active")
+    if "draft_wizard" in changes and existing_lifecycle != "draft":
+        raise _deal_not_draft_error()
     if "proposed_brand" in changes and not await _deals_has_proposed_brand(session):
         logger.warning(
             "deals.update: proposed_brand dropped for deal=%s — column "
@@ -1884,6 +2163,14 @@ async def update_deal(
             params[field] = _bind_date(
                 session, date.fromisoformat(value) if isinstance(value, str) else value
             )
+        elif field == "draft_wizard":
+            # FON-79 — JSONB on Postgres (explicit CAST), TEXT on SQLite;
+            # ``null`` clears it.
+            if is_sqlite:
+                set_clauses.append(f"{field} = :{field}")
+            else:
+                set_clauses.append(f"{field} = CAST(:{field} AS JSONB)")
+            params[field] = json.dumps(value) if value is not None else None
         else:
             set_clauses.append(f"{field} = :{field}")
             params[field] = value
@@ -1957,12 +2244,15 @@ async def update_deal(
             deal_id=str(deal_id),
             actor_id="system",
             action="deal.updated",
-            payload={"changes": changes},
+            payload={"changes": _changes_for_audit(changes)},
         )
     await session.commit()
-    # Wave 3 W3.5 — pipeline-view cache invalidation.
-    from ..services.pipeline import invalidate as _pipeline_invalidate
-    _pipeline_invalidate(tenant_id)
+    # Wave 3 W3.5 — pipeline-view cache invalidation. A draft is not in the
+    # snapshot, and its autosave PATCHes arrive every few hundred ms, so
+    # they leave the cache alone.
+    if existing_lifecycle != "draft":
+        from ..services.pipeline import invalidate as _pipeline_invalidate
+        _pipeline_invalidate(tenant_id)
 
     refreshed = (
         await session.execute(
@@ -1976,6 +2266,290 @@ async def update_deal(
     assert refreshed is not None  # we just updated it
     logger.info("deals.update: deal=%s changes=%s", deal_id, list(changes.keys()))
     return _row_to_record(dict(refreshed._mapping))
+
+
+#: Children of a deal, FK-safest order (children before parents). Each table
+#: either has FK ON DELETE CASCADE or is deleted explicitly here — explicit is
+#: safer: Postgres and SQLite agree on order without perfect FK plumbing.
+#: audit_log rows are KEPT: they are the compliance trail of the deletion
+#: itself ("tenant X deleted deal Y at T").
+_DEAL_CASCADE_SQL: tuple[tuple[str, str], ...] = (
+    # Children of documents (extraction_results FK -> documents.id).
+    (
+        "DELETE FROM extraction_results "
+        "WHERE document_id IN ("
+        "  SELECT id FROM documents WHERE deal_id = :deal AND tenant_id = :tenant"
+        ")",
+        "extraction_results",
+    ),
+    # Direct children of the deal.
+    ("DELETE FROM broker_questions WHERE deal_id = :deal AND tenant_id = :tenant", "broker_questions"),
+    ("DELETE FROM broker_qa_pairs WHERE deal_id = :deal AND tenant_id = :tenant", "broker_qa_pairs"),
+    ("DELETE FROM scenarios WHERE deal_id = :deal AND tenant_id = :tenant", "scenarios"),
+    ("DELETE FROM engine_outputs WHERE deal_id = :deal AND tenant_id = :tenant", "engine_outputs"),
+    ("DELETE FROM documents WHERE deal_id = :deal AND tenant_id = :tenant", "documents"),
+)
+
+
+async def _cascade_delete_deal(
+    session: AsyncSession,
+    *,
+    deal_id: str | UUID,
+    tenant_id: str | UUID,
+) -> tuple[dict[str, int], list[str]]:
+    """Delete a deal and every child row, inside the caller's transaction.
+
+    Shared by ``DELETE /deals/{id}/hard`` and ``DELETE /deals/{id}/draft``
+    (FON-79) so the two can never disagree about what a deletion removes.
+    Returns ``(deleted_counts, orphan_storage_keys)``: the per-table row
+    counts for the audit trail, and the raw-store keys the deleted document
+    rows pointed at that NO remaining document row still references (a
+    duplicated deal shares the original's objects by ``storage_key``). The
+    caller removes those objects with :func:`_delete_raw_objects` AFTER its
+    commit — a storage failure must never roll back the rows, and a failed
+    commit must never leave rows pointing at deleted objects.
+    """
+    bind = {"deal": str(deal_id), "tenant": str(tenant_id)}
+    keys = [
+        str(r[0])
+        for r in (
+            await session.execute(
+                text(
+                    "SELECT DISTINCT storage_key FROM documents "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant "
+                    "AND storage_key IS NOT NULL"
+                ),
+                bind,
+            )
+        ).fetchall()
+    ]
+
+    deleted_counts: dict[str, int] = {}
+    for sql, label in _DEAL_CASCADE_SQL:
+        result = await session.execute(text(sql), bind)
+        deleted_counts[label] = result.rowcount or 0
+    result = await session.execute(
+        text("DELETE FROM deals WHERE id = :deal AND tenant_id = :tenant"), bind
+    )
+    deleted_counts["deals"] = result.rowcount or 0
+
+    orphan_keys: list[str] = []
+    for key in keys:
+        still = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM documents "
+                    "WHERE storage_key = :key AND tenant_id = :tenant LIMIT 1"
+                ),
+                {"key": key, "tenant": str(tenant_id)},
+            )
+        ).first()
+        if still is None:
+            orphan_keys.append(key)
+    return deleted_counts, orphan_keys
+
+
+async def _delete_raw_objects(keys: list[str], *, deal_id: str) -> int:
+    """Best-effort raw-store cleanup after the row deletes committed, one
+    object per key (``api.documents.delete_document`` does the same for a
+    single document). An orphaned object is an ops nuisance, never a reason
+    to fail the request. Returns how many objects were removed."""
+    if not keys:
+        return 0
+    removed = 0
+    try:
+        from ..storage import get_store
+
+        store = get_store()
+    except Exception:
+        logger.exception(
+            "deals: raw store unavailable — %d object(s) of deal=%s orphaned",
+            len(keys), deal_id,
+        )
+        return 0
+    for key in keys:
+        try:
+            if await asyncio.to_thread(store.delete, key):
+                removed += 1
+        except Exception:
+            logger.exception(
+                "deals: storage delete failed for key=%s (deal=%s); rows "
+                "already deleted, blob orphaned",
+                key, deal_id,
+            )
+    return removed
+
+
+@router.post("/{deal_id}/activate", response_model=DealRecord)
+async def activate_deal(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
+) -> DealRecord:
+    """FON-79 — Finish: turn a draft into an underwriting.
+
+    409 ``deal_not_draft`` when the deal is already active; 422
+    ``deal_name_required`` when the name is blank (the one piece of
+    identifying information a deal must have). Sets ``lifecycle='active'``,
+    clears ``draft_wizard``, stamps ``activated_at`` and ``status='In
+    Review'`` (A.6.1), audits ``deal.activated`` with the step the wizard
+    reached and the document count, and invalidates the pipeline cache —
+    the deal now counts.
+    """
+    tenant_id = auth.tenant_id
+    tenant_id_str = str(tenant_id)
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {await _deal_columns(session, include_draft_wizard=True)} "
+                "FROM deals WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id_str},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    row = dict(existing._mapping)
+    if str(row.get("lifecycle") or "active") != "draft":
+        raise _deal_not_draft_error()
+    if not str(row.get("name") or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "deal_name_required",
+                "message": "Give the deal a name before finishing setup.",
+            },
+        )
+    wizard = _coerce_draft_wizard(row.get("draft_wizard"))
+    steps_completed = wizard.get("step") if isinstance(wizard, dict) else None
+    document_count = int(
+        (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM documents "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant"
+                ),
+                {"deal": str(deal_id), "tenant": tenant_id_str},
+            )
+        ).scalar()
+        or 0
+    )
+
+    now = _now()
+    await session.execute(
+        text(
+            """
+            UPDATE deals
+               SET lifecycle = 'active',
+                   draft_wizard = NULL,
+                   activated_at = :now,
+                   status = 'In Review',
+                   updated_at = :now
+             WHERE id = :id AND tenant_id = :tenant
+            """
+        ),
+        {"id": str(deal_id), "tenant": tenant_id_str, "now": now},
+    )
+    await _write_audit(
+        session,
+        tenant_id=tenant_id_str,
+        deal_id=str(deal_id),
+        actor_id=auth.user_id or "system",
+        action="deal.activated",
+        payload={
+            "steps_completed": steps_completed,
+            "document_count": document_count,
+            "previous_status": row.get("status"),
+        },
+    )
+    await session.commit()
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(tenant_id)
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"SELECT {await _deal_columns(session, include_draft_wizard=True)} "
+                "FROM deals WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": str(deal_id), "tenant": tenant_id_str},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info(
+        "deals.activate: deal=%s tenant=%s steps=%s documents=%s",
+        deal_id, tenant_id_str, steps_completed, document_count,
+    )
+    return _row_to_record(dict(refreshed._mapping))
+
+
+@router.delete("/{deal_id}/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_draft(
+    deal_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
+) -> Response:
+    """FON-79 — Discard a draft: the deal, its documents, extraction rows
+    and scenarios go, with the raw-store objects (the same cascade as
+    ``DELETE /deals/{id}/hard``). 409 ``deal_not_draft`` on an active deal,
+    so this route can never delete an underwriting — which is also why it
+    needs no ``require_role``: a draft is the analyst's own scratch work.
+    Audited at tenant level as ``deal.draft_discarded`` (the deal id stops
+    existing). Cross-tenant guesses 404.
+    """
+    tenant_id = auth.tenant_id
+    tenant_id_str = str(tenant_id)
+    deal_id_str = str(deal_id)
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {await _deal_columns(session)} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": deal_id_str, "tenant": tenant_id_str},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    if str(existing._mapping.get("lifecycle") or "active") != "draft":
+        raise _deal_not_draft_error()
+    deal_name = existing._mapping.get("name")
+
+    deleted_counts, orphan_keys = await _cascade_delete_deal(
+        session, deal_id=deal_id_str, tenant_id=tenant_id_str
+    )
+    # Audit BEFORE commit so a partial cascade still leaves a trail.
+    try:
+        await log_audit(
+            session,
+            tenant_id=tenant_id_str,
+            deal_id=deal_id_str,
+            actor_id=auth.user_id,
+            action="deal.draft_discarded",
+            resource_type="deal",
+            resource_id=deal_id_str,
+            metadata={
+                "name": deal_name,
+                "cascade_counts": deleted_counts,
+                "raw_objects_to_delete": len(orphan_keys),
+                "auth_source": auth.source,
+            },
+        )
+    except Exception:
+        logger.exception("discard_draft: audit log failed for deal=%s", deal_id)
+    await session.commit()
+    await _delete_raw_objects(orphan_keys, deal_id=deal_id_str)
+    logger.info(
+        "deals.discard_draft: deal=%s tenant=%s cascade=%s objects=%d",
+        deal_id, tenant_id_str, deleted_counts, len(orphan_keys),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
@@ -2025,51 +2599,12 @@ async def hard_delete_deal(
         )
     deal_name = existing._mapping.get("name")
 
-    # Cascade. Each table either has FK ON DELETE CASCADE OR we
-    # delete explicitly. Doing it explicitly is safer — Postgres +
-    # SQLite agree on order without needing FK plumbing to be perfect.
-    cascade_sql = [
-        # Children of documents (extraction_results FK -> documents.id).
-        (
-            "DELETE FROM extraction_results "
-            "WHERE document_id IN ("
-            "  SELECT id FROM documents WHERE deal_id = :deal AND tenant_id = :tenant"
-            ")",
-            "extraction_results",
-        ),
-        # Direct-children of deal.
-        ("DELETE FROM broker_questions WHERE deal_id = :deal AND tenant_id = :tenant", "broker_questions"),
-        ("DELETE FROM broker_qa_pairs WHERE deal_id = :deal AND tenant_id = :tenant", "broker_qa_pairs"),
-        ("DELETE FROM scenarios WHERE deal_id = :deal AND tenant_id = :tenant", "scenarios"),
-        ("DELETE FROM engine_outputs WHERE deal_id = :deal AND tenant_id = :tenant", "engine_outputs"),
-        ("DELETE FROM documents WHERE deal_id = :deal AND tenant_id = :tenant", "documents"),
-        # audit_log: scoped narrowly to this deal so we don't delete
-        # tenant-wide audit history. Keep these even after deal delete
-        # for compliance forensics — but the original Wave 1 audit
-        # schema doesn't carry deal_id on every row, so this is a
-        # best-effort match on the deal_id column when present.
-        # NB: we KEEP audit entries that mention the deal_id in
-        # metadata/payload — those are usually scoped to actor/system
-        # actions and survive deletion for compliance.
-    ]
-
-    deleted_counts: dict[str, int] = {}
-    bind = {"deal": deal_id_str, "tenant": tenant_id_str}
-    for sql, label in cascade_sql:
-        result = await session.execute(text(sql), bind)
-        deleted_counts[label] = result.rowcount or 0
-
-    # The deal itself.
-    await session.execute(
-        text("DELETE FROM deals WHERE id = :id AND tenant_id = :tenant"),
-        {"id": deal_id_str, "tenant": tenant_id_str},
+    deleted_counts, orphan_keys = await _cascade_delete_deal(
+        session, deal_id=deal_id_str, tenant_id=tenant_id_str
     )
-    deleted_counts["deals"] = 1
 
     # Audit BEFORE commit so a partial cascade still leaves a trail.
     try:
-        from ..audit import log_audit
-
         await log_audit(
             session,
             tenant_id=tenant_id_str,
@@ -2082,6 +2617,7 @@ async def hard_delete_deal(
             metadata={
                 "name": deal_name,
                 "cascade_counts": deleted_counts,
+                "raw_objects_to_delete": len(orphan_keys),
                 "auth_source": auth.source,
             },
         )
@@ -2091,6 +2627,7 @@ async def hard_delete_deal(
         )
 
     await session.commit()
+    await _delete_raw_objects(orphan_keys, deal_id=deal_id_str)
 
     from ..services.pipeline import invalidate as _pipeline_invalidate
     _pipeline_invalidate(tenant_id)
@@ -2763,9 +3300,7 @@ async def gate1(
     engines run. The graph state-machine is wired separately; this
     route is the canonical record of the decision.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     accepted = body.decision == "approve"
     next_state = "run_engines" if accepted else "halt"
     await log_audit(
@@ -2805,9 +3340,7 @@ async def gate2(
     ``audit_log``. The downstream finalize step (memo lock + export)
     reads the latest ``gate2.decision`` row to know whether to proceed.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     accepted = body.recommendation in ("go", "conditional")
     next_state = "finalize" if accepted else "decline"
     await log_audit(
@@ -2884,6 +3417,8 @@ async def transition_deal_state(
     exact criteria. For now this endpoint enforces only the topological
     transition rules above and stamps the timestamp + audit trail.
     """
+    # FON-79 — a draft has no lifecycle state to advance.
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     current = (
         await session.execute(
             text(
@@ -3717,9 +4252,7 @@ async def trigger_memo_generation(
     analyst is surfaced via the SSE channel (``event: error``)
     instead of leaving the stream hanging.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     try:
         # Thread the request tenant through — without it the loader
         # resolves the deal under DEFAULT_TENANT_ID, doesn't find a
@@ -3856,9 +4389,7 @@ async def stream_memo(
 
     A 5-minute absolute timeout guards against pathological hangs.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     from ..streaming.broadcast import (
         DONE_SENTINEL,
         ERROR_SENTINEL,

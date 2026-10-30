@@ -97,6 +97,7 @@ from .deals import (
     DealRecord,
     _deal_columns,
     _row_to_record,
+    assert_deal_active,
     get_tenant_id,
 )
 
@@ -272,6 +273,9 @@ async def duplicate_deal(
     include_comments = bool(body.include_cell_comments) if body else False
     skipped: list[str] = list(SKIPPED_TABLES)
 
+    # FON-79 — a lifecycle draft is 409 ``deal_is_draft`` (404 for a stranger,
+    # as below): there is no underwriting to copy yet.
+    await assert_deal_active(session, deal_id=src, tenant_id=tenant)
     source = (
         await session.execute(
             text("SELECT * FROM deals WHERE id = :id AND tenant_id = :tenant"),
@@ -330,6 +334,10 @@ async def duplicate_deal(
         "name": new_name,
         "created_at": now,
         "updated_at": now,
+        # FON-79 — the copy is born active (the source is, see the guard
+        # above) but nobody pressed Finish on it: no activated_at, no wizard.
+        "activated_at": None,
+        "draft_wizard": None,
     }
     await _insert_row(
         session,

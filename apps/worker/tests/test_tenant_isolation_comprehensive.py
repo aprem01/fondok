@@ -180,6 +180,11 @@ ENDPOINT_CASES: list[EndpointCase] = [
     EndpointCase("GET", "/deals", "/{deal_id}/memo/edits"),
     # Duplicate deal — copies docs / reviewed extractions / assumptions.
     EndpointCase("POST", "/deals", "/{deal_id}/duplicate"),
+    # FON-79 — drafts. The seeded deals are ACTIVE, so the owner gets 409
+    # ``deal_not_draft`` (not 404) and a stranger 404; neither is ever 2xx.
+    # ``tests/test_deals_drafts.py`` covers the draft path and the 401.
+    EndpointCase("POST", "/deals", "/{deal_id}/activate", body={}),
+    EndpointCase("DELETE", "/deals", "/{deal_id}/draft"),
     # documents_router — deal-scoped reads
     EndpointCase("GET", "/deals", "/{deal_id}/documents"),
     # ``?q=`` is REQUIRED: without it FastAPI answers 422 before the handler

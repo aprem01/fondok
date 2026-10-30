@@ -45,7 +45,7 @@ from ..services.engine_runner import (
     run_single_engine,
 )
 from ..services.run_freshness import stale_engines
-from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, assert_deal_active, get_tenant_id
 
 logger = logging.getLogger(__name__)
 engines_router = APIRouter()
@@ -261,11 +261,10 @@ async def kickoff_run_all(
 
     Tenant-scoped: cross-tenant access returns 404 before the
     background task is scheduled — otherwise an attacker could
-    enqueue compute against another tenant's deal.
+    enqueue compute against another tenant's deal. FON-79: a lifecycle
+    draft is 409 ``deal_is_draft`` — nothing runs on a half-built deal.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     run_id = str(uuid4())
     started_at = datetime.now(UTC)
     overrides = body.assumptions if body else None
@@ -324,11 +323,10 @@ async def kickoff_run_one(
     under a second on the Kimpton fixture, so we run synchronously in
     the request and return the persisted row directly. The
     ``BackgroundTasks`` parameter is kept on the signature so future
-    long-running engines can flip a single line to defer.
+    long-running engines can flip a single line to defer. FON-79: a
+    lifecycle draft is 409 ``deal_is_draft``.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     _validate_engine_name(name)
     overrides = body.assumptions if body else None
     run_id = str(uuid4())
@@ -429,11 +427,11 @@ async def preview_returns(
     Read-only guarantee: this NEVER writes to ``engine_outputs``, never mints
     a ``run_id``, and never advances the deal's canonical run — dragging a
     sandbox slider cannot mutate the deal. Tenant-scoped like the sibling
-    engine routes (cross-tenant deal ids 404 before any compute).
+    engine routes (cross-tenant deal ids 404 before any compute); a
+    lifecycle draft is 409 ``deal_is_draft`` (FON-79) — the sandbox walks the
+    engine chain too.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     body = body or ReturnsPreviewBody()
     # A deal with no key count / purchase price raises
     # ``MissingIdentityInputsError``; the app-level handler (``app.main``)

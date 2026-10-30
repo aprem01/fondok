@@ -202,6 +202,51 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS positioning_source_detail TEXT",
     ),
     (
+        # FON-79 (go-live plan ITEM A) — server-side deal drafts. ``lifecycle``
+        # is orthogonal to ``status`` (the analyst's workflow label) and to
+        # ``state`` (onboarding / validation): ``draft`` is a wizard that has
+        # not pressed Finish, ``active`` is an underwriting. Every existing
+        # row defaults to ``active`` — they are all real deals. The worker
+        # probes the catalog before reading / writing these columns, so an
+        # un-migrated DB reads ``active`` / NULL instead of 500ing.
+        "deals.add_lifecycle",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'active'",
+    ),
+    (
+        # Guarded like the audit trigger (pg_constraint lookup) so a re-run
+        # is a no-op — ``ADD CONSTRAINT`` has no ``IF NOT EXISTS`` form.
+        "deals.add_lifecycle_chk",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'deals_lifecycle_chk'
+            ) THEN
+                ALTER TABLE deals ADD CONSTRAINT deals_lifecycle_chk
+                    CHECK (lifecycle IN ('draft', 'active'));
+            END IF;
+        END
+        $$
+        """,
+    ),
+    (
+        # The wizard's resume payload ``{v, step, fields}`` — the analyst's
+        # text as typed, so resume is lossless. Non-NULL only while
+        # ``lifecycle = 'draft'``; activate clears it.
+        "deals.add_draft_wizard",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS draft_wizard JSONB",
+    ),
+    (
+        # When Finish was pressed. NULL for a draft and for a deal created
+        # directly as active (nothing was activated).
+        "deals.add_activated_at",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ",
+    ),
+    (
+        "deals.idx_tenant_lifecycle",
+        "CREATE INDEX IF NOT EXISTS idx_deals_tenant_lifecycle ON deals (tenant_id, lifecycle)",
+    ),
+    (
         "documents.create_table",
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -1460,6 +1505,27 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "deals.add_positioning_source_detail_sqlite",
         "ALTER TABLE deals ADD COLUMN positioning_source_detail TEXT",
+    ),
+    (
+        # FON-79 — SQLite mirror of the lifecycle / draft ALTERs above. SQLite
+        # cannot ADD a CHECK constraint after the fact, so the two-value
+        # domain is enforced by the API (``CreateDealBody.lifecycle`` is a
+        # Literal) and by Postgres in production. JSON is TEXT here, as for
+        # ``field_overrides``.
+        "deals.add_lifecycle_sqlite",
+        "ALTER TABLE deals ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'",
+    ),
+    (
+        "deals.add_draft_wizard_sqlite",
+        "ALTER TABLE deals ADD COLUMN draft_wizard TEXT",
+    ),
+    (
+        "deals.add_activated_at_sqlite",
+        "ALTER TABLE deals ADD COLUMN activated_at TEXT",
+    ),
+    (
+        "deals.idx_tenant_lifecycle_sqlite",
+        "CREATE INDEX IF NOT EXISTS idx_deals_tenant_lifecycle ON deals (tenant_id, lifecycle)",
     ),
     (
         "documents.create_table",

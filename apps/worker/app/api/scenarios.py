@@ -41,7 +41,7 @@ from ..services.engine_runner import (
     get_run_status,
     run_all_engines,
 )
-from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
+from .deals import _assert_deal_belongs_to_tenant, assert_deal_active, get_tenant_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -748,10 +748,9 @@ async def run_scenario(
     Runs synchronously (engines are pure-Python and complete in well
     under a second on the Kimpton fixture). Stamps the run_id back into
     ``scenarios.last_run_id`` so the UI can deep-link without re-running.
+    FON-79: a lifecycle draft is 409 ``deal_is_draft`` — this is an engine run.
     """
-    await _assert_deal_belongs_to_tenant(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
     await _load_scenario(
         session, scenario_id=scenario_id, deal_id=deal_id, tenant_id=tenant_id
     )
