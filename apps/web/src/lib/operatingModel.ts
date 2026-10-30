@@ -7,6 +7,11 @@
  * `apps/worker/app/api/deals.py`.
  */
 import { rulesById } from '@/lib/variance';
+import {
+  MGMT_FEE_GUIDANCE_BY_MODEL,
+  MGMT_FEE_GUIDANCE_DISCLAIMER,
+  OPERATING_MODEL_LABELS,
+} from '@/lib/methodology/managementFeeGuidance.generated';
 
 export type OperatingModelId = 'owner_operated' | 'third_party' | 'brand_managed';
 
@@ -17,17 +22,17 @@ export const OPERATING_MODEL_OPTIONS: ReadonlyArray<{
 }> = [
   {
     id: 'owner_operated',
-    label: 'Owner-operated / in-house',
+    label: OPERATING_MODEL_LABELS.owner_operated,
     desc: 'The owner runs the hotel with its own management team.',
   },
   {
     id: 'third_party',
-    label: 'Third-party operator',
+    label: OPERATING_MODEL_LABELS.third_party,
     desc: 'An independent management company operates the hotel under contract.',
   },
   {
     id: 'brand_managed',
-    label: 'Brand-managed / brand-operated',
+    label: OPERATING_MODEL_LABELS.brand_managed,
     desc: 'The brand itself manages and operates the hotel.',
   },
 ];
@@ -48,20 +53,13 @@ export function operatingModelLabel(v: string | null | undefined): string | null
  * actual fee varies by operator, brand, contract and asset, and the analyst
  * sets `mgmt_fee_pct` (and, Sam #9, the opt-in
  * `incentive_mgmt_fee_pct_of_gop`) themselves — nothing here changes either.
- * The same text is printed on /methodology so the product and its
- * documentation cannot drift.
+ *
+ * FON-120: the text is authored ONCE in
+ * `packages/methodology/data/management_fee_guidance.yaml` and generated
+ * here (`scripts/gen_methodology.py`), so the product, the Methodology page
+ * (`{{slot:mgmt-fee-guidance}}`) and the text Atlas reads cannot drift.
  */
-export const MGMT_FEE_GUIDANCE_DISCLAIMER =
-  'Directional guidance only — not an underwriting standard; actual fees vary by operator, brand, contract and asset. Nothing here changes the management fee or incentive fee assumptions.';
-
-export const MGMT_FEE_GUIDANCE_BY_MODEL: Readonly<Record<OperatingModelId, string>> = {
-  third_party:
-    'Third-party operators typically charge a base fee of roughly 2–4% of total revenue, with a possible incentive fee on top (often a share of GOP or NOI above a hurdle) — enter it as the Incentive fee, a share of GOP after the base fee.',
-  brand_managed:
-    'Brand-managed hotels typically carry a base fee of roughly 2–4% of total revenue, a possible incentive fee (enter it as the Incentive fee, a share of GOP after the base fee), and brand-related charges (marketing / programme fees, reservation and loyalty costs) that sit outside the base fee.',
-  owner_operated:
-    'Owner-operated hotels pay no external management fee by definition, so an incentive fee rarely applies; analysts may still include an imputed base fee to normalise expenses against managed comparables.',
-};
+export { MGMT_FEE_GUIDANCE_BY_MODEL, MGMT_FEE_GUIDANCE_DISCLAIMER };
 
 /**
  * The management-fee context line shown beside the Management fee assumption.

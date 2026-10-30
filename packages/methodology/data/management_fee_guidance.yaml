@@ -1,0 +1,39 @@
+# FON-102 — Sam's directional management-fee guidance, by operating model.
+#
+# DIRECTIONAL / ILLUSTRATIVE ONLY. This is not an underwriting standard: the
+# actual fee varies by operator, brand, contract and asset, and the analyst
+# sets the management fee (and, Sam #9, the opt-in incentive fee) themselves —
+# nothing here changes either. The same text is printed beside the fee on the
+# Future P&L and in the Methodology §2 guidance box ({{slot:mgmt-fee-guidance}}),
+# rendered on the web from the generated module (scripts/gen_methodology.py →
+# apps/web/src/lib/methodology/managementFeeGuidance.generated.ts, re-exported
+# by lib/operatingModel.ts) and on the worker from this file, so the product,
+# its documentation and Atlas cannot drift from one another.
+#
+# The ids mirror the worker's `OperatingModel` literal (apps/worker/app/api/deals.py)
+# and the web's `OperatingModelId`.
+disclaimer: >-
+  Directional guidance only — not an underwriting standard; actual fees vary by
+  operator, brand, contract and asset. Nothing here changes the management fee
+  or incentive fee assumptions.
+models:
+  - id: owner_operated
+    label: Owner-operated / in-house
+    guidance: >-
+      Owner-operated hotels pay no external management fee by definition, so an
+      incentive fee rarely applies; analysts may still include an imputed base fee
+      to normalise expenses against managed comparables.
+  - id: third_party
+    label: Third-party operator
+    guidance: >-
+      Third-party operators typically charge a base fee of roughly 2–4% of total
+      revenue, with a possible incentive fee on top (often a share of GOP or NOI
+      above a hurdle) — enter it as the Incentive fee, a share of GOP after the
+      base fee.
+  - id: brand_managed
+    label: Brand-managed / brand-operated
+    guidance: >-
+      Brand-managed hotels typically carry a base fee of roughly 2–4% of total
+      revenue, a possible incentive fee (enter it as the Incentive fee, a share of
+      GOP after the base fee), and brand-related charges (marketing / programme
+      fees, reservation and loyalty costs) that sit outside the base fee.

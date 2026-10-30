@@ -1,0 +1,80 @@
+# Methodology package index (FON-120) — section ORDER, ids, Atlas keywords.
+#
+# One source, three detail levels (conceptual / detailed / engineering), two
+# renderers (web: scripts/gen_methodology.py → content.generated.ts; worker:
+# app/methodology reads these files at boot), one consumer (Atlas, the deal
+# copilot). Each section's title, decisions and test anchors live in its own
+# file's frontmatter so they cannot drift from the body; this index holds what
+# spans sections: the order (which gives each level its "Section N" numbering
+# over the sections that HAVE that level), the page chrome per level and the
+# keyword map Atlas selects sections with.
+#
+# Authoring rules: README.md in this directory.
+version: 1
+
+pages:
+  conceptual:
+    eyebrow: Methodology
+    title: How Fondok underwrites
+    subtitle: >-
+      The reasoning behind every number on the platform — what is read from your
+      documents, how the projection, market, financing and returns are built, and
+      which assumptions are yours to set.
+  detailed:
+    eyebrow: Methodology · Detail
+    title: How Fondok underwrites — detail
+    subtitle: >-
+      The client methodology with the formulas, defaults and precedence rules the
+      model actually runs, for Fondok administrators. Every figure below cites the
+      code or copy it is read from.
+  engineering:
+    eyebrow: Methodology · internal
+    title: How Fondok underwrites — engineering reference
+    subtitle: >-
+      The reasoning behind every number on the platform — what gets extracted, how
+      projections are built, where market data comes from, and which assumptions
+      are model-driven vs analyst-controlled.
+
+sections:
+  - id: extraction
+    file: 01-extraction.md
+    keywords: [extract, extraction, document, upload, classif, parse, confidence, reconcil, verify, retry, re-run, rerun, duplicate, period, t-12, t12, p&l, scanned]
+  - id: projection
+    file: 02-projection.md
+    keywords: [projection, future p&l, year 1, year-1, year one, base year, calendar, close date, occupancy, adr, revpar, growth, expense, method, management fee, incentive fee, stabiliz, stabilis, exit noi, exit cap, reversion, sale, hold, displacement, renovation, pip, capex, budget, waterfall, noi, ff&e, reserve, gop, benchmark, operating model, exit year, returns by exit]
+  - id: sources
+    file: 03-sources.md
+    keywords: [source, badge, provenance, where did, come from, override, justification, note, market, submarket, comp set, str, cbre, horizons, index, penetration, mpi, ari, as-of, as of, ledger, primary statement, property name, project name, key count, keys, brand, positioning, property type, demand, supply, ttm, trace, hover, pinned, pin]
+  - id: engines
+    file: 04-engines.md
+    keywords: [engine, model, debt, loan, senior, pace, dscr, debt yield, ltv, ltc, covenant, origination, financing, interest, floating, sofr, amortis, amortiz, sandbox, sensitivit, partnership, waterfall, gp, lp, promote, re-run, failed, banner, stale]
+  - id: pricing
+    file: 05-pricing.md
+    keywords: [irr, equity multiple, moic, target, hurdle, return profile, yield on cost, max price, solver, pricing, bidding, asking, bridge, export, excel, memo, deck, loi, within target, above target, below target, breakeven]
+  - id: ic-memo
+    file: 06-ic-memo.md
+    keywords: [ic memo, memo, variance, broker, flag, diligence, recommendation, proceed, decision, basis mismatch, plausib, noi impact, resolve, accept]
+  - id: reasons
+    file: 07-reasons.md
+    keywords: [dash, "—", reason, refus, not available, why is, missing, blank, awaiting, needs review, structure, layout, customize]
+  - id: concept-registry
+    file: 08-concept-registry.md
+    keywords: [concept, registry, alias, ontology, usali line, vocabulary, field path]
+  - id: lineage
+    file: 09-lineage.md
+    keywords: [lineage, trace, traces back, chain, where does, how was, computed, calculated, derived, stale, page, document and page, walk]
+  - id: regression-baselines
+    file: 10-regression-baselines.md
+    keywords: [compare runs, baseline, drift, regression, changed, moved, before and after, run history, golden]
+  - id: controls
+    file: 11-controls.md
+    keywords: [who sets, analyst-controlled, model-derived, control, yours to set, hold period default, default hold, 5 years, 7 years, 6 years]
+
+atlas:
+  # Sections whose text is always in the block, whatever the question.
+  always_include: [reasons, lineage]
+  # ~8k tokens at ≈4 characters per token. Pass 1 places every selected
+  # section's conceptual text (always-included first, then matched by rank);
+  # pass 2 adds detailed text in the same order while it fits. A section whose
+  # conceptual text alone does not fit is skipped.
+  max_chars: 32000
