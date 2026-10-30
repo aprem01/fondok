@@ -252,13 +252,8 @@ OPTIONAL_WHEN_NOT_APPLICABLE: dict[str, frozenset[str]] = {
 
 
 def _is_not_applicable(result: Mapping[str, Any] | None) -> bool:
-    """True when an engine result is a ``not_applicable`` refusal."""
-    if not isinstance(result, Mapping):
-        return False
-    failure = result.get("failure")
-    return isinstance(failure, Mapping) and str(
-        getattr(failure.get("reason"), "value", failure.get("reason"))
-    ) == ReasonCode.NOT_APPLICABLE.value
+    """True when an engine result has the ``not_applicable`` status."""
+    return isinstance(result, Mapping) and result.get("status") == STATUS_NOT_APPLICABLE
 
 
 # ──────── Plain-language engine failure messages (E-023, FON-63) ────────
@@ -564,6 +559,37 @@ class EngineFailure(BaseModel):
     message: str
     missing: list[str] = []
     exception_type: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+#: The engine-row status of an engine that does not apply to the deal as
+#: configured (B5: the partnership waterfall on a deal without complete
+#: partnership terms). NOT a failure: it never appears in ``failures``, never
+#: counts toward ``engine_failures_last_hour``, and a run whose only
+#: non-complete engine is ``not_applicable`` is complete.
+STATUS_NOT_APPLICABLE = "not_applicable"
+
+
+class EngineNotApplicable(BaseModel):
+    """Why an engine row landed ``status='not_applicable'`` — typed, persisted
+    (in the ``failure`` column, read back as ``not_applicable``).
+
+    ``reason`` is ``not_applicable`` (the deal carries none of the terms the
+    engine needs) or ``awaiting_analyst`` (it carries some, and the analyst
+    has to finish entering them). ``missing`` names the absent term groups;
+    ``incomplete`` names each half-entered item in words ("Tier 3 has a GP
+    split but no hurdle"). ``message`` is the sentence the UI prints.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    engine: str
+    reason: ReasonCode
+    message: str
+    missing: list[str] = []
+    incomplete: list[str] = []
 
     def as_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
@@ -7620,6 +7646,56 @@ async def _persist_failure_row(
     return _failed_result(failure, runtime_ms=0)
 
 
+async def _persist_not_applicable_row(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    refusal: EngineNotApplicable,
+) -> dict[str, Any]:
+    """Insert one engine row with ``status='not_applicable'`` and the typed
+    refusal (``failure`` column, ``error`` left NULL — it is not an error),
+    and return the result envelope ``{engine, status, not_applicable,
+    runtime_ms}``. No ``failure`` key: :func:`failures_of` never lists it."""
+    row_id = await _persist_status(
+        session,
+        deal_id=str(_coerce_uuid(deal_id)),
+        tenant_id=tenant_id,
+        engine_name=refusal.engine,
+        run_id=run_id,
+        inputs=None,
+        started_at=_now(),
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE engine_outputs
+               SET status = :status,
+                   error = NULL,
+                   failure = :failure,
+                   completed_at = :ts
+             WHERE id = :id
+               AND tenant_id = :tenant
+            """
+        ),
+        {
+            "id": row_id,
+            "tenant": str(tenant_id),
+            "status": STATUS_NOT_APPLICABLE,
+            "failure": _json_dumps(refusal.as_dict()),
+            "ts": _now(),
+        },
+    )
+    await session.commit()
+    return {
+        "engine": refusal.engine,
+        "status": STATUS_NOT_APPLICABLE,
+        "not_applicable": refusal.as_dict(),
+        "runtime_ms": 0,
+    }
+
+
 def _failed_result(failure: EngineFailure, *, runtime_ms: int) -> dict[str, Any]:
     """The API-facing envelope for a failed engine: ``error`` keeps the
     message (older readers), ``failure`` carries the typed record."""
@@ -7793,11 +7869,15 @@ async def run_single_engine(
     if engine_name == "partnership":
         terms = partnership_terms(base_inputs)
         if not terms.applicable:
-            return await _persist_failure_row(
+            return await _persist_not_applicable_row(
                 session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
-                failure=EngineFailure(
+                refusal=EngineNotApplicable(
                     engine=engine_name,
-                    reason=ReasonCode.NOT_APPLICABLE,
+                    reason=(
+                        ReasonCode.AWAITING_ANALYST
+                        if terms.carries_any
+                        else ReasonCode.NOT_APPLICABLE
+                    ),
                     message=terms.refusal_message(),
                     missing=list(terms.missing),
                 ),
@@ -7808,6 +7888,14 @@ async def run_single_engine(
     # any one Run button without manually orchestrating the chain.
     for dep in ENGINE_DEPS[engine_name]:
         if dep not in accumulated:
+            # B5 — an optional dependency that does not apply to this deal
+            # (Partnership without complete terms) is not re-run: the chain
+            # already recorded its ``not_applicable`` row, and the dependant
+            # runs without it.
+            if dep in OPTIONAL_WHEN_NOT_APPLICABLE.get(engine_name, frozenset()) and (
+                dep == "partnership" and not partnership_terms(base_inputs).applicable
+            ):
+                continue
             await run_single_engine(
                 session,
                 deal_id=deal_id,
@@ -8481,6 +8569,8 @@ def _row_to_dict(mapping: Any) -> dict[str, Any]:
 
     name = mapping["engine_name"]
     outputs = _decode(mapping["outputs"])
+    status = mapping["status"]
+    stored = _decode(mapping["failure"])
     summary = ""
     if outputs and mapping["status"] == "complete":
         summary = _summary_from_dict(name, outputs)
@@ -8496,9 +8586,13 @@ def _row_to_dict(mapping: Any) -> dict[str, Any]:
         "outputs": outputs,
         "summary": summary,
         "error": mapping["error"],
-        # Typed failure (``EngineFailure``) — None on complete / running rows
-        # and on failed rows written before the column existed.
-        "failure": _decode(mapping["failure"]),
+        # Typed failure (``EngineFailure``) — None on complete / running /
+        # not-applicable rows and on failed rows written before the column
+        # existed.
+        "failure": None if status == STATUS_NOT_APPLICABLE else stored,
+        # B5 — the typed ``EngineNotApplicable`` on a ``not_applicable`` row
+        # (the web renders a neutral state, not an error); None otherwise.
+        "not_applicable": stored if status == STATUS_NOT_APPLICABLE else None,
         "started_at": _coerce_iso(mapping["started_at"]),
         "completed_at": _coerce_iso(mapping["completed_at"]),
         "runtime_ms": mapping["runtime_ms"],
@@ -8574,6 +8668,8 @@ def _coerce_iso(value: Any) -> str | None:
 
 __all__ = [
     "CANONICAL_ENGINES",
+    "STATUS_NOT_APPLICABLE",
+    "EngineNotApplicable",
     "ENGINE_DEPS",
     "ENGINE_NAMES",
     "ENGINE_REGISTRY",

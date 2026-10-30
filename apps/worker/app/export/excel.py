@@ -999,7 +999,7 @@ def _build_partnership(wb: Workbook, model: dict[str, Any]) -> None:
         _write_value(
             ws, row, 1, None, None, concept="partnership",
             missing=str(unavailable.get("reason") or "no partnership terms on this deal"),
-            code=ReasonCode.NOT_APPLICABLE,
+            code=ReasonCode(unavailable.get("code") or ReasonCode.NOT_APPLICABLE.value),
         )
         _autosize(ws, [30, 18, 18])
         _freeze_top(ws, row=2)

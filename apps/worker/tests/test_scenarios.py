@@ -342,10 +342,11 @@ async def test_run_scenario_applies_overrides_to_engine() -> None:
             assert engines[name]["status"] == "complete", (
                 f"engine {name} did not complete: {engines[name]}"
             )
-        assert engines["partnership"]["failure"]["reason"] == "not_applicable"
-        assert engines["partnership"]["failure"]["message"] == (
+        assert engines["partnership"]["status"] == "not_applicable"
+        assert engines["partnership"]["not_applicable"]["message"] == (
             "no partnership terms on this deal"
         )
+        assert all(f["engine"] != "partnership" for f in run.get("failures", []))
         assert engines["cash_flow"]["outputs"]["distributions"] == []
         assert engines["cash_flow"]["outputs"]["distributions_unavailable"]
 

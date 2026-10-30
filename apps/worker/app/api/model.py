@@ -36,6 +36,7 @@ from ..services.engine_runner import (
     ENGINE_NAMES,
     ENGINE_REGISTRY,
     EngineFailure,
+    EngineNotApplicable,
     _load_deal_overrides,
     failures_of,
     get_latest_output,
@@ -81,7 +82,7 @@ class EngineSlotStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    status: str  # 'queued' | 'running' | 'complete' | 'failed'
+    status: str  # 'queued' | 'running' | 'complete' | 'failed' | 'not_applicable'
 
 
 class EngineRunKickoff(BaseModel):
@@ -116,6 +117,11 @@ class EngineOutputResponse(BaseModel):
     inputs: dict[str, Any] | None = None
     error: str | None = None
     failure: EngineFailure | None = None
+    # B5 — on a ``status='not_applicable'`` row (the engine does not apply to
+    # the deal as configured — e.g. Partnership without complete partnership
+    # terms): ``{engine, reason, message, missing, incomplete}``. Not a
+    # failure: never in ``failures``; the web renders a neutral state.
+    not_applicable: EngineNotApplicable | None = None
     runtime_ms: int | None = None
     started_at: str | None = None
     completed_at: str | None = None

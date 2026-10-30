@@ -93,12 +93,28 @@ def test_suggestions_are_defined_once_and_never_defaults() -> None:
 
 @pytest.mark.asyncio
 async def test_no_terms_partnership_not_applicable_cash_flow_still_runs() -> None:
-    results, _deal_id, _tenant = await _run({})
+    from app.services.engine_runner import failures_of, get_run_scoped_outputs
+
+    results, deal_id, tenant_id = await _run({})
     part = results["partnership"]
-    assert part["status"] == "failed"
-    assert part["failure"]["reason"] == "not_applicable"
-    assert part["failure"]["message"] == "no partnership terms on this deal"
-    assert part["failure"]["missing"] == ["split", "pref_rate", "tiers"]
+    # Not a failure: its own status, typed record, no ``failure`` key.
+    assert part["status"] == "not_applicable"
+    assert "failure" not in part
+    assert part["not_applicable"]["reason"] == "not_applicable"
+    assert part["not_applicable"]["message"] == "no partnership terms on this deal"
+    assert part["not_applicable"]["missing"] == ["split", "pref_rate", "tiers"]
+    assert failures_of(results) == []
+    # Readable back off the persisted row (what GET …/engines serves).
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as session:
+        rows = await get_run_scoped_outputs(session, deal_id=deal_id, tenant_id=tenant_id)
+    row = rows["partnership"]
+    assert row["status"] == "not_applicable"
+    assert row["failure"] is None
+    assert row["error"] is None
+    assert row["not_applicable"]["reason"] == "not_applicable"
+    assert failures_of(rows) == []
     cf = results["cash_flow"]
     assert cf["status"] == "complete"
     assert cf["outputs"]["distributions"] == []
@@ -110,8 +126,10 @@ async def test_no_terms_partnership_not_applicable_cash_flow_still_runs() -> Non
 @pytest.mark.asyncio
 async def test_partial_terms_name_what_is_missing() -> None:
     results, *_ = await _run({"pref_rate": 0.08})
-    failure = results["partnership"]["failure"]
-    assert failure["reason"] == "not_applicable"
+    assert results["partnership"]["status"] == "not_applicable"
+    failure = results["partnership"]["not_applicable"]
+    # Some terms carried → the analyst has to finish them.
+    assert failure["reason"] == "awaiting_analyst"
     assert failure["missing"] == ["split", "tiers"]
     assert failure["message"] == (
         "partnership terms incomplete on this deal: no GP / LP equity split, promote tiers"
@@ -216,9 +234,10 @@ def test_excel_partnership_sheet_states_not_applicable() -> None:
 
     snapshot = {
         "partnership": {
-            "status": "failed",
+            "status": "not_applicable",
             "outputs": None,
-            "failure": {
+            "failure": None,
+            "not_applicable": {
                 "engine": "partnership",
                 "reason": "not_applicable",
                 "message": "no partnership terms on this deal",
@@ -235,3 +254,44 @@ def test_excel_partnership_sheet_states_not_applicable() -> None:
     cells = [str(c.value) for row in wb["Partnership"].iter_rows() for c in row if c.value]
     assert any("no partnership terms on this deal" in c for c in cells)
     assert not any("engine output on the deal's canonical run" in c for c in cells)
+
+
+@pytest.mark.asyncio
+async def test_not_applicable_is_not_counted_as_an_engine_failure() -> None:
+    from app.api import admin_health
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as session:
+        await session.execute(text("DELETE FROM engine_outputs"))
+        await session.commit()
+    await _run({})
+    async with get_session_factory()() as session:
+        n_rows = (
+            await session.execute(
+                text("SELECT engine_name FROM engine_outputs WHERE status = 'not_applicable'")
+            )
+        ).scalars().all()
+        counts = await admin_health.failure_counts_last_hour(session)
+    assert n_rows == ['partnership'], n_rows
+    assert counts["engine_failures_last_hour"] == 0
+
+
+@pytest.mark.asyncio
+async def test_engines_endpoint_exposes_the_not_applicable_record() -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    _results, deal_id, tenant_id = await _run({})
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-Tenant-Id": tenant_id},
+    ) as client:
+        r = await client.get(f"/deals/{deal_id}/engines")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    part = body["engines"]["partnership"]
+    assert part["status"] == "not_applicable"
+    assert part["failure"] is None
+    assert part["not_applicable"]["message"] == "no partnership terms on this deal"
+    assert all(f["engine"] != "partnership" for f in body.get("failures", []))

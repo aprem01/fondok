@@ -491,8 +491,7 @@ async def list_runs(
             text(
                 # tenant-scope predicate required by tenant_middleware
                 """
-                SELECT run_id, engine_name, status, started_at, completed_at,
-                       failure
+                SELECT run_id, engine_name, status, started_at, completed_at
                   FROM engine_outputs
                  WHERE deal_id = :deal AND tenant_id = :tenant
                    AND run_id IS NOT NULL
@@ -561,7 +560,7 @@ async def list_runs(
         entry["engines"].append(m["engine_name"])
         ct = parse_ts(_iso(m["completed_at"])) if m["completed_at"] is not None else None
         entry["_rows"].append(
-            (m["engine_name"], _effective_status(m["status"], m.get("failure")), ct)
+            (m["engine_name"], m["status"], ct)
         )
         st = parse_ts(_iso(m["started_at"]))
         if st:
@@ -594,23 +593,6 @@ async def list_runs(
     return out
 
 
-def _effective_status(status: Any, failure: Any) -> str:
-    """B5 — a ``failed`` row whose typed failure is ``not_applicable`` (the
-    partnership engine on a deal with no partnership terms) did what it should:
-    it reads as ``not_applicable``, which the run status treats as done."""
-    status = str(status or "")
-    if status != "failed" or failure is None:
-        return status
-    if isinstance(failure, str):
-        try:
-            failure = json.loads(failure)
-        except (TypeError, ValueError):
-            return status
-    if isinstance(failure, dict) and failure.get("reason") == "not_applicable":
-        return "not_applicable"
-    return status
-
-
 def _run_status(
     engine_rows: list[tuple[str, str, datetime | None]], canon: set[str]
 ) -> str:
@@ -628,6 +610,8 @@ def _run_status(
     statuses = [s for _, s, _ in rows]
     if any(s == "running" for s in statuses) or any(c is None for _, _, c in rows):
         return "running"
+    # ``not_applicable`` rows are done (B5) — they neither fail nor partial
+    # a run.
     if any(s == "failed" for s in statuses):
         return "failed" if all(s == "failed" for s in statuses) else "partial"
     return "complete"

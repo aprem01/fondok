@@ -1560,19 +1560,18 @@ async def _pricing_sheets(
 
 
 def _partnership_unavailable(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-    """B5 — when the canonical run's partnership row is a ``not_applicable``
-    refusal (the deal carries no partnership terms), the code and the
-    engine's own sentence, so the Partnership sheet states it instead of an
-    "engine skipped". ``None`` for any other state."""
+    """B5 — when the canonical run's partnership row has the
+    ``not_applicable`` status (the deal carries no complete partnership
+    terms), its reason code and the engine's own sentence, so the Partnership
+    sheet states it instead of an "engine skipped". ``None`` otherwise."""
     row = snapshot.get("partnership")
-    failure = row.get("failure") if isinstance(row, dict) else None
-    if not isinstance(failure, dict):
+    if not isinstance(row, dict) or row.get("status") != "not_applicable":
         return None
-    if str(failure.get("reason") or "") != ReasonCode.NOT_APPLICABLE.value:
-        return None
-    message = str(failure.get("message") or "").strip() or "no partnership terms on this deal"
-    refuse(ReasonCode.NOT_APPLICABLE, message, "partnership")
-    return {"code": ReasonCode.NOT_APPLICABLE.value, "reason": message}
+    record = row.get("not_applicable") if isinstance(row.get("not_applicable"), dict) else {}
+    message = str(record.get("message") or "").strip() or "no partnership terms on this deal"
+    code = coerce_reason(record.get("reason"), ReasonCode.NOT_APPLICABLE)
+    refuse(code, message, "partnership")
+    return {"code": code.value, "reason": message}
 
 
 def _build_sensitivity_engine(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any]:
