@@ -128,9 +128,6 @@ the inputs behind it — starting value, growth, index or penetration where pres
 source rows. When no trace was recorded for a cell the drawer says so; Fondok never prints a formula
 it did not record.
 
-**One Excel export.** *Export* and *Editable .xlsx* download one server-built workbook; a figure
-the model has not published is a blank cell there, never a zero.
-
 {testid=benchmark-column-methodology} **Benchmark column.** When the deal carries a P&L benchmark report (CBRE or HotStats), the Base-year
 column gains a Benchmark sub-column showing the comparable set's ratio for thirteen lines on the
 same basis as the model's own ratio, and the difference in points. Colour marks direction only,

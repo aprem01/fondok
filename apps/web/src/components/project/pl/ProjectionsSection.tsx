@@ -47,7 +47,7 @@
 
 import { useMemo, useState, useEffect, useCallback, useContext, createContext, type ReactNode, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { Sparkles, Download, FileText } from 'lucide-react';
+import { Sparkles, FileText } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import {
   ProvenanceDot,
@@ -65,7 +65,6 @@ import {
   NOTE_PLACEHOLDER,
   NOTE_REQUIRED_MESSAGE,
 } from '@/lib/overrideNote';
-import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/format';
 import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
@@ -716,19 +715,7 @@ export default function ProjectionsSection({
     );
   }
 
-  const onExport = async () => {
-    // Wave 3 (C11) — ONE export mechanism: the worker's Future P&L workbook
-    // (``GET /deals/{id}/exports/projections.xlsx``, the same file the
-    // round-trip's Editable .xlsx control downloads). The browser builds no
-    // spreadsheet, so a figure the engine did not publish is the worker's
-    // not-available cell, never a client-side guess.
-    try {
-      await api.plRoundTrip.download(dealId, 'projections', `fondok-future-pl-${dealId}.xlsx`);
-      toast(`${PL_SUB_LABEL.projections} exported`, { type: 'success' });
-    } catch (err) {
-      toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { type: 'error' });
-    }
-  };
+
 
   // The "Show" control trims the columns RENDERED (base year + N forecast
   // years), capped at the engine-provided years. It is a view filter, not an
@@ -808,7 +795,10 @@ export default function ProjectionsSection({
           <CommentedCellsToggle />
           {/* FON-41 E-017 — editable workbook (projection + Assumptions sheet
               with stable override keys); Import previews, Apply saves the
-              assumptions through the field_overrides PATCH, then re-models. */}
+              assumptions through the field_overrides PATCH, then re-models.
+              Wave 3 (C11) — this is the Future P&L's ONE export: the worker's
+              workbook. The separate "Export" button downloaded the very same
+              file, so it is gone rather than presented as a second format. */}
           <PlRoundTripControls
             dealId={dealId}
             kind="projections"
@@ -818,9 +808,6 @@ export default function ProjectionsSection({
               await run();
             }}
           />
-          <Button variant="secondary" size="sm" onClick={onExport}>
-            <Download size={11} /> Export
-          </Button>
         </div>
       </div>
 

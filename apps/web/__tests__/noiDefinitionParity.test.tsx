@@ -372,9 +372,10 @@ describe('Financials — the P&L / Projections surfaces name the basis', () => {
     expectNoBareNoiLabel();
   });
 
-  it('the Projections export is the worker\u2019s Future P&L workbook (it prints the same NOI label)', async () => {
+  it('one export control: Editable .xlsx downloads the worker\u2019s Future P&L workbook; no second Export button', async () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /^export$/i }));
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Editable \.xlsx/ }));
     await waitFor(() => expect(fx.download).toHaveBeenCalledTimes(1));
     expect(fx.download).toHaveBeenCalledWith('deal-uuid-1', 'projections', 'fondok-future-pl-deal-uuid-1.xlsx');
   });

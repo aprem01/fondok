@@ -239,10 +239,6 @@ export default function LegacyMethodologyClientPage() {
             down to the source rows. When no trace was recorded for a cell the drawer says so; Fondok never
             prints a formula it did not record.
           </p>
-          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            <strong>One Excel export.</strong> <em>Export</em> and <em>Editable .xlsx</em> download one
-            server-built workbook; a figure the model has not published is a blank cell there, never a zero.
-          </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="benchmark-column-methodology">
             <strong>Benchmark column.</strong> When the deal carries a P&amp;L benchmark report (CBRE or
             HotStats), the Base-year column gains a Benchmark sub-column showing the comparable set&apos;s
@@ -1064,6 +1060,16 @@ export default function LegacyMethodologyClientPage() {
               <em> and</em> confirm it. Only the confirmed verdict is written into the memo and the export header.
             </li>
           </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">The Future P&amp;L workbook</h4>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed">
+            The Future P&amp;L has one Excel export, <em>Editable .xlsx</em>, built on the server from the published
+            model: a figure the model has not published is a blank cell, never a zero. It does not yet carry the
+            room-count rows (days, rooms, available and occupied rooms), the % Rev, PAR and POR columns, the Net
+            Cash Flow row or the Exit-year forward NOI that the on-screen table shows.
+          </p>
         </Card>
 
         <Card className="p-5 mt-4">
