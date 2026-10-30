@@ -8,12 +8,13 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
-import { Plus, Trash2 } from 'lucide-react';
+import { Handshake, Plus, Trash2 } from 'lucide-react';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { api, isWorkerConnected, userMessage, type ValueState } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useToast } from '@/components/ui/Toast';
+import { Card } from '@/components/ui/Card';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { useSourceLookup, type ResolvedSource } from '@/lib/hooks/useDealProvenance';
@@ -556,6 +557,16 @@ export default function PartnershipTab() {
   const prefOverride = Number.isFinite(prefOverrideRaw) ? prefOverrideRaw : undefined;
   const prefRate: number | undefined = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : carriedPrefRate);
 
+  // Wave 3 (B5) — the worker's verdict that the Partnership engine does not
+  // apply to this deal as configured: `not_applicable` (no terms at all) or
+  // `awaiting_analyst` (terms half-entered; `message` names each tier). Not a
+  // failure — the run is blocked on the analyst, so the tab says so neutrally.
+  const partnershipRow = outputs?.engines?.partnership;
+  const notApplicable = partnershipRow?.status === 'not_applicable'
+    ? partnershipRow.not_applicable ?? null
+    : null;
+  const termsIncomplete = notApplicable?.reason === 'awaiting_analyst';
+
   const hasWorkerPartnership = wGp != null || wLp != null
     || (tierAllocations != null && tierAllocations.length > 0)
     || wGpEquityFlat != null || wLpEquityFlat != null
@@ -617,6 +628,23 @@ export default function PartnershipTab() {
           runToken={runToken}
         />
 
+        {/* Half-entered terms block the run: shown where this tab reports a
+            run that did not produce numbers, with the worker's sentence naming
+            each tier verbatim. Amber, not red — nothing errored. */}
+        {notApplicable && termsIncomplete && (
+          <div
+            role="status"
+            data-testid="partnership-terms-incomplete"
+            style={{
+              border: `1px solid ${palette.border}`, borderLeft: `3px solid ${prov.amber}`, borderRadius: 9,
+              background: palette.surfaceTint, padding: '10px 14px', marginBottom: 14, fontSize: 12.5,
+            }}
+          >
+            <div style={{ fontWeight: 600, color: palette.ink }}>The partnership waterfall is waiting on your terms</div>
+            <div style={{ color: palette.textSecondary, marginTop: 3, lineHeight: 1.5 }}>{notApplicable.message}</div>
+          </div>
+        )}
+
         <SubTabNav
           items={SUB_TABS.map((t) => ({ id: t.id, label: t.label }))}
           activeId={tab}
@@ -630,6 +658,18 @@ export default function PartnershipTab() {
             extraction is live (prose extraction validated on prod 9/5; terms are
             confirmed on the document page before they drive the model). */}
         <ManualInputsBanner onEdit={() => setTab('waterfall')} />
+        {/* No partnership terms on the deal at all: the neutral empty state
+            (the same card the Future P&L uses for "No projections yet"). The
+            sub-tabs stay below so the terms can be entered on Waterfall. */}
+        {notApplicable && !termsIncomplete && (
+          <Card className="p-12 text-center mb-4" data-testid="partnership-not-applicable">
+            <Handshake size={22} className="mx-auto text-ink-400 mb-3" aria-hidden="true" />
+            <div className="text-[14px] font-semibold text-ink-900">No partnership terms on this deal</div>
+            <p className="text-[12.5px] text-ink-500 mt-1.5 max-w-md mx-auto leading-relaxed">
+              {notApplicable.message}
+            </p>
+          </Card>
+        )}
         {/* TODO(FON-72): a manual-entry-only preview endpoint would let the
             waterfall/allocation render from unsaved inputs before a full engine
             run. Backend flagged this; endpoint intentionally not built here. */}

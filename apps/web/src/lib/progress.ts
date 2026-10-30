@@ -178,13 +178,15 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
 
   let completed = 0;
   let failed = 0;
+  let notApplicable = 0;
   for (const name of order) {
     const s = byEngine.get(name)?.status;
     if (s === 'complete') completed += 1;
     else if (s === 'failed') failed += 1;
+    else if (s === 'not_applicable') notApplicable += 1;
   }
   const total = order.length;
-  const allDone = total > 0 && completed + failed === total;
+  const allDone = total > 0 && completed + failed + notApplicable === total;
 
   // Prefer the engine the worker says is running; otherwise the first one
   // (in dependency order) that hasn't reached a terminal state — i.e. the
@@ -199,7 +201,7 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
   if (currentEngine == null && !allDone) {
     for (const name of order) {
       const s = byEngine.get(name)?.status;
-      if (s !== 'complete' && s !== 'failed') {
+      if (s !== 'complete' && s !== 'failed' && s !== 'not_applicable') {
         currentEngine = name;
         break;
       }

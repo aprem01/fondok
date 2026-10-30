@@ -748,3 +748,62 @@ describe('PartnershipTab — partnership terms are the deal\u2019s own or absent
     expect(rowFor('Preferred Return')).toHaveTextContent('7%');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wave 3 (B5) — the worker's `not_applicable` partnership row is a neutral
+// state, never a failure: no terms → "No partnership terms on this deal" +
+// the worker's message; half-entered terms → the blocked-run notice with the
+// worker's sentence naming each tier.
+// ─────────────────────────────────────────────────────────────────────────
+describe('PartnershipTab — the engine does not apply (not_applicable)', () => {
+  function withPartnershipRow(row: Record<string, unknown>) {
+    const base = OUTPUTS as unknown as { engines: Record<string, Record<string, unknown>> };
+    return {
+      ...base,
+      engines: { ...base.engines, partnership: { ...base.engines.partnership, outputs: null, ...row } },
+    } as unknown as EngineOutputsResponse;
+  }
+
+  it('no terms → the neutral empty state with the worker\u2019s message; no failure styling', () => {
+    activeOutputs = withPartnershipRow({
+      status: 'not_applicable',
+      error: null,
+      not_applicable: {
+        engine: 'partnership', reason: 'not_applicable', message: 'no partnership terms on this deal',
+        missing: ['split', 'pref_rate', 'tiers'], incomplete: [],
+      },
+    });
+    render(<PartnershipTab />);
+    const card = screen.getByTestId('partnership-not-applicable');
+    expect(card).toHaveTextContent('No partnership terms on this deal');
+    expect(card).toHaveTextContent('no partnership terms on this deal');
+    expect(card.getAttribute('role')).not.toBe('alert');
+    expect(screen.queryByTestId('partnership-terms-incomplete')).toBeNull();
+    expect(screen.queryByText(/didn\u2019t finish|errored|Failed/)).toBeNull();
+    // The sub-tabs stay so the terms can be entered.
+    expect(screen.getByRole('tab', { name: 'Waterfall' })).toBeInTheDocument();
+  });
+
+  it('half-entered tiers → the blocked-run notice naming each tier, verbatim', () => {
+    const message = 'partnership terms incomplete on this deal: Tier 2 has a GP split but no hurdle; Tier 4 has a hurdle but no GP / LP split';
+    activeOutputs = withPartnershipRow({
+      status: 'not_applicable',
+      error: null,
+      not_applicable: {
+        engine: 'partnership', reason: 'awaiting_analyst', message,
+        missing: [], incomplete: ['Tier 2 has a GP split but no hurdle', 'Tier 4 has a hurdle but no GP / LP split'],
+      },
+    });
+    render(<PartnershipTab />);
+    const notice = screen.getByTestId('partnership-terms-incomplete');
+    expect(notice).toHaveTextContent(message);
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(screen.queryByTestId('partnership-not-applicable')).toBeNull();
+  });
+
+  it('a complete run shows neither state', () => {
+    render(<PartnershipTab />);
+    expect(screen.queryByTestId('partnership-not-applicable')).toBeNull();
+    expect(screen.queryByTestId('partnership-terms-incomplete')).toBeNull();
+  });
+});

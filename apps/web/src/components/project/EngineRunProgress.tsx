@@ -17,6 +17,7 @@ import {
   EngineName,
   EngineOutputResponse,
   EngineStatus,
+  isTerminalEngineStatus,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { useNow } from '@/lib/hooks/useNow';
@@ -76,9 +77,7 @@ export default function EngineRunProgress({
   // (the poll itself re-renders every 750 ms, but a stalled poll must not
   // freeze the clock). Once everything is terminal the sample stops and
   // the final elapsed stays put.
-  const terminal = rows.filter(
-    (r) => r.status === 'complete' || r.status === 'failed',
-  ).length;
+  const terminal = rows.filter((r) => isTerminalEngineStatus(r.status)).length;
   const inFlight =
     Boolean(runId) &&
     !hidden &&
@@ -212,6 +211,9 @@ function EngineRow({
         {status === 'failed' && (
           <X size={12} className="text-danger-700 check-pop" />
         )}
+        {status === 'not_applicable' && (
+          <Circle size={12} className="text-ink-300" aria-label="not applicable" />
+        )}
       </span>
       <span
         className={cn(
@@ -231,6 +233,7 @@ function EngineRow({
         {status === 'running' && '…running'}
         {status === 'queued' && '(queued)'}
         {status === 'failed' && (row?.error || 'failed')}
+        {status === 'not_applicable' && 'not applicable to this deal'}
       </span>
       {status === 'complete' && runtime != null && (
         <span className="text-[10.5px] text-ink-500 tabular-nums flex-shrink-0">
