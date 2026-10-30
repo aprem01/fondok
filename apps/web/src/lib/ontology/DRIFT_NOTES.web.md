@@ -255,8 +255,9 @@ names a numbered segment and matches as a prefix (`.page5.`).
 
 * Fold `period_end` / `statement_period_end` into `concepts.yaml` (§2).
 * Decide the six `LEGACY_UNCLASSIFIED` kinds with Sam (§6d).
-* Move the seed tooltip off "Kimpton fixture default" together with
-  `/methodology` (§6c).
+* ~~Move the seed tooltip off "Kimpton fixture default"~~ — done 2026-10-30
+  (Wave 3): the seed badge uses the registry's explanation; /methodology never
+  quoted the Kimpton line after the package split.
 * The real fix behind all of this remains the worker route the
   `HistoricalsSection` comment has always pointed at:
   `GET /deals/{id}/historicals/normalized`, running `resolve_many`
