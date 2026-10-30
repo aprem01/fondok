@@ -470,10 +470,11 @@ are not applied on top.
 2. PIP or capital plan filed in the PIP / Renovation Budget lane that states a total — the newest
    plan date wins (plan date, else report date, else upload date).
 3. The offering memorandum's broker pro forma renovation budget.
-4. Platform default, badged Seed with its reason: $5,280,000. Two other dollar defaults sit
-   beside it in the same table — working capital $500,000 and closing costs 2.0% of the purchase
-   price. All three are flagged for follow-up in the go-live plan; until then each is badged so a
-   reader never mistakes it for the deal's own figure.
+4. Platform default, badged Seed with its reason (no document of the needed type, or no field
+   that states the figure): $5,280,000. Two other dollar defaults sit beside it in the same
+   table — working capital $500,000 and closing costs 2.0% of the purchase price. Each is used
+   only when no document states the figure, and each carries the Seed badge and its reason
+   wherever it is printed, so a reader never mistakes it for the deal's own figure.
 
 <!-- source: apps/worker/app/agents/extraction_schemas/capex.md (2% scope-sum tolerance), apps/worker/app/services/renovation_budget.py -->
 A PIP whose stated total differs from the sum of its own scope items by more than 2% is flagged

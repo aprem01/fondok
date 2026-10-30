@@ -36,39 +36,43 @@ pages:
       are model-driven vs analyst-controlled.
 
 sections:
+  # Keywords match the question on word boundaries (``str`` does not match
+  # ``structure``); a trailing ``*`` is a prefix match (``stabiliz*``). Keep
+  # them specific — a generic word pulls a 15k-character section into every
+  # Atlas prompt and crowds out the one the question is about.
   - id: extraction
     file: 01-extraction.md
-    keywords: [extract, extraction, document, upload, classif, parse, confidence, reconcil, verify, retry, re-run, rerun, duplicate, period, t-12, t12, p&l, scanned]
+    keywords: [extract*, upload*, classif*, parse*, parsing, confidence score, reconcil*, verif*, retry, re-run, rerun, duplicate deal, duplicat*, statement period, scanned, data room, pipeline]
   - id: projection
     file: 02-projection.md
-    keywords: [projection, future p&l, year 1, year-1, year one, base year, calendar, close date, occupancy, adr, revpar, growth, expense, method, management fee, incentive fee, stabiliz, stabilis, exit noi, exit cap, reversion, sale, hold, displacement, renovation, pip, capex, budget, waterfall, noi, ff&e, reserve, gop, benchmark, operating model, exit year, returns by exit]
+    keywords: [projection*, future p&l, year 1, year-1, year one, base year, calendar, close date, occupancy, adr, revpar, growth rate, expense line*, expense method*, management fee, incentive fee, stabiliz*, stabilis*, exit noi, exit cap, exit cap rate, reversion, hold period, displacement, renovation, pip, capex, renovation budget, waterfall, noi, ff&e, reserve, gop, benchmark*, operating model, exit year, returns by exit, sale price, sale date, terminal noi]
   - id: sources
     file: 03-sources.md
-    keywords: [source, badge, provenance, where did, come from, override, justification, note, market, submarket, comp set, str, cbre, horizons, index, penetration, mpi, ari, as-of, as of, ledger, primary statement, property name, project name, key count, keys, brand, positioning, property type, demand, supply, ttm, trace, hover, pinned, pin]
+    keywords: [source badge*, badge*, provenance, where did, come from, override*, justification, market comps, submarket, comp set, comp-set, str report*, str rates, str comp*, cbre, horizons, index analysis, penetration, mpi, ari, as-of, as of date, underwriting date, ledger, primary statement, primary source, property name, project name, key count, brand, positioning, property type, demand growth, supply growth, ttm, noi pin, pinned, platform default*, seed*]
   - id: engines
     file: 04-engines.md
-    keywords: [engine, model, debt, loan, senior, pace, dscr, debt yield, ltv, ltc, covenant, origination, financing, interest, floating, sofr, amortis, amortiz, sandbox, sensitivit, partnership, waterfall, gp, lp, promote, re-run, failed, banner, stale]
+    keywords: [engine*, debt, loan*, senior loan, pace, dscr, debt yield, ltv, ltc, covenant*, origination fee, financing, interest rate, floating rate, sofr, amortis*, amortiz*, sandbox, sensitivit*, partnership, gp, lp, promote, model failed, failed engine, re-run, banner, stale, sources & uses, sources and uses, capital stack, capital structure, structure, tranche*]
   - id: pricing
     file: 05-pricing.md
-    keywords: [irr, equity multiple, moic, target, hurdle, return profile, yield on cost, max price, solver, pricing, bidding, asking, bridge, export, excel, memo, deck, loi, within target, above target, below target, breakeven]
+    keywords: [irr, equity multiple, moic, target*, hurdle*, return profile, yield on cost, max price, solver, pricing, bidding price, asking price, bridge, export*, excel, deck, loi, within target, above target, below target, breakeven, clears]
   - id: ic-memo
     file: 06-ic-memo.md
-    keywords: [ic memo, memo, variance, broker, flag, diligence, recommendation, proceed, decision, basis mismatch, plausib, noi impact, resolve, accept]
+    keywords: [ic memo, memo, variance*, broker*, flag*, diligence, recommendation, proceed, decision, basis mismatch, plausib*, noi impact, resolve*, accept variance, model assessment]
   - id: reasons
     file: 07-reasons.md
-    keywords: [dash, "—", reason, refus, not available, why is, missing, blank, awaiting, needs review, structure, layout, customize]
+    keywords: [dash*, reason*, refus*, not available, why is, missing, blank, awaiting, needs review, structure edit*, layout, customize structure]
   - id: concept-registry
     file: 08-concept-registry.md
-    keywords: [concept, registry, alias, ontology, usali line, vocabulary, field path]
+    keywords: [concept*, registry, alias*, ontology, usali line, vocabulary, field path*]
   - id: lineage
     file: 09-lineage.md
-    keywords: [lineage, trace, traces back, chain, where does, how was, computed, calculated, derived, stale, page, document and page, walk]
+    keywords: [lineage, trace*, chain, where does, how was, how is, computed, calculated, derived, stale, document and page, walk]
   - id: regression-baselines
     file: 10-regression-baselines.md
-    keywords: [compare runs, baseline, drift, regression, changed, moved, before and after, run history, golden]
+    keywords: [compare runs, baseline*, drift, regression, changed, moved, before and after, run history, golden]
   - id: controls
     file: 11-controls.md
-    keywords: [who sets, analyst-controlled, model-derived, control, yours to set, hold period default, default hold, 5 years, 7 years, 6 years]
+    keywords: [who sets, analyst-controlled, model-derived, yours to set, hold period default*, default hold, 5 years, 7 years, 6 years]
 
 atlas:
   # Sections whose text is always in the block, whatever the question.

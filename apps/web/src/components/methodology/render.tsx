@@ -76,9 +76,23 @@ function InlineNodeView({ node }: { node: InlineNode }) {
     }
     case 'slot': {
       const render = SLOTS.inline[node.name];
-      return render ? <>{render()}</> : <span data-unrendered-slot={node.name} />;
+      return render ? <>{render()}</> : <UnrenderedSlot name={node.name} inline />;
     }
   }
+}
+
+/**
+ * A slot the SLOTS map does not know. The loader refuses unknown slot names
+ * at codegen, so this is reached only when the two maps drift; it says so on
+ * the page rather than leaving a silent gap, and the levels test fails on it.
+ */
+function UnrenderedSlot({ name, inline = false }: { name: string; inline?: boolean }) {
+  const text = `slot not available: ${name}`;
+  return inline ? (
+    <span data-unrendered-slot={name} className="text-[11px] text-danger-700">{text}</span>
+  ) : (
+    <div data-unrendered-slot={name} className="text-[12px] text-danger-700 rounded border border-danger-200 p-2">{text}</div>
+  );
 }
 
 /** The first `strong` node and the rest — for label/description rows. */
@@ -155,7 +169,7 @@ function BlockView({ block }: { block: BlockNode }) {
       );
     case 'slot': {
       const Render = SLOTS.block[block.name];
-      return Render ? <Render /> : <div data-unrendered-slot={block.name} />;
+      return Render ? <Render /> : <UnrenderedSlot name={block.name} />;
     }
     case 'container':
       return <ContainerView block={block} />;

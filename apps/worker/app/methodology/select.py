@@ -31,20 +31,37 @@ def _normalise(s: str) -> str:
     return re.sub(r"\s+", " ", s.lower())
 
 
+def keyword_pattern(keyword: str) -> re.Pattern[str]:
+    """A keyword matches on word boundaries — ``str`` never matches
+    ``structure``, ``pin`` never matches ``pinned``. A trailing ``*`` asks
+    for a prefix match (``stabiliz*`` → stabilized / stabilization). The
+    boundaries are ``\\w`` lookarounds so ``p&l``, ``t-12`` and ``as-of``
+    work as written."""
+    k = _normalise(keyword).strip()
+    prefix = k.endswith("*")
+    if prefix:
+        k = k[:-1]
+    body = re.escape(k)
+    tail = r"\w*" if prefix else ""
+    return re.compile(rf"(?<!\w){body}{tail}(?!\w)")
+
+
 def keyword_hits(section: Section, question: str) -> int:
     q = _normalise(question)
-    return sum(1 for k in section.keywords if _normalise(k) in q)
+    return sum(1 for k in section.keywords if keyword_pattern(k).search(q))
 
 
 def select_section_ids(question: str, pkg: MethodologyPackage) -> list[str]:
     """Matched sections ranked by hit count (index order breaks ties), then
-    the always-included ones that did not match."""
-    scored = [(keyword_hits(s, question), i, s.id) for i, s in enumerate(pkg.sections)]
+    the always-included ones. An always-included section is listed last even
+    when it matched — it is in every prompt, so it never competes with the
+    section the question is about for the first place."""
+    always = [sid for sid in pkg.atlas_always_include if sid in pkg.by_id]
+    scored = [
+        (keyword_hits(s, question), i, s.id) for i, s in enumerate(pkg.sections) if s.id not in always
+    ]
     matched = [sid for hits, _i, sid in sorted(scored, key=lambda t: (-t[0], t[1])) if hits > 0]
-    for sid in pkg.atlas_always_include:
-        if sid in pkg.by_id and sid not in matched:
-            matched.append(sid)
-    return matched
+    return matched + always
 
 
 def section_text(section: Section, *, levels: tuple[str, ...]) -> str:
@@ -114,6 +131,7 @@ __all__ = [
     "build_methodology_block",
     "build_selection",
     "keyword_hits",
+    "keyword_pattern",
     "section_text",
     "select_section_ids",
 ]

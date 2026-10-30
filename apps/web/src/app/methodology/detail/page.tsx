@@ -33,6 +33,9 @@ type DetailState =
 export default function MethodologyDetailPage() {
   const role = useCurrentRole();
   const isAdmin = role === 'org:admin';
+  // 'unknown' is the pre-mount / no-org state: show neither the gate card nor
+  // the detail until the role resolves, so the server and client HTML agree.
+  const isMember = role === 'org:member';
   const [state, setState] = useState<DetailState>({ kind: 'idle' });
   const page = METHODOLOGY_PAGES.detailed;
 
@@ -57,7 +60,7 @@ export default function MethodologyDetailPage() {
     <div className="max-w-4xl" data-testid="methodology-detail">
       <PageHeader eyebrow={page.eyebrow} title={page.title} subtitle={page.subtitle} />
 
-      {!isAdmin && (
+      {isMember && (
         <Card className="p-4 mb-8 bg-ink-50 border-border" data-testid="methodology-detail-gate">
           <p className="text-[12.5px] text-ink-700 leading-relaxed flex items-start gap-2">
             <Lock size={13} className="text-ink-500 mt-0.5 flex-shrink-0" aria-hidden="true" />

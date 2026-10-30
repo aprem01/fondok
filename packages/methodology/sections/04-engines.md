@@ -125,8 +125,9 @@ applicable and reports the uncovered debt service as that year's shortfall.
 <!-- source: apps/worker/app/services/engine_runner.py (_seed_defaults closing_costs_pct 0.02, working_capital 500000, soft_costs 0, contingency 0, renovation_budget 5280000) -->
 Closing costs 2.0% of the purchase price; working capital $500,000; soft costs and contingency 0
 (a zero use is omitted from the table; an analyst who carries them enters the amounts). The
-renovation budget default is $5,280,000 (see Section 2 for its precedence). Each default is badged
-Seed with its reason and is flagged for follow-up in the go-live plan.
+renovation budget default is $5,280,000 (see Section 2 for its precedence). Each is a platform
+default used only when no document states the figure, badged Seed with its reason (no document of
+the needed type, or no field that states the figure) wherever it is printed.
 
 :::
 

@@ -66,6 +66,55 @@ def test_block_is_capped_and_never_crowds_out_reasons_and_lineage(pkg) -> None:
     assert "projection" in tiny.skipped
 
 
+def test_keywords_match_on_word_boundaries(pkg) -> None:
+    """Review finding: substring matching let generic words (model, str, pin,
+    keys, note, sale) pull the two longest sections into every prompt. A
+    keyword now matches a whole word (``str`` is not ``structure``, ``pin`` is
+    not ``pinned``); a trailing ``*`` is an explicit prefix match."""
+    from app.methodology.select import keyword_pattern
+
+    assert not keyword_pattern("str").search("the structure of this deal")
+    assert not keyword_pattern("pin").search("the noi is pinned")
+    assert keyword_pattern("pinned").search("the noi is pinned")
+    assert keyword_pattern("stabiliz*").search("the stabilization year")
+    assert keyword_pattern("p&l").search("on the p&l tab") and not keyword_pattern("p&l").search("p&ls")
+    assert keyword_pattern("t-12").search("from the t-12") and not keyword_pattern("t-12").search("t-120")
+    # no index.yaml keyword is a bare generic word any more
+    generic = {"model", "str", "note", "sale", "pin", "keys", "source", "market", "index", "page", "trace", "engine"}
+    for s in pkg.sections:
+        assert not (set(s.keywords) & generic), (s.id, set(s.keywords) & generic)
+
+
+def test_generic_model_question_selects_engines_not_sources(pkg) -> None:
+    """The reviewer's probe: 'structure' is the capital / debt structure
+    (engines); nothing in it is a sources question. Before the fix this pulled
+    sources + engines (31k chars) and the cap dropped the engines detail."""
+    q = "What does the model say about the structure of this deal?"
+    ids = select_section_ids(q, pkg)
+    assert "engines" in ids and "sources" not in ids and "projection" not in ids
+    sel = build_selection(q, pkg)
+    assert sel.section_ids == ["engines", "reasons", "lineage"]
+    # the relevant section keeps its detailed level under the default cap
+    assert sel.dropped_detailed == [] and sel.skipped == []
+    assert "### engines — " in sel.text and "[detailed]" in sel.text
+    assert "Debt — defaults and clamps" in sel.text
+    assert len(sel.text) <= pkg.atlas_max_chars
+
+
+def test_cap_keeps_the_relevant_detailed_level(pkg) -> None:
+    """With one matched section the budget always has room for its detailed
+    text, even for the longest section on the page (projection)."""
+    for q, sid in (
+        ("What exit cap rate does the model use?", "projection"),
+        ("Which STR report feeds the comp set?", "sources"),
+        ("How is the levered IRR calculated?", "pricing"),
+    ):
+        sel = build_selection(q, pkg)
+        assert sel.section_ids[0] == sid, (q, sel.section_ids)
+        assert sid not in sel.dropped_detailed, (q, sel.dropped_detailed)
+        assert f"### {sid} — " in sel.text and "[detailed]" in sel.text
+
+
 def test_unrelated_question_still_carries_reasons_and_lineage(pkg) -> None:
     sel = build_selection("Tell me about this deal", pkg)
     assert sel.section_ids == ["reasons", "lineage"]

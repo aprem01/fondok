@@ -158,13 +158,20 @@ jobs:
 
   # FON-120 — an underwriting behaviour change ships with its methodology.
   # ``scripts/check_methodology_touched.py`` diffs the merge-base with
-  # origin/main (HEAD^ on a push to main): a change under
-  # apps/worker/app/engines/, services/engine_runner.py,
-  # services/index_methodology.py, services/stabilization*.py, api/model.py or
-  # packages/schemas-py/**/underwriting.py without a change under
-  # packages/methodology/** fails unless a commit in the range carries the
-  # ``methodology: unchanged`` trailer. Same shape as pipeline-version above;
-  # stdlib only.
+  # origin/main (HEAD^ on a push to main): a change to any of the guarded
+  # paths —
+  #   apps/worker/app/engines/**            apps/worker/app/services/stabilization*
+  #   apps/worker/app/services/engine_runner.py
+  #   apps/worker/app/services/index_methodology.py
+  #   apps/worker/app/services/renovation_budget.py
+  #   apps/worker/app/services/benchmark_suggestions.py
+  #   apps/worker/app/services/deal_type.py
+  #   apps/worker/app/api/model.py
+  #   packages/schemas-py/fondok_schemas/underwriting.py
+  #   packages/schemas-py/fondok_schemas/reasons.py
+  # — without a change under packages/methodology/** fails unless a commit in
+  # the range carries the ``methodology: unchanged`` trailer. Same shape as
+  # pipeline-version above; stdlib only.
   methodology-sync:
     name: Methodology sync guard
     runs-on: ubuntu-latest
