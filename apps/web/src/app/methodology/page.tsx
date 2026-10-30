@@ -632,6 +632,12 @@ export default function MethodologyPage() {
             names; typing a market or submarket that is not suggested is always allowed, and Fondok never invents
             an STR identifier or a submarket name.
           </p>
+          <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="market-data-policy-methodology">
+            <strong>Market defaults may be withheld for a workspace.</strong> A market default derived from a
+            licensed vendor&apos;s report (a CoStar submarket forecast, for instance) may be withheld for a workspace
+            until that licensing is confirmed for it; a withheld default is shown as not applied with its reason,
+            never replaced by a number, and the workspace&apos;s own uploaded figures are unaffected.
+          </p>
         </Card>
 
         <Card className="p-5 mb-4">

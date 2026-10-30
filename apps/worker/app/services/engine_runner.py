@@ -106,6 +106,7 @@ from ..engines import (
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from ..engines.stabilization import resolve_stabilized_year_index
 from ..engines.timeline import RENOVATION_START_OFFSET_MONTHS
+from ..tenants import TenantDataPolicies, load_tenant_data_policy
 from .deal_type import development_hold_default, is_development_like
 from fondok_schemas.underwriting import (
     IndexDriverYear,
@@ -460,6 +461,12 @@ def _engine_error_text(engine_name: str, exc: BaseException) -> str:
 #: fixture (``tests/fixtures/kimpton_seed.py``) injected through
 #: ``run_all_engines(..., assumptions=...)``.
 IDENTITY_INPUT_KEYS: tuple[str, ...] = ("keys", "purchase_price")
+
+#: FON-116 — the loader-context key under which ``_load_engine_inputs``
+#: publishes the tenant's :class:`TenantDataPolicies` (the CoStar licensing
+#: gate). Metadata like ``__sources__``: filtered by every serializer, read by
+#: no engine. The topline resolvers (topline PR 3) take it as ``policy``.
+DATA_POLICY_KEY = "__data_policy__"
 
 #: Which identity inputs each engine reads DIRECTLY off ``base`` (the
 #: ``base["keys"]`` / ``base["purchase_price"]`` reads in ``_build_input_for``).
@@ -1367,6 +1374,12 @@ async def _load_engine_inputs(
       (``no_document`` / ``no_source`` / ``str_unavailable``), or what the
       as-of gate did (``not_knowable_as_of`` / ``as_of_unknown``), or that
       an identity input is missing (``missing_identity_inputs``).
+    * ``base["__data_policy__"]`` (``DATA_POLICY_KEY``, FON-116) — the
+      tenant's :class:`~app.tenants.TenantDataPolicies` (the CoStar
+      licensing gate), loaded from the registry before any market loader
+      runs. The loader-context seam the topline resolvers take as
+      ``policy``; nothing reads it yet and it moves no number. On the
+      explicit-assumptions seam it is the default policy (no registry read).
 
     Wave 3 W3.2: when ``scenario_id`` is set, the scenario's overrides
     merge on top of the deal's persisted ``field_overrides`` and feed
@@ -1418,7 +1431,17 @@ async def _load_engine_inputs(
         base["__sources__"] = sources
         base["__source_fields__"] = {}
         base["__reasons__"] = {}
+        # No registry read on this path either: a complete, explicit
+        # assumption set carries the default policy by construction.
+        base[DATA_POLICY_KEY] = TenantDataPolicies()
         return base
+
+    # FON-116 — the tenant's data policies (the CoStar licensing gate), read
+    # BEFORE any market loader so the topline resolvers (next PR) can take
+    # ``policy`` from the loader context. Today nothing below reads it and no
+    # number moves; a registry outage propagates as a load error rather than
+    # running a ``withhold`` tenant on ``allow``.
+    data_policy = await load_tenant_data_policy(effective_tenant)
 
     # Phase 2.1 — the underwriting as-of date, resolved BEFORE the market
     # loaders run so a report published after it can be refused. Read from
@@ -2678,6 +2701,11 @@ async def _load_engine_inputs(
         key: sf.as_dict() for key, sf in source_fields.items()
     }
     base["__reasons__"] = reasons
+    # FON-116 — the loader-context seam for the topline resolvers: the typed
+    # policy object, as metadata (``__`` prefix: filtered by every serializer,
+    # read by no engine). PR 3 passes it as ``policy`` to resolve_growth_by_year
+    # / resolve_benchmark; until then it moves nothing.
+    base[DATA_POLICY_KEY] = data_policy
     # FON-89 — say what Year-1 displacement the model runs with and why,
     # AFTER the override loop (the explicit y1_* / pip_displacement.*
     # assumptions are analyst overrides, so only now is the answer final).

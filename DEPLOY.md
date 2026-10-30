@@ -423,9 +423,16 @@ curl -s https://fondok-worker-production.up.railway.app/health \
 ```
 
 Operator detail — storage, auth posture, embeddings, cache counters, the
-last LLM provider refusal (`llm_provider.last_error` / `last_error_at`) and
-`extraction_failures_last_hour` / `engine_failures_last_hour` — is on
-`GET /admin/health` behind an internal admin JWT.
+last LLM provider refusal (`llm_provider.last_error` / `last_error_at`),
+`extraction_failures_last_hour` / `engine_failures_last_hour` and the
+`data_policies` posture (`tenants_total`, `tenants_with_withhold`,
+`invalid_rows`, or `error` on a registry outage) — is on `GET /admin/health`
+behind an internal admin JWT.
+
+First deploy carrying FON-116 (tenant data policies): confirm the worker's
+first boot log shows `migration applied: tenants.add_data_policies` before
+trusting `/admin/health` — every registry read now selects that column, so a
+boot whose migration failed refuses tenant lookups rather than serving them.
 
 ### Update the Vercel web app
 

@@ -165,6 +165,17 @@ async def deal_state_fingerprint(
                 {"tenant": tenant},
             )
         ).first()
+        # FON-116 — the tenant's data policies (the CoStar licensing gate)
+        # are an input to the loaders, so a policy flip must invalidate every
+        # cached read that could have depended on it. Read straight from the
+        # row (not the registry cache) so a flip on another replica lands
+        # here at once. No row (unregistered tenant) is a stable part.
+        policy = (
+            await session.execute(
+                text("SELECT data_policies FROM tenants WHERE id = :tenant"),
+                {"tenant": tenant},
+            )
+        ).first()
     except Exception as exc:  # a fingerprint failure only disables caching
         logger.info("read_cache: fingerprint unavailable for deal=%s: %s", deal, exc)
         return None
@@ -175,6 +186,7 @@ async def deal_state_fingerprint(
         [tuple(r._mapping.values()) for r in extractions],
         tuple(runs._mapping.values()) if runs is not None else None,
         tuple(portfolio._mapping.values()) if portfolio is not None else None,
+        str(policy[0]) if policy is not None else None,
     ]
     return _digest(parts)
 

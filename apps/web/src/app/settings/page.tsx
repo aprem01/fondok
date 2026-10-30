@@ -12,6 +12,7 @@ import { api, isWorkerConnected, userMessage } from '@/lib/api';
 import { useCurrentOrg, useOrgActions, useOrgMembers } from '@/lib/auth';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
+import DataPoliciesCard from '@/components/settings/DataPoliciesCard';
 import { Sparkles, RotateCcw } from 'lucide-react';
 
 // Notifications and Integrations were tabs over fixtures: toggles that toasted
@@ -314,6 +315,9 @@ export default function SettingsPage() {
           </Card>
 
           <HintsSection />
+
+          {/* FON-116 — internal admins only; hides itself otherwise. */}
+          <DataPoliciesCard />
 
           {SALES_EMAIL && (
             <Card className="p-5 bg-brand-50 border-brand-100" data-testid="settings-contact">
