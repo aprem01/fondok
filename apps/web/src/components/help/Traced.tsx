@@ -21,8 +21,10 @@ import { sourceLabel } from '@/lib/provenance';
 import { useTrace, useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { TraceToSourceAction } from '@/components/project/LineageDrawer';
 
-function fmtTraceValue(v: number): string {
-  if (!Number.isFinite(v)) return '—';
+function fmtTraceValue(v: number | null | undefined): string {
+  // null = the input had no figure (e.g. a growth year held flat because no
+  // forecast exists); the trace carries the reason, and the cell is a dash.
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000) return `$${Math.round(v).toLocaleString()}`;
