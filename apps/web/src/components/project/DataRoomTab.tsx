@@ -1643,7 +1643,8 @@ function InlineDocumentReview({
   const [sectionFacet, setSectionFacet] = useState<string>('all');
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const fields = doc.fieldList ?? [];
+  const docFieldList = doc.fieldList;
+  const fields = useMemo(() => docFieldList ?? [], [docFieldList]);
 
   // Group extracted fields under section labels, in first-appearance (schema)
   // order so the table reads like the document.

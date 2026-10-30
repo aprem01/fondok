@@ -234,8 +234,8 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
           <Row
             cols={cols}
             label="Keys"
-            cells={columns.map(() => (
-              <span className="text-brand-700 font-medium">{fmtInt(kv)}</span>
+            cells={columns.map((_, i) => (
+              <span key={i} className="text-brand-700 font-medium">{fmtInt(kv)}</span>
             ))}
             zebra
           />
@@ -245,14 +245,14 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
             cols={cols}
             label="Occupancy"
             cells={series.occupancy.map((v, i) => (
-              <span className={metricClass(i)}>{traced(fmtPct(v, 1), i)}</span>
+              <span key={i} className={metricClass(i)}>{traced(fmtPct(v, 1), i)}</span>
             ))}
           />
           <Row
             cols={cols}
             label="ADR"
             cells={series.adr.map((v, i) => (
-              <span className={metricClass(i)}>{traced(fmtDollar(v), i)}</span>
+              <span key={i} className={metricClass(i)}>{traced(fmtDollar(v), i)}</span>
             ))}
             zebra
           />
@@ -260,7 +260,7 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
             cols={cols}
             label="RevPAR"
             cells={series.revpar.map((v, i) => (
-              <span className={metricClass(i)}>{traced(fmtDollar(v), i)}</span>
+              <span key={i} className={metricClass(i)}>{traced(fmtDollar(v), i)}</span>
             ))}
           />
           <Row cols={cols} label="Occupancy Growth" cells={occGrowth.map(growthCell)} zebra />
@@ -269,8 +269,8 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
           <Row
             cols={cols}
             label="Source"
-            cells={sources.map((s) => (
-              <span className="inline-flex flex-col items-end gap-0.5 text-[10.5px] text-ink-500">
+            cells={sources.map((s, i) => (
+              <span key={i} className="inline-flex flex-col items-end gap-0.5 text-[10.5px] text-ink-500">
                 {s?.basis && <BasisChip basis={s.basis} label={s.basisLabel} />}
                 <span title={s?.detail ?? undefined}>{s?.label ?? '—'}</span>
               </span>
@@ -281,8 +281,8 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
             cols={cols}
             label="Basis"
             labelTitle="Sam #6 — whether each column is reported historical data (Actual), a CBRE projection (Forecast) or the Year-1 level grown at the market growth assumption (Assumption), with its source and reporting period."
-            cells={sources.map((s) => (
-              <span className="inline-block max-w-[150px] truncate text-[10px] text-ink-500" title={s?.basisLabel ?? undefined}>
+            cells={sources.map((s, i) => (
+              <span key={i} className="inline-block max-w-[150px] truncate text-[10px] text-ink-500" title={s?.basisLabel ?? undefined}>
                 {s?.basisLabel ?? '—'}
               </span>
             ))}
@@ -312,8 +312,8 @@ function PenetrationTable({ cols, rows, forecastBand }: { cols: IaColumns; rows:
               labelTitle={r.reason ?? undefined}
               zebra={idx % 2 === 1}
               testId={`index-penetration-${r.key}`}
-              cells={r.cells.map((c) => (
-                <span title={c.trace ?? r.reason ?? undefined}>{c.text}</span>
+              cells={r.cells.map((c, i) => (
+                <span key={i} title={c.trace ?? r.reason ?? undefined}>{c.text}</span>
               ))}
             />
           ))}

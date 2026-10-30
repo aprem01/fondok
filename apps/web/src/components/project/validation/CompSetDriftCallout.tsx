@@ -91,7 +91,7 @@ export function CompSetDriftCallout({ dealId }: { dealId: string }) {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[12px] text-danger-700">
             <AlertTriangle size={13} aria-hidden="true" />
-            <span>Couldn't load comp-set drift — {state.error}</span>
+            <span>Couldn&apos;t load comp-set drift — {state.error}</span>
           </div>
           <Button
             size="sm"

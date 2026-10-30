@@ -137,6 +137,59 @@ export default function HistoricalBaselinePanel({
 }: HistoricalBaselinePanelProps) {
   const router = useRouter();
 
+  // Every hook runs on every render, BEFORE the empty-baseline return below
+  // (React's rules of hooks). With no baseline they memoise over empty inputs
+  // and are never read.
+  const years = useMemo(() => (baseline?.years ?? []) as YearRow[], [baseline?.years]);
+  const gaps = baseline?.gaps;
+  const walk = baseline?.walk;
+
+  // Build the gap label — "Missing 2020-2021" or "Missing 2022".
+  // Defense-in-depth: empty gaps array → null chip.
+  const gapLabel = useMemo(() => {
+    if (!gaps?.length) return null;
+    if (gaps.length === 1) return `Missing ${gaps[0]}`;
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    // Contiguous range → "Missing 2020-2021"; otherwise list.
+    const contiguous = sorted.every((y, i) => i === 0 || y === sorted[i - 1] + 1);
+    if (contiguous) return `Missing ${min}-${max}`;
+    return `Missing ${sorted.join(', ')}`;
+  }, [gaps]);
+
+  // Walk top-N — already sorted by abs(yoy_pct) DESC by the engine.
+  // Filter out the None-pct entries (no YoY signal) before slicing. A
+  // comparison the engine refused as incomparable arrives with
+  // ``yoy_pct === null`` and is dropped here with the rest, so a swing
+  // across a gap year is never offered as a broker question (FON-44 §4).
+  const walkTop = useMemo(() => {
+    return (walk ?? [])
+      .filter(w => w.yoy_pct !== null)
+      .slice(0, WALK_TOP_N);
+  }, [walk]);
+
+  // The engine's walk, indexed by (line, year) — the single source of
+  // every historical percentage this panel renders. An absent entry means
+  // the engine produced no comparison for that cell: either the swing sat
+  // under its noise floor or the line was not extracted that year.
+  const walkIndex = useMemo(() => {
+    const byKey = new Map<string, WalkEntry>();
+    for (const w of (walk ?? []) as WalkEntry[]) {
+      byKey.set(`${w.line}|${w.year}`, w);
+    }
+    return byKey;
+  }, [walk]);
+
+  // Why a year's comparisons were refused, resolved once per COLUMN — the
+  // condition is a property of the period pair, identical for every line
+  // in it.
+  const detailByYear = useMemo(() => {
+    const byYear = new Map<number, string | null>();
+    for (const y of years) byYear.set(y.fiscal_year, refusalDetail(years, y));
+    return byYear;
+  }, [years]);
+
   // Hide the panel entirely when there's no baseline data yet — the
   // engine returns coverage_pct=0 for any deal with no historical
   // P&Ls. Showing an empty table would only confuse the analyst.
@@ -144,7 +197,6 @@ export default function HistoricalBaselinePanel({
     return null;
   }
 
-  const years = baseline.years as YearRow[];
   const hasForecast =
     forecastY1 !== undefined && Object.keys(forecastY1).length > 0;
 
@@ -159,52 +211,6 @@ export default function HistoricalBaselinePanel({
     ? `${coverageNum} of the ${coverageDenom} fiscal years in the lookback `
       + `window ending ${latestYear} carry an extracted P&L`
     : `${coverageDenom}-year lookback window`;
-
-  // Build the gap label — "Missing 2020-2021" or "Missing 2022".
-  // Defense-in-depth: empty gaps array → null chip.
-  const gapLabel = useMemo(() => {
-    if (!baseline.gaps.length) return null;
-    if (baseline.gaps.length === 1) return `Missing ${baseline.gaps[0]}`;
-    const sorted = [...baseline.gaps].sort((a, b) => a - b);
-    const min = sorted[0];
-    const max = sorted[sorted.length - 1];
-    // Contiguous range → "Missing 2020-2021"; otherwise list.
-    const contiguous = sorted.every((y, i) => i === 0 || y === sorted[i - 1] + 1);
-    if (contiguous) return `Missing ${min}-${max}`;
-    return `Missing ${sorted.join(', ')}`;
-  }, [baseline.gaps]);
-
-  // Walk top-N — already sorted by abs(yoy_pct) DESC by the engine.
-  // Filter out the None-pct entries (no YoY signal) before slicing. A
-  // comparison the engine refused as incomparable arrives with
-  // ``yoy_pct === null`` and is dropped here with the rest, so a swing
-  // across a gap year is never offered as a broker question (FON-44 §4).
-  const walkTop = useMemo(() => {
-    return baseline.walk
-      .filter(w => w.yoy_pct !== null)
-      .slice(0, WALK_TOP_N);
-  }, [baseline.walk]);
-
-  // The engine's walk, indexed by (line, year) — the single source of
-  // every historical percentage this panel renders. An absent entry means
-  // the engine produced no comparison for that cell: either the swing sat
-  // under its noise floor or the line was not extracted that year.
-  const walkIndex = useMemo(() => {
-    const byKey = new Map<string, WalkEntry>();
-    for (const w of baseline.walk as WalkEntry[]) {
-      byKey.set(`${w.line}|${w.year}`, w);
-    }
-    return byKey;
-  }, [baseline.walk]);
-
-  // Why a year's comparisons were refused, resolved once per COLUMN — the
-  // condition is a property of the period pair, identical for every line
-  // in it.
-  const detailByYear = useMemo(() => {
-    const byYear = new Map<number, string | null>();
-    for (const y of years) byYear.set(y.fiscal_year, refusalDetail(years, y));
-    return byYear;
-  }, [years]);
 
   // Click a walk chip → route to the Validation tab where the
   // Broker Questions panel lives. The user runs Refresh there to

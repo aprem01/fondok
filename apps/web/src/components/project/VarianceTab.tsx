@@ -98,7 +98,8 @@ export default function VarianceTab() {
   // `flags` is null until the report lands (or when nothing can be fetched);
   // the states below say which: not configured, loading, failed, no flags.
   const live = useVariance(rawId);
-  const varianceFlags: VarianceFlag[] = live.flags ?? [];
+  const liveFlags = live.flags;
+  const varianceFlags: VarianceFlag[] = useMemo(() => liveFlags ?? [], [liveFlags]);
   const criticalCount = live.critical;
   const warnCount = live.warn;
   const infoCount = live.info;

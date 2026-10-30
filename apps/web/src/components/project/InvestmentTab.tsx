@@ -276,7 +276,13 @@ export default function InvestmentTab() {
   // Summary already used — never the local assumptions store (Move-2 step 4).
   const isMockIdInv = /^\d+$/.test(dealId);
   const liveMode = isWorkerConnected() && !isMockIdInv;
-  const invOverrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+  // Memoised on the deal row's own object so the save callbacks below keep a
+  // stable identity between renders that did not change the overrides.
+  const dealFieldOverrides = deal?.field_overrides;
+  const invOverrides = useMemo(
+    () => (dealFieldOverrides ?? {}) as Record<string, unknown>,
+    [dealFieldOverrides],
+  );
   const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A save schedules a run-all 1.2s later. Cancel it on unmount: a tab the

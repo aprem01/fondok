@@ -436,8 +436,8 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
               </Badge>
             </div>
             <p className="text-[12px] text-ink-500 mt-0.5 leading-relaxed">
-              Year-over-year variances Fondok flagged on the deal's
-              historical P&Ls. Each question is broker-ready — copy or
+              Year-over-year variances Fondok flagged on the deal&apos;s
+              historical P&amp;Ls. Each question is broker-ready — copy or
               mark sent and Fondok tracks the response.
             </p>
           </div>
@@ -511,7 +511,7 @@ export function BrokerQuestionsPanel({ dealId }: { dealId: string }) {
         <div className="flex items-center justify-between gap-3 px-3 py-3 rounded-md bg-danger-50 border border-danger-500/30">
           <div className="flex items-center gap-2 text-[12.5px] text-danger-700">
             <AlertTriangle size={14} aria-hidden="true" />
-            <span>Couldn't load broker questions — {state.error}</span>
+            <span>Couldn&apos;t load broker questions — {state.error}</span>
           </div>
           <Button size="sm" variant="secondary" onClick={() => fetchAll()}>
             <RefreshCw size={12} aria-hidden="true" /> Try again

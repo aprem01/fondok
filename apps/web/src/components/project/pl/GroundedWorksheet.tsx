@@ -517,7 +517,13 @@ export default function GroundedWorksheet({
     return v;
   }, [modelBase, draft]);
 
-  const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+  // Memoised on the deal row's own object: it is a dependency of the memoised
+  // rows / callbacks below, which must not rebuild on every render.
+  const dealFieldOverrides = deal?.field_overrides;
+  const overrides = useMemo(
+    () => (dealFieldOverrides ?? {}) as Record<string, unknown>,
+    [dealFieldOverrides],
+  );
   const isOverridden = (key?: string) => !!key && key in overrides;
 
   // FON-41 — ONE canonical review state (lib/reviewState), shared with the
