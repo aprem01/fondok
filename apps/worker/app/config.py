@@ -528,7 +528,11 @@ class Settings(BaseSettings):
     # 401 (``InvalidIssuerError``) and nothing pointed at the config. Every
     # str field and every SecretStr value is stripped here, once, at
     # construction; the log names the FIELD so the operator can fix the
-    # source — the value itself is never written anywhere.
+    # source — the value itself is never written anywhere. WARNING, not
+    # INFO: Settings is first built while ``app.main`` is still importing
+    # its routers, before ``logging.basicConfig`` runs, and Python's
+    # last-resort handler only forwards WARNING and above to stderr —
+    # an INFO line here would never reach the Railway deploy log.
     @model_validator(mode="after")
     def _strip_whitespace(self) -> Settings:
         for name in type(self).model_fields:
@@ -538,12 +542,12 @@ class Settings(BaseSettings):
                 stripped = raw.strip()
                 if stripped != raw:
                     setattr(self, name, SecretStr(stripped))
-                    logger.info("config: stripped whitespace from %s", name)
+                    logger.warning("config: stripped whitespace from %s", name)
             elif isinstance(value, str):
                 stripped = value.strip()
                 if stripped != value:
                     setattr(self, name, stripped)
-                    logger.info("config: stripped whitespace from %s", name)
+                    logger.warning("config: stripped whitespace from %s", name)
         return self
 
     @staticmethod

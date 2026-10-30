@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 
-import { GET, versionBody } from '@/app/api/version/route';
+import { GET } from '@/app/api/version/route';
+import { versionBody } from '@/lib/version';
 
 const saved = { sha: process.env.VERCEL_GIT_COMMIT_SHA, env: process.env.VERCEL_ENV };
 

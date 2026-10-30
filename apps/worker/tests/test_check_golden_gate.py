@@ -170,6 +170,7 @@ def _run_compare(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.slow
 def test_real_compare_flag_exits_3_only_when_the_fixture_moved(tmp_path: Path) -> None:
     """Prove the flag the gate relies on against the committed baseline: a
     clean baseline exits 0 with or without the flag; a baseline with one

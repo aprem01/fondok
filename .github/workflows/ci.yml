@@ -40,11 +40,14 @@ jobs:
       - name: Unit tests (vitest)
         run: pnpm --filter web test
 
+      # --no-lint: the dedicated step above already linted; `next build`
+      # would run ESLint a second time. The Vercel production build keeps
+      # ESLint on, so a lint error fails that build too (DEPLOY.md).
       - name: Build web
         working-directory: apps/web
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-        run: pnpm exec next build
+        run: pnpm exec next build --no-lint
 
   python:
     name: Python (worker)

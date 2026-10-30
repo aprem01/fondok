@@ -6,11 +6,21 @@ Sentry DSN were stripped. A trailing ``"\\n"`` pasted into
 (``InvalidIssuerError``) with nothing in the config pointing at the cause.
 Now the model validator strips every string field, logs WHICH field it
 touched — names only, never values — and leaves clean values alone.
+
+The line is logged at WARNING on purpose: ``Settings`` is first constructed
+while ``app.main`` is importing its routers, before ``logging.basicConfig``
+runs, so only Python's last-resort handler (WARNING and above → stderr) is
+in place. The subprocess test at the bottom proves the line reaches stderr
+under that real import order.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -76,3 +86,25 @@ def test_none_and_non_string_fields_are_untouched() -> None:
     s = _settings(CLERK_JWT_ISSUER=None, DEFAULT_DEAL_BUDGET_USD=12.5)
     assert s.CLERK_JWT_ISSUER is None
     assert s.DEFAULT_DEAL_BUDGET_USD == 12.5
+
+
+def test_strip_line_reaches_stderr_under_the_real_import_order(tmp_path: Path) -> None:
+    """``import app.main`` in a fresh interpreter with a trailing newline on
+    CLERK_JWT_ISSUER: Settings is built during the router imports, before
+    ``logging.basicConfig`` in main.py, and the WARNING must still appear on
+    stderr (Python's last-resort handler). An INFO line would not."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if not k.startswith(("CLERK_", "ANTHROPIC_", "DATABASE_URL"))
+    }
+    env["CLERK_JWT_ISSUER"] = "https://clerk.fondok.example\n"
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp_path / 'import-order.db'}"
+    env["ANTHROPIC_API_KEY"] = "sk-test-key-not-real"
+    worker = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=str(worker), env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert "config: stripped whitespace from CLERK_JWT_ISSUER" in proc.stderr, proc.stderr[-1500:]
+    assert "clerk.fondok.example" not in proc.stderr

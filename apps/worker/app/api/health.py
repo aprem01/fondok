@@ -14,8 +14,9 @@ build 3.5 hours behind main and nothing on the probe could show it — the only
 version field is the hand-maintained ``__version__``. :func:`build_info` reads
 the deployed commit from ``RAILWAY_GIT_COMMIT_SHA`` (Railway runtime), else
 ``FONDOK_BUILD_SHA`` (Dockerfile ``ARG GIT_SHA``), else null, and the image
-build time from ``FONDOK_BUILD_TIME`` (Dockerfile ``ARG BUILD_TIME``), else
-the ``BUILD_TIME`` file the Dockerfile writes, else null. A commit SHA is not
+build time from the ``BUILD_TIME`` file the Dockerfile writes at build
+(``FONDOK_BUILD_TIME`` in the environment overrides it; ``FONDOK_BUILD_TIME_FILE``
+relocates the file — both for tests and non-Docker hosts), else null. A commit SHA is not
 sensitive; the post-deploy smoke polls it to know the new worker is serving.
 """
 

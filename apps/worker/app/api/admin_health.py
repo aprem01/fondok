@@ -117,66 +117,86 @@ async def _failed_engine_timestamps(
     return [(r[0],) for r in rows]
 
 
+async def _count_failures(
+    session: AsyncSession,
+    *,
+    table: str,
+    distinct_tenants_sql: str,
+    fetch,
+    cutoff: datetime,
+) -> tuple[int | None, dict[str, Any]]:
+    """One counter: plan the scan for ``table``, run it, count. Returns
+    ``(count_or_None, {"source", "tenants"})``."""
+    from ..services.tenant_scan import plan_tenant_scan, scan_by_tenant
+
+    plan = await plan_tenant_scan(distinct_tenants_sql=distinct_tenants_sql, job=f"admin_health_{table}")
+    scan = {
+        "source": plan.source,
+        "tenants": len(plan.tenants) if plan.tenants is not None else None,
+    }
+    try:
+        if plan.per_tenant:
+            # The request session already holds a transaction that began
+            # under the ADMIN's tenant (public_snapshot / ops_snapshot ran
+            # in it). ``scan_by_tenant`` publishes each tenant and relies on
+            # the ``after_begin`` hook to set the GUC — which fires only when
+            # a transaction BEGINS. End the admin's transaction here so the
+            # first tenant's fetch starts its own and is scoped to it;
+            # without this the first tenant silently counts zero under RLS.
+            await session.commit()
+        rows = await scan_by_tenant(session, plan, fetch)
+        return _timestamps_after(rows, cutoff), scan
+    except Exception as exc:
+        logger.warning("admin_health: %s failure count failed: %s", table, exc)
+        await session.rollback()
+        return None, scan
+
+
 async def failure_counts_last_hour(
     session: AsyncSession, *, now: datetime | None = None
 ) -> dict[str, Any]:
     """``{extraction_failures_last_hour, engine_failures_last_hour,
     failures_last_hour_scan}`` — see the module docstring. A counter whose
     query failed is ``None`` (never 0) and the failure is logged."""
-    from ..services.tenant_scan import plan_tenant_scan, scan_by_tenant
-
     now = (now or datetime.now(UTC)).astimezone(UTC)
     cutoff = now - FAILURE_WINDOW
     # One day of slack on the prefix so a timestamp written in another
     # zone's text form still enters the exact comparison.
     day = (cutoff - timedelta(days=1)).date().isoformat()
 
-    out: dict[str, Any] = {
-        "extraction_failures_last_hour": None,
-        "engine_failures_last_hour": None,
-        "failures_last_hour_scan": {
-            "window_hours": int(FAILURE_WINDOW.total_seconds() // 3600),
-            "source": None,
-            "tenants": None,
-        },
-    }
     # ``scan_by_tenant`` publishes each tenant on the ContextVar; restore the
     # caller's tenant afterwards so the rest of the request runs as them.
     token = current_tenant_id.set(current_tenant_id.get())
     try:
-        plan = await plan_tenant_scan(
+        docs, docs_scan = await _count_failures(
+            session,
+            table="documents",
             distinct_tenants_sql=(
                 "SELECT DISTINCT tenant_id FROM documents WHERE status IN ('FAILED', 'PARSE_FAILED')"
             ),
-            job="admin_health_failures",
+            fetch=lambda s, t: _failed_document_timestamps(s, day=day, tenant=t),
+            cutoff=cutoff,
         )
-        out["failures_last_hour_scan"]["source"] = plan.source
-        out["failures_last_hour_scan"]["tenants"] = (
-            len(plan.tenants) if plan.tenants is not None else None
+        engines, engines_scan = await _count_failures(
+            session,
+            table="engine_outputs",
+            distinct_tenants_sql=(
+                "SELECT DISTINCT tenant_id FROM engine_outputs WHERE status = 'failed'"
+            ),
+            fetch=lambda s, t: _failed_engine_timestamps(s, day=day, tenant=t),
+            cutoff=cutoff,
         )
-        try:
-            doc_rows = await scan_by_tenant(
-                session,
-                plan,
-                lambda s, t: _failed_document_timestamps(s, day=day, tenant=t),
-            )
-            out["extraction_failures_last_hour"] = _timestamps_after(doc_rows, cutoff)
-        except Exception as exc:
-            logger.warning("admin_health: extraction failure count failed: %s", exc)
-            await session.rollback()
-        try:
-            eng_rows = await scan_by_tenant(
-                session,
-                plan,
-                lambda s, t: _failed_engine_timestamps(s, day=day, tenant=t),
-            )
-            out["engine_failures_last_hour"] = _timestamps_after(eng_rows, cutoff)
-        except Exception as exc:
-            logger.warning("admin_health: engine failure count failed: %s", exc)
-            await session.rollback()
     finally:
         current_tenant_id.reset(token)
-    return out
+    return {
+        "extraction_failures_last_hour": docs,
+        "engine_failures_last_hour": engines,
+        "failures_last_hour_scan": {
+            "window_hours": int(FAILURE_WINDOW.total_seconds() // 3600),
+            "documents": docs_scan,
+            "engine_outputs": engines_scan,
+        },
+    }
 
 
 @router.get("/health")

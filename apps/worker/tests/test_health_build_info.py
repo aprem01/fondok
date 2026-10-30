@@ -4,9 +4,8 @@ On 2026-10-28 Railway lagged 3.5 hours behind main and nobody could tell:
 ``/health`` carried only the hand-maintained ``__version__``. It now reports
 ``build_sha`` — ``RAILWAY_GIT_COMMIT_SHA`` first (Railway injects it at
 runtime), else ``FONDOK_BUILD_SHA`` (baked by the Dockerfile's ``ARG
-GIT_SHA``), else null — and ``build_time`` (``FONDOK_BUILD_TIME`` from the
-Dockerfile ``ARG BUILD_TIME``, else the ``BUILD_TIME`` file the image writes
-at build, else null). Public and non-sensitive: a commit SHA says nothing an
+GIT_SHA``), else null — and ``build_time`` (the ``BUILD_TIME`` file the image writes at
+build, overridable by ``FONDOK_BUILD_TIME``, else null). Public and non-sensitive: a commit SHA says nothing an
 attacker can use and ``version`` was already there.
 """
 

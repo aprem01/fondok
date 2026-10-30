@@ -37,6 +37,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-key-not-real")
 
 from app import llm as llm_mod  # noqa: E402
 from app.api import admin_health as admin_health_mod  # noqa: E402
+from app.auth.context import current_tenant_id  # noqa: E402
 from app.database import get_session_factory  # noqa: E402
 from app.migrations import run_startup_migrations  # noqa: E402
 from app.tenants import upsert_tenant  # noqa: E402
@@ -121,7 +122,60 @@ async def test_failure_counters_count_across_tenants_in_the_last_hour(seeded) ->
     # 3 per tenant x 2 tenants (the SQLite / RLS-off path is one cross-tenant scan).
     assert counts["extraction_failures_last_hour"] == 6
     assert counts["engine_failures_last_hour"] == 2
-    assert counts["failures_last_hour_scan"] == {"window_hours": 1, "source": "cross_tenant", "tenants": None}
+    assert counts["failures_last_hour_scan"] == {
+        "window_hours": 1,
+        "documents": {"source": "cross_tenant", "tenants": None},
+        "engine_outputs": {"source": "cross_tenant", "tenants": None},
+    }
+
+
+@pytest.mark.asyncio
+async def test_per_tenant_scan_publishes_the_first_tenant_too(seeded, monkeypatch) -> None:
+    """Under RLS the request session already holds a transaction begun under
+    the ADMIN's tenant. The ``after_begin`` GUC hook fires only when a
+    transaction begins, so unless the admin's transaction is ended before the
+    per-tenant loop, the FIRST tenant's fetch runs under the admin's GUC and
+    counts zero. Mock the GUC setter and assert the publish sequence."""
+    from app import database as db
+    from app.api import admin_health as mod
+    from app.services.tenant_scan import ScanPlan
+
+    published: list[str | None] = []
+
+    def fake_publish(session, transaction, connection):
+        from app.auth.context import current_tenant_id
+
+        published.append(current_tenant_id.get())
+
+    # Pretend RLS is live and the plan is two tenants.
+    monkeypatch.setattr(db, "_tenant_guc_is_active", lambda: True)
+    monkeypatch.setattr(db, "_publish_tenant_guc", fake_publish)
+
+    async def fake_plan(**kwargs):
+        return ScanPlan(("tenant-A", "tenant-B"), "registry")
+
+    import app.services.tenant_scan as ts
+
+    monkeypatch.setattr(ts, "plan_tenant_scan", fake_plan)
+
+    factory = get_session_factory()
+    async with factory() as s:
+        current_tenant_id.set("admin-tenant")
+        # The request has already begun a transaction as the admin.
+        await s.execute(text("SELECT 1"))
+        assert published == ["admin-tenant"]
+        counts = await mod.failure_counts_last_hour(s)
+        # Admin's transaction ended before the loop: tenant-A got its own
+        # transaction (and GUC) for the documents scan, then tenant-B, then
+        # both again for the engine_outputs scan.
+        assert published == ["admin-tenant", "tenant-A", "tenant-B", "tenant-A", "tenant-B"], published
+        assert counts["failures_last_hour_scan"]["documents"] == {"source": "registry", "tenants": 2}
+        # Per-tenant SQL carries the predicate; nothing is seeded under these
+        # tenant ids, so the honest answer is 0 (a count, not a refusal).
+        assert counts["extraction_failures_last_hour"] == 0
+        assert counts["engine_failures_last_hour"] == 0
+        # The caller's tenant is restored.
+        assert current_tenant_id.get() == "admin-tenant"
 
 
 @pytest.mark.asyncio

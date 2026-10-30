@@ -434,6 +434,12 @@ cd /Users/prem/fondok
 vercel --prod --yes
 ```
 
+Since 2026-10-30 `apps/web/.eslintrc.json` is in place and `next build` runs
+ESLint, so **a lint error (or warning — CI runs `--max-warnings=0`) fails the
+Vercel production build**; run `pnpm exec next lint --max-warnings=0` in
+`apps/web` before pushing. CI's own build step passes `--no-lint` because its
+dedicated lint step already ran.
+
 Set `NEXT_PUBLIC_WORKER_URL` if the worker URL ever changes (e.g. custom domain):
 
 ```bash

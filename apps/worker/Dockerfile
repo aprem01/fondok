@@ -61,15 +61,13 @@ WORKDIR /workspace/apps/worker
 # reports ``build_sha`` from RAILWAY_GIT_COMMIT_SHA (Railway injects it at
 # runtime — the primary path, nothing to pass) and falls back to the value
 # baked here for a build made anywhere else:
-#   docker build --build-arg GIT_SHA=$(git rev-parse HEAD) \
-#                --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) ...
+#   docker build --build-arg GIT_SHA=$(git rev-parse HEAD) ...
 # An ARG that was not passed bakes an empty ENV, which /health reads as null.
-# BUILD_TIME is also written to a file at image build so a Railway build,
-# which passes no args, still reports when the image was made.
+# ``build_time`` is the moment this layer was built, written to a file the
+# worker reads at /workspace/BUILD_TIME — no build arg needed, so a Railway
+# build (which passes none) reports it too.
 ARG GIT_SHA=""
-ARG BUILD_TIME=""
-ENV FONDOK_BUILD_SHA=${GIT_SHA} \
-    FONDOK_BUILD_TIME=${BUILD_TIME}
+ENV FONDOK_BUILD_SHA=${GIT_SHA}
 RUN date -u +%Y-%m-%dT%H:%M:%SZ > /workspace/BUILD_TIME
 
 USER fondok
