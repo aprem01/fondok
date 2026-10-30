@@ -364,6 +364,15 @@ departmental lines, share of total revenue for undistributed and fixed lines):
 | Lifestyle | 30% | 75% | 50% | 26% | 7% |
 | Luxury | 32% | 78% | 55% | 30% | 8% |
 
+<!-- source: apps/worker/app/engines/expense.py (ExpenseEngineOutput.synthesized_lines, SynthesizedLine source seed / ratio_override, reason), apps/worker/app/export/live_payload.py (_build_op_ratio_provenance synthesized_lines), apps/worker/app/export/excel.py (_build_assumptions, _build_op_ratio_provenance), apps/worker/app/export/memo_pdf.py (_render_op_ratio_provenance) -->
+Undistributed and fixed lines split their category ratio by a fixed USALI weight (A&G 28%, IT 7%,
+sales & marketing 20%, property operations 20%, utilities 25%; property taxes 55%, insurance 40%,
+other fixed 5%). Every Year-1 line synthesized this way is listed with its value, its source (Seed
+for the hotel-type default, Ratio override when an applied ratio set it) and the reason — “no T-12
+line for Utilities; hotel-type default 5.50% of total revenue (select)” — on the Excel Assumptions
+and Op-Ratio Provenance sheets and in the memo's operating-ratio provenance section. A line the
+T-12 carries is never listed; neither is one folded into a category the T-12 already itemizes.
+
 :::
 
 ::: card

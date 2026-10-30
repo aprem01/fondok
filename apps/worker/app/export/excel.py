@@ -618,6 +618,25 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
             row += 1
         row += 1
 
+    # B3 — Year-1 expense lines the T-12 does not carry, synthesized at a
+    # ratio: each with its value, its source and the reason.
+    op_prov = model.get("op_ratio_provenance") if isinstance(model.get("op_ratio_provenance"), dict) else {}
+    synthesized = [s for s in (op_prov.get("synthesized_lines") or []) if isinstance(s, dict)]
+    if synthesized:
+        ws.cell(row=row, column=1, value="Year-1 Expense Lines Synthesized from Ratios")
+        _style_subhead_row(ws, row, 3)
+        row += 1
+        for s in synthesized:
+            ws.cell(row=row, column=1, value=str(s.get("field") or s.get("line")))
+            _write_value(ws, row, 2, s.get("value"), USD_FMT, concept="expense.synthesized_line",
+                         missing="synthesized line carries no value")
+            _write_note(
+                ws, row, 3,
+                f"{_SOURCE_DISPLAY(str(s.get('source') or 'seed'))} — {s.get('reason') or ''}",
+            )
+            row += 1
+        row += 1
+
     _autosize(ws, [32, 22, 30])
     _freeze_top(ws, row=2)
 
@@ -1415,7 +1434,8 @@ def _build_op_ratio_provenance(wb: Workbook, op_prov: dict[str, Any] | None) -> 
         return False
     lines = op_prov.get("lines") or []
     note = op_prov.get("note")
-    if not lines and not note:
+    synthesized = [s for s in (op_prov.get("synthesized_lines") or []) if isinstance(s, dict)]
+    if not lines and not note and not synthesized:
         return False
 
     ws = wb.create_sheet("Op-Ratio Provenance")
@@ -1462,6 +1482,20 @@ def _build_op_ratio_provenance(wb: Workbook, op_prov: dict[str, Any] | None) -> 
             for col in range(1, len(headers) + 1):
                 ws.cell(row=row, column=col).fill = fill
         row += 1
+
+    # B3 — the Year-1 expense lines synthesized at a ratio (no T-12 line).
+    if synthesized:
+        row += 1
+        ws.cell(row=row, column=1, value="Year-1 expense lines synthesized from ratios")
+        _style_subhead_row(ws, row, len(headers))
+        row += 1
+        for s in synthesized:
+            ws.cell(row=row, column=1, value=str(s.get("field") or s.get("line")))
+            _write_value(ws, row, 2, s.get("value"), USD_FMT, concept="expense.synthesized_line",
+                         missing="synthesized line carries no value")
+            ws.cell(row=row, column=3, value=_SOURCE_DISPLAY(str(s.get("source") or "seed")))
+            _write_note(ws, row, 4, str(s.get("reason") or ""))
+            row += 1
 
     # Legend
     row += 1

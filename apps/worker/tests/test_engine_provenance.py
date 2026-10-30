@@ -286,8 +286,19 @@ def test_engines_tag_provenance_state() -> None:
         assert out.provenance
         for trace in out.provenance.values():
             assert trace.state is not None
-        # These are all formula-computed values.
-        assert all(t.state == "calculated" for t in out.provenance.values())
+        # Formula-computed values read ``calculated``; B3 — a Year-1 expense
+        # line synthesized at a hotel-type ratio is a seed (``assumption``).
+        synthesized = {
+            path
+            for path, t in out.provenance.items()
+            if t.source == "seed" and (t.note or "").startswith("no T-12 line for ")
+        }
+        assert all(
+            t.state == "calculated"
+            for path, t in out.provenance.items()
+            if path not in synthesized
+        )
+        assert all(out.provenance[p].state == "assumption" for p in synthesized)
 
 
 def test_unlevered_basis_is_total_capital_not_purchase() -> None:

@@ -1361,7 +1361,9 @@ _OP_RATIO_CATALOG: tuple[tuple[str, str], ...] = (
 )
 
 
-def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any]:
+def _build_op_ratio_provenance(
+    base: dict[str, Any], expense: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Op-Ratio Provenance rows from the loader's ``__sources__`` map.
 
     One line per catalog ratio that the loader resolved AND tagged with a
@@ -1387,6 +1389,23 @@ def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any]:
             non_seed = True
         lines.append({"field": label, "value": value, "source": source, "document_id": None})
     out: dict[str, Any] = {"lines": lines, "all_seed": bool(lines) and not non_seed}
+    # B3 — the Year-1 expense lines the T-12 does not carry, synthesized at a
+    # ratio, each with its provenance (``seed`` = hotel-type default) and the
+    # reason ("no T-12 line for <name>; hotel-type default <ratio> …").
+    synthesized = [
+        {
+            "field": str(s.get("label") or s.get("line")),
+            "line": s.get("line"),
+            "value": _num(s.get("value")),
+            "ratio": _num(s.get("ratio")),
+            "source": str(s.get("source") or "seed"),
+            "reason": str(s.get("reason") or ""),
+        }
+        for s in ((expense or {}).get("synthesized_lines") or [])
+        if isinstance(s, dict)
+    ]
+    if synthesized:
+        out["synthesized_lines"] = synthesized
     if not lines:
         reason = "no operating ratio resolved with a source on this deal's run"
         refuse(ReasonCode.ENGINE_SKIPPED, reason, "op_ratio.lines")
@@ -1773,7 +1792,7 @@ async def _assemble_live_payload(
         if capex:
             model["capex_schedule"] = capex
         # B2 — always present for a modelled deal (says so when all-seed).
-        model["op_ratio_provenance"] = _build_op_ratio_provenance(engine_base)
+        model["op_ratio_provenance"] = _build_op_ratio_provenance(engine_base, expense)
         # A9 — the segment model's platform defaults are badged in words.
         segment_provenance = _build_segment_provenance(engine_base)
         if segment_provenance:

@@ -435,7 +435,9 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
     # ── Op-ratio provenance — B2: present whenever the payload carries the
     # block, including the all-seed case (the block then carries a note).
     op_prov = model.get("op_ratio_provenance")
-    if not isinstance(op_prov, dict) or not (op_prov.get("lines") or op_prov.get("note")):
+    if not isinstance(op_prov, dict) or not (
+        op_prov.get("lines") or op_prov.get("note") or op_prov.get("synthesized_lines")
+    ):
         op_prov = None
 
     # ── Pricing sensitivity grid ─────────────────────────────────────
@@ -726,7 +728,8 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
         return ""
     lines = op_prov.get("lines") or []
     note = op_prov.get("note")
-    if not lines and not note:
+    synthesized = [s for s in (op_prov.get("synthesized_lines") or []) if isinstance(s, dict)]
+    if not lines and not note and not synthesized:
         return ""
 
     rows = []
@@ -784,6 +787,27 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
         if rows
         else ""
     )
+    # B3 — every Year-1 expense line synthesized at a ratio (no T-12 line),
+    # with its source chip and the reason.
+    synth_rows = []
+    for s in synthesized:
+        display, tag_class = _source_chip(str(s.get("source") or "seed"))
+        synth_rows.append(
+            f"<tr><td>{html.escape(str(s.get('field') or s.get('line') or ''))}</td>"
+            f"<td class='num'>{_fmt_usd(_as_float(s.get('value')), concept='expense.synthesized_line')}</td>"
+            f"<td><span class='source-tag {tag_class}'>{display}</span>"
+            f"<div class='cite'>{html.escape(str(s.get('reason') or ''))}</div></td></tr>"
+        )
+    synth_html = (
+        "<h3>Year-1 expense lines synthesized from ratios</h3>"
+        "<table class='mini'>"
+        "<thead><tr><th>Expense Line</th>"
+        "<th style='text-align:right'>Year-1 Value</th>"
+        "<th>Source / Reason</th></tr></thead>"
+        f"<tbody>{''.join(synth_rows)}</tbody></table>"
+        if synth_rows
+        else ""
+    )
     return (
         "<h2>Operating Ratios &mdash; Provenance</h2>"
         "<div class='callout'><strong>Source precedence:</strong> Override &rarr; "
@@ -791,6 +815,7 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
         "Lower-tier sources are flagged for IC review.</div>"
         + note_html
         + table_html
+        + synth_html
     )
 
 

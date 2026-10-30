@@ -268,6 +268,44 @@ class ExpenseYear(BaseModel):
     noi_institutional: float | None = None
 
 
+#: Display names for the synthesized-line provenance (B3).
+_LINE_DISPLAY: dict[str, str] = {
+    "rooms_dept_expense": "Rooms department expense",
+    "fb_dept_expense": "F&B department expense",
+    "other_dept_expense": "Other operated department expense",
+    "administrative_general": "Administrative & general",
+    "information_telecom": "Information & telecommunications",
+    "sales_marketing": "Sales & marketing",
+    "property_operations": "Property operations & maintenance",
+    "utilities": "Utilities",
+    "property_taxes": "Property taxes",
+    "insurance": "Insurance",
+    "other_fixed": "Other fixed charges",
+}
+
+
+class SynthesizedLine(BaseModel):
+    """B3 (go-live audit) — one Year-1 expense line the T-12 does not carry,
+    synthesized at a ratio. ``source`` is ``seed`` when the ratio is the
+    hotel-type default (``HOTEL_TYPE_DEFAULTS``) and ``ratio_override`` when
+    the deal's ratio override (an applied benchmark / portfolio ratio) set
+    it; ``reason`` is the sentence every export prints beside the line."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    line: str
+    label: str
+    value: float
+    #: The line's effective share of ``basis`` (for an undistributed / fixed
+    #: line: the category ratio × the line's canonical weight).
+    ratio: float
+    #: The ratio key the line rides on (``rooms_dept_pct`` …).
+    ratio_key: str
+    basis: Literal["rooms_revenue", "fb_revenue", "other_revenue", "total_revenue"]
+    source: Literal["seed", "ratio_override"]
+    reason: str
+
+
 class ExpenseEngineOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -278,6 +316,10 @@ class ExpenseEngineOutput(BaseModel):
     # The web app surfaces this list as a footnote on the Operating
     # Statement so reviewers know which numbers are real vs synthesized.
     sourced_from_t12: list[str] = Field(default_factory=list)
+    # B3 (go-live audit) — the Year-1 lines the T-12 does NOT carry and the
+    # engine synthesized at a ratio, each with its provenance and reason.
+    # Empty when every line is an actual (or folded into a grounded category).
+    synthesized_lines: list[SynthesizedLine] = Field(default_factory=list)
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "years[0].noi". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
@@ -463,6 +505,9 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         y1_undist_lines: dict[str, float] = {}
         y1_fixed_lines: dict[str, float] = {}
         y1_undist_total = y1_fixed_total = 0.0
+        # B3 — line → (ratio, ratio_key, basis, Year-1 value) for each
+        # Year-1 line synthesized at a ratio.
+        y1_synth: dict[str, tuple[float, str, str, float]] = {}
 
         for idx, rev_year in enumerate(payload.revenue.years):
             rooms = rev_year.rooms_revenue
@@ -550,6 +595,33 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 fixed_total = sum(fixed_lines.values())
 
                 if is_y1:
+                    # B3 — every Year-1 line the T-12 does not carry and the
+                    # category did not fold is synthesized at a ratio.
+                    for line, basis, ratio_key, value in (
+                        ("rooms_dept_expense", "rooms_revenue", "rooms_dept_pct", dept_rooms),
+                        ("fb_dept_expense", "fb_revenue", "fb_dept_pct", dept_fb),
+                        ("other_dept_expense", "other_revenue", "other_dept_pct", dept_other),
+                    ):
+                        if not (use_actuals and line in actuals):
+                            y1_synth[line] = (
+                                float(defaults[ratio_key]), ratio_key, basis, value
+                            )
+                    for line, weight in UNDIST_WEIGHTS.items():
+                        if line not in actuals and not undist_grounded:
+                            y1_synth[line] = (
+                                float(defaults["undistributed_pct_revenue"]) * weight,
+                                "undistributed_pct_revenue",
+                                "total_revenue",
+                                undist_lines[line],
+                            )
+                    for line, weight in FIXED_WEIGHTS.items():
+                        if line not in actuals and not fixed_grounded:
+                            y1_synth[line] = (
+                                float(defaults["fixed_pct_revenue"]) * weight,
+                                "fixed_pct_revenue",
+                                "total_revenue",
+                                fixed_lines[line],
+                            )
                     y1_dept_rooms, y1_dept_fb, y1_dept_other = dept_rooms, dept_fb, dept_other
                     y1_undist_lines = dict(undist_lines)
                     y1_undist_total = undist_total
@@ -870,8 +942,57 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     "where extracted).",
                 )
 
+        # B3 — publish the synthesized Year-1 lines (a line an analyst
+        # projection method re-drove in Year 1 is no longer a ratio default;
+        # a ``growth`` method keeps the Year-1 anchor, so it still is) and
+        # badge each one's Year-1 value in the provenance sidecar.
+        synthesized: list[SynthesizedLine] = []
+        for line, (ratio, ratio_key, basis, value) in y1_synth.items():
+            spec = methods.get(line)
+            if spec is not None and line not in unresolved and spec.method != "growth":
+                continue
+            label = _LINE_DISPLAY[line]
+            from_override = ratio_key in payload.overrides
+            reason = (
+                f"no T-12 line for {label}; ratio override {ratio:.2%} of "
+                f"{basis.replace('_', ' ')}"
+                if from_override
+                else f"no T-12 line for {label}; hotel-type default {ratio:.2%} "
+                f"of {basis.replace('_', ' ')} ({payload.hotel_type})"
+            )
+            synthesized.append(
+                SynthesizedLine(
+                    line=line,
+                    label=label,
+                    value=value,
+                    ratio=ratio,
+                    ratio_key=ratio_key,
+                    basis=basis,  # type: ignore[arg-type]
+                    source="ratio_override" if from_override else "seed",
+                    reason=reason,
+                )
+            )
+            path = _LINE_OUTPUT_PATH.get(line) or f"fixed_charges.{line}"
+            prov.setdefault(
+                f"years[0].{path}",
+                ValueTrace(
+                    value=value,
+                    formula=f"{line} = {basis} × {ratio:.6g}",
+                    inputs=[
+                        ValueInput(
+                            name=ratio_key,
+                            value=float(defaults[ratio_key]),
+                            source="seed" if not from_override else None,
+                        )
+                    ],
+                    source="seed" if not from_override else None,
+                    note=reason,
+                ),
+            )
+
         return ExpenseEngineOutput(
             deal_id=payload.deal_id,
+            synthesized_lines=synthesized,
             line_methods=line_methods,
             years=years,
             noi_cagr=noi_cagr,
@@ -890,4 +1011,5 @@ __all__ = [
     "ExpenseYear",
     "LineMethodInfo",
     "ProjectionMethod",
+    "SynthesizedLine",
 ]

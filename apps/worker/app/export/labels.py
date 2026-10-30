@@ -184,6 +184,8 @@ SOURCE_DISPLAY: dict[str, str] = {
     "capex_ffe_default": "FF&E default",
     "deal_type_default": "Development hold default",
     "str_segmentation": "STR Segmentation report",
+    # B3 — an expense line synthesized at the deal's ratio override.
+    "ratio_override": "Ratio override",
     "platform_default_segmentation": "Platform default — no segmentation data on file",
     "platform_default_renovation_split": "Platform default split",
     # Legacy label (runs persisted before 2026-10-30, when every segment
