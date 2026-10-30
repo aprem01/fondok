@@ -52,6 +52,34 @@ export function titleCaseToken(token: string): string {
     .join(' ');
 }
 
+/**
+ * The Data Room's document-status vocabulary — one word per worker status,
+ * shared by the Data Room table and the New Deal wizard's uploaded-file rows
+ * (FON-79) so a document never reads "Processing" on one surface and
+ * "Extracting" on another. Raw ``EXTRACTED`` / ``PARSE_FAILED`` tokens never
+ * reach a chip.
+ */
+export function docStatusLabel(status: string | null | undefined): string {
+  switch ((status ?? '').toUpperCase()) {
+    case 'EXTRACTED':
+      return 'Extracted';
+    case 'EXTRACTING':
+    case 'CLASSIFYING':
+    case 'PROCESSING':
+    case 'PARSING':
+      return 'Processing';
+    case 'FAILED':
+    case 'PARSE_FAILED':
+      // 'Pending' here once hid extraction failures (Sam QA 2026-05-13);
+      // 'Failed' surfaces the problem and the row's error tells the user
+      // what to do next.
+      return 'Failed';
+    case 'UPLOADED':
+    default:
+      return 'Pending';
+  }
+}
+
 /** The display label for a document-type token; never the raw token. */
 export function docTypeLabel(token: string | null | undefined): string {
   if (!token) return 'Uncategorized';

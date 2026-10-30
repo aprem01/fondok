@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import Modal from '@/components/ui/Modal';
-import { docTypeLabel } from '@/lib/docTypeLabels';
+import { docTypeLabel, docStatusLabel } from '@/lib/docTypeLabels';
 import {
   api,
   isWorkerConnected,
@@ -180,28 +180,10 @@ function engineStatusReadiness(status: string | null | undefined): number {
   return 0;
 }
 
-// Map worker doc statuses to a single label the StatusBadge knows about.
-function statusLabel(s: string): string {
-  switch (s) {
-    case 'EXTRACTED':
-      return 'Extracted';
-    case 'EXTRACTING':
-    case 'CLASSIFYING':
-    case 'PROCESSING':
-    case 'PARSING':
-      return 'Processing';
-    case 'FAILED':
-    case 'PARSE_FAILED':
-      // Previously mapped to 'Pending', which silently hid extraction
-      // failures (Sam QA 2026-05-13). 'Failed' surfaces the problem
-      // and the row's error_kind + error_message tell the user what
-      // to do next.
-      return 'Failed';
-    case 'UPLOADED':
-    default:
-      return 'Pending';
-  }
-}
+// Map worker doc statuses to a single label the StatusBadge knows about —
+// the vocabulary lives in lib/docTypeLabels so the wizard's uploaded-file
+// rows (FON-79) read the same words.
+const statusLabel = (s: string): string => docStatusLabel(s);
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null) return '—';

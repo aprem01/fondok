@@ -9,6 +9,7 @@ import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './au
 import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
 import { wizardDocSubtype, type DocSubtype } from './docSubtype';
+import type { DraftWizardPayload } from './wizardDraft';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -100,9 +101,23 @@ export interface WorkerDeal {
   // endpoint so the projects grid only shows "No documents uploaded" when a
   // deal genuinely has none (FON-35). Omitted on older worker builds → 0.
   document_count?: number;
+  /** FON-79 — ``'draft'`` while the New Deal wizard has not pressed Finish;
+   *  ``'active'`` for an underwriting. Orthogonal to ``status``. ABSENT on a
+   *  worker that cannot hold drafts — the web feature-detects on it. */
+  lifecycle?: DealLifecycle;
+  /** FON-79 — when Finish was pressed; null for a draft and for a direct
+   *  active create. */
+  activated_at?: string | null;
+  /** FON-79 — the wizard's resume payload. Returned by the create response
+   *  and by ``GET /deals/{id}?include=draft_wizard`` only; null / absent
+   *  everywhere else and on an active deal. */
+  draft_wizard?: DraftWizardPayload | null;
   created_at: string;
   updated_at: string;
 }
+
+/** FON-79 — a deal is either the wizard's server-side draft or an underwriting. */
+export type DealLifecycle = 'draft' | 'active';
 
 export interface WorkerDealStatus {
   id: string;
@@ -162,6 +177,10 @@ export interface PipelineDealRow {
 
 export interface PipelineSummary {
   deal_count: number;
+  /** FON-79 — lifecycle drafts in the tenant, counted BESIDE the rows (a
+   *  draft has no run, no target and no state). Absent on a worker that
+   *  cannot hold drafts. */
+  draft_count?: number;
   median_irr: number | null;
   p25_irr: number | null;
   p75_irr: number | null;
@@ -816,6 +835,18 @@ export interface NewDealBody {
   str_market_id?: string | null;
   market?: string | null;
   submarket?: string | null;
+  /** FON-79 — ``'draft'`` creates the wizard's server-side draft (the row
+   *  cannot be run, exported or memo'd until ``activate``); default active. */
+  lifecycle?: DealLifecycle;
+  /** FON-79 — the wizard's resume payload; accepted only with ``lifecycle: 'draft'``. */
+  draft_wizard?: DraftWizardPayload | null;
+}
+
+/** FON-79 — ``GET /deals`` filter. The web passes nothing (``all``) for the
+ *  Projects list and splits client-side; ``draft`` for the wizard's chip. */
+export interface ListDealsOpts {
+  lifecycle?: DealLifecycle | 'all';
+  signal?: AbortSignal;
 }
 
 /** Sam #6 — one row of STR's market / submarket definition list
@@ -902,6 +933,7 @@ export {
   wizardDocSubtype,
 } from './docSubtype';
 export type { DocSubtype } from './docSubtype';
+export type { DraftWizardPayload } from './wizardDraft';
 
 /** Wizard-step file payload — what the new-project guided onboarding hands to
  *  ``api.documents.upload``. The category drives the right-rail checklist; the
@@ -1558,6 +1590,23 @@ export function workerDetail(body: string | null | undefined): string | null {
     // "… (deal 3f2a… not found; traceback …)" → "…"
     text = text.replace(/\s*\([^()]*(?:traceback|uuid|id=|[0-9a-f]{8}-[0-9a-f]{4})[^()]*\)\s*$/i, '').trim();
     return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The worker's machine-readable refusal code (``detail.code`` — e.g.
+ * ``deal_is_draft``, ``deal_not_draft``, ``documents_in_flight``), or null
+ * when the error carries none. Branch on this, never on the sentence.
+ */
+export function workerErrorCode(err: unknown): string | null {
+  const name = (err as { name?: string } | null)?.name;
+  if (!(err instanceof WorkerError) && name !== 'WorkerError') return null;
+  try {
+    const parsed = JSON.parse((err as WorkerError).body) as { detail?: { code?: unknown } };
+    const code = parsed?.detail?.code;
+    return typeof code === 'string' && code ? code : null;
   } catch {
     return null;
   }
@@ -2279,8 +2328,13 @@ export const api = {
       request<AgentCostsResponse>('GET', `/observability/agent-costs?days=${Math.trunc(days)}`, undefined, { signal }),
   },
   deals: {
-    list: (signal?: AbortSignal) =>
-      request<WorkerDeal[]>('GET', '/deals', undefined, { signal }),
+    /** Every deal on the tenant, newest first. Accepts the legacy bare
+     *  ``AbortSignal`` or ``{ lifecycle, signal }`` (FON-79). */
+    list: (opts?: AbortSignal | ListDealsOpts) => {
+      const o: ListDealsOpts = opts && 'aborted' in opts ? { signal: opts } : (opts ?? {});
+      const qs = o.lifecycle && o.lifecycle !== 'all' ? `?lifecycle=${o.lifecycle}` : '';
+      return request<WorkerDeal[]>('GET', `/deals${qs}`, undefined, { signal: o.signal });
+    },
     /** Multi-deal Pipeline view (Wave 3 W3.5) — sortable / filterable
      *  table of every active deal in the tenant, enriched with the
      *  latest engine-output snapshot per deal + portfolio-level KPIs
@@ -2309,6 +2363,21 @@ export const api = {
     create: (deal: NewDealBody) => request<WorkerDeal>('POST', '/deals', deal),
     get: (id: string, signal?: AbortSignal) =>
       request<WorkerDeal>('GET', `/deals/${id}`, undefined, { signal }),
+    /** FON-79 — the resume read: one deal WITH its ``draft_wizard`` payload
+     *  (``?include=draft_wizard``; the plain get never carries it). */
+    getDraft: (id: string, signal?: AbortSignal) =>
+      request<WorkerDeal>('GET', `/deals/${id}?include=draft_wizard`, undefined, { signal }),
+    /** FON-79 — Finish: a draft becomes an underwriting (``lifecycle='active'``,
+     *  ``status='In Review'``). 409 ``deal_not_draft`` if already active; 422
+     *  ``deal_name_required`` on a blank name. */
+    activate: (id: string) =>
+      request<WorkerDeal>('POST', `/deals/${id}/activate`),
+    /** FON-79 — Discard a draft: the deal, its documents, extractions and
+     *  stored files go. 409 ``deal_not_draft`` on an active deal (this route
+     *  can never delete an underwriting); 409 ``documents_in_flight`` (with
+     *  ``count``) while extraction still owns one of its documents. */
+    discardDraft: (id: string) =>
+      request<void>('DELETE', `/deals/${id}/draft`),
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
     /** Per-category coverage score for the workspace CompletenessCard
@@ -2403,8 +2472,11 @@ export const api = {
         'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
         | 'deal_type' | 'return_profile' | 'positioning' | 'status'
         | 'target_irr' | 'target_moic' | 'reopening_date'
-        | 'str_market_id' | 'market' | 'submarket'>> & {
+        | 'str_market_id' | 'market' | 'submarket' | 'deal_stage'>>
+      & Partial<Pick<NewDealBody, 'sourcing_channel' | 'purchase_price'>> & {
         field_overrides?: Record<string, unknown>;
+        /** FON-79 — the wizard's resume payload; 409 ``deal_not_draft`` on an active deal. */
+        draft_wizard?: DraftWizardPayload | null;
       },
     ) =>
       request<WorkerDeal>('PATCH', `/deals/${id}`, patch),
