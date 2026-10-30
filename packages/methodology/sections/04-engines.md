@@ -138,6 +138,10 @@ the needed type, or no field that states the figure) wherever it is printed.
 GP equity 10%, LP equity 90%, preferred return 10% a year, badged Seed until entered. A shortfall
 is funded as a dated pro-rata capital call by ownership split; the preferred return accrues on it.
 
+These terms have one definition, in the Partnership engine. The Partnership tab reads them from the
+deal's assumption sources and labels each one *Platform default* until you set your own; a term the
+model has not published shows a dash, never a figure of the tab's own.
+
 :::
 
 ::: card

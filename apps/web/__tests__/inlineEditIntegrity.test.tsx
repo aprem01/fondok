@@ -213,7 +213,7 @@ vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 
 const toastSpy = vi.fn();
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: toastSpy }) }));
-vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));
+vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null, useSourceLookup: () => () => null }));
 
 import DebtTab from '@/components/project/DebtTab';
 import InvestmentTab from '@/components/project/InvestmentTab';

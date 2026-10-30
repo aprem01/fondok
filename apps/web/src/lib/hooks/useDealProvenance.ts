@@ -137,3 +137,11 @@ export function useSource(key: string | undefined): ResolvedSource | null {
   const ctx = useContext(Ctx);
   return key ? ctx.get(key) : null;
 }
+
+/** The deal's provenance resolver itself, for a component that reads a FAMILY
+ *  of keys (e.g. the `partnership.waterfall.<i>.*` tiers) rather than one.
+ *  Returns null for every key outside a ProvenanceProvider. Its identity
+ *  changes only when the payload does. */
+export function useSourceLookup(): (key: string) => ResolvedSource | null {
+  return useContext(Ctx).get;
+}
