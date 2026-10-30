@@ -351,6 +351,16 @@ describe('Financials — the P&L / Projections surfaces name the basis', () => {
     expectNoBareNoiLabel();
   });
 
+  // A12 (Wave 3) — the P&L tab used to carry an unmounted "Historical vs
+  // Projected" line chart whose series coalesced a missing year to 0. It is
+  // gone with the rest of the tab's dead statement builder: the tab draws no
+  // series of its own, so no point can be a zero standing in for a gap.
+  it('PLTab draws no chart series of its own (no coalesced-to-zero points)', () => {
+    const { container } = render(<PLTab />);
+    expect(container.querySelector('.recharts-wrapper')).toBeNull();
+    expect(screen.queryByText('Historical vs Projected Performance')).toBeNull();
+  });
+
   it('the Projections table labels the NOI row "NOI (before FF&E reserve)" at $2,001,056', () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const row = Array.from(document.querySelectorAll<HTMLTableRowElement>('table tbody tr'))
