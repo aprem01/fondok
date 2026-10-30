@@ -37,6 +37,12 @@ os.environ.setdefault("EVALS_MOCK", "true")
 
 TENANT = "aaaaaaaa-9696-9696-9696-9696aaaaaaaa"
 H = {"X-Tenant-Id": TENANT}
+#: An EXTERNAL tenant the list is withheld from (switches default off).
+EXTERNAL = "bbbbbbbb-9696-9696-9696-9696bbbbbbbb"
+HX = {"X-Tenant-Id": EXTERNAL}
+#: No registry row at all.
+UNREGISTERED = "cccccccc-9696-9696-9696-9696cccccccc"
+HU = {"X-Tenant-Id": UNREGISTERED}
 
 _WORKER_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT = _WORKER_ROOT / "scripts" / "load_str_markets.py"
@@ -84,6 +90,14 @@ async def _reset_db(tmp_path: Path) -> None:
         tenant_id=UUID(TENANT), clerk_org_id="org_test_internal_om_match",
         name="Fondok Internal (test)", kind="internal", status="active",
     )
+    await upsert_tenant(
+        tenant_id=UUID(EXTERNAL), clerk_org_id="org_test_external_om_match",
+        name="Client (test)", kind="external", status="active",
+    )
+    os.environ.pop("MARKET_TAXONOMY_SERVE_EXTERNAL", None)
+    from app.config import get_settings
+
+    get_settings.cache_clear()
     p = tmp_path / "geo.csv"
     p.write_text(COSTAR_CSV, encoding="utf-8")
     parsed = loader.parse_costar_geography(p)
@@ -111,14 +125,16 @@ async def _create_deal(body: dict[str, Any] | None = None) -> dict[str, Any]:
         return r.json()
 
 
-async def _run_sync(deal_id: str, fields: list[dict[str, Any]], *, doc_type: str = "OM") -> str:
+async def _run_sync(
+    deal_id: str, fields: list[dict[str, Any]], *, doc_type: str = "OM", tenant: str = TENANT,
+) -> str:
     from app.api.documents import _sync_deal_metadata_from_extraction
     from app.database import get_session_factory
 
     doc_id = str(uuid4())
     async with get_session_factory()() as session:
         await _sync_deal_metadata_from_extraction(
-            session, deal_id=deal_id, tenant_id=TENANT, fields=fields,
+            session, deal_id=deal_id, tenant_id=tenant, fields=fields,
             doc_type=doc_type, doc_id=doc_id,
         )
     return doc_id
@@ -129,13 +145,13 @@ async def _deal(deal_id: str) -> dict[str, Any]:
         return (await c.get(f"/deals/{deal_id}", headers=H)).json()
 
 
-async def _audit(action: str) -> list[dict[str, Any]]:
+async def _audit(action: str, tenant: str = TENANT) -> list[dict[str, Any]]:
     from app.database import get_session_factory
 
     async with get_session_factory()() as s:
         rows = (await s.execute(text(
             "SELECT payload FROM audit_log WHERE action = :a AND tenant_id = :t"
-        ), {"a": action, "t": TENANT})).all()
+        ), {"a": action, "t": tenant})).all()
     out = []
     for (payload,) in rows:
         blob = json.loads(payload) if isinstance(payload, str) else payload
@@ -371,3 +387,62 @@ async def test_a_submarket_only_edit_keeps_the_om_provenance_detail() -> None:
         r = await c.patch(f"/deals/{deal['id']}", headers=H, json={"str_market_id": SOUTH})
         assert r.status_code == 200, r.text
         assert r.json()["market_source"] == "analyst" and r.json()["market_source_detail"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_om_never_fills_a_market_for_a_tenant_the_list_is_withheld_from(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Default closed: the canonical name, key and type of a licensed market
+    never reach a workspace that may not be served the list — even via an OM."""
+    from app.config import get_settings
+    from app.database import get_session_factory
+
+    fields = [
+        _field("property_overview.location", "Northhaven, TS"),
+        _field("property_overview.submarket", "Riverside"),
+    ]
+    deals: dict[str, str] = {}
+    async with _client() as c:
+        for name, headers in (("external", HX), ("unregistered", HU)):
+            r = await c.post("/deals", headers=headers, json={"name": name})
+            assert r.status_code == 201, r.text
+            deals[name] = r.json()["id"]
+    with caplog.at_level("INFO", logger="app.services.market_match"):
+        await _run_sync(deals["external"], fields, tenant=EXTERNAL)
+        await _run_sync(deals["unregistered"], fields, tenant=UNREGISTERED)
+    assert sum("market_match: withheld" in r.getMessage() for r in caplog.records) == 2
+    async with get_session_factory()() as s:
+        rows = (await s.execute(text(
+            "SELECT market, str_market_id, submarket, submarket_id, market_source "
+            "FROM deals WHERE tenant_id IN (:a, :b)"
+        ), {"a": EXTERNAL, "b": UNREGISTERED})).all()
+    assert len(rows) == 2 and all(tuple(r) == (None, None, None, None, None) for r in rows)
+    assert await _audit("deal.market_matched_from_extraction", EXTERNAL) == []
+    assert await _audit("deal.market_matched_from_extraction", UNREGISTERED) == []
+
+    # Both switches on → the external tenant is served, and the OM fills.
+    os.environ["MARKET_TAXONOMY_SERVE_EXTERNAL"] = "1"
+    get_settings.cache_clear()
+    async with get_session_factory()() as s:
+        await s.execute(text("UPDATE reference_datasets SET licensed_for_external = 1"))
+        await s.commit()
+    try:
+        await _run_sync(deals["external"], fields, tenant=EXTERNAL)
+        async with _client() as c:
+            got = (await c.get(f"/deals/{deals['external']}", headers=HX)).json()
+        assert (got["market"], got["str_market_id"], got["market_source"]) == (
+            "Northhaven - TS USA", NORTH, "om_exact_match",
+        )
+        # Still never for a caller with no registry row.
+        await _run_sync(deals["unregistered"], fields, tenant=UNREGISTERED)
+        async with _client() as c:
+            got = (await c.get(f"/deals/{deals['unregistered']}", headers=HU)).json()
+        assert got["market"] is None and got["str_market_id"] is None
+    finally:
+        os.environ.pop("MARKET_TAXONOMY_SERVE_EXTERNAL", None)
+        get_settings.cache_clear()
+    # The internal tenant is filled as before.
+    internal = await _create_deal()
+    await _run_sync(internal["id"], fields)
+    assert (await _deal(internal["id"]))["str_market_id"] == NORTH

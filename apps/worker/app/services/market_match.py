@@ -25,6 +25,13 @@ Provenance: ``market_source = 'om_exact_match'`` and ``market_source_detail``
 re-checks the fill-only rule so an analyst's value is never overwritten, even
 by a race; one ``audit_log`` row ``deal.market_matched_from_extraction``.
 
+Licence gate (default closed): the fill runs only when the deal's tenant may
+be served the list (:func:`app.services.str_markets.may_serve_str_markets` —
+internal, or external with both switches on). For a withheld or unregistered
+tenant nothing is written and ``market_match: withheld`` is logged; the
+canonical name, key and market type never reach a workspace the list is
+withheld from.
+
 Best-effort: any failure is logged and the extraction completes — a market
 suggestion is never a gate on the document. Reads extraction OUTPUT rows
 only; nothing here touches ``app/extraction`` or ``app/agents``.
@@ -138,7 +145,7 @@ async def match_market_from_om(
     """The fill step described in the module docstring. The caller has
     already applied the FON-84 gate (OM only)."""
     from ..api.deals import _deals_has_market_column, _deals_has_market_source
-    from .str_markets import has_market_type_column
+    from .str_markets import has_market_type_column, may_serve_str_markets
 
     try:
         for col in ("str_market_id", "market", "submarket", "submarket_id"):
@@ -147,6 +154,10 @@ async def match_market_from_om(
         if not await _deals_has_market_source(session):
             return
         if not await has_market_type_column(session):
+            return
+        served, why = await may_serve_str_markets(session, tenant_id)
+        if not served:
+            logger.info("market_match: withheld deal=%s tenant=%s (%s)", deal_id, tenant_id, why)
             return
 
         row = (
