@@ -93,7 +93,12 @@ const PARTNERSHIP_SOURCE = {
 } as const;
 /** One reference promote band as the worker published it; a field the payload
  *  does not carry is undefined (the row then asks the analyst to set it). */
-interface SeedTier { hurdle: number | undefined; gp: number | undefined }
+interface SeedTier {
+  hurdle: number | undefined;
+  gp: number | undefined;
+  /** assumption_sources tags either field `seed` — the platform suggestion. */
+  seeded: boolean;
+}
 /** The badge a worker reference term carries wherever it is shown. */
 const PLATFORM_DEFAULT_NOTE = 'Platform default — no partnership terms on this deal yet; set yours to replace it';
 // FON-66 Part A — the analyst can change the promote-tier COUNT (add/remove
@@ -332,12 +337,14 @@ export default function PartnershipTab() {
     const bound = declared != null ? Math.max(0, Math.min(MAX_TIERS, Math.round(declared))) : MAX_TIERS;
     const tiers: SeedTier[] = [];
     for (let i = 0; i < bound; i += 1) {
-      const hurdle = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.tier(i, 'hurdle_rate')));
-      const gp = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.tier(i, 'gp_split')));
+      const hurdleSrc = lookupSource(PARTNERSHIP_SOURCE.tier(i, 'hurdle_rate'));
+      const gpSrc = lookupSource(PARTNERSHIP_SOURCE.tier(i, 'gp_split'));
+      const hurdle = sourcedNum(hurdleSrc);
+      const gp = sourcedNum(gpSrc);
       // Without a declared count the ladder is the contiguous run of bands
       // the payload carries.
       if (declared == null && hurdle == null && gp == null) break;
-      tiers.push({ hurdle, gp });
+      tiers.push({ hurdle, gp, seeded: hurdleSrc?.source === 'seed' || gpSrc?.source === 'seed' });
     }
     return tiers;
   }, [lookupSource]);
@@ -555,14 +562,16 @@ export default function PartnershipTab() {
   const lpPct = has(gpPct) ? 1 - gpPct : undefined;
   // True when the shown split is the worker's platform suggestion (source
   // `seed`), not a term the deal carries (`partnership_doc`, an override).
-  const gpPctIsDefault = gpPctOverride == null && gpPctComputed == null && seedGpPct != null
-    && gpPctSource?.source === 'seed';
+  // The badge follows the SOURCE: whenever assumption_sources tags the term
+  // `seed`, the value on screen (even an engine run's) rests on the platform
+  // suggestion. Only an override saved in this session — which the payload
+  // has not re-read yet — takes it off.
+  const gpPctIsDefault = gpPctOverride == null && gpPctSource?.source === 'seed';
 
   const prefOverrideRaw = readOverrideNum(overrides, 'pref_rate', NaN);
   const prefOverride = Number.isFinite(prefOverrideRaw) ? prefOverrideRaw : undefined;
   const prefRate: number | undefined = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : seedPrefRate);
-  const prefIsDefault = prefOverride == null && !has(wLpPrefPct) && seedPrefRate != null
-    && prefSource?.source === 'seed';
+  const prefIsDefault = prefOverride == null && prefSource?.source === 'seed';
 
   const hasWorkerPartnership = wGp != null || wLp != null
     || (tierAllocations != null && tierAllocations.length > 0)
@@ -1531,6 +1540,9 @@ function PromoteWaterfall({
     const gpComplete = Number.isFinite(gpFrac);
     const hurdleComplete = Number.isFinite(hurdleFrac);
     const incomplete = !(gpComplete && hurdleComplete);
+    // C3 — a band resting on the platform suggestion (source `seed`) says so,
+    // unless the analyst has overridden this tier since the payload was read.
+    const tierIsDefault = !!seed?.seeded && !(gpPath in overrides) && !(hurdlePath in overrides);
     const last = pos === visibleCount - 1;
     // FON-66 follow-up — EVERY promote tier is removable (mid-stack included),
     // as long as one survives.
@@ -1617,6 +1629,11 @@ function PromoteWaterfall({
             {incomplete
               ? 'Set the hurdle and GP split to activate this tier'
               : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
+            {tierIsDefault && (
+              <span data-testid={`tier-${i}-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
+                Platform default — set this tier to replace it
+              </span>
+            )}
           </span>
           {removable && (
             <button

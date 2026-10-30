@@ -139,8 +139,9 @@ GP equity 10%, LP equity 90%, preferred return 10% a year, badged Seed until ent
 is funded as a dated pro-rata capital call by ownership split; the preferred return accrues on it.
 
 These terms have one definition, in the Partnership engine. The Partnership tab reads them from the
-deal's assumption sources and labels each one *Platform default* until you set your own; a term the
-model has not published shows a dash, never a figure of the tab's own.
+deal's assumption sources. Every term and promote band whose source is the platform suggestion is
+labelled *Platform default* — also when the model has run on it — until you, or a partnership
+document, set it; one with no source shows a dash, never a figure of the tab's own.
 
 :::
 

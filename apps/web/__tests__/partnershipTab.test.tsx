@@ -718,16 +718,32 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
     expect(within(tiers).getByText('— preferred return')).toBeInTheDocument();
   });
 
-  it('present → the worker value renders, badged as a platform default', async () => {
+  /** The Platform default note under the Summary's GP-ownership / pref rows. */
+  const termNotes = () => screen.queryAllByText(/^Platform default — no partnership terms on this deal yet/);
+  const tierBadge = (i: number) => screen.queryByTestId(`tier-${i}-platform-default`);
+
+  it('present → the worker value renders, badged as a platform default (terms and bands)', async () => {
     activeOutputs = bareOutputs();
     renderWithSources();
     await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
     expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('12%');
     expect(rowFor('LP Investor Ownership')).toHaveTextContent('88%');
-    expect(screen.getAllByText(/Platform default/).length).toBeGreaterThan(0);
+    expect(termNotes()).toHaveLength(2); // GP / Sponsor Ownership + Preferred Return
+    expect(tierBadge(0)).toBeInTheDocument();
+    expect(tierBadge(1)).toBeInTheDocument();
   });
 
-  it('a term the deal itself carries (partnership_doc) is shown without the Platform default badge', async () => {
+  it('a seeded term keeps the badge even when the engine ran on it', async () => {
+    // The default fixture's run splits equity 10 / 90 and here publishes a pref.
+    activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
+    renderWithSources();
+    await waitFor(() => expect(tierBadge(0)).toBeInTheDocument());
+    expect(rowFor('Preferred Return')).toHaveTextContent('7%');
+    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('10%');
+    expect(termNotes()).toHaveLength(2);
+  });
+
+  it('a term the deal itself carries (partnership_doc) has no badge; its seeded bands keep theirs', async () => {
     activeOutputs = bareOutputs();
     sources.payload = {
       ...WORKER_SEED_PAYLOAD,
@@ -735,7 +751,24 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
     };
     renderWithSources();
     await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
-    expect(screen.queryByText(/Platform default/)).toBeNull();
+    expect(termNotes()).toHaveLength(0);
+    // The promote bands are still the platform suggestion → badged.
+    expect(tierBadge(0)).toBeInTheDocument();
+    expect(tierBadge(1)).toBeInTheDocument();
+  });
+
+  it('an analyst_override source carries no badge — terms or bands', async () => {
+    activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
+    sources.payload = {
+      ...WORKER_SEED_PAYLOAD,
+      sources: Object.fromEntries(Object.keys(WORKER_SEED_PAYLOAD.sources).map((k) => [k, 'analyst_override'])),
+    };
+    renderWithSources();
+    await waitFor(() => expect(assumptionSourcesSpy).toHaveBeenCalled());
+    await screen.findByText('Until 13% LP IRR');
+    expect(termNotes()).toHaveLength(0);
+    expect(tierBadge(0)).toBeNull();
+    expect(tierBadge(1)).toBeNull();
   });
 
   it('an engine-published pref wins over the worker reference term', async () => {
