@@ -57,7 +57,7 @@ test.describe('@prod upload pipeline', () => {
     await page.getByRole('button', { name: /^next$/i }).last().click(); // Step 3 → 4
     await page.getByRole('button', { name: /^next$/i }).last().click(); // 4 → 5
     await page.getByRole('button', { name: /^next$/i }).last().click(); // 5 → 6
-    await page.getByRole('button', { name: /create deal/i }).click();
+    await page.getByRole('button', { name: /^finish$/i }).click();
 
     const uploadResp = await uploadPromise;
     const uploaded = (await uploadResp.json()) as Array<{ id: string }>;

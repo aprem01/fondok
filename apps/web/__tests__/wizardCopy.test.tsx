@@ -120,7 +120,9 @@ describe('R-013 — required-field legend and optional labels', () => {
     expect(screen.getByText('Market')).toBeInTheDocument();
     expect(screen.getByText('Submarket')).toBeInTheDocument();
     expect(screen.queryByText('City / Submarket *')).toBeNull();
-    expect(screen.getByText('Hotel Name')).toBeInTheDocument();
+    // A.6.3 (FON-79) — no Hotel Name field: the property's name is read from
+    // the Offering Memorandum, never typed in here.
+    expect(screen.queryByText('Hotel Name')).toBeNull();
     expect(screen.getByText('Purchase / Indicative Price')).toBeInTheDocument();
     expect(bodyText()).not.toMatch(/\(optional\)/i);
   });
@@ -188,10 +190,10 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     expect(selected.textContent).toBe('Selected: Kimpton Hotels & Restaurants · IHG');
 
     clickNext(); // → Review (R-024: brand + positioning are one step)
-    expect(screen.getByText('Review & Create Deal')).toBeInTheDocument();
+    expect(screen.getByText('Review & Finish')).toBeInTheDocument();
     expect(bodyText()).toContain('Kimpton Hotels & Restaurants · IHG');
 
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({
       name: 'Workbook Deal',
@@ -210,7 +212,7 @@ describe('R-019 — brand search shows the specific brand with its chain; submit
     expect(screen.getByText('Selected:', { exact: false }).textContent).toBe('Selected: Curio Collection by Hilton · Hilton');
 
     clickNext(); // → Review
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Curio Collection by Hilton', brand: null });
   });
@@ -242,7 +244,7 @@ describe('R-048 — Existing brand and Proposed brand are two separate fields', 
     expect(screen.getByText('Existing Brand').nextElementSibling?.textContent).toBe('Kimpton');
     expect(screen.getByText('Proposed Brand').nextElementSibling?.textContent).toMatch(/^Thompson Hotels/);
 
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     const body = worker.create.mock.calls[0][0] as Record<string, unknown>;
     expect(body.brand).toBe('Kimpton');
@@ -254,7 +256,7 @@ describe('R-048 — Existing brand and Proposed brand are two separate fields', 
     clickNext(); // → Review
     expect(screen.getByText('Existing Brand').nextElementSibling?.textContent).toBe('From the Offering Memorandum');
     expect(screen.getByText('Proposed Brand').nextElementSibling?.textContent).toBe('Brand Agnostic');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ brand: null, proposed_brand: null });
   });
@@ -282,7 +284,7 @@ describe('R-024 — Brand and Positioning: choosing a brand suggests positioning
     // Analyst chooses a tier for this property.
     fireEvent.click(screen.getByRole('button', { name: /^Luxury/ }));
     clickNext(); // → Review
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Kimpton Hotels & Restaurants', positioning: 'luxury' });
   });
@@ -294,7 +296,7 @@ describe('R-024 — Brand and Positioning: choosing a brand suggests positioning
     fireEvent.click(screen.getByTestId('positioning-tier-upper-upscale'));
     expect(bodyText()).toContain('Selected: Upper Upscale');
     clickNext();
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Kimpton Hotels & Restaurants', positioning: 'upper-upscale' });
   });
@@ -306,7 +308,7 @@ describe('R-024 — Brand and Positioning: choosing a brand suggests positioning
     clickNext();
     // Review says so in words rather than implying a chosen tier.
     expect(bodyText()).toContain('No tier chosen — Motel One suggests Upper Midscale');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ proposed_brand: 'Motel One', positioning: 'default' });
   });
@@ -322,7 +324,7 @@ describe('R-025 — Operating model is captured on the Brand step and sent as `o
     clickNext(); // → Review
     expect(screen.getByText('Operating Model').nextElementSibling?.textContent).toBe('Third-party operator');
 
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ operating_model: 'third_party' });
   });
@@ -331,7 +333,7 @@ describe('R-025 — Operating model is captured on the Brand step and sent as `o
     driveToBrandStep();
     clickNext();
     expect(screen.getByText('Operating Model').nextElementSibling?.textContent).toBe('Not specified');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ operating_model: null });
   });
@@ -363,7 +365,7 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
   it('"$36.4M" parses to 36,400,000, shows the parsed hint, shows on Review and is submitted', async () => {
     driveToReviewWithPrice('$36.4M');
     expect(reviewPrice()).toBe('$36,400,000');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: 36_400_000 });
   });
@@ -381,7 +383,7 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
   it('a unit-less figure under $1M ("36400") is NOT persisted as $36,400 — the hint asks for M / MM or full dollars and the payload sends null', async () => {
     driveToReviewWithPrice('36400');
     expect(reviewPrice()).toBe('"36400" — not read as a price; set it on CAPEX → Deal Summary');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
   });
@@ -400,7 +402,7 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
   it('a range "$120-140M" stores the midpoint and Review says "range midpoint"', async () => {
     driveToReviewWithPrice('$120-140M');
     expect(reviewPrice()).toBe('$130,000,000 (range midpoint of $120-140M)');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: 130_000_000 });
   });
@@ -408,7 +410,7 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
   it('unparseable text sends null and keeps the text as a note on Review — never a guessed number', async () => {
     driveToReviewWithPrice('TBD after NDA');
     expect(reviewPrice()).toBe('"TBD after NDA" — not read as a price; set it on CAPEX → Deal Summary');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
   });
@@ -416,7 +418,7 @@ describe('FON-99 — Purchase / Indicative Price seeds deals.purchase_price', ()
   it('blank sends null', async () => {
     driveToReviewWithPrice('');
     expect(reviewPrice()).toBe('—');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ purchase_price: null });
   });
@@ -448,7 +450,7 @@ describe('FON-100 — Return Profile presets are Core 5–10 / Core Plus 7–12 
     stageFinancialAndAdvance();
     clickNext(); // → Review
     expect(screen.getByText('Return Requirements').nextElementSibling?.textContent).toBe('Core Plus (7-12%)');
-    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^finish$/i }));
     await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
     expect(worker.create.mock.calls[0][0]).toMatchObject({ return_profile: 'core-plus' });
   });

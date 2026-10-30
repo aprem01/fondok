@@ -12,7 +12,10 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, brandPositioningLabel, searchBrandFamilies } from '@/lib/catalogs';
 import { cn } from '@/lib/format';
-import { api, isWorkerConnected, userMessage, WizardFile } from '@/lib/api';
+import {
+  api, isWorkerConnected, userMessage, workerErrorCode, WizardFile,
+  type DraftWizardPayload, type WizardCategory, type WorkerDeal, type WorkerDocument,
+} from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { DocumentsStep, WIZARD_CATEGORIES } from '@/components/project/wizard/DocumentsStep';
 import { DocumentsChecklist } from '@/components/project/wizard/DocumentsChecklist';
@@ -27,8 +30,12 @@ import { unsupportedFileMessage } from '@/lib/uploadFormats';
 import { purchasePriceFromText, describeIndicativePrice, indicativePriceHint } from '@/lib/wizardPrice';
 import {
   loadDraft, saveDraft, clearDraft, relativeTime, DRAFT_DEBOUNCE_MS,
+  loadDraftPointer, clearDraftPointer,
   loadDefaultReturnProfile, saveDefaultReturnProfile, type DraftFileRef,
 } from '@/lib/wizardDraft';
+import { useServerDraft, type DraftDealPatch, type DraftLostReason } from '@/lib/hooks/useServerDraft';
+import { isProcessingStatus } from '@/lib/progress';
+import { wizardCategoryForDocument, isFinancialDocument } from '@/lib/wizardDocuments';
 
 const steps = [
   { n: 1, label: 'Deal Details' },
@@ -60,7 +67,9 @@ type WizardFields = Omit<WizardData, 'docs'>;
 // The wizard's untouched state. `returnProfile` is replaced by the analyst's
 // saved default (R-015) when one exists.
 const INITIAL_FIELDS: WizardFields = {
-  dealName: '', city: '', keys: '', stage: 'Teaser', hotelName: '', price: '',
+  // A.6.3 — no Hotel Name field: the Property Name is read from the Offering
+  // Memorandum (the methodology says so), never typed in here.
+  dealName: '', city: '', keys: '', stage: 'Teaser', price: '',
   // Sam #6 — Market / Submarket (separate from City). `strMarketId` is STR's
   // market id, set only by picking a market from STR's loaded list ('' = none).
   market: '', submarket: '', strMarketId: '',
@@ -117,6 +126,87 @@ function draftIsMeaningful(fields: WizardFields, step: number, fileCount: number
 
 const sameFile = (a: DraftFileRef, b: DraftFileRef) => a.name === b.name && a.category === b.category;
 
+/** One staged file's identity (name · size · slot) for the upload bookkeeping. */
+const stagedKey = (f: WizardFile) => `${f.file.name}::${f.file.size}::${f.category}`;
+
+/** How often the Documents step re-reads the draft's documents while one is
+ *  still moving through the pipeline. */
+const DRAFT_DOCS_POLL_MS = 3000;
+
+/**
+ * The normalized deal columns the wizard sends — the same body for the draft
+ * row's PATCH on every autosave, for the draft's create, and for a direct
+ * (worker cannot hold a draft) create. One builder so the Projects list,
+ * search and resume can never disagree about what the analyst entered.
+ */
+function dealBodyFromFields(
+  f: WizardFields,
+  normalizeCity: (v: string) => string,
+  marketPick: { market: string; strMarketId: string | null },
+): DraftDealPatch & { name: string } {
+  // Keys is optional — the OM extraction fills `property_overview.keys`.
+  // Send null when the analyst hasn't typed a number so the worker schema
+  // flows through cleanly instead of pinning a placeholder key count that
+  // the deal would then surface as if it were real metadata.
+  const parsedKeys = Number.parseInt(f.keys, 10);
+  const keysInt = Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : null;
+  return {
+    name: f.dealName.trim(),
+    // R-012 — trim / comma-space / fold onto a known market spelling.
+    city: normalizeCity(f.city) || null,
+    market: marketPick.market || null,
+    str_market_id: marketPick.market ? marketPick.strMarketId : null,
+    submarket: tidyLocation(f.submarket) || null,
+    keys: keysInt,
+    service: null,
+    deal_type: f.dealType,
+    // The acquisition stage the wizard asks for on Step 1 — persisted as
+    // the deal's `deal_stage` so the list and pipeline read what the
+    // analyst chose, not a "Teaser" default.
+    deal_stage: f.stage || null,
+    // FON-59 / R-048 (Sam's decision 4) — two separate fields. The picker
+    // is the PROPOSED brand ("agnostic" → none); the typed Existing brand
+    // goes to `brand`, and blank leaves it for the OM to fill.
+    brand: f.existingBrand.trim() || null,
+    proposed_brand: f.brand === 'agnostic' ? null : f.brand,
+    // R-025 — the intended operating model; '' (not chosen) → null.
+    operating_model: isOperatingModelId(f.operatingModel) ? f.operatingModel : null,
+    return_profile: f.returnProfile,
+    positioning: f.positioning,
+    // FON-99 — the Purchase / Indicative Price, parsed to whole dollars. A
+    // range sends its midpoint (labelled so on Review); text that does not
+    // read as a price sends null — never a guess — and the analyst sets the
+    // price on CAPEX → Deal Summary. Persisted as deals.purchase_price, which
+    // the engine runner badges "Deal record" (SOURCE_DEAL_ROW), not "Seed".
+    purchase_price: purchasePriceFromText(f.price),
+    // Sourcing channel for pipeline analytics. Send the canonical
+    // lower-snake-case id (e.g. "capital_partner") not the display
+    // label so the worker can use it as an enum.
+    sourcing_channel:
+      (sourcingChannels.find(s => s.label === f.sourcing)?.id)
+      ?? f.sourcing.toLowerCase().replace(/\s+/g, '_'),
+  };
+}
+
+/** Wizard fields read back off a draft's deal columns — the fallback when
+ *  the row carries no wizard payload (resume stays possible, less exact). */
+function fieldsFromDeal(deal: WorkerDeal): Partial<WizardFields> {
+  const out: Partial<WizardFields> = { dealName: deal.name ?? '' };
+  if (deal.city) out.city = deal.city;
+  if (deal.market) out.market = deal.market;
+  if (deal.submarket) out.submarket = deal.submarket;
+  if (deal.str_market_id) out.strMarketId = deal.str_market_id;
+  if (typeof deal.keys === 'number' && deal.keys > 0) out.keys = String(deal.keys);
+  if (deal.deal_stage) out.stage = deal.deal_stage;
+  if (deal.deal_type) out.dealType = deal.deal_type;
+  if (isKnownProfile(deal.return_profile)) out.returnProfile = deal.return_profile;
+  if (deal.positioning) out.positioning = deal.positioning;
+  if (deal.brand) out.existingBrand = deal.brand;
+  if (deal.proposed_brand) out.brand = deal.proposed_brand;
+  if (isOperatingModelId(deal.operating_model ?? '')) out.operatingModel = deal.operating_model ?? '';
+  return out;
+}
+
 export default function NewProjectPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -166,66 +256,109 @@ export default function NewProjectPage() {
   // Files the restored draft had staged. Bytes can't survive a reload, so
   // they're listed for re-attach and drop off as the analyst re-adds them.
   const [pendingFiles, setPendingFiles] = useState<DraftFileRef[]>([]);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // The browser-local save (pre-name phase, or a worker that cannot hold a
+  // draft). Once the server draft exists, its own status takes over.
+  const [localSaveStatus, setLocalSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const createdRef = useRef(false);
   // R-015 — the analyst's default Return Profile (this browser).
   const [defaultProfile, setDefaultProfile] = useState<string | null>(null);
+
+  // ─── FON-79 — the server-side draft ──────────────────────────────────────
+  // From the first debounced autosave after a non-blank Deal Name (worker
+  // connected and able to hold a draft), the deal row on the worker is the
+  // autosave; the browser keeps only a pointer to it. Resume comes from
+  // `?draft=<id>` or that pointer. See lib/hooks/useServerDraft.
+  const [resuming, setResuming] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  // Lifecycle drafts on this tenant besides the one open here (A.2: shown as
+  // a chip linking to Projects, never opened silently).
+  const [tenantDraftCount, setTenantDraftCount] = useState<number | null>(null);
+  const onDraftLost = useCallback((reason: DraftLostReason, id: string) => {
+    if (reason === 'not_draft') {
+      toast('That deal is already set up — opening it', { type: 'info' });
+      router.replace(`/projects/${id}`);
+      return;
+    }
+    if (reason === 'not_found') {
+      toast('That draft is no longer available — starting a new deal', { type: 'info' });
+      if (typeof window !== 'undefined' && window.location.search.includes('draft=')) {
+        router.replace('/projects/new');
+      }
+    }
+    // 'unsupported' — the worker cannot hold drafts; the wizard stays local.
+  }, [router, toast]);
+  const serverDraft = useServerDraft({ onLost: onDraftLost });
+  const {
+    draftId, saveStatus: serverSaveStatus, savedAt: serverSavedAt, supported: draftsSupported,
+    save: saveServerDraft, create: createServerDraft, probe: probeServerDrafts, load: loadServerDraft,
+  } = serverDraft;
+  const serverDraftRef = useRef(serverDraft);
+  serverDraftRef.current = serverDraft;
 
   useEffect(() => {
     const def = loadDefaultReturnProfile();
     const validDef = isKnownProfile(def) ? def : null;
     setDefaultProfile(validDef);
-    const draft = loadDraft();
-    if (draft) {
-      setData({ ...freshFields(validDef), ...pickDraftFields(draft.fields), docs: [] });
-      setStep(Math.min(steps.length, Math.max(1, Math.round(draft.step))));
-      setRestoredAt(draft.savedAt);
-      setPendingFiles(draft.files);
-    } else if (validDef) {
-      setData(d => ({ ...d, returnProfile: validDef }));
+    const restoreLocal = () => {
+      const draft = loadDraft();
+      if (draft) {
+        setData({ ...freshFields(validDef), ...pickDraftFields(draft.fields), docs: [] });
+        setStep(Math.min(steps.length, Math.max(1, Math.round(draft.step))));
+        setRestoredAt(draft.savedAt);
+        setPendingFiles(draft.files);
+      } else if (validDef) {
+        setData(d => ({ ...d, returnProfile: validDef }));
+      }
+      setHydrated(true);
+    };
+    const connected = isWorkerConnected();
+    const requested = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('draft')
+      : null;
+    const serverId = connected ? (requested?.trim() || loadDraftPointer()?.draftDealId || null) : null;
+    if (!serverId) {
+      restoreLocal();
+      if (connected) void probeServerDrafts();
+      return;
     }
-    setHydrated(true);
+    let cancelled = false;
+    setResuming(true);
+    void loadServerDraft(serverId).then((res) => {
+      if (cancelled) return;
+      setResuming(false);
+      if (!res) {
+        restoreLocal();
+        return;
+      }
+      const wizardFields = res.wizard?.fields && typeof res.wizard.fields === 'object'
+        ? pickDraftFields(res.wizard.fields)
+        : {};
+      const fields: WizardFields = { ...freshFields(validDef), ...fieldsFromDeal(res.deal), ...wizardFields };
+      const stepFromWizard = typeof res.wizard?.step === 'number' ? res.wizard.step : 1;
+      const resumedStep = Math.min(steps.length, Math.max(1, Math.round(stepFromWizard)));
+      setData({ ...fields, docs: [] });
+      setStep(resumedStep);
+      // The row already holds this — opening a draft is not an edit.
+      serverDraftRef.current.prime(
+        dealBodyFromFields(fields, (v) => normalizeLocation(v, []), { market: tidyLocation(fields.market), strMarketId: fields.strMarketId || null }),
+        { v: 1, step: resumedStep, fields },
+      );
+      const at = res.deal.updated_at ? new Date(res.deal.updated_at).getTime() : Date.now();
+      setRestoredAt(Number.isFinite(at) ? at : Date.now());
+      setPendingFiles([]);
+      // The row is the truth now — a stale local draft must not restore over it.
+      clearDraft();
+      setHydrated(true);
+    });
+    return () => { cancelled = true; };
+    // Mount only: the draft id comes from the URL / pointer read above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const remainingFiles = useMemo(
     () => pendingFiles.filter(p => !data.docs.some(d => sameFile(p, { name: d.file.name, category: d.category }))),
     [pendingFiles, data.docs],
   );
-
-  useEffect(() => {
-    if (!hydrated || createdRef.current) return;
-    const { docs, ...fields } = data;
-    const files: DraftFileRef[] = [
-      ...docs.map(d => ({ name: d.file.name, category: d.category, fiscal_year: d.fiscal_year ?? null })),
-      ...remainingFiles,
-    ];
-    if (!draftIsMeaningful(fields, step, files.length, defaultProfile)) {
-      clearDraft();
-      setSaveStatus('idle');
-      return;
-    }
-    setSaveStatus('saving');
-    const t = setTimeout(() => {
-      if (createdRef.current) return;
-      setSaveStatus(saveDraft({ savedAt: Date.now(), step, fields, files }) ? 'saved' : 'idle');
-    }, DRAFT_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [data, step, hydrated, remainingFiles, defaultProfile]);
-
-  const discardDraft = () => {
-    clearDraft();
-    setData({ ...freshFields(defaultProfile), docs: [] });
-    setStep(1);
-    setRestoredAt(null);
-    setPendingFiles([]);
-    setDocsGateNudge(false);
-    setSaveStatus('idle');
-  };
-
-  const setDefaultReturnProfile = (id: string | null) => {
-    saveDefaultReturnProfile(id);
-    setDefaultProfile(id);
-  };
 
   // ─── R-012 — City suggestions ───────────────────────────────────────────
   // Distinct cities already used on this tenant's deals, then the static
@@ -241,14 +374,163 @@ export default function NewProjectPage() {
         setTenantCities(
           deals.map(d => d.city).filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
         );
+        // FON-79 — the same read says how many drafts the tenant already has.
+        setTenantDraftCount(deals.filter(d => d.lifecycle === 'draft').length);
       })
       .catch(() => { /* suggestions are best-effort */ });
     return () => ctrl.abort();
   }, []);
   const citySuggestions = useMemo(() => locationSuggestions(tenantCities), [tenantCities]);
-  const normalizeCity = (v: string) => normalizeLocation(v, tenantCities);
+  const normalizeCity = useCallback((v: string) => normalizeLocation(v, tenantCities), [tenantCities]);
   // Sam #6 — Market / Submarket suggestions (STR's list when loaded).
   const strMarkets = useStrMarkets(data.market, data.strMarketId || null, data.submarket);
+
+  useEffect(() => {
+    if (!hydrated || createdRef.current) return;
+    const { docs, ...fields } = data;
+    const wizard: DraftWizardPayload = { v: 1, step, fields };
+    if (draftId) {
+      // FON-79 — the row is the autosave: normalized columns + the wizard's
+      // own payload on every save (debounced and serialized by the hook).
+      clearDraft();
+      setLocalSaveStatus('idle');
+      saveServerDraft(
+        dealBodyFromFields(fields, normalizeCity, { market: tidyLocation(fields.market), strMarketId: fields.strMarketId || null }),
+        wizard,
+      );
+      return;
+    }
+    const files: DraftFileRef[] = [
+      ...docs.map(d => ({ name: d.file.name, category: d.category, fiscal_year: d.fiscal_year ?? null })),
+      ...remainingFiles,
+    ];
+    if (!draftIsMeaningful(fields, step, files.length, defaultProfile)) {
+      clearDraft();
+      setLocalSaveStatus('idle');
+      return;
+    }
+    setLocalSaveStatus('saving');
+    const t = setTimeout(() => {
+      if (createdRef.current) return;
+      setLocalSaveStatus(saveDraft({ savedAt: Date.now(), step, fields, files }) ? 'saved' : 'idle');
+      // The first autosave after a non-blank Deal Name, on a worker that can
+      // hold a draft, creates the row (once — the hook holds the promise).
+      if (draftsSupported && isWorkerConnected() && fields.dealName.trim()) {
+        void createServerDraft(
+          dealBodyFromFields(fields, normalizeCity, { market: tidyLocation(fields.market), strMarketId: fields.strMarketId || null }),
+          wizard,
+        );
+      }
+    }, DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [data, step, hydrated, remainingFiles, defaultProfile, draftId, draftsSupported, saveServerDraft, createServerDraft, normalizeCity]);
+
+  // ─── FON-79 — the draft's uploaded documents ─────────────────────────────
+  // Read when the draft exists; re-read while any document is still moving
+  // through the pipeline, and after every upload / removal.
+  const [serverDocs, setServerDocs] = useState<WorkerDocument[]>([]);
+  const [docsTick, setDocsTick] = useState(0);
+  const refreshServerDocs = useCallback(() => setDocsTick(t => t + 1), []);
+  const anyDocProcessing = serverDocs.some(d => isProcessingStatus(d.status));
+  useEffect(() => {
+    if (!draftId) {
+      setServerDocs([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    const read = () => {
+      api.documents.list(draftId, ctrl.signal)
+        .then((rows) => { if (!ctrl.signal.aborted) setServerDocs(rows); })
+        .catch(() => { /* the list keeps its last read; the next tick retries */ });
+    };
+    read();
+    const t = anyDocProcessing ? setInterval(read, DRAFT_DOCS_POLL_MS) : null;
+    return () => {
+      ctrl.abort();
+      if (t) clearInterval(t);
+    };
+  }, [draftId, docsTick, anyDocProcessing]);
+  // Staged files currently leaving the browser (by identity).
+  const [uploadingKeys, setUploadingKeys] = useState<Set<string>>(() => new Set());
+  const isUploading = useCallback((f: WizardFile) => uploadingKeys.has(stagedKey(f)), [uploadingKeys]);
+  const uploadNow = useCallback(async (batch: WizardFile[]) => {
+    const id = serverDraftRef.current.draftId;
+    if (!id || batch.length === 0) return;
+    const keys = new Set(batch.map(stagedKey));
+    setUploadingKeys(prev => new Set([...prev, ...keys]));
+    try {
+      const uploaded = await api.documents.upload(id, batch);
+      // The rows are on the deal now — drop the staged copies.
+      setData(d => ({ ...d, docs: d.docs.filter(f => !keys.has(stagedKey(f))) }));
+      refreshServerDocs();
+      toast(`Uploaded ${uploaded.length} · extraction running in the background`, { type: 'success' });
+    } catch (err) {
+      // The file stays staged and goes up on Finish.
+      toast(`Upload failed — ${userMessage(err)}. The file stays here and uploads when you Finish.`, { type: 'error' });
+    } finally {
+      setUploadingKeys(prev => {
+        const next = new Set(prev);
+        for (const k of keys) next.delete(k);
+        return next;
+      });
+    }
+  }, [refreshServerDocs, toast]);
+  const removeServerDoc = useCallback(async (doc: WorkerDocument) => {
+    const id = serverDraftRef.current.draftId;
+    if (!id) return;
+    try {
+      await api.documents.delete(id, doc.id);
+      setServerDocs(rows => rows.filter(r => r.id !== doc.id));
+      refreshServerDocs();
+    } catch (err) {
+      toast(`Couldn't remove ${doc.filename} — ${userMessage(err)}`, { type: 'error' });
+    }
+  }, [refreshServerDocs, toast]);
+  const retagServerDoc = useCallback(async (doc: WorkerDocument, patch: { doc_type?: string; fiscal_year?: number }) => {
+    const id = serverDraftRef.current.draftId;
+    if (!id) return;
+    try {
+      const updated = await api.documents.reclassify(id, doc.id, patch);
+      setServerDocs(rows => rows.map(r => (r.id === doc.id ? updated : r)));
+    } catch (err) {
+      toast(`Couldn't change ${doc.filename} — ${userMessage(err)}`, { type: 'error' });
+    }
+  }, [toast]);
+  const uploadedCategories = useMemo(() => serverDocs.map(wizardCategoryForDocument), [serverDocs]);
+
+  const discardDraft = async () => {
+    setDiscardError(null);
+    if (serverDraftRef.current.draftId) {
+      try {
+        await serverDraftRef.current.discard();
+        toast('Draft discarded', { type: 'info' });
+      } catch (err) {
+        // 409 documents_in_flight — the worker says how many and what to do.
+        const msg = userMessage(err);
+        setDiscardError(msg);
+        toast(msg, { type: 'error' });
+        return;
+      }
+      setServerDocs([]);
+      if (typeof window !== 'undefined' && window.location.search.includes('draft=')) {
+        router.replace('/projects/new');
+      }
+    }
+    clearDraft();
+    clearDraftPointer();
+    setData({ ...freshFields(defaultProfile), docs: [] });
+    setStep(1);
+    setRestoredAt(null);
+    setPendingFiles([]);
+    setDocsGateNudge(false);
+    setLocalSaveStatus('idle');
+  };
+
+  const setDefaultReturnProfile = (id: string | null) => {
+    saveDefaultReturnProfile(id);
+    setDefaultProfile(id);
+  };
+
   const setDocs = useCallback(
     (docs: WizardFile[]) => setData(d => ({ ...d, docs })),
     [],
@@ -292,28 +574,6 @@ export default function NewProjectPage() {
     }
     setSubmitting(true);
     try {
-      // Keys is now optional — the wizard's expectation is that the
-      // OM extraction fills it in (`property_overview.keys`). Send
-      // null when the analyst hasn't typed a number so the worker
-      // schema flows through cleanly instead of pinning a placeholder
-      // 100-key value that the deal will then surface as if it were
-      // real metadata.
-      const parsedKeys = Number.parseInt(data.keys, 10);
-      const keysInt =
-        Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : null;
-      // FON-59 / R-048 (Sam's decision 4) — two separate fields. The picker
-      // is the PROPOSED brand ("agnostic" → none); the typed Existing brand
-      // goes to `brand`, and blank leaves it for the OM to fill.
-      const proposedBrandValue = data.brand === 'agnostic' ? null : data.brand;
-      const existingBrandValue = data.existingBrand.trim() || null;
-      // R-025 — the intended operating model; '' (not chosen) → null.
-      const operatingModelValue = isOperatingModelId(data.operatingModel) ? data.operatingModel : null;
-      // FON-99 — the Purchase / Indicative Price, parsed to whole dollars. A
-      // range sends its midpoint (labelled so on Review); text that does not
-      // read as a price sends null — never a guess — and the analyst sets the
-      // price on CAPEX → Deal Summary. Persisted as deals.purchase_price, which
-      // the engine runner badges "Deal record" (SOURCE_DEAL_ROW), not "Seed".
-      const purchasePriceValue = purchasePriceFromText(data.price);
       // Sam #6 — a market carries STR's id only when it resolves to exactly
       // one market in STR's loaded list; typed text is stored without one.
       let marketPick: { market: string; strMarketId: string | null } = {
@@ -323,44 +583,47 @@ export default function NewProjectPage() {
       if (marketPick.market && !marketPick.strMarketId) {
         marketPick = await strMarkets.resolve(data.market);
       }
+      const { docs: stagedDocs, ...fields } = data;
+      const body = dealBodyFromFields(fields, normalizeCity, marketPick);
 
-      // The worker's `NewDealBody` schema (apps/worker/app/api/deals.py) is
-      // narrow today, but we send the wizard's full intent: extra fields are
-      // either persisted by newer worker builds (Phase 6+) or harmlessly
-      // ignored. Cast at the call site so we don't have to touch lib/api.ts.
-      const body = {
-        name: data.dealName.trim(),
-        // R-012 — trim / comma-space / fold onto a known market spelling.
-        city: normalizeCity(data.city) || null,
-        market: marketPick.market || null,
-        str_market_id: marketPick.market ? marketPick.strMarketId : null,
-        submarket: tidyLocation(data.submarket) || null,
-        keys: keysInt,
-        service: null,
-        deal_type: data.dealType,
-        // The acquisition stage the wizard asks for on Step 1 — persisted as
-        // the deal's `deal_stage` so the list and pipeline read what the
-        // analyst chose, not a "Teaser" default.
-        deal_stage: data.stage || null,
-        brand: existingBrandValue,
-        proposed_brand: proposedBrandValue,
-        operating_model: operatingModelValue,
-        return_profile: data.returnProfile,
-        positioning: data.positioning,
-        purchase_price: purchasePriceValue,
-        // Sourcing channel for pipeline analytics. Send the canonical
-        // lower-snake-case id (e.g. "capital_partner") not the display
-        // label so the worker can use it as an enum.
-        sourcing_channel:
-          (sourcingChannels.find(s => s.label === data.sourcing)?.id)
-          ?? data.sourcing.toLowerCase().replace(/\s+/g, '_'),
-      };
-      const created = await api.deals.create(body as Parameters<typeof api.deals.create>[0]);
+      // FON-79 — Finish on a server-side draft: any file still staged (an
+      // upload that failed on add) goes up first, the last columns land, then
+      // the row is activated and the deal page opens.
+      const draft = serverDraftRef.current;
+      if (draft.draftId) {
+        const id = draft.draftId;
+        if (stagedDocs.length > 0) {
+          setUploadingCount(stagedDocs.length);
+          setUploadStartedAt(Date.now());
+          try {
+            await api.documents.upload(id, stagedDocs);
+            setData(d => ({ ...d, docs: [] }));
+          } finally {
+            setUploadStartedAt(null);
+          }
+        }
+        draft.save(body, { v: 1, step, fields });
+        let activated: WorkerDeal | null = null;
+        try {
+          activated = await draft.activate();
+        } catch (err) {
+          // Already active (another tab finished it) → it is the deal we want.
+          if (workerErrorCode(err) !== 'deal_not_draft') throw err;
+        }
+        createdRef.current = true;
+        clearDraft();
+        clearDraftPointer();
+        toast(`Deal created · ${activated?.name ?? body.name}`, { type: 'success' });
+        router.push(`/projects/${id}`);
+        return;
+      }
+
+      const created = await api.deals.create(body);
       // R-011 — the deal exists now; a restored draft would only create a
       // duplicate, so drop it before the (long) upload starts.
       createdRef.current = true;
       clearDraft();
-      setSaveStatus('idle');
+      setLocalSaveStatus('idle');
       toast(`Deal created · ${created.name}`, { type: 'success' });
 
       // If the wizard collected files in step 3, upload them to the
@@ -372,12 +635,12 @@ export default function NewProjectPage() {
       // PARSING to CLASSIFYING mid-parse) and was the root cause of
       // Sam QA 2026-05-13 #1: "T-12 uploaded in wizard renders 0
       // fields, OM stuck in extracting/processing".
-      if (data.docs.length > 0) {
+      if (stagedDocs.length > 0) {
         toast(
-          `Uploading ${data.docs.length} document${data.docs.length === 1 ? '' : 's'}…`,
+          `Uploading ${stagedDocs.length} document${stagedDocs.length === 1 ? '' : 's'}…`,
           { type: 'info' },
         );
-        setUploadingCount(data.docs.length);
+        setUploadingCount(stagedDocs.length);
         setUploadStartedAt(Date.now());
         try {
           // Send the wizard payload — the worker reads
@@ -388,7 +651,7 @@ export default function NewProjectPage() {
           // overwriting it.
           const uploaded = await api.documents.upload(
             String(created.id),
-            data.docs,
+            stagedDocs,
           );
           toast(
             `Uploaded ${uploaded.length} · parsing + extraction running in the background`,
@@ -411,6 +674,23 @@ export default function NewProjectPage() {
     }
   };
 
+  // Header save status. Server draft: "Saved to Fondok · just now" /
+  // "Saving…" / "Couldn't save — retrying". Local: "Saving…" / "Saved locally".
+  const statusNow = useNow(!!draftId && serverSaveStatus === 'saved', 30_000);
+  const saveStatusText: string | null = draftId
+    ? serverSaveStatus === 'saving'
+      ? 'Saving…'
+      : serverSaveStatus === 'error'
+        ? 'Couldn’t save — retrying'
+        : serverSavedAt != null
+          ? `Saved to Fondok · ${relativeTime(serverSavedAt, statusNow)}`
+          : null
+    : localSaveStatus === 'saving'
+      ? 'Saving…'
+      : localSaveStatus === 'saved'
+        ? 'Saved locally'
+        : null;
+
   return (
     <div className="px-8 py-8 max-w-[1100px] mx-auto">
       <div className="mb-6">
@@ -419,13 +699,29 @@ export default function NewProjectPage() {
         </Link>
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-[24px] font-semibold text-ink-900">New Project</h1>
-          {saveStatus !== 'idle' && (
-            <span data-testid="draft-save-status" aria-live="polite" className="text-[11.5px] text-ink-500">
-              {saveStatus === 'saving' ? 'Saving…' : 'Saved locally'}
+          {saveStatusText && (
+            <span
+              data-testid="draft-save-status"
+              aria-live="polite"
+              className={cn('text-[11.5px]', serverSaveStatus === 'error' && draftId ? 'text-warn-700' : 'text-ink-500')}
+            >
+              {saveStatusText}
             </span>
           )}
         </div>
       </div>
+
+      {!draftId && tenantDraftCount != null && tenantDraftCount > 0 && (
+        <Card className="p-3 mb-5 border-border" data-testid="tenant-drafts-chip">
+          <div className="text-[12.5px] text-ink-700">
+            You have {tenantDraftCount} unfinished {tenantDraftCount === 1 ? 'draft' : 'drafts'}
+            <span className="text-ink-500"> · </span>
+            <Link href="/projects?filter=Drafts" className="font-medium text-brand-700 hover:text-brand-500">
+              See them on Projects
+            </Link>
+          </div>
+        </Card>
+      )}
 
       {restoredAt != null && (
         <Card className="p-4 mb-5 border-brand-100 bg-brand-50" data-testid="draft-restored-banner">
@@ -433,17 +729,23 @@ export default function NewProjectPage() {
             <Info size={15} className="text-brand-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
             <div className="flex-1 min-w-0">
               <div className="text-[12.5px] text-ink-900">
-                Restored your unfinished deal from {relativeTime(restoredAt)}
+                {draftId ? 'Resumed your draft, last saved ' : 'Restored your unfinished deal from '}
+                {relativeTime(restoredAt)}
                 <span className="text-ink-500"> · </span>
                 <button
                   type="button"
-                  onClick={discardDraft}
+                  onClick={() => { void discardDraft(); }}
                   className="text-[12.5px] font-medium text-brand-700 hover:text-brand-500"
                 >
                   Discard
                 </button>
               </div>
-              {remainingFiles.length > 0 && (
+              {discardError && (
+                <div className="mt-2 text-[12px] text-warn-700" role="alert" data-testid="draft-discard-error">
+                  {discardError}
+                </div>
+              )}
+              {!draftId && remainingFiles.length > 0 && (
                 <div className="mt-2 text-[12px] text-ink-700" data-testid="draft-reattach">
                   <div>
                     Re-attach {remainingFiles.length === 1 ? 'this file' : `these ${remainingFiles.length} files`} on
@@ -497,13 +799,18 @@ export default function NewProjectPage() {
 
       {/* Step body */}
       <Card className="p-7">
-        {step === 1 && (
+        {resuming && (
+          <div className="flex items-center gap-2 text-[12.5px] text-ink-500" role="status" data-testid="draft-resuming">
+            <Loader2 size={14} className="animate-spin text-brand-500" aria-hidden="true" /> Opening your draft…
+          </div>
+        )}
+        {!resuming && step === 1 && (
           <Step1 data={data} update={update} citySuggestions={citySuggestions} normalizeCity={normalizeCity} strMarkets={strMarkets} />
         )}
-        {step === 2 && (
+        {!resuming && step === 2 && (
           <Step2 data={data} update={update} defaultProfile={defaultProfile} onSetDefault={setDefaultReturnProfile} />
         )}
-        {step === 3 && (
+        {!resuming && step === 3 && (
           <Step3Documents
             files={data.docs}
             onChange={(files) => {
@@ -514,10 +821,16 @@ export default function NewProjectPage() {
             }}
             onCanContinueChange={setDocsCanContinue}
             showGateWarning={docsGateNudge && !docsCanContinue}
+            serverDocs={serverDocs}
+            uploadedCategories={uploadedCategories}
+            onUploadNow={draftId ? uploadNow : undefined}
+            isUploading={isUploading}
+            onRemoveServerDoc={removeServerDoc}
+            onRetagServerDoc={retagServerDoc}
           />
         )}
-        {step === 4 && <Step4 data={data} update={update} />}
-        {step === 5 && <Step6 data={data} jumpTo={setStep} />}
+        {!resuming && step === 4 && <Step4 data={data} update={update} />}
+        {!resuming && step === 5 && <Step6 data={data} serverDocs={serverDocs} jumpTo={setStep} />}
       </Card>
 
       {submitError && (
@@ -582,9 +895,9 @@ export default function NewProjectPage() {
             Next <ChevronRight size={13} />
           </Button>
         ) : (
-          <Button variant="primary" onClick={onCreate} disabled={submitting}>
+          <Button variant="primary" onClick={onCreate} disabled={submitting || resuming}>
             {submitting && <Loader2 size={13} className="animate-spin" />}
-            {submitting ? (uploadCopy ?? 'Creating…') : 'Create Deal'}
+            {submitting ? (uploadCopy ?? 'Finishing…') : 'Finish'}
           </Button>
         )}
       </div>
@@ -593,7 +906,7 @@ export default function NewProjectPage() {
 }
 
 type WizardData = {
-  dealName: string; city: string; keys: string; stage: string; hotelName: string; price: string;
+  dealName: string; city: string; keys: string; stage: string; price: string;
   market: string; submarket: string; strMarketId: string;
   dealType: string;
   returnProfile: string; docs: WizardFile[]; brand: string; existingBrand: string; operatingModel: string; brandSearch: string;
@@ -726,8 +1039,9 @@ function Step1({ data, update, citySuggestions, normalizeCity, strMarkets }: Ste
           <Select label="How far along are you in the acquisition process? *" value={data.stage} onChange={v => update({ stage: v })} options={dealStages}
             help="Teaser — pre-NDA screening. Under NDA — accessing the data room. LOI — letter of intent submitted. PSA — under purchase & sale agreement." />
         </div>
+        {/* A.6.3 — no Hotel Name field here: the Property Name is read from
+            the Offering Memorandum and shown on the Overview. */}
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Hotel Name" value={data.hotelName} onChange={v => update({ hotelName: v })} placeholder="Marriott Chicago Downtown" />
           {/* FON-99 — parsed and sent as deals.purchase_price (see lib/wizardPrice). */}
           <Field label="Purchase / Indicative Price" value={data.price} onChange={v => update({ price: v })} placeholder="$120-140M"
             help="Seeds the model's purchase price. Accepts $36.4M, 36.4MM, 36,400,000 or a range such as $120-140M (the midpoint is stored); a bare figure under $1M needs M / MM or the full dollars. Editable later on CAPEX → Deal Summary."
@@ -867,11 +1181,23 @@ function Step3Documents({
   onChange,
   onCanContinueChange,
   showGateWarning,
+  serverDocs,
+  uploadedCategories,
+  onUploadNow,
+  isUploading,
+  onRemoveServerDoc,
+  onRetagServerDoc,
 }: {
   files: WizardFile[];
   onChange: (files: WizardFile[]) => void;
   onCanContinueChange: (ok: boolean) => void;
   showGateWarning: boolean;
+  serverDocs: WorkerDocument[];
+  uploadedCategories: WizardCategory[];
+  onUploadNow?: (added: WizardFile[]) => void;
+  isUploading: (f: WizardFile) => boolean;
+  onRemoveServerDoc: (doc: WorkerDocument) => void;
+  onRetagServerDoc: (doc: WorkerDocument, patch: { doc_type?: string; fiscal_year?: number }) => void;
 }) {
   const { toast } = useToast();
   // Layout: the DocumentsStep owns its own internal sidebar + content
@@ -886,6 +1212,11 @@ function Step3Documents({
           onChange={onChange}
           onCanContinueChange={onCanContinueChange}
           showGateWarning={showGateWarning}
+          serverDocs={serverDocs}
+          onUploadNow={onUploadNow}
+          isUploading={isUploading}
+          onRemoveServerDoc={onRemoveServerDoc}
+          onRetagServerDoc={onRetagServerDoc}
           onUnsupportedFile={(filename) =>
             toast(
               unsupportedFileMessage(filename),
@@ -903,7 +1234,7 @@ function Step3Documents({
           body="This is the same checklist your IC reviewer will see. The percentage in the workspace later reflects how many categories you've covered. Aim for ≥80% before generating the memo."
           side="left"
         >
-          <DocumentsChecklist files={files} />
+          <DocumentsChecklist files={files} uploadedCategories={uploadedCategories} />
         </CoachMark>
       </aside>
     </div>
@@ -1191,7 +1522,7 @@ function PositioningPicker({ data, update }: StepProps) {
   );
 }
 
-function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => void }) {
+function Step6({ data, serverDocs, jumpTo }: { data: WizardData; serverDocs: WorkerDocument[]; jumpTo: (step: number) => void }) {
   const profile = returnProfiles.find(r => r.id === data.returnProfile);
   const positioning = positioningTiers.find(p => p.id === data.positioning);
   // A brand's STR scale the analyst did not select stays a suggestion on the
@@ -1206,18 +1537,27 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
   // committing. Wave 1 (June 2026): we collapse the 11 categories into
   // four headline groups for the review page so the summary stays
   // scannable — the deal workspace surfaces a full CompletenessCard.
-  const omCount = data.docs.filter(f => f.category === 'om').length;
-  const financialCount = data.docs.filter(
+  // FON-79 — staged files and documents already uploaded to the draft are
+  // both the deal's documents here.
+  const docRows = [
+    ...data.docs.map(f => ({ category: f.category, fiscal_year: f.fiscal_year ?? null })),
+    ...serverDocs.map(d => ({
+      category: isFinancialDocument(d) ? ('financials' as const) : wizardCategoryForDocument(d),
+      fiscal_year: d.fiscal_year ?? null,
+    })),
+  ];
+  const omCount = docRows.filter(f => f.category === 'om').length;
+  const financialCount = docRows.filter(
     f => f.category === 'financials',
   ).length;
-  const strCount = data.docs.filter(f => f.category === 'str').length;
+  const strCount = docRows.filter(f => f.category === 'str').length;
   // Everything else (insurance / taxes / room mix / capex / property
   // info / leases / surveys) rolls up under "Other supporting docs"
   // for the summary headline.
-  const otherCount = data.docs.length - omCount - financialCount - strCount;
+  const otherCount = docRows.length - omCount - financialCount - strCount;
   const financialYears = Array.from(
     new Set(
-      data.docs
+      docRows
         .filter(f => f.category === 'financials')
         .map(f => f.fiscal_year)
         .filter((y): y is number => typeof y === 'number'),
@@ -1226,13 +1566,12 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
 
   const docsSummary =
     financialCount > 0
-      ? `${data.docs.length} file${data.docs.length === 1 ? '' : 's'} · ${financialCount} financial${financialCount === 1 ? '' : 's'}${financialYears.length > 0 ? ` (${financialYears.join(', ')})` : ''}`
+      ? `${docRows.length} file${docRows.length === 1 ? '' : 's'} · ${financialCount} financial${financialCount === 1 ? '' : 's'}${financialYears.length > 0 ? ` (${financialYears.join(', ')})` : ''}`
       : 'No financials staged';
 
   const rows = [
     { label: 'Deal Name', value: data.dealName || 'Untitled', step: 1 },
     { label: 'Deal Type', value: dealTypeLabel(data.dealType), step: 1 },
-    { label: 'Hotel Name', value: data.hotelName || 'Not specified', step: 1 },
     { label: 'City', value: data.city || 'Not specified', step: 1 },
     { label: 'Market', value: data.market.trim() ? `${data.market.trim()}${data.strMarketId ? ` (STR id ${data.strMarketId})` : ''}` : 'Not specified', step: 1 },
     { label: 'Submarket', value: data.submarket.trim() || 'Not specified', step: 1 },
@@ -1271,12 +1610,12 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
 
   return (
     <div>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Review & Create Deal</h2>
-      <p className="text-[12.5px] text-ink-500 mb-3">Last check before we create the deal.</p>
+      <h2 className="text-[18px] font-semibold text-ink-900 mb-1">Review & Finish</h2>
+      <p className="text-[12.5px] text-ink-500 mb-3">Last check before the deal goes live.</p>
       <div className="rounded-md bg-brand-50 border border-brand-100 p-3 text-[12px] text-ink-700 leading-relaxed mb-6">
         Confirm everything looks right. Click any row to edit a section. Once you click
-        <span className="font-medium"> Create Deal</span>, the deal goes into your pipeline,
-        files start uploading in the background, and Fondok routes each one to the right extractor.
+        <span className="font-medium"> Finish</span>, the deal goes into your pipeline,
+        any file not yet uploaded starts uploading in the background, and Fondok routes each one to the right extractor.
       </div>
 
       {financialCount === 0 && (
@@ -1298,7 +1637,7 @@ function Step6({ data, jumpTo }: { data: WizardData; jumpTo: (step: number) => v
       <Card className="p-4 mb-4" aria-label="Document staging summary">
         <div className="flex items-center justify-between mb-3">
           <div className="text-[12px] uppercase tracking-wider text-ink-500 font-semibold">
-            Staged documents
+            Documents
           </div>
           <button
             onClick={() => jumpTo(3)}
