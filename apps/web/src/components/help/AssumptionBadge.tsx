@@ -141,7 +141,24 @@ const TONE = {
  *  explanation is used. */
 type SourceStyle = { tone: string; Icon: typeof Database; tooltip?: string };
 
+/** Wave 3 (Task 13: A9 / B8) — three registry source ids. The badge text and
+ *  tooltip come from the generated registry (``SOURCES[id].badge`` /
+ *  ``.explanation``); only tone and icon are authored here. They are kept in
+ *  their own object and spread into ``SOURCE_STYLE`` so this file compiles
+ *  both before the regenerated ``SourceId`` carries them (a spread is not
+ *  excess-property checked) and after (the spread then satisfies the
+ *  exhaustive ``Record<SourceId, …>``). */
+const WAVE3_SOURCE_STYLE = {
+  // B8 — the renovation budget's 75/15/10 hard / soft / fee split, a platform default.
+  platform_default_renovation_split: { tone: TONE.neutral, Icon: Sparkles },
+  // A9 — a segment-model figure the STR Segmentation report does not state.
+  platform_default_segmentation: { tone: TONE.neutral, Icon: Sparkles },
+  // A9 — a figure the deal's STR Segmentation report states (grounded).
+  str_segmentation: { tone: TONE.grounded, Icon: BarChart3 },
+} satisfies Record<string, SourceStyle>;
+
 const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
+  ...WAVE3_SOURCE_STYLE,
   seed: {
     tone: TONE.neutral,
     tooltip:
@@ -286,13 +303,16 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
 };
 
 const SOURCE_META: Record<AssumptionSource, SourceMeta> = Object.fromEntries(
-  (Object.keys(SOURCE_STYLE) as AssumptionSource[]).map((id) => [
-    id,
-    {
-      label: SOURCE_BADGE_FROM_REGISTRY[id],
-      tone: SOURCE_STYLE[id].tone,
-      Icon: SOURCE_STYLE[id].Icon,
-      tooltip: SOURCE_STYLE[id].tooltip ?? SOURCE_EXPLANATION_FROM_REGISTRY[id],
-    },
-  ]),
+  (Object.keys(SOURCE_STYLE) as AssumptionSource[])
+    // Only ids the generated registry knows (see WAVE3_SOURCE_STYLE).
+    .filter((id) => id in SOURCE_BADGE_FROM_REGISTRY)
+    .map((id) => [
+      id,
+      {
+        label: SOURCE_BADGE_FROM_REGISTRY[id],
+        tone: SOURCE_STYLE[id].tone,
+        Icon: SOURCE_STYLE[id].Icon,
+        tooltip: SOURCE_STYLE[id].tooltip ?? SOURCE_EXPLANATION_FROM_REGISTRY[id],
+      },
+    ]),
 ) as Record<AssumptionSource, SourceMeta>;
