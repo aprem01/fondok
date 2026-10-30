@@ -305,7 +305,20 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));
 vi.mock('@/lib/hooks/useValueTrace', () => ({ useTrace: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
-import GroundedWorksheet from '@/components/project/pl/GroundedWorksheet';
+/**
+ * A fresh GroundedWorksheet module graph per test. useDocuments keeps one
+ * document store per deal at MODULE level (shared across tabs by design), and
+ * both tests render the same deal id. Without a fresh graph the second mount
+ * is seeded with the first test's document list — the full deal, T-12
+ * included — and shows it until its own list read lands. On a slow runner
+ * (CI, 2026-10-30) the assertions ran inside that window: "expected <button
+ * T12 Mar 2025> to be null". Reproduced locally by delaying the list mock
+ * 200 ms.
+ */
+async function freshWorksheet(): Promise<typeof import('@/components/project/pl/GroundedWorksheet').default> {
+  vi.resetModules();
+  return (await import('@/components/project/pl/GroundedWorksheet')).default;
+}
 
 const RED_CELL = /^Low confidence \(\d+%\) — click to review its source$/;
 
@@ -319,6 +332,7 @@ describe('evidence ablation — the rendered worksheet', () => {
   it('renders a T-12 pill and its nine red cells while the statement is on the deal', async () => {
     SERVED.docs = LIVE_DOCS;
     SERVED.extractions = LIVE_EXTRACTIONS as Record<string, unknown>;
+    const GroundedWorksheet = await freshWorksheet();
     render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
     await waitFor(
       // FON-41 #4 — the pill states the period, not a bare "T-12".
@@ -336,6 +350,7 @@ describe('evidence ablation — the rendered worksheet', () => {
     const gone = without(LIVE_DOCS, LIVE_EXTRACTIONS, DOC_T12_2025.id);
     SERVED.docs = gone.docs;
     SERVED.extractions = gone.extractions as Record<string, unknown>;
+    const GroundedWorksheet = await freshWorksheet();
     render(<GroundedWorksheet dealId={LIVE_DEAL_ID} />);
 
     await waitFor(

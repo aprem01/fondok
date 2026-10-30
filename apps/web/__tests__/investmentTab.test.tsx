@@ -253,9 +253,11 @@ import InvestmentTab, { compCapRangeHint } from '@/components/project/Investment
 import { DisplacementStatusContext } from '@/lib/hooks/useDisplacementStatus';
 import type { DisplacementStatus } from '@/lib/api';
 import { REASONS } from '@/lib/ontology/reasons.generated';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   updateSpy.mockClear();
   timelineSpy.mockClear();
   engineRunSpy.mockClear();

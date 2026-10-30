@@ -200,6 +200,10 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
 });
 
 import CashFlowTab from '@/components/project/CashFlowTab';
+import { resetRouter } from './helpers/mockRouter';
+
+// Every test starts on the bare URL — a routing test's ?sub= must not leak.
+beforeEach(() => resetRouter(nav));
 
 describe('CashFlowTab — render', () => {
   beforeEach(() => {

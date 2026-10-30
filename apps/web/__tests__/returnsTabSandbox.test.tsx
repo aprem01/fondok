@@ -164,7 +164,8 @@ const runOneSpy = vi.fn();
 const runAllSpy = vi.fn();
 
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,
@@ -179,6 +180,13 @@ vi.mock('@/lib/api', async () => {
     },
   };
 });
+
+// The tab reads the deal row only for its header context; these tests assert
+// on the sandbox KPIs. Before the network guard the real useDeal fetched the
+// worker URL and failed, leaving the deal null — answer null deterministically.
+vi.mock('@/lib/hooks/useDeal', () => ({
+  useDeal: () => ({ deal: null, status: null, loading: false, error: null, workerConfigured: true, refresh: () => {} }),
+}));
 
 // Trim the heavy tab chrome to nothing — the test only cares about the
 // headline KPIs + the Live Assumptions card.
@@ -216,9 +224,11 @@ vi.mock('@/lib/hooks/useFlash', () => ({ useFlash: () => false }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import ReturnsTab from '@/components/project/ReturnsTab';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   previewSpy.mockClear();
   runOneSpy.mockClear();
   runAllSpy.mockClear();

@@ -214,9 +214,11 @@ vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import DebtTab, { trancheClassLabel, buildCapitalStack } from '@/components/project/DebtTab';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   updateSpy.mockClear();
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();

@@ -104,7 +104,8 @@ const COMPS = {
 };
 
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,
@@ -179,9 +180,11 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 import MarketTab from '@/components/project/MarketTab';
 import { api } from '@/lib/api';
 import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   mockOverrides = {};
   mockSources = {};
   mockReasons = {};
