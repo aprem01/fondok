@@ -98,7 +98,7 @@ class EngineOutputResponse(BaseModel):
     """Latest persisted row for one engine.
 
     ``failure`` (Wave 0, 2026-10-30) is the typed reason a ``failed`` row did
-    not produce outputs — ``code`` is a ``ReasonCode`` (``missing_identity_inputs``
+    not produce outputs — ``reason`` is a ``ReasonCode`` (``missing_identity_inputs``
     with ``missing`` naming the deal inputs to enter, ``load_error`` /
     ``engine_error`` with ``exception_type``, ``engine_skipped``); ``error``
     keeps the same message as plain text. ``null`` on complete rows and on

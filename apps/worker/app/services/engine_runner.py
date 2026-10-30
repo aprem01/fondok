@@ -245,9 +245,6 @@ _ENGINE_LABELS: dict[str, str] = {
     "cash_flow": "Cash Flow",
 }
 
-# Literal that separates the human sentence from the raw validator text.
-_TECHNICAL_DETAIL_PREFIX = "Technical detail:"
-
 # What an analyst can actually change when a given (engine, field) rejects a
 # value. The Debt NOI series is the expense engine's NOI path, so a negative
 # year is an upstream revenue / expense / occupancy problem, not a debt one.
@@ -385,12 +382,11 @@ def _humanize_engine_validation_error(engine_name: str, exc: ValidationError) ->
         kept. Check key count, revenue base, expense base, or a
         starting-occupancy override, then re-run.
 
-        Technical detail: 1 validation error for DebtEngineInputExt ...
-
     One sentence per error entry (from ``loc`` / ``type`` / ``input`` /
     ``ctx``); the downstream list is the transitive dependants of
-    ``engine_name`` in ``ENGINE_DEPS``; the raw pydantic text follows a blank
-    line and ``Technical detail:`` verbatim.
+    ``engine_name`` in ``ENGINE_DEPS``. The raw pydantic text is NOT appended
+    (security review, 2026-10-30: user-facing text carries field names and
+    bounds only); it reaches the log via ``logger.exception`` in the runner.
     """  # noqa: RUF002 - the U+2212 glyph IS the documented output
     label = _ENGINE_LABELS.get(engine_name, engine_name)
     problems: list[str] = []
@@ -421,15 +417,19 @@ def _humanize_engine_validation_error(engine_name: str, exc: ValidationError) ->
             *hints,
         ]
     )
-    return f"{human}\n\n{_TECHNICAL_DETAIL_PREFIX} {exc}"
+    return human
 
 
 def _engine_error_text(engine_name: str, exc: BaseException) -> str:
-    """The ``error`` string persisted on a failed engine row.
+    """The ``error`` string persisted on a failed engine row — USER-FACING.
 
-    pydantic ``ValidationError`` → the plain-language form above; every other
-    exception keeps ``str(exc)`` exactly as before. A bug in the formatter
-    itself must never mask the engine failure, so it falls back to ``str``.
+    pydantic ``ValidationError`` → the plain-language form above (built from
+    the error entries' ``loc`` / ``type`` / ``ctx`` — field names and bounds,
+    never the raw pydantic text). Every other exception → a generic sentence
+    naming the exception TYPE only: ``str(exc)`` can carry a connection string,
+    SQL or a file path and goes to the logger / ``report_alert`` instead
+    (security review, 2026-10-30). A bug in the formatter itself must never
+    mask the engine failure, so it falls back to the generic sentence.
     """
     if isinstance(exc, ValidationError):
         try:
@@ -438,7 +438,12 @@ def _engine_error_text(engine_name: str, exc: BaseException) -> str:
             logger.exception(
                 "could not humanize validation error for engine %s", engine_name
             )
-    return str(exc)
+    label = _ENGINE_LABELS.get(engine_name, engine_name)
+    return (
+        f"{label}: the model raised {type(exc).__name__} and did not produce "
+        f"an output. The failure has been reported; your saved assumptions "
+        f"were kept."
+    )
 
 
 # ─────────────────── Identity inputs + labelled defaults ───────────────────
@@ -485,7 +490,8 @@ def missing_identity_inputs(base: Mapping[str, Any]) -> tuple[str, ...]:
 class EngineFailure(BaseModel):
     """Why an engine row landed ``status='failed'`` — typed, persisted.
 
-    ``code`` is one of the engine-run members of :class:`ReasonCode`:
+    ``reason`` is one of the engine-run members of :class:`ReasonCode` (the
+    web reads ``failures: [{engine, reason, message, ...}]``):
 
     * ``missing_identity_inputs`` — ``missing`` lists the identity inputs the
       engine needs and the deal does not carry;
@@ -504,13 +510,24 @@ class EngineFailure(BaseModel):
     model_config = {"extra": "forbid"}
 
     engine: str
-    code: ReasonCode
+    reason: ReasonCode
     message: str
     missing: list[str] = []
     exception_type: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
+
+
+class EngineInputsLoadError(RuntimeError):
+    """Raised by the non-persisting paths (``run_returns_preview``) when the
+    deal's data could not be read; carries the typed ``load_error``
+    :class:`EngineFailure` (``report_alert`` has already fired). The
+    persisting runners record the failure row instead of raising."""
+
+    def __init__(self, failure: EngineFailure) -> None:
+        self.failure = failure
+        super().__init__(failure.message)
 
 
 class MissingIdentityInputsError(LookupError):
@@ -7241,7 +7258,7 @@ def _load_error_failure(engine_name: str, exc: BaseException) -> EngineFailure:
     the logger / ``report_alert`` (``_report_load_error``), never to the API."""
     return EngineFailure(
         engine=engine_name,
-        code=ReasonCode.LOAD_ERROR,
+        reason=ReasonCode.LOAD_ERROR,
         message=(
             f"The model did not run: reading the deal's data failed "
             f"({type(exc).__name__}). The failure has been reported; "
@@ -7370,6 +7387,9 @@ async def run_single_engine(
                 tenant_id=tenant_id, assumptions=assumptions,
             )
         except Exception as exc:  # noqa: BLE001 — recorded as the typed load_error
+            # On Postgres the failed statement aborted the transaction; the
+            # failure row below cannot be written until it is rolled back.
+            await session.rollback()
             _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)
             return await _persist_failure_row(
                 session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
@@ -7382,7 +7402,7 @@ async def run_single_engine(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
             failure=EngineFailure(
                 engine=engine_name,
-                code=ReasonCode.MISSING_IDENTITY_INPUTS,
+                reason=ReasonCode.MISSING_IDENTITY_INPUTS,
                 message=_missing_identity_message(needed),
                 missing=sorted(needed),
             ),
@@ -7448,7 +7468,7 @@ async def run_single_engine(
         # Every other exception is stored exactly as before.
         failure = EngineFailure(
             engine=engine_name,
-            code=ReasonCode.ENGINE_ERROR,
+            reason=ReasonCode.ENGINE_ERROR,
             message=_engine_error_text(engine_name, exc),
             exception_type=type(exc).__name__,
         )
@@ -7534,6 +7554,11 @@ async def run_all_engines(
             tenant_id=tenant_id, assumptions=assumptions,
         )
     except Exception as exc:  # noqa: BLE001 — recorded as the typed load_error
+        # On Postgres the failed statement aborted the transaction; the failure
+        # rows below cannot be written until it is rolled back (without this the
+        # INSERTs raise InFailedSQLTransactionError, the background task logs
+        # it, and the run ends with zero rows — the silent failure forbidden).
+        await session.rollback()
         _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)
         for name in ENGINE_NAMES:
             _record(
@@ -7555,7 +7580,7 @@ async def run_all_engines(
                     session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
                     failure=EngineFailure(
                         engine=name,
-                        code=ReasonCode.MISSING_IDENTITY_INPUTS,
+                        reason=ReasonCode.MISSING_IDENTITY_INPUTS,
                         message=_missing_identity_message(needed),
                         missing=sorted(needed),
                     ),
@@ -7572,7 +7597,7 @@ async def run_all_engines(
                     session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
                     failure=EngineFailure(
                         engine=name,
-                        code=ReasonCode.ENGINE_SKIPPED,
+                        reason=ReasonCode.ENGINE_SKIPPED,
                         message=(
                             f"skipped: upstream {', '.join(missing)} did not complete"
                         ),
@@ -7702,10 +7727,17 @@ async def run_returns_preview(
     are ignored so a sandbox request can't reach unrelated engine inputs.
 
     Raises :class:`MissingIdentityInputsError` when the deal lacks an
-    identity input (nothing is persisted here, so there is no row to mark
-    failed); a loader failure propagates as-is for the route to report.
+    identity input, and :class:`EngineInputsLoadError` (carrying the typed
+    ``load_error`` :class:`EngineFailure`, after ``report_alert``) when the
+    deal's data could not be read — nothing is persisted here, so there is
+    no row to mark failed; ``app.main`` turns both into the client answer.
     """
-    base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    try:
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+    except Exception as exc:  # surfaced as the typed load_error
+        await session.rollback()
+        _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=None)
+        raise EngineInputsLoadError(_load_error_failure("returns", exc)) from exc
     missing = missing_identity_inputs(base)
     if missing:
         raise MissingIdentityInputsError(missing)
@@ -8138,6 +8170,7 @@ __all__ = [
     "ENGINE_REGISTRY",
     "IDENTITY_INPUT_KEYS",
     "EngineFailure",
+    "EngineInputsLoadError",
     "MissingIdentityInputsError",
     "failures_of",
     "identity_inputs_needed",

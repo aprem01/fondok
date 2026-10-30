@@ -667,7 +667,7 @@ async def test_removing_the_om_that_priced_the_deal_makes_the_capital_chain_refu
     assert _reason_code(after["__reasons__"].get("purchase_price")) == "missing_identity_inputs"
     for name in ("capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
         assert results[name]["status"] == "failed", results[name]
-        assert results[name]["failure"]["code"] == "missing_identity_inputs"
+        assert results[name]["failure"]["reason"] == "missing_identity_inputs"
         assert results[name]["failure"]["missing"] == ["purchase_price"]
     for name in ("revenue", "fb", "expense"):
         assert results[name]["status"] == "complete", results[name]

@@ -14,9 +14,12 @@ Pinned here:
   with thousands separators, the ``$0`` floor from ``ctx``);
 * the downstream list is derived from ``ENGINE_DEPS`` in registry order;
 * the "saved assumptions were kept" sentence and the actionable hint;
-* the raw pydantic text survives verbatim after ``Technical detail:``;
+* the raw pydantic text is NOT appended (security review 2026-10-30: the
+  message is user-facing on every failures surface, so it carries field
+  names and bounds only; the raw text reaches the log);
 * a generic-but-specific fallback for any other engine / field;
-* non-validation exceptions are stored exactly as before.
+* non-validation exceptions become a generic sentence naming the exception
+  TYPE only — never ``str(exc)``.
 """
 
 # The U+2212 MINUS SIGN in the expected strings below is deliberate: it is the
@@ -112,21 +115,20 @@ def test_debt_negative_year1_noi_is_the_exact_e023_sentence() -> None:
     # Only the NOI entry fires — the sentence describes exactly that.
     assert [e["loc"] for e in exc.errors()] == [("noi_by_year", 0)]
 
-    text = _humanize_engine_validation_error("debt", exc)
-    human, sep, technical = text.partition("\n\nTechnical detail: ")
+    human = _humanize_engine_validation_error("debt", exc)
 
-    assert sep, "raw pydantic text must follow a blank line and 'Technical detail:'"
     assert human == EXPECTED_DEBT_MESSAGE
     assert human.startswith(EXPECTED_DEBT_FIRST_SENTENCE)
     assert EXPECTED_DOWNSTREAM_SENTENCE in human
     assert EXPECTED_KEPT_SENTENCE in human
     assert human.endswith(EXPECTED_HINT_SENTENCE)
 
-    # Nothing lost: the technical remainder IS the raw pydantic text.
-    assert technical == str(exc)
-    assert "noi_by_year.0" in technical
-    assert "greater_than_equal" in technical
-    assert "-4879452.5" in technical
+    # The raw pydantic text is NOT appended (user-facing on every failures
+    # surface); the structured sentence above carries what the analyst needs.
+    assert "Technical detail" not in human
+    assert "noi_by_year.0" not in human
+    assert "greater_than_equal" not in human
+    assert str(exc) not in human
 
 
 def test_second_tester_value_and_1_based_year_index() -> None:
@@ -140,7 +142,7 @@ def test_second_tester_value_and_1_based_year_index() -> None:
 
 def test_multiple_bad_years_each_get_a_sentence() -> None:
     exc = _raise_debt(noi_by_year=[-4879452.5, 1.0, -69982.0])
-    human = _humanize_engine_validation_error("debt", exc).split("\n\nTechnical detail: ")[0]
+    human = _humanize_engine_validation_error("debt", exc)
     assert human.startswith(
         "Debt: NOI for year 1 is −$4,879,453, below the $0 minimum the Debt model accepts. "
         "NOI for year 3 is −$69,982, below the $0 minimum the Debt model accepts. "
@@ -176,15 +178,13 @@ def test_generic_fallback_names_field_value_and_range() -> None:
     """Any other engine / field: '<field path> = <value> is outside the allowed
     range (<constraint>)' + the same stops / not-run / kept text."""
     exc = _raise_debt(purchase_price_usd=-1_000_000.0)
-    text = _humanize_engine_validation_error("debt", exc)
-    human, _, technical = text.partition("\n\nTechnical detail: ")
+    human = _humanize_engine_validation_error("debt", exc)
     assert human == (
         "Debt: purchase_price_usd = -1,000,000 is outside the allowed range (≥ 0). "
         "The model stops here and Returns, Sensitivity, Partnership and Cash Flow were not run. "
         "Your saved assumptions were kept. "
         "Check the assumptions feeding the Debt model, then re-run."
     )
-    assert technical == str(exc)
 
 
 def test_generic_fallback_for_another_engine_and_a_non_range_error() -> None:
@@ -197,8 +197,7 @@ def test_generic_fallback_for_another_engine_and_a_non_range_error() -> None:
 
     with pytest.raises(ValidationError) as info:
         _CapitalLike(equity_pct=1.5)  # type: ignore[call-arg]
-    text = _humanize_engine_validation_error("capital", info.value)
-    human = text.split("\n\nTechnical detail: ")[0]
+    human = _humanize_engine_validation_error("capital", info.value)
     assert human == (
         "Capital: purchase_price: Field required. "
         "equity_pct = 1.5 is outside the allowed range (≤ 1). "
@@ -212,9 +211,15 @@ def test_generic_fallback_for_another_engine_and_a_non_range_error() -> None:
 def test_engine_error_text_dispatches_only_validation_errors() -> None:
     exc = _raise_debt(noi_by_year=[-4879452.5, 1.0])
     assert _engine_error_text("debt", exc) == _humanize_engine_validation_error("debt", exc)
-    # Anything else is stored exactly as before — byte-for-byte str(exc).
-    plain = ZeroDivisionError("float division by zero")
-    assert _engine_error_text("debt", plain) == "float division by zero"
+    # Anything else: a generic sentence naming the exception TYPE only. The
+    # text is user-facing (every failures surface), so ``str(exc)`` — which can
+    # carry a path, SQL or a connection string — never reaches it.
+    plain = ZeroDivisionError("float division by zero at /Users/analyst/secret.xlsx")
+    text = _engine_error_text("debt", plain)
+    assert text.startswith("Debt: the model raised ZeroDivisionError")
+    assert "Your saved assumptions were kept" in text or "saved assumptions were kept" in text
+    assert "float division" not in text
+    assert "secret.xlsx" not in text
 
 
 @pytest.mark.parametrize(

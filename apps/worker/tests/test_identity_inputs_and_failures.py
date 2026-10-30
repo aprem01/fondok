@@ -128,7 +128,7 @@ async def test_missing_identity_inputs_fail_every_dependent_engine_without_seeds
     for name, r in results.items():
         assert r["status"] == "failed", (name, r)
         assert r.get("outputs") is None
-        assert r["failure"]["code"] == "missing_identity_inputs", (name, r)
+        assert r["failure"]["reason"] == "missing_identity_inputs", (name, r)
         assert r["failure"]["engine"] == name
         assert r["failure"]["message"]
     # Each engine lists exactly the identity inputs it (transitively) needs.
@@ -142,7 +142,7 @@ async def test_missing_identity_inputs_fail_every_dependent_engine_without_seeds
     for r in rows:
         assert r["status"] == "failed"
         assert r["outputs"] is None
-        assert r["failure"]["code"] == "missing_identity_inputs"
+        assert r["failure"]["reason"] == "missing_identity_inputs"
         assert r["error"] == r["failure"]["message"]
     # The deal row is never overwritten with seed values.
     assert deal_row._mapping["keys"] is None
@@ -175,7 +175,7 @@ async def test_engines_that_do_not_need_a_missing_input_still_run() -> None:
     )
     for name in ("capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
         assert results[name]["status"] == "failed", results[name]
-        assert results[name]["failure"]["code"] == "missing_identity_inputs"
+        assert results[name]["failure"]["reason"] == "missing_identity_inputs"
         assert results[name]["failure"]["missing"] == ["purchase_price"]
     _no_seed_identity_anywhere(results)
 
@@ -196,9 +196,9 @@ async def test_run_single_engine_refuses_on_missing_identity_inputs() -> None:
         )
 
     assert result["status"] == "failed"
-    assert result["failure"]["code"] == "missing_identity_inputs"
+    assert result["failure"]["reason"] == "missing_identity_inputs"
     assert result["failure"]["missing"] == ["keys", "purchase_price"]
-    assert row is not None and row["failure"]["code"] == "missing_identity_inputs"
+    assert row is not None and row["failure"]["reason"] == "missing_identity_inputs"
 
 
 @pytest.mark.asyncio
@@ -281,11 +281,11 @@ async def test_loader_db_error_is_a_typed_load_error_and_alerts(monkeypatch) -> 
     assert set(results) == set(ENGINE_NAMES)
     for name, r in results.items():
         assert r["status"] == "failed", (name, r)
-        assert r["failure"]["code"] == "load_error", (name, r)
+        assert r["failure"]["reason"] == "load_error", (name, r)
         assert r["failure"]["exception_type"], (name, r)
         assert "no document" not in r["failure"]["message"].lower()
     assert {r["engine"] for r in rows} == set(ENGINE_NAMES)
-    assert all(r["failure"]["code"] == "load_error" for r in rows)
+    assert all(r["failure"]["reason"] == "load_error" for r in rows)
     assert len(calls) == 1
     assert calls[0]["severity"] == "error"
     assert calls[0]["deal_id"] == deal_id
@@ -317,7 +317,7 @@ async def test_deal_row_read_error_is_a_load_error_not_a_seed_run(monkeypatch) -
             await session.commit()
 
     assert all(r["status"] == "failed" for r in results.values())
-    assert all(r["failure"]["code"] == "load_error" for r in results.values())
+    assert all(r["failure"]["reason"] == "load_error" for r in results.values())
     assert results["revenue"]["failure"]["exception_type"]
     assert len(calls) == 1 and calls[0]["severity"] == "error"
 
@@ -337,7 +337,7 @@ async def test_malformed_override_blob_is_a_load_error_in_the_engine_path(monkey
         results = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
         )
-    assert all(r["failure"]["code"] == "load_error" for r in results.values())
+    assert all(r["failure"]["reason"] == "load_error" for r in results.values())
     assert len(calls) == 1
 
 
@@ -367,7 +367,7 @@ async def test_load_error_message_never_carries_the_exception_text(monkeypatch) 
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
         )
     for r in results.values():
-        assert r["failure"]["code"] == "load_error"
+        assert r["failure"]["reason"] == "load_error"
         assert r["failure"]["exception_type"] == "ConnectionError"
         assert "ConnectionError" in r["failure"]["message"]
         assert secret not in r["failure"]["message"]
@@ -379,6 +379,172 @@ async def test_load_error_message_never_carries_the_exception_text(monkeypatch) 
     assert secret in calls[0]["extra"]["exception_text"]
 
 
+class _AbortingSession:
+    """A Postgres-shaped session: after a failed statement EVERY execute raises
+    ("current transaction is aborted, commands ignored until end of transaction
+    block") until ``rollback()`` is called. SQLite does not behave this way, so
+    the aborted state is simulated explicitly."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.aborted = False
+        self.rollbacks = 0
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def execute(self, *args, **kwargs):
+        if self.aborted:
+            raise RuntimeError(
+                "current transaction is aborted, commands ignored until end of "
+                "transaction block"
+            )
+        return await self._inner.execute(*args, **kwargs)
+
+    async def rollback(self) -> None:
+        self.aborted = False
+        self.rollbacks += 1
+        await self._inner.rollback()
+
+
+def _abort_on_expense_read(monkeypatch, wrapper: _AbortingSession) -> None:
+    """The expense-actuals read fails AND leaves the transaction aborted."""
+    from app.services import engine_runner
+
+    async def _boom(session, **kwargs):
+        wrapper.aborted = True
+        raise RuntimeError('relation "extraction_results" does not exist')
+
+    monkeypatch.setattr(engine_runner, "_load_t12_expense_actuals", _boom)
+
+
+@pytest.mark.asyncio
+async def test_load_error_rows_are_persisted_after_an_aborted_transaction(monkeypatch) -> None:
+    """Q1 (review): on Postgres the loader's failed statement aborts the
+    transaction; without a rollback the failure INSERTs raise too, the
+    background task logs it, and the run ends with ZERO rows and
+    ``failures: []`` — a silent failure. The runners roll back first."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        ENGINE_NAMES,
+        failures_of,
+        get_run_status,
+        run_all_engines,
+        run_single_engine,
+    )
+
+    _alert_recorder(monkeypatch)
+    tenant_id, run_id, run_one = str(uuid4()), str(uuid4()), str(uuid4())
+    async with get_session_factory()() as inner:
+        deal_id = await _insert_deal(
+            inner, tenant_id=tenant_id, keys=KIMPTON_KEYS,
+            purchase_price=KIMPTON_PURCHASE_PRICE,
+        )
+        wrapper = _AbortingSession(inner)
+        _abort_on_expense_read(monkeypatch, wrapper)
+        results = await run_all_engines(
+            wrapper, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        assert wrapper.rollbacks >= 1
+        single = await run_single_engine(
+            wrapper, deal_id=deal_id, tenant_id=tenant_id, engine_name="returns",
+            run_id=run_one,
+        )
+    assert {f["engine"] for f in failures_of(results)} == set(ENGINE_NAMES)
+    assert single["failure"]["reason"] == "load_error"
+    # Read back through a FRESH session: the rows really landed.
+    async with get_session_factory()() as session:
+        rows = await get_run_status(
+            session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id
+        )
+        one = await get_run_status(
+            session, deal_id=deal_id, run_id=run_one, tenant_id=tenant_id
+        )
+    assert {r["engine"] for r in rows} == set(ENGINE_NAMES)
+    assert all(r["status"] == "failed" and r["failure"]["reason"] == "load_error" for r in rows)
+    assert [r["engine"] for r in one] == ["returns"]
+    assert one[0]["failure"]["reason"] == "load_error"
+
+
+@pytest.mark.asyncio
+async def test_engine_error_message_never_carries_the_exception_text(monkeypatch) -> None:
+    """Q2 (review): the same redaction rule for ``engine_error`` — the
+    user-facing message names the exception TYPE only; ``str(exc)`` goes to
+    the logger / ``report_alert``. A pydantic ``ValidationError`` keeps its
+    plain-language E-023 sentence (field names and bounds) with no raw
+    pydantic text appended."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.engine_runner import run_all_engines
+
+    calls = _alert_recorder(monkeypatch)
+    secret = "/Users/analyst/private/term-sheet.xlsx postgresql://svc:S3cr3t@db"
+
+    class _Boom:
+        def run(self, _input):
+            raise RuntimeError(f"could not read {secret}")
+
+    monkeypatch.setitem(engine_runner.ENGINE_REGISTRY, "capital", _Boom)
+    async with get_session_factory()() as session:
+        results = await run_all_engines(
+            session, deal_id=KIMPTON_FIXTURE_DEAL_ID, tenant_id=str(uuid4()),
+            run_id=str(uuid4()), assumptions=kimpton_seed(),
+        )
+    cap = results["capital"]
+    assert cap["failure"]["reason"] == "engine_error"
+    assert cap["failure"]["exception_type"] == "RuntimeError"
+    assert "RuntimeError" in cap["failure"]["message"]
+    assert secret not in json.dumps(cap)
+    assert "could not read" not in json.dumps(cap)
+    assert any(secret in str(c["exc"]) for c in calls)
+
+    # ValidationError: the E-023 sentence survives, the raw pydantic text does not.
+    async with get_session_factory()() as session:
+        results = await run_all_engines(
+            session, deal_id=KIMPTON_FIXTURE_DEAL_ID, tenant_id=str(uuid4()),
+            run_id=str(uuid4()), overrides={"ltv": 1.5}, assumptions=kimpton_seed(),
+        )
+    msg = results["capital"]["failure"]["message"]
+    assert "Your saved assumptions were kept." in msg
+    assert "Technical detail" not in msg
+    assert "validation error" not in msg.lower()
+    assert "pydantic" not in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_returns_preview_loader_error_is_a_typed_load_error_and_alerts(monkeypatch) -> None:
+    """Minor (review): the non-persisting preview routes a loader failure
+    through the same typed failure + ``report_alert`` path — a 500 whose body
+    is the ``load_error`` record (type only), never a bare 500 with no alert."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+
+    calls = _alert_recorder(monkeypatch)
+    tenant_id = str(uuid4())
+    async with get_session_factory()() as session:
+        deal_id = await _insert_deal(
+            session, tenant_id=tenant_id, keys=KIMPTON_KEYS,
+            purchase_price=KIMPTON_PURCHASE_PRICE,
+        )
+        await session.execute(text("DROP TABLE portfolio_library"))
+        await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/deals/{deal_id}/engines/returns/preview",
+            json={}, headers={"X-Tenant-Id": tenant_id},
+        )
+    assert r.status_code == 500, r.text
+    detail = r.json()["detail"]
+    assert detail["reason"] == "load_error"
+    assert detail["engine"] == "returns"
+    assert detail["exception_type"]
+    assert "no such table" not in r.text
+    assert "portfolio_library" not in r.text
+    assert len(calls) == 1 and calls[0]["severity"] == "error"
+
+
 @pytest.mark.asyncio
 async def test_malformed_override_blob_is_a_500_with_a_clear_body_on_the_api() -> None:
     from httpx import ASGITransport, AsyncClient
@@ -388,18 +554,24 @@ async def test_malformed_override_blob_is_a_500_with_a_clear_body_on_the_api() -
 
     tenant_id = str(uuid4())
     async with get_session_factory()() as session:
+        blob = '{"ltv": 0.6, "note": "term sheet S3cr3tPassw0rd"'  # unterminated
         deal_id = await _insert_deal(
             session, tenant_id=tenant_id, keys=KIMPTON_KEYS,
-            purchase_price=KIMPTON_PURCHASE_PRICE, field_overrides="not json {",
+            purchase_price=KIMPTON_PURCHASE_PRICE, field_overrides=blob,
         )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/deals/{deal_id}", headers={"X-Tenant-Id": tenant_id})
         assert r.status_code == 500, r.text
-        assert "field_overrides" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert "field_overrides" in detail and "JSONDecodeError" in detail
+        # Q2 (review): the body names the column and the exception type only —
+        # never the stored blob or the decoder's own text.
+        assert "S3cr3tPassw0rd" not in r.text and "Expecting" not in r.text
         # The memo envelope reads the same column — same answer, never Base.
         r = await c.get(f"/deals/{deal_id}/memo", headers={"X-Tenant-Id": tenant_id})
         assert r.status_code == 500, r.text
         assert "field_overrides" in r.json()["detail"]
+        assert "S3cr3tPassw0rd" not in r.text
 
 
 # ─────────────────────────── ai_confidence ───────────────────────────
@@ -456,10 +628,10 @@ async def test_run_status_and_engine_list_carry_the_failure_list() -> None:
         body = r.json()
         assert {f["engine"] for f in body["failures"]} == set(ENGINE_NAMES)
         for f in body["failures"]:
-            assert f["code"] == "missing_identity_inputs"
+            assert f["reason"] == "missing_identity_inputs"
             assert f["message"]
             assert f["missing"]
-        assert all(e["failure"]["code"] == "missing_identity_inputs" for e in body["engines"])
+        assert all(e["failure"]["reason"] == "missing_identity_inputs" for e in body["engines"])
 
         r = await c.get(f"/deals/{deal_id}/engines", headers=headers)
         assert r.status_code == 200, r.text
@@ -472,7 +644,7 @@ async def test_run_status_and_engine_list_carry_the_failure_list() -> None:
         )
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "failed"
-        assert r.json()["failure"]["code"] == "missing_identity_inputs"
+        assert r.json()["failure"]["reason"] == "missing_identity_inputs"
 
 
 @pytest.mark.asyncio
@@ -487,10 +659,10 @@ async def test_an_engine_exception_is_a_typed_engine_error_and_upstream_skips_ar
         )
     cap = results["capital"]
     assert cap["status"] == "failed"
-    assert cap["failure"]["code"] == "engine_error"
+    assert cap["failure"]["reason"] == "engine_error"
     assert cap["failure"]["exception_type"] == "ValidationError"
     assert cap["failure"]["message"] == cap["error"]
-    assert results["debt"]["failure"]["code"] == "engine_skipped"
+    assert results["debt"]["failure"]["reason"] == "engine_skipped"
     assert "capital" in results["debt"]["failure"]["message"]
     assert results["revenue"]["status"] == "complete"
     assert "failure" not in results["revenue"]

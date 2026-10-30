@@ -41,7 +41,7 @@ from .database import dispose_engine, dispose_migrations_engine, get_engine
 from .migrations import run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
-from .services.engine_runner import MissingIdentityInputsError
+from .services.engine_runner import EngineInputsLoadError, MissingIdentityInputsError
 from .services.extraction_watchdog import start_watchdog, stop_watchdog
 from .services.embedding_repair import start_embedding_repair, stop_embedding_repair
 from .telemetry import setup_langsmith, setup_telemetry
@@ -237,6 +237,16 @@ async def _missing_identity_inputs_response(
     )
 
 
+async def _engine_inputs_load_error_response(
+    _request: Request, exc: Exception
+) -> JSONResponse:
+    """500 — the deal's data could not be read, so the in-memory chain did not
+    run. The body is the typed ``load_error`` failure (exception TYPE only;
+    the full text went to the log and ``report_alert``)."""
+    assert isinstance(exc, EngineInputsLoadError)
+    return JSONResponse(status_code=500, content={"detail": exc.failure.as_dict()})
+
+
 def create_app() -> FastAPI:
     """Application factory — used by uvicorn and tests."""
     app = FastAPI(
@@ -279,6 +289,7 @@ def create_app() -> FastAPI:
     # vocabulary (``reason``, the ``missing`` fields, the sentence). Routes
     # need no per-route handling, so no chain can fall through to a 500.
     app.add_exception_handler(MissingIdentityInputsError, _missing_identity_inputs_response)
+    app.add_exception_handler(EngineInputsLoadError, _engine_inputs_load_error_response)
 
     app.include_router(health_router.router, tags=["health"])
     app.include_router(deals_router.router, prefix="/deals", tags=["deals"])

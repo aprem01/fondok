@@ -844,9 +844,16 @@ def _coerce_overrides(value: Any) -> dict[str, Any]:
         try:
             value = json.loads(value)
         except json.JSONDecodeError as exc:
+            # The decode error's text can quote the stored blob; the client
+            # body names the column and the exception type only (the full
+            # text goes to the log).
+            logger.exception("deals.field_overrides is not valid JSON")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"deals.field_overrides is not valid JSON: {exc}",
+                detail=(
+                    "deals.field_overrides is not valid JSON "
+                    f"({type(exc).__name__}); the row needs repair."
+                ),
             ) from exc
     if isinstance(value, dict):
         return value
