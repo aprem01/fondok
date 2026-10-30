@@ -25,7 +25,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+from tests.fixtures.kimpton_seed import (
+    KIMPTON_FIXTURE_DEAL_ID,
+    kimpton_partnership_field_overrides,
+    kimpton_seed,
+)
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
@@ -105,7 +109,11 @@ async def _run(overrides: dict | None = None) -> dict:
                 session, deal_id=KIMPTON, tenant_id=str(uuid4()),
                 run_id=str(uuid4()), assumptions=kimpton_seed(),
             )
-        deal_id, tenant_id = await _deal_with_overrides(session, overrides)
+        # B5 — the deal carries the Kimpton partnership terms so the whole
+        # chain (Partnership and Cash Flow distributions included) runs.
+        deal_id, tenant_id = await _deal_with_overrides(
+            session, {**kimpton_partnership_field_overrides(), **overrides}
+        )
         return await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
         )

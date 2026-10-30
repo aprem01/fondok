@@ -19,15 +19,23 @@ Both ``tests/test_engine_runner.py::test_run_all_engines_kimpton`` and
 ``scripts/compare_golden_baseline.py`` go through that call, so the golden
 numbers are byte-identical to the pre-fixture run.
 
-Keep the Kimpton values in THIS module only. The non-identity part of the
-dict mirrors the production ``_default_assumptions()`` values on purpose
-(``test_kimpton_fixture_defaults_match_production_defaults`` pins that): a
-production default change must be a conscious golden re-baseline, never a
-silent drift.
+Keep the Kimpton values in THIS module only. The non-identity, non-
+partnership part of the dict mirrors the production ``_default_assumptions()``
+values on purpose (``test_kimpton_fixture_defaults_match_production_defaults``
+pins that): a production default change must be a conscious golden
+re-baseline, never a silent drift.
+
+B5 (2026-10-30) — the Kimpton Angler partnership TERMS (GP / LP split, the 10%
+preferred return and the six-tier promote stack in
+:data:`KIMPTON_PARTNERSHIP_TERMS`) are the deal's own terms and live here, in
+the fixture. Until then the production runner seeded that promote stack
+(``_KIMPTON_WATERFALL_REFERENCE``) onto every deal; production now runs the
+waterfall only on terms a deal carries.
 """
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 #: The baseline's ``deal_id``. Historically ``uuid5(NAMESPACE_URL,
@@ -41,6 +49,40 @@ KIMPTON_FIXTURE_DEAL_ID = "d849e90a-9581-519c-a796-5e09277b7260"
 #: Kimpton numbers put these on the row (``keys`` / ``purchase_price``).
 KIMPTON_KEYS = 132
 KIMPTON_PURCHASE_PRICE = 36_400_000
+
+
+#: The Kimpton Angler JV terms (FON-66 §3), in the loader's own channels: the
+#: three scalars and the per-tier promote stack keyed by tier index (the shape
+#: a partnership document or the analyst's Partnership-tab entries produce).
+KIMPTON_PARTNERSHIP_TERMS: dict[str, Any] = {
+    "gp_equity_pct": 0.10,
+    "lp_equity_pct": 0.90,
+    "pref_rate": 0.10,
+    "partnership_waterfall_overrides": {
+        0: {"hurdle_rate": 0.10, "gp_split": 0.00, "lp_split": 1.00},
+        1: {"hurdle_rate": 0.15, "gp_split": 0.20, "lp_split": 0.80},
+        2: {"hurdle_rate": 0.20, "gp_split": 0.25, "lp_split": 0.75},
+        3: {"hurdle_rate": 0.25, "gp_split": 0.25, "lp_split": 0.75},
+        4: {"hurdle_rate": 0.30, "gp_split": 0.25, "lp_split": 0.75},
+        5: {"hurdle_rate": 0.50, "gp_split": 0.50, "lp_split": 0.50},
+    },
+}
+
+
+def kimpton_partnership_field_overrides() -> dict[str, Any]:
+    """The Kimpton partnership terms as ``deals.field_overrides`` entries — the
+    paths the Partnership tab writes — for tests that run a DATABASE deal
+    which must carry partnership terms (B5: without them the partnership
+    engine reports ``not_applicable``)."""
+    out: dict[str, Any] = {
+        "gp_equity_pct": KIMPTON_PARTNERSHIP_TERMS["gp_equity_pct"],
+        "lp_equity_pct": KIMPTON_PARTNERSHIP_TERMS["lp_equity_pct"],
+        "pref_rate": KIMPTON_PARTNERSHIP_TERMS["pref_rate"],
+    }
+    for idx, tier in KIMPTON_PARTNERSHIP_TERMS["partnership_waterfall_overrides"].items():
+        for field, value in tier.items():
+            out[f"partnership.waterfall.{idx}.{field}"] = value
+    return out
 
 
 def kimpton_seed() -> dict[str, Any]:
@@ -81,15 +123,16 @@ def kimpton_seed() -> dict[str, Any]:
         "selling_costs_pct": 0.02,
         # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
         "transfer_tax_pct": 0.0,
-        "gp_equity_pct": 0.10,
-        "lp_equity_pct": 0.90,
-        # FON-66 — Kimpton Angler benchmark preferred return (10%).
-        "pref_rate": 0.10,
+        # Deep-copied: the per-tier map is mutable and must never be shared
+        # between runs.
+        **copy.deepcopy(KIMPTON_PARTNERSHIP_TERMS),
     }
 
 
 __all__ = [
     "KIMPTON_FIXTURE_DEAL_ID",
+    "KIMPTON_PARTNERSHIP_TERMS",
+    "kimpton_partnership_field_overrides",
     "KIMPTON_KEYS",
     "KIMPTON_PURCHASE_PRICE",
     "kimpton_seed",

@@ -331,15 +331,23 @@ async def test_run_scenario_applies_overrides_to_engine() -> None:
         assert run["scenario_id"] == sid
         assert run["run_id"]
 
-        # Every engine ran.
+        # Every engine ran — except Partnership: B5, the deal carries no
+        # partnership terms, so it is a typed not-applicable refusal and the
+        # Cash Flow statement still runs (without distribution lines).
         engines = run["engines"]
         for name in (
             "revenue", "fb", "expense", "capital",
-            "debt", "returns", "sensitivity", "partnership",
+            "debt", "returns", "sensitivity", "cash_flow",
         ):
             assert engines[name]["status"] == "complete", (
                 f"engine {name} did not complete: {engines[name]}"
             )
+        assert engines["partnership"]["failure"]["reason"] == "not_applicable"
+        assert engines["partnership"]["failure"]["message"] == (
+            "no partnership terms on this deal"
+        )
+        assert engines["cash_flow"]["outputs"]["distributions"] == []
+        assert engines["cash_flow"]["outputs"]["distributions_unavailable"]
 
         # Downside flexes BOTH NOI Y1 down AND IRR down vs. the base.
         scen_irr = engines["returns"]["outputs"]["levered_irr"]

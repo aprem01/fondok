@@ -998,6 +998,10 @@ class CashFlowStatementOutput(BaseModel):
     unlevered: list[CashFlowStatementLine]
     levered: list[CashFlowStatementLine]
     distributions: list[CashFlowStatementLine]
+    # B5 (go-live audit) — why ``distributions`` is empty when it is: the
+    # deal carries no partnership terms, so no waterfall was run (e.g.
+    # "no partnership terms on this deal"). ``None`` when the lines exist.
+    distributions_unavailable: str | None = None
     # Canonical bottom-line series — a direct view over the returns engine, so
     # consumers (and the reconciliation guard) can compare without re-summing.
     unlevered_cash_flow: list[float]

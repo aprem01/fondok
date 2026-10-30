@@ -1559,6 +1559,22 @@ async def _pricing_sheets(
     return grid_d, mp_d, None, grid_unavailable
 
 
+def _partnership_unavailable(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """B5 — when the canonical run's partnership row is a ``not_applicable``
+    refusal (the deal carries no partnership terms), the code and the
+    engine's own sentence, so the Partnership sheet states it instead of an
+    "engine skipped". ``None`` for any other state."""
+    row = snapshot.get("partnership")
+    failure = row.get("failure") if isinstance(row, dict) else None
+    if not isinstance(failure, dict):
+        return None
+    if str(failure.get("reason") or "") != ReasonCode.NOT_APPLICABLE.value:
+        return None
+    message = str(failure.get("message") or "").strip() or "no partnership terms on this deal"
+    refuse(ReasonCode.NOT_APPLICABLE, message, "partnership")
+    return {"code": ReasonCode.NOT_APPLICABLE.value, "reason": message}
+
+
 def _build_sensitivity_engine(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """The persisted ``sensitivity`` engine output for the deck heat-map.
 
@@ -1722,6 +1738,10 @@ async def _assemble_live_payload(
     partnership_block = _build_partnership(partnership, partnership_inputs)
     if partnership_block:
         model["partnership_engine"] = partnership_block
+    else:
+        unavailable = _partnership_unavailable(snapshot)
+        if unavailable:
+            model["partnership_unavailable"] = unavailable
 
     # A1 — the IC deck's heat-map reads the sensitivity ENGINE's persisted
     # output for this run, or states why there is none. Never synthesized.

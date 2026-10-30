@@ -42,7 +42,7 @@ from .base import BaseEngine
 from .capital import CapitalEngineOutput
 from .debt import DebtEngineOutputExt
 from .expense import ExpenseEngineOutput
-from .partnership import PartnershipOutputExt
+from .partnership import NO_WATERFALL_REASON, PartnershipOutputExt
 from .returns import ReturnsEngineOutputExt
 
 # Reconciliation tolerance — the composed statement must tie out to the
@@ -65,7 +65,10 @@ class CashFlowStatementInput(BaseModel):
     expense: ExpenseEngineOutput
     debt: DebtEngineOutputExt
     returns: ReturnsEngineOutputExt
-    partnership: PartnershipOutputExt
+    # B5 — ``None`` when the deal carries no partnership terms (the
+    # partnership engine reported ``not_applicable``); the statement then has
+    # no distribution lines and ``distributions_unavailable`` says why.
+    partnership: PartnershipOutputExt | None = None
     # Transfer / recordation tax rate applied to the gross sale on exit — the
     # returns engine deducts it alongside brokerage selling costs, so the
     # unlevered disposition line must too (0 unless the analyst set it).
@@ -426,8 +429,8 @@ class CashFlowStatementEngine(
         # ────────────────────────── Distributions ─────────────────────────
         # Sourced from the partnership waterfall — LP pref, GP promote, exit —
         # NOT a hardcoded 10% pref-target proxy (the old CashFlowTab default).
-        lp_flows = [float(x) for x in (part.lp_cash_flows or [])]
-        gp_flows = [float(x) for x in (part.gp_cash_flows or [])]
+        lp_flows = [float(x) for x in (part.lp_cash_flows or [])] if part else []
+        gp_flows = [float(x) for x in (part.gp_cash_flows or [])] if part else []
         dist_lines: list[CashFlowStatementLine] = []
         if lp_flows:
             dist_lines.append(
@@ -443,6 +446,8 @@ class CashFlowStatementEngine(
                     note=(
                         "Partnership → GP cash flows incl. promote "
                         f"(total promote ${part.promote_amount:,.0f})."
+                        if part
+                        else "Partnership → GP cash flows incl. promote."
                     ),
                 )
             )
@@ -463,6 +468,9 @@ class CashFlowStatementEngine(
             unlevered=unlev_lines,
             levered=lev_lines,
             distributions=dist_lines,
+            distributions_unavailable=(
+                None if part is not None else NO_WATERFALL_REASON
+            ),
             unlevered_cash_flow=[float(v) for v in unlev_canon],
             levered_cash_flow=[float(v) for v in lev_canon],
             provenance=provenance,

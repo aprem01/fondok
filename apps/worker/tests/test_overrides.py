@@ -249,6 +249,17 @@ async def test_partnership_waterfall_tombstone_round_trips_through_loader() -> N
                 "name": "Tombstone Waterfall Hotel",
                 "overrides": json.dumps(
                     {
+                        # B5 — the deal's own promote stack, as the analyst
+                        # entered it (hurdle + GP split; LP derives). There
+                        # is no seed stack beneath it any more.
+                        **{
+                            f"partnership.waterfall.{i}.{f}": v
+                            for i, (h, gp) in enumerate(
+                                [(0.10, 0.0), (0.15, 0.20), (0.20, 0.25),
+                                 (0.25, 0.25), (0.30, 0.25), (0.50, 0.50)]
+                            )
+                            for f, v in (("hurdle_rate", h), ("gp_split", gp))
+                        },
                         # Flat bool — what PartnershipTab writes on Remove.
                         "partnership.waterfall.2.removed": True,
                         # Structured shape a note-bearing panel could write.
@@ -269,9 +280,9 @@ async def test_partnership_waterfall_tombstone_round_trips_through_loader() -> N
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
 
     wf_ov = base["partnership_waterfall_overrides"]
-    assert wf_ov[2] == {"removed": True}
-    assert wf_ov[4] == {"removed": False}
-    assert wf_ov[1] == {"gp_split": 0.30}
+    assert wf_ov[2] == {"hurdle_rate": 0.20, "gp_split": 0.25, "removed": True}
+    assert wf_ov[4] == {"hurdle_rate": 0.30, "gp_split": 0.25, "removed": False}
+    assert wf_ov[1] == {"hurdle_rate": 0.15, "gp_split": 0.30}
     assert wf_ov[6] == {"hurdle_rate": 0.55, "gp_split": 0.60, "lp_split": 0.40}
     assert base["partnership_waterfall_tier_count"] == 7
     # The tombstone was ROUTED, not dumped as a stray top-level base key, and
@@ -286,10 +297,12 @@ async def test_partnership_waterfall_tombstone_round_trips_through_loader() -> N
     # The builder — exactly what the partnership engine step feeds the engine.
     wf = _build_partnership_waterfall(wf_ov, base["partnership_waterfall_tier_count"])
     labels = [t.label for t in wf]
-    assert len(wf) == 6  # 6 seed − idx 2 removed + idx 6 added
-    assert "Tier 3 (to 20%)" not in labels  # the tombstoned band is gone
-    assert "Tier 5 (to 30%)" in labels  # removed:"false" kept idx 4
-    assert labels[-1] == "Tier 7 (to 55%)"
+    assert len(wf) == 6  # 6 entered − idx 2 removed + idx 6 added
+    assert 0.20 not in [t.hurdle_rate for t in wf]  # the tombstoned band is gone
+    assert 0.30 in [t.hurdle_rate for t in wf]  # removed:"false" kept idx 4
+    # Labels are positional (``promote_tier_label``): the top tier is
+    # open-ended above the one below it.
+    assert labels[-1] == "Tier 6 (>50%)"
     assert (wf[1].gp_split, wf[1].lp_split) == (0.30, 0.70)
     assert [t.hurdle_rate for t in wf] == sorted(t.hurdle_rate for t in wf)
 

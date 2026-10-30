@@ -450,6 +450,15 @@ class AssumptionSourcesResponse(BaseModel):
     ``analyst_override``. The web app surfaces these as small badges
     on the Investment / Returns / Overview tabs so reviewers can see
     which numbers are grounded vs which are still defaults.
+
+    C3 (go-live audit) — the partnership terms travel here too, keyed
+    ``partnership.gp_equity_pct`` / ``partnership.lp_equity_pct`` /
+    ``partnership.pref_rate`` / ``partnership.waterfall.tier_count`` /
+    ``partnership.waterfall.<i>.{hurdle_rate,gp_split,lp_split,label,removed}``:
+    a term the deal carries with its own label (``partnership_doc`` /
+    ``analyst_override``), every other one as the platform suggestion
+    (``engines.partnership.SUGGESTED_*``) with source ``seed`` and reason
+    ``awaiting_analyst``. The suggestions are never applied to the model.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -3216,6 +3225,10 @@ async def _compute_assumption_sources(
             session, deal_id=deal_id, tenant_id=tenant_id, source_fields=source_fields
         )
     raw_reasons = base.pop("__reasons__", None)
+    # C3 — the partnership terms view: the deal's carried terms and, for every
+    # term it does not carry, the platform suggestion (source ``seed``,
+    # reason ``awaiting_analyst``), keyed ``partnership.*``. Merged below.
+    raw_partnership = base.pop("__partnership_terms__", None)
     # FON-89 — the loader's Year-1 displacement verdict (dict or absent).
     raw_displacement = base.pop("__displacement_status__", None)
     displacement_status: dict[str, Any] | None = (
@@ -3253,6 +3266,10 @@ async def _compute_assumption_sources(
     # Only return entries that have a tracked source AND a value the
     # UI can read.
     sources_filtered = {k: s for k, s in sources.items() if k in values}
+    if isinstance(raw_partnership, dict):
+        values.update(raw_partnership.get("values") or {})
+        sources_filtered.update(raw_partnership.get("sources") or {})
+        assumption_reasons.update(raw_partnership.get("reasons") or {})
 
     # Per-document provenance lookup. Best-effort — failures degrade
     # to an empty map (the badge UI just doesn't render the link icon).

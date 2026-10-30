@@ -28,9 +28,10 @@ reads one consistent snapshot.
   cap rate and exit NOI, and the returns schedule by exit year. A loss-making deal is reported
   honestly — a negative IRR or a multiple below one is never floored.
 - **Sensitivity** IRR and equity multiple across exit cap, hold, growth and other pairs.
-- **Partnership** The GP / LP waterfall with preferred return, catch-up and promote tiers. A
-  shortfall is funded as a dated pro-rata capital call that adds to unreturned capital, and is
-  reported as additional contributions.
+- **Partnership** The GP / LP waterfall with preferred return, catch-up and promote tiers. It runs
+  only on the deal's own partnership terms; without them it reports “not applicable — no
+  partnership terms on this deal”. A shortfall is funded as a dated pro-rata capital call that adds
+  to unreturned capital, and is reported as additional contributions.
 
 :::
 
@@ -138,11 +139,23 @@ breakdown.
 :::
 
 ::: card
-#### Partnership — defaults
+#### Partnership — the deal's own terms, or not applicable
 
-<!-- source: apps/worker/app/services/engine_runner.py (_seed_defaults gp_equity_pct 0.10, lp_equity_pct 0.90, pref_rate 0.10) -->
-GP equity 10%, LP equity 90%, preferred return 10% a year, badged Seed until entered. A shortfall
-is funded as a dated pro-rata capital call by ownership split; the preferred return accrues on it.
+<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT 0.10, SUGGESTED_LP_EQUITY_PCT 0.90, SUGGESTED_PREF_RATE 0.10, SUGGESTED_PROMOTE_TIERS, NO_PARTNERSHIP_TERMS_REASON), apps/worker/app/services/engine_runner.py (partnership_terms, _partnership_terms_view, OPTIONAL_WHEN_NOT_APPLICABLE), apps/worker/app/api/deals.py (assumption_sources partnership.*) -->
+The waterfall runs only on partnership terms the deal carries — from an uploaded partnership / JV
+document or entered on the Partnership tab: the GP / LP equity split (one side derives the other),
+the preferred return and at least one promote tier (a hurdle and a split). Without them the
+Partnership engine reports **not applicable — “no partnership terms on this deal”** (or names the
+missing terms when only some are entered); the Partnership sheet of the Excel export states the same
+reason, and the Cash Flow statement runs without distribution lines and says why. No benchmark
+waterfall is ever applied in their place.
+
+<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT, SUGGESTED_LP_EQUITY_PCT, SUGGESTED_PREF_RATE, SUGGESTED_PROMOTE_TIERS), apps/worker/app/engines/partnership.py (PartnershipEngine deficit capital call) -->
+The platform's suggested terms — GP 10% / LP 90%, a 10% preferred return, and promote tiers of 0%
+GP to 10%, 20% to 15%, 25% to 20%, 25% to 25%, 25% to 30% and 50% above 30% — are defined once and
+offered on the Partnership tab badged Seed (awaiting your decision). They never reach the model
+until entered. A shortfall is funded as a dated pro-rata capital call by ownership split; the
+preferred return accrues on it.
 
 :::
 
@@ -195,10 +208,12 @@ web app reads them via /deals/\{id\}/engine_outputs.
   reported honestly, not floored or crashed.
 - **Sensitivity** IRR heatmap across exit cap × RevPAR growth (or other configurable pairs); the IC
   deck prints this persisted grid, never a synthesized one.
-- **Partnership** GP / LP waterfall with preferred return, catch-up, promote tiers. A deficit period
-  is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned
-  capital — the preferred return accrues on it — and is reported as additional contributions; Cash
-  Flow → Partnership → Returns carry one treatment of additional equity.
+- **Partnership** GP / LP waterfall with preferred return, catch-up, promote tiers — run only on the
+  deal's own terms (a partnership document or the analyst's entries); otherwise the engine row is a
+  `not_applicable` refusal and the Cash Flow statement runs without distribution lines. A deficit
+  period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to
+  unreturned capital — the preferred return accrues on it — and is reported as additional
+  contributions; Cash Flow → Partnership → Returns carry one treatment of additional equity.
 
 :::
 

@@ -16,12 +16,16 @@ truly source-derived, not fallback:
 
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+
+from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
 
 # Per-file SQLite DB, set BEFORE any app module imports so the cached Settings
 # pick up the right DSN (mirrors test_fon73_run_scoped_readers.py).
@@ -207,7 +211,7 @@ _WF = [
 def _partnership_annual() -> PartnershipInputExt:
     return PartnershipInputExt(
         deal_id=uuid4(), total_equity=11_000_000,
-        gp_equity_pct=0.10, lp_equity_pct=0.90, waterfall=_WF,
+        gp_equity_pct=0.10, lp_equity_pct=0.90, pref_rate=0.08, waterfall=_WF,
         cash_flows=[1_000_000, 1_200_000, 1_400_000, 1_600_000, 20_000_000],
     )
 
@@ -215,7 +219,7 @@ def _partnership_annual() -> PartnershipInputExt:
 def _partnership_monthly() -> PartnershipInputExt:
     return PartnershipInputExt(
         deal_id=uuid4(), total_equity=11_000_000,
-        gp_equity_pct=0.10, lp_equity_pct=0.90, waterfall=_WF,
+        gp_equity_pct=0.10, lp_equity_pct=0.90, pref_rate=0.08, waterfall=_WF,
         cash_flows=[1],  # unused on the monthly path
         period="monthly",
         cash_flows_monthly=[-11_000_000] + [100_000] * 51 + [20_000_000],
@@ -324,7 +328,11 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
             "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
             "VALUES (:id, :tenant, :name, 132, 36400000, :fo)"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Prov Test", "fo": "{}"},
+        # B5 — the deal carries partnership terms, so the waterfall runs.
+        {
+            "id": deal_id, "tenant": tenant_id, "name": "Prov Test",
+            "fo": json.dumps(kimpton_partnership_field_overrides()),
+        },
     )
 
 

@@ -28,6 +28,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
+
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-negative-noi.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
@@ -208,7 +210,10 @@ async def test_full_chain_completes_on_a_negative_year_one_noi() -> None:
         deal_id, tenant_id = await _deal(
             session,
             {"noi_override_by_year": [-69_982.0, 2_400_000.0, 3_100_000.0,
-                                      3_300_000.0, 3_400_000.0]},
+                                      3_300_000.0, 3_400_000.0],
+             # B5 — the deal carries partnership terms, so Partnership runs
+             # on the negative year too.
+             **kimpton_partnership_field_overrides()},
         )
         results = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())

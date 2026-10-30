@@ -39,6 +39,60 @@ from .base import BaseEngine
 from .returns import irr, xirr
 
 
+# ─────────── C3 / B5 (go-live audit) — the partnership suggestions ───────────
+#
+# THE one definition of Fondok's partnership suggestions. Until 2026-10-30
+# three copies disagreed (this module defaulted the pref to 8%, the runner's
+# seed said 10%, the web's Partnership tab carried its own 10% / promote
+# stack) and the runner ran EVERY deal's waterfall on the Kimpton Angler
+# benchmark stack, unbadged. Now:
+#
+# * these values are SUGGESTIONS only: ``GET /deals/{id}/assumption_sources``
+#   publishes them as ``partnership.*`` with source ``seed`` (reason
+#   ``awaiting_analyst``) so the Partnership tab can offer them;
+# * the engine never applies them — the waterfall runs only on terms the deal
+#   carries (an analyst override or an extracted partnership document), and
+#   reports ``not_applicable`` / :data:`NO_PARTNERSHIP_TERMS_REASON` otherwise.
+SUGGESTED_GP_EQUITY_PCT: float = 0.10
+SUGGESTED_LP_EQUITY_PCT: float = 0.90
+SUGGESTED_PREF_RATE: float = 0.10
+#: Promote tiers as ``(hurdle_rate, gp_split)``; ``lp_split = 1 − gp_split``.
+#: Tier 1 (0% GP to a 10% hurdle) is the preferred return; the top tier
+#: (hurdle 50%) is the ">30% IRR" band.
+SUGGESTED_PROMOTE_TIERS: tuple[tuple[float, float], ...] = (
+    (0.10, 0.00),
+    (0.15, 0.20),
+    (0.20, 0.25),
+    (0.25, 0.25),
+    (0.30, 0.25),
+    (0.50, 0.50),
+)
+#: Why the partnership engine did not run on a deal without terms.
+NO_PARTNERSHIP_TERMS_REASON = "no partnership terms on this deal"
+#: What a view over the waterfall (the cash-flow statement's distribution
+#: lines) prints when the engine did not run — covers "no terms" and
+#: "incomplete terms" alike.
+NO_WATERFALL_REASON = (
+    "no partnership waterfall: the deal does not carry a complete set of "
+    "partnership terms"
+)
+
+
+def promote_tier_label(
+    position: int, *, hurdle: float, gp_split: float, prev_hurdle: float | None, is_top: bool
+) -> str:
+    """The display label of the promote tier at 0-based ``position`` in the
+    built stack: the first tier with no GP share is the preferred return
+    ("Preferred (to 10%)"); the top tier of a multi-tier stack is open-ended
+    above the previous hurdle ("Tier 6 (>30%)"); every other tier runs to its
+    hurdle ("Tier 2 (to 15%)")."""
+    if position == 0 and gp_split == 0:
+        return f"Preferred (to {hurdle:.0%})"
+    if is_top and prev_hurdle is not None:
+        return f"Tier {position + 1} (>{prev_hurdle:.0%})"
+    return f"Tier {position + 1} (to {hurdle:.0%})"
+
+
 class PartnershipInputExt(BaseModel):
     """Self-contained input — bypasses the canonical PartnershipInput when the
     caller already has a flat cash flow series rather than a ReturnsEngineOutput.
@@ -48,9 +102,10 @@ class PartnershipInputExt(BaseModel):
 
     deal_id: UUID
     total_equity: Annotated[float, Field(gt=0)]
-    gp_equity_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.10
-    lp_equity_pct: Annotated[float, Field(ge=0.0, le=1.0)] = 0.90
-    pref_rate: Annotated[float, Field(ge=0.0, le=0.30)] = 0.08
+    # C3 — no defaults: the engine runs only on the deal's own terms.
+    gp_equity_pct: Annotated[float, Field(ge=0.0, le=1.0)]
+    lp_equity_pct: Annotated[float, Field(ge=0.0, le=1.0)]
+    pref_rate: Annotated[float, Field(ge=0.0, le=0.30)]
     waterfall: list[WaterfallTier] = Field(min_length=1)
     cash_flows: list[float] = Field(
         min_length=1,
@@ -868,10 +923,17 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
 
 
 __all__ = [
+    "NO_PARTNERSHIP_TERMS_REASON",
+    "NO_WATERFALL_REASON",
+    "SUGGESTED_GP_EQUITY_PCT",
+    "SUGGESTED_LP_EQUITY_PCT",
+    "SUGGESTED_PREF_RATE",
+    "SUGGESTED_PROMOTE_TIERS",
     "PartnershipEngine",
     "PartnershipInputExt",
     "PartnershipOutputExt",
     "TierAllocation",
+    "promote_tier_label",
 ]
 
 

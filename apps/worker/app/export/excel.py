@@ -992,6 +992,18 @@ def _build_partnership(wb: Workbook, model: dict[str, Any]) -> None:
     ws["A1"] = "Partnership Structure"
     _style_header_row(ws, 1, 3)
     row = 2
+    unavailable = model.get("partnership_unavailable")
+    if not p and isinstance(unavailable, dict):
+        # B5 — the deal carries no partnership terms: the waterfall was not
+        # run, and the sheet says so with the engine's own reason.
+        _write_value(
+            ws, row, 1, None, None, concept="partnership",
+            missing=str(unavailable.get("reason") or "no partnership terms on this deal"),
+            code=ReasonCode.NOT_APPLICABLE,
+        )
+        _autosize(ws, [30, 18, 18])
+        _freeze_top(ws, row=2)
+        return
     if not p:
         _write_value(
             ws, row, 1, None, None, concept="partnership",

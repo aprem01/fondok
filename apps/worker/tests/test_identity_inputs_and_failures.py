@@ -696,12 +696,19 @@ def test_kimpton_fixture_defaults_match_production_defaults() -> None:
     fails here first and becomes a conscious golden re-baseline."""
     from app.services.engine_runner import IDENTITY_INPUT_KEYS, _default_assumptions
 
+    from tests.fixtures.kimpton_seed import KIMPTON_PARTNERSHIP_TERMS
+
     fixture = kimpton_seed()
     assert set(IDENTITY_INPUT_KEYS) == {"keys", "purchase_price"}
     for key in IDENTITY_INPUT_KEYS:
         assert key in fixture
         assert key not in _default_assumptions()
-    assert {k: v for k, v in fixture.items() if k not in IDENTITY_INPUT_KEYS} == (
+    # B5 — partnership terms are deal terms: in the fixture, never a default.
+    for key in KIMPTON_PARTNERSHIP_TERMS:
+        assert key in fixture
+        assert key not in _default_assumptions()
+    deal_keys = set(IDENTITY_INPUT_KEYS) | set(KIMPTON_PARTNERSHIP_TERMS)
+    assert {k: v for k, v in fixture.items() if k not in deal_keys} == (
         _default_assumptions()
     )
 

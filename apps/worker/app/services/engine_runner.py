@@ -104,6 +104,14 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
+from ..engines.partnership import (
+    NO_PARTNERSHIP_TERMS_REASON,
+    SUGGESTED_GP_EQUITY_PCT,
+    SUGGESTED_LP_EQUITY_PCT,
+    SUGGESTED_PREF_RATE,
+    SUGGESTED_PROMOTE_TIERS,
+    promote_tier_label,
+)
 from ..engines.comp_sales import (
     EXIT_CAP_COMPS_SOURCE,
     cap_rate_fraction,
@@ -219,7 +227,10 @@ ENGINE_REGISTRY: dict[str, type] = {
 
 # Each engine declares the upstream outputs it needs. When any
 # dependency failed we mark this engine ``skipped`` rather than running
-# it with stale inputs.
+# it with stale inputs — except a dependency listed in
+# ``OPTIONAL_WHEN_NOT_APPLICABLE`` that reported ``not_applicable`` (B5: the
+# cash-flow statement runs without distribution lines on a deal with no
+# partnership terms).
 ENGINE_DEPS: dict[str, list[str]] = {
     "revenue": [],
     "fb": ["revenue"],
@@ -232,6 +243,22 @@ ENGINE_DEPS: dict[str, list[str]] = {
     # Move 2 — a composed view over the canonical outputs; runs LAST.
     "cash_flow": ["capital", "expense", "debt", "returns", "partnership"],
 }
+
+#: B5 — a dependency an engine runs WITHOUT when that dependency reported
+#: ``not_applicable`` (never when it failed or was skipped).
+OPTIONAL_WHEN_NOT_APPLICABLE: dict[str, frozenset[str]] = {
+    "cash_flow": frozenset({"partnership"}),
+}
+
+
+def _is_not_applicable(result: Mapping[str, Any] | None) -> bool:
+    """True when an engine result is a ``not_applicable`` refusal."""
+    if not isinstance(result, Mapping):
+        return False
+    failure = result.get("failure")
+    return isinstance(failure, Mapping) and str(
+        getattr(failure.get("reason"), "value", failure.get("reason"))
+    ) == ReasonCode.NOT_APPLICABLE.value
 
 
 # ──────── Plain-language engine failure messages (E-023, FON-63) ────────
@@ -625,11 +652,12 @@ def _default_assumptions() -> dict[str, Any]:
         "selling_costs_pct": 0.02,
         # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
         "transfer_tax_pct": 0.0,
-        "gp_equity_pct": 0.10,
-        "lp_equity_pct": 0.90,
-        # FON-66 — benchmark preferred return (10%). The promote tiers above
-        # this live in _KIMPTON_WATERFALL_REFERENCE.
-        "pref_rate": 0.10,
+        # B5 / C3 (go-live audit) — NO partnership terms here. The GP / LP
+        # split, the preferred return and the promote tiers come only from an
+        # analyst override or an extracted partnership document; without them
+        # the partnership engine reports ``not_applicable``. The platform's
+        # SUGGESTED terms (``engines.partnership.SUGGESTED_*``) are published
+        # to the web as ``partnership.*`` (source ``seed``) and never applied.
     }
 
 
@@ -745,8 +773,8 @@ _STR_SEEDED_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
 SOURCE_DERIVED_FROM_REVPAR_GROWTH = "derived_from_revpar_growth"
 # FON-66 Slice B — partnership/JV terms extracted from an uploaded
 # PARTNERSHIP-classified document (ownership split, preferred return, promote
-# waterfall). Sits between the Kimpton benchmark seed and an analyst override:
-# seed < partnership_doc < analyst_override.
+# waterfall). An analyst override wins over it. B5 — there is no seed beneath
+# it: without either, the partnership engine reports ``not_applicable``.
 SOURCE_PARTNERSHIP_DOC = "partnership_doc"
 # Phase 2.1 (as-of gate) — the market-report siblings of
 # ``str_forecast_unavailable``. A CBRE Horizons report or an OM comp table
@@ -1453,6 +1481,7 @@ async def _load_engine_inputs(
         base["__sources__"] = sources
         base["__source_fields__"] = {}
         base["__reasons__"] = {}
+        base[PARTNERSHIP_TERMS_VIEW_KEY] = _partnership_terms_view(base, sources)
         # No registry read on this path either: a complete, explicit
         # assumption set carries the default policy by construction.
         base[DATA_POLICY_KEY] = TenantDataPolicies()
@@ -1931,11 +1960,12 @@ async def _load_engine_inputs(
             sources[key] = SOURCE_PORTFOLIO_PNL
 
     # FON-66 Slice B — partnership/JV terms extracted from an uploaded
-    # PARTNERSHIP document overlay the Kimpton benchmark seed (gp/lp/pref
-    # scalars + the per-tier promote waterfall) and are tagged
-    # SOURCE_PARTNERSHIP_DOC. They share the ``partnership_waterfall_overrides``
-    # channel the analyst override loop writes to later, so an analyst edit on
-    # the same tier field still wins: seed < partnership_doc < analyst_override.
+    # PARTNERSHIP document (gp/lp/pref scalars + the per-tier promote
+    # waterfall), tagged SOURCE_PARTNERSHIP_DOC. They share the
+    # ``partnership_waterfall_overrides`` channel the analyst override loop
+    # writes to later, so an analyst entry on the same tier field still wins:
+    # partnership_doc < analyst_override. B5 — nothing seeds these keys; a deal
+    # with neither source carries no partnership terms.
     pship_scalars, pship_waterfall = await _load_partnership_terms(
         session, deal_id=deal_id, tenant_id=effective_tenant
     )
@@ -2376,12 +2406,12 @@ async def _load_engine_inputs(
                             )
                 continue
             elif path == _PARTNERSHIP_TIER_COUNT_KEY:
-                # FON-66 Part A — analyst-controlled promote-tier COUNT. Sets
-                # the exact number of promote tiers the builder emits. A higher
-                # count adds tiers (defined by per-index overrides beyond the
-                # seed); a lower count drops the highest tiers. Absent → the
-                # seed length exactly (byte-identical default). Lands as a plain
-                # int on ``base`` for the partnership builder to read.
+                # FON-66 Part A — analyst-controlled promote-tier COUNT: the
+                # upper bound of the tier index space the builder walks (a
+                # lower count drops the highest tiers; tiers are defined by
+                # their per-index terms). Absent → one past the highest
+                # carried index. Lands as a plain int on ``base`` for the
+                # partnership builder to read.
                 try:
                     n_tiers = (
                         int(float(value))
@@ -2438,11 +2468,11 @@ async def _load_engine_inputs(
             elif _parse_partnership_override_path(path) is not None:
                 # FON-66 — partnership waterfall per-tier field override. Indexed
                 # scalars (``partnership.waterfall.<idx>.<field>``) land in
-                # ``base['partnership_waterfall_overrides'][idx][field]``; the
-                # partnership builder seeds the Kimpton reference stack and layers
-                # these on top (deriving the complementary split so a single-side
-                # edit keeps gp + lp == 1.0). Any index is accepted, so an
-                # analyst-added tier beyond the seed routes here too.
+                # ``base['partnership_waterfall_overrides'][idx][field]`` (over a
+                # partnership document's tier at that index, if any); the
+                # partnership builder builds each tier from these terms
+                # (deriving the complementary split so a single-side entry
+                # keeps gp + lp == 1.0). Any index is accepted.
                 parsed_wf = _parse_partnership_override_path(path)
                 if parsed_wf is not None:
                     idx, field = parsed_wf
@@ -2726,6 +2756,9 @@ async def _load_engine_inputs(
         if seg_key in sources and sources[seg_key] != SOURCE_ANALYST_OVERRIDE:
             sources[seg_key] = sources.get("adr_growth", SOURCE_SEED)
     base["__sources__"] = sources
+    # C3 — the partnership terms view (carried terms + the platform's
+    # suggestions) the Partnership tab reads off assumption_sources.
+    base[PARTNERSHIP_TERMS_VIEW_KEY] = _partnership_terms_view(base, sources)
     base["__source_fields__"] = {
         key: sf.as_dict() for key, sf in source_fields.items()
     }
@@ -3428,38 +3461,21 @@ def _parse_debt_stack_override_path(path: str) -> tuple[str, int | None, str] | 
     return None
 
 
-# ── Partnership waterfall overrides (FON-66) ───────────────────────────
-# The promote waterfall ships as a deal-agnostic institutional default
-# (the Kimpton Angler benchmark stack) that an analyst can edit per-tier
-# from the Partnership tab. Each editable field is exposed as an indexed
-# scalar path — ``partnership.waterfall.<idx>.<field>`` — so the values
-# clear the scalar override guard the same way the debt-stack tranche
-# overrides do. Splits always sum to 1.0; editing one side derives the
-# other in the builder, so a single-field edit never trips the
-# ``WaterfallTier`` validator.
+# ── Partnership waterfall terms (FON-66, B5) ──────────────────────────
+# The promote waterfall is built ONLY from terms the deal carries: an
+# extracted partnership document or the analyst's per-tier entries from the
+# Partnership tab. Each editable field is an indexed scalar path —
+# ``partnership.waterfall.<idx>.<field>`` — so the values clear the scalar
+# override guard the same way the debt-stack tranche overrides do. Splits
+# always sum to 1.0; entering one side derives the other in the builder, so a
+# single-field entry never trips the ``WaterfallTier`` validator. Until
+# 2026-10-30 every deal's stack was seeded from the Kimpton Angler benchmark
+# (unbadged); that seed is gone — the platform's SUGGESTED stack lives in
+# ``engines.partnership.SUGGESTED_PROMOTE_TIERS`` and is never applied.
 _PARTNERSHIP_WATERFALL_FIELDS: tuple[str, ...] = (
     "hurdle_rate",
     "gp_split",
     "lp_split",
-)
-# Default promote structure — Kimpton Angler benchmark (FON-66 §3). The
-# preferred return itself is carried by ``pref_rate`` (seed 0.10); these
-# are the promote tiers above it. The top tier represents ">30% IRR".
-_KIMPTON_WATERFALL_REFERENCE: tuple[dict[str, Any], ...] = (
-    {"label": "Preferred (to 10%)", "hurdle_rate": 0.10, "gp_split": 0.00, "lp_split": 1.00},
-    {"label": "Tier 2 (to 15%)", "hurdle_rate": 0.15, "gp_split": 0.20, "lp_split": 0.80},
-    {"label": "Tier 3 (to 20%)", "hurdle_rate": 0.20, "gp_split": 0.25, "lp_split": 0.75},
-    {"label": "Tier 4 (to 25%)", "hurdle_rate": 0.25, "gp_split": 0.25, "lp_split": 0.75},
-    {"label": "Tier 5 (to 30%)", "hurdle_rate": 0.30, "gp_split": 0.25, "lp_split": 0.75},
-    {"label": "Tier 6 (>30%)", "hurdle_rate": 0.50, "gp_split": 0.50, "lp_split": 0.50},
-)
-_PARTNERSHIP_TIER_INDEXES: tuple[int, ...] = tuple(
-    range(len(_KIMPTON_WATERFALL_REFERENCE))
-)
-_OVERRIDE_PARTNERSHIP_KEYS: frozenset[str] = frozenset(
-    f"partnership.waterfall.{idx}.{field}"
-    for idx in _PARTNERSHIP_TIER_INDEXES
-    for field in _PARTNERSHIP_WATERFALL_FIELDS
 )
 # FON-66 Part A — the analyst controls the promote-tier COUNT via a single
 # ``partnership.waterfall.tier_count`` integer override. Bounded so a
@@ -3547,20 +3563,22 @@ def _tier_is_tombstoned(tier_overrides: Mapping[str, Any]) -> bool:
     return _coerce_override_flag(tier_overrides.get(_PARTNERSHIP_TIER_REMOVED_FIELD)) is True
 
 
-def _resolve_partnership_tier_count(tier_count: int | None) -> int:
-    """Clamp the analyst's tier-count override to a sane range.
+def _resolve_partnership_tier_count(
+    tier_count: int | None, overrides: Mapping[int, Any] | None = None
+) -> int:
+    """How many promote-tier indices the builder walks.
 
-    ``None`` (no override) → the seed length exactly, so a deal that never
-    touched the count builds the byte-identical default stack. An explicit
-    value is bounded to ``[1, _MAX_PARTNERSHIP_TIERS]``.
+    ``None`` (no tier-count entry) → one past the highest index the deal's
+    terms carry (0 when it carries none — no tiers, no waterfall). An
+    explicit value is bounded to ``[1, _MAX_PARTNERSHIP_TIERS]``.
     """
-    seed_len = len(_KIMPTON_WATERFALL_REFERENCE)
+    carried = (max(int(i) for i in overrides) + 1) if overrides else 0
     if tier_count is None:
-        return seed_len
+        return min(carried, _MAX_PARTNERSHIP_TIERS)
     try:
         count = int(tier_count)
     except (TypeError, ValueError):
-        return seed_len
+        return min(carried, _MAX_PARTNERSHIP_TIERS)
     return max(1, min(count, _MAX_PARTNERSHIP_TIERS))
 
 
@@ -3568,54 +3586,34 @@ def _build_partnership_waterfall(
     overrides: dict[int, dict[str, Any]] | None,
     tier_count: int | None = None,
 ) -> list[WaterfallTier]:
-    """Seed the Kimpton reference promote stack and layer analyst edits.
+    """Build the promote stack from the deal's own tier terms.
 
-    Each in-seed tier starts from ``_KIMPTON_WATERFALL_REFERENCE``. An
-    override on ``gp_split`` (or ``lp_split``) alone derives the
-    complementary split so the ``WaterfallTier`` ``gp + lp == 1`` validator
-    is never tripped by a single-field edit; overriding both sides uses the
-    analyst's exact values (their responsibility to keep the sum at 1.0).
+    B5 (go-live audit) — there is no seed stack: each tier index in
+    ``[0, count)`` is built from the terms carried at that index (a
+    partnership document's extracted tier, or the analyst's entries). A tier
+    needs its ``hurdle_rate`` and at least one split — the other split
+    derives (``gp + lp == 1``); a tier missing either is OMITTED, never
+    backfilled with a fabricated split. Labels come from
+    :func:`~app.engines.partnership.promote_tier_label`.
 
-    FON-66 Part A — ``tier_count`` sets the EXACT number of promote tiers:
-
-    * ``None`` → the seed length (the byte-identical default — every deal
-      that never set the count is unchanged).
-    * ``N < seed_len`` → the lowest ``N`` seed tiers; the highest tiers are
-      dropped (removal). Their now-orphaned per-index overrides are ignored
-      because those indices are never visited.
-    * ``N > seed_len`` → the seed tiers plus analyst-added tiers at indices
-      ``[seed_len, N)`` defined ENTIRELY by per-index overrides. There is no
-      seed fallback beyond the seed: an added tier is emitted only when the
-      analyst has supplied ``hurdle_rate`` and at least one split (the other
-      derives). An incomplete or invalid added tier is OMITTED — never
-      backfilled with a fabricated split that would silently shift the GP/LP
-      allocation. It simply has no effect until the analyst completes it.
+    ``tier_count`` (FON-66 Part A) bounds the index space: ``None`` → one past
+    the highest carried index; an explicit count drops higher indices.
 
     FON-66 follow-up — per-index TOMBSTONES remove ANY tier, mid-stack
-    included. ``overrides[idx]["removed"] is True`` (the
+    included: ``overrides[idx]["removed"] is True`` (the
     ``partnership.waterfall.<idx>.removed`` override) makes the builder skip
-    that index; the surviving tiers are packed contiguously, each keeping
-    its OWN hurdle/split values (nothing shifts onto a neighbour's seed).
-    ``tier_count`` remains the upper bound of the index space, so a
-    tombstone at or beyond the bound is inert. Any numeric overrides left on
-    a tombstoned index are ignored (never carried to a survivor), and clearing
-    the tombstone (``False`` / key absent) simply rebuilds the tier from its
-    seed + whatever overrides sit on that index. Floor of one: if honoring
-    every tombstone would leave NO promote tier (the ``WaterfallTier`` list
-    must be non-empty — same floor ``_resolve_partnership_tier_count``
-    applies to the count), the tombstone on the lowest index is ignored so
-    exactly that tier survives. No tombstones → byte-identical to before.
+    that index; the surviving tiers are packed contiguously, each keeping its
+    OWN terms. Floor of one: if honoring every tombstone would leave NO tier
+    while a buildable one exists, the tombstone on the lowest index is
+    ignored. An empty result means the deal carries no promote terms.
     """
     overrides = overrides or {}
-    count = _resolve_partnership_tier_count(tier_count)
+    count = _resolve_partnership_tier_count(tier_count, overrides)
     tombstoned = frozenset(
         idx for idx in range(count) if _tier_is_tombstoned(overrides.get(idx, {}))
     )
     tiers = _assemble_partnership_tiers(overrides, count, skip=tombstoned)
     if not tiers and tombstoned:
-        # Floor of one promote tier — never emit an empty stack. Ignore only
-        # the lowest tombstone (the lowest index is always the in-seed
-        # preferred tier when every buildable index is tombstoned).
         tiers = _assemble_partnership_tiers(
             overrides, count, skip=tombstoned - {min(tombstoned)}
         )
@@ -3628,78 +3626,249 @@ def _assemble_partnership_tiers(
     *,
     skip: frozenset[int],
 ) -> list[WaterfallTier]:
-    """Walk indices ``[0, count)``, skipping ``skip``, building each tier.
+    """Walk indices ``[0, count)``, skipping ``skip``, building each tier from
+    its carried terms. Survivors are appended in index order — contiguous, no
+    gaps — and labelled by their position in the built stack."""
+    return [t for _idx, t in _assemble_indexed_tiers(overrides, count, skip=skip)]
 
-    The per-index construction is exactly the shipped FON-66 Part A logic;
-    ``skip`` is empty when no tombstones exist, so the default path is
-    unchanged. Survivors are appended in index order — contiguous, no gaps.
-    """
-    seed = _KIMPTON_WATERFALL_REFERENCE
-    seed_len = len(seed)
-    tiers: list[WaterfallTier] = []
+
+def _assemble_indexed_tiers(
+    overrides: Mapping[int, Mapping[str, Any]],
+    count: int,
+    *,
+    skip: frozenset[int],
+) -> list[tuple[int, WaterfallTier]]:
+    """:func:`_assemble_partnership_tiers` keeping each tier's override index
+    (the Partnership tab edits tiers by index)."""
+    terms: list[tuple[int, float, float, float]] = []
     for idx in range(count):
         if idx in skip:
             continue
         ov = overrides.get(idx, {})
-        if idx < seed_len:
-            ref = seed[idx]
-            hurdle = float(ov.get("hurdle_rate", ref["hurdle_rate"]))
-            gp_ov = "gp_split" in ov
-            lp_ov = "lp_split" in ov
+        if "hurdle_rate" not in ov:
+            continue
+        gp_ov = "gp_split" in ov
+        lp_ov = "lp_split" in ov
+        if not gp_ov and not lp_ov:
+            continue
+        try:
+            hurdle = float(ov["hurdle_rate"])
             if gp_ov and lp_ov:
                 gp_split = float(ov["gp_split"])
                 lp_split = float(ov["lp_split"])
             elif gp_ov:
                 gp_split = float(ov["gp_split"])
                 lp_split = round(1.0 - gp_split, 6)
-            elif lp_ov:
+            else:
                 lp_split = float(ov["lp_split"])
                 gp_split = round(1.0 - lp_split, 6)
-            else:
-                gp_split = float(ref["gp_split"])
-                lp_split = float(ref["lp_split"])
-            tiers.append(
+            # Validate the tier on its own before it joins the stack.
+            WaterfallTier(label="_", hurdle_rate=hurdle, gp_split=gp_split, lp_split=lp_split)
+        except (ValueError, TypeError):
+            # Invalid values (e.g. splits that don't sum to 1.0, or a
+            # hurdle outside 0..1) — omit rather than crash the run.
+            continue
+        terms.append((idx, hurdle, gp_split, lp_split))
+    tiers: list[tuple[int, WaterfallTier]] = []
+    for pos, (idx, hurdle, gp_split, lp_split) in enumerate(terms):
+        tiers.append(
+            (
+                idx,
                 WaterfallTier(
-                    label=str(ref["label"]),
+                    label=promote_tier_label(
+                        pos,
+                        hurdle=hurdle,
+                        gp_split=gp_split,
+                        prev_hurdle=terms[pos - 1][1] if pos > 0 else None,
+                        is_top=pos == len(terms) - 1 and len(terms) > 1,
+                    ),
                     hurdle_rate=hurdle,
                     gp_split=gp_split,
                     lp_split=lp_split,
-                )
+                ),
             )
-        else:
-            # Analyst-added tier beyond the seed — defined only by the
-            # per-index overrides. Require hurdle_rate + at least one split;
-            # otherwise omit (honest incomplete, never a fabricated default).
-            if "hurdle_rate" not in ov:
-                continue
-            gp_ov = "gp_split" in ov
-            lp_ov = "lp_split" in ov
-            if not gp_ov and not lp_ov:
-                continue
-            try:
-                hurdle = float(ov["hurdle_rate"])
-                if gp_ov and lp_ov:
-                    gp_split = float(ov["gp_split"])
-                    lp_split = float(ov["lp_split"])
-                elif gp_ov:
-                    gp_split = float(ov["gp_split"])
-                    lp_split = round(1.0 - gp_split, 6)
-                else:
-                    lp_split = float(ov["lp_split"])
-                    gp_split = round(1.0 - lp_split, 6)
-                tiers.append(
-                    WaterfallTier(
-                        label=f"Tier {idx + 1} (to {hurdle:.0%})",
-                        hurdle_rate=hurdle,
-                        gp_split=gp_split,
-                        lp_split=lp_split,
-                    )
-                )
-            except (ValueError, TypeError):
-                # Invalid values (e.g. splits that don't sum to 1.0, or a
-                # hurdle outside 0..1) — omit rather than crash the run.
-                continue
+        )
     return tiers
+
+
+# ── B5 / C3 — does the deal carry partnership terms? ──────────────────────
+
+#: Human names of the term groups the waterfall needs.
+_PARTNERSHIP_TERM_NAMES: dict[str, str] = {
+    "split": "GP / LP equity split",
+    "pref_rate": "preferred return",
+    "tiers": "promote tiers",
+}
+
+
+@dataclass(frozen=True)
+class PartnershipTerms:
+    """The partnership terms a deal carries, as the engine would run them.
+
+    ``missing`` lists the term groups (``split`` / ``pref_rate`` / ``tiers``)
+    the deal does not carry; the engine runs only when it is empty.
+    """
+
+    gp_equity_pct: float | None
+    lp_equity_pct: float | None
+    pref_rate: float | None
+    tiers: tuple[WaterfallTier, ...]
+    missing: tuple[str, ...]
+
+    @property
+    def applicable(self) -> bool:
+        return not self.missing
+
+    @property
+    def carries_any(self) -> bool:
+        return len(self.missing) < len(_PARTNERSHIP_TERM_NAMES)
+
+    def refusal_message(self) -> str:
+        if not self.carries_any:
+            return NO_PARTNERSHIP_TERMS_REASON
+        names = [_PARTNERSHIP_TERM_NAMES[m] for m in self.missing]
+        return f"partnership terms incomplete on this deal: no {', '.join(names)}"
+
+
+def _num_or_none(value: Any) -> float | None:
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def partnership_terms(base: Mapping[str, Any]) -> PartnershipTerms:
+    """B5 — the partnership terms ``base`` carries (an analyst override or an
+    extracted partnership document put them there; the loader seeds none).
+
+    The GP / LP split is one term: when only one side is carried the other is
+    its complement (a two-party split, not a default). The promote tiers are
+    :func:`_build_partnership_waterfall` over the carried per-tier terms.
+    """
+    gp = _num_or_none(base.get("gp_equity_pct"))
+    lp = _num_or_none(base.get("lp_equity_pct"))
+    if gp is not None and lp is None:
+        lp = round(1.0 - gp, 6)
+    elif lp is not None and gp is None:
+        gp = round(1.0 - lp, 6)
+    pref = _num_or_none(base.get("pref_rate"))
+    tiers = tuple(
+        _build_partnership_waterfall(
+            base.get("partnership_waterfall_overrides"),
+            base.get("partnership_waterfall_tier_count"),
+        )
+    )
+    missing: list[str] = []
+    if gp is None:
+        missing.append("split")
+    if pref is None:
+        missing.append("pref_rate")
+    if not tiers:
+        missing.append("tiers")
+    return PartnershipTerms(gp, lp, pref, tiers, tuple(missing))
+
+
+#: Loader metadata key: the partnership terms VIEW served on
+#: ``GET /deals/{id}/assumption_sources`` (C3).
+PARTNERSHIP_TERMS_VIEW_KEY = "__partnership_terms__"
+
+
+def _partnership_terms_view(
+    base: Mapping[str, Any], sources: Mapping[str, str]
+) -> dict[str, dict[str, Any]]:
+    """C3 — ``{"values", "sources", "reasons"}`` keyed ``partnership.*``.
+
+    Each term the deal carries is published with its own value and label
+    (``partnership_doc`` / ``analyst_override``); every term it does not
+    carry is published as the platform SUGGESTION
+    (``engines.partnership.SUGGESTED_*``) with source ``seed`` and reason
+    ``awaiting_analyst`` — the ONE definition the Partnership tab reads, never
+    applied by the engine.
+    """
+    values: dict[str, Any] = {}
+    srcs: dict[str, str] = {}
+    reasons: dict[str, str] = {}
+
+    def _suggest(key: str, value: Any) -> None:
+        values[key] = value
+        srcs[key] = SOURCE_SEED
+        reasons[key] = ReasonCode.AWAITING_ANALYST.value
+
+    for key, suggestion in (
+        ("gp_equity_pct", SUGGESTED_GP_EQUITY_PCT),
+        ("lp_equity_pct", SUGGESTED_LP_EQUITY_PCT),
+        ("pref_rate", SUGGESTED_PREF_RATE),
+    ):
+        carried = _num_or_none(base.get(key))
+        if carried is not None:
+            values[f"partnership.{key}"] = carried
+            srcs[f"partnership.{key}"] = sources.get(key, SOURCE_SEED)
+        else:
+            _suggest(f"partnership.{key}", suggestion)
+
+    overrides = base.get("partnership_waterfall_overrides") or {}
+    tier_count = base.get("partnership_waterfall_tier_count")
+    if overrides:
+        count = _resolve_partnership_tier_count(tier_count, overrides)
+        values["partnership.waterfall.tier_count"] = count
+        # An explicit count carries its own label; a count derived from the
+        # carried tiers carries theirs.
+        carried_labels = [
+            sources[k]
+            for k in sorted(sources)
+            if k.startswith("partnership.waterfall.") and k != _PARTNERSHIP_TIER_COUNT_KEY
+        ]
+        srcs["partnership.waterfall.tier_count"] = sources.get(
+            _PARTNERSHIP_TIER_COUNT_KEY,
+            carried_labels[0] if carried_labels else SOURCE_SEED,
+        )
+        labels = {
+            idx: tier.label
+            for idx, tier in _assemble_indexed_tiers(
+                overrides,
+                count,
+                skip=frozenset(
+                    i for i in range(count) if _tier_is_tombstoned(overrides.get(i, {}))
+                ),
+            )
+        }
+        for idx in range(count):
+            tier_ov = overrides.get(idx, {})
+            for field in _PARTNERSHIP_WATERFALL_FIELDS:
+                if field in tier_ov:
+                    key = f"partnership.waterfall.{idx}.{field}"
+                    values[key] = float(tier_ov[field])
+                    srcs[key] = sources.get(key, SOURCE_SEED)
+            if _tier_is_tombstoned(tier_ov):
+                key = f"partnership.waterfall.{idx}.{_PARTNERSHIP_TIER_REMOVED_FIELD}"
+                values[key] = True
+                srcs[key] = sources.get(key, SOURCE_ANALYST_OVERRIDE)
+            if idx in labels:
+                key = f"partnership.waterfall.{idx}.label"
+                values[key] = labels[idx]
+                srcs[key] = sources.get(
+                    f"partnership.waterfall.{idx}.hurdle_rate", SOURCE_SEED
+                )
+    else:
+        _suggest("partnership.waterfall.tier_count", len(SUGGESTED_PROMOTE_TIERS))
+        n = len(SUGGESTED_PROMOTE_TIERS)
+        for idx, (hurdle, gp_split) in enumerate(SUGGESTED_PROMOTE_TIERS):
+            _suggest(f"partnership.waterfall.{idx}.hurdle_rate", hurdle)
+            _suggest(f"partnership.waterfall.{idx}.gp_split", gp_split)
+            _suggest(f"partnership.waterfall.{idx}.lp_split", round(1.0 - gp_split, 6))
+            _suggest(
+                f"partnership.waterfall.{idx}.label",
+                promote_tier_label(
+                    idx,
+                    hurdle=hurdle,
+                    gp_split=gp_split,
+                    prev_hurdle=SUGGESTED_PROMOTE_TIERS[idx - 1][0] if idx else None,
+                    is_top=idx == n - 1 and n > 1,
+                ),
+            )
+    return {"values": values, "sources": srcs, "reasons": reasons}
 
 
 def _coerce_comp_sales_override_value(field: str, value: Any) -> Any:
@@ -7216,16 +7385,14 @@ def _build_input_for(
         if not flows:
             # Defensive fallback: synthesize a flat annual cash flow.
             flows = [returns_out.equity_multiple * capital_out.equity_amount / max(1, base["hold_years"])]
-        # FON-66 — seed the Kimpton benchmark promote stack, then layer any
-        # analyst per-tier overrides (partnership.waterfall.<idx>.<field>).
-        # FON-66 Part A — an analyst tier-count override sets how many promote
-        # tiers are built (add/remove); absent → the seed length exactly.
-        # FON-66 follow-up — per-index tombstones (``<idx>.removed``) remove
-        # any tier mid-stack; the builder packs the survivors contiguously.
-        waterfall = _build_partnership_waterfall(
-            base.get("partnership_waterfall_overrides"),
-            base.get("partnership_waterfall_tier_count"),
-        )
+        # B5 — the deal's OWN terms only (partnership document / analyst
+        # entries; tier count and per-index tombstones applied by the
+        # builder). ``run_single_engine`` refuses the engine before this point
+        # when the deal does not carry the full set.
+        terms = partnership_terms(base)
+        if not terms.applicable:
+            raise ValueError(terms.refusal_message())
+        waterfall = list(terms.tiers)
         # FON-66/67 — auto-select the monthly IRR-hurdle waterfall for deals with
         # sub-annual timing (a mid-year close, an off-cycle exit, or a refi),
         # where monthly vs annual materially diverges; else the annual waterfall
@@ -7249,9 +7416,9 @@ def _build_input_for(
         return PartnershipInputExt(
             deal_id=deal_uuid,
             total_equity=capital_out.equity_amount,
-            gp_equity_pct=base["gp_equity_pct"],
-            lp_equity_pct=base["lp_equity_pct"],
-            pref_rate=base["pref_rate"],
+            gp_equity_pct=terms.gp_equity_pct,
+            lp_equity_pct=terms.lp_equity_pct,
+            pref_rate=terms.pref_rate,
             waterfall=waterfall,
             cash_flows=flows,
             # FON-72 — GP catch-up is opt-in per deal (analyst-set override);
@@ -7281,7 +7448,10 @@ def _build_input_for(
             expense=accumulated["expense"],
             debt=accumulated["debt"],
             returns=accumulated["returns"],
-            partnership=accumulated["partnership"],
+            # B5 — absent when the deal carries no partnership terms (the
+            # partnership engine reported ``not_applicable``): the statement
+            # then has no distribution lines and says why.
+            partnership=accumulated.get("partnership"),
             transfer_tax_pct=float(base.get("transfer_tax_pct") or 0.0),
             deferred_capital=float(_dc) if _dc not in (None, "") else 0.0,
             deferred_capital_year=(
@@ -7618,6 +7788,21 @@ async def run_single_engine(
             ),
         )
 
+    # B5 — the waterfall runs only on terms the deal carries. Without them the
+    # engine is not applicable: a typed refusal row, never a run on defaults.
+    if engine_name == "partnership":
+        terms = partnership_terms(base_inputs)
+        if not terms.applicable:
+            return await _persist_failure_row(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                failure=EngineFailure(
+                    engine=engine_name,
+                    reason=ReasonCode.NOT_APPLICABLE,
+                    message=terms.refusal_message(),
+                    missing=list(terms.missing),
+                ),
+            )
+
     # Some engines need upstream outputs. When called in single-engine
     # mode we transparently run prerequisites first so the user can hit
     # any one Run button without manually orchestrating the chain.
@@ -7799,7 +7984,15 @@ async def run_all_engines(
             continue
 
         deps = ENGINE_DEPS[name]
-        missing = [d for d in deps if d not in accumulated]
+        missing = [
+            d
+            for d in deps
+            if d not in accumulated
+            and not (
+                d in OPTIONAL_WHEN_NOT_APPLICABLE.get(name, frozenset())
+                and _is_not_applicable(results.get(d))
+            )
+        ]
         if missing:
             # Upstream failed — record a skipped row and move on.
             _record(
