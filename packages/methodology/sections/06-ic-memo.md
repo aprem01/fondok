@@ -37,10 +37,24 @@ inference.
 ::: card
 #### The Future P&L workbook
 
-The Future P&L has one Excel export, *Editable .xlsx*, built on the server from the published model:
-a figure the model has not published is a blank cell, never a zero. It does not yet carry the
-room-count rows (days, rooms, available and occupied rooms), the % Rev, PAR and POR columns, the Net
-Cash Flow row or the Exit-year forward NOI that the on-screen table shows.
+The Future P&L has one Excel export, *Editable .xlsx*, built on the server from the published model.
+It carries the rows and columns of the on-screen table:
+
+- **Room counts.** Days, Number of Rooms, Available Rooms and Occupied Rooms for each model year,
+  read from the revenue engine's own calculation. Days is the engine's day count (365), the one its
+  Available Rooms and RevPAR are built on, so the rows foot.
+- **% Rev, PAR and POR beside every year's amount.** % Rev is the line's share of Total Revenue; a
+  departmental expense is over its own department's revenue, the same basis as the Benchmark %
+  column. PAR divides the amount by Available Rooms and POR by Occupied Rooms. Rates such as
+  occupancy and ADR take no ratio and show a dash.
+- **Net Cash Flow**: NOI after the FF&E reserve, from the cash-flow engine.
+- **An Exit Year column** with the NOI the reversion is valued on, from the returns engine. The row
+  is labelled with its basis: the forward 12 months after the sale by default, or the stabilized,
+  sale-year or override figure when the deal uses one.
+
+A figure the model run did not produce reads *not available* with the reason, never a zero or an
+empty cell. These rows and columns are read-only: importing an edited workbook ignores them, and only
+the Assumptions sheet is applied.
 
 :::
 
