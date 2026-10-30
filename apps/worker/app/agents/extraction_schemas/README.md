@@ -18,7 +18,13 @@ extraction_schemas/
   cbre_horizons.md   ← CBRE Hotel Horizons forecast ...
   pnl_benchmark.md   ← CBRE Benchmarker / HotStats USALI 11th ...
   market_study.md    ← CoStar submarket / market study: inventory, pipeline,
-                        supply & demand trend (Market tab growth tiles)
+                        supply & demand trend (Market tab growth tiles), and
+                        the appendix performance / supply & demand series by
+                        class bucket (`market_study.class.<bucket>.<YYYY>.*`,
+                        future-P&L market growth — FON-116). This file is ALSO
+                        spliced into the legacy `SYSTEM_PROMPT` at import
+                        (`extractor._legacy_market_study_block`), so it is the
+                        one source of the MARKET_STUDY contract on both paths.
   capex.md           ← PIP / renovation budget (`capex_plan.pip.*`, a candidate
                         for the model's renovation budget — FON-101), forward
                         capital plan (`future_capex.*`, reference only),
@@ -56,7 +62,9 @@ No Python changes required. Worker restart picks up the new file.
 ## Migration plan
 
 Today the legacy `SYSTEM_PROMPT` constant in `extractor.py` is the
-runtime default and contains every doc type's contract inline.
+runtime default and contains every doc type's contract inline — except
+MARKET_STUDY, whose section is read from `market_study.md` at import
+(FON-116) so the two paths cannot drift on it.
 Schemas in this directory are loaded as a parallel code path gated on
 the env var `EXTRACTOR_USE_DYNAMIC_SCHEMAS`:
 

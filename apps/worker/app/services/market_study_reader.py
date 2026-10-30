@@ -62,6 +62,15 @@ Export filter rules (live export: 30 rows, 3 with a ``market`` /
   distinct ``market`` values) mis-reads its own header ("Miami Airport"),
   so its self-stated submarket is never a term.
 
+Performance by class (FON-116, ``read_class_forecast``): the appendix series
+``market_study.class.<bucket>.<YYYY>.*`` / ``market_study.trend.<YYYY>.*``
+(occupancy, ADR, RevPAR, their YoY changes, the class supply / demand
+changes, a ``.period`` tag per year) as one series per bucket for the
+topline growth resolver — fractions as printed, the page on every figure, a
+blank cell ``None``; a report without class tables serves the overall
+series and says so; a bucket's missing year is never patched from the
+overall series. See the section comment above ``read_class_forecast``.
+
 Unit guard on growth (``*_change*``) candidates: a value is a rate only when
 it is a fraction (|v| ≤ 1.5) or a plausible percent (|v| ≤ 150 with a
 ``%`` / ``pct`` hint on the unit, in the path or in the raw text). Anything
@@ -76,8 +85,8 @@ Pure functions — no DB, no I/O.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Literal
 
@@ -981,7 +990,382 @@ def market_study_rows(rows: Sequence[FieldRow]) -> list[FieldRow]:
     return [r for r in rows if (r.doc_type or "") == "MARKET_STUDY"]
 
 
+# ─────────────────── performance by class bucket (FON-116) ───────────────────
+#
+# The CoStar submarket appendix prints a supply & demand table and a
+# performance table (occupancy / ADR / RevPAR, each with its YoY change) for
+# the whole submarket and for three class buckets. ``market_study.md`` asks
+# for them as ``market_study.class.<bucket>.<YYYY>.<attr>`` rows plus one
+# ``.period`` tag per year; the overall tables are ``market_study.trend.
+# <YYYY>.<attr>``. ``read_class_forecast`` turns one report into a series per
+# bucket for the topline growth resolver: the resolver asks for the bucket
+# that matches the deal's positioning and gets, per calendar year, the
+# fractions as printed, the period tag, and the page — or ``None`` for a
+# blank cell (a blank is never 0).
+#
+# Overall fallback: a report with no class tables serves the overall series
+# for ANY requested bucket, saying so (``fallback_reason``). A bucket that IS
+# in the report but lacks a year is never silently patched from the overall
+# series — that year is simply absent (``ClassSeries.year`` → None); the
+# resolver decides whether to carry forward or declare the year unavailable.
+
+ClassBucket = Literal["luxury_upper_upscale", "upscale_upper_midscale", "midscale_economy", "all"]
+CLASS_BUCKETS: tuple[str, ...] = ("luxury_upper_upscale", "upscale_upper_midscale", "midscale_economy")
+CLASS_BUCKET_LABELS: dict[str, str] = {
+    "luxury_upper_upscale": "Luxury & Upper Upscale",
+    "upscale_upper_midscale": "Upscale & Upper Midscale",
+    "midscale_economy": "Midscale & Economy",
+    "all": "All classes",
+}
+_CLASS_ROW_RE = re.compile(
+    r"^market_study\.class\.(?P<bucket>luxury_upper_upscale|upscale_upper_midscale|midscale_economy)"
+    r"\.(?P<year>(?:19|20)\d{2})\.(?P<attr>[a-z_]+)$"
+)
+_TREND_ROW_RE = re.compile(r"^market_study\.trend\.(?P<year>(?:19|20)\d{2})\.(?P<attr>[a-z_]+)$")
+_CLASS_LEVEL_ATTRS = ("occupancy_pct", "adr_usd", "revpar_usd", "supply_rooms", "demand_room_nights")
+_CLASS_CHANGE_ATTRS = (
+    "occupancy_change_pct", "adr_change_pct", "revpar_change_pct", "supply_change_pct", "demand_change_pct",
+)
+#: The order in which a year's page / document are taken from its figures:
+#: the performance table first (that is what the growth resolver reads).
+_CLASS_PAGE_ORDER = (
+    "occupancy_pct", "adr_usd", "revpar_usd", "occupancy_change_pct", "adr_change_pct", "revpar_change_pct",
+    "supply_change_pct", "demand_change_pct", "supply_rooms", "demand_room_nights",
+)
+_FORECAST_FIRST_YEAR = "market_study.forecast.first_year"
+_FORECAST_LAST_YEAR = "market_study.forecast.last_year"
+
+
+@dataclass(frozen=True)
+class ClassYear:
+    """One calendar year of one bucket's series, as the report prints it.
+
+    Percentages are fractions (``-0.012`` for -1.2%); a blank cell is
+    ``None``. ``refs`` names the row behind every figure present.
+    """
+
+    bucket: str
+    year: int
+    period: Literal["actual", "forecast"] | None
+    occupancy_pct: float | None = None
+    adr_usd: float | None = None
+    revpar_usd: float | None = None
+    occupancy_change_pct: float | None = None
+    adr_change_pct: float | None = None
+    revpar_change_pct: float | None = None
+    supply_change_pct: float | None = None
+    demand_change_pct: float | None = None
+    supply_rooms: int | None = None
+    demand_room_nights: int | None = None
+    page: int | None = None
+    doc_name: str | None = None
+    doc_id: str | None = None
+    refs: Mapping[str, FieldRef] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ClassSeries:
+    """The years served for a requested bucket, ascending by year."""
+
+    requested_bucket: str
+    bucket: str
+    label: str
+    years: tuple[ClassYear, ...]
+    #: Set only when the requested bucket is not in the report and the
+    #: overall series is served instead.
+    fallback_reason: str | None = None
+
+    def year(self, year: int) -> ClassYear | None:
+        return next((y for y in self.years if y.year == year), None)
+
+    @property
+    def forecast_years(self) -> tuple[ClassYear, ...]:
+        return tuple(y for y in self.years if y.period == "forecast")
+
+    @property
+    def actual_years(self) -> tuple[ClassYear, ...]:
+        return tuple(y for y in self.years if y.period == "actual")
+
+    @property
+    def first_year(self) -> int | None:
+        return self.years[0].year if self.years else None
+
+    @property
+    def last_year(self) -> int | None:
+        return self.years[-1].year if self.years else None
+
+
+@dataclass(frozen=True)
+class ClassForecastReading:
+    """One report's class-bucket and overall series.
+
+    ``buckets`` holds each bucket the report carries (``"all"`` = the overall
+    ``market_study.trend`` series). ``reason`` is ``no_document`` when the
+    deal has no MARKET_STUDY rows, ``no_source`` when it has a market study
+    but no performance / supply & demand series; ``detail`` names the files.
+    """
+
+    buckets: Mapping[str, tuple[ClassYear, ...]]
+    doc_name: str | None = None
+    doc_id: str | None = None
+    extraction_id: str | None = None
+    submarket: str | None = None
+    market: str | None = None
+    report_date: str | None = None
+    first_forecast_year: int | None = None
+    last_forecast_year: int | None = None
+    reason: str | None = None
+    detail: str | None = None
+
+    def series(self, bucket: str | None) -> ClassSeries:
+        """The requested bucket's years; the overall series, flagged, when the
+        report has no table for that bucket; an empty series (with the reason)
+        when it has neither."""
+        wanted = (bucket or "all").strip().lower()
+        label = CLASS_BUCKET_LABELS.get(wanted, wanted.replace("_", " "))
+        if wanted in self.buckets:
+            return ClassSeries(requested_bucket=wanted, bucket=wanted, label=label, years=self.buckets[wanted])
+        if "all" in self.buckets and wanted != "all":
+            return ClassSeries(
+                requested_bucket=wanted,
+                bucket="all",
+                label=CLASS_BUCKET_LABELS["all"],
+                years=self.buckets["all"],
+                fallback_reason=(
+                    f"{label} series not in the report ({self.doc_name or 'market study'}) — "
+                    "the overall submarket series is used instead"
+                ),
+            )
+        why = self.detail or (
+            "No market study on this deal." if self.reason == REASON_NO_DOCUMENT
+            else "No class or overall performance series in the market study."
+        )
+        return ClassSeries(requested_bucket=wanted, bucket="all", label=CLASS_BUCKET_LABELS["all"], years=(), fallback_reason=why)
+
+
+def _class_scope(rows: Sequence[FieldRow]) -> list[FieldRow]:
+    """MARKET_STUDY-lane rows plus any row already in the ``market_study.`` namespace."""
+    return [r for r in rows if (r.doc_type or "") == "MARKET_STUDY" or r.lname.startswith("market_study.")]
+
+
+def _series_match(row: FieldRow) -> tuple[str, int, str] | None:
+    """``(bucket, year, attr)`` for a class or overall series row, else None."""
+    m = _CLASS_ROW_RE.match(row.lname)
+    if m:
+        return m.group("bucket"), int(m.group("year")), m.group("attr")
+    m = _TREND_ROW_RE.match(row.lname)
+    if m:
+        return "all", int(m.group("year")), m.group("attr")
+    return None
+
+
+def _first_text(rows: Iterable[FieldRow], name: str) -> str | None:
+    for r in rows:
+        if r.lname == name and isinstance(r.value, str) and r.value.strip():
+            return r.value.strip()
+    return None
+
+
+def _first_int(rows: Iterable[FieldRow], name: str) -> int | None:
+    for r in rows:
+        if r.lname == name:
+            v = coerce_int(r.value)
+            if v is not None and 1900 <= v <= 2100:
+                return v
+    return None
+
+
+def _class_period(value: Any) -> Literal["actual", "forecast"] | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if v.startswith(("forecast", "proj", "outlook")):
+        return "forecast"
+    if v.startswith(("actual", "hist")):
+        return "actual"
+    return None
+
+
+def _class_level(attr: str, row: FieldRow) -> float | int | None:
+    v = coerce_float(row.value)
+    if v is None or v <= 0:
+        return None
+    if attr == "occupancy_pct":
+        # 68.1 (whole percent) → 0.681; a fraction stays. 1.0 is 100%.
+        return round(v / 100.0, 6) if v > 1.0 else v
+    if attr in {"supply_rooms", "demand_room_nights"}:
+        return coerce_int(row.value)
+    return v
+
+
+def _class_change(row: FieldRow) -> float | None:
+    """A ``*_change_pct`` cell as a FRACTION — the unit guard of the growth
+    readers applies (an absolute delta in a change column is not a rate)."""
+    points, raw = _rate_points(row, set(_path_tokens(row.field_name)))
+    if points is None or raw is None:
+        return None
+    return round(points / 100.0, 6)
+
+
+def _build_class_year(
+    bucket: str,
+    year: int,
+    cells: Mapping[str, FieldRow],
+    *,
+    tag: str | None,
+    first_forecast: int | None,
+    last_forecast: int | None,
+) -> ClassYear | None:
+    values: dict[str, float | int | None] = {}
+    refs: dict[str, FieldRef] = {}
+    for attr in _CLASS_LEVEL_ATTRS:
+        row = cells.get(attr)
+        v = _class_level(attr, row) if row is not None else None
+        values[attr] = v
+        if v is not None and row is not None:
+            refs[attr] = FieldRef.of(row, v)
+    for attr in _CLASS_CHANGE_ATTRS:
+        row = cells.get(attr)
+        v = _class_change(row) if row is not None else None
+        values[attr] = v
+        if v is not None and row is not None:
+            refs[attr] = FieldRef.of(row, v)
+    if not refs:
+        return None  # a year with no figure at all is not a year
+    anchor = next(cells[a] for a in _CLASS_PAGE_ORDER if a in refs)
+    period = _class_period(tag)
+    if period is None and first_forecast is not None:
+        in_window = year >= first_forecast and (last_forecast is None or year <= last_forecast)
+        period = "forecast" if in_window else ("actual" if year < first_forecast else None)
+    return ClassYear(
+        bucket=bucket,
+        year=year,
+        period=period,
+        occupancy_pct=values["occupancy_pct"],
+        adr_usd=values["adr_usd"],
+        revpar_usd=values["revpar_usd"],
+        occupancy_change_pct=values["occupancy_change_pct"],
+        adr_change_pct=values["adr_change_pct"],
+        revpar_change_pct=values["revpar_change_pct"],
+        supply_change_pct=values["supply_change_pct"],
+        demand_change_pct=values["demand_change_pct"],
+        supply_rooms=values["supply_rooms"],
+        demand_room_nights=values["demand_room_nights"],
+        page=anchor.page,
+        doc_name=anchor.doc_name,
+        doc_id=anchor.doc_id,
+        refs=refs,
+    )
+
+
+def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
+    """The class-bucket performance / supply & demand series of the deal's
+    CoStar submarket report.
+
+    One report is read: among the MARKET_STUDY extractions that carry a class
+    or overall series, the one with class tables, then the newest by its own
+    ``market_study.report_date`` (else the document's ``report_as_of``, else
+    the extraction time), then the fullest. Within it the first row per
+    (bucket, year, attribute) wins — rows arrive newest first.
+    """
+    scope = _class_scope(rows)
+    if not scope:
+        return ClassForecastReading(buckets={}, reason=REASON_NO_DOCUMENT, detail="No market study on this deal.")
+
+    by_ext: dict[str | None, list[FieldRow]] = {}
+    for r in scope:
+        by_ext.setdefault(r.extraction_id, []).append(r)
+
+    def _rank(ext_rows: list[FieldRow]) -> tuple[int, str, str, int] | None:
+        matches = [m for m in (_series_match(r) for r in ext_rows) if m is not None]
+        if not matches:
+            return None
+        has_class = any(b != "all" for b, _y, _a in matches)
+        dated = _first_text(ext_rows, "market_study.report_date") or next(
+            (r.report_as_of for r in ext_rows if r.report_as_of), None
+        ) or ""
+        created = next((r.created_at for r in ext_rows if r.created_at), None) or ""
+        return (int(has_class), dated, created, len(matches))
+
+    ranked = [(rank, ext_rows) for ext_rows in by_ext.values() if (rank := _rank(ext_rows)) is not None]
+    submarket_any = _first_text(scope, "market_study.submarket")
+    market_any = _first_text(scope, "market_study.market")
+    if not ranked:
+        names = sorted({r.doc_name for r in scope if r.doc_name})
+        return ClassForecastReading(
+            buckets={},
+            doc_name=names[0] if len(names) == 1 else None,
+            submarket=submarket_any,
+            market=market_any,
+            report_date=_first_text(scope, "market_study.report_date"),
+            reason=REASON_NO_SOURCE,
+            detail=(
+                "No class or overall performance series in "
+                + (", ".join(names) if names else "the uploaded market study")
+                + " — the appendix performance / supply & demand tables were not extracted."
+            ),
+        )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    chosen = ranked[0][1]
+
+    tables: dict[str, dict[int, dict[str, FieldRow]]] = {}
+    tags: dict[tuple[str, int], str | None] = {}
+    for r in chosen:
+        m = _series_match(r)
+        if m is None:
+            continue
+        bucket, year, attr = m
+        if attr == "period":
+            tags.setdefault((bucket, year), r.value if isinstance(r.value, str) else None)
+            continue
+        tables.setdefault(bucket, {}).setdefault(year, {}).setdefault(attr, r)
+
+    first_forecast = _first_int(chosen, _FORECAST_FIRST_YEAR)
+    last_forecast = _first_int(chosen, _FORECAST_LAST_YEAR)
+    buckets: dict[str, tuple[ClassYear, ...]] = {}
+    tagged_forecast: list[int] = []
+    for bucket, years in tables.items():
+        built: list[ClassYear] = []
+        for year in sorted(years):
+            cy = _build_class_year(
+                bucket, year, years[year],
+                tag=tags.get((bucket, year)), first_forecast=first_forecast, last_forecast=last_forecast,
+            )
+            if cy is not None:
+                built.append(cy)
+                if cy.period == "forecast":
+                    tagged_forecast.append(year)
+        if built:
+            buckets[bucket] = tuple(built)
+    if not buckets:
+        names = sorted({r.doc_name for r in chosen if r.doc_name})
+        return ClassForecastReading(
+            buckets={},
+            doc_name=names[0] if len(names) == 1 else None,
+            submarket=submarket_any,
+            market=market_any,
+            reason=REASON_NO_SOURCE,
+            detail="The market study's performance series carries no readable figure.",
+        )
+    anchor = next(iter(next(iter(buckets.values()))))
+    return ClassForecastReading(
+        buckets=buckets,
+        doc_name=anchor.doc_name,
+        doc_id=anchor.doc_id,
+        extraction_id=chosen[0].extraction_id,
+        submarket=_first_text(chosen, "market_study.submarket") or submarket_any,
+        market=_first_text(chosen, "market_study.market") or market_any,
+        report_date=_first_text(chosen, "market_study.report_date") or next(
+            (r.report_as_of for r in chosen if r.report_as_of), None
+        ),
+        first_forecast_year=first_forecast if first_forecast is not None else (min(tagged_forecast) if tagged_forecast else None),
+        last_forecast_year=last_forecast if last_forecast is not None else (max(tagged_forecast) if tagged_forecast else None),
+    )
+
+
 __all__ = [
+    "CLASS_BUCKETS",
+    "CLASS_BUCKET_LABELS",
     "GROWTH_PREFIXES",
     "MARKET_STUDY_PREFIXES",
     "PIPELINE_EXPORT_PREFIX",
@@ -989,6 +1373,10 @@ __all__ = [
     "RATE_PERCENT_MAX",
     "REASON_NO_DOCUMENT",
     "REASON_NO_SOURCE",
+    "ClassBucket",
+    "ClassForecastReading",
+    "ClassSeries",
+    "ClassYear",
     "GrowthReading",
     "PipelineFilter",
     "PipelineHotel",
@@ -996,6 +1384,7 @@ __all__ = [
     "market_study_rows",
     "market_terms_from_rows",
     "multi_market_export_docs",
+    "read_class_forecast",
     "read_demand_growth",
     "read_supply_growth",
 ]

@@ -280,7 +280,9 @@ def test_legacy_system_prompt_carries_the_same_capex_contract() -> None:
 def test_pipeline_version_bumped_for_the_capex_contract() -> None:
     from app.api.documents import EXTRACTION_PIPELINE_VERSION, _sibling_reuse_allowed
 
-    assert EXTRACTION_PIPELINE_VERSION == "v8"
+    # v8 shipped the CAPEX contract; later contracts (v9: the CoStar class
+    # forecast, FON-116) bump past it — the cache must never serve a pre-v8 row.
+    assert int(EXTRACTION_PIPELINE_VERSION.removeprefix("v")) >= 8
     # CAPEX is LLM-extracted (no deterministic template), so sibling reuse is
     # allowed for it — the loader gates on the document's own doc_subtype.
     assert _sibling_reuse_allowed("CAPEX") is True
