@@ -38,6 +38,7 @@ from ..config import get_settings
 from ..extraction.compaction import compact_for_prompt
 from ..telemetry import trace_agent
 from ..usali_rules import rules_as_prompt_block
+from .extraction_schemas.loader import schema_text
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,36 @@ _EMPTY_ENVELOPE_RETRY_DELAY_MAX_S = 3.0
 # ─────────────────────── prompt ───────────────────────
 
 
-SYSTEM_PROMPT = """You are Fondok's Extractor agent — a hotel acquisitions
+def _legacy_market_study_block() -> str:
+    """The MARKET_STUDY section of the legacy prompt, read from the schema file.
+
+    FON-116: ``extraction_schemas/market_study.md`` is the ONE source of the
+    MARKET_STUDY contract. The dynamic path (``EXTRACTOR_USE_DYNAMIC_SCHEMAS=1``)
+    loads that file per document; the legacy ``SYSTEM_PROMPT`` below — still
+    sent whenever the flag is off, or a payload mixes doc types — used to carry
+    its own copy, which silently drifted. It now splices the file in at import,
+    so a schema edit reaches both paths and the version guard sees one change.
+    A missing file is a packaging bug, not a degraded prompt: fail loudly.
+    """
+    md = schema_text("MARKET_STUDY")
+    if md is None:
+        raise RuntimeError(
+            "extraction_schemas/market_study.md is missing — the extractor "
+            "prompt would have no MARKET_STUDY contract"
+        )
+    return (
+        "   * **MARKET_STUDY (CoStar submarket / market report, feasibility or\n"
+        "     third-party market study).** The contract is the schema file\n"
+        "     ``extraction_schemas/market_study.md``, reproduced verbatim below\n"
+        "     (one source for both prompt paths); downstream reads its field\n"
+        "     paths EXACTLY as written.\n\n"
+        f"{md.strip()}\n\n"
+    )
+
+
+
+SYSTEM_PROMPT = (
+    """You are Fondok's Extractor agent — a hotel acquisitions
 analyst pulling typed financial fields out of a deal document so the
 downstream Normalizer can map them onto the USALI chart of accounts.
 
@@ -439,50 +469,9 @@ include:
            ``pnl_benchmark.noi_par``,
            ``pnl_benchmark.rooms_revenue_por``,
            ``pnl_benchmark.fb_revenue_por``.
-   * **MARKET_STUDY (CoStar submarket / market report, feasibility or
-     third-party market study).** Carries the submarket's existing room
-     inventory, the supply pipeline (under construction / final planning
-     / planned), and a supply-and-demand trend table by year with YoY
-     changes. The Market tab reads these EXACT paths for Demand Growth
-     and Supply Growth, so use them (percentages as 0..1 decimals):
-       * Header:
-           ``market_study.market``, ``market_study.submarket``,
-           ``market_study.report_date`` — ISO date of the report,
-           ``market_study.period_label`` — the trend-table period as
-             printed (e.g. "12 Mo Ending Jun 2026").
-       * Inventory + pipeline rollups (rooms, ``unit`` ``rooms``):
-           ``market_study.supply.existing_rooms`` — the submarket's
-             current room inventory,
-           ``market_study.supply.under_construction_rooms``,
-           ``market_study.supply.final_planning_rooms``,
-           ``market_study.supply.planned_rooms`` — proposed / early
-             planning / unentitled,
-           ``market_study.supply.delivered_12mo_rooms``.
-       * Pipeline projects (one row per listed project, ``<n>``
-         1-indexed in report order):
-           ``under_construction.<n>.name``,
-           ``under_construction.<n>.rooms``,
-           ``under_construction.<n>.status`` — one of
-             ``under_construction`` / ``final_planning`` / ``planned``,
-           ``under_construction.<n>.expected_open`` — ISO date or
-             quarter as printed,
-           ``under_construction.total_rooms`` — the report's
-             under-construction total.
-       * Supply & demand trend (``<YYYY>`` calendar year; the trailing
-         twelve months as ``ttm``):
-           ``market_study.trend.<YYYY>.supply_rooms``,
-           ``market_study.trend.<YYYY>.supply_change_pct``,
-           ``market_study.trend.<YYYY>.demand_room_nights``,
-           ``market_study.trend.<YYYY>.demand_change_pct``,
-           ``market_study.trend.<YYYY>.occupancy_pct``,
-           ``market_study.trend.<YYYY>.adr_usd``,
-           ``market_study.trend.<YYYY>.revpar_usd``,
-           ``market_study.trend.<YYYY>.revpar_change_pct``,
-           ``market_study.trend.<YYYY>.period`` — ``actual`` or
-             ``forecast`` (forecast years are shown only as forecast),
-           ``market_study.trend.ttm.demand_change_pct``,
-           ``market_study.trend.ttm.supply_change_pct``.
-   * **PARTNERSHIP (operating agreement / JV / equity waterfall).**
+"""
+    + _legacy_market_study_block()
+    + """   * **PARTNERSHIP (operating agreement / JV / equity waterfall).**
      A prose legal document — an LLC operating agreement, a joint-
      venture agreement, or an equity term sheet — that lays out the
      GP/LP ownership split, the preferred return, and the promote
@@ -684,6 +673,7 @@ source — silence is acceptable, fabrication is not.
 Output: one structured ``ExtractorEnvelope``. Do not emit prose
 outside the schema.
 """
+)
 
 
 def prompt_sha(instructions: str) -> str:

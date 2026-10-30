@@ -16,6 +16,10 @@ The flag is intentionally opt-in. The legacy prompt has been hammered
 by Sam's pilots; the new path becomes the default after a regression
 corpus confirms byte-equivalent (or better) outputs.
 
+One exception to the two-path split: the MARKET_STUDY contract lives ONLY
+in ``market_study.md`` — the legacy prompt splices that file in at import
+through :func:`schema_text` (FON-116), so the two paths cannot drift on it.
+
 Files in this directory follow the convention:
 
     _base.md             ← always loaded first (agent-behavior preamble).
@@ -62,6 +66,19 @@ def _read(filename: str) -> str | None:
 def _schema_filename(doc_type: str) -> str:
     """Map a doc_type token to its filename — lowercase, no extension."""
     return f"{(doc_type or '').strip().lower()}.md"
+
+
+def schema_text(doc_type: str | None) -> str | None:
+    """The raw text of ``<doc_type>.md`` — flag or no flag.
+
+    For callers that embed a contract somewhere other than the dynamic
+    prompt: the legacy ``SYSTEM_PROMPT`` in ``agents/extractor.py`` splices
+    the MARKET_STUDY file in at import (FON-116) so the schema file is the
+    single source for both prompt paths. ``None`` when no such file exists.
+    """
+    if not doc_type or not doc_type.strip():
+        return None
+    return _read(_schema_filename(doc_type))
 
 
 def available_doc_types() -> list[str]:
@@ -124,4 +141,5 @@ __all__ = [
     "is_enabled",
     "build_system_prompt",
     "available_doc_types",
+    "schema_text",
 ]

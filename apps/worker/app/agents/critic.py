@@ -1217,17 +1217,201 @@ def apply_capex_plausibility(
     return out_fields, conf, flags
 
 
+# ──────────── MARKET_STUDY YoY-change consistency (FON-116) ────────────
+#
+# A per-DOCUMENT arithmetic check on a CoStar submarket extraction: the
+# appendix prints, per year, a level AND its YoY change for occupancy, ADR
+# and RevPAR — overall (``market_study.trend.<YYYY>.*``) and per class bucket
+# (``market_study.class.<bucket>.<YYYY>.*``). When a year's change and both
+# that year's and the prior year's level are present, the change must
+# reconcile to ``level(Y) / level(Y-1) - 1`` within 0.3 percentage points
+# (the levels are printed to 0.1 pt / one cent, so a true row reconciles to
+# well under that). A wider gap means the extractor read a neighbouring
+# column, shifted a row by one year, or mixed a whole-percent with a
+# fraction — any of which would feed the wrong market growth into the future
+# P&L. The CHANGE field keeps its value (nothing is invented) but its
+# confidence is capped at 0.5 so it lands in ``low_confidence_fields`` / the
+# Data Room's review queue, with the reason on the field and on the report.
+# Deterministic, LLM-free, best-effort.
+
+MARKET_STUDY_CHANGE_TOLERANCE_PTS = 0.3  #: flag when |implied - printed| > 0.3 pts
+
+_MARKET_STUDY_SERIES_RE = re.compile(
+    r"^(?P<prefix>market_study\.(?:trend|class\.[a-z0-9_]+))\.(?P<year>(?:19|20)\d{2})"
+    r"\.(?P<attr>occupancy_pct|adr_usd|revpar_usd|occupancy_change_pct|adr_change_pct|revpar_change_pct)$"
+)
+_MARKET_STUDY_LEVEL_OF: dict[str, str] = {"occupancy": "occupancy_pct", "adr": "adr_usd", "revpar": "revpar_usd"}
+_MARKET_STUDY_LABEL_OF: dict[str, str] = {"occupancy": "occupancy", "adr": "ADR", "revpar": "RevPAR"}
+
+
+class MarketStudyConsistencyFlag(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    metric: str
+    year: int
+    prior_year: int
+    reported_change_pct: float
+    implied_change_pct: float
+    delta_pts: float
+    level: float
+    prior_level: float
+    reason: str
+
+
+def _market_study_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.replace(",", "").replace("$", "").replace("%", "").strip()
+        try:
+            return float(cleaned) if cleaned else None
+        except ValueError:
+            return None
+    return None
+
+
+def _market_study_fraction(value: Any) -> float | None:
+    """A printed change as a fraction: ``-0.012`` stays, ``-1.2`` (whole
+    percent) → ``-0.012``; anything beyond ±150% is not a rate."""
+    f = _market_study_number(value)
+    if f is None:
+        return None
+    if abs(f) <= 1.5:
+        return f
+    return f / 100.0 if abs(f) <= 150.0 else None
+
+
+def check_market_study_consistency(fields: Sequence[Mapping[str, Any]]) -> list[MarketStudyConsistencyFlag]:
+    """Flag every ``*_change_pct`` that disagrees with its own two levels.
+
+    Pure. Only the market-study series rows take part; a series with a
+    missing level on either side is left alone (nothing to reconcile to).
+    """
+    table: dict[str, dict[int, dict[str, Any]]] = {}
+    for f in fields:
+        if not isinstance(f, Mapping):
+            continue
+        name = f.get("field_name")
+        m = _MARKET_STUDY_SERIES_RE.match(str(name).strip().lower()) if isinstance(name, str) else None
+        if m is None:
+            continue
+        slot = table.setdefault(m.group("prefix"), {}).setdefault(int(m.group("year")), {})
+        slot.setdefault(m.group("attr"), (name, f.get("value")))
+
+    flags: list[MarketStudyConsistencyFlag] = []
+    for prefix, years in table.items():
+        series_label = (
+            "overall" if prefix == "market_study.trend"
+            else prefix.removeprefix("market_study.class.").replace("_", " ")
+        )
+        for year in sorted(years):
+            prior = years.get(year - 1)
+            if prior is None:
+                continue
+            for metric, level_attr in _MARKET_STUDY_LEVEL_OF.items():
+                change_cell = years[year].get(f"{metric}_change_pct")
+                if change_cell is None or level_attr not in years[year] or level_attr not in prior:
+                    continue
+                reported = _market_study_fraction(change_cell[1])
+                level = _market_study_number(years[year][level_attr][1])
+                prior_level = _market_study_number(prior[level_attr][1])
+                if reported is None or level is None or prior_level is None or level <= 0 or prior_level <= 0:
+                    continue
+                implied = level / prior_level - 1.0
+                delta_pts = abs(implied - reported) * 100.0
+                if delta_pts <= MARKET_STUDY_CHANGE_TOLERANCE_PTS:
+                    continue
+                noun = _MARKET_STUDY_LABEL_OF[metric]
+                flags.append(
+                    MarketStudyConsistencyFlag(
+                        field_name=change_cell[0],
+                        metric=metric,
+                        year=year,
+                        prior_year=year - 1,
+                        reported_change_pct=reported,
+                        implied_change_pct=implied,
+                        delta_pts=round(delta_pts, 3),
+                        level=level,
+                        prior_level=prior_level,
+                        reason=(
+                            f"{series_label} {noun} {year} YoY change {reported:+.1%} does not reconcile to the "
+                            f"printed levels ({prior_level:g} in {year - 1} → {level:g} in {year} = {implied:+.1%}; "
+                            f"{delta_pts:.1f} pts apart, tolerance {MARKET_STUDY_CHANGE_TOLERANCE_PTS} pts) — "
+                            "likely a neighbouring column or a row shifted by one year; review against the page."
+                        ),
+                    )
+                )
+    return flags
+
+
+def apply_market_study_consistency(
+    fields: Sequence[Mapping[str, Any]],
+    confidence: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[MarketStudyConsistencyFlag]]:
+    """Run :func:`check_market_study_consistency` and write the result back.
+
+    Each flagged change keeps its VALUE; its ``confidence`` is capped at 0.5
+    and the reason written to its ``note``; the confidence report gets the
+    field under ``low_confidence_fields``, the reason under
+    ``plausibility_flags`` and ``requires_human_review`` set. Returns new
+    objects; inputs are not mutated.
+    """
+    out_fields = [dict(f) for f in fields if isinstance(f, Mapping)]
+    conf: dict[str, Any] = dict(confidence or {})
+    flags = check_market_study_consistency(out_fields)
+    if not flags:
+        return out_fields, conf, []
+
+    by_name = {f.get("field_name"): f for f in out_fields}
+    by_field = dict(conf.get("by_field") or {})
+    low = list(conf.get("low_confidence_fields") or [])
+    for flag in flags:
+        fd = by_name.get(flag.field_name)
+        if fd is None:
+            continue
+        cur = fd.get("confidence")
+        cur_f = float(cur) if isinstance(cur, int | float) and not isinstance(cur, bool) else 1.0
+        fd["confidence"] = min(cur_f, PLAUSIBILITY_CONFIDENCE_CAP)
+        prior = fd.get("note")
+        fd["note"] = f"{prior} {flag.reason}" if isinstance(prior, str) and prior else flag.reason
+        by_field[flag.field_name] = fd["confidence"]
+        if flag.field_name not in low:
+            low.append(flag.field_name)
+
+    conf["by_field"] = by_field
+    if by_field:
+        conf["overall"] = sum(float(v) for v in by_field.values()) / len(by_field)
+    conf["low_confidence_fields"] = low
+    conf["requires_human_review"] = True
+    existing = list(conf.get("plausibility_flags") or [])
+    existing.extend(f.model_dump() for f in flags)
+    conf["plausibility_flags"] = existing
+    logger.info(
+        "critic: market-study consistency flagged %d field(s): %s",
+        len(flags),
+        "; ".join(f.reason for f in flags),
+    )
+    return out_fields, conf, flags
+
+
 __all__ = [
+    "MARKET_STUDY_CHANGE_TOLERANCE_PTS",
     "PIP_TOTAL_TOLERANCE",
     "PLAUSIBILITY_CONFIDENCE_CAP",
     "PLAUSIBILITY_FLOOR_RATIO",
     "CapexPlausibilityFlag",
     "CriticInput",
     "CriticOutput",
+    "MarketStudyConsistencyFlag",
     "StatementPlausibilityFlag",
     "apply_capex_plausibility",
+    "apply_market_study_consistency",
     "apply_statement_plausibility",
     "check_capex_plausibility",
+    "check_market_study_consistency",
     "check_statement_plausibility",
     "run_critic",
     "validate_grounding",

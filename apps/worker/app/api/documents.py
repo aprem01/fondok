@@ -626,7 +626,15 @@ async def _audit_re_extract_requested(
 # ``capex_plan.pip.*`` / ``future_capex.*`` — and a critic pass. Every prior
 # CAPEX extraction carries none of those fields, so a cached row must not be
 # served for them.
-EXTRACTION_PIPELINE_VERSION = "v8"
+# v9 (FON-116, 2026-10-30): MARKET_STUDY gained class-bucket performance /
+# forecast rows — ``market_study.class.<bucket>.<YYYY>.{occupancy_pct,
+# adr_usd, revpar_usd, *_change_pct, period}``, ``market_study.forecast.
+# first_year`` / ``last_year`` and the overall ``occupancy_change_pct`` /
+# ``adr_change_pct`` columns (``extraction_schemas/market_study.md``, which the
+# legacy prompt now splices in verbatim) — plus the critic pass that reconciles
+# each printed YoY change to its two levels. Cached CoStar submarket
+# extractions carry none of the class rows and must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v9"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -7680,6 +7688,15 @@ async def _run_extraction_pipeline_inner(
                 fields=fields,
                 confidence=confidence,
             )
+            # FON-116 — CoStar submarket series check: each printed YoY
+            # change against its two levels. Keyed on the rows themselves,
+            # not the tag (a CoStar report tagged STR_TREND still extracts
+            # in the MARKET_STUDY lane). Flagged changes are capped at 0.5.
+            fields, confidence = _apply_market_study_quality_pass(
+                doc_id=doc_id,
+                fields=fields,
+                confidence=confidence,
+            )
 
             ext_id = uuid4()
             # HOTFIX 2026-07-05: terse compression-on-write shipped
@@ -10268,6 +10285,49 @@ def _apply_capex_quality_pass(
         return out_fields, out_conf
     except Exception as exc:  # never block extraction
         logger.warning("critic: capex plausibility failed for doc=%s: %s", doc_id, exc)
+        return fields, confidence
+
+
+_MARKET_STUDY_SERIES_PREFIXES = ("market_study.class.", "market_study.trend.")
+
+
+def _apply_market_study_quality_pass(
+    *,
+    doc_id: str,
+    fields: list[dict[str, Any]],
+    confidence: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """FON-116 — the MARKET_STUDY critic pass
+    (``agents/critic.apply_market_study_consistency``).
+
+    When an extraction carries the CoStar appendix series
+    (``market_study.class.<bucket>.<YYYY>.*`` / ``market_study.trend.<YYYY>.*``),
+    a year's printed YoY change for occupancy, ADR or RevPAR must reconcile to
+    that year's and the prior year's printed levels within 0.3 pts. A change
+    that does not is kept but capped at 0.5 confidence, with the reason on
+    the field's ``note`` and under ``plausibility_flags`` /
+    ``requires_human_review``. A no-op for every extraction without those
+    rows; best-effort throughout.
+    """
+    if not fields or not any(
+        isinstance(f, dict) and str(f.get("field_name") or "").lower().startswith(_MARKET_STUDY_SERIES_PREFIXES)
+        for f in fields
+    ):
+        return fields, confidence
+    try:
+        from ..agents.critic import apply_market_study_consistency
+
+        out_fields, out_conf, flags = apply_market_study_consistency(fields, confidence)
+        if flags:
+            logger.info(
+                "critic: doc=%s %d market-study change(s) disagree with their levels: %s",
+                doc_id,
+                len(flags),
+                "; ".join(f.reason for f in flags),
+            )
+        return out_fields, out_conf
+    except Exception as exc:  # never block extraction
+        logger.warning("critic: market-study consistency failed for doc=%s: %s", doc_id, exc)
         return fields, confidence
 
 
