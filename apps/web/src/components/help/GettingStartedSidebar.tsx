@@ -245,7 +245,7 @@ export function GettingStartedSidebar() {
 
       {allDone && (
         <div className="px-3.5 py-2 border-t border-border bg-success-50/40 text-[12px] text-success-700 leading-relaxed">
-          You're all set — close this when you're ready.
+          You&apos;re all set — close this when you&apos;re ready.
         </div>
       )}
     </aside>

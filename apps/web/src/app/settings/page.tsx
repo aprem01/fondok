@@ -464,7 +464,7 @@ function HintsSection() {
       <div className="flex items-center justify-between py-3">
         <div>
           <div className="text-[13px] font-medium text-ink-900">Reset all coach marks</div>
-          <div className="text-[12px] text-ink-500 mt-0.5">Clears every "dismissed" record so the hints surface again — useful for onboarding a new teammate.</div>
+          <div className="text-[12px] text-ink-500 mt-0.5">Clears every &ldquo;dismissed&rdquo; record so the hints surface again — useful for onboarding a new teammate.</div>
         </div>
         <Button variant="secondary" size="sm" onClick={onReset}>
           <RotateCcw size={12} aria-hidden="true" /> Reset hints

@@ -45,7 +45,9 @@ export default function DocumentDetailPage() {
 
   const doc = documents.find((d) => d.id === docId);
   const ext = extractions[docId];
-  const fields = ext?.fields ?? [];
+  // Memoised so the useMemo below keys on a stable array when `ext` has none.
+  const extFields = ext?.fields;
+  const fields = useMemo(() => extFields ?? [], [extFields]);
 
   // Only fields that carry a value are shown; counts follow the visible set.
   const displayable = useMemo(

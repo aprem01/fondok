@@ -226,7 +226,7 @@ export default function PipelineDigestsPage() {
 
       {!isWorkerConnected() && (
         <Card className="border-warning-300 bg-warning-50 p-4 text-sm text-warning-900">
-          Digests aren't available right now. Contact your Fondok administrator.
+          Digests aren&apos;t available right now. Contact your Fondok administrator.
         </Card>
       )}
 

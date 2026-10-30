@@ -2231,6 +2231,10 @@ export const api = {
       // owner DSN (DATABASE_URL_MIGRATIONS), "same" otherwise. Optional so
       // a web bundle deployed ahead of the worker still types the old body.
       db_migrations_dsn?: 'owner' | 'same';
+      // 2026-10-30 — which commit the worker is serving (RAILWAY_GIT_COMMIT_SHA,
+      // else the Dockerfile ARG) and when the image was built; null when unknown.
+      build_sha?: string | null;
+      build_time?: string | null;
     }>('GET', '/health'),
   admin: {
     /** Tenant-scoped LLM cost + cache hit-rate rollup. Requires

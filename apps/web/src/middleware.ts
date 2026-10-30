@@ -20,6 +20,8 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/diag',
+  // Deploy verification — the post-deploy smoke polls this without a session.
+  '/api/version',
   '/landing',
   '/test-documents(.*)',
 ]);

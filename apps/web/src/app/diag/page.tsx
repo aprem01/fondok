@@ -13,6 +13,12 @@ import { api, isWorkerConnected, workerUrl, type AgentCostsResponse } from '@/li
 
 const DIAG_ENABLED = process.env.NEXT_PUBLIC_SHOW_DIAG === 'true';
 
+/** Body of this app's own GET /api/version (src/app/api/version/route.ts). */
+interface WebVersion {
+  sha: string | null;
+  env: string | null;
+}
+
 interface Diag {
   workerUrl: string;
   connected: boolean;
@@ -21,6 +27,8 @@ interface Diag {
     version?: string;
     db?: string;
     db_migrations_dsn?: 'owner' | 'same';
+    build_sha?: string | null;
+    build_time?: string | null;
   } | null;
   healthError: string | null;
   dealsCount: number | null;
@@ -64,6 +72,8 @@ function DiagPageInner() {
     buildTime: new Date().toISOString(),
     loading: true,
   });
+  const [webVersion, setWebVersion] = useState<WebVersion | null>(null);
+  const [webVersionError, setWebVersionError] = useState<string | null>(null);
   const [costs, setCosts] = useState<AgentCostsResponse | null>(null);
   const [costsError, setCostsError] = useState<string | null>(null);
   const [smoke, setSmoke] = useState<SmokeState>({ step: 'idle' });
@@ -104,6 +114,19 @@ function DiagPageInner() {
         else setCostsError(`observability endpoint not reachable: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // Same-origin: which web bundle is serving (VERCEL_GIT_COMMIT_SHA / VERCEL_ENV
+    // read at request time by the route handler). Independent of the worker.
+    async function readWebVersion() {
+      try {
+        const res = await fetch('/api/version', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as WebVersion;
+        if (!cancelled) setWebVersion({ sha: json.sha ?? null, env: json.env ?? null });
+      } catch (e) {
+        if (!cancelled) setWebVersionError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    void readWebVersion();
     if (isWorkerConnected()) {
       void run();
     } else {
@@ -197,6 +220,19 @@ function DiagPageInner() {
         <Kv k="page rendered at" v={diag.buildTime} />
       </Section>
 
+      <Section title="Web build (GET /api/version)">
+        {webVersionError ? (
+          <pre style={{ color: '#b00' }} data-testid="diag-web-version-error">{webVersionError}</pre>
+        ) : !webVersion ? (
+          <div>loading…</div>
+        ) : (
+          <>
+            <Kv k="sha" v={webVersion.sha ?? '—'} />
+            <Kv k="env" v={webVersion.env ?? '—'} />
+          </>
+        )}
+      </Section>
+
       <Section title="Worker /health">
         {diag.loading ? <div>loading…</div> : diag.healthError ? (
           <pre style={{ color: '#b00' }}>{diag.healthError}</pre>
@@ -206,6 +242,8 @@ function DiagPageInner() {
             <Kv k="version" v={String(diag.health?.version ?? '?')} />
             <Kv k="db" v={String(diag.health?.db ?? '?')} />
             <Kv k="db_migrations_dsn" v={String(diag.health?.db_migrations_dsn ?? '?')} />
+            <Kv k="build_sha" v={diag.health?.build_sha ?? '—'} />
+            <Kv k="build_time" v={diag.health?.build_time ?? '—'} />
           </>
         )}
       </Section>

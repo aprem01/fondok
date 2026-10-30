@@ -10,8 +10,9 @@
 
 type Context = Record<string, unknown>;
 
+// `any` here is deliberate: the module shape is whichever Sentry SDK the
+// runtime resolves (browser or node), and the package is an optional dep.
 const dynImport = (m: string) =>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (Function('m', 'return import(m)') as (m: string) => Promise<any>)(m);
 
 export async function reportToSentry(
