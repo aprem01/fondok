@@ -48,42 +48,193 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | --- | --- | --- | --- |
 | `NEXT_PUBLIC_WORKER_URL` | `https://fondok-worker-production.up.railway.app` | same | _not yet set — see Known Issues_ |
 | `ANTHROPIC_API_KEY` | encrypted | encrypted | – |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | _optional_; unset = demo mode | _optional_ | _optional_ |
-| `CLERK_SECRET_KEY` | _optional_; required when publishable key is set | _optional_ | _optional_ |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | required (`pk_test_` today, `pk_live_` after the cutover below) | same | same |
+| `CLERK_SECRET_KEY` | required alongside the publishable key | same | same |
+
+Both Clerk keys are effectively required on every deployed environment: a
+web bundle without them boots in its local demo persona, but the worker
+refuses every request that carries no Clerk JWT (see "Enabling Clerk auth"),
+so such a deployment shows no data.
 
 ## Enabling Clerk auth
 
-Auth is feature-flagged via `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Without
-it, the app boots in demo mode as **Eshan Mehta · Brookfield Real Estate**
-(see `apps/web/src/lib/mockData.ts`) and every worker request resolves
-to `DEFAULT_TENANT_ID`. Setting both keys flips the app into authenticated
-multi-tenant mode without any code changes.
+**The contract (FON-93, in force since 2026-10-06): the tenant of every
+worker request is the `org_id` of a verified Clerk session JWT, and nothing
+else.** There is no header fallback and no default tenant on a deployed
+worker.
 
-1. Sign up at [clerk.com](https://clerk.com) and create a new application
-   (Standard plan suffices for an org-aware deployment).
-2. From the Clerk dashboard → API Keys, copy the **Publishable key**
-   (`pk_test_…` or `pk_live_…`).
-3. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in Vercel:
-   ```bash
-   vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --value 'pk_live_xxx'
-   ```
-4. Copy the **Secret key** and set `CLERK_SECRET_KEY` (encrypted):
-   ```bash
-   vercel env add CLERK_SECRET_KEY production --value 'sk_live_xxx'
-   ```
-5. Redeploy the web app — `vercel --prod --yes`. Sign-in / sign-up routes
-   activate automatically and the sidebar swaps the demo persona for the
-   live Clerk user + organization switcher.
-6. (Optional, multi-tenant) In the Clerk dashboard → Organizations,
-   enable organizations. Each organization becomes a Fondok tenant: the
-   web app sends `X-Tenant-Id: <organization_id>` on every worker
-   request, and the worker scopes all reads/writes to that tenant. When
-   no org is selected, the worker falls back to `DEFAULT_TENANT_ID`.
+How a request is scoped:
 
-To disable auth in a deployment without unsetting the env var (useful
-for previews), set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_dummy_dummy`
-— the `_dummy` suffix is treated as unset and the app reverts to demo
-mode.
+1. The web app attaches `Authorization: Bearer <Clerk session JWT>` to every
+   worker call. The worker verifies the signature against `CLERK_JWKS_URL`
+   (RS256) and, when set, the `CLERK_JWT_ISSUER` / `CLERK_JWT_AUDIENCE`
+   claims. A token that fails verification is a **401** (the browser
+   refreshes its session and retries); a request with no token is a **401**.
+2. The JWT's organization id (`org_id`, or `o.id` in v2 claims) is turned
+   into the tenant UUID (`coerce_org_tenant_id`, a UUIDv5 of the org id).
+   Every tenant-scoped table stores that UUID; every query carries it.
+3. With `REQUIRE_REGISTERED_TENANT=1` the org must also be a row in the
+   `tenants` registry with status `active`; otherwise the request is a
+   **403 `tenant_not_registered`**. This is what makes a Clerk organization a
+   Fondok workspace — creating an org in Clerk is not enough.
+4. The legacy `X-Tenant-Id` header path is **closed**:
+   `ALLOW_TENANT_HEADER_WITHOUT_JWT` defaults to off and must stay unset on
+   Railway. It exists for the test suite and a developer's laptop only.
+   `DEFAULT_TENANT_ID` is reachable only through that closed path.
+
+Verify the posture on the deployed worker (internal admin JWT):
+
+```bash
+curl -s -H "Authorization: Bearer <internal admin token>" \
+  https://fondok-worker-production.up.railway.app/admin/health \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["auth"])'
+# {'header_tenant_path_enabled': False, 'jwt_required': True,
+#  'registered_tenant_required': True, 'rls_tenant_guc': True}
+```
+
+### Registering a tenant
+
+`POST /admin/tenants` registers an org over HTTP, but only for a caller whose
+own tenant is already `internal` — so the first internal tenant is written
+from a trusted shell, and new institutions can be too:
+
+```bash
+cd apps/worker
+# Bootstrap Fondok's own workspace (once per Clerk instance)
+uv run python scripts/register_tenant.py \
+    --clerk-org org_XXXXXXXXXXXXXXXXXXXXXXXX --name "Fondok Internal" --kind internal
+# Register a customer institution
+uv run python scripts/register_tenant.py \
+    --clerk-org org_YYYYYYYYYYYYYYYYYYYYYYYY --name "Brookfield" --kind external
+# See what is registered
+uv run python scripts/register_tenant.py --list
+```
+
+`scripts/isolation_rollout.py` sequences the whole Phase-3 runbook
+(`docs/WORKSPACE_ISOLATION.md` §5, §6, §10): dry run by default, `--execute`
+performs the database steps (register the internal tenant, fold the listed
+deals' old single-member tenants into it) and prints the Clerk / Railway
+steps as instructions with the `/admin/health` fields that must read true
+afterwards. The Clerk webhook (`CLERK_WEBHOOK_SECRET`, Svix) parks
+`organization.created` orgs as `pending_review`; `register_tenant.py
+--status active` or the admin API approves them.
+
+Worker variables that drive all of this (`apps/worker/app/config.py`):
+
+| Key | Production value |
+| --- | --- |
+| `CLERK_JWKS_URL` | the instance's `https://<frontend-api>/.well-known/jwks.json` |
+| `CLERK_JWT_ISSUER` | the instance's issuer, e.g. `https://clerk.<host>` (optional, recommended) |
+| `CLERK_JWT_AUDIENCE` | optional |
+| `CLERK_WEBHOOK_SECRET` | the instance's Svix endpoint secret (`whsec_…`) |
+| `REQUIRE_REGISTERED_TENANT` | `1` |
+| `ALLOW_TENANT_HEADER_WITHOUT_JWT` | **unset** |
+
+Values must carry no trailing whitespace. Since 2026-10-30 the worker
+strips every string setting at boot and logs
+`config: stripped whitespace from <NAME>` (the name only) when it had to —
+grep the deploy log for that line after changing a variable.
+
+### Web keys
+
+```bash
+printf '%s' "$VALUE" | vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production
+printf '%s' "$VALUE" | vercel env add CLERK_SECRET_KEY production
+```
+
+`printf '%s'` (no trailing newline) is the point. A publishable key ending in
+`_dummy` is treated as unset by the web app (preview deployments that should
+not sign in); the worker behind it still requires a JWT.
+
+## Clerk production cutover
+
+The worker and the web app run against a Clerk **development** instance
+(`pk_test_` / `sk_test_`). Go-live moves both to a production instance.
+Facts that shape the order below (verify against Clerk's docs when
+executing): a production instance is bound to a domain you control and
+needs DNS CNAME records (`clerk.<domain>`, `accounts.<domain>`, mail
+records); `*.vercel.app` cannot carry them. **A Fondok-owned domain (e.g.
+`app.fondok.<tld>`) is therefore a prerequisite**, and that one fact fans
+out into CORS, the e2e host guard and the alias workflow.
+
+Steps, in order. "Verify" lines are read-only.
+
+1. **Domain (Prem).** Add the production hostname to the Vercel project
+   (`aprem01s-projects/fondok`); keep `fondok-app.vercel.app` as a secondary
+   alias during the transition.
+   Verify: `curl -sI https://<host>/ | head -1` → 200, or 307 to sign-in.
+2. **CORS (code/config).** `CORS_ORIGINS=https://<host>` on Railway — the
+   default regex only knows `*.vercel.app` hosts.
+   Verify: `curl -s -o /dev/null -w '%{http_code}' -H "Origin: https://<host>" -X OPTIONS -H "Access-Control-Request-Method: GET" https://fondok-worker-production.up.railway.app/health`
+   and inspect `access-control-allow-origin` with `-D -`.
+3. **Clerk (Prem).** Create the production instance with the same settings
+   as dev: organizations on, org creation off — repeat the dev-instance step
+   from `docs/WORKSPACE_ISOLATION.md` §10.2:
+   `clerk api /instance/organization_settings -X PATCH -d '{"organization_creation_defaults":{"enabled":false}}' --instance prod`.
+   Set the domain, add the DNS records, wait for Clerk to show them
+   verified. Create the "Fondok Internal" and "Brookfield" organizations on
+   the production instance — **their org ids are new** (step 7).
+   Verify: `clerk api /instance --instance prod` and
+   `curl -s https://clerk.<host>/.well-known/jwks.json | python -m json.tool | head`.
+4. **Vercel env, production scope only (Prem).**
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_…`, `CLERK_SECRET_KEY=sk_live_…`;
+   keep `NEXT_PUBLIC_WORKER_URL`; leave `NEXT_PUBLIC_SHOW_DIAG` and
+   `NEXT_PUBLIC_SHOW_DANGER_ZONE` unset. Use
+   `printf '%s' "$VALUE" | vercel env add NAME production`.
+   Verify: `vercel env ls production` lists the names; after the deploy the
+   sign-in page no longer shows Clerk's "Development mode" badge.
+5. **Railway env (Prem).**
+   `CLERK_JWKS_URL=https://clerk.<host>/.well-known/jwks.json`,
+   `CLERK_JWT_ISSUER=https://clerk.<host>`, and rotate `CLERK_WEBHOOK_SECRET`
+   to the production instance's Svix endpoint secret (webhook URL unchanged:
+   `https://fondok-worker-production.up.railway.app/webhooks/clerk`, events
+   `organization.created/updated/deleted`). Set each through stdin:
+   `printf '%s' "$VALUE" | railway variable set --service fondok-worker --stdin KEY`.
+   Verify no whitespace slipped in:
+   `railway variables --service fondok-worker --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k:(v!=v.strip()) for k,v in d.items()})'`
+   → every value `False`. Then confirm the redeploy landed (next section's
+   `build_sha` one-liner).
+6. **JWT verification check (code, after the worker redeploys).** Take a
+   production-instance session token (DevTools → any worker call →
+   Authorization) and decode it without verifying:
+   `python3 -c 'import jwt,sys; print(jwt.decode(sys.argv[1], options={"verify_signature":False}))' <token>`
+   → `iss` equals `CLERK_JWT_ISSUER`, `o.id` / `org_id` present. Then
+   `curl -H "Authorization: Bearer <token>" https://fondok-worker-production.up.railway.app/deals`
+   → 200, or 403 `tenant_not_registered` until step 7 — that sequence is
+   expected.
+7. **Tenant registry re-seed (Prem).** Tenant UUIDs derive from the Clerk
+   org id, so **production-instance orgs are new tenants**; every deal Sam,
+   Eshan and Rani rely on lives under dev-instance org UUIDs. Dry run, then
+   execute:
+   `uv run python scripts/isolation_rollout.py --internal-org org_<prodFondokInternal> --fold-org org_<devFondokInternal> --deal-id …`
+   (add `--execute` once the plan reads right) to register the new internal
+   tenant and fold the dev-era rows into it; then
+   `uv run python scripts/register_tenant.py --clerk-org org_<prodBrookfield> --name Brookfield --kind external`.
+   Verify: `register_tenant.py --list` shows both rows `active`; Sam signs
+   in and sees the folded deals (`docs/WORKSPACE_ISOLATION.md` §10.7).
+8. **Enforcement (Prem).** `REQUIRE_REGISTERED_TENANT=1` if not already on.
+   Verify: `/admin/health.auth.registered_tenant_required == true` as a
+   Fondok Internal admin; a throwaway org gets 403.
+9. **CI smoke secrets (code — decision needed).** The post-deploy smoke
+   signs in through the deployed app, but `apps/web/e2e/prod/global-setup.ts`
+   refuses live keys. Either (a) relax the guard to "refuse `sk_live_` unless
+   `FONDOK_SMOKE_ALLOW_LIVE_INSTANCE=1`" and provision a dedicated smoke user
+   on the production instance (Clerk test emails work on production
+   instances only with test mode enabled — verify), or (b) keep a
+   dev-instance preview deployment for the smoke and point
+   `PLAYWRIGHT_BASE_URL` there. (a) is recommended. Either way update the
+   `apps/web/e2e/prod/guard.ts` host allow-list and the hard-coded
+   `https://fondok-app.vercel.app` in `post-deploy-smoke.yml` to the new
+   domain.
+10. **Docs.** This file's "Enabling Clerk auth" and the RUNBOOK's live
+    surfaces must name the new host.
+
+**Rollback:** switch the four Clerk variables (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
+`CLERK_SECRET_KEY` on Vercel; `CLERK_JWKS_URL`, `CLERK_JWT_ISSUER` on
+Railway — and `CLERK_WEBHOOK_SECRET` if rotated) back to the dev-instance
+values and redeploy both sides; confirm with the `build_sha` one-liner and
+`/admin/health.auth`. The registry rows for the production orgs are
+harmless to leave in place.
 
 ## Build configuration
 
@@ -189,6 +340,25 @@ railway up --service fondok-worker --detach
 
 Build takes about 3-5 minutes. Use `--detach` to background; omit to stream.
 
+A push to `main` also redeploys (Railway builds `apps/worker/Dockerfile` on
+push). Either way, **confirm the new build is serving before judging it** —
+on 2026-10-28 Railway lagged 3.5 hours behind `main` and nothing showed it:
+
+```bash
+curl -s https://fondok-worker-production.up.railway.app/health \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["build_sha"], d["version"], d["status"], d["degraded_reasons"])'
+git rev-parse origin/main   # must equal build_sha
+```
+
+`build_sha` is `RAILWAY_GIT_COMMIT_SHA` (Railway sets it on the container),
+else the Dockerfile's `ARG GIT_SHA`, else `null` — a `null` means the
+container has neither, not that nothing is deployed. The post-deploy smoke
+(`.github/workflows/post-deploy-smoke.yml`, job `worker-deployed`) runs this
+same check for up to 20 minutes after every alias promotion and fails with an
+annotation when the worker never catches up; the web side is
+`https://fondok-app.vercel.app/api/version` (`{sha, env}`), required to match
+only when the deploy touched `apps/web/`.
+
 ### View logs
 
 ```bash
@@ -240,9 +410,22 @@ railway connect Postgres
 ### Verify health
 
 ```bash
-curl https://fondok-worker-production.up.railway.app/health
-# {"status":"ok","version":"0.1.0","db":"ok"}
+curl -s https://fondok-worker-production.up.railway.app/health | python3 -m json.tool
+# status, version, build_sha, build_time, db, db_migrations_dsn, usali_rules,
+# structural_recognizer, ontology_version, degraded_reasons
 ```
+
+The one-liner that answers "is the commit I pushed the one serving?":
+
+```bash
+curl -s https://fondok-worker-production.up.railway.app/health \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["build_sha"], d["version"], d["status"], d["degraded_reasons"])'
+```
+
+Operator detail — storage, auth posture, embeddings, cache counters, the
+last LLM provider refusal (`llm_provider.last_error` / `last_error_at`) and
+`extraction_failures_last_hour` / `engine_failures_last_hour` — is on
+`GET /admin/health` behind an internal admin JWT.
 
 ### Update the Vercel web app
 
