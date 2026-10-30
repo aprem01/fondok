@@ -254,21 +254,6 @@ class Settings(BaseSettings):
         default="00000000-0000-0000-0000-000000000001"
     )
 
-    # ── Demo exports ────────────────────────────────────────────────
-    # Comma-separated non-UUID deal ids that ``GET /deals/{id}/export/*`` may
-    # serve from the Kimpton Angler fixture (``kimpton-angler-2026``). EMPTY
-    # in production: any other non-UUID id is ``404 Deal not found.`` —
-    # before 2026-10-17 every slug served the fixture workbook / memo /
-    # deck (eight fictional source documents in the appendix) to any
-    # authenticated tenant, so a typo'd or shared URL handed a client a
-    # hotel they do not own.
-    DEMO_EXPORT_SLUGS: str = Field(default="")
-
-    def demo_export_slugs(self) -> frozenset[str]:
-        return frozenset(
-            part.strip() for part in self.DEMO_EXPORT_SLUGS.split(",") if part.strip()
-        )
-
     # ── Clerk (auth + RBAC) ─────────────────────────────────────────
     # Wave RBAC 2026-07 — the worker verifies Clerk session JWTs on
     # every request that carries ``Authorization: Bearer <jwt>``. The

@@ -193,14 +193,9 @@ ENDPOINT_CASES: list[EndpointCase] = [
     ),
     EndpointCase("GET", "/deals", "/{deal_id}/document_coverage"),
     EndpointCase("GET", "/deals", "/{deal_id}/completeness"),
-    # analysis_router (mounted at /analysis)
-    EndpointCase(
-        "POST",
-        "/analysis",
-        "/{deal_id}/analyze",
-        body={},
-        skip_positive=True,
-    ),
+    # analysis_router (mounted at /analysis). The ``/{deal_id}/analyze``
+    # stub-job route was removed for go-live (it answered 200 with a fake
+    # job id); nothing here is listed for it.
     EndpointCase(
         "GET", "/analysis", "/{deal_id}/variance", skip_positive=True
     ),

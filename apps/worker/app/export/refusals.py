@@ -57,6 +57,28 @@ def refuse(
     return REFUSAL_GLYPH
 
 
+#: Export-side prefix for a value the builder declined to invent. Where a
+#: workbook / memo / deck cell would otherwise hold a number, the cell reads
+#: ``not available: <reason>`` (go-live rule: an unknown is never 0 / 0% / $0).
+NOT_AVAILABLE_PREFIX = "not available"
+
+
+def unavailable(
+    code: ReasonCode,
+    detail: str,
+    concept: str | None = None,
+) -> str:
+    """Record a refusal and return the export sentence ``not available: <detail>``.
+
+    The glyph form (:func:`refuse`) suits dense tables whose header names the
+    field; this form suits headline cells, label/value rows and section notes,
+    where the reader needs the reason on the page itself. Both record the same
+    typed :class:`Refusal`, so the Refusals sheet / memo footnote list it.
+    """
+    refuse(code, detail, concept)
+    return f"{NOT_AVAILABLE_PREFIX}: {detail}"
+
+
 @contextmanager
 def collect_refusals(into: list[Refusal] | None = None) -> Iterator[list[Refusal]]:
     """Record every :func:`refuse` call made inside the block.
@@ -137,6 +159,7 @@ def reason_explanation(code: ReasonCode) -> str:
 
 
 __all__ = [
+    "NOT_AVAILABLE_PREFIX",
     "REFUSAL_GLYPH",
     "ReasonCode",
     "Refusal",
@@ -146,4 +169,5 @@ __all__ = [
     "reason_explanation",
     "reason_label",
     "refuse",
+    "unavailable",
 ]

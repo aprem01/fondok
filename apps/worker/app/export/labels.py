@@ -30,17 +30,31 @@ CASH_NOI = "Cash NOI (after FF&E reserve)"
 #: and the label must NOT assert "before FF&E reserve" about it.
 NOI_BASIS_UNCONFIRMED = "NOI (basis unconfirmed — pre-upgrade run)"
 
-#: The pre-FON-59 label, still emitted by :mod:`app.export.fixtures` and the
-#: demo payload. Kept so a lookup written against the new vocabulary still
-#: finds the headline NOI row on an older payload.
-LEGACY_NOI = "Net Operating Income"
-
 #: Every label that can carry the headline (before-reserve) NOI row, newest
 #: first. Lookups over ``p_and_l_engine_proforma["lines"]`` should match this.
+#: The export payload is assembled fresh from the engine snapshot on every
+#: request, so there is no older persisted payload to accommodate.
 NOI_HEADLINE_LABELS: tuple[str, ...] = (
     NOI_BEFORE_RESERVE,
     NOI_BASIS_UNCONFIRMED,
-    LEGACY_NOI,
+)
+
+#: Printed beside every exported debt figure whose rate rides on the debt
+#: engine's flat SOFR default (a floating tranche with no analyst index
+#: assumption). Same words the Debt tab shows next to the Benchmark row.
+BENCHMARK_DEFAULT_NOTE = (
+    "Fondok’s flat SOFR assumption, not market data — enter the index you "
+    "underwrite to"
+)
+
+#: Op-Ratio Provenance note when every resolved ratio is a hotel-type seed.
+OP_RATIO_ALL_SEED_NOTE = (
+    "all operating ratios are hotel-type defaults; no T-12 was provided"
+)
+
+#: Pricing / solve-to-target sections when the deal carries no return target.
+PRICING_NO_TARGET_NOTE = (
+    "Pricing to target not available: no return target set on this deal"
 )
 
 
