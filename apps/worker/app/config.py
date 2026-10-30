@@ -7,11 +7,14 @@ half-configured state.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -518,6 +521,30 @@ class Settings(BaseSettings):
     # The TTL is only the safety net for writes the fingerprint cannot see
     # (another replica, manual SQL); ``0`` disables the cache.
     READ_CACHE_TTL_S: float = Field(default=120.0, ge=0.0)
+
+    # ── Whitespace hygiene (go-live audit D.7, 2026-10-30) ──────────
+    # A value pasted into Railway / Vercel with a trailing newline used to
+    # reach the code verbatim: a "\n" on CLERK_JWT_ISSUER made every JWT a
+    # 401 (``InvalidIssuerError``) and nothing pointed at the config. Every
+    # str field and every SecretStr value is stripped here, once, at
+    # construction; the log names the FIELD so the operator can fix the
+    # source — the value itself is never written anywhere.
+    @model_validator(mode="after")
+    def _strip_whitespace(self) -> "Settings":
+        for name in type(self).model_fields:
+            value = getattr(self, name, None)
+            if isinstance(value, SecretStr):
+                raw = value.get_secret_value()
+                stripped = raw.strip()
+                if stripped != raw:
+                    setattr(self, name, SecretStr(stripped))
+                    logger.info("config: stripped whitespace from %s", name)
+            elif isinstance(value, str):
+                stripped = value.strip()
+                if stripped != value:
+                    setattr(self, name, stripped)
+                    logger.info("config: stripped whitespace from %s", name)
+        return self
 
     @staticmethod
     def _as_async_dsn(url: str) -> str:
