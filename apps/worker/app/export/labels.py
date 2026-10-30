@@ -67,6 +67,42 @@ IRR_GRID_NO_TARGET_NOTE = (
 #: The grid solver ran but produced no cells.
 IRR_GRID_NO_CELLS_NOTE = "IRR sensitivity grid not available: the grid returned no cells"
 
+#: FON-118 — the "Returns by Exit Year" block on a payload whose returns
+#: engine ran before the schedule existed (an old run) / with no returns at all.
+EXIT_SCHEDULE_STALE_NOTE = (
+    "returns by exit year are produced by a model run made after 2026-10-30; "
+    "run the model again"
+)
+EXIT_SCHEDULE_NO_RETURNS_NOTE = "no returns engine output on the export payload"
+EXIT_SCHEDULE_TITLE = "Returns by Exit Year"
+EXIT_SCHEDULE_COLUMNS: tuple[str, ...] = (
+    "Exit",
+    "Exit NOI",
+    "Gross sale",
+    "Loan payoff",
+    "Net proceeds",
+    "Unlevered IRR",
+    "Levered IRR",
+    "Equity multiple",
+)
+
+
+def exit_row_label(row: dict) -> str:
+    """``Year 3`` / ``Month 52`` (off-cycle) with ``· selected`` / ``· peak``
+    markers — the first column of the exit-year table in every export."""
+    yr = row.get("exit_year")
+    month = row.get("exit_month")
+    label = (
+        f"Year {yr}" if isinstance(yr, int)
+        else f"Month {month}" if isinstance(month, int)
+        else "Exit"
+    )
+    if row.get("is_selected"):
+        label += " · selected"
+    if row.get("is_peak_levered"):
+        label += " · peak"
+    return label
+
 #: The grid solver raised. ``error`` is the exception TYPE only (the message
 #: may quote deal data; the full traceback is in the worker log).
 IRR_GRID_ENGINE_ERROR_NOTE = (

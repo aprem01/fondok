@@ -250,6 +250,19 @@ def distinct_codes(refusals: Iterable[object]) -> list[ReasonCode]:
     return out
 
 
+def coerce_reason(value: object, default: ReasonCode = ReasonCode.NOT_APPLICABLE) -> ReasonCode:
+    """The :class:`ReasonCode` a payload row carries (an enum member or its
+    string value), or ``default`` when the row names none / an unknown one."""
+    if isinstance(value, ReasonCode):
+        return value
+    if isinstance(value, str):
+        try:
+            return ReasonCode(value)
+        except ValueError:
+            return default
+    return default
+
+
 def reason_label(code: ReasonCode) -> str:
     """Short human label for ``code`` — from ``REASON_META``, never typed."""
     return REASON_META[code]["label"]
@@ -266,6 +279,7 @@ __all__ = [
     "ReasonCode",
     "Refusal",
     "as_float",
+    "coerce_reason",
     "collect_refusals",
     "dedupe",
     "distinct_codes",

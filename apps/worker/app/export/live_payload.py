@@ -58,7 +58,7 @@ from dataclasses import asdict
 from typing import Any
 from uuid import UUID
 
-from fondok_schemas.reasons import ReasonCode
+from fondok_schemas.reasons import REASON_META, ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,7 +72,7 @@ from .labels import (
     PRICING_NO_TARGET_NOTE,
     noi_before_reserve_label,
 )
-from .refusals import as_float, collect_refusals, dedupe, refuse, sum_strict
+from .refusals import as_float, coerce_reason, collect_refusals, dedupe, refuse, sum_strict
 
 logger = logging.getLogger(__name__)
 
@@ -422,7 +422,58 @@ def _build_returns(returns: dict[str, Any]) -> dict[str, Any]:
     _set(out, "equity_multiple", _num(returns.get("equity_multiple")))
     _set(out, "year1_cash_on_cash", _num(returns.get("year_one_coc")))
     _set(out, "avg_cash_on_cash", _num(returns.get("avg_coc")))
+    # FON-118 — returns by exit year (live renames: ``*_usd``). A row the
+    # engine did not price keeps its ``status`` / ``reason`` and carries no
+    # numbers; the refusal is recorded so ``model["refusals"]`` lists it.
+    rows_out: list[dict[str, Any]] = []
+    for i, row in enumerate(returns.get("exit_schedule") or []):
+        if not isinstance(row, dict):
+            continue
+        r: dict[str, Any] = {
+            "is_selected": bool(row.get("is_selected")),
+            "is_peak_levered": bool(row.get("is_peak_levered")),
+            "status": row.get("status") or "not_available",
+            "refi_included": bool(row.get("refi_included")),
+        }
+        _set(r, "exit_year", _int(row.get("exit_year")))
+        _set(r, "exit_month", _int(row.get("exit_month")))
+        _set(r, "reason", row.get("reason"))
+        _set(r, "reason_detail", row.get("reason_detail"))
+        _set(r, "exit_noi_basis", row.get("exit_noi_basis"))
+        _set(r, "exit_noi_period_label", row.get("exit_noi_period_label") or None)
+        _set(r, "terminal_noi_usd", _num(row.get("terminal_noi")))
+        _set(r, "gross_sale_price_usd", _num(row.get("gross_sale_price")))
+        _set(r, "selling_costs_usd", _num(row.get("selling_costs")))
+        _set(r, "transfer_tax_usd", _num(row.get("transfer_tax")))
+        _set(r, "loan_payoff_usd", _num(row.get("loan_payoff")))
+        _set(r, "net_sale_proceeds_usd", _num(row.get("net_proceeds")))
+        _set(r, "levered_irr", _num(row.get("levered_irr")))
+        _set(r, "unlevered_irr", _num(row.get("unlevered_irr")))
+        _set(r, "equity_multiple", _num(row.get("equity_multiple")))
+        if r["status"] != "computed":
+            code = coerce_reason(row.get("reason"))
+            refuse(
+                code,
+                row.get("reason_detail") or REASON_META[code]["explanation"],
+                f"returns.exit_schedule[{i}]",
+            )
+        rows_out.append(r)
+    if rows_out:
+        out["exit_schedule"] = rows_out
+    _set(out, "selected_exit_month", _int(returns.get("selected_exit_month")))
+    _set(out, "selected_exit_year", _int(returns.get("selected_exit_year")))
+    _set(out, "peak_levered_exit_year", _int(returns.get("peak_levered_exit_year")))
     return out
+
+
+def _int(value: Any) -> int | None:
+    """A whole number from the payload, or ``None`` — never a coerced 0."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_partnership(

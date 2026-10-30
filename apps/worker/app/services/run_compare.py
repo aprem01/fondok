@@ -185,6 +185,10 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str | None, str, str, str], ...] = (
     ("returns", "hold_years", None, "Hold (years)", "year", "Returns"),
     ("returns", "peak_equity", None, "Peak equity", "usd", "Returns"),
     ("returns", "year_one_coc", "year_one_coc", "Year-1 cash-on-cash", "pct", "Returns"),
+    # FON-118 — returns by exit year. The per-row fields follow (see the
+    # ``exit_schedule`` loop in ``extract_headline_fields``).
+    ("returns", "selected_exit_month", None, "Selected exit (month from close)", "month", "Returns"),
+    ("returns", "peak_levered_exit_year", None, "Peak levered-IRR exit year", "year", "Returns"),
     ("partnership", "lp.irr", "lp.irr", "LP IRR", "pct", "Partnership"),
     ("partnership", "gp.irr", "gp.irr", "GP IRR", "pct", "Partnership"),
     ("partnership", "lp.equity_multiple", "lp.equity_multiple", "LP equity multiple", "x", "Partnership"),
@@ -198,6 +202,30 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str | None, str, str, str], ...] = (
 def _year_label(row: Any, idx: int) -> str:
     yr = row.get("year") if isinstance(row, Mapping) else None
     return f"Year {yr}" if isinstance(yr, int) else f"Year {idx + 1}"
+
+
+#: (path suffix inside an exit-schedule row, label, unit) — FON-118.
+_EXIT_ROW_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("levered_irr", "Levered IRR", "pct"),
+    ("unlevered_irr", "Unlevered IRR", "pct"),
+    ("equity_multiple", "Equity multiple", "x"),
+    ("net_proceeds", "Net sale proceeds", "usd"),
+)
+
+
+def _exit_row_label(row: Any, idx: int) -> str:
+    """``Exit Year 3`` / ``Exit month 52`` (off-cycle), ``· selected`` when it
+    is the deal's own exit. Rows are keyed by index, labelled for a reader."""
+    if not isinstance(row, Mapping):
+        return f"Exit row {idx + 1}"
+    yr = row.get("exit_year")
+    month = row.get("exit_month")
+    label = (
+        f"Exit Year {yr}" if isinstance(yr, int)
+        else f"Exit month {month}" if isinstance(month, int)
+        else f"Exit row {idx + 1}"
+    )
+    return f"{label} · selected" if row.get("is_selected") else label
 
 
 def _field(
@@ -290,6 +318,19 @@ def extract_headline_fields(engines: Mapping[str, Any]) -> list[dict[str, Any]]:
                     spath = f"schedule[{i}].{sub}"
                     out.append(
                         _field("debt", spath, f"{ylab} · {slabel}", sunit, "Debt",
+                               _get_path(src, spath), _provenance_for(src, spath))
+                    )
+        # FON-118 — the returns-by-exit-year rows sit after the returns scalars.
+        # A ``not_available`` row carries None in every value — it stays None
+        # here (an absent row value is never a 0), so a baseline without the
+        # table and a head with one differ only by ``added`` rows.
+        if engine == "returns" and path == "peak_levered_exit_year":
+            for i, row in enumerate(src.get("exit_schedule") or []):
+                rlab = _exit_row_label(row, i)
+                for sub, slabel, sunit in _EXIT_ROW_FIELDS:
+                    spath = f"exit_schedule[{i}].{sub}"
+                    out.append(
+                        _field("returns", spath, f"{rlab} · {slabel}", sunit, "Returns",
                                _get_path(src, spath), _provenance_for(src, spath))
                     )
 

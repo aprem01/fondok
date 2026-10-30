@@ -85,6 +85,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .labels import (
+    EXIT_SCHEDULE_COLUMNS,
+    EXIT_SCHEDULE_NO_RETURNS_NOTE,
+    EXIT_SCHEDULE_STALE_NOTE,
+    EXIT_SCHEDULE_TITLE,
+    exit_row_label,
     COMP_CAP_METHOD_DISPLAY,
     COMP_COVERAGE_DISPLAY,
     NOI_HEADLINE_LABELS,
@@ -92,7 +97,15 @@ from .labels import (
     line_label,
     source_display,
 )
-from .refusals import as_float, collect_refusals, dedupe, refuse, sum_strict, unavailable
+from .refusals import (
+    as_float,
+    coerce_reason,
+    collect_refusals,
+    dedupe,
+    refuse,
+    sum_strict,
+    unavailable,
+)
 
 # ─────────────────────────── styling helpers ───────────────────────────
 
@@ -840,6 +853,66 @@ def _build_returns(wb: Workbook, model: dict[str, Any]) -> None:
         if benchmark_note:
             _write_note(ws, row, 3, str(benchmark_note))
         row += 1
+    row += 1
+
+    # FON-118 — returns by exit year: the same projection sold at each
+    # year-end. A row the engine did not price states why in its own words;
+    # a payload without the table (an old run) says so, never a 0.
+    ncols = len(EXIT_SCHEDULE_COLUMNS)
+    ws.cell(row=row, column=1, value=EXIT_SCHEDULE_TITLE.upper())
+    _style_subhead_row(ws, row, ncols)
+    row += 1
+    for j, header in enumerate(EXIT_SCHEDULE_COLUMNS, start=1):
+        ws.cell(row=row, column=j, value=header)
+    _style_header_row(ws, row, ncols)
+    row += 1
+    schedule = ret.get("exit_schedule")
+    if not isinstance(schedule, list) or not schedule:
+        _write_note(
+            ws, row, 1,
+            unavailable(
+                ReasonCode.STALE_RUN if ret else ReasonCode.ENGINE_SKIPPED,
+                EXIT_SCHEDULE_STALE_NOTE if ret else EXIT_SCHEDULE_NO_RETURNS_NOTE,
+                "returns.exit_schedule",
+            ),
+        )
+        row += 1
+    else:
+        for i, r in enumerate(schedule):
+            if not isinstance(r, dict):
+                continue
+            concept = f"returns.exit_schedule[{i}]"
+            ws.cell(row=row, column=1, value=exit_row_label(r))
+            if r.get("status") != "computed":
+                code = coerce_reason(r.get("reason"))
+                _write_note(
+                    ws, row, 2,
+                    unavailable(
+                        code,
+                        str(r.get("reason_detail") or REASON_META[code]["explanation"]),
+                        concept,
+                    ),
+                )
+                row += 1
+                continue
+            for col, key, fmt in (
+                (2, "terminal_noi_usd", USD_FMT),
+                (3, "gross_sale_price_usd", USD_FMT),
+                (4, "loan_payoff_usd", USD_FMT),
+                (5, "net_sale_proceeds_usd", USD_FMT),
+                (6, "unlevered_irr", PCT_FMT),
+                (7, "levered_irr", PCT_FMT),
+                (8, "equity_multiple", MULT_FMT),
+            ):
+                _write_value(
+                    ws, row, col, _as_float(r.get(key)), fmt,
+                    concept=f"{concept}.{key}",
+                    missing=f"no {key.replace('_usd', '').replace('_', ' ')} on the exit-year row",
+                )
+            basis = r.get("exit_noi_period_label")
+            if basis:
+                _write_note(ws, row, ncols + 1, str(basis))
+            row += 1
     row += 1
 
     ws.cell(row=row, column=1, value="CASH FLOW WATERFALL ($)")

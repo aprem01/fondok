@@ -138,6 +138,59 @@ def test_diff_math_and_unchanged_omitted() -> None:
     assert every["b"]["delta_abs"] == 0.0 and every["b"]["delta_pct"] == 0.0
 
 
+def test_exit_schedule_rows_are_added_against_the_golden_baseline() -> None:
+    """FON-118 — a head run that publishes the returns-by-exit-year rows
+    differs from the 2026-10-16 baseline ONLY by ``added`` rows ("not in
+    baseline run"); a ``not_available`` row's None values add nothing."""
+    import copy
+
+    from app.services.run_compare import diff_fields, extract_headline_fields
+
+    repo = Path(__file__).resolve().parents[3]
+    doc = json.loads(
+        (repo / "evals/baselines/kimpton-golden-2026-10-16.json").read_text()
+    )
+    base_eng = {k: v["outputs"] for k, v in doc["engines"].items()}
+    head_eng = copy.deepcopy(base_eng)
+    ret = head_eng["returns"]
+    ret["selected_exit_month"] = 60
+    ret["selected_exit_year"] = 5
+    ret["peak_levered_exit_year"] = 1
+    ret["exit_schedule"] = [
+        {"exit_year": 1, "exit_month": 12, "is_selected": False, "is_peak_levered": False,
+         "status": "not_available", "reason": "capital_deploying",
+         "reason_detail": "capital still deploying through month 15",
+         "levered_irr": None, "unlevered_irr": None, "equity_multiple": None,
+         "net_proceeds": None},
+        {"exit_year": 5, "exit_month": 60, "is_selected": True, "is_peak_levered": True,
+         "status": "computed", "reason": None,
+         "levered_irr": ret["levered_irr"], "unlevered_irr": ret["unlevered_irr"],
+         "equity_multiple": ret["equity_multiple"], "net_proceeds": ret["net_proceeds"]},
+    ]
+    head = extract_headline_fields(head_eng)
+    keys = {f["key"] for f in head}
+    assert "returns.selected_exit_month" in keys
+    assert "returns.peak_levered_exit_year" in keys
+    assert "returns.exit_schedule[0].levered_irr" in keys
+    assert "returns.exit_schedule[1].net_proceeds" in keys
+    labels = {f["key"]: f["label"] for f in head}
+    assert labels["returns.exit_schedule[0].levered_irr"] == "Exit Year 1 · Levered IRR"
+    assert labels["returns.exit_schedule[1].equity_multiple"] == "Exit Year 5 · selected · Equity multiple"
+
+    rows = diff_fields(extract_headline_fields(base_eng), head)
+    assert rows, "the new fields must surface"
+    assert {r["status"] for r in rows} == {"added"}
+    assert all(r["delta_reason"] == "not in baseline run" for r in rows)
+    added_keys = {r["key"] for r in rows}
+    # The dashed Year-1 row adds nothing: None is not a value.
+    assert not any(k.startswith("returns.exit_schedule[0].") for k in added_keys)
+    assert "returns.exit_schedule[1].levered_irr" in added_keys
+    # Every pre-existing headline field is unchanged.
+    every = {r["key"]: r for r in diff_fields(extract_headline_fields(base_eng), head, include_unchanged=True)}
+    assert every["returns.levered_irr"]["status"] == "unchanged"
+    assert every["returns.net_proceeds"]["status"] == "unchanged"
+
+
 def test_extractor_covers_sams_checklist_on_the_golden_baseline() -> None:
     """Every headline Sam named is present on the committed Kimpton baseline."""
     from app.services.run_compare import extract_headline_fields
