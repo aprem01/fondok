@@ -308,8 +308,13 @@ def test_projection_export_lists_every_assumption_with_key_and_source() -> None:
     # Unset assumptions stay blank — never a UI default.
     assert wa.cell(row=2 + keys.index("starting_adr"), column=3).value is None
     wp = wb["Future P&L"]
-    assert wp.cell(row=2, column=1).value == "revenue.occupancy"
-    assert wp.cell(row=2, column=3).value == 0.7
+    # Row 2 is the hidden column-key row; engine lines follow the room counts.
+    assert wp.cell(row=2, column=1).value == "fondok_column"
+    assert wp.row_dimensions[2].hidden
+    paths = [wp.cell(row=r, column=1).value for r in range(3, wp.max_row + 1)]
+    occ = 3 + paths.index("revenue.occupancy")
+    assert wp.cell(row=1, column=3).value == "Base year (Year 1) Amount"
+    assert wp.cell(row=occ, column=3).value == 0.7
 
 
 def test_projection_import_note_rule_and_computed_cells() -> None:
@@ -326,7 +331,10 @@ def test_projection_import_note_rule_and_computed_cells() -> None:
     r = wa.max_row + 1
     wa.cell(row=r, column=1).value = "made_up_key"
     wa.cell(row=r, column=3).value = 1
-    wb["Future P&L"].cell(row=2, column=3).value = 0.75                   # computed cell
+    wp = wb["Future P&L"]
+    occ = next(r for r in range(3, wp.max_row + 1)
+               if wp.cell(row=r, column=1).value == "revenue.occupancy")
+    wp.cell(row=occ, column=3).value = 0.75                               # computed cell
     buf = io.BytesIO()
     wb.save(buf)
 
@@ -538,15 +546,18 @@ def test_projection_export_benchmark_column_is_read_only_and_after_the_years() -
         values=values, assumptions=_assumption_rows(), benchmark=bm,
     )
     wp = _sheet(data, "Future P&L")
-    # The column sits AFTER every year column, so year indices are untouched.
-    assert wp.cell(row=1, column=3 + n).value == BENCHMARK_HEADER
-    assert wp.max_column == 3 + n
-    rows = {wp.cell(row=r, column=1).value: r for r in range(2, wp.max_row + 1)}
+    # The column sits AFTER every year group (Amount | % Rev | PAR | POR) and
+    # the Exit Year column, so year indices are untouched.
+    bm_col = 3 + 4 * n + 1
+    assert wp.cell(row=1, column=bm_col).value == BENCHMARK_HEADER
+    assert wp.cell(row=2, column=bm_col).value == "benchmark"
+    assert wp.max_column == bm_col
+    rows = {wp.cell(row=r, column=1).value: r for r in range(3, wp.max_row + 1)}
     rooms = rows["expense.dept_expenses.rooms"]
-    assert wp.cell(row=rooms, column=3 + n).value == 0.25
-    assert wp.cell(row=rooms, column=3 + n).number_format == "0.0%"
+    assert wp.cell(row=rooms, column=bm_col).value == 0.25
+    assert wp.cell(row=rooms, column=bm_col).number_format == "0.0%"
     # A line the benchmark did not publish is blank — never zero-filled.
-    assert wp.cell(row=rows["revenue.occupancy"], column=3 + n).value is None
+    assert wp.cell(row=rows["revenue.occupancy"], column=bm_col).value is None
     # The year cells are exactly what they were without a benchmark.
     assert wp.cell(row=rooms, column=3).value == 2_800_000.0
 
@@ -555,7 +566,7 @@ def test_projection_export_benchmark_column_is_read_only_and_after_the_years() -
         deal_id="deal-1", deal_name="X", year_headers=["Base year (Year 1)", "Year 2"],
         values=values, assumptions=_assumption_rows(),
     )
-    assert _sheet(plain, "Future P&L").max_column == 2 + n
+    assert _sheet(plain, "Future P&L").max_column == bm_col - 1
 
 
 def test_projection_import_ignores_the_benchmark_column() -> None:
@@ -574,9 +585,12 @@ def test_projection_import_ignores_the_benchmark_column() -> None:
     wb = load_workbook(io.BytesIO(data))
     wp = wb["Future P&L"]
     rows = {wp.cell(row=r, column=1).value: r for r in range(2, wp.max_row + 1)}
+    header = [c.value for c in wp[1]]
+    bm_col = header.index("Benchmark %") + 1
+    assert bm_col == 3 + 4 * n + 1
     # An analyst types over the benchmark cell (and even a blank one) …
-    wp.cell(row=rows["expense.dept_expenses.rooms"], column=3 + n).value = 0.99
-    wp.cell(row=rows["revenue.occupancy"], column=3 + n).value = "n/a"
+    wp.cell(row=rows["expense.dept_expenses.rooms"], column=bm_col).value = 0.99
+    wp.cell(row=rows["revenue.occupancy"], column=bm_col).value = "n/a"
     buf = io.BytesIO()
     wb.save(buf)
 
