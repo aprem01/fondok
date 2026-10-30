@@ -8,11 +8,23 @@ model, per-tenant cache counters — moved to ``GET /admin/health``
 (:mod:`app.api.admin_health`) on 2026-10-17: it is infrastructure and
 tenant-enumeration disclosure on a public URL. :func:`ops_snapshot` builds
 that block so both routes share one implementation.
+
+``build_sha`` / ``build_time`` (2026-10-30): on 2026-10-28 Railway served a
+build 3.5 hours behind main and nothing on the probe could show it — the only
+version field is the hand-maintained ``__version__``. :func:`build_info` reads
+the deployed commit from ``RAILWAY_GIT_COMMIT_SHA`` (Railway runtime), else
+``FONDOK_BUILD_SHA`` (Dockerfile ``ARG GIT_SHA``), else null, and the image
+build time from ``FONDOK_BUILD_TIME`` (Dockerfile ``ARG BUILD_TIME``), else
+the ``BUILD_TIME`` file the Dockerfile writes, else null. A commit SHA is not
+sensitive; the post-deploy smoke polls it to know the new worker is serving.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -25,6 +37,36 @@ from ..database import get_session, migrations_dsn_kind
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# Written by apps/worker/Dockerfile at image build; absent on a checkout.
+_DEFAULT_BUILD_TIME_FILE = Path(__file__).resolve().parents[4] / "BUILD_TIME"
+
+
+def _clean(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+@lru_cache(maxsize=4)
+def _read_build_time_file(path: str) -> str | None:
+    try:
+        return _clean(Path(path).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
+def build_info() -> dict[str, str | None]:
+    """``{build_sha, build_time}`` — see the module docstring for the sources.
+    Blank values (an ``ARG`` that was never passed bakes an empty ``ENV``)
+    read as null; nothing here is ever invented."""
+    sha = _clean(os.environ.get("RAILWAY_GIT_COMMIT_SHA")) or _clean(
+        os.environ.get("FONDOK_BUILD_SHA")
+    )
+    build_time = _clean(os.environ.get("FONDOK_BUILD_TIME")) or _read_build_time_file(
+        os.environ.get("FONDOK_BUILD_TIME_FILE") or str(_DEFAULT_BUILD_TIME_FILE)
+    )
+    return {"build_sha": sha, "build_time": build_time}
 
 
 @router.get("/health")
@@ -87,6 +129,9 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
     return {
         "status": "ok" if not degraded_reasons else "degraded",
         "version": __version__,
+        # Which commit is serving — the post-deploy smoke's worker-deployed
+        # job polls this until it equals the pushed SHA (2026-10-30).
+        **build_info(),
         "db": db_status,
         # FON-93 — "owner" when DATABASE_URL_MIGRATIONS (a dedicated owner
         # DSN for startup DDL) is set, "same" when DDL runs on the serving
