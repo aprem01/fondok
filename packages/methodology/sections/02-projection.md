@@ -128,10 +128,8 @@ the inputs behind it — starting value, growth, index or penetration where pres
 source rows. When no trace was recorded for a cell the drawer says so; Fondok never prints a formula
 it did not record.
 
-**One Excel export.** The *Export* button on the Future P&L and the *Editable .xlsx* control
-download the same workbook, built on the server from the published model. A figure the model has
-not published is a blank cell in it, exactly as it is a dash on screen, never a zero. The Historical
-P&L workbook is built the same way.
+**One Excel export.** *Export* and *Editable .xlsx* download one server-built workbook; a figure
+the model has not published is a blank cell there, never a zero.
 
 {testid=benchmark-column-methodology} **Benchmark column.** When the deal carries a P&L benchmark report (CBRE or HotStats), the Base-year
 column gains a Benchmark sub-column showing the comparable set's ratio for thirteen lines on the
@@ -622,12 +620,6 @@ value-lineage drawer for its engine field (`revenue.years[i].adr`,
 value, growth, index or penetration where present — down to the source rows. When the lineage record
 carries no walk for a cell the drawer says "No trace available for this cell."; the app never prints
 a formula it did not record.
-
-**Exports.** There is one export mechanism per workbook. The Future P&L *Export* button and the
-round-trip *Editable .xlsx* control both download `GET /deals/{id}/exports/projections.xlsx`
-(`build_projections_workbook`: the Future P&L sheet plus the Assumptions sheet); the Historical P&L
-workbook is `GET /deals/{id}/exports/historicals.xlsx`. The browser builds no spreadsheet, so a value
-the engine did not publish is the worker's empty cell — never a client-side zero or guess.
 
 **Ratios.** The "% Rev" sub-column (the *Show %* switch, on by default) is each line as a share of
 that year's Total Revenue. Departmental expense lines follow the USALI convention instead — Rooms

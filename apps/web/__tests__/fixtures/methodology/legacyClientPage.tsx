@@ -240,10 +240,8 @@ export default function LegacyMethodologyClientPage() {
             prints a formula it did not record.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3">
-            <strong>One Excel export.</strong> The <em>Export</em> button on the Future P&amp;L and the
-            <em>Editable .xlsx</em> control download the same workbook, built on the server from the
-            published model. A figure the model has not published is a blank cell in it, exactly as it is a
-            dash on screen, never a zero. The Historical P&amp;L workbook is built the same way.
+            <strong>One Excel export.</strong> <em>Export</em> and <em>Editable .xlsx</em> download one
+            server-built workbook; a figure the model has not published is a blank cell there, never a zero.
           </p>
           <p className="text-[12.5px] text-ink-500 leading-relaxed mt-3" data-testid="benchmark-column-methodology">
             <strong>Benchmark column.</strong> When the deal carries a P&amp;L benchmark report (CBRE or
