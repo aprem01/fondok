@@ -20,6 +20,8 @@ const hoisted = vi.hoisted(() => ({
   tab: '',
   outputs: null as unknown,
   varianceFlags: null as unknown[] | null,
+  /** Every id the page handed to useVariance, in render order. */
+  varianceIds: [] as string[],
 }));
 
 vi.mock('next/navigation', () => ({
@@ -29,11 +31,16 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/projects/fff00000-0000-0000-0000-000000000aaa',
 }));
 vi.mock('@/lib/hooks/useVariance', () => ({
-  useVariance: () => ({
-    flags: hoisted.varianceFlags,
-    critical: 0, warn: 0, info: 0, note: null, loading: false, error: null,
-    workerConfigured: hoisted.connected, refresh: vi.fn(),
-  }),
+  // Mirrors the real hook's guard: an empty id fetches nothing and answers
+  // the empty state; a real id answers the fixture.
+  useVariance: (id: string) => {
+    hoisted.varianceIds.push(id);
+    return {
+      flags: id ? hoisted.varianceFlags : null,
+      critical: 0, warn: 0, info: 0, note: null, loading: false, error: null,
+      workerConfigured: hoisted.connected, refresh: vi.fn(),
+    };
+  },
 }));
 
 const mockedUseDeal = vi.fn();
@@ -104,6 +111,7 @@ beforeEach(() => {
   hoisted.tab = '';
   hoisted.outputs = null;
   hoisted.varianceFlags = null;
+  hoisted.varianceIds = [];
   mockedUseDeal.mockReset();
 });
 afterEach(cleanup);
@@ -132,6 +140,34 @@ describe('Deal header — a wizard deal before extraction', () => {
     loaded({ ...DEAL, ai_confidence: 0 });
     render(<ProjectDetailPage />);
     expect(screen.getByRole('button', { name: 'AI confidence 0%' })).toBeInTheDocument();
+  });
+
+  it('never asks the worker for the variance report on mount, while the deal loads, or on the load-error path', () => {
+    mockedUseDeal.mockReturnValue({ deal: null, status: null, loading: true, error: null, workerConfigured: true, refresh: vi.fn() });
+    render(<ProjectDetailPage />);
+    expect(hoisted.varianceIds.length).toBeGreaterThan(0);
+    expect(hoisted.varianceIds.every((id) => id === '')).toBe(true);
+    cleanup();
+    hoisted.varianceIds = [];
+    mockedUseDeal.mockReturnValue({ deal: null, status: null, loading: false, error: 'timeout', workerConfigured: true, refresh: vi.fn() });
+    render(<ProjectDetailPage />);
+    expect(hoisted.varianceIds.every((id) => id === '')).toBe(true);
+    cleanup();
+    hoisted.varianceIds = [];
+    // Loaded, tooltip closed: still nothing — the count is only shown inside the tooltip.
+    loaded(DEAL);
+    render(<ProjectDetailPage />);
+    expect(hoisted.varianceIds.every((id) => id === '')).toBe(true);
+  });
+
+  it('asks for the variance report only once the confidence tooltip opens, and stops when it closes', () => {
+    loaded(DEAL);
+    render(<ProjectDetailPage />);
+    const pill = screen.getByRole('button', { name: 'Awaiting documents' });
+    fireEvent.focus(pill);
+    expect(hoisted.varianceIds[hoisted.varianceIds.length - 1]).toBe(DEAL.id);
+    fireEvent.blur(pill);
+    expect(hoisted.varianceIds[hoisted.varianceIds.length - 1]).toBe('');
   });
 
   it('the confidence breakdown reads the variance count from the worker — "—" until it answers', () => {

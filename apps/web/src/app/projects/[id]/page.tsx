@@ -326,7 +326,11 @@ export default function ProjectDetailPage() {
   const avgFieldConfidence = projectOrNull?.aiConfidence ?? null;
   // The worker's variance report for this deal — the same hook the Analysis
   // tab reads. Null until it has answered (or when it could not): "—".
-  const variance = useVariance(rawId);
+  // Fetched ONLY while the deal is loaded and the tooltip is open: an empty
+  // id short-circuits the hook, so no request fires on mount, on the load /
+  // error path, or on every tab for the life of the page (and the Analysis
+  // tab's own poller is not doubled). Closing the tooltip stops the poll.
+  const variance = useVariance(deal && confidenceOpen ? rawId : '');
   const varianceFlagCount: number | null = variance.flags === null ? null : variance.flags.length;
 
   const activeTab = searchParams.get('tab') || '';
