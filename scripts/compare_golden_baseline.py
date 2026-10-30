@@ -32,6 +32,11 @@ compare it to the change you shipped. It exits 2 only when it could not run
 (broken venv, failed migration, import error, missing baseline file), so a
 caller that checks the exit code can tell "could not compare" from "no
 headline differences".
+
+``--exit-nonzero-on-headline-diff`` turns the report into a gate: exit 3 when
+a headline field or an engine status differs from the baseline (0 when they
+match, 2 when the comparison could not run — unchanged). This is what
+``scripts/check_golden_gate.py`` runs in CI; a plain run keeps exiting 0.
 """
 
 from __future__ import annotations
@@ -167,6 +172,14 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="also list unchanged headline fields")
     ap.add_argument("--full", action="store_true", help="also diff every raw numeric leaf")
     ap.add_argument("--write", type=Path, help="write a NEW baseline file instead of comparing")
+    ap.add_argument(
+        "--exit-nonzero-on-headline-diff",
+        action="store_true",
+        help=(
+            "exit 3 when a headline field or an engine status differs from the "
+            "baseline (default: this is a report and exits 0 either way)"
+        ),
+    )
     args = ap.parse_args()
 
     db = _bootstrap()
@@ -257,12 +270,18 @@ def main() -> int:
 
     if not changed and not status_moves:
         print("\nNo headline differences: the Kimpton fixture matches the baseline.")
+        return 0
+    if args.exit_nonzero_on_headline_diff:
+        # Distinct from 2 ("could not run"): the comparison completed and
+        # found the fixture moved. ``scripts/check_golden_gate.py`` maps this
+        # to pass/fail by looking for the ``golden: expected`` trailer.
+        return 3
     return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        code = main()
     except Exception as exc:  # noqa: BLE001 — report the failure, then say so via the exit code
         print(f"compare_golden_baseline: could not complete the comparison: {exc!r}")
         # A completed report exits 0 whatever it found; a comparison that
@@ -270,4 +289,4 @@ if __name__ == "__main__":
         sys.exit(2)
     finally:
         _cleanup()
-    sys.exit(0)
+    sys.exit(code)
