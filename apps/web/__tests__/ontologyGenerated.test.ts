@@ -28,6 +28,8 @@ const EXPECTED_REASONS = [
   // Engine-run failures (Wave 0, 2026-10-30): a deal without its identity
   // inputs, a loader that could not read the deal, an engine that raised.
   'missing_identity_inputs', 'load_error', 'engine_error',
+  // Returns by exit year (Wave 1): why a sale at a given year-end has no value.
+  'under_construction', 'capital_deploying', 'no_sale_value',
 ];
 
 describe('ontology — generated concept registry', () => {
@@ -121,7 +123,7 @@ describe('ontology — generated concept registry', () => {
 });
 
 describe('ontology — generated refusal reasons', () => {
-  it('exposes exactly the 19 shared codes with {label, ui, explanation}', () => {
+  it('exposes exactly the 22 shared codes with {label, ui, explanation}', () => {
     expect([...REASON_CODES].sort()).toEqual([...EXPECTED_REASONS].sort());
     expect(Object.keys(REASONS).sort()).toEqual([...EXPECTED_REASONS].sort());
     for (const code of REASON_CODES) {

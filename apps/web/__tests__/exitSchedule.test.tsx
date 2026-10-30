@@ -80,7 +80,7 @@ function schedule(): ReturnsExitScheduleRow[] {
     }),
     // Year 2 — a code this bundle's registry does not know yet (Task 5 regen).
     row({
-      exit_year: 2, exit_month: 24, status: 'not_available', reason: 'under_construction',
+      exit_year: 2, exit_month: 24, status: 'not_available', reason: 'some_future_code',
       reason_detail: 'construction window runs to month 30', exit_noi_basis: null,
       exit_noi_period_label: 'Forward 12-month NOI (Year 3, projected)',
     }),
@@ -349,8 +349,8 @@ describe('lib/engines/returns — the one reader', () => {
     expect(exitRowReasonLabel(known)).toBe(REASONS.inconclusive.label);
     expect(exitRowReasonTitle(known)).toBe(`${REASONS.inconclusive.label} — cash flows have one sign; no IRR`);
     const unknown = schedule()[1];
-    expect(exitRowReasonLabel(unknown)).toBe('under_construction');
-    expect(exitRowReasonTitle(unknown)).toBe('under_construction — construction window runs to month 30');
+    expect(exitRowReasonLabel(unknown)).toBe('some_future_code');
+    expect(exitRowReasonTitle(unknown)).toBe('some_future_code — construction window runs to month 30');
     // No detail → the registry's explanation stands in.
     expect(exitRowReasonTitle({ status: 'not_available', reason: 'inconclusive', reason_detail: null }))
       .toBe(`${REASONS.inconclusive.label} — ${REASONS.inconclusive.explanation}`);
@@ -437,8 +437,8 @@ describe('Returns — the exit schedule card', () => {
   it('a reason code the registry predates renders as its raw code, not a crash', () => {
     render(<ReturnsTab />);
     const y2 = rowByLabel('Year 2');
-    expect(y2).toHaveAttribute('data-reason', 'under_construction');
-    expect(within(y2).getByText('under_construction')).toBeInTheDocument();
+    expect(y2).toHaveAttribute('data-reason', 'some_future_code');
+    expect(within(y2).getByText('some_future_code')).toBeInTheDocument();
     expect(within(y2).getAllByText('—').length).toBeGreaterThanOrEqual(6);
   });
 
