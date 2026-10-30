@@ -308,6 +308,10 @@ export const ReasonCode = z.enum([
   "missing_identity_inputs", // deal has no keys / purchase price
   "load_error",              // the loader could not read the deal's data
   "engine_error",            // the engine raised (bad input, bug)
+  // Wave 1 (FON-118) — returns-by-exit-year row refusals.
+  "under_construction",      // sale inside the stated construction window
+  "capital_deploying",       // equity draws / deferred capital land after the sale
+  "no_sale_value",           // exit NOI at that sale date is not positive
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -438,6 +442,24 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "The engine that produces this figure raised an error (for example an input outside its accepted range), so there is no output to show.",
+  },
+  under_construction: {
+    label: "Under construction",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "On a development deal this exit date falls inside the analyst-stated construction window, so a sale at that date is not modelled.",
+  },
+  capital_deploying: {
+    label: "Capital still deploying",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "Equity draws or deferred capital are still being deployed after this exit date, so a sale before the capital is fully in is not modelled.",
+  },
+  no_sale_value: {
+    label: "No sale value",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist.",
   },
 };
 
@@ -631,6 +653,37 @@ export const ReturnsEngineInput = z.object({
 });
 export type ReturnsEngineInput = z.infer<typeof ReturnsEngineInput>;
 
+// FON-44 (R-059) + FON-118 — the NOI the reversion caps (mirror of
+// fondok_schemas.underwriting.ExitNoiBasisLiteral).
+export const ExitNoiBasis = z.enum(["forward_12m", "stabilized", "sale_year", "override"]);
+export type ExitNoiBasis = z.infer<typeof ExitNoiBasis>;
+
+// FON-118 — one row of the returns-by-exit-year schedule (mirror of
+// fondok_schemas.underwriting.ExitYearReturn). Field names are the web
+// contract (returns-exit-plan.md §2.4).
+export const ExitYearReturn = z.object({
+  exit_year: z.number().int().min(1).nullable(),
+  exit_month: z.number().int().min(1),
+  is_selected: z.boolean(),
+  is_peak_levered: z.boolean(),
+  status: z.enum(["computed", "not_available"]),
+  reason: ReasonCode.nullable().default(null),
+  reason_detail: z.string().nullable().default(null),
+  exit_noi_basis: ExitNoiBasis.nullable().default(null),
+  exit_noi_period_label: z.string().default(""),
+  terminal_noi: z.number().nullable().default(null),
+  gross_sale_price: z.number().nullable().default(null),
+  selling_costs: z.number().nullable().default(null),
+  transfer_tax: z.number().nullable().default(null),
+  loan_payoff: z.number().nullable().default(null),
+  refi_included: z.boolean().default(false),
+  net_proceeds: z.number().nullable().default(null),
+  levered_irr: z.number().nullable().default(null),
+  unlevered_irr: z.number().nullable().default(null),
+  equity_multiple: z.number().nullable().default(null),
+});
+export type ExitYearReturn = z.infer<typeof ExitYearReturn>;
+
 export const ReturnsEngineOutput = z.object({
   deal_id: z.string().uuid(),
   levered_irr: z.number(),
@@ -643,8 +696,13 @@ export const ReturnsEngineOutput = z.object({
   net_proceeds: z.number(),
   hold_years: z.number().int().min(1).max(20),
   // FON-44 (R-059) — which NOI the reversion capped, and its period label.
-  exit_noi_basis: z.enum(["forward_12m", "stabilized", "override"]).default("forward_12m"),
+  exit_noi_basis: ExitNoiBasis.default("forward_12m"),
   exit_noi_period_label: z.string().default(""),
+  // FON-118 — returns by exit year; the headline IS the is_selected row.
+  exit_schedule: z.array(ExitYearReturn).default([]),
+  selected_exit_month: z.number().int().min(1).nullable().default(null),
+  selected_exit_year: z.number().int().min(1).nullable().default(null),
+  peak_levered_exit_year: z.number().int().min(1).nullable().default(null),
   provenance: ProvenanceMap.default({}),
 });
 export type ReturnsEngineOutput = z.infer<typeof ReturnsEngineOutput>;

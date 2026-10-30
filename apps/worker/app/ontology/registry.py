@@ -79,7 +79,7 @@ SourceKind = Literal["grounded", "assumption", "calculated", "override", "refusa
 ImpactBasis = Literal["noi", "revenue", "expense", "other"]
 Reason = Literal["no_source", "period_mismatch", "unit_unknown", "basis_excluded"]
 
-#: The 19 refusal codes shared with ``fondok_schemas.reasons`` and the web.
+#: The 22 refusal codes shared with ``fondok_schemas.reasons`` and the web.
 REASON_CODES: tuple[str, ...] = (
     "no_document", "no_source", "unit_unknown", "period_mismatch", "basis_mismatch",
     "basis_excluded", "awaiting_analyst", "needs_review", "pin_active", "str_unavailable",
@@ -87,6 +87,8 @@ REASON_CODES: tuple[str, ...] = (
     "not_applicable",
     # Wave 0 (2026-10-30) — engine-run failures.
     "missing_identity_inputs", "load_error", "engine_error",
+    # Wave 1 (FON-118) — returns-by-exit-year row refusals.
+    "under_construction", "capital_deploying", "no_sale_value",
 )
 
 #: Engines a concept may name: the engine_runner / provenance names plus the

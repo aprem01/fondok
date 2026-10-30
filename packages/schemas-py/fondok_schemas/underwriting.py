@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .financial import ModelAssumptions, USALIFinancials
 from .provenance import ValueTrace
+from .reasons import ReasonCode
 
 
 # ─────────────── Revenue Segmentation (Wave 2 P2.1) ───────────────
@@ -759,6 +760,48 @@ class ReturnsEngineInput(BaseModel):
     terminal_noi: Annotated[float, Field(gt=0)]
 
 
+#: FON-44 (R-059) + FON-118 — the NOI the reversion caps. ``forward_12m``
+#: (default) = the forward 12 months after the sale; ``stabilized`` = the
+#: stabilized year's NOI grown to the sale year; ``sale_year`` = the sale
+#: year's own Cash NOI, not grown; ``override`` = the analyst's pinned figure.
+ExitNoiBasisLiteral = Literal["forward_12m", "stabilized", "sale_year", "override"]
+
+
+class ExitYearReturn(BaseModel):
+    """FON-118 — the deal sold at one exit date, on the SAME projection.
+
+    One row of ``ReturnsEngineOutput.exit_schedule``. Every projection
+    year-end is a row (``exit_year`` 1..hold); the deal's own exit is the
+    ``is_selected`` row and IS the headline (``levered_irr`` etc. on the
+    output equal this row's). An off-cycle selected exit (a 52-month hold)
+    has ``exit_year None``. A row the model does not price is
+    ``status == "not_available"`` with a ``reason`` — never a 0, never an
+    engine error. Numbers are ``None`` wherever the row has none.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    exit_year: Annotated[int, Field(ge=1)] | None
+    exit_month: Annotated[int, Field(ge=1)]
+    is_selected: bool
+    is_peak_levered: bool
+    status: Literal["computed", "not_available"]
+    reason: ReasonCode | None = None
+    reason_detail: str | None = None
+    exit_noi_basis: ExitNoiBasisLiteral | None = None
+    exit_noi_period_label: str = ""
+    terminal_noi: float | None = None
+    gross_sale_price: float | None = None
+    selling_costs: float | None = None
+    transfer_tax: float | None = None
+    loan_payoff: float | None = None
+    refi_included: bool = False
+    net_proceeds: float | None = None
+    levered_irr: float | None = None
+    unlevered_irr: float | None = None
+    equity_multiple: float | None = None
+
+
 class ReturnsEngineOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -774,10 +817,23 @@ class ReturnsEngineOutput(BaseModel):
     hold_years: Annotated[int, Field(ge=1, le=20)]
     # FON-44 (R-059) — which NOI the reversion capped: the forward 12 months
     # after the exit (default), the stabilized year's NOI grown to the exit,
-    # or the analyst's ``terminal_noi_override``. ``exit_noi_period_label`` is
-    # the human period, e.g. "Forward 12-month NOI (Year 6)".
-    exit_noi_basis: Literal["forward_12m", "stabilized", "override"] = "forward_12m"
+    # the sale year's own NOI (``sale_year``, FON-44 addition), or the
+    # analyst's ``terminal_noi_override``. ``exit_noi_period_label`` is the
+    # human period, e.g. "Forward 12-month NOI (Year 6)".
+    exit_noi_basis: ExitNoiBasisLiteral = "forward_12m"
     exit_noi_period_label: str = ""
+    # FON-118 — returns by exit year. The headline above IS the ``is_selected``
+    # row; the other rows price the same projection sold at each year-end.
+    # Empty when the caller did not ask for the table (grid re-runs).
+    exit_schedule: list[ExitYearReturn] = Field(default_factory=list)
+    # The deal's own exit: month from close (hold × 12, or the disposition
+    # month override) and its projection year (None when off-cycle). None on
+    # a run that predates the schedule.
+    selected_exit_month: Annotated[int, Field(ge=1)] | None = None
+    selected_exit_year: Annotated[int, Field(ge=1)] | None = None
+    # The year-end row with the highest levered IRR among computed rows
+    # (earliest on ties); None when no year row is computed.
+    peak_levered_exit_year: Annotated[int, Field(ge=1)] | None = None
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "equity_multiple". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)

@@ -24,8 +24,10 @@ from fondok_schemas import (
 
 def test_reason_vocabulary_is_closed_and_described() -> None:
     # 16 Phase-0 codes + the 3 engine-run failure codes (2026-10-30):
-    # missing_identity_inputs / load_error / engine_error.
-    assert len(ReasonCode) == 19
+    # missing_identity_inputs / load_error / engine_error, + the 3
+    # returns-by-exit-year row refusals (FON-118): under_construction /
+    # capital_deploying / no_sale_value.
+    assert len(ReasonCode) == 22
     assert set(REASON_META) == set(ReasonCode)
     assert all(m["ui"] == "—" for m in REASON_META.values())
 
