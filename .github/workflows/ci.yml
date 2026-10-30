@@ -37,8 +37,14 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: pnpm exec next lint --max-warnings=0
 
+      # --sequence.shuffle: files AND tests run in a random order each push, so
+      # a test that leans on state another test left behind fails here instead
+      # of on some later, unrelated push. The seed is printed at the top of the
+      # log ("Running tests with seed N"); reproduce locally with
+      # `pnpm exec vitest run --sequence.shuffle --sequence.seed=N`.
       - name: Unit tests (vitest)
-        run: pnpm --filter web test
+        working-directory: apps/web
+        run: pnpm exec vitest run --sequence.shuffle
 
       # --no-lint: the dedicated step above already linted; `next build`
       # would run ESLint a second time. The Vercel production build keeps
