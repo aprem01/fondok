@@ -7,31 +7,44 @@ on:
     branches: [main]
 
 jobs:
+  # Installs with pnpm 9 + the frozen lockfile, the same way e2e.yml and
+  # post-deploy-smoke.yml do (until 2026-10-30 this job ran `npm install`
+  # against a different lockfile). Lint is BLOCKING: `next lint` had no
+  # ESLint config at all and the step was continue-on-error, so a green
+  # check meant nothing. Vitest (117 files under apps/web/__tests__) ran in
+  # no workflow before this.
   typescript:
     name: TypeScript (web)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v3
         with:
-          node-version: "20"
-          cache: "npm"
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
 
       - name: Install deps
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Lint web
+      - name: Lint web (blocking)
         working-directory: apps/web
-        run: npx --yes next lint --max-warnings=0
-        continue-on-error: true
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: pnpm exec next lint --max-warnings=0
+
+      - name: Unit tests (vitest)
+        run: pnpm --filter web test
 
       - name: Build web
         working-directory: apps/web
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-        run: npx --yes next build
+        run: pnpm exec next build
 
   python:
     name: Python (worker)
@@ -53,6 +66,10 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The Kimpton golden gate below reads commit trailers over the
+          # push/PR range (merge-base with origin/main).
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -92,6 +109,18 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://fondok:fondok@localhost:5432/fondok
         run: uv run python -c "from app.main import app; print('OK')"
+
+      # Kimpton golden gate (2026-10-30). Re-runs the Kimpton Angler fixture
+      # through every engine against evals/baselines/kimpton-golden-*.json
+      # and FAILS when a headline field or an engine status moved — unless a
+      # commit in the range carries the trailer ``golden: expected`` (a
+      # deliberate model change, shipped with its re-baselined file). Before
+      # this the compare was a manual report that exited 0 either way. The
+      # script pins its own throwaway SQLite database; the Postgres service
+      # above is not involved. Stdlib wrapper: scripts/check_golden_gate.py.
+      - name: Kimpton golden gate
+        working-directory: ${{ github.workspace }}
+        run: uv run --project apps/worker python scripts/check_golden_gate.py
 
   # FON-88 — extractor changes must bump EXTRACTION_PIPELINE_VERSION.
   # ``scripts/check_pipeline_version.py`` diffs the merge-base with

@@ -51,6 +51,19 @@ name: Post-deploy smoke (live deal)
 #   FONDOK_SMOKE_B_PASSWORD Clerk org, for apps/web/e2e/prod/02-two-firm-
 #   FONDOK_SMOKE_B_ORG      isolation.spec.ts (FON-93). Unset → that spec
 #                           skips itself; the live-deal smoke still runs.
+#
+# THE DEPLOY GATE IN FRONT OF THE SMOKE (2026-10-30)
+# --------------------------------------------------
+# On 2026-10-28 Railway served a worker 3.5 hours behind main and nothing
+# could show it. The `worker-deployed` job now runs first and the smoke
+# `needs` it: it polls the worker's public `GET /health` until `build_sha`
+# equals the commit this run is for (workflow_run.head_sha, else github.sha),
+# bounded at 20 minutes in 30 s steps, and fails with an `::error::` on
+# timeout. It polls the web's `GET /api/version` the same way, but a match
+# is REQUIRED only when the commits being deployed touched apps/web/** —
+# Vercel skips builds for docs-only pushes and the alias workflow is
+# deliberately not SHA-strict — otherwise it logs what is serving and goes
+# on. Read-only GETs; it needs no secrets.
 
 on:
   # Run it by hand: GitHub → Actions → this workflow → Run workflow.
@@ -118,16 +131,163 @@ jobs:
       - name: Prove the prod project cannot be selected without the opt-in
         run: cd apps/web && pnpm test:e2e:prod:guard
 
-  # ── The smoke ───────────────────────────────────────────────────────────
-  smoke:
-    name: Live deal smoke
-    # Never on a pull request. On a workflow_run, only when the alias
-    # promotion actually succeeded — aliasing a stale build and then smoking
-    # it would report on a bundle nobody is served.
+  # ── The deploy gate ─────────────────────────────────────────────────────
+  worker-deployed:
+    name: Deployed build matches the commit
+    # Same trigger rule as the smoke: never on a pull request; on a
+    # workflow_run only when the alias promotion succeeded.
     if: >-
       github.event_name != 'pull_request' &&
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the target commit may not be the checkout tip
+          # (workflow_run checks out the default branch), and the apps/web
+          # paths check diffs a commit range.
+          fetch-depth: 0
+
+      - name: Resolve the commit this run is for
+        id: target
+        env:
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          FALLBACK_SHA: ${{ github.sha }}
+        run: |
+          set -u
+          sha="${WORKFLOW_RUN_HEAD_SHA:-$FALLBACK_SHA}"
+          if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+            echo "::error::target commit $sha is not in this checkout — cannot verify the deploy"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Verifying that production serves $sha (event: $GITHUB_EVENT_NAME)."
+
+      - name: Wait for the worker to serve this commit (GET /health build_sha)
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+          HEALTH_URL: https://fondok-worker-production.up.railway.app/health
+          # 40 x 30 s = the 20-minute bound. Overridable so the script can be
+          # exercised locally against a fake server.
+          POLL_ATTEMPTS: "40"
+          POLL_SLEEP: "30"
+        run: |
+          set -u
+          seen="(no response)"
+          for i in $(seq 1 "$POLL_ATTEMPTS"); do
+            body=$(curl -s --max-time 20 "$HEALTH_URL" || true)
+            seen=$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+          except Exception:
+              print("(not json)"); sys.exit(0)
+          print(d.get("build_sha") or "null")
+          ' 2>/dev/null || echo "(parse error)")
+            if [ "$seen" = "$TARGET" ]; then
+              echo "fondok-worker serves $TARGET (attempt $i)."
+              printf '%s' "$body" | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)
+          print("  version:", d.get("version"), " build_time:", d.get("build_time"),
+                " status:", d.get("status"), " degraded_reasons:", d.get("degraded_reasons"))
+          ' || true
+              exit 0
+            fi
+            echo "[$i/$POLL_ATTEMPTS] /health build_sha = $seen, want $TARGET — waiting ${POLL_SLEEP} s…"
+            sleep "$POLL_SLEEP"
+          done
+          echo "::error::fondok-worker is NOT serving $TARGET after 20 minutes — /health build_sha is $seen. Railway has not deployed this commit (build failed, health check rolled it back, or it is lagging as on 2026-10-28). If build_sha is null, RAILWAY_GIT_COMMIT_SHA is not reaching the container. Smoke skipped."
+          exit 1
+
+      # Does the deploy this run is for change the web bundle? Compare the
+      # web sha that is serving now with the target: when the serving sha is
+      # a known ancestor, diff that range; otherwise fall back to the target
+      # commit alone. No change under apps/web/** → the alias legitimately
+      # still points at the previous bundle and a sha match is not required.
+      - name: Does this deploy touch apps/web?
+        id: web
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+          VERSION_URL: https://fondok-app.vercel.app/api/version
+        run: |
+          set -u
+          serving=$(curl -s --max-time 20 "$VERSION_URL" | python3 -c '
+          import json, sys
+          try:
+              print(json.load(sys.stdin).get("sha") or "")
+          except Exception:
+              print("")
+          ' 2>/dev/null || true)
+          if [ -n "$serving" ] && git cat-file -e "${serving}^{commit}" 2>/dev/null \
+             && git merge-base --is-ancestor "$serving" "$TARGET" 2>/dev/null; then
+            range="${serving}..${TARGET}"
+          else
+            range="${TARGET}^..${TARGET}"
+          fi
+          changed=$(git diff --name-only "$range" -- apps/web | head -20 || true)
+          if [ -n "$changed" ]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+            echo "apps/web changed in $range — the web sha must match:"
+            printf '%s\n' "$changed"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "No apps/web change in $range — a web sha match is not required (serving: ${serving:-unknown})."
+          fi
+
+      - name: Wait for the web to serve this commit (GET /api/version)
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+          REQUIRED: ${{ steps.web.outputs.required }}
+          VERSION_URL: https://fondok-app.vercel.app/api/version
+          POLL_ATTEMPTS: "40"
+          POLL_SLEEP: "30"
+        run: |
+          set -u
+          attempts="$POLL_ATTEMPTS"
+          [ "$REQUIRED" = "true" ] || attempts=1
+          seen="(no response)"
+          for i in $(seq 1 $attempts); do
+            body=$(curl -s --max-time 20 "$VERSION_URL" || true)
+            seen=$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+          except Exception:
+              print("(not json)"); sys.exit(0)
+          print(d.get("sha") or "null", d.get("env") or "null")
+          ' 2>/dev/null || echo "(parse error)")
+            if [ "${seen%% *}" = "$TARGET" ]; then
+              echo "fondok-app.vercel.app serves $TARGET (env ${seen##* }, attempt $i)."
+              exit 0
+            fi
+            if [ "$REQUIRED" != "true" ]; then
+              echo "fondok-app.vercel.app /api/version reports: $seen (no apps/web change in this deploy — continuing)."
+              exit 0
+            fi
+            echo "[$i/$attempts] /api/version = $seen, want $TARGET — waiting ${POLL_SLEEP} s…"
+            sleep "$POLL_SLEEP"
+          done
+          echo "::error::fondok-app.vercel.app is NOT serving $TARGET after 20 minutes — /api/version reports $seen. The Vercel build failed or the alias was not promoted. Smoke skipped."
+          exit 1
+
+  # ── The smoke ───────────────────────────────────────────────────────────
+  smoke:
+    name: Live deal smoke
+    needs: [worker-deployed]
+    # Never on a pull request. On a workflow_run, only when the alias
+    # promotion actually succeeded — aliasing a stale build and then smoking
+    # it would report on a bundle nobody is served. And only once the deploy
+    # gate above proved production serves this commit: a job with its own
+    # `if:` loses the implicit success() check on `needs`, so it is spelled
+    # out here.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success') &&
+      needs.worker-deployed.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
