@@ -64,6 +64,15 @@ IRR_GRID_NO_TARGET_NOTE = (
     "IRR sensitivity grid not available: no IRR target set on this deal"
 )
 
+#: The grid solver ran but produced no cells.
+IRR_GRID_NO_CELLS_NOTE = "IRR sensitivity grid not available: the grid returned no cells"
+
+#: The grid solver raised. ``error`` is the exception TYPE only (the message
+#: may quote deal data; the full traceback is in the worker log).
+IRR_GRID_ENGINE_ERROR_NOTE = (
+    "IRR sensitivity grid not available: the grid solver failed ({error})"
+)
+
 #: What an export prints for a max-price search that did not converge
 #: (``price_solver.SolveStatus``) — never the bracket end as a price.
 SOLVER_STATUS_NOTE: dict[str, str] = {

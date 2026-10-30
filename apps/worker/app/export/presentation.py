@@ -640,7 +640,15 @@ def _render_sensitivity_grid(slide: Slide, sens: dict[str, Any]) -> None:
         lookup[(round(float(rv), 9), round(float(cv), 9))] = c
     base = next((c for c in cells if c.get("is_base")), None)
     base_val = base.get("value") if base else None
-    tolerance = 0.1 if metric == "equity_multiple" else 0.02
+    # Amber band below base, in the metric's own unit: 2pp for the rate
+    # metrics (IRRs, cash-on-cash), 0.1x for the multiple, 2% of the base
+    # value for the sale price (a dollar figure has no absolute band).
+    if metric == "equity_multiple":
+        tolerance = 0.1
+    elif metric == "gross_sale_price":
+        tolerance = abs(base_val) * 0.02 if base_val is not None else 0.0
+    else:
+        tolerance = 0.02
 
     title = (
         f"{_SENS_METRIC_LABEL.get(str(metric), str(metric))} — "

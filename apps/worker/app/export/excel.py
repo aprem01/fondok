@@ -87,7 +87,6 @@ from openpyxl.worksheet.worksheet import Worksheet
 from .labels import (
     COMP_CAP_METHOD_DISPLAY,
     COMP_COVERAGE_DISPLAY,
-    IRR_GRID_NO_TARGET_NOTE,
     NOI_HEADLINE_LABELS,
     SOLVER_STATUS_NOTE,
     line_label,
@@ -1477,12 +1476,22 @@ def _build_sensitivity_grid(
         row += 1
 
     if not cells:
-        # EM-only deal: the grid's breakeven sweep needs an IRR hurdle.
+        # No grid: the payload says why (EM-only deal, solver error, no
+        # cells); a payload with no reason gets a stated refusal, never a
+        # guessed one.
         row += 1
         ws.cell(row=row, column=1, value="IRR SENSITIVITY GRID")
         _style_header_row(ws, row, width)
         row += 1
-        _write_note(ws, row, 1, grid_unavailable or IRR_GRID_NO_TARGET_NOTE)
+        _write_note(
+            ws, row, 1,
+            grid_unavailable
+            or unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                "no IRR sensitivity grid on the export payload",
+                "pricing.sensitivity_grid",
+            ),
+        )
         _autosize(ws, [26] + [14] * (width - 1))
         _freeze_top(ws, row=2)
         return True

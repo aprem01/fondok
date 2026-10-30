@@ -354,6 +354,23 @@ def test_pricing_sheet_renders_max_price_without_a_grid_and_states_why(tmp_path:
     assert "no price down to half the basis clears this hurdle" in _render_max_price_callout(unreachable)
 
 
+def test_pricing_sheet_without_a_grid_reason_refuses_rather_than_guessing(tmp_path: Path) -> None:
+    """A payload with a max price but neither a grid nor a stated reason must
+    not be told "no IRR target" — it gets a typed not-available."""
+    from app.export import build_excel
+    from app.export.labels import IRR_GRID_NO_TARGET_NOTE
+
+    model = {"deal_name": "H", "max_price": {
+        "target_irr": 0.14, "target_em": None, "max_price_for_irr": 40_000_000.0,
+        "max_price_for_em": None, "binding_constraint": "irr", "final_price_per_key": 200_000.0,
+        "max_price": 40_000_000.0, "irr_status": "converged", "em_status": "not_requested",
+    }}
+    vals = _sheet_values(build_excel("x", model, tmp_path / "no-reason.xlsx"), "Pricing Sensitivity")
+    assert f"{NOT_AVAILABLE_PREFIX}: no IRR sensitivity grid on the export payload" in vals
+    assert IRR_GRID_NO_TARGET_NOTE not in vals
+    assert "40000000" in vals or "40000000.0" in vals
+
+
 def test_sensitivity_axis_ticks_do_not_collide_on_rate_axes() -> None:
     from app.export.presentation import _fmt_sens_axis
 

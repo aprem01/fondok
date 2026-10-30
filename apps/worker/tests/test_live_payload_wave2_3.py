@@ -540,6 +540,75 @@ async def test_live_payload_em_only_target_keeps_max_price_and_states_grid_reaso
     assert "Pricing Sensitivity (5x5 Grid)" not in html_str
 
 
+async def _irr_deal_payload(tmp_path: Path, monkeypatch, fake_grid):
+    """An IRR-target deal whose grid solver is replaced by ``fake_grid``;
+    returns ``(model, memo, pricing-sheet values, memo html)``."""
+    from openpyxl import load_workbook
+
+    import app.engines.pricing_sensitivity as ps
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.export.live_payload import load_live_payload
+    from app.export.memo_pdf import _render_html
+    from app.services.engine_runner import run_all_engines
+
+    monkeypatch.setattr(ps, "run_sensitivity_grid", fake_grid)
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id, target_irr=_TARGET_IRR)
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
+        await session.commit()
+        _deal, model, memo = await load_live_payload(session, deal_id, tenant_id)
+    out = build_excel(deal_id, model, tmp_path / "grid-failure.xlsx")
+    wb = load_workbook(out, read_only=True)
+    vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value is not None]
+    wb.close()
+    return model, memo, vals, _render_html(memo, model)
+
+
+@pytest.mark.asyncio
+async def test_irr_deal_grid_solver_error_states_the_error_type(tmp_path: Path, monkeypatch) -> None:
+    """The grid solver raised on an IRR-target deal: the reason names the
+    exception TYPE (never the no-target sentence, never the message)."""
+    from app.export.labels import IRR_GRID_ENGINE_ERROR_NOTE, IRR_GRID_NO_TARGET_NOTE
+
+    def boom(*_a, **_k):
+        raise ZeroDivisionError("secret deal figure 12345")
+
+    model, _memo, vals, html_str = await _irr_deal_payload(tmp_path, monkeypatch, boom)
+    note = IRR_GRID_ENGINE_ERROR_NOTE.format(error="ZeroDivisionError")
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == note
+    assert "12345" not in model["sensitivity_grid_unavailable"]
+    assert model["max_price"]["target_irr"] == _TARGET_IRR  # the solve still ran
+    assert note in vals and IRR_GRID_NO_TARGET_NOTE not in vals
+    assert "MAX-PRICE FINDINGS" in vals
+    assert note in html_str and IRR_GRID_NO_TARGET_NOTE not in html_str
+    assert "Max-Price Findings" in html_str
+
+
+@pytest.mark.asyncio
+async def test_irr_deal_grid_with_no_cells_states_so(tmp_path: Path, monkeypatch) -> None:
+    from app.engines.pricing_sensitivity import SensitivityGrid
+    from app.export.labels import IRR_GRID_NO_CELLS_NOTE, IRR_GRID_NO_TARGET_NOTE
+
+    def empty(base_input, *, target_irr, **_k):
+        return SensitivityGrid(
+            base_exit_cap_pct=base_input.assumptions.exit_cap_rate,
+            base_stabilized_noi=base_input.year_one_noi,
+            cells=[],
+        )
+
+    model, _memo, vals, html_str = await _irr_deal_payload(tmp_path, monkeypatch, empty)
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == IRR_GRID_NO_CELLS_NOTE
+    assert IRR_GRID_NO_CELLS_NOTE in vals and IRR_GRID_NO_TARGET_NOTE not in vals
+    assert IRR_GRID_NO_CELLS_NOTE in html_str and IRR_GRID_NO_TARGET_NOTE not in html_str
+    assert "Pricing Sensitivity (5x5 Grid)" not in html_str
+
+
 # ─────────────────── 3. transaction comps → Market Comps rows ───────────────────
 
 

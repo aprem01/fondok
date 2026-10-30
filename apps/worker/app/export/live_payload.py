@@ -65,6 +65,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .labels import (
     BENCHMARK_DEFAULT_NOTE,
     CASH_NOI,
+    IRR_GRID_ENGINE_ERROR_NOTE,
+    IRR_GRID_NO_CELLS_NOTE,
     IRR_GRID_NO_TARGET_NOTE,
     OP_RATIO_ALL_SEED_NOTE,
     PRICING_NO_TARGET_NOTE,
@@ -1405,15 +1407,22 @@ async def _pricing_sheets(
         )
         grid_unavailable = IRR_GRID_NO_TARGET_NOTE
     else:
+        # Every way the grid can be missing states its own reason — never
+        # the no-target sentence for a deal that HAS an IRR target.
         try:
             grid = run_sensitivity_grid(base_input, target_irr=target_irr)
             grid_d = asdict(grid)
             grid_d["target_irr"] = target_irr
             if not grid_d.get("cells"):
                 grid_d = None
-        except Exception:  # noqa: BLE001
+                grid_unavailable = IRR_GRID_NO_CELLS_NOTE
+        except Exception as exc:  # noqa: BLE001
             logger.debug("live export: sensitivity grid failed", exc_info=True)
             grid_d = None
+            # Exception type only — the message may quote deal data.
+            grid_unavailable = IRR_GRID_ENGINE_ERROR_NOTE.format(error=type(exc).__name__)
+        if grid_unavailable:
+            refuse(ReasonCode.ENGINE_SKIPPED, grid_unavailable, "pricing.sensitivity_grid")
 
     mp_d: dict[str, Any] | None = None
     try:
