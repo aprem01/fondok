@@ -38,7 +38,7 @@ def test_excel_builds(tmp_out: Path) -> None:
     from openpyxl import load_workbook
 
     from app.export import build_excel
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = tmp_out / "model.xlsx"
     build_excel("kimpton-angler-2026", kimpton_model(), out)
@@ -77,7 +77,7 @@ def test_memo_pdf_builds(tmp_out: Path) -> None:
     )
 
     from app.export import build_memo_pdf
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
 
     out = tmp_out / "memo.pdf"
     build_memo_pdf(kimpton_memo(), kimpton_model(), out)
@@ -96,7 +96,7 @@ def test_pptx_builds(tmp_out: Path) -> None:
     from pptx import Presentation
 
     from app.export import build_pptx
-    from app.export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_deal, kimpton_memo, kimpton_model
 
     out = tmp_out / "deck.pptx"
     build_pptx(kimpton_deal(), kimpton_model(), kimpton_memo(), out)

@@ -147,7 +147,7 @@ def test_revenue_mix_sheet_present_when_segments_populated(tmp_out: Path) -> Non
     plus year-total and grand-total rows.
     """
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -167,7 +167,7 @@ def test_revenue_mix_sheet_present_when_segments_populated(tmp_out: Path) -> Non
 def test_revenue_mix_sheet_absent_when_segments_empty(tmp_out: Path) -> None:
     """Empty / missing segments_by_year → no Revenue Mix sheet."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     model = copy.deepcopy(kimpton_model())
     model["segments_by_year"] = []
@@ -187,7 +187,7 @@ def test_renovation_plan_sheet_present_only_when_pip_displacement_set(
     """Renovation Plan sheet renders only when pip displacement carries
     a non-"none" closure_strategy."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     # Case 1: fixture has rolling closure → sheet present
     out = _build_to(tmp_out, kimpton_model())
@@ -226,7 +226,7 @@ def test_capital_plan_three_bucket_sheet_includes_phasing(tmp_out: Path) -> None
     """Capital Plan sheet renders 5 hold years × PIP/Non-PIP/ROI cols
     plus a Total row."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -253,7 +253,7 @@ def test_op_ratio_provenance_sheet_lists_winning_source_per_ratio(
     """Op-Ratio Provenance sheet has 1 row per ratio with the winning
     source labelled (T-12, Portfolio, CBRE, HOST, or Override)."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -275,7 +275,7 @@ def test_sensitivity_sheet_has_5x5_grid_and_color_scale(tmp_out: Path) -> None:
     with a ColorScaleRule attached (real conditional format, not just
     baked-in fill)."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out)  # need write-mode for conditional_formatting access
@@ -326,7 +326,7 @@ def test_sensitivity_sheet_marks_dscr_breach_cells(tmp_out: Path) -> None:
     """DSCR-breach cells get a red fill + ``!`` comment override on top
     of the color-scale rule."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out)
@@ -349,7 +349,7 @@ def test_comp_sales_sheet_present_when_transactions_exist(tmp_out: Path) -> None
     """Comparable Sales sheet renders the comp universe + median +
     weighted cap callouts when comp_sales has ≥1 transaction."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -378,7 +378,7 @@ def test_historical_baseline_sheet_present_when_coverage_high(tmp_out: Path) -> 
     """Historical Baseline renders the per-year P&L table + YoY walk
     when coverage_pct > 0."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -399,7 +399,7 @@ def test_historical_baseline_sheet_present_when_coverage_high(tmp_out: Path) -> 
 def test_str_forecast_sheet_has_48_data_rows(tmp_out: Path) -> None:
     """STR Forecast sheet has 48 data rows (24 historical + 24 forecast)."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -421,7 +421,7 @@ def test_named_scenarios_compare_sheet_present_when_scenarios_exist(
     """Named Scenarios sheet renders one column per scenario + delta
     cols, with KPI rows (IRR, EM, Y1 NOI, Stab NOI, Exit Cap, DSCR)."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -455,7 +455,7 @@ def test_loi_appendix_sheet_renders_plain_text(tmp_out: Path) -> None:
     """LOI Appendix sheet renders the LOI markdown body, one line per row,
     with headings styled bold."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     out = _build_to(tmp_out, kimpton_model())
     wb = load_workbook(out, read_only=True)
@@ -477,7 +477,7 @@ def test_cover_sheet_section_list_omits_empty_sections(tmp_out: Path) -> None:
     """Cover sheet's 'Sections Included' list reflects ONLY the sheets
     that actually rendered for this deal."""
     from openpyxl import load_workbook
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     # Kimpton fixture has every Wave 2/3 section → list shows them all.
     out = _build_to(tmp_out, kimpton_model())

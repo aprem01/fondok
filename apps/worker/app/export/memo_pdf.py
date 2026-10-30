@@ -66,6 +66,7 @@ from .refusals import (
     reason_explanation,
     reason_label,
     refuse,
+    unavailable,
 )
 
 # WeasyPrint must be importable. We import lazily inside build_memo_pdf
@@ -137,6 +138,37 @@ def _fmt_mult(
         return f"{float(v):.2f}x"
     except (TypeError, ValueError):
         return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def _fmt_int(
+    v: float | int | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"{int(round(float(v))):,}"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def _as_float(v: Any) -> float | None:
+    """``None`` stays ``None`` — a missing payload number is never read as 0."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sum_strict(values: list[float | None]) -> float | None:
+    """A total only when every component is present (go-live rule 1)."""
+    if any(v is None for v in values):
+        return None
+    return float(sum(values))  # type: ignore[arg-type]
 
 
 CSS = """
@@ -465,9 +497,10 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
     if not capex_schedule or not isinstance(capex_schedule, list):
         capex_schedule = None
 
-    # ── Op-ratio provenance ─────────────────────────────────────────
+    # ── Op-ratio provenance — B2: present whenever the payload carries the
+    # block, including the all-seed case (the block then carries a note).
     op_prov = model.get("op_ratio_provenance")
-    if not op_prov or not isinstance(op_prov, dict) or not op_prov.get("lines"):
+    if not isinstance(op_prov, dict) or not (op_prov.get("lines") or op_prov.get("note")):
         op_prov = None
 
     # ── Pricing sensitivity grid ─────────────────────────────────────
@@ -480,13 +513,20 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
     if not max_price or not isinstance(max_price, dict):
         max_price = None
 
+    # ── A3: why the pricing section is absent, when it is ───────────
+    pricing_unavailable = model.get("pricing_unavailable")
+    if not isinstance(pricing_unavailable, str) or not pricing_unavailable.strip():
+        pricing_unavailable = None
+
     # ── Historical baseline + walk ───────────────────────────────────
     baseline = model.get("historical_baseline")
     if not baseline or not isinstance(baseline, dict) or not baseline.get("years"):
         baseline = None
-    elif float(baseline.get("coverage_pct") or 0) <= 0:
-        # Coverage 0 means no docs uploaded → suppress the section.
-        baseline = None
+    else:
+        coverage = _as_float(baseline.get("coverage_pct"))
+        if coverage is None or coverage <= 0:
+            # Coverage 0 means no docs uploaded → suppress the section.
+            baseline = None
 
     # ── LOI draft ────────────────────────────────────────────────────
     loi = model.get("loi_draft")
@@ -500,6 +540,7 @@ def _aggregate_wave2_for_memo(model: dict[str, Any]) -> dict[str, Any]:
         "op_ratio_provenance": op_prov,
         "sensitivity_grid": grid,
         "max_price": max_price,
+        "pricing_unavailable": pricing_unavailable,
         "historical_baseline": baseline,
         "loi": loi,
     }
@@ -524,18 +565,18 @@ def _render_revenue_mix(segments: list[dict[str, Any]] | None) -> str:
                 ReasonCode.NO_SOURCE, "revenue segment has no name", "segment.name"
             )
         )
-        mix = float(seg.get("mix_pct") or 0)
-        net_rev = float(seg.get("net_revenue") or 0)
-        channel_cost = float(seg.get("channel_cost_pct") or 0)
-        flag = "ota-flag" if channel_cost >= 0.15 else ""
+        mix = _as_float(seg.get("mix_pct"))
+        net_rev = _as_float(seg.get("net_revenue"))
+        channel_cost = _as_float(seg.get("channel_cost_pct"))
+        flag = "ota-flag" if channel_cost is not None and channel_cost >= 0.15 else ""
         if flag:
             ota_flagged = True
         rows.append(
             f"<tr class='{flag}'>"
             f"<td>{name}</td>"
-            f"<td class='num'>{_fmt_pct(mix)}</td>"
-            f"<td class='num'>{_fmt_usd(net_rev)}</td>"
-            f"<td class='num'>{_fmt_pct(channel_cost)}</td>"
+            f"<td class='num'>{_fmt_pct(mix, concept='segment.mix_pct')}</td>"
+            f"<td class='num'>{_fmt_usd(net_rev, concept='segment.net_revenue')}</td>"
+            f"<td class='num'>{_fmt_pct(channel_cost, concept='segment.channel_cost_pct')}</td>"
             f"</tr>"
         )
 
@@ -605,22 +646,29 @@ def _render_pip_plan(pip: dict[str, Any] | None) -> str:
         else ""
     )
 
-    brand = pip.get("brand") or "Independent"
-    recovery_months = pip.get("occupancy_recovery_months") or refuse(
-        ReasonCode.NO_SOURCE,
-        "PIP spec carries no occupancy recovery period",
-        "pip.occupancy_recovery_months",
+    brand = pip.get("brand") or refuse(
+        ReasonCode.NO_SOURCE, "PIP spec carries no brand", "pip.brand"
     )
-    revpar_uplift = pip.get("revpar_index_post_reno")
+    recovery_months = pip.get("occupancy_recovery_months")
+    recovery_txt = (
+        f"{recovery_months} months"
+        if recovery_months is not None
+        else refuse(
+            ReasonCode.NO_SOURCE,
+            "PIP spec carries no occupancy recovery period",
+            "pip.occupancy_recovery_months",
+        )
+    )
+    revpar_uplift = _as_float(pip.get("revpar_index_post_reno"))
 
     return (
         "<h2>Renovation Plan</h2>"
         f"<div class='callout'>"
         f"<strong>Strategy:</strong> {html.escape(strategy_label)} "
         f"&middot; <strong>Brand:</strong> {html.escape(str(brand))} "
-        f"&middot; <strong>Recovery:</strong> {recovery_months} months "
+        f"&middot; <strong>Recovery:</strong> {recovery_txt} "
         f"&middot; <strong>Y2+ RevPAR uplift:</strong> "
-        f"{_fmt_pct((revpar_uplift or 1.0) - 1.0)}</div>"
+        f"{_fmt_pct(None if revpar_uplift is None else revpar_uplift - 1.0, concept='pip.revpar_index_post_reno')}</div>"
         "<h3 class='sub'>Y1 Monthly Offline Schedule</h3>"
         "<table class='mini'>"
         f"<thead><tr>{months_header}</tr></thead>"
@@ -646,33 +694,40 @@ def _render_capex_plan(schedule: list[dict[str, Any]] | None) -> str:
         return ""
 
     rows = []
-    tot_pip = tot_non = tot_roi_inv = tot_roi_lift = tot_total = 0.0
+    cols: dict[str, list[float | None]] = {
+        "pip_usd": [], "non_pip_usd": [], "roi_investment_usd": [],
+        "roi_noi_lift_usd": [], "total_capex_usd": [],
+    }
     for y in schedule:
-        pip_v = float(y.get("pip_usd") or 0)
-        non_v = float(y.get("non_pip_usd") or 0)
-        roi_inv = float(y.get("roi_investment_usd") or 0)
-        roi_lift = float(y.get("roi_noi_lift_usd") or 0)
-        total = float(y.get("total_capex_usd") or pip_v + non_v + roi_inv)
-        tot_pip += pip_v
-        tot_non += non_v
-        tot_roi_inv += roi_inv
-        tot_roi_lift += roi_lift
-        tot_total += total
+        pip_v = _as_float(y.get("pip_usd"))
+        non_v = _as_float(y.get("non_pip_usd"))
+        roi_inv = _as_float(y.get("roi_investment_usd"))
+        roi_lift = _as_float(y.get("roi_noi_lift_usd"))
+        total = _as_float(y.get("total_capex_usd"))
+        if total is None:
+            total = _sum_strict([pip_v, non_v, roi_inv])
+        for key, val in (
+            ("pip_usd", pip_v), ("non_pip_usd", non_v), ("roi_investment_usd", roi_inv),
+            ("roi_noi_lift_usd", roi_lift), ("total_capex_usd", total),
+        ):
+            cols[key].append(val)
         rows.append(
             f"<tr><td>Year {y.get('year', '?')}</td>"
-            f"<td class='num'>{_fmt_usd(pip_v)}</td>"
-            f"<td class='num'>{_fmt_usd(non_v)}</td>"
-            f"<td class='num'>{_fmt_usd(roi_inv)}</td>"
-            f"<td class='num'>{_fmt_usd(roi_lift)}</td>"
-            f"<td class='num'>{_fmt_usd(total)}</td></tr>"
+            f"<td class='num'>{_fmt_usd(pip_v, concept='capex.pip')}</td>"
+            f"<td class='num'>{_fmt_usd(non_v, concept='capex.non_pip')}</td>"
+            f"<td class='num'>{_fmt_usd(roi_inv, concept='capex.roi_investment')}</td>"
+            f"<td class='num'>{_fmt_usd(roi_lift, concept='capex.roi_noi_lift')}</td>"
+            f"<td class='num'>{_fmt_usd(total, concept='capex.total')}</td></tr>"
         )
+    # Column totals only when every year's bucket is stated.
     rows.append(
         "<tr class='total'><td>Total</td>"
-        f"<td class='num'>{_fmt_usd(tot_pip)}</td>"
-        f"<td class='num'>{_fmt_usd(tot_non)}</td>"
-        f"<td class='num'>{_fmt_usd(tot_roi_inv)}</td>"
-        f"<td class='num'>{_fmt_usd(tot_roi_lift)}</td>"
-        f"<td class='num'>{_fmt_usd(tot_total)}</td></tr>"
+        + "".join(
+            f"<td class='num'>{_fmt_usd(_sum_strict(cols[key]), concept=f'capex.{key}.total')}</td>"
+            for key in ("pip_usd", "non_pip_usd", "roi_investment_usd",
+                        "roi_noi_lift_usd", "total_capex_usd")
+        )
+        + "</tr>"
     )
 
     return (
@@ -716,7 +771,8 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
     if not op_prov:
         return ""
     lines = op_prov.get("lines") or []
-    if not lines:
+    note = op_prov.get("note")
+    if not lines and not note:
         return ""
 
     rows = []
@@ -736,10 +792,10 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
         display, tag_class = _source_chip(source)
         doc = line.get("document_id")
         value_html = (
-            _fmt_pct(value)
-            if isinstance(value, float) and 0 <= value <= 1
-            else _fmt_usd(value)
-            if value
+            _fmt_pct(value, concept="op_ratio.value")
+            if isinstance(value, (int, float)) and 0 <= value <= 1
+            else _fmt_usd(value, concept="op_ratio.value")
+            if value is not None
             else refuse(
                 ReasonCode.NO_SOURCE,
                 "op-ratio provenance line carries no value",
@@ -758,29 +814,46 @@ def _render_op_ratio_provenance(op_prov: dict[str, Any] | None) -> str:
             "</tr>"
         )
 
-    return (
-        "<h2>Operating Ratios &mdash; Provenance</h2>"
-        "<div class='callout'><strong>Source precedence:</strong> Override &rarr; "
-        "T-12 actuals &rarr; Portfolio P&amp;L &rarr; CBRE Horizons &rarr; HOST &rarr; Seed. "
-        "Lower-tier sources are flagged for IC review.</div>"
+    # B2 — when every ratio is a hotel-type seed (or none resolved), say so
+    # in words on the page; the section is never silently omitted.
+    note_html = (
+        f"<div class='callout warn'><strong>Note:</strong> {html.escape(str(note))}</div>"
+        if note
+        else ""
+    )
+    table_html = (
         "<table class='mini'>"
         "<thead><tr><th>Expense Line</th>"
         "<th style='text-align:right'>Underwritten Value</th>"
         "<th>Winning Source</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
+        if rows
+        else ""
+    )
+    return (
+        "<h2>Operating Ratios &mdash; Provenance</h2>"
+        "<div class='callout'><strong>Source precedence:</strong> Override &rarr; "
+        "T-12 actuals &rarr; Portfolio P&amp;L &rarr; CBRE Horizons &rarr; HOST &rarr; Seed. "
+        "Lower-tier sources are flagged for IC review.</div>"
+        + note_html
+        + table_html
     )
 
 
 def _cell_class(
-    irr: float, target_irr: float, dscr_breach: bool
+    irr: float | None, target_irr: float | None, dscr_breach: bool
 ) -> str:
     """Map an IRR cell to a green/amber/red class against the target.
 
     Same scale as the UI: cell >= target -> green; within 200bp below ->
-    amber; otherwise red. DSCR breach overrides to red regardless.
+    amber; otherwise red. DSCR breach overrides to red regardless. With no
+    target (or no IRR) the cell is left uncoloured — colour is a judgement
+    against a hurdle, and there is no hurdle to judge against.
     """
     if dscr_breach:
         return "cell-red"
+    if irr is None or target_irr is None:
+        return ""
     delta = irr - target_irr
     if delta >= 0:
         return "cell-green"
@@ -802,21 +875,28 @@ def _render_sensitivity_grid(grid: dict[str, Any] | None) -> str:
     if not cells:
         return ""
 
-    target_irr = float(grid.get("target_irr") or 0.15)
+    # The deal's own IRR hurdle (the live payload sets it from the
+    # Investment Profile); ``None`` leaves the cells uncoloured.
+    target_irr = _as_float(grid.get("target_irr"))
 
     # Re-bucket the flat row-major list into a 2-D layout: NOI rows
-    # (descending), cap-rate columns (ascending). The aggregator may
-    # have already laid them out this way; we re-derive from the
-    # individual cell keys to be safe.
-    cap_axis = sorted({round(float(c.get("exit_cap_pct") or 0), 6) for c in cells})
+    # (descending), cap-rate columns (ascending). Every grid cell carries
+    # both axis keys (``SensitivityCell`` dataclass fields).
+    cells = [
+        c for c in cells
+        if c.get("exit_cap_pct") is not None and c.get("noi_multiplier") is not None
+    ]
+    if not cells:
+        return ""
+    cap_axis = sorted({round(float(c["exit_cap_pct"]), 6) for c in cells})
     noi_axis = sorted(
-        {round(float(c.get("noi_multiplier") or 0), 4) for c in cells},
+        {round(float(c["noi_multiplier"]), 4) for c in cells},
         reverse=True,
     )
     cell_lookup = {
         (
-            round(float(c.get("exit_cap_pct") or 0), 6),
-            round(float(c.get("noi_multiplier") or 0), 4),
+            round(float(c["exit_cap_pct"]), 6),
+            round(float(c["noi_multiplier"]), 4),
         ): c
         for c in cells
     }
@@ -835,23 +915,27 @@ def _render_sensitivity_grid(grid: dict[str, Any] | None) -> str:
             if cell is None:
                 row.append("<td>&mdash;</td>")
                 continue
-            irr = float(cell.get("levered_irr") or 0)
-            em = float(cell.get("equity_multiple") or 0)
+            irr = _as_float(cell.get("levered_irr"))
+            em = _as_float(cell.get("equity_multiple"))
             dscr_breach = bool(cell.get("breaches_dscr_floor"))
             cls = _cell_class(irr, target_irr, dscr_breach)
             warn = " !" if dscr_breach else ""
             row.append(
-                f"<td class='{cls}'>{_fmt_pct(irr)}<br/>"
-                f"<span style='font-size:7pt'>{em:.2f}x{warn}</span></td>"
+                f"<td class='{cls}'>{_fmt_pct(irr, concept='sensitivity.levered_irr')}<br/>"
+                f"<span style='font-size:7pt'>{_fmt_mult(em, concept='sensitivity.equity_multiple')}{warn}</span></td>"
             )
         body_rows.append("<tr>" + "".join(row) + "</tr>")
 
     breakeven_cap = grid.get("breakeven_exit_cap_pct")
     breakeven_noi = grid.get("breakeven_noi_multiplier")
+    colour_note = (
+        f"Cells colored against the deal's target levered IRR "
+        f"{_fmt_pct(target_irr)} (green &ge; target, amber within 200bp, red below). "
+        if target_irr is not None
+        else "Cells are not colored: no target levered IRR is set on this deal. "
+    )
     legend = (
-        f"<p class='cite'>Cells colored against target IRR "
-        f"{_fmt_pct(target_irr)} (green &ge; target, amber within 200bp, "
-        f"red below). ! marks DSCR &lt; 1.0x. "
+        f"<p class='cite'>{colour_note}! marks DSCR &lt; 1.0x. "
         f"Breakeven exit cap = "
         f"{_fmt_pct(breakeven_cap) if breakeven_cap is not None else 'outside grid'}; "
         f"breakeven NOI multiplier = "
@@ -870,27 +954,65 @@ def _render_max_price_callout(max_price: dict[str, Any] | None) -> str:
     """Render the max-price-for-target-return callout with the binding chip."""
     if not max_price:
         return ""
-    irr_price = max_price.get("max_price_for_irr")
-    em_price = max_price.get("max_price_for_em")
-    target_irr = max_price.get("target_irr") or 0.15
-    target_em = max_price.get("target_em") or 1.8
-    binding = str(max_price.get("binding_constraint") or "irr").upper()
-    per_key = max_price.get("final_price_per_key") or 0
+    target_irr = _as_float(max_price.get("target_irr"))
+    target_em = _as_float(max_price.get("target_em"))
+    binding = max_price.get("binding_constraint")
+    per_key = _as_float(max_price.get("final_price_per_key"))
 
-    badge_cls = "warn" if binding in ("IRR", "EM") else "muted"
+    # One line per hurdle the deal actually set; a search that did not
+    # converge says so rather than printing the bracket end.
+    lines: list[str] = []
+    for label, target, price_key, status_key, fmt in (
+        ("IRR", target_irr, "max_price_for_irr", "irr_status", _fmt_pct),
+        ("EM", target_em, "max_price_for_em", "em_status", _fmt_mult),
+    ):
+        if target is None:
+            continue
+        status = str(max_price.get(status_key) or "converged")
+        price = _as_float(max_price.get(price_key))
+        if status == "converged" and price is not None:
+            value = _fmt_usd(price, concept=f"max_price.{label.lower()}")
+        elif status == "unreachable":
+            value = "no price down to half the basis clears this hurdle"
+        elif status == "above_ceiling":
+            value = "clears the hurdle even at twice the basis"
+        else:
+            value = unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                f"the {label} search did not converge ({status})",
+                f"max_price.{label.lower()}",
+            )
+        lines.append(f"<strong>Max price for {fmt(target)} {label}:</strong> {value}<br/>")
+    if not lines:
+        return ""
 
+    binding_html = (
+        f"<span class='badge warn'>{html.escape(str(binding).upper())}</span>"
+        if binding
+        else refuse(
+            ReasonCode.NO_SOURCE,
+            "max-price solve names no binding constraint",
+            "max_price.binding_constraint",
+        )
+    )
     return (
         "<h2>Max-Price Findings</h2>"
         f"<div class='callout success'>"
-        f"<strong>Max price for {_fmt_pct(target_irr)} IRR:</strong> "
-        f"{_fmt_usd(irr_price)}<br/>"
-        f"<strong>Max price for {target_em:.2f}x EM:</strong> "
-        f"{_fmt_usd(em_price)}<br/>"
-        f"<strong>Binding constraint:</strong> "
-        f"<span class='badge {badge_cls}'>{html.escape(binding)}</span> "
+        + "".join(lines)
+        + f"<strong>Binding constraint:</strong> {binding_html} "
         f"&nbsp; <strong>Headline price/key:</strong> "
-        f"{_fmt_usd(per_key)}"
+        f"{_fmt_usd(per_key, concept='max_price.per_key')}"
         "</div>"
+    )
+
+
+def _render_pricing_unavailable(reason: str | None) -> str:
+    """A3 — the pricing section states why it has no numbers (no target)."""
+    if not reason:
+        return ""
+    return (
+        "<h2>Pricing to Target</h2>"
+        f"<div class='callout warn'>{html.escape(reason)}</div>"
     )
 
 
@@ -900,7 +1022,7 @@ def _render_historical_walk(baseline: dict[str, Any] | None) -> str:
         return ""
     years = baseline.get("years") or []
     walk = baseline.get("walk") or []
-    coverage = float(baseline.get("coverage_pct") or 0)
+    coverage = _as_float(baseline.get("coverage_pct"))
 
     if not years:
         return ""
@@ -954,7 +1076,7 @@ def _render_historical_walk(baseline: dict[str, Any] | None) -> str:
     return (
         "<h2>Historical Baseline Walk</h2>"
         f"<div class='callout'>"
-        f"<strong>Coverage:</strong> {_fmt_pct(coverage)} of look-back "
+        f"<strong>Coverage:</strong> {_fmt_pct(coverage, concept='historical.coverage')} of look-back "
         f"window ({len(years)} of {baseline.get('look_back_years') or 5} years)."
         "</div>"
         f"<table class='mini'>{header}{''.join(body_rows)}</table>"
@@ -1134,18 +1256,42 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 
     # Pull NOI from Y1 of the proforma if available. The headline row is the
     # BEFORE-FF&E-reserve basis (FON-59 #1), never the "Cash NOI" row below it.
-    noi_y1 = next((row.get("y1") for row in lines if row.get("label") in NOI_HEADLINE_LABELS), None)
+    noi_y1 = _as_float(
+        next((row.get("y1") for row in lines if row.get("label") in NOI_HEADLINE_LABELS), None)
+    )
 
-    # RevPAR — derive if we have keys + room revenue
-    keys = model.get("keys") or 132
-    room_rev_y1 = next((row.get("y1") for row in lines if row.get("label") == "Room Revenue"), None)
-    revpar_y1 = (room_rev_y1 * 1000 / (keys * 365)) if room_rev_y1 and keys else None
+    # RevPAR — derived only when the deal states its key count and the
+    # proforma its Year-1 room revenue (two real figures; never a default
+    # key count).
+    keys = _as_float(model.get("keys"))
+    room_rev_y1 = _as_float(
+        next((row.get("y1") for row in lines if row.get("label") == "Room Revenue"), None)
+    )
+    revpar_y1 = (
+        room_rev_y1 * 1000 / (keys * 365)
+        if room_rev_y1 is not None and keys is not None and keys > 0
+        else None
+    )
 
     title = header.get("title", "Investment Committee Memorandum")
-    subject = header.get("subject_property", "Hotel")
+    subject = header.get("subject_property") or unavailable(
+        ReasonCode.NO_SOURCE, "no property name on the deal", "property_overview.name"
+    )
     location = header.get("location", "")
     rec = header.get("recommendation", "")
-    confidence = appendix.get("ai_confidence", 0)
+    confidence = _as_float(appendix.get("ai_confidence"))
+    confidence_badge = (
+        f"AI Confidence: {int(round(confidence * 100))}%"
+        if confidence is not None
+        else "AI Confidence: " + unavailable(
+            ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"
+        )
+    )
+    keys_txt = (
+        f"{int(keys):,} Keys"
+        if keys is not None
+        else refuse(ReasonCode.NO_SOURCE, "no key count on the deal row", "deal.keys") + " Keys"
+    )
 
     # Highlights = top 4 insights
     highlight_items = "".join(
@@ -1155,7 +1301,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 
     # Risks = subscores
     risk_items = "".join(
-        f"<li><strong>{html.escape(s.get('name', ''))}</strong> — {html.escape(s.get('tier', ''))} ({s.get('score', 0)})</li>"
+        f"<li><strong>{html.escape(s.get('name', ''))}</strong> — {html.escape(s.get('tier', ''))} "
+        f"({_fmt_int(s.get('score'), concept='risk.score')})</li>"
         for s in risks_section.get("subscores", [])[:4]
     )
 
@@ -1165,36 +1312,49 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     if not risk_items:
         risk_items = "<li>—</li>"
 
-    # Sources & Uses mini table
-    sources = model.get("sources") or [
-        {"label": "Senior Debt", "amount": debt.get("loan_amount_usd", 0)},
-        {"label": "Equity", "amount": inv.get("total_capital_usd", 0) - debt.get("loan_amount_usd", 0)},
+    # Sources mini table — the capital engine's own line items; no fallback
+    # rebuilt from scalar fields, and a total only when every line has an
+    # amount.
+    source_lines = [
+        x for x in (model.get("sources") or []) if isinstance(x, dict) and not x.get("total")
     ]
     sources_rows = ""
-    src_total = 0
-    for s in sources:
-        if s.get("total"):
-            continue
-        amt = s.get("amount", 0)
-        src_total += amt
-        sources_rows += (
-            f"<tr><td>{html.escape(str(s.get('label', '')))}</td>"
-            f"<td class='num'>{_fmt_usd(amt)}</td></tr>"
+    if not source_lines:
+        sources_rows = (
+            "<tr><td colspan='2'>"
+            + html.escape(unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                "no sources on the deal's capital engine output",
+                "sources",
+            ))
+            + "</td></tr>"
         )
-    sources_rows += (
-        f"<tr class='total'><td>Total</td>"
-        f"<td class='num'>{_fmt_usd(src_total)}</td></tr>"
-    )
+    else:
+        amounts = [_as_float(x.get("amount")) for x in source_lines]
+        for x, amt in zip(source_lines, amounts, strict=True):
+            sources_rows += (
+                f"<tr><td>{html.escape(str(x.get('label', '')))}</td>"
+                f"<td class='num'>{_fmt_usd(amt, concept='sources.amount')}</td></tr>"
+            )
+        sources_rows += (
+            f"<tr class='total'><td>Total</td>"
+            f"<td class='num'>{_fmt_usd(_sum_strict(amounts), concept='sources.total')}</td></tr>"
+        )
 
     # Returns mini table
     returns_rows = "".join([
-        f"<tr><td>Levered IRR</td><td class='num'>{_fmt_pct(ret.get('levered_irr'))}</td></tr>",
-        f"<tr><td>Equity Multiple</td><td class='num'>{_fmt_mult(ret.get('equity_multiple'))}</td></tr>",
-        f"<tr><td>Year 1 CoC</td><td class='num'>{_fmt_pct(ret.get('year1_cash_on_cash'))}</td></tr>",
-        f"<tr><td>Hold Period</td><td class='num'>{ret.get('hold_years', 0)} yrs</td></tr>",
-        f"<tr><td>Year 1 DSCR</td><td class='num'>{_fmt_mult(debt.get('year1_dscr'))}</td></tr>",
-        f"<tr><td>Year 1 Debt Yield</td><td class='num'>{_fmt_pct(debt.get('year1_debt_yield'))}</td></tr>",
+        f"<tr><td>Levered IRR</td><td class='num'>{_fmt_pct(ret.get('levered_irr'), concept='levered_irr')}</td></tr>",
+        f"<tr><td>Equity Multiple</td><td class='num'>{_fmt_mult(ret.get('equity_multiple'), concept='equity_multiple')}</td></tr>",
+        f"<tr><td>Year 1 CoC</td><td class='num'>{_fmt_pct(ret.get('year1_cash_on_cash'), concept='year_one_coc')}</td></tr>",
+        f"<tr><td>Hold Period</td><td class='num'>{_fmt_int(ret.get('hold_years'), concept='hold_years')} yrs</td></tr>",
+        f"<tr><td>Year 1 DSCR</td><td class='num'>{_fmt_mult(debt.get('year1_dscr'), concept='dscr')}</td></tr>",
+        f"<tr><td>Year 1 Debt Yield</td><td class='num'>{_fmt_pct(debt.get('year1_debt_yield'), concept='debt_yield')}</td></tr>",
     ])
+    # B9 — the flat-SOFR provenance note travels with the debt figures.
+    benchmark_note = debt.get("benchmark_note")
+    debt_note_html = (
+        f"<p class='cite'>{html.escape(str(benchmark_note))}</p>" if benchmark_note else ""
+    )
 
     # Citations footer
     docs = appendix.get("documents_reviewed", [])
@@ -1224,6 +1384,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     op_ratio_html = _render_op_ratio_provenance(wave2["op_ratio_provenance"])
     sensitivity_html = _render_sensitivity_grid(wave2["sensitivity_grid"])
     max_price_html = _render_max_price_callout(wave2["max_price"])
+    pricing_unavailable_html = _render_pricing_unavailable(wave2["pricing_unavailable"])
     historical_html = _render_historical_walk(wave2["historical_baseline"])
     loi_html = _render_loi_appendix(wave2["loi"])
 
@@ -1240,10 +1401,10 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 <div class="header">
   <div class="label">Investment Committee Memorandum</div>
   <h1>{html.escape(subject)}</h1>
-  <div class="meta">{html.escape(location)} · {keys} Keys</div>
+  <div class="meta">{html.escape(location)} · {keys_txt}</div>
   <div class="badges">
-    <span class="badge {rec_badge_class}">{html.escape(rec or 'IN REVIEW')}</span>
-    <span class="badge">AI Confidence: {int(confidence * 100)}%</span>
+    <span class="badge {rec_badge_class}">{html.escape(rec or unavailable(ReasonCode.AWAITING_ANALYST, 'no IC recommendation confirmed by the analyst', 'ic_recommendation'))}</span>
+    <span class="badge">{html.escape(confidence_badge)}</span>
     <span class="badge">{html.escape(header.get('deal_stage', ''))}</span>
   </div>
 </div>
@@ -1256,8 +1417,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 </div>
 
 <div class="metrics">
-  <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload", "revpar")}</div></div>
-  <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m((noi_y1 or 0) * 1000) if noi_y1 else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
+  <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
+  <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
   <div class="metric"><div class="k">Cap Rate</div><div class="v">{_fmt_pct(inv.get('entry_cap_rate_year1_uw'), code=ReasonCode.ENGINE_SKIPPED, concept='entry_cap_rate')}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
@@ -1293,12 +1454,15 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
       <thead><tr><th>Metric</th><th style="text-align:right">Value</th></tr></thead>
       <tbody>{returns_rows}</tbody>
     </table>
+    {debt_note_html}
   </div>
 </div>
 
 {capex_html}
 
 {op_ratio_html}
+
+{pricing_unavailable_html}
 
 {sensitivity_html}
 
@@ -1346,6 +1510,7 @@ __all__ = [
     "_render_max_price_callout",
     "_render_op_ratio_provenance",
     "_render_pip_plan",
+    "_render_pricing_unavailable",
     "_render_revenue_mix",
     "_render_sensitivity_grid",
     "build_memo_pdf",

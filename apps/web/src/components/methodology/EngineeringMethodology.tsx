@@ -680,7 +680,7 @@ export default function EngineeringMethodology() {
               ['Capital', 'Purchase price + closing costs + renovation budget + working capital → property uses; plus the senior origination fee (owned by the Financing tab) → total capital; Sources & Uses.'],
               ['Debt', 'Senior + PACE tranche stack from analyst-entered terms (fixed or index + spread with floor / cap, amortization or interest-only, IO stub, maturity); monthly amortization schedule; DSCR, debt yield, LTV / LTC; analyst-entered covenant thresholds; refi optionality.'],
               ['Returns', 'Levered + unlevered IRR, equity multiple, Year-1 CoC, terminal value via exit cap × terminal NOI. Handles loss-making (underwater) deals — a negative IRR or sub-1x multiple is reported honestly, not floored or crashed.'],
-              ['Sensitivity', 'IRR heatmap across exit cap × hold years (or other configurable pairs).'],
+              ['Sensitivity', 'IRR heatmap across exit cap × RevPAR growth (or other configurable pairs); the IC deck prints this persisted grid, never a synthesized one.'],
               ['Partnership', 'GP / LP waterfall with preferred return, catch-up, promote tiers. A deficit period is funded as a dated pro-rata GP/LP capital call (by ownership split) that adds to unreturned capital — the preferred return accrues on it — and is reported as additional contributions; Cash Flow → Partnership → Returns carry one treatment of additional equity.'],
             ].map(([name, desc]) => (
               <li key={name} className="flex items-start gap-2">
@@ -830,8 +830,8 @@ export default function EngineeringMethodology() {
               Both pricing blocks call the solver with no overrides, so an active Live Assumptions sandbox does not reach them. While one is on, each block says so inline rather than quietly answering a different question. Reset the sandbox on Sensitivities to compare like for like.
             </li>
             <li>
-              <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
-              The IC memo / Excel max-price section still prints the legacy 15% / 1.80x hurdles until the export path is migrated to the deal&apos;s targets.
+              <span className="font-semibold text-ink-900">Exports.</span>{' '}
+              <code className="text-[11.5px]">export/live_payload.py</code> resolves the deal&apos;s targets through the same <code className="text-[11.5px]">_deal_return_targets</code> read the pricing routes use; the Excel Pricing Sensitivity sheet and memo Max-Price Findings carry no solver output without a target (they state &ldquo;Pricing to target not available: no return target set on this deal&rdquo;), and the deck&apos;s heat-map is the persisted <code className="text-[11.5px]">sensitivity</code> engine row or a stated reason. No export module holds a default hurdle, a fixture, or a demo path.
             </li>
           </ul>
         </Card>

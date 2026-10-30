@@ -869,9 +869,44 @@ export default function MethodologyPage() {
               base cell reproduces the headline solve exactly.
             </li>
             <li>
-              <span className="font-semibold text-ink-900">Known gap — exports.</span>{' '}
-              The Excel model&apos;s max-price section still prints the legacy hurdles rather than the
-              deal&apos;s targets. The on-screen solver is authoritative.
+              <span className="font-semibold text-ink-900">Exports price to your targets, or say they cannot.</span>{' '}
+              The Excel model&apos;s Pricing Sensitivity sheet and the IC memo&apos;s Max-Price Findings solve
+              against the same Investment Profile targets as the on-screen solver. With no target on the deal,
+              the sheet and the memo section read &ldquo;Pricing to target not available: no return target
+              set on this deal&rdquo; and carry no solver output; with only a target equity multiple, the
+              max price solves that hurdle alone and the IRR grid is omitted (its breakeven sweep needs an
+              IRR target). The LOI draft prices at the solver&apos;s offerable headline and refuses — with the
+              reason — when the deal record has no property name or key count, or when no price clears the
+              hurdle.
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-5 mt-4">
+          <h4 className="text-[13px] font-semibold text-ink-900 mb-2">What the exports never do</h4>
+          <ul className="space-y-2 text-[12.5px] text-ink-700 list-disc pl-5">
+            <li>
+              <span className="font-semibold text-ink-900">Invent a number.</span>{' '}
+              A figure the deal does not carry prints as &ldquo;not available: &lt;reason&gt;&rdquo; naming the
+              field (headline cells, assumption rows, section notes) or as a dash inside a table whose header
+              names the field — never 0, 0% or $0. Totals are stated only when every component is; a missing
+              component is named instead. The Debt Schedule sheet is the debt engine&apos;s own monthly
+              schedule, never re-derived from headline terms.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Synthesize a sensitivity grid.</span>{' '}
+              The IC deck&apos;s heat-map is the Sensitivity engine&apos;s persisted output for the deal&apos;s
+              canonical run. If that engine has not run, failed, or produced no cells, the slide states
+              &ldquo;Sensitivity analysis not available: &lt;reason&gt;&rdquo;. The deck carries no generic
+              &ldquo;next steps&rdquo;.
+            </li>
+            <li>
+              <span className="font-semibold text-ink-900">Hide a default.</span>{' '}
+              The Op-Ratio Provenance sheet and memo section are always produced for a modelled deal; when
+              every ratio is a hotel-type seed they say so (&ldquo;all operating ratios are hotel-type defaults;
+              no T-12 was provided&rdquo;). Wherever an exported debt figure rides on Fondok&apos;s flat SOFR
+              assumption, the export prints the same note the Debt tab shows. The unsourced brand recovery
+              multiplier table is no longer printed.
             </li>
           </ul>
         </Card>

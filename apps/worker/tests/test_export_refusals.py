@@ -8,10 +8,13 @@ a :class:`~fondok_schemas.reasons.Refusal`.
 
 What this module pins:
 
-1. **Additive, provably.** ``load_live_payload``'s ``deal`` / ``memo`` dicts
-   and the ``model`` key set are compared against
-   ``fixtures/live_payload_pre_refusals.json`` — captured by running the
-   pre-change tree — with only ``refusals`` allowed to be new.
+1. **Shape-pinned.** ``load_live_payload``'s ``deal`` / ``memo`` dicts and
+   the ``model`` key set are compared against
+   ``fixtures/live_payload_snapshot.json`` — captured by running THIS tree's
+   loader over the same seeded deals (regenerate deliberately, never by
+   hand, when a payload change is intended: run the seeding in
+   ``_bare_payload`` / ``_modeled_payload`` and dump the shape). The
+   ``refusals`` list is the one key the snapshot does not pin.
 2. **Every dash is accounted for.** Each ``"—"`` the payload carries has a
    ``Refusal`` on ``model["refusals"]``, and every recorded code is in the
    closed :class:`ReasonCode` vocabulary.
@@ -44,7 +47,7 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
-_SNAPSHOT = Path(__file__).parent / "fixtures" / "live_payload_pre_refusals.json"
+_SNAPSHOT = Path(__file__).parent / "fixtures" / "live_payload_snapshot.json"
 
 #: The one key Phase 4.2 adds to the model. Nothing else may appear.
 _ADDED_MODEL_KEY = "refusals"
@@ -153,14 +156,20 @@ async def _modeled_payload():
 
 
 @pytest.mark.asyncio
-async def test_payload_matches_the_pre_change_snapshot_but_for_refusals() -> None:
-    """``deal`` / ``memo`` byte-identical; ``model`` gains only ``refusals``.
+async def test_payload_matches_the_snapshot_but_for_refusals() -> None:
+    """``deal`` / ``memo`` byte-identical to the snapshot; the ``model`` key
+    set equal to it plus ``refusals``.
 
-    The snapshot was produced by running ``load_live_payload`` on the tree as
-    it stood before Phase 4.2. If routing a dash through ``refuse`` ever
-    changed a rendered value, this is where it shows up.
+    The snapshot pins the live payload's shape for a bare deal (no run, no
+    city, no keys, no return target) and a modelled one (canonical run +
+    downside scenario, no return target). Go-live Wave 0 moved it on
+    purpose: the bare deal's name is a typed refusal (never the literal
+    "Hotel"), the modelled deal carries ``sensitivity_engine`` and
+    ``op_ratio_provenance`` (all-seed, stated), and — with no return target
+    on the deal — ``pricing_unavailable`` in place of ``sensitivity_grid`` /
+    ``max_price``. If a rendered value drifts again, this is where it shows.
     """
-    assert _SNAPSHOT.exists(), f"missing pre-change snapshot {_SNAPSHOT}"
+    assert _SNAPSHOT.exists(), f"missing payload snapshot {_SNAPSHOT}"
     snap = json.loads(_SNAPSHOT.read_text())
 
     deal, model, memo = await _bare_payload()
@@ -346,9 +355,9 @@ async def test_no_refusals_sheet_when_the_payload_refused_nothing(
     from openpyxl import load_workbook
 
     from app.export import build_excel
-    from app.export.fixtures import load_demo_payload
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
-    _deal, model, _memo = load_demo_payload("kimpton-angler-2026")
+    model = kimpton_model()
     assert "refusals" not in model
 
     out = build_excel("kimpton-angler-2026", model, tmp_path / "demo.xlsx")
@@ -398,7 +407,7 @@ def test_memo_pdf_with_nothing_to_refuse_gains_no_footnote() -> None:
     It grounds every figure, so it writes no dash and earns no footnote —
     the golden memo export is untouched by this phase.
     """
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html, _render_html_body
 
     memo, model = kimpton_memo(), kimpton_model()
