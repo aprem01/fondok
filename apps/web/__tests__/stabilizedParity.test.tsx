@@ -150,7 +150,8 @@ vi.mock('@/lib/hooks/useVariance', () => ({
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/api')>();
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await importOriginal<typeof import('@/lib/api')>());
   return {
     ...actual,
     isWorkerConnected: () => true,

@@ -211,7 +211,8 @@ const RECORDS = [
   { id: 's-base', deal_id: 'deal-1', name: 'Base Case', is_base: true, in_memo: true, overrides: [] },
 ] as unknown as ScenarioRecord[];
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,

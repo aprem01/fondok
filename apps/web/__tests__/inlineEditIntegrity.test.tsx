@@ -189,7 +189,8 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
 const timelineSpy = vi.fn(async () => TIMELINE);
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,

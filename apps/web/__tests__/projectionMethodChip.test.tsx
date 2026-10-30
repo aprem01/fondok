@@ -135,7 +135,8 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));
 vi.mock('@/lib/hooks/useFlash', () => ({ useFlash: () => false }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: fx.toast }) }));
 vi.mock('@/lib/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/api')>();
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await importOriginal<typeof import('@/lib/api')>());
   return {
     ...actual,
     isWorkerConnected: () => true,

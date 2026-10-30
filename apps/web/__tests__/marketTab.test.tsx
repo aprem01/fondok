@@ -104,7 +104,8 @@ const COMPS = {
 };
 
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,

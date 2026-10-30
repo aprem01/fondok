@@ -101,7 +101,8 @@ vi.mock('@/components/project/EngineRunHistory', () => ({ default: () => null })
 vi.mock('@/components/project/WhatJustHappened', () => ({ default: () => null }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/lib/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/api')>();
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await importOriginal<typeof import('@/lib/api')>());
   return {
     ...actual,
     isWorkerConnected: () => true,

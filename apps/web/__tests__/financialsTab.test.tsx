@@ -152,7 +152,8 @@ const updateSpy = vi.fn(async (_id: string, _body: unknown) => ({ id: 'deal-uuid
 // E-015 — what GET /deals/{id}/lineage serves (null = nothing recorded).
 const lineageSpy = vi.fn(async (_id: string): Promise<unknown> => null);
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const { withQuietWorker } = await import('./helpers/quietWorker');
+  const actual = withQuietWorker(await vi.importActual<typeof import('@/lib/api')>('@/lib/api'));
   return {
     ...actual,
     isWorkerConnected: () => true,
