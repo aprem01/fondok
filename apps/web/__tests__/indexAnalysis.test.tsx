@@ -20,7 +20,7 @@
  *     years, with the source named per column.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, HistoricalBaselineResponse } from '@/lib/api';
 
@@ -87,6 +87,26 @@ vi.mock('@/lib/hooks/useHistoricalBaseline', () => ({
 }));
 
 import IndexAnalysisSection from '@/components/project/pl/IndexAnalysisSection';
+import { api } from '@/lib/api';
+
+/**
+ * Render the section and wait until BOTH of its independent reads (market
+ * data and the index methodology) have resolved and React has applied them.
+ * The tables mount after the first read; asserting before the second lands
+ * raced in CI (2026-10-30, three different tests in this file), never locally.
+ */
+async function renderSettled(): Promise<void> {
+  render(<IndexAnalysisSection dealId={DEAL} />);
+  await waitFor(() => {
+    expect(api.market.data).toHaveBeenCalled();
+    expect(api.market.indexMethodology).toHaveBeenCalled();
+  });
+  // Let both resolved promises and the state updates they trigger flush.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 import { buildReconciliation, type ReconciliationInput } from '@/components/project/pl/IndexMethodology';
 
 /** Revenue-engine years: a Base Year (TTM) + eight forecast years at a steady
@@ -196,7 +216,7 @@ const FIRST_FORECAST = 6; // index of 2025 among the 15 year columns (2019–203
 
 describe('Index Analysis — year columns follow the close calendar (FON-94)', () => {
   it('forecast columns are exactly the engine calendar; six historical years precede Year 1', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     expect(yearHeaders(table)).toEqual([
       '2019', '2020', '2021', '2022', '2023', '2024',
@@ -211,7 +231,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
   it('nothing is carried forward beyond the engine horizon', async () => {
     // A 5-year hold closing in 2025: columns end at 2029 — no invented 2030+.
     mockOutputs = outputs(5, 2025);
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     const headers = yearHeaders(table);
     expect(headers[headers.length - 1]).toBe('2029');
@@ -225,7 +245,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
   it('the same calendar year sits in the same column: 2026 is years[1], not years[2]', async () => {
     // A 2026 close (Year 1 = 2026): the 2026 column must be the Base Year.
     mockOutputs = outputs(9, 2026);
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     const headers = yearHeaders(table);
     expect(headers.slice(0, 7)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', '2026']);
@@ -235,7 +255,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
 
   it('with no close date the forecast columns are ordinals and a note says why', async () => {
     mockOutputs = outputs(9, null);
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     const headers = yearHeaders(table);
     // History = the years the documents report (the P&L fiscal years); forecast = "Year N".
@@ -252,7 +272,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
 
 describe('Index Analysis — RGI Growth is gone (FON-60 §5)', () => {
   it('renders no RGI Growth row, and keeps the three index LEVEL rows', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     expect(await screen.findByText('Penetration Index')).toBeInTheDocument();
 
     expect(screen.queryByText('RGI Growth (pts)')).not.toBeInTheDocument();
@@ -264,7 +284,7 @@ describe('Index Analysis — RGI Growth is gone (FON-60 §5)', () => {
   });
 
   it('never prints a +0.0 growth cell anywhere in the penetration table', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Penetration Index')).closest('table') as HTMLElement;
     expect(within(table).queryByText('+0.0')).not.toBeInTheDocument();
   });
@@ -272,7 +292,7 @@ describe('Index Analysis — RGI Growth is gone (FON-60 §5)', () => {
 
 describe('Index Analysis — the first forecast year’s growth (FON-61 §3)', () => {
   it('is N/A when the last historical column and the Base Year are different bases', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
 
     for (const row of ['Occupancy Growth', 'ADR Growth', 'RevPAR Growth']) {
@@ -282,7 +302,7 @@ describe('Index Analysis — the first forecast year’s growth (FON-61 §3)', (
   });
 
   it('names the mismatch on hover rather than leaving a bare N/A', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
 
     const cell = rowCells('ADR Growth', table)[FIRST_FORECAST];
@@ -295,7 +315,7 @@ describe('Index Analysis — the first forecast year’s growth (FON-61 §3)', (
   });
 
   it('leaves the SECOND forecast year a real number — only the boundary is refused', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
 
     // ADR grows 4% a year in the fixture, forecast over forecast.
@@ -309,7 +329,7 @@ describe('Index Analysis — the first forecast year’s growth (FON-61 §3)', (
     // No multi-year P&L and no STR annual history → the 2024 column is blank,
     // so there is nothing to grow from; the Base Year itself still sits in 2025.
     mockBaseline = null;
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     expect(rowCells('ADR', table)[FIRST_FORECAST - 1]).toHaveTextContent('—');
     expect(rowCells('ADR', table)[FIRST_FORECAST]).toHaveTextContent('$288');
@@ -323,7 +343,7 @@ describe('Index Analysis — the first forecast year’s growth (FON-61 §3)', (
 
 describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FON-95)', () => {
   it('with no CBRE report: subject = underwriting, comp set and market say they have no forecast source', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     expect(await screen.findByText(/Forecast — Fondok underwriting/)).toBeInTheDocument();
     expect(screen.getByText(/Forecast — no comp-set forecast source/)).toBeInTheDocument();
     expect(screen.getByText(/Forecast — no market forecast source/)).toBeInTheDocument();
@@ -340,7 +360,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
 
   it('a CBRE Horizons projection is the MARKET forecast, placed by its calendar year, with doc + page', async () => {
     mockMarket = { ...MARKET_NO_CBRE, cbre_horizons: CBRE_2025 };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const band = await screen.findByText(/Forecast — Market \/ CBRE Horizons — Miami Beach \(Miami Horizons Q3 2025\.xlsx, p\.4\)/);
     expect(band.closest('table')).toBe(tableOf('Market'));
     // The comp set is never labelled with the CBRE forecast.
@@ -363,7 +383,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
         years: [{ year_index: 1, calendar_year: 2026, occupancy_pct: 0.72, adr_usd: 300, revpar_usd: 216 }],
       },
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const market = (await screen.findByText('Market')).closest('table') as HTMLElement;
     expect(rowCells('ADR', market)[FIRST_FORECAST]).toHaveTextContent('—');
     expect(rowCells('ADR', market)[FIRST_FORECAST + 1]).toHaveTextContent('$300');
@@ -374,7 +394,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
       ...MARKET_NO_CBRE,
       cbre_horizons: { years: [{ year_index: 1, occupancy_pct: 0.72, adr_usd: 300, revpar_usd: 216 }] },
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const band = await screen.findByText(/Forecast — no market forecast source/);
     expect(band.getAttribute('title')).toMatch(/no calendar year/);
     const market = tableOf('Market');
@@ -388,7 +408,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
         { calendar_year: 2023, period: 'annual', segment: null, occupancy_pct: 0.70, adr_usd: 231, doc_type: 'MARKET_STUDY', doc_name: 'CoStar Submarket.pdf', page: 12, fields: ['market_study.trend.2023.adr_usd'] },
       ],
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const market = (await screen.findByText('Market')).closest('table') as HTMLElement;
     expect(rowCells('ADR', market)[4]).toHaveTextContent('$231'); // 2023
     expect(rowCells('Occupancy', market)[4]).toHaveTextContent('70.0%');
@@ -398,7 +418,7 @@ describe('Index Analysis — the forecast band names its origin (FON-60 §4 / FO
   });
 
   it('the band is not the bare word "Forecast" any more', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     expect(await screen.findByText('Subject Property')).toBeInTheDocument();
     const bands = screen.queryAllByText('Forecast');
     expect(bands).toHaveLength(0);
@@ -417,7 +437,7 @@ describe('Index Analysis — subject history source precedence (FON-95)', () => 
         subject_annual: [{ calendar_year: 2024, occupancy_pct: 70.1, adr_usd: 275, page: 3 }],
       },
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     // 2024 — STR annual (70.1% / $275), NOT the baseline's 64.0% / $250.
     expect(rowCells('Occupancy', table)[5]).toHaveTextContent('70.1%');
@@ -438,7 +458,7 @@ describe('Index Analysis — subject history source precedence (FON-95)', () => 
 
 describe('Index Analysis — penetration rows (FON-95)', () => {
   it('fair share of supply includes the subject in the denominator', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     // The row mounts before the comp-set rooms arrive, so wait for the figure
     // itself rather than for the row (CI 2026-10-30: the row existed, the cell
     // was still empty).
@@ -450,7 +470,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
   });
 
   it('shows fair-share occupancy, actual share of demand and fair-share rooms revenue with their inputs', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     // Anchor column (2024): subject FY 64.0% / $250 ; comp = 0.716 ÷ 1.032 = 69.38%, 288 ÷ 0.942 = $305.73.
@@ -467,7 +487,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
   });
 
   it('adds occupancy (pts) and ADR ($ and %) variances beside the RevPAR variance', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     await waitFor(() => expect(at('index-penetration-occ-var')[5]).toHaveTextContent('−5.4 pts')); // 64.0 − 69.38
@@ -489,7 +509,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
         index_mpi_target: figure(103.2, 'override', [], 'Hold share'),
       },
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     // At par: (212.14 − 160) × 132 × 366 = $2,518,…  (positive: the subject is below par).
@@ -508,14 +528,14 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
       ...baseline(),
       years: [{ fiscal_year: 2024, occupancy: 0.80, adr: 400, revpar: null }],
     } as unknown as HistoricalBaselineResponse;
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const cells = () => Array.from(screen.getByTestId('index-penetration-oppty-par').querySelectorAll('td')).slice(1);
     await waitFor(() => expect(cells()[5]).toHaveTextContent(/^−\$[\d,]+$/));
   });
 
   it('with no target set the at-target row is "—" and says so on the label', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const row = screen.getByTestId('index-penetration-oppty-target');
     expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
@@ -526,7 +546,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     // The fixture: index_mpi_target = 103.2 from the STR document (the
     // published MPI itself), index_ari_target = 105 analyst override.
     mockIndexMethodology = methodology({ toggle_on: true, by_year_applies: true });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const row = screen.getByTestId('index-penetration-oppty-target');
     expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
@@ -580,7 +600,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
         report_month: '2025-05',
       },
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const line = await screen.findByTestId('index-reconciliation-line');
     const text = line.textContent ?? '';
     // Projections' own Base Year, its calendar year and its source document.
@@ -600,7 +620,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
   it('lists every step from the source to the Base Year, including displacement', async () => {
     mockOutputs = testerOutputs();
     mockSources = { ...T12_SOURCES, y1_occupancy_displacement_pct: { source: 'seed', value: 0.05 } };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const card = await screen.findByTestId('index-projections-reconciliation');
     expect(within(card).getByText(/Stabilized baseline 83\.9% \/ \$245\.00/)).toBeInTheDocument();
     expect(within(card).getByText(/Year-1 renovation displacement −5\.0% occupancy/)).toBeInTheDocument();
@@ -610,7 +630,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
   it('with no close date the card names the "Year 1" column rather than a guessed year', async () => {
     mockOutputs = outputs(9, null);
     mockSources = T12_SOURCES;
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const line = await screen.findByTestId('index-reconciliation-line');
     expect(line.textContent).toMatch(/in its Year 1 column/);
     expect(line.textContent).not.toMatch(/2025 column/);
@@ -747,7 +767,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
       hold_years: 3, calendar_known: true,
       by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const grid = await screen.findByTestId('index-by-year-grid');
     expect(within(grid).getByTestId('index-by-year-row-1')).toHaveTextContent('Base year (Year 1) · 2025');
     expect(within(grid).getByTestId('index-by-year-row-3')).toHaveTextContent('Year 3 · 2027');
@@ -774,7 +794,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
       by_year: byYearRows(), hold_years: 3, calendar_known: true, by_year_applies: true, by_year_disabled_reason: null,
     });
     mockOverrides = { exit_cap_rate: { value: 0.07, note: 'Broker' } };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const grid = await screen.findByTestId('index-by-year-grid');
     expect(within(grid).queryByTestId('index-by-year-disabled')).toBeNull();
     fireEvent.click(within(grid).getByTestId('index-by-year-edit'));
@@ -796,7 +816,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
       toggle_on: true,
       by_year: byYearRows(), hold_years: 3, by_year_applies: true, by_year_disabled_reason: null,
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const grid = await screen.findByTestId('index-by-year-grid');
     fireEvent.click(within(grid).getByTestId('index-by-year-edit'));
     fireEvent.change(within(grid).getByLabelText('Year 1 ARI target'), { target: { value: '-5' } });
@@ -816,7 +836,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
       toggle_on: true,
       by_year: byYearRows({ mpiYear2: 115, ariScalar: 105 }), hold_years: 3, by_year_applies: true, by_year_disabled_reason: null,
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     const mpi = at('index-penetration-mpi');
@@ -842,7 +862,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
       by_year: byYearRows({ mpiYear2: 115, ariScalar: 105 }), hold_years: 3, calendar_known: true,
       by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     const mpi = at('index-penetration-mpi');
@@ -861,7 +881,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
 
   it('without by-year rows (older worker) the table is exactly as before', async () => {
     mockIndexMethodology = methodology();
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     expect(screen.queryByTestId('index-by-year-grid')).toBeNull();
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
@@ -873,7 +893,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
 describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
   it('shows the three methods; the disabled one says why', async () => {
     mockIndexMethodology = methodology();
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const costar = await screen.findByTestId('index-method-costar_comp_set');
     expect(costar).toBeDisabled();
     expect(costar.getAttribute('title')).toMatch(/No CoStar Property Analytics comp-set extraction/);
@@ -887,7 +907,7 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
   it('saves the selected method as the index_methodology override (no note — a method choice)', async () => {
     mockIndexMethodology = methodology();
     mockOverrides = { exit_cap_rate: { value: 0.07, note: 'Broker' } };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     fireEvent.click(await screen.findByTestId('index-method-market_benchmark'));
     await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
     const [dealId, body] = updateDeal.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
@@ -899,7 +919,7 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
 
   it('shows each assumption with its document + page, a reason, or "Your override"', async () => {
     mockIndexMethodology = methodology();
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const adrGrowthSrc = await screen.findByTestId('index-assumption-source-index_market_adr_growth');
     expect(adrGrowthSrc).toHaveTextContent('Submarket Report.pdf, p.6');
     // The extraction field path is audit detail: hover only, never printed.
@@ -920,7 +940,7 @@ describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
 
   it('an assumption edit needs a note and is written with it', async () => {
     mockIndexMethodology = methodology({ toggle_on: true });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const row = await screen.findByTestId('index-assumption-index_market_adr_growth');
     fireEvent.click(within(row).getByText('Edit'));
     fireEvent.change(within(row).getByLabelText('Market ADR growth value'), { target: { value: '3.5' } });
@@ -953,7 +973,7 @@ describe('Index Analysis — Sam #3', () => {
       by_year_disabled_reason: BY_YEAR_OFF_REASON,
       assumptions: { ...methodology().assumptions, index_mpi_target: figure(103.2, 'override', [], 'Hold share') },
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     const row = screen.getByTestId('index-penetration-oppty-target');
     expect(Array.from(row.querySelectorAll('td')).slice(1).every((td) => td.textContent === '—')).toBe(true);
@@ -972,7 +992,7 @@ describe('Index Analysis — Sam #3', () => {
         index_ari_target: figure(1.05, 'override', [], 'ratio'),
       },
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const panelRow = await screen.findByTestId('index-assumption-index_mpi_target');
     expect(panelRow).toHaveTextContent('103.2');
     expect(screen.getByTestId('index-assumption-index_ari_target')).toHaveTextContent('105.0');
@@ -996,7 +1016,7 @@ describe('Index Analysis — Sam #3', () => {
       assumptions: { ...methodology().assumptions, index_mpi_target: figure(null, null, [], LEGACY_REASON) },
     });
     mockOverrides = { index_mpi_target: { value: 5, note: 'old' } };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const row = await screen.findByTestId('index-assumption-index_mpi_target');
     expect(within(row).getAllByText('—').length).toBeGreaterThan(0);
     expect(screen.getByTestId('index-assumption-source-index_mpi_target')).toHaveTextContent(/5 is outside 25–250.*re-enter it/);
@@ -1028,7 +1048,7 @@ describe('Index Analysis — Sam #3', () => {
       },
     ];
     mockIndexMethodology = methodology({ comp_set_by_year: compByYear });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     expect(await screen.findByText(/Forecast — comp set grown at market growth \(assumption\)/)).toBeInTheDocument();
     expect(screen.queryByText(/Forecast — no comp-set forecast source/)).toBeNull();
     const comp = tableOf('STR Competitive Set');
@@ -1053,7 +1073,7 @@ describe('Index Analysis — Sam #3', () => {
       benchmark_adr: figure(i === 0 ? 231 : null, i === 0 ? 'document' : null, [MKT_REF]),
     }));
     mockIndexMethodology = methodology({ selected: 'market_benchmark', selected_source: 'override', by_year: rows, hold_years: 3 });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Penetration Index');
     expect(screen.getByText('Occupancy Index (MPI) vs Market / chain-scale benchmark')).toBeInTheDocument();
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
@@ -1067,7 +1087,7 @@ describe('Index Analysis — Sam #3', () => {
   });
 
   it('the comp table is titled as the STR comp set, never "CoStar Market"', async () => {
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     expect(await screen.findByText('STR Competitive Set')).toBeInTheDocument();
     expect(screen.queryByText(/CoStar Market — Competitive Set/)).toBeNull();
   });
@@ -1101,7 +1121,7 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
       by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
       subject_period_end: '2025-05', cbre_report_date: 'September 2025',
     });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const grid = await screen.findByTestId('index-by-year-grid');
     const y1 = within(grid).getByTestId('index-by-year-bench-occ-basis-1');
     expect(y1).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
@@ -1129,7 +1149,7 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
             },
     }));
     mockIndexMethodology = methodology({ by_year: rows, hold_years: 3, calendar_known: true, by_year_applies: true });
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     const grid = await screen.findByTestId('index-by-year-grid');
     const y2 = within(grid).getByTestId('index-by-year-bench-occ-basis-2');
     expect(y2).toHaveTextContent('Assumption · grown at market growth');
@@ -1146,7 +1166,7 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
       str_trend: { ...MARKET_NO_CBRE.str_trend, ttm_period_end: '2025-05', doc_name: STR_DOC },
       cbre_horizons: { ...CBRE_2025, years: [CBRE_2025.years[1]], publication_date: 'September 2025' },
     };
-    render(<IndexAnalysisSection dealId={DEAL} />);
+    await renderSettled();
     await screen.findByText('Subject Property');
     // Comp set: the STR TTM anchor (2024 column) is an actual with its period end.
     const comp = tableOf('STR Competitive Set');
