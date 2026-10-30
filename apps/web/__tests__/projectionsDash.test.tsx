@@ -153,6 +153,15 @@ describe('Future P&L — a year the engine left blank', () => {
     expect(fb[2 * SUB]).toBe('$3,000,000');
   });
 
+  it('PAR and POR are dollars per room, as the legend says — not per thousand rooms', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    // Year 1: Rooms Revenue $10,000,000 over 132 keys × 365 days = 48,180
+    // available rooms → $208 PAR; 36,135 occupied rooms (75%) → $277 POR.
+    const rooms = rowCells('Rooms');
+    expect(rooms[2]).toBe('$208');
+    expect(rooms[3]).toBe('$277');
+  });
+
   it('one export control: Editable .xlsx downloads the worker\u2019s Future P&L workbook; no second Export button', async () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();

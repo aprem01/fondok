@@ -1229,12 +1229,14 @@ function ProjectionsTable({
       maximumFractionDigits: decimals,
     })}`;
   };
-  const par = (v: number, available: number) =>
-    available > 0 ? (v / available) * 1000 : 0;
-  const por = (v: number, occupied: number) =>
-    occupied > 0 ? (v / occupied) * 1000 : 0;
-  const pctRev = (v: number, total: number) =>
-    total > 0 ? (v / total) * 100 : 0;
+  // Dollars per available / occupied room, as the legend states. No room
+  // base → no figure (null renders "—"), never 0.
+  const par = (v: number, available: number): number | null =>
+    available > 0 ? v / available : null;
+  const por = (v: number, occupied: number): number | null =>
+    occupied > 0 ? v / occupied : null;
+  const pctRev = (v: number, total: number): number | null =>
+    total > 0 ? (v / total) * 100 : null;
 
   // Index column helper labels (growth-rate references shown for Year 1).
   const indexLabel = (key: string): string => {
@@ -2407,9 +2409,9 @@ function FullRow({
   /** What `ratioOf` is, for the % cell's tooltip ("Rooms revenue"). */
   ratioBasis?: string;
   fmtAmount: (v: number, opts?: { decimals?: number; prefix?: string }) => string;
-  pctRev: (v: number, total: number) => number;
-  par: (v: number, available: number) => number;
-  por: (v: number, occupied: number) => number;
+  pctRev: (v: number, total: number) => number | null;
+  par: (v: number, available: number) => number | null;
+  por: (v: number, occupied: number) => number | null;
   bold?: boolean;
   // Provenance: when set, the Amount cell for column i is wrapped in
   // <Traced> so hovering shows the formula behind the computed value, and
@@ -2554,11 +2556,11 @@ function SubCells({
           className={td}
         />
       )}
-      <td className={cn(td, 'text-ink-700')} title={par != null && par > 0 ? fmtAmount(par, { decimals: 2, prefix: '$' }) : undefined}>
-        {par != null && par > 0 ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}
+      <td className={cn(td, 'text-ink-700')} title={par != null ? fmtAmount(par, { decimals: 2, prefix: '$' }) : undefined}>
+        {par != null ? fmtAmount(par, { decimals: 0, prefix: '$' }) : '—'}
       </td>
-      <td className={cn(td, 'text-ink-700')} title={por != null && por > 0 ? fmtAmount(por, { decimals: 2, prefix: '$' }) : undefined}>
-        {por != null && por > 0 ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}
+      <td className={cn(td, 'text-ink-700')} title={por != null ? fmtAmount(por, { decimals: 2, prefix: '$' }) : undefined}>
+        {por != null ? fmtAmount(por, { decimals: 0, prefix: '$' }) : '—'}
       </td>
     </>
   );
