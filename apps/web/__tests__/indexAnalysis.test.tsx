@@ -439,11 +439,14 @@ describe('Index Analysis — subject history source precedence (FON-95)', () => 
 describe('Index Analysis — penetration rows (FON-95)', () => {
   it('fair share of supply includes the subject in the denominator', async () => {
     render(<IndexAnalysisSection dealId={DEAL} />);
-    const row = await screen.findByTestId('index-penetration-fair-share');
-    const cells = Array.from(row.querySelectorAll('td')).slice(1);
+    // The row mounts before the comp-set rooms arrive, so wait for the figure
+    // itself rather than for the row (CI 2026-10-30: the row existed, the cell
+    // was still empty).
+    const cells = () =>
+      Array.from(screen.getByTestId('index-penetration-fair-share').querySelectorAll('td')).slice(1);
     // 132 ÷ (61 + 132) = 68.39% — not 132 ÷ 61.
-    expect(cells[0]).toHaveTextContent('68.39%');
-    expect(within(cells[0]).getByText('68.39%').getAttribute('title')).toMatch(/132 ÷ \(comp-set rooms 61 \+ subject rooms 132\)/);
+    await waitFor(() => expect(cells()[0]).toHaveTextContent('68.39%'));
+    expect(within(cells()[0]).getByText('68.39%').getAttribute('title')).toMatch(/132 ÷ \(comp-set rooms 61 \+ subject rooms 132\)/);
   });
 
   it('shows fair-share occupancy, actual share of demand and fair-share rooms revenue with their inputs', async () => {
