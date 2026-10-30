@@ -122,6 +122,7 @@ def _flex_returns_input(
             "year_one_noi": new_year_one,
             "noi_by_year": new_noi_by_year,
             "terminal_noi_override": new_terminal,
+            "exit_schedule": False,  # FON-118 — one metric per cell
         }
     )
 

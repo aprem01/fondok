@@ -51,6 +51,11 @@ class ReasonCode(str, Enum):
     MISSING_IDENTITY_INPUTS = "missing_identity_inputs"  # deal has no keys / purchase price
     LOAD_ERROR = "load_error"              # the loader could not read the deal's data
     ENGINE_ERROR = "engine_error"          # the engine raised (bad input, bug)
+    # Wave 1 (FON-118 / FON-44) — returns-by-exit-year rows that are not
+    # modelled. Each dashes ONE row of the exit schedule, never the headline.
+    UNDER_CONSTRUCTION = "under_construction"  # sale inside the stated construction window
+    CAPITAL_DEPLOYING = "capital_deploying"    # equity draws / deferred capital land after the sale
+    NO_SALE_VALUE = "no_sale_value"            # exit NOI at that sale date is not positive
 
 
 class Refusal(BaseModel):
@@ -246,6 +251,30 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "explanation": (
             "The engine that produces this figure raised an error (for example "
             "an input outside its accepted range), so there is no output to show."
+        ),
+    },
+    ReasonCode.UNDER_CONSTRUCTION: {
+        "label": "Under construction",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "On a development deal this exit date falls inside the analyst-stated "
+            "construction window, so a sale at that date is not modelled."
+        ),
+    },
+    ReasonCode.CAPITAL_DEPLOYING: {
+        "label": "Capital still deploying",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "Equity draws or deferred capital are still being deployed after this "
+            "exit date, so a sale before the capital is fully in is not modelled."
+        ),
+    },
+    ReasonCode.NO_SALE_VALUE: {
+        "label": "No sale value",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The exit NOI at this sale date is not positive, so a direct-cap sale "
+            "value does not exist."
         ),
     },
 }

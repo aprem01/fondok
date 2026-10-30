@@ -7,7 +7,9 @@ is applied to:
   identical to the pre-FON-44 reversion (the Kimpton goldens pin that).
 * ``stabilized`` — the stabilized year's NOI grown to the exit year at the
   same growth; the exit year's NOI when stabilization lands after the exit.
-* ``terminal_noi_override`` beats both and reports ``override``.
+* ``sale_year`` (FON-44 addition, 2026-10-30) — the exit year's own Cash NOI,
+  not grown.
+* ``terminal_noi_override`` beats every basis and reports ``override``.
 """
 
 from __future__ import annotations
@@ -73,6 +75,33 @@ def test_default_is_forward_12m_and_unchanged() -> None:
         exclude={"deal_id"}
     )
     assert "Forward 12-month NOI (Year 6)" in (default.provenance["terminal_noi"].note or "")
+    # FON-118 — the new fields ride along without touching the headline: the
+    # selected row IS the headline, on both the default and the explicit basis.
+    for out in (default, explicit):
+        assert len(out.exit_schedule) == 5
+        sel = out.exit_schedule[-1]
+        assert sel.is_selected and sel.exit_year == 5
+        assert sel.levered_irr == out.levered_irr
+        assert sel.exit_noi_period_label == out.exit_noi_period_label
+
+
+def test_sale_year_basis_caps_the_exit_years_own_noi() -> None:
+    out = ReturnsEngine().run(_input(exit_noi_basis="sale_year"))
+    assert out.exit_noi_basis == "sale_year"
+    assert out.exit_noi_period_label == "Sale-year NOI (Year 5)"
+    assert out.terminal_noi == NOI[-1]
+    assert out.gross_sale_price == NOI[-1] / CAP
+    trace = out.provenance["terminal_noi"]
+    assert trace.formula == "terminal_noi = exit_year_noi"
+    names = {i.name for i in trace.inputs}
+    assert "revpar_growth" not in names  # nothing is grown on this basis
+    assert names == {"source_year_noi"}
+    assert "Sale-year NOI (Year 5)" in (trace.note or "")
+    # Interim rows read the same rule at their own year.
+    for k, row in enumerate(out.exit_schedule, start=1):
+        assert row.exit_noi_basis == "sale_year"
+        assert row.exit_noi_period_label == f"Sale-year NOI (Year {k})"
+        assert row.terminal_noi == NOI[k - 1]
 
 
 def test_stabilized_basis_grows_the_stabilized_year_to_the_exit() -> None:
@@ -112,7 +141,7 @@ def test_stabilized_without_a_year_resolves_one() -> None:
 
 
 def test_override_beats_every_basis() -> None:
-    for basis in ("forward_12m", "stabilized"):
+    for basis in ("forward_12m", "stabilized", "sale_year"):
         out = ReturnsEngine().run(
             _input(exit_noi_basis=basis, stabilized_year=3, terminal_noi_override=2_500_000.0)
         )
@@ -134,6 +163,7 @@ def test_runner_coerces_the_override_to_the_allow_list() -> None:
 
     assert _coerce_exit_noi_basis(None) == "forward_12m"
     assert _coerce_exit_noi_basis("stabilized") == "stabilized"
+    assert _coerce_exit_noi_basis("sale_year") == "sale_year"
     assert _coerce_exit_noi_basis({"value": "stabilized", "note": ""}) == "stabilized"
     assert _coerce_exit_noi_basis("trailing_12m") == "forward_12m"
     assert _coerce_exit_noi_basis(3) == "forward_12m"

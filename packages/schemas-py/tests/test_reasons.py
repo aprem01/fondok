@@ -1,7 +1,7 @@
 """Phase 0.3 — the ReasonCode vocabulary is importable, closed, and described.
 
 Run from ``packages/schemas-py`` (``python -m pytest -q``); pure Pydantic, no
-worker dependencies. Locks the exact 16-code set and order so the TypeScript
+worker dependencies. Locks the exact 22-code set and order so the TypeScript
 mirrors (``packages/schemas-ts/src/index.ts`` and
 ``apps/web/src/lib/ontology/reasons.generated.ts``) have one fixed target.
 """
@@ -35,6 +35,14 @@ EXPECTED_CODES = [
     "engine_skipped",
     "inconclusive",
     "not_applicable",
+    # Wave 0 (2026-10-30) — engine-run failures.
+    "missing_identity_inputs",
+    "load_error",
+    "engine_error",
+    # Wave 1 (FON-118) — returns-by-exit-year row refusals.
+    "under_construction",
+    "capital_deploying",
+    "no_sale_value",
 ]
 
 
@@ -44,9 +52,9 @@ def test_exported_from_package_root() -> None:
         assert hasattr(fondok_schemas, name), name
 
 
-def test_enum_is_exactly_the_sixteen_codes_in_order() -> None:
+def test_enum_is_exactly_the_shared_codes_in_order() -> None:
     assert [c.value for c in ReasonCode] == EXPECTED_CODES
-    assert len(ReasonCode) == 16
+    assert len(ReasonCode) == 22
 
 
 def test_enum_is_a_str_so_it_serialises_as_its_value() -> None:

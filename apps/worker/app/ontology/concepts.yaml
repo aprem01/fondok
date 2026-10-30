@@ -3145,6 +3145,12 @@ sources:
     kind: assumption
     doc_types: []
     explanation: FF&E reserve leg of the capex plan at the default reserve rate.
+  deal_type_default:
+    label: Development hold default
+    badge: Default for development deals — confirm
+    kind: assumption
+    doc_types: []
+    explanation: The hold period suggested by the deal type — 7 years for a ground-up development, 6 for an adaptive reuse (5 is the acquisition seed). A suggestion only; the analyst's hold override replaces it.
   roi_user:
     label: ROI capex (analyst)
     badge: ROI
@@ -3216,7 +3222,7 @@ sources:
     explanation: Renovation budget read from a PIP / CapEx document uploaded to the deal (the stated PIP total). A separate PIP or capital plan is the more detailed source, so it outranks the OM's broker figure; among several, the latest-dated plan wins. Only a document laned PIP / Renovation budget (or left untagged) can feed this; Historic and Future CapEx documents are reference only.
 
 # ═══════════════════════════════ Refusal reasons ═════════════════════════
-# The 16 codes shared with packages/schemas-py/fondok_schemas/reasons.py and
+# The 22 codes shared with packages/schemas-py/fondok_schemas/reasons.py and
 # apps/web/src/lib/ontology/reasons.generated.ts (``ui`` is the short text
 # shown in place of a value; ``explanation`` the hover body).
 reasons:
@@ -3297,3 +3303,15 @@ reasons:
     label: Engine failed
     ui: —
     explanation: The engine that produces this figure raised an error (for example an input outside its accepted range), so there is no output to show.
+  under_construction:
+    label: Under construction
+    ui: —
+    explanation: On a development deal this exit date falls inside the analyst-stated construction window, so a sale at that date is not modelled.
+  capital_deploying:
+    label: Capital still deploying
+    ui: —
+    explanation: Equity draws or deferred capital are still being deployed after this exit date, so a sale before the capital is fully in is not modelled.
+  no_sale_value:
+    label: No sale value
+    ui: —
+    explanation: The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist.

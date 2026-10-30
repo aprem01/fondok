@@ -651,7 +651,8 @@ export type ValueState =
 
 /** Provenance + calculation rationale for one modeled output value. */
 export interface ValueTrace {
-  value: number;
+  /** null when the figure was refused — the trace then carries `reason`. */
+  value: number | null;
   /** Human formula, e.g. "noi = gop − management_fee − ffe_reserve". */
   formula?: string | null;
   inputs: ValueInput[];

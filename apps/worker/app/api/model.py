@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fondok_schemas.reasons import ReasonCode
+from fondok_schemas.underwriting import ExitYearReturn
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -399,6 +400,14 @@ class ReturnsPreviewResponse(BaseModel):
     total_capital: float | None = None
     noi_by_year: list[float] | None = None
     cash_flows: list[float] | None = None
+    # FON-118 — the sandbox's returns by exit year (one row per projection
+    # year-end of the PREVIEWED hold, plus the selected exit). Same typed row
+    # the canonical run persists; the headline fields above equal the
+    # ``is_selected`` row.
+    exit_schedule: list[ExitYearReturn] | None = None
+    selected_exit_month: int | None = None
+    selected_exit_year: int | None = None
+    peak_levered_exit_year: int | None = None
     # Present only when ``include_sensitivity`` was requested — the serialized
     # sensitivity engine output (row/col axes + flat cell list), matching the
     # shape the web ``matrixFromWorker`` helper already consumes.

@@ -38,9 +38,17 @@ caller that checks the exit code can tell "could not compare" from "no
 headline differences".
 
 ``--exit-nonzero-on-headline-diff`` turns the report into a gate: exit 3 when
-a headline field or an engine status differs from the baseline (0 when they
-match, 2 when the comparison could not run — unchanged). This is what
-``scripts/check_golden_gate.py`` runs in CI; a plain run keeps exiting 0.
+a headline field's VALUE differs from the baseline (``changed``), a baseline
+field is gone from the head run (``removed``), or an engine status differs
+(0 when they match, 2 when the comparison could not run — unchanged). This is
+what ``scripts/check_golden_gate.py`` runs in CI; a plain run keeps exiting 0.
+
+A headline field the head run publishes and the baseline never had
+(``added`` — "not in baseline run", e.g. the FON-118 ``exit_schedule`` rows)
+is listed in the report but is NOT a move: no baseline value exists for it
+to have moved from, so it cannot be a calculation regression. The next
+baseline cut (``--write``) picks such fields up; until then the verdict line
+counts them separately.
 """
 
 from __future__ import annotations
@@ -268,9 +276,11 @@ def main() -> int:
         extract_headline_fields({k: v.get("outputs") for k, v in head.items()}),
         include_unchanged=args.all,
     )
-    changed = [r for r in rows if r["status"] != "unchanged"]
+    changed = [r for r in rows if r["status"] in ("changed", "removed")]
+    added = [r for r in rows if r["status"] == "added"]
     print()
     print(f"Headline fields changed: {len(changed)}")
+    print(f"Headline fields added (not in baseline run): {len(added)}")
     group = None
     for r in rows:
         if r["group"] != group:
@@ -333,7 +343,14 @@ def main() -> int:
         print(f"Raw leaves changed: {n_changed} (added: {n_added}, removed: {n_removed})")
 
     if not changed and not status_moves:
-        print("\nNo headline differences: the Kimpton fixture matches the baseline.")
+        if added:
+            print(
+                f"\nNo headline differences: the Kimpton fixture matches the baseline "
+                f"({len(added)} added field(s) have no baseline value — cut a new "
+                "baseline with --write to carry them)."
+            )
+        else:
+            print("\nNo headline differences: the Kimpton fixture matches the baseline.")
         return 0
     if args.exit_nonzero_on_headline_diff:
         # Distinct from 2 ("could not run"): the comparison completed and

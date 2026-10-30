@@ -158,7 +158,9 @@ def _flex(
     """Return a new ReturnsEngineInputExt with one assumption replaced."""
     a = base.assumptions
     new_assumptions = a.model_copy(update={variable: value if variable != "hold_years" else int(value)})
-    return base.model_copy(update={"assumptions": new_assumptions})
+    # FON-118 — a grid cell reads one metric; the per-exit-year table is not
+    # requested (a typed input, not a special case inside the engine).
+    return base.model_copy(update={"assumptions": new_assumptions, "exit_schedule": False})
 
 
 def _cell_trace(
@@ -283,6 +285,7 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
                         "assumptions": base_input.assumptions.model_copy(
                             update={"interest_rate": rate}
                         ),
+                        "exit_schedule": False,  # FON-118 — one metric per cell
                     }
                 )
                 result = returns_engine.run(trial)

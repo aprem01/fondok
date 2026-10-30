@@ -406,6 +406,72 @@ async def test_engines_endpoint_reports_a_run_that_predates_a_block() -> None:
 
 
 @pytest.mark.asyncio
+async def test_engines_endpoint_names_the_exit_schedule_on_an_old_returns_run() -> None:
+    """FON-118 — a returns row written before ``exit_schedule`` existed is
+    reported under ``stale_run.missing_blocks["returns"]``; the canonical run
+    carries the table."""
+    import json
+
+    from app.api.model import list_engine_outputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    deal_uuid = uuid4()
+    tenant_id = uuid4()
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id)
+        )
+        await run_all_engines(
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id),
+            run_id=str(uuid4()),
+        )
+        fresh = await list_engine_outputs(
+            deal_id=str(deal_uuid), session=session, tenant_id=tenant_id
+        )
+        assert fresh.stale_run is None
+        returns_out = fresh.engines["returns"].outputs
+        assert returns_out is not None
+        assert len(returns_out["exit_schedule"]) == returns_out["hold_years"]
+        assert returns_out["exit_schedule"][-1]["is_selected"] is True
+        assert returns_out["exit_schedule"][-1]["levered_irr"] == returns_out["levered_irr"]
+
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, outputs FROM engine_outputs "
+                    "WHERE deal_id = :deal AND tenant_id = :tenant "
+                    "AND engine_name = 'returns'"
+                ),
+                {"deal": str(deal_uuid), "tenant": str(tenant_id)},
+            )
+        ).first()
+        assert row is not None
+        stored = json.loads(row[1]) if isinstance(row[1], str) else dict(row[1])
+        levered_before = stored["levered_irr"]
+        stored.pop("exit_schedule")
+        await session.execute(
+            text(
+                "UPDATE engine_outputs SET outputs = :out "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"out": json.dumps(stored), "id": row[0], "tenant": str(tenant_id)},
+        )
+        await session.commit()
+
+        resp = await list_engine_outputs(
+            deal_id=str(deal_uuid), session=session, tenant_id=tenant_id
+        )
+
+    assert resp.stale_run is not None
+    assert resp.stale_run.missing_blocks == {"returns": ["exit_schedule"]}
+    assert resp.engines["returns"].outputs is not None
+    assert resp.engines["returns"].outputs["levered_irr"] == levered_before
+
+
+@pytest.mark.asyncio
 async def test_engines_endpoint_treats_a_null_block_as_fresh() -> None:
     """``"stabilization": null`` is a refusal the engine made, not staleness.
 

@@ -265,6 +265,10 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   pip_om: { tone: TONE.brand, Icon: FileText },
   pip_user: { tone: TONE.input, Icon: Pencil },
   capex_ffe_default: { tone: TONE.neutral, Icon: Sparkles },
+  // FON-118 / FON-44 — the hold default a development-like deal type carries
+  // (7 ground-up / 6 adaptive reuse); a suggestion the analyst confirms. The
+  // registry's badge text + explanation render; Task 6 owns the Returns copy.
+  deal_type_default: { tone: TONE.neutral, Icon: Sparkles },
   roi_user: { tone: TONE.input, Icon: Pencil },
   partnership_doc: { tone: TONE.brand, Icon: FileText },
   // FON-61 / E-028 — an analyst's Index Analysis assumption (market growth or

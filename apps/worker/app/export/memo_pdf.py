@@ -60,13 +60,19 @@ from typing import Any
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
 from .labels import (
+    EXIT_SCHEDULE_COLUMNS,
+    EXIT_SCHEDULE_NO_RETURNS_NOTE,
+    EXIT_SCHEDULE_STALE_NOTE,
+    EXIT_SCHEDULE_TITLE,
     NOI_HEADLINE_LABELS,
     SOLVER_STATUS_NOTE,
+    exit_row_label,
     line_label,
     source_display,
 )
 from .refusals import (
     as_float,
+    coerce_reason,
     collect_refusals,
     distinct_codes,
     fmt_int,
@@ -1121,6 +1127,70 @@ def _render_loi_appendix(loi: dict[str, Any] | None) -> str:
 # ───────────────────────────────────────────────────────────────────────
 
 
+def _render_exit_schedule(ret: dict[str, Any] | None) -> str:
+    """FON-118 — "Returns by Exit Year": the same projection sold at each
+    year-end. A row the engine did not price renders the glyph + its reason
+    label (and records the refusal); a payload with no table says why.
+    """
+    title = f"<h2>{html.escape(EXIT_SCHEDULE_TITLE)}</h2>"
+    if not ret:
+        note = unavailable(
+            ReasonCode.ENGINE_SKIPPED, EXIT_SCHEDULE_NO_RETURNS_NOTE, "returns.exit_schedule"
+        )
+        return f"{title}<p class='cite'>{html.escape(note)}</p>"
+    rows = ret.get("exit_schedule")
+    if not isinstance(rows, list) or not rows:
+        note = unavailable(
+            ReasonCode.STALE_RUN, EXIT_SCHEDULE_STALE_NOTE, "returns.exit_schedule"
+        )
+        return f"{title}<p class='cite'>{html.escape(note)}</p>"
+    head = "".join(
+        f"<th{'' if j == 0 else ' style=\'text-align:right\''}>{html.escape(c)}</th>"
+        for j, c in enumerate(EXIT_SCHEDULE_COLUMNS)
+    )
+    body = ""
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        label = html.escape(exit_row_label(row))
+        concept = f"returns.exit_schedule[{i}]"
+        if row.get("status") != "computed":
+            code = coerce_reason(row.get("reason"))
+            glyph = refuse(
+                code,
+                row.get("reason_detail") or reason_explanation(code),
+                concept,
+            )
+            body += (
+                f"<tr><td>{label}</td>"
+                f"<td class='num' colspan='{len(EXIT_SCHEDULE_COLUMNS) - 1}'>"
+                f"{html.escape(glyph)} {html.escape(reason_label(code))}</td></tr>"
+            )
+            continue
+        basis = row.get("exit_noi_period_label")
+        basis_html = (
+            f"<br/><span style='font-size:7pt'>{html.escape(str(basis))}</span>" if basis else ""
+        )
+        body += (
+            f"<tr><td>{label}</td>"
+            f"<td class='num'>{_fmt_usd(row.get('terminal_noi_usd'), concept=f'{concept}.terminal_noi')}{basis_html}</td>"
+            f"<td class='num'>{_fmt_usd(row.get('gross_sale_price_usd'), concept=f'{concept}.gross_sale_price')}</td>"
+            f"<td class='num'>{_fmt_usd(row.get('loan_payoff_usd'), concept=f'{concept}.loan_payoff')}</td>"
+            f"<td class='num'>{_fmt_usd(row.get('net_sale_proceeds_usd'), concept=f'{concept}.net_proceeds')}</td>"
+            f"<td class='num'>{_fmt_pct(row.get('unlevered_irr'), concept=f'{concept}.unlevered_irr')}</td>"
+            f"<td class='num'>{_fmt_pct(row.get('levered_irr'), concept=f'{concept}.levered_irr')}</td>"
+            f"<td class='num'>{_fmt_mult(row.get('equity_multiple'), concept=f'{concept}.equity_multiple')}</td></tr>"
+        )
+    return (
+        f"{title}<table class='mini'><thead><tr>{head}</tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        "<p class='cite'>Each row sells the same projection at that year-end: "
+        "operating cash, draws, debt service and refinance timing are held fixed; "
+        "only the sale date and the loan payoff move. The selected row is the "
+        "deal's own exit and equals the Returns Summary above.</p>"
+    )
+
+
 def _refusal_footnote(refusals: list[Any]) -> str:
     """Footnote listing the distinct reasons this memo printed a dash for.
 
@@ -1286,6 +1356,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
         f"<tr><td>Year 1 DSCR</td><td class='num'>{_fmt_mult(debt.get('year1_dscr'), concept='dscr')}</td></tr>",
         f"<tr><td>Year 1 Debt Yield</td><td class='num'>{_fmt_pct(debt.get('year1_debt_yield'), concept='debt_yield')}</td></tr>",
     ])
+    # FON-118 — returns by exit year, under the Returns Summary.
+    exit_schedule_html = _render_exit_schedule(ret or None)
     # B9 — the flat-SOFR provenance note travels with the debt figures.
     benchmark_note = debt.get("benchmark_note")
     debt_note_html = (
@@ -1395,6 +1467,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     {debt_note_html}
   </div>
 </div>
+
+{exit_schedule_html}
 
 {capex_html}
 

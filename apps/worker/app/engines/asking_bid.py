@@ -68,7 +68,11 @@ class AskingBidResult:
 def _scenario_at(
     base: ReturnsEngineInputExt, price: float, rooms: int | None
 ) -> PriceScenario:
-    flexed = base if abs(price - base.assumptions.purchase_price) < 0.5 else _flex_price(base, price)
+    flexed = (
+        base.model_copy(update={"exit_schedule": False})  # FON-118 — one metric
+        if abs(price - base.assumptions.purchase_price) < 0.5
+        else _flex_price(base, price)
+    )
     out = ReturnsEngine().run(flexed)
     return PriceScenario(
         purchase_price=price,

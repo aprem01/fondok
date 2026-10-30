@@ -11,7 +11,7 @@ export interface ReasonMeta {
   explanation: string;
 }
 
-export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error";
+export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value";
 
 export const REASON_CODES: readonly ReasonCode[] = [
   "no_document",
@@ -32,7 +32,10 @@ export const REASON_CODES: readonly ReasonCode[] = [
   "not_applicable",
   "missing_identity_inputs",
   "load_error",
-  "engine_error"
+  "engine_error",
+  "under_construction",
+  "capital_deploying",
+  "no_sale_value"
 ];
 
 export const REASONS: Record<ReasonCode, ReasonMeta> = {
@@ -130,6 +133,21 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
     "label": "Engine failed",
     "ui": "—",
     "explanation": "The engine that produces this figure raised an error (for example an input outside its accepted range), so there is no output to show."
+  },
+  "under_construction": {
+    "label": "Under construction",
+    "ui": "—",
+    "explanation": "On a development deal this exit date falls inside the analyst-stated construction window, so a sale at that date is not modelled."
+  },
+  "capital_deploying": {
+    "label": "Capital still deploying",
+    "ui": "—",
+    "explanation": "Equity draws or deferred capital are still being deployed after this exit date, so a sale before the capital is fully in is not modelled."
+  },
+  "no_sale_value": {
+    "label": "No sale value",
+    "ui": "—",
+    "explanation": "The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist."
   }
 };
 

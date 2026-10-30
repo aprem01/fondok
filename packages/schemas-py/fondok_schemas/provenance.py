@@ -114,6 +114,7 @@ class ValueInput(BaseModel):
     name: str
     # ``None`` = the input had NO value (e.g. a year with no growth figure that
     # was held flat): a trace never writes 0 for an absence — the note says why.
+    # A refused value carries ``reason`` instead.
     value: float | None
     # When this input is an underwriting assumption, the ``__sources__`` key
     # it maps to — lets the UI chain modeled-value provenance back to the
@@ -132,7 +133,8 @@ class ValueTrace(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    value: float
+    # None = no value (a refusal carries ``reason`` instead) — Wave 1.
+    value: float | None
     # Human-readable calculation rationale, e.g.
     # "rooms_revenue = occupied_rooms × ADR". None for directly-sourced values.
     formula: str | None = None
