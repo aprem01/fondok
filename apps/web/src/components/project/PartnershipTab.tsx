@@ -75,37 +75,31 @@ const COMPOUNDING_OPTIONS = [
   'Quarterly / cumulative',
 ];
 
-// C3 (Wave 3) — the partnership reference terms (the preferred return, the
-// GP co-invest share and the promote-band ladder) have ONE definition: the
-// worker's `engines/partnership.py`. They reach this tab through the deal's
-// assumption_sources payload as `partnership.*` keys with source `seed`, and a
-// key the payload does not carry renders "—" (awaiting data) — never a
-// browser-side literal. Each tier's editable fields persist as indexed
-// field_overrides (`partnership.waterfall.<idx>.<field>`) the worker layers
-// over its reference ladder; `hurdle`/`gp` are fractions, LP split derives as
-// `1 - gp`. Index order is load-bearing — the worker keys overrides by
-// position.
+// C3 (Wave 3) — the web carries no partnership terms of its own, and the
+// platform suggests none. The terms the DEAL carries (a partnership document
+// or the analyst's overrides) reach this tab through the deal's
+// assumption_sources payload as `partnership.*` keys; a term the deal does
+// not carry is absent there and renders "—" (awaiting data). Each tier's
+// editable fields persist as indexed field_overrides
+// (`partnership.waterfall.<idx>.<field>`); `hurdle`/`gp` are fractions, LP
+// split derives as `1 - gp`. Index order is load-bearing — the worker keys
+// overrides by position.
 const PARTNERSHIP_SOURCE = {
   prefRate: 'partnership.pref_rate',
   gpEquityPct: 'partnership.gp_equity_pct',
   tierCount: 'partnership.waterfall.tier_count',
   tier: (i: number, field: 'hurdle_rate' | 'gp_split'): string => `partnership.waterfall.${i}.${field}`,
 } as const;
-/** One reference promote band as the worker published it; a field the payload
+/** One promote band as the deal carries it (assumption_sources); a field it
  *  does not carry is undefined (the row then asks the analyst to set it). */
-interface SeedTier {
+interface CarriedTier {
   hurdle: number | undefined;
   gp: number | undefined;
-  /** assumption_sources tags this field `seed` — the platform suggestion. */
-  hurdleSeeded: boolean;
-  gpSeeded: boolean;
 }
-/** The badge a worker reference term carries wherever it is shown. */
-const PLATFORM_DEFAULT_NOTE = 'Platform default — no partnership terms on this deal yet; set yours to replace it';
 // FON-66 Part A — the analyst can change the promote-tier COUNT (add/remove
 // tiers), not just edit the seed bands. The count persists as a single
 // `partnership.waterfall.tier_count` field_override the worker reads. Absent →
-// the length of the worker's reference ladder (C3). Bounds mirror the worker
+// the number of tiers the deal carries (C3). Bounds mirror the worker
 // (`_MAX_PARTNERSHIP_TIERS`) so the UI can't request a stack the engine clamps.
 const TIER_COUNT_PATH = 'partnership.waterfall.tier_count';
 const MAX_TIERS = 12;
@@ -331,38 +325,34 @@ export default function PartnershipTab() {
     setNote('');
   }, []);
 
-  // ─── C3: the worker's partnership reference terms ──────────────────
+  // ─── C3: the partnership terms the deal carries ────────────────────
   const lookupSource = useSourceLookup();
-  const waterfallSeed = useMemo<SeedTier[]>(() => {
+  const carriedTiers = useMemo<CarriedTier[]>(() => {
     const declared = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.tierCount));
     const bound = declared != null ? Math.max(0, Math.min(MAX_TIERS, Math.round(declared))) : MAX_TIERS;
-    const tiers: SeedTier[] = [];
+    const tiers: CarriedTier[] = [];
     for (let i = 0; i < bound; i += 1) {
-      const hurdleSrc = lookupSource(PARTNERSHIP_SOURCE.tier(i, 'hurdle_rate'));
-      const gpSrc = lookupSource(PARTNERSHIP_SOURCE.tier(i, 'gp_split'));
-      const hurdle = sourcedNum(hurdleSrc);
-      const gp = sourcedNum(gpSrc);
+      const hurdle = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.tier(i, 'hurdle_rate')));
+      const gp = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.tier(i, 'gp_split')));
       // Without a declared count the ladder is the contiguous run of bands
       // the payload carries.
       if (declared == null && hurdle == null && gp == null) break;
-      tiers.push({ hurdle, gp, hurdleSeeded: hurdleSrc?.source === 'seed', gpSeeded: gpSrc?.source === 'seed' });
+      tiers.push({ hurdle, gp });
     }
     return tiers;
   }, [lookupSource]);
-  const prefSource = lookupSource(PARTNERSHIP_SOURCE.prefRate);
-  const gpPctSource = lookupSource(PARTNERSHIP_SOURCE.gpEquityPct);
-  const seedPrefRate = sourcedNum(prefSource);
-  const seedGpPct = sourcedNum(gpPctSource);
+  const carriedPrefRate = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.prefRate));
+  const carriedGpPct = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.gpEquityPct));
 
   // ─── FON-66 Part A: variable promote-tier count ────────────────────
   // How many promote tiers this deal has. An analyst override wins; absent →
-  // the worker's reference ladder length. Clamped to the worker's [1, MAX_TIERS] range so the UI
+  // the number of tiers the deal carries. Clamped to the worker's [1, MAX_TIERS] range so the UI
   // and engine never disagree on the count.
   const tierCount = Math.max(
     1,
     Math.min(
       MAX_TIERS,
-      Math.round(readOverrideNum(overrides, TIER_COUNT_PATH, waterfallSeed.length)),
+      Math.round(readOverrideNum(overrides, TIER_COUNT_PATH, carriedTiers.length)),
     ),
   );
   // FON-66 follow-up — the tiers actually in the stack: every index below the
@@ -379,13 +369,13 @@ export default function PartnershipTab() {
   // reference value; undefined when neither exists (never a stand-in 0).
   const tierHurdleAt = useCallback(
     (i: number): number | undefined => {
-      const v = readOverrideNum(overrides, `partnership.waterfall.${i}.hurdle_rate`, waterfallSeed[i]?.hurdle ?? NaN);
+      const v = readOverrideNum(overrides, `partnership.waterfall.${i}.hurdle_rate`, carriedTiers[i]?.hurdle ?? NaN);
       return Number.isFinite(v) ? v : undefined;
     },
-    [overrides, waterfallSeed],
+    [overrides, carriedTiers],
   );
   const tierGpAt = (i: number): number | undefined => {
-    const v = readOverrideNum(overrides, `partnership.waterfall.${i}.gp_split`, waterfallSeed[i]?.gp ?? NaN);
+    const v = readOverrideNum(overrides, `partnership.waterfall.${i}.gp_split`, carriedTiers[i]?.gp ?? NaN);
     return Number.isFinite(v) ? v : undefined;
   };
 
@@ -450,7 +440,7 @@ export default function PartnershipTab() {
       const topVisible = visible[visible.length - 1];
       if (idx === topVisible) {
         const newCount = visible[visible.length - 2] + 1; // next survivor + 1
-        patch[TIER_COUNT_PATH] = newCount === waterfallSeed.length ? null : newCount;
+        patch[TIER_COUNT_PATH] = newCount === carriedTiers.length ? null : newCount;
         for (let j = newCount; j < tierCount; j += 1) {
           patch[`partnership.waterfall.${j}.hurdle_rate`] = null;
           patch[`partnership.waterfall.${j}.gp_split`] = null;
@@ -465,7 +455,7 @@ export default function PartnershipTab() {
       }
       void onSaveOverride(patch);
     },
-    [liveMode, tierCount, visibleTierIndices, waterfallSeed.length, onSaveOverride, toast],
+    [liveMode, tierCount, visibleTierIndices, carriedTiers.length, onSaveOverride, toast],
   );
   // Summary-tab helper: the first promote band above the preferred tier is the
   // SECOND visible tier (not a fixed index — a tombstone may have removed 1).
@@ -553,27 +543,18 @@ export default function PartnershipTab() {
   const lpInitialEquity = (has(lpEquity) && has(lpAdditional)) ? lpEquity - lpAdditional : lpEquity;
 
   // Ownership split — an analyst override wins, else derived from the engine's
-  // contributed equity, else the worker's reference term (C3), else "—".
+  // contributed equity, else the term the deal carries (C3), else "—".
   const gpPctOverrideRaw = readOverrideNum(overrides, 'gp_equity_pct', NaN);
   const gpPctOverride = Number.isFinite(gpPctOverrideRaw) ? gpPctOverrideRaw : undefined;
   const gpPctComputed = (has(gpEquity) && has(lpEquity) && gpEquity + lpEquity > 0)
     ? gpEquity / (gpEquity + lpEquity)
     : undefined;
-  const gpPct: number | undefined = gpPctOverride ?? gpPctComputed ?? seedGpPct;
+  const gpPct: number | undefined = gpPctOverride ?? gpPctComputed ?? carriedGpPct;
   const lpPct = has(gpPct) ? 1 - gpPct : undefined;
-  // True when the shown split is the worker's platform suggestion (source
-  // `seed`), not a term the deal carries (`partnership_doc`, an override).
-  // The badge follows the SOURCE: whenever assumption_sources tags the term
-  // `seed`, the value on screen (even an engine run's) rests on the platform
-  // suggestion. Any analyst override with a finite value takes it off —
-  // one loaded from `deal.field_overrides` as well as one saved in this
-  // session that the payload has not re-read yet.
-  const gpPctIsDefault = gpPctOverride == null && gpPctSource?.source === 'seed';
 
   const prefOverrideRaw = readOverrideNum(overrides, 'pref_rate', NaN);
   const prefOverride = Number.isFinite(prefOverrideRaw) ? prefOverrideRaw : undefined;
-  const prefRate: number | undefined = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : seedPrefRate);
-  const prefIsDefault = prefOverride == null && prefSource?.source === 'seed';
+  const prefRate: number | undefined = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : carriedPrefRate);
 
   const hasWorkerPartnership = wGp != null || wLp != null
     || (tierAllocations != null && tierAllocations.length > 0)
@@ -732,7 +713,6 @@ export default function PartnershipTab() {
                     onJustification={setNote}
                     value={pctv(gpPct, 0)}
                     valueColor={has(gpPct) ? prov.blue : prov.muted}
-                    note={gpPctIsDefault ? PLATFORM_DEFAULT_NOTE : undefined}
                   />
                   <KeyRow
                     label="LP Investor Ownership"
@@ -775,7 +755,6 @@ export default function PartnershipTab() {
                     onJustification={setNote}
                     value={pctv(prefRate, 0)}
                     valueColor={has(prefRate) ? prov.blue : prov.muted}
-                    note={prefIsDefault ? PLATFORM_DEFAULT_NOTE : undefined}
                   />
                   <KeyRow
                     label="Compounding"
@@ -840,7 +819,7 @@ export default function PartnershipTab() {
                 <PromoteWaterfall
                   readOnly
                   prefRate={prefRate}
-                  seedTiers={waterfallSeed}
+                  carriedTierList={carriedTiers}
                   hasCatchUp={hasCatchUp}
                   liveMode={liveMode}
                   overrides={overrides}
@@ -942,7 +921,6 @@ export default function PartnershipTab() {
                     onJustification={setNote}
                     value={pctv(gpPct, 0)}
                     valueColor={has(gpPct) ? prov.blue : prov.muted}
-                    note={gpPctIsDefault ? PLATFORM_DEFAULT_NOTE : undefined}
                   />
                   <KeyRow label="LP Investor Ownership" dot="calculated" value={pctv(lpPct, 0)} valueColor={prov.gray} />
                   <KeyRow
@@ -960,7 +938,6 @@ export default function PartnershipTab() {
                     onJustification={setNote}
                     value={pctv(prefRate, 0)}
                     valueColor={has(prefRate) ? prov.blue : prov.muted}
-                    note={prefIsDefault ? PLATFORM_DEFAULT_NOTE : undefined}
                   />
                   <CompoundingRow value={compounding} onChange={setCompounding} />
                 </div>
@@ -970,7 +947,7 @@ export default function PartnershipTab() {
               <SectionCard title="Promote Waterfall">
                 <PromoteWaterfall
                   prefRate={prefRate}
-                  seedTiers={waterfallSeed}
+                  carriedTierList={carriedTiers}
                   hasCatchUp={hasCatchUp}
                   liveMode={liveMode}
                   overrides={overrides}
@@ -1441,14 +1418,14 @@ function AllocationTable({
 const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(150px,1fr)';
 
 function PromoteWaterfall({
-  prefRate, seedTiers, hasCatchUp, liveMode: liveModeProp, readOnly = false, overrides, editing, draft, setDraft, note, setNote,
+  prefRate, carriedTierList, hasCatchUp, liveMode: liveModeProp, readOnly = false, overrides, editing, draft, setDraft, note, setNote,
   startEdit, cancelEdit, commitPct,
   tierCount, tierIndices, onAddTier, onRemoveTier,
 }: {
-  /** Undefined → "—" (no override, no engine pref, no worker reference term). */
+  /** Undefined → "—" (no override, no engine pref, no term the deal carries). */
   prefRate: number | undefined;
-  /** C3 — the worker's reference promote ladder (assumption_sources). */
-  seedTiers: SeedTier[];
+  /** C3 — the promote bands the deal carries (assumption_sources). */
+  carriedTierList: CarriedTier[];
   hasCatchUp: boolean;
   liveMode: boolean;
   /** FON-66 (R-071) — the Summary mounts this table read-only so the waterfall
@@ -1529,7 +1506,7 @@ function PromoteWaterfall({
   // override index each row's edits persist under.
   const promoteRows = tierIndices.map((i, pos) => {
     idx += 1;
-    const seed = seedTiers[i]; // undefined for analyst-added tiers
+    const seed = carriedTierList[i]; // undefined for a tier the deal does not carry
     const gpPath = `partnership.waterfall.${i}.gp_split`;
     const hurdlePath = `partnership.waterfall.${i}.hurdle_rate`;
     // A tier's value is the analyst's override, else the worker's reference
@@ -1542,12 +1519,6 @@ function PromoteWaterfall({
     const gpComplete = Number.isFinite(gpFrac);
     const hurdleComplete = Number.isFinite(hurdleFrac);
     const incomplete = !(gpComplete && hurdleComplete);
-    // C3 — a band resting on the platform suggestion (source `seed`) says so,
-    // unless the analyst has overridden this tier since the payload was read.
-    // Per field, with the same finite-override test as the terms: overriding
-    // only the hurdle leaves the GP split badged, and vice versa.
-    const hurdleIsDefault = !!seed?.hurdleSeeded && !Number.isFinite(readOverrideNum(overrides, hurdlePath, NaN));
-    const gpIsDefault = !!seed?.gpSeeded && !Number.isFinite(readOverrideNum(overrides, gpPath, NaN));
     const last = pos === visibleCount - 1;
     // FON-66 follow-up — EVERY promote tier is removable (mid-stack included),
     // as long as one survives.
@@ -1634,16 +1605,6 @@ function PromoteWaterfall({
             {incomplete
               ? 'Set the hurdle and GP split to activate this tier'
               : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
-            {hurdleIsDefault && (
-              <span data-testid={`tier-${i}-hurdle-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
-                Hurdle: platform default — set it to replace it
-              </span>
-            )}
-            {gpIsDefault && (
-              <span data-testid={`tier-${i}-gp-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
-                GP split: platform default — set it to replace it
-              </span>
-            )}
           </span>
           {removable && (
             <button

@@ -179,9 +179,9 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 }));
 
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
-// C3 (Wave 3) — the partnership reference terms are the WORKER's
-// (engines/partnership.py), served through GET /deals/{id}/assumption_sources
-// as `partnership.*` keys with source `seed`. The web carries no copy.
+// C3 (Wave 3) — the partnership terms the deal carries are served through
+// GET /deals/{id}/assumption_sources as `partnership.*` keys; an uncarried
+// term is absent. The web carries no copy and the platform suggests none.
 const sources = vi.hoisted(() => ({
   payload: null as null | {
     id: string;
@@ -220,17 +220,18 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 import PartnershipTab from '@/components/project/PartnershipTab';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 
-/** The worker's published partnership reference terms (source `seed`). */
-const WORKER_SEED_PAYLOAD = {
+/** Partnership terms the deal CARRIES (a partnership document), as the worker
+ *  publishes them on assumption_sources. The worker suggests none. */
+const CARRIED_TERMS_PAYLOAD = {
   id: 'deal-uuid-1',
   sources: {
-    'partnership.pref_rate': 'seed',
-    'partnership.gp_equity_pct': 'seed',
-    'partnership.waterfall.tier_count': 'seed',
-    'partnership.waterfall.0.hurdle_rate': 'seed',
-    'partnership.waterfall.0.gp_split': 'seed',
-    'partnership.waterfall.1.hurdle_rate': 'seed',
-    'partnership.waterfall.1.gp_split': 'seed',
+    'partnership.pref_rate': 'partnership_doc',
+    'partnership.gp_equity_pct': 'partnership_doc',
+    'partnership.waterfall.tier_count': 'partnership_doc',
+    'partnership.waterfall.0.hurdle_rate': 'partnership_doc',
+    'partnership.waterfall.0.gp_split': 'partnership_doc',
+    'partnership.waterfall.1.hurdle_rate': 'partnership_doc',
+    'partnership.waterfall.1.gp_split': 'partnership_doc',
   },
   values: {
     'partnership.pref_rate': 0.09,
@@ -254,7 +255,7 @@ function renderWithSources() {
 
 beforeEach(() => {
   cleanup();
-  sources.payload = WORKER_SEED_PAYLOAD;
+  sources.payload = CARRIED_TERMS_PAYLOAD;
   assumptionSourcesSpy.mockClear();
   activeOutputs = OUTPUTS;
   updateSpy.mockClear();
@@ -680,10 +681,11 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// C3 (Wave 3) — ONE definition of the partnership reference terms, in the
-// worker. The web reads `partnership.*` off assumption_sources; when the
-// payload does not carry a key the value is "—" (awaiting data), never a
-// browser-side 8% / 10% / promote ladder.
+// C3 (Wave 3) — the web holds no partnership terms and the platform suggests
+// none. The tab reads the terms the deal carries off assumption_sources
+// (`partnership.*`); a term the deal does not carry is absent there and reads
+// "—" (awaiting data), never a browser-side 8% / 10% / promote ladder and
+// never a "Platform default".
 // ─────────────────────────────────────────────────────────────────────────
 /** The KeyRow (label + value) for a label — not the dollar-waterfall row that
  *  may share its text. */
@@ -696,7 +698,7 @@ function rowFor(label: string): HTMLElement {
   return rows[0];
 }
 
-describe('PartnershipTab — reference terms come from the worker (C3)', () => {
+describe('PartnershipTab — partnership terms are the deal\u2019s own or absent (C3)', () => {
   /** The engine envelope WITHOUT a pref or a GP/LP equity split. */
   function bareOutputs() {
     return withPartnershipOutputs({ gp: null, lp: null });
@@ -718,81 +720,28 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
     expect(within(tiers).getByText('— preferred return')).toBeInTheDocument();
   });
 
-  /** The Platform default note under the Summary's GP-ownership / pref rows. */
-  const termNotes = () => screen.queryAllByText(/^Platform default — no partnership terms on this deal yet/);
-  /** Both per-field band badges present (hurdle AND GP split) → the element, else null. */
-  const tierBadge = (i: number) => {
-    const h = screen.queryByTestId(`tier-${i}-hurdle-platform-default`);
-    const g = screen.queryByTestId(`tier-${i}-gp-platform-default`);
-    if (!!h !== !!g) throw new Error(`tier ${i}: hurdle badge ${!!h}, gp badge ${!!g}`);
-    return h;
-  };
-
-  it('present → the worker value renders, badged as a platform default (terms and bands)', async () => {
+  it('carried terms render as the deal\u2019s own values — no Platform default badge anywhere', async () => {
     activeOutputs = bareOutputs();
     renderWithSources();
     await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
     expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('12%');
     expect(rowFor('LP Investor Ownership')).toHaveTextContent('88%');
-    expect(termNotes()).toHaveLength(2); // GP / Sponsor Ownership + Preferred Return
-    expect(tierBadge(0)).toBeInTheDocument();
-    expect(tierBadge(1)).toBeInTheDocument();
+    expect(screen.getByTestId('summary-waterfall-tiers')).toHaveTextContent('Until 13% LP IRR');
+    expect(screen.queryByText(/platform default/i)).toBeNull();
   });
 
-  it('a seeded term keeps the badge even when the engine ran on it', async () => {
-    // The default fixture's run splits equity 10 / 90 and here publishes a pref.
-    activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
-    renderWithSources();
-    await waitFor(() => expect(tierBadge(0)).toBeInTheDocument());
-    expect(rowFor('Preferred Return')).toHaveTextContent('7%');
-    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('10%');
-    expect(termNotes()).toHaveLength(2);
-  });
-
-  it('a term the deal itself carries (partnership_doc) has no badge; its seeded bands keep theirs', async () => {
+  it('GP not carried → GP ownership and LP ownership are both dashes', async () => {
     activeOutputs = bareOutputs();
-    sources.payload = {
-      ...WORKER_SEED_PAYLOAD,
-      sources: { ...WORKER_SEED_PAYLOAD.sources, 'partnership.pref_rate': 'partnership_doc', 'partnership.gp_equity_pct': 'partnership_doc' },
-    };
+    const { 'partnership.gp_equity_pct': _gs, ...srcs } = CARRIED_TERMS_PAYLOAD.sources;
+    const { 'partnership.gp_equity_pct': _gv, ...vals } = CARRIED_TERMS_PAYLOAD.values;
+    sources.payload = { ...CARRIED_TERMS_PAYLOAD, sources: srcs, values: vals };
     renderWithSources();
     await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
-    expect(termNotes()).toHaveLength(0);
-    // The promote bands are still the platform suggestion → badged.
-    expect(tierBadge(0)).toBeInTheDocument();
-    expect(tierBadge(1)).toBeInTheDocument();
+    expect(rowFor('GP / Sponsor Ownership')).toHaveTextContent('—');
+    expect(rowFor('LP Investor Ownership')).toHaveTextContent('—');
   });
 
-  it('overriding only a band\u2019s hurdle leaves its GP split badged (per-field badge)', async () => {
-    activeOutputs = bareOutputs();
-    mockDeal.field_overrides = { 'partnership.waterfall.0.hurdle_rate': { value: 0.14, note: 'JV term sheet' } };
-    try {
-      renderWithSources();
-      await waitFor(() => expect(screen.getByTestId('tier-0-gp-platform-default')).toBeInTheDocument());
-      expect(screen.queryByTestId('tier-0-hurdle-platform-default')).toBeNull();
-      // The untouched band keeps both.
-      expect(screen.getByTestId('tier-1-hurdle-platform-default')).toBeInTheDocument();
-      expect(screen.getByTestId('tier-1-gp-platform-default')).toBeInTheDocument();
-    } finally {
-      mockDeal.field_overrides = {};
-    }
-  });
-
-  it('an analyst_override source carries no badge — terms or bands', async () => {
-    activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
-    sources.payload = {
-      ...WORKER_SEED_PAYLOAD,
-      sources: Object.fromEntries(Object.keys(WORKER_SEED_PAYLOAD.sources).map((k) => [k, 'analyst_override'])),
-    };
-    renderWithSources();
-    await waitFor(() => expect(assumptionSourcesSpy).toHaveBeenCalled());
-    await screen.findByText('Until 13% LP IRR');
-    expect(termNotes()).toHaveLength(0);
-    expect(tierBadge(0)).toBeNull();
-    expect(tierBadge(1)).toBeNull();
-  });
-
-  it('an engine-published pref wins over the worker reference term', async () => {
+  it('an engine-published pref wins over the carried term', async () => {
     activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
     renderWithSources();
     await waitFor(() => expect(assumptionSourcesSpy).toHaveBeenCalled());
