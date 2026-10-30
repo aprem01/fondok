@@ -78,7 +78,18 @@ vi.mock('next/dynamic', () => ({
 }));
 
 import ProjectDetailPage from '@/app/projects/[id]/page';
-import { projects as mockProjects } from '@/lib/mockData';
+
+/**
+ * The identifiers of the four fictitious hotels the page used to fall back
+ * to (lib/mockData, deleted 2026-10-30). Kept here as the regression sweep:
+ * none of them may ever appear on a deal page again.
+ */
+const FORMER_SAMPLE_DEALS = [
+  { name: 'Hilton Garden Inn Downtown', city: 'Austin, TX' },
+  { name: 'Kimpton Angler', city: 'Miami Beach, FL' },
+  { name: 'Marriott Magnificent Mile', city: 'Chicago, IL' },
+  { name: 'Hyatt Regency Waterfront', city: 'Seattle, WA' },
+];
 
 describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
   beforeEach(() => {
@@ -91,7 +102,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
       status: null,
       loading: true,
       error: null,
-      fromMock: false,
+      workerConfigured: true,
       refresh: vi.fn(),
     });
 
@@ -104,14 +115,12 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
       'fff00000-0000-0000-0000-000000000aaa',
     );
 
-    // CRITICAL — no mock-data name leaks through. We sweep every
-    // mock project's name AND city to catch the regression where the
-    // page synthesized a project from ``mockProjects[0]``.
-    for (const m of mockProjects) {
+    // CRITICAL — no sample name leaks through. We sweep every
+    // former sample deal's name AND city to catch the regression where the
+    // page synthesized a project from a fixture.
+    for (const m of FORMER_SAMPLE_DEALS) {
       expect(container.textContent ?? '').not.toContain(m.name);
-      if (m.city) {
-        expect(container.textContent ?? '').not.toContain(m.city);
-      }
+      expect(container.textContent ?? '').not.toContain(m.city);
     }
     expect(container.textContent ?? '').not.toContain('Hilton');
     expect(container.textContent ?? '').not.toContain('Hilton Garden Inn');
@@ -124,7 +133,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
       status: null,
       loading: false,
       error: 'timeout',
-      fromMock: false,
+      workerConfigured: true,
       refresh,
     });
 
@@ -140,7 +149,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
 
     // No mock-data name leaks through on the error path either.
     expect(container.textContent ?? '').not.toContain('Hilton');
-    for (const m of mockProjects) {
+    for (const m of FORMER_SAMPLE_DEALS) {
       expect(container.textContent ?? '').not.toContain(m.name);
     }
   });
@@ -152,7 +161,7 @@ describe('Bug #1 — UUID deal load gate (data-leak guard)', () => {
       loading: false,
       error:
         'TimeoutError: Fondok is still extracting your upload. Try again in 30 seconds.',
-      fromMock: false,
+      workerConfigured: true,
       refresh: vi.fn(),
     });
 

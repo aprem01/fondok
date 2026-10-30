@@ -3,9 +3,9 @@
  *
  * When `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is set to a real key, these
  * hooks proxy to Clerk's `useUser()` / `useOrganization()`. When unset
- * (current state) or set to a `_dummy` placeholder, they return the
- * static "Eshan Mehta · Brookfield Real Estate" persona from
- * `lib/mockData.ts` so the demo keeps working end-to-end.
+ * (current state) or set to a `_dummy` placeholder, they return the neutral
+ * "Demo Workspace / Demo Analyst" persona below — the only persona a build
+ * without an auth backend can show.
  *
  * The `getCurrentOrgId()` helper is the imperative escape hatch used by
  * `lib/api.ts` to attach `X-Tenant-Id` to outbound worker requests
@@ -15,8 +15,18 @@
 
 import { useEffect } from 'react';
 import { useAuth, useUser, useOrganization, useClerk } from '@clerk/nextjs';
-import { workspace as mockWorkspace, currentUser as mockUser } from './mockData';
 import { useMounted } from './hooks/useMounted';
+
+// The auth-less build's persona. Deliberately neutral: it must never name a
+// real institution or a real person — if Clerk fails to hydrate on a preview
+// deploy, THIS is what every visitor would see in the sidebar.
+const DEMO_WORKSPACE = { name: 'Demo Workspace', plan: 'Demo', url: 'demo' } as const;
+const DEMO_USER = {
+  name: 'Demo Analyst',
+  role: 'Analyst',
+  initials: 'DA',
+  email: 'analyst@example.com',
+} as const;
 
 // ─── Hydration determinism ─────────────────────────────────────────────────
 // The server renders these shims with Clerk NOT loaded (static ClerkProvider,
@@ -102,10 +112,10 @@ export function useCurrentUser(): CurrentUser {
   // module-level flag so we only call it when safe.
   if (!isClerkConfigured) {
     return {
-      name: mockUser.name,
-      role: mockUser.role,
-      initials: mockUser.initials,
-      email: mockUser.email,
+      name: DEMO_USER.name,
+      role: DEMO_USER.role,
+      initials: DEMO_USER.initials,
+      email: DEMO_USER.email,
       id: 'demo',
     };
   }
@@ -139,16 +149,16 @@ export function useCurrentUser(): CurrentUser {
 /**
  * Returns the active organization. In Clerk this maps to the user's
  * currently selected Organization (the workspace switcher selection).
- * In demo mode returns the static Brookfield Real Estate workspace.
+ * In demo mode returns the static demo workspace.
  */
 export function useCurrentOrg(): CurrentOrg {
   const mounted = useMounted();
   if (!isClerkConfigured) {
     return {
       id: null,
-      name: mockWorkspace.name,
-      plan: mockWorkspace.plan,
-      url: mockWorkspace.url,
+      name: DEMO_WORKSPACE.name,
+      plan: DEMO_WORKSPACE.plan,
+      url: DEMO_WORKSPACE.url,
       status: 'demo',
     };
   }

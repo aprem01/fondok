@@ -95,7 +95,7 @@ import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceLabel } from '@/lib/provenance';
-import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/mockData';
+import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
 import {
   KpiTile,
   SectionCard,

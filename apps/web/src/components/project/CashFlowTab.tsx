@@ -13,6 +13,8 @@ import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { EngineFailuresBanner, engineFailures } from './EngineFailuresBanner';
+import { EngineOutputsError } from './EngineOutputsError';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
 import {
@@ -156,7 +158,7 @@ export default function CashFlowTab() {
   const router = useRouter();
   const dealId = (params?.id as string | undefined) ?? '';
   const [computing, setComputing] = useState(false);
-  const { outputs } = useEngineOutputs(dealId);
+  const { outputs, error: outputsError, refresh: refreshOutputs } = useEngineOutputs(dealId);
   // The same full-chain re-run the stale-run banner posts, for the fallback
   // card below: every engine republishes together, so the statement lands in
   // the same snapshot as the returns already on screen.
@@ -192,6 +194,11 @@ export default function CashFlowTab() {
   // P&L first" — the P&L already ran.
   if (!cf) {
     const hasReturns = returns.leveredIrr != null || returns.equityMultiple != null;
+    // D1 / D4 — three different reasons for "no statement", three different
+    // cards: the read failed (Retry), an engine failed (the banner names it
+    // and the reason), or the model genuinely has not published one.
+    const readFailed = outputsError != null && outputs == null;
+    const failures = engineFailures(outputs);
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -217,6 +224,11 @@ export default function CashFlowTab() {
             onRunStart={() => setComputing(true)}
             onRunComplete={() => setComputing(false)}
           />
+          {readFailed ? (
+            <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the cash-flow statement" />
+          ) : failures.length > 0 ? (
+            <EngineFailuresBanner outputs={outputs} dealId={dealId} />
+          ) : (
           <Card className="p-16 text-center" data-testid="cashflow-not-published">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
               <Activity size={20} className="text-ink-400" />
@@ -243,6 +255,7 @@ export default function CashFlowTab() {
               </Button>
             )}
           </Card>
+          )}
           <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />

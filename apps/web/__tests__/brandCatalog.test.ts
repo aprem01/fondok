@@ -18,7 +18,7 @@ import {
   findBrand,
   positioningTiers,
   searchBrandFamilies,
-} from '@/lib/mockData';
+} from '@/lib/catalogs';
 
 const fam = (name: string) => brandFamilies.find((f) => f.family === name);
 const names = (family: string) => (fam(family)?.brands ?? []).map((b) => b.name);

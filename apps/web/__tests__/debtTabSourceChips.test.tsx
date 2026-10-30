@@ -170,7 +170,7 @@ const mockDeal: { id: string; keys: number; field_overrides: Record<string, unkn
 };
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: mockDeal, status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    deal: mockDeal, status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 vi.mock('@/lib/hooks/useEngineRun', () => ({

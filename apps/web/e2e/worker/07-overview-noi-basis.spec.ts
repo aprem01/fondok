@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { gotoDeal, stubWorker } from '../fixtures/workerStub';
 
 /**
  * Overview — NOI basis labelling, and what the Stabilization block says when
@@ -21,16 +22,21 @@ import { test, expect } from '@playwright/test';
  *    the investigation blamed the engine instead. The banner is the fix; this
  *    locks it.
  *
- * SCOPE, honestly: this project runs with `NEXT_PUBLIC_WORKER_URL=''`, so
- * `useEngineOutputs` never fetches and `stabilizedYearBlock()` is null for
- * every deal. That makes "renders dashes" trivially true here — it is
+ * SCOPE, honestly: the stubbed worker's expense output carries no
+ * `stabilization` block, so `stabilizedYearBlock()` is null for this deal.
+ * That makes "renders dashes" close to trivially true here — it is
  * `__tests__/stabilizedParity.test.tsx` that proves the dash is chosen over a
- * borrowed year when real engine output IS present. What this spec adds is
+ * borrowed year when a stabilized year IS present. What this spec adds is
  * that the banner reaches a real browser, on the real route, next to the real
  * rows — which is exactly the part that was missing in production.
+ *
+ * Moved from the `mock` project on 2026-10-30 (go-live Wave 0, C4): it used to
+ * open the fictitious sample deal (id=7) the worker-less build rendered. That
+ * fixture is gone, so this runs on the `worker-stub` project against the
+ * stubbed deal, with `stubWorker` installed before each navigation.
  */
 
-const OVERVIEW = '/projects/7?tab=overview';
+const OVERVIEW = '?tab=overview';
 
 /** Exact-text labels that would leave the reader guessing which NOI it is. */
 const AMBIGUOUS_NOI_LABELS = [
@@ -43,13 +49,11 @@ const AMBIGUOUS_NOI_LABELS = [
 
 test.describe('Overview — NOI basis is always stated', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('fondok:coachmarks:disabled', 'true');
-    });
+    await stubWorker(page);
   });
 
   test('Entry NOI is before-reserve and the exit figure is Cash NOI', async ({ page }) => {
-    await page.goto(OVERVIEW);
+    await gotoDeal(page, OVERVIEW);
 
     await expect(
       page.getByText('Run-Rate / Entry NOI (before FF&E reserve)'),
@@ -61,7 +65,7 @@ test.describe('Overview — NOI basis is always stated', () => {
   });
 
   test('no row is labelled a bare, unqualified "NOI"', async ({ page }) => {
-    await page.goto(OVERVIEW);
+    await gotoDeal(page, OVERVIEW);
     // Anchor on a row we know renders, so an empty page can't pass this.
     await expect(page.getByText('Entry Cap Rate')).toBeVisible();
 
@@ -76,13 +80,11 @@ test.describe('Overview — NOI basis is always stated', () => {
 
 test.describe('Overview — a Stabilization block with no published year', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('fondok:coachmarks:disabled', 'true');
-    });
+    await stubWorker(page);
   });
 
   test('every Stabilization row is a dash and the banner says to re-run', async ({ page }) => {
-    await page.goto(OVERVIEW);
+    await gotoDeal(page, OVERVIEW);
 
     // Scope to the section — "Stabilized NOI" is also a KPI tile label.
     const stabilization = page.getByTestId('overview-section-stabilization');
@@ -117,19 +119,18 @@ test.describe('Overview — a Stabilization block with no published year', () =>
   /**
    * FON-75 — the page-level stale-run banner must NOT fire here.
    *
-   * This project runs with `NEXT_PUBLIC_WORKER_URL=''` against a mock deal id,
-   * so there is no engines payload and therefore no `stale_run`. A banner that
-   * appeared anyway would be a false positive — telling an analyst to re-run a
-   * model on a deal whose run nobody has even read. That is the one way the
-   * feature can do harm, so it is asserted on the screen where the section
-   * banner DOES fire: the two are independent.
+   * The stub's engines payload carries no `stale_run`, so there is nothing
+   * for the page-level banner to report. A banner that appeared anyway would
+   * be a false positive — telling an analyst to re-run a model the worker
+   * never flagged. That is the one way the feature can do harm, so it is
+   * asserted on the screen where the section banner DOES fire: the two are
+   * independent.
    *
-   * The positive half — both banners together on a genuinely stale run — needs
-   * a connected worker and cannot run in mock mode; it lives in
-   * `e2e/worker/04-stale-run-banner.spec.ts`.
+   * The positive half — both banners together on a genuinely stale run —
+   * lives in `04-stale-run-banner.spec.ts`.
    */
   test('the page-level stale-run banner stays silent with no engine payload', async ({ page }) => {
-    await page.goto(OVERVIEW);
+    await gotoDeal(page, OVERVIEW);
     await expect(page.getByTestId('overview-section-stabilization')).toBeVisible();
     await expect(page.getByTestId('stale-run-banner')).toHaveCount(0);
   });

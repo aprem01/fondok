@@ -174,7 +174,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
     deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', keys: 132, field_overrides: FIELD_OVERRIDES },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 vi.mock('@/lib/hooks/useEngineRun', () => ({

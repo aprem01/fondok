@@ -1041,6 +1041,13 @@ export default function MethodologyPage() {
         <Card className="p-5 mt-4">
           <h4 className="text-[13px] font-semibold text-ink-900 mb-2">How to read a dash</h4>
           <ul className="space-y-2 text-[12.5px] text-ink-600 leading-relaxed">
+            <li data-testid="dash-rule">
+              <span className="font-semibold text-ink-900">A figure with no source renders as —.</span>{' '}
+              That holds for every number on every screen and in every export: a room count the documents
+              have not stated yet, a confidence score before any field has been read, a projection line the
+              model did not produce, a return the engine did not compute. Nothing is filled in with a zero,
+              an estimate or a sample figure, and the exported workbook leaves the same cell empty.
+            </li>
             <li>
               <span className="font-semibold text-ink-900">One glyph, many reasons.</span>{' '}
               Every reason renders the same dash; the hover text is what distinguishes them.
@@ -1054,9 +1061,10 @@ export default function MethodologyPage() {
             </li>
             <li>
               <span className="font-semibold text-ink-900">A dash is not an error.</span>{' '}
-              A model that could not finish shows the red banner described in Section 4, with a Re-run. A dash is
-              the model declining to invent a number it has no grounds for — the reason says which grounds are
-              missing.
+              A model that could not finish shows the red banner described in Section 4, naming the model and
+              the reason it stopped, with a Re-run. A screen whose results could not be fetched at all says
+              so, with a Retry, rather than pretending the model has not run. A dash is the model declining to
+              invent a number it has no grounds for — the reason says which grounds are missing.
             </li>
           </ul>
         </Card>

@@ -709,8 +709,10 @@ export default function InvestmentTab() {
       ? sellingCosts / grossExit
       : undefined;
   })();
-  const netExit = has(grossExit)
-    ? grossExit - (sellingCosts ?? 0)
+  // Net of selling costs — undefined (→ '—') until BOTH are on the run; a
+  // missing selling-cost figure is not a zero one.
+  const netExit = has(grossExit) && has(sellingCosts)
+    ? grossExit - sellingCosts
     : undefined;
   const holdYears = holdYearsOverride ?? wHoldYears;
   // The note rides beside the field ONLY while the analyst's saved value is

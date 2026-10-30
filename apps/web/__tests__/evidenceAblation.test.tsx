@@ -298,7 +298,7 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({ useEngineRun: () => ({ run: vi.fn(a
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
     deal: { id: 'e577f547-a3cd-4e78-9ee1-8d761b0c4777', keys: 132, field_overrides: {} },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));

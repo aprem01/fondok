@@ -10,33 +10,29 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
-import { projects as mockProjects, projectStatuses, Project } from '@/lib/mockData';
+import { projectStatuses } from '@/lib/catalogs';
+import { displayConfidence } from '@/lib/project';
+import { formatKeys } from '@/lib/formatKeys';
 import { cn, fmtDate, fmtCurrency } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
-import { WorkerDeal, PipelineDealRow, api, isWorkerConnected, userMessage } from '@/lib/api';
+import { WorkerDeal, PipelineDealRow, api, userMessage } from '@/lib/api';
+import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { useCurrentRole } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
-// Per-row kebab actions. Worker-backed deals (UUID id, not pure-numeric mock)
-// stream Excel / Memo via the worker; mock deals get an honest toast that
-// names the export plus a Data Room nudge so the affordance still reads.
+// Per-row kebab actions — every row is a worker-backed deal (the list only
+// renders with a worker configured).
 const buildProjectMenu = (
   id: string,
   name: string,
-  isMock: boolean,
   toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
   onArchived: () => void,
   isAdmin: boolean,
 ) => {
-  const liveMode = isWorkerConnected() && !isMock;
   const onArchive = async () => {
-    if (!liveMode) {
-      toast('This sample deal can’t be archived.', { type: 'info' });
-      return;
-    }
     try {
       await api.deals.archive(id);
       toast('Project archived', { type: 'success' });
@@ -46,10 +42,6 @@ const buildProjectMenu = (
     }
   };
   const onDeleteForever = async () => {
-    if (!liveMode) {
-      toast('This sample deal can’t be deleted.', { type: 'info' });
-      return;
-    }
     const expected = (name || 'this project').trim();
     const typed = window.prompt(
       `Permanently delete "${expected}" and ALL its documents, ` +
@@ -84,7 +76,8 @@ interface DisplayDeal {
   id: string;
   name: string;
   city: string;
-  keys: number;
+  /** Room count, or null until the OM extraction fills it — rendered "—", never 0. */
+  keys: number | null;
   service: string;
   status: string;
   dealStage: string;
@@ -96,31 +89,11 @@ interface DisplayDeal {
   /** 0–100, or null when Fondok has not scored the deal — rendered "—", never 0%. */
   aiConfidence: number | null;
   assignee: string;
+  /** Document count as text, or "—" on a worker that does not report it. */
   docs: string;
   updatedAt: string;
+  /** True only when the worker REPORTS zero documents — unknown is not zero. */
   noDocs: boolean;
-  isMock: boolean;
-}
-
-function fromMockProject(p: Project): DisplayDeal {
-  return {
-    id: String(p.id),
-    name: p.name,
-    city: p.city,
-    keys: p.keys,
-    service: p.service,
-    status: p.status,
-    dealStage: p.dealStage,
-    pricePerKey: null,
-    irr: p.irr,
-    noi: p.noi ?? null,
-    aiConfidence: p.aiConfidence,
-    assignee: p.assignee,
-    docs: p.docs,
-    updatedAt: p.updatedAt,
-    noDocs: !!p.noDocs,
-    isMock: true,
-  };
 }
 
 /**
@@ -133,19 +106,18 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
     id: d.id,
     name: d.name,
     city: d.city ?? '—',
-    keys: d.keys ?? 0,
+    keys: d.keys,
     service: d.service ?? '—',
     status: d.status || 'Draft',
     dealStage: d.deal_stage || 'Teaser',
     pricePerKey: row?.price_per_key ?? null,
     irr: row?.levered_irr != null ? row.levered_irr * 100 : null,
     noi: row?.noi_y1 ?? null,
-    aiConfidence: d.ai_confidence != null ? Math.round(d.ai_confidence * 100) : null,
+    aiConfidence: displayConfidence(d.ai_confidence),
     assignee: '—',
-    docs: String(d.document_count ?? 0),
+    docs: d.document_count != null ? String(d.document_count) : '—',
     updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
-    noDocs: (d.document_count ?? 0) === 0,
-    isMock: false,
+    noDocs: d.document_count === 0,
   };
 }
 
@@ -159,33 +131,29 @@ export default function ProjectsPage() {
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
 
-  const { deals, loading, error, fromMock, refresh } = useDeals();
+  const { deals, loading, error, workerConfigured, refresh } = useDeals();
   const heroVisible = useGetStartedHeroVisible();
 
-  // Worker-connected mode (the real deployment) shows ONLY worker
-  // deals — the seeded demos (Kimpton Angler etc.) were confusing
-  // institutional users into thinking they had pre-existing data on
-  // the platform. The mocks still render in pure-mock fallback mode
-  // (no worker URL configured) so the marketing/demo build keeps
-  // something on screen.
+  // The list is worker deals and nothing else. Without a worker URL there is
+  // no list — the body below says so instead of showing sample deals.
   // The pipeline payload carries each deal's headline returns ($/Key, IRR,
   // NOI) from its latest run — the same payload the dashboard reads. Joined
   // here by deal id; a deal with no run shows "—" for those cells.
   const [pipelineRows, setPipelineRows] = useState<Record<string, PipelineDealRow>>({});
   useEffect(() => {
-    if (fromMock) return;
+    if (!workerConfigured) return;
     const ctrl = new AbortController();
     api.deals
       .pipeline({ sort: 'last_activity_desc', limit: 200 }, ctrl.signal)
       .then((r) => setPipelineRows(Object.fromEntries(r.deals.map((d) => [d.deal_id, d]))))
       .catch(() => { /* the list still renders; return cells read "—" */ });
     return () => ctrl.abort();
-  }, [fromMock, deals.length]);
+  }, [workerConfigured, deals.length]);
 
-  const display: DisplayDeal[] = useMemo(() => {
-    if (fromMock) return mockProjects.map(fromMockProject);
-    return deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id]));
-  }, [deals, fromMock, pipelineRows]);
+  const display: DisplayDeal[] = useMemo(
+    () => deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id])),
+    [deals, pipelineRows],
+  );
 
   const filtered = display.filter((p) =>
     (filter === 'All Status' || p.status === filter) &&
@@ -258,7 +226,7 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {error && !fromMock && (
+      {error && workerConfigured && (
         <Card className="p-5 mb-5 border-danger-500/30 bg-danger-50">
           <div className="flex items-start gap-3">
             <AlertTriangle size={16} className="text-danger-700 flex-shrink-0 mt-0.5" />
@@ -271,7 +239,9 @@ export default function ProjectsPage() {
         </Card>
       )}
 
-      {loading && deals.length === 0 ? (
+      {!workerConfigured ? (
+        <WorkerNotConfigured surface="deal list" />
+      ) : loading && deals.length === 0 ? (
         <div className="grid grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
             <Card key={i} className="p-5 animate-pulse">
@@ -328,7 +298,7 @@ export default function ProjectsPage() {
                       </div>
                     </div>
                   </div>
-                  <span className="text-[11px] text-ink-500 whitespace-nowrap">{p.keys} keys</span>
+                  <span className="text-[11px] text-ink-500 whitespace-nowrap tabular-nums">{formatKeys(p.keys)} keys</span>
                 </div>
 
                 <div className="flex items-center gap-1.5 mb-4">
@@ -432,7 +402,7 @@ export default function ProjectsPage() {
                   <div className="text-[13.5px] font-medium text-ink-900 truncate">{p.name}</div>
                   <StatusBadge value={p.status} />
                 </div>
-                <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · {p.keys} keys · {p.service}</div>
+                <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · <span className="tabular-nums">{formatKeys(p.keys)}</span> keys · {p.service}</div>
               </div>
               <div className="w-20 flex justify-end">
                 <StatusBadge value={p.dealStage} />
@@ -455,7 +425,7 @@ export default function ProjectsPage() {
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
-              <KebabMenu items={buildProjectMenu(p.id, p.name, p.isMock, toast, refresh, isAdmin)} />
+              <KebabMenu items={buildProjectMenu(p.id, p.name, toast, refresh, isAdmin)} />
             </Link>
           ))}
         </Card>

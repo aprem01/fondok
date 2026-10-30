@@ -94,25 +94,25 @@ const TIER_META: Record<
   }
 > = {
   compliant: {
-    label: (s) => `Compliant ${Math.round(s ?? 0)}`,
+    label: (s) => (s == null ? 'Compliant' : `Compliant ${Math.round(s)}`),
     classes:
       'bg-success-50 text-success-700 border-success-500/30 hover:bg-success-100',
     Icon: ShieldCheck,
-    aria: (n) => `USALI compliant — score ${Math.round(n.score ?? 0)} of 100`,
+    aria: (n) => (n.score == null ? 'USALI compliant' : `USALI compliant — score ${Math.round(n.score)} of 100`),
   },
   review: {
-    label: (s) => `Review ${Math.round(s ?? 0)}`,
+    label: (s) => (s == null ? 'Review' : `Review ${Math.round(s)}`),
     classes:
       'bg-warn-50 text-warn-700 border-warn-500/30 hover:bg-warn-100',
     Icon: AlertCircle,
-    aria: (n) => `USALI review — score ${Math.round(n.score ?? 0)} of 100`,
+    aria: (n) => (n.score == null ? 'USALI review' : `USALI review — score ${Math.round(n.score)} of 100`),
   },
   high_risk: {
-    label: (s) => `High risk ${Math.round(s ?? 0)}`,
+    label: (s) => (s == null ? 'High risk' : `High risk ${Math.round(s)}`),
     classes:
       'bg-danger-50 text-danger-700 border-danger-500/30 hover:bg-danger-100',
     Icon: AlertTriangle,
-    aria: (n) => `USALI high risk — score ${Math.round(n.score ?? 0)} of 100`,
+    aria: (n) => (n.score == null ? 'USALI high risk' : `USALI high risk — score ${Math.round(n.score)} of 100`),
   },
   inconclusive: {
     label: () => 'Inconclusive',
@@ -131,10 +131,13 @@ function buildTooltip(n: NormalizedUsali): string {
   }
   const crit = n.deviations.filter((d) => d.severity === 'CRITICAL').length;
   const warn = n.deviations.filter((d) => d.severity === 'WARN').length;
-  const passed = n.passedCount ?? 0;
-  const applicable = n.applicableCount ?? 0;
   const dev = `${crit} critical · ${warn} warn deviations`;
-  return `USALI score ${Math.round(n.score ?? 0)}/100 — ${passed}/${applicable} rules passed · ${dev}. Click for full deviation list.`;
+  const score = n.score == null ? 'USALI score —' : `USALI score ${Math.round(n.score)}/100`;
+  const passed =
+    n.passedCount != null && n.applicableCount != null
+      ? ` — ${n.passedCount}/${n.applicableCount} rules passed`
+      : '';
+  return `${score}${passed} · ${dev}. Click for full deviation list.`;
 }
 
 export function UsaliBadge({

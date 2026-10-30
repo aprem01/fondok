@@ -10,7 +10,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, brandPositioningLabel, searchBrandFamilies } from '@/lib/mockData';
+import { dealStages, returnProfiles, positioningTiers, sourcingChannels, brandChain, brandFamilyShort, brandDefaultPositioning, brandPositioningLabel, searchBrandFamilies } from '@/lib/catalogs';
 import { cn } from '@/lib/format';
 import { api, isWorkerConnected, userMessage, WizardFile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
@@ -40,7 +40,7 @@ const steps = [
   { n: 5, label: 'Review' },
 ];
 
-// FON-100 — one icon per return profile id (ids live in lib/mockData).
+// FON-100 — one icon per return profile id (ids live in lib/catalogs).
 const iconForReturn: Record<string, any> = { core: Target, 'core-plus': Star, 'value-add': TrendingUp, opportunistic: Rocket };
 // Every positioningTiers id must map here. A missing id renders <undefined />
 // and crashes the wizard with React #130 — the `?? Sparkles` fallback at the
@@ -338,6 +338,10 @@ export default function NewProjectPage() {
         keys: keysInt,
         service: null,
         deal_type: data.dealType,
+        // The acquisition stage the wizard asks for on Step 1 — persisted as
+        // the deal's `deal_stage` so the list and pipeline read what the
+        // analyst chose, not a "Teaser" default.
+        deal_stage: data.stage || null,
         brand: existingBrandValue,
         proposed_brand: proposedBrandValue,
         operating_model: operatingModelValue,

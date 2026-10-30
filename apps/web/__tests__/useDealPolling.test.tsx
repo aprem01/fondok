@@ -164,9 +164,9 @@ describe('useDeal — refetches the deal row as extraction finishes (E-003 / FON
     await tick(60_000);
     expect(getSpy).not.toHaveBeenCalled();
     expect(statusSpy).not.toHaveBeenCalled();
-    // With Fondok's service connected a numeric id is not a deal — never the
-    // sample fixture dressed as one.
-    expect(result.current.fromMock).toBe(false);
+    // With Fondok's service connected a numeric id is not a deal — never a
+    // sample dressed as one.
+    expect(result.current.workerConfigured).toBe(true);
     expect(result.current.deal).toBeNull();
     expect(result.current.error).toMatch(/not found/i);
   });

@@ -328,8 +328,9 @@ export default function HistoricalBaselinePanel({
             Biggest YoY swings
           </div>
           <div className="flex flex-wrap gap-2">
-            {walkTop.map(w => {
-              const sign = (w.yoy_pct ?? 0) >= 0 ? '+' : '';
+            {walkTop.filter(w => w.yoy_pct != null).map(w => {
+              const yoy = w.yoy_pct as number;
+              const sign = yoy >= 0 ? '+' : '';
               const label = ROW_CATALOG.find(([k]) => k === w.line)?.[1]
                 ?? w.line;
               return (
@@ -345,18 +346,18 @@ export default function HistoricalBaselinePanel({
                   <span
                     className={cn(
                       'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded',
-                      (w.yoy_pct ?? 0) >= 0
+                      yoy >= 0
                         ? 'bg-success-50 text-success-700'
                         : 'bg-warn-50 text-warn-700',
                     )}
                   >
-                    {(w.yoy_pct ?? 0) >= 0 ? (
+                    {yoy >= 0 ? (
                       <TrendingUp size={10} />
                     ) : (
                       <TrendingDown size={10} />
                     )}
                     {sign}
-                    {fmtPct(w.yoy_pct ?? 0, 1)}
+                    {fmtPct(yoy, 1)}
                   </span>
                 </button>
               );

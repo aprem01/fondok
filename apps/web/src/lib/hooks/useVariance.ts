@@ -10,21 +10,24 @@
  * Variance tab can render real broker-vs-T12 deltas while keeping its
  * existing presentation layer.
  *
- * On non-live deals (mock ids, no worker) the hook returns ``null`` so
- * callers can fall back to the canned Kimpton fixtures.
+ * ``flags`` is ``null`` until the worker has answered (or when there is no
+ * worker to ask) — callers render a loading / not-configured / error state,
+ * never a canned finding. A fetch failure lands in ``error`` with ``refresh``
+ * to retry, so it is never mistaken for "no flags yet".
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   isWorkerConnected,
+  userMessage,
   VarianceFlagResult,
   VarianceReportResult,
 } from '@/lib/api';
 import type {
   VarianceFlag,
   Severity as LocalSeverity,
-} from '@/lib/varianceData';
+} from '@/lib/variance';
 
 const POLL_MS = 5000;
 
@@ -35,40 +38,45 @@ export interface VarianceState {
   info: number;
   note: string | null;
   loading: boolean;
+  /** The last fetch failed (worker unreachable, 5xx). Distinct from "no flags". */
   error: string | null;
+  /** False when `NEXT_PUBLIC_WORKER_URL` is unset — nothing is ever fetched. */
+  workerConfigured: boolean;
+  /** Re-fetch now (the error state's Retry). */
+  refresh: () => void;
 }
 
+type VarianceData = Omit<VarianceState, 'workerConfigured' | 'refresh'>;
+
+const EMPTY: VarianceData = {
+  flags: null,
+  critical: 0,
+  warn: 0,
+  info: 0,
+  note: null,
+  loading: false,
+  error: null,
+};
+
 export function useVariance(dealId: string | null | undefined): VarianceState {
-  const [state, setState] = useState<VarianceState>({
-    flags: null,
-    critical: 0,
-    warn: 0,
-    info: 0,
-    note: null,
-    loading: false,
-    error: null,
-  });
+  const workerConfigured = isWorkerConnected();
+  const [state, setState] = useState<VarianceData>(EMPTY);
   const tick = useRef(0);
+  // Bumped by `refresh` so the effect below re-subscribes and fetches at once.
+  const [attempt, setAttempt] = useState(0);
+  const refresh = useCallback(() => setAttempt((n) => n + 1), []);
 
   const idStr = dealId == null ? '' : String(dealId);
 
   useEffect(() => {
-    // Mock deals (numeric ids) and unconfigured worker fall back to fixture.
+    // No worker, or an id the worker cannot know (numeric): nothing to fetch.
     if (!isWorkerConnected() || !idStr || /^\d+$/.test(idStr)) {
-      setState({
-        flags: null,
-        critical: 0,
-        warn: 0,
-        info: 0,
-        note: null,
-        loading: false,
-        error: null,
-      });
+      setState(EMPTY);
       return;
     }
     const localTick = ++tick.current;
     const ctrl = new AbortController();
-    setState((prev) => ({ ...prev, loading: true }));
+    setState((prev) => ({ ...prev, loading: true, error: null }));
 
     const fetchOnce = () => {
       api.analysis
@@ -91,7 +99,7 @@ export function useVariance(dealId: string | null | undefined): VarianceState {
           setState((prev) => ({
             ...prev,
             loading: false,
-            error: err instanceof Error ? err.message : String(err),
+            error: userMessage(err),
           }));
         });
     };
@@ -102,9 +110,9 @@ export function useVariance(dealId: string | null | undefined): VarianceState {
       clearInterval(t);
       ctrl.abort();
     };
-  }, [idStr]);
+  }, [idStr, attempt]);
 
-  return state;
+  return { ...state, workerConfigured, refresh };
 }
 
 // ───────────────────────── mapping ─────────────────────────

@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { brandFamilies, positioningTiers } from '@/lib/mockData';
+import { brandFamilies, positioningTiers } from '@/lib/catalogs';
 import { positioningSourceChip } from '@/lib/positioningSource';
 import {
   buildBrandCatalog,

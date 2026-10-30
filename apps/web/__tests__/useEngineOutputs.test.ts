@@ -15,6 +15,7 @@ let connected = true;
 vi.mock('@/lib/api', () => ({
   api: { engines: { getAll: (...a: unknown[]) => getAll(...a) } },
   isWorkerConnected: () => connected,
+  userMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
@@ -43,6 +44,31 @@ describe('useEngineOutputs · settled', () => {
     await waitFor(() => expect(result.current.settled).toBe(true));
     expect(result.current.outputs).toBeNull();
     expect(result.current.loading).toBe(false);
+  });
+
+  it('a failed fetch lands in `error` — distinct from "model not run" (null outputs, no error)', async () => {
+    getAll.mockRejectedValue(new TypeError('Failed to fetch'));
+    const { result } = renderHook(() => useEngineOutputs('deal-1'));
+    await waitFor(() => expect(result.current.settled).toBe(true));
+    expect(result.current.error).toEqual(expect.any(String));
+    expect(result.current.outputs).toBeNull();
+  });
+
+  it('a later successful refresh clears the error and keeps the outputs', async () => {
+    getAll.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { result } = renderHook(() => useEngineOutputs('deal-1'));
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    getAll.mockResolvedValue({ deal_id: 'deal-1', engines: {} });
+    await result.current.refresh();
+    await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.outputs).toEqual({ deal_id: 'deal-1', engines: {} });
+  });
+
+  it('a healthy fetch that returns nothing has NO error — that is "model not run"', async () => {
+    getAll.mockResolvedValue({ deal_id: 'deal-1', engines: {} });
+    const { result } = renderHook(() => useEngineOutputs('deal-1'));
+    await waitFor(() => expect(result.current.settled).toBe(true));
+    expect(result.current.error).toBeNull();
   });
 
   it('settles immediately when the worker is not connected (never waits forever)', async () => {

@@ -15,11 +15,17 @@
  * with the raw pydantic text after "Technical detail:". Those are shown
  * VERBATIM; the keyword heuristics in `humanizeEngineError` apply only to
  * errors the worker did not already phrase.
+ *
+ * Go-live Wave 0 (D4): the run / engine-outputs payload also carries a
+ * per-engine failure list, `failures: [{engine, reason, message}]`. The banner
+ * merges it with the failed rows (one entry per engine — the list's reason and
+ * message win) and names the reason beside the engine, so Returns, Cash Flow
+ * and Scenario Analysis can render it in place of blank or zero figures.
  */
 
 import { AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import type { EngineName, EngineOutputsResponse } from '@/lib/api';
+import type { EngineFailure, EngineName, EngineOutputsResponse } from '@/lib/api';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { ENGINE_MODEL_LABEL } from '@/lib/fieldLabels';
 
@@ -103,6 +109,44 @@ export function humanizeEngineError(raw: string | null | undefined): HumanizedEn
   return { message, technical: raw, runnerFormatted: false };
 }
 
+/** A failed engine as the banner renders it: merged from the failure list
+ *  and the failed rows. `reason` is null for a row the list does not name. */
+export interface EngineFailureEntry {
+  engine: string;
+  reason: string | null;
+  /** The raw message / error text, humanised at render time. */
+  raw: string | null;
+}
+
+/**
+ * Every engine that did not complete on this snapshot — from the worker's
+ * `failures` list first, then any `status: 'failed'` row the list does not
+ * already cover. Empty when every engine is healthy.
+ */
+export function engineFailures(outputs: EngineOutputsResponse | null): EngineFailureEntry[] {
+  if (!outputs) return [];
+  const byEngine = new Map<string, EngineFailureEntry>();
+  for (const f of (outputs.failures ?? []) as EngineFailure[]) {
+    if (!f || typeof f.engine !== 'string' || !f.engine) continue;
+    byEngine.set(f.engine, {
+      engine: f.engine,
+      reason: typeof f.reason === 'string' && f.reason.trim() ? f.reason.trim() : null,
+      raw: typeof f.message === 'string' && f.message.trim() ? f.message : null,
+    });
+  }
+  for (const [engine, row] of Object.entries(outputs.engines ?? {}) as [
+    EngineName,
+    EngineOutputsResponse['engines'][EngineName],
+  ][]) {
+    if (row?.status !== 'failed' || byEngine.has(engine)) continue;
+    byEngine.set(engine, { engine, reason: null, raw: row.error ?? null });
+  }
+  return [...byEngine.values()];
+}
+
+/** `missing_input` → "missing input" — the stable code, readable. */
+const humanizeReason = (reason: string) => reason.replace(/[_-]+/g, ' ').trim();
+
 export function EngineFailuresBanner({
   outputs,
   dealId,
@@ -114,28 +158,26 @@ export function EngineFailuresBanner({
   const { run, status } = useEngineRun(dealId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
 
-  const failed = Object.entries(outputs?.engines ?? {}).filter(
-    ([, row]) => row?.status === 'failed',
-  ) as [EngineName, EngineOutputsResponse['engines'][EngineName]][];
+  const failed = engineFailures(outputs);
 
   if (failed.length === 0) return null;
 
   return (
-    <Card className="p-4 mb-5 border-danger-500/40 bg-danger-50" role="alert">
+    <Card className="p-4 mb-5 border-danger-500/40 bg-danger-50" role="alert" data-testid="engine-failures-banner">
       <div className="flex items-start gap-3">
         <AlertTriangle size={18} className="text-danger-700 flex-shrink-0 mt-0.5" aria-hidden="true" />
         <div className="flex-1 min-w-0">
           <div className="text-[13.5px] font-semibold text-danger-700">
             {failed.length === 1
-              ? `The ${ENGINE_LABEL[failed[0][0]] ?? failed[0][0]} model didn’t finish`
+              ? `The ${ENGINE_LABEL[failed[0].engine] ?? failed[0].engine} model didn’t finish`
               : `${failed.length} models didn’t finish`}
           </div>
           <p className="text-[12px] text-danger-700/80 mt-0.5">
             These numbers are showing as “—” because the model errored, not because data is missing.
           </p>
           <ul className="mt-2 space-y-2">
-            {failed.map(([engine, row]) => {
-              const { message, technical, runnerFormatted } = humanizeEngineError(row?.error);
+            {failed.map(({ engine, reason, raw }) => {
+              const { message, technical, runnerFormatted } = humanizeEngineError(raw);
               // A runner-formatted sentence already opens with its own
               // "<Engine>: " — bold that opener instead of prefixing the row
               // label a second time ("Debt: Debt: …"). The text stays verbatim.
@@ -150,6 +192,15 @@ export function EngineFailuresBanner({
                   <span className="text-danger-700/90" data-testid="engine-failure-message">
                     {body}
                   </span>
+                  {reason && (
+                    <span
+                      className="ml-2 inline-flex items-center rounded-sm border border-danger-500/30 bg-white/60 px-1.5 py-0.5 text-[10.5px] text-danger-700/80"
+                      data-testid="engine-failure-reason"
+                      title={`Reason code: ${reason}`}
+                    >
+                      reason: {humanizeReason(reason)}
+                    </span>
+                  )}
                   {technical && (
                     <details className="mt-1">
                       <summary className="text-[11px] text-danger-700/60 cursor-pointer select-none">

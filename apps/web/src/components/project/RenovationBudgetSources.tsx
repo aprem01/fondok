@@ -97,7 +97,7 @@ export default function RenovationBudgetSources({ dealId, live, refreshKey, onUs
   const summary: string = !data
     ? (failed ? 'Sources unavailable' : 'Loading…')
     : selected
-      ? `${selected.kind === 'analyst_override' ? 'Your override' : (selected.filename || selected.label)} · ${fmtCurrency(selected.value_usd ?? 0)}`
+      ? `${selected.kind === 'analyst_override' ? 'Your override' : (selected.filename || selected.label)} · ${selected.value_usd == null ? '—' : fmtCurrency(selected.value_usd)}`
       : data.selected_source === 'seed'
         ? 'Seed — no document states a budget'
         : `${candidates.length} source${candidates.length === 1 ? '' : 's'}`;

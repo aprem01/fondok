@@ -91,7 +91,7 @@ import { useVariance } from '@/lib/hooks/useVariance';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { ValueState } from '@/lib/api';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
 import { openLineage } from '@/components/project/LineageDrawer';

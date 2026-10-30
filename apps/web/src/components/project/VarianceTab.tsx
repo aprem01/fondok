@@ -9,25 +9,10 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { cn, fmtCurrency, fmtPct } from '@/lib/format';
-import {
-  varianceFlags as mockVarianceFlags,
-  varianceSummary,
-  rulesById,
-  criticalCount as mockCriticalCount,
-  warnCount as mockWarnCount,
-  infoCount as mockInfoCount,
-  type VarianceFlag,
-  type Severity,
-} from '@/lib/varianceData';
+import { rulesById, type VarianceFlag, type Severity } from '@/lib/variance';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { Citation } from '@/components/citations/Citation';
-
-// Filename lookup for the synthetic Kimpton mock document IDs so the
-// SourceDocPane header can show a human-readable label.
-const VARIANCE_DOC_NAMES: Record<string, string> = {
-  'kimpton-angler-om-2026': 'Offering_Memorandum_Final.pdf',
-  'kimpton-angler-t12-2026q1': 'T12_FinancialStatement.xlsx',
-};
+import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 
 type RowDecision = 'pending' | 'accepted' | 'overridden';
 
@@ -109,18 +94,15 @@ export default function VarianceTab() {
   const [decisions, setDecisions] = useState<Record<string, RowDecision>>({});
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
-  // Live worker-backed variance flags for real (UUID) deals; falls back to
-  // the Kimpton fixture for mock ids and when the worker has nothing to
-  // compare yet. This is what fixes Sam QA #6: the badge and content now
-  // resolve to the same flag set, and a real deal's flags reflect the
-  // deal's actual broker vs T-12 deltas instead of the demo fixture.
+  // The worker's variance report for this deal — the ONLY source of flags.
+  // `flags` is null until the report lands (or when nothing can be fetched);
+  // the states below say which: not configured, loading, failed, no flags.
   const live = useVariance(rawId);
-  const liveActive = live.flags !== null;
-  const varianceFlags: VarianceFlag[] = liveActive ? (live.flags ?? []) : mockVarianceFlags;
-  const criticalCount = liveActive ? live.critical : mockCriticalCount;
-  const warnCount = liveActive ? live.warn : mockWarnCount;
-  const infoCount = liveActive ? live.info : mockInfoCount;
-  const liveNote = liveActive ? live.note : null;
+  const varianceFlags: VarianceFlag[] = live.flags ?? [];
+  const criticalCount = live.critical;
+  const warnCount = live.warn;
+  const infoCount = live.info;
+  const liveNote = live.note;
 
   const setDecision = (id: string, d: RowDecision) =>
     setDecisions(prev => ({ ...prev, [id]: prev[id] === d ? 'pending' : d }));
@@ -142,11 +124,35 @@ export default function VarianceTab() {
     }
   };
 
-  // Empty state for live deals that don't have both sides of the
-  // comparison yet (only OM uploaded, only T-12, etc.). Renders the
-  // worker's structured "what's missing" note instead of the Kimpton
-  // narrative which would mislead.
-  if (liveActive && varianceFlags.length === 0) {
+  if (!live.workerConfigured) {
+    return <WorkerNotConfigured surface="variance report" />;
+  }
+  // A failed fetch is NOT "no flags yet": say the report did not load and
+  // offer the retry (D1 — error and empty are different states).
+  if (live.error && live.flags === null) {
+    return (
+      <Card className="p-5 border-danger-500/30 bg-danger-50" role="alert" data-testid="variance-load-error">
+        <div className="flex items-start gap-3">
+          <AlertTriangle size={16} className="text-danger-700 flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="flex-1">
+            <div className="text-[13px] font-semibold text-danger-700">The variance report did not load</div>
+            <p className="text-[12px] text-danger-700/80 mt-1">{live.error}</p>
+          </div>
+          <Button variant="secondary" size="sm" onClick={live.refresh}>Retry</Button>
+        </div>
+      </Card>
+    );
+  }
+  if (live.flags === null) {
+    return (
+      <Card className="p-5" role="status" aria-live="polite" data-testid="variance-loading">
+        <div className="text-[12.5px] text-ink-500">Loading the variance report…</div>
+      </Card>
+    );
+  }
+  // No flags: the worker has not compared both sides yet (only the OM, only
+  // the T-12). Render its structured "what's missing" note.
+  if (varianceFlags.length === 0) {
     return (
       <div className="space-y-5">
         <Card className="p-5">
@@ -172,39 +178,33 @@ export default function VarianceTab() {
     );
   }
 
-  // Live deals get a real-deal narrative — same shape as the Kimpton
-  // mock copy ("Most material: broker NOI overstated by $X (Y%), driven
-  // by …") but populated from the deal's actual flags. Drivers are the
+  // The narrative ("Most material: broker NOI overstated by $X (Y%), driven
+  // by …") is populated from the deal's actual flags. Drivers are the
   // top-three flags by absolute NOI impact, prefixed with severity.
-  const totalFlags = liveActive ? varianceFlags.length : varianceSummary.total_flags;
+  const totalFlags = varianceFlags.length;
 
   // Prefer the dedicated NOI flag for the headline overstate $; fall
   // back to the sum of broker-vs-T12 deltas across flags so a deal
   // without an explicit NOI flag still shows a directional anchor.
-  const liveNoiFlag = liveActive
-    ? varianceFlags.find((f) => f.metric.toLowerCase() === 'noi')
-    : undefined;
-  const noiOverstateUsd = liveActive
-    ? liveNoiFlag && liveNoiFlag.broker_value != null && liveNoiFlag.t12_value != null
+  const liveNoiFlag = varianceFlags.find((f) => f.metric.toLowerCase() === 'noi');
+  const noiOverstateUsd =
+    liveNoiFlag && liveNoiFlag.broker_value != null && liveNoiFlag.t12_value != null
       ? liveNoiFlag.broker_value - liveNoiFlag.t12_value
       : varianceFlags.reduce(
           (s, f) =>
             s + Math.max(0, f.broker_value ?? 0) - Math.max(0, f.t12_value ?? 0),
           0,
-        )
-    : varianceSummary.noi_overstate_usd;
-  const noiOverstatePct = liveActive
-    ? liveNoiFlag && liveNoiFlag.t12_value
-      ? (liveNoiFlag.broker_value ?? 0) / liveNoiFlag.t12_value - 1
-      : 0
-    : varianceSummary.noi_overstate_pct;
+        );
+  const noiOverstatePct =
+    liveNoiFlag && liveNoiFlag.t12_value && liveNoiFlag.broker_value != null
+      ? liveNoiFlag.broker_value / liveNoiFlag.t12_value - 1
+      : 0;
 
   // Top three NOI drivers — sorted by absolute NOI impact, NOI flag
   // itself excluded since it's the rollup. Each driver renders as a
   // human-readable phrase ("ADR overstated", "RevPAR optimistic",
   // "Insurance understated") derived from the metric name + delta sign.
-  const liveTopDrivers = liveActive
-    ? [...varianceFlags]
+  const liveTopDrivers = [...varianceFlags]
         .filter((f) => f.metric.toLowerCase() !== 'noi')
         .sort((a, b) => Math.abs(b.noi_impact_usd) - Math.abs(a.noi_impact_usd))
         .slice(0, 3)
@@ -222,8 +222,7 @@ export default function VarianceTab() {
                 ? 'overstated'
                 : 'understated';
           return `${f.metric} ${direction}`.toLowerCase();
-        })
-    : [];
+        });
 
   const liveTopDriversPhrase =
     liveTopDrivers.length === 0
@@ -237,7 +236,7 @@ export default function VarianceTab() {
   // Direction-aware verb so a broker who *understated* NOI (rare, but
   // happens on stabilized refis) isn't framed as "overstated".
   const noiVerb = noiOverstateUsd >= 0 ? 'overstated' : 'understated';
-  const showLiveNoiHeadline = liveActive && Math.abs(noiOverstateUsd) >= 1_000;
+  const showLiveNoiHeadline = Math.abs(noiOverstateUsd) >= 1_000;
 
   return (
     <div className="space-y-5">
@@ -262,36 +261,24 @@ export default function VarianceTab() {
                 {totalFlags} variance flag{totalFlags === 1 ? '' : 's'}
               </span>{' '}
               between the broker pro forma and T-12 actuals.
-              {liveActive ? (
-                showLiveNoiHeadline ? (
-                  <>
-                    {' '}Most material: broker NOI {noiVerb} by{' '}
-                    <span className="font-semibold text-danger-700">
-                      {fmtCurrency(Math.abs(noiOverstateUsd), { compact: true })}
-                      {noiOverstatePct !== 0 && (
-                        <> ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)</>
-                      )}
-                    </span>
-                    {liveTopDriversPhrase && (
-                      <>, driven by {liveTopDriversPhrase}</>
+              {showLiveNoiHeadline ? (
+                <>
+                  {' '}Most material: broker NOI {noiVerb} by{' '}
+                  <span className="font-semibold text-danger-700">
+                    {fmtCurrency(Math.abs(noiOverstateUsd), { compact: true })}
+                    {noiOverstatePct !== 0 && (
+                      <> ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)</>
                     )}
-                    .{' '}
-                  </>
-                ) : (
-                  <>
-                    {' '}Each flag below cites the source page and rule it
-                    tripped.{' '}
-                  </>
-                )
+                  </span>
+                  {liveTopDriversPhrase && (
+                    <>, driven by {liveTopDriversPhrase}</>
+                  )}
+                  .{' '}
+                </>
               ) : (
                 <>
-                  {' '}Most material: broker NOI overstated by{' '}
-                  <span className="font-semibold text-danger-700">
-                    {fmtCurrency(noiOverstateUsd, { compact: true })}{' '}
-                    ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)
-                  </span>
-                  , driven by optimistic occupancy uplift, understated coastal insurance, and
-                  compressed OpEx ratio assumptions.{' '}
+                  {' '}Each flag below cites the source page and rule it
+                  tripped.{' '}
                 </>
               )}
               <span className="text-ink-900 font-medium">
@@ -331,11 +318,7 @@ export default function VarianceTab() {
         />
         <KpiCard
           label="Sources Reconciled"
-          value={
-            liveActive
-              ? `${varianceFlags.filter((f) => f.source_documents.length > 0).length} of ${varianceFlags.length}`
-              : `${varianceSummary.sources_reconciled} of ${varianceSummary.sources_total}`
-          }
+          value={`${varianceFlags.filter((f) => f.source_documents.length > 0).length} of ${varianceFlags.length}`}
           tone="success"
           icon={ShieldCheck}
         />
@@ -472,8 +455,7 @@ export default function VarianceTab() {
                             // exact page the variance was computed from.
                             <div className="mt-1.5 flex flex-wrap items-center gap-1">
                               {flag.source_documents.map((src, idx) => {
-                                const name =
-                                  VARIANCE_DOC_NAMES[src.document_id] ?? src.document_id;
+                                const name = src.document_id;
                                 const tag =
                                   src.document_id.includes('om')
                                     ? 'OM'

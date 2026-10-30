@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 // Type-only import — the critic finding SHAPE (no fixture data) shared with
 // the worker JSON mapper below.
-import type { KimptonCriticFinding, KimptonCriticSeverity } from '@/lib/mockData';
+import type { CriticFinding, CriticSeverity } from '@/lib/critic';
 import { fmtCurrency, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import { Citation } from '@/components/citations/Citation';
@@ -36,7 +36,7 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { isWorkerConnected, workerUrl } from '@/lib/api';
 import { CacheHitBadge } from './CacheHitBadge';
-import type { VarianceFlag } from '@/lib/varianceData';
+import type { VarianceFlag } from '@/lib/variance';
 
 type SubTab = 'summary' | 'memo' | 'ask' | 'risks' | 'variance' | 'sources' | 'critic' | 'sensitivity' | 'scenarios' | 'cost';
 
@@ -329,7 +329,22 @@ export default function AnalysisTab() {
         />
       )}
 
-      {sub === 'variance' && (
+      {/* D1 — a variance report that FAILED to load is not "no flags": say
+          so, with Retry, instead of the empty state below. */}
+      {sub === 'variance' && variance.error && variance.flags === null && (
+        <Card className="p-5 border-danger-500/30 bg-danger-50" role="alert" data-testid="variance-load-error">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-danger-700 flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="flex-1">
+              <div className="text-[13px] font-semibold text-danger-700">The variance report did not load</div>
+              <p className="text-[12px] text-danger-700/80 mt-1">{variance.error}</p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={variance.refresh}>Retry</Button>
+          </div>
+        </Card>
+      )}
+
+      {sub === 'variance' && !(variance.error && variance.flags === null) && (
         <Card className="p-8 text-center">
           <div className="w-12 h-12 mx-auto rounded-lg bg-warn-50 flex items-center justify-center mb-3">
             <FileSearch size={20} className="text-warn-700" />
@@ -400,25 +415,25 @@ export default function AnalysisTab() {
 // USALI fields it spans, and clickable page citations into the source
 // document pane. Sorted by severity (CRITICAL → WARN → INFO).
 
-const SEVERITY_RANK: Record<KimptonCriticSeverity, number> = {
+const SEVERITY_RANK: Record<CriticSeverity, number> = {
   CRITICAL: 0,
   WARN: 1,
   INFO: 2,
 };
 
-const SEVERITY_TONE: Record<KimptonCriticSeverity, 'red' | 'amber' | 'blue'> = {
+const SEVERITY_TONE: Record<CriticSeverity, 'red' | 'amber' | 'blue'> = {
   CRITICAL: 'red',
   WARN: 'amber',
   INFO: 'blue',
 };
 
-const SEVERITY_BORDER: Record<KimptonCriticSeverity, string> = {
+const SEVERITY_BORDER: Record<CriticSeverity, string> = {
   CRITICAL: 'border-l-danger-500 bg-danger-50/40',
   WARN: 'border-l-warn-500 bg-warn-50/40',
   INFO: 'border-l-brand-500/50 bg-brand-50/30',
 };
 
-const SEVERITY_ICON: Record<KimptonCriticSeverity, typeof AlertTriangle> = {
+const SEVERITY_ICON: Record<CriticSeverity, typeof AlertTriangle> = {
   CRITICAL: AlertTriangle,
   WARN: AlertCircle,
   INFO: Info,
@@ -429,7 +444,7 @@ function CriticReview({
   summary,
   onReviewField,
 }: {
-  findings: KimptonCriticFinding[];
+  findings: CriticFinding[];
   summary: string;
   // FON-24: jump from a cited field to its review row in the Data Room.
   onReviewField?: (docId: string | null, field: string) => void;
@@ -459,7 +474,7 @@ function CriticReview({
       acc[f.severity] = (acc[f.severity] ?? 0) + 1;
       return acc;
     },
-    { CRITICAL: 0, WARN: 0, INFO: 0 } as Record<KimptonCriticSeverity, number>,
+    { CRITICAL: 0, WARN: 0, INFO: 0 } as Record<CriticSeverity, number>,
   );
 
   return (
@@ -664,10 +679,10 @@ function useLiveMemoSummary(dealId: string | null): LiveSummaryState {
 // ───────────── Live Critic report ─────────────
 // GET /deals/{id}/critic returns the latest persisted CriticReport. 404
 // = no run yet (the empty state handles that). Maps the worker JSON shape
-// to the local KimptonCriticFinding shape so we can reuse <CriticReview>.
+// to the local CriticFinding shape so we can reuse <CriticReview>.
 
 interface LiveCriticState {
-  findings: KimptonCriticFinding[] | null;
+  findings: CriticFinding[] | null;
   summary: string | null;
   status: 'loading' | 'ok' | 'empty' | 'error';
 }
@@ -705,9 +720,9 @@ function useLiveCriticReport(dealId: string | null): LiveCriticState {
           return;
         }
         const rawFindings = Array.isArray(data.findings) ? data.findings : [];
-        const findings: KimptonCriticFinding[] = rawFindings.map((f, i) => {
+        const findings: CriticFinding[] = rawFindings.map((f, i) => {
           const sevRaw = String(f.severity ?? '').toUpperCase();
-          const severity: KimptonCriticSeverity =
+          const severity: CriticSeverity =
             sevRaw === 'CRITICAL' ? 'CRITICAL'
             : sevRaw === 'WARN' ? 'WARN'
             : 'INFO';

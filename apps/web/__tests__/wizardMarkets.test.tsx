@@ -105,6 +105,14 @@ describe('Sam #6 — STR market list not loaded (today)', () => {
     });
   });
 
+  it('sends the acquisition stage the wizard collected as deal_stage (go-live checklist)', async () => {
+    seedReviewDraft({ stage: 'LOI' });
+    render(<NewProjectPage />);
+    fireEvent.click(screen.getByRole('button', { name: /create deal/i }));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1));
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ deal_stage: 'LOI' });
+  });
+
   it('sends null market / submarket when left blank', async () => {
     seedReviewDraft({});
     render(<NewProjectPage />);

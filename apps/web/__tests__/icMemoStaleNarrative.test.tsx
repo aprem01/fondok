@@ -119,7 +119,7 @@ vi.mock('@/lib/hooks/useDeal', () => ({
       id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL',
       keys: 132, brand: 'Kimpton', field_overrides: fx.fieldOverrides,
     },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 
@@ -147,7 +147,7 @@ vi.mock('@/lib/api', async () => {
 
 import ICMemoTab from '@/components/project/ICMemoTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 
 const PROJECT = { id: 0, name: 'Kimpton Hotel' } as unknown as Project;
 

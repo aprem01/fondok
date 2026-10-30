@@ -215,5 +215,6 @@ export function fieldExplanation(
   docName?: string | null,
 ): string {
   const where = sourcePageLabel(page, docName);
-  return `${pct(confidence ?? 0)}% confidence${where ? ` · ${where}` : ''}`;
+  const conf = confidence == null ? 'confidence not scored' : `${pct(confidence)}% confidence`;
+  return `${conf}${where ? ` · ${where}` : ''}`;
 }

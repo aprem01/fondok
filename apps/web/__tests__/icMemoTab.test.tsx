@@ -27,7 +27,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
-import type { VarianceFlag } from '@/lib/varianceData';
+import type { VarianceFlag } from '@/lib/variance';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'deal-uuid-1' }),
@@ -94,7 +94,7 @@ const fx = vi.hoisted(() => ({
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
     deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, brand: 'Kimpton', field_overrides: fx.fieldOverrides },
-    status: null, loading: false, error: null, fromMock: false, refresh: fx.refreshDealSpy,
+    status: null, loading: false, error: null, workerConfigured: true, refresh: fx.refreshDealSpy,
   }),
 }));
 
@@ -153,7 +153,7 @@ vi.mock('@/lib/api', async () => {
 
 import ICMemoTab from '@/components/project/ICMemoTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 
 const PROJECT = { id: 0, name: 'Kimpton Hotel' } as unknown as Project;
 

@@ -10,8 +10,10 @@ import { kimptonSmokeEnabled } from './e2e/kimpton-qa/guard';
  * genuinely different surfaces:
  *
  *   :3000  NEXT_PUBLIC_WORKER_URL=''            → `isWorkerConnected()` false.
- *          The API client never fetches; every tab falls back to
- *          `lib/mockData.ts`. This is the shell/wizard/navigation suite.
+ *          The API client never fetches and every data surface renders the
+ *          "Worker not configured" state (there is no fixture fallback —
+ *          go-live Wave 0, C4). This is the shell/wizard/navigation suite plus
+ *          the lock on that state itself.
  *
  *   :3001  NEXT_PUBLIC_WORKER_URL='/__e2e-worker' → `isWorkerConnected()` true,
  *          pointed at a same-origin path nothing serves. Specs under
@@ -177,8 +179,8 @@ export default defineConfig({
           timeout: 120_000,
           env: {
             ...devServerEnv,
-            // Empty worker URL forces the API client into mock mode so
-            // these tests never hit a real backend.
+            // Empty worker URL: the API client never fetches and the data
+            // surfaces render "Worker not configured" — no backend, no fixture.
             NEXT_PUBLIC_WORKER_URL: '',
           },
         },

@@ -145,8 +145,8 @@ function BridgeBody({ data }: { data: InvestmentBridgeResponse }) {
           ))}
         </div>
         <div data-testid="bridge-foot" style={{ fontSize: 11, color: layout.foots ? palette.textMuted : prov.amber, marginTop: 10, lineHeight: 1.5 }}>
-          {layout.foots && layout.computedTotal != null && layout.equityReturned != null
-            ? `Foots: ${mm(data.equity_invested ?? 0)} invested + the five legs = ${mm(layout.computedTotal)}, equal to the ${mm(layout.equityReturned)} returned to equity (Σ levered cash flow, returns engine).`
+          {layout.foots && layout.computedTotal != null && layout.equityReturned != null && data.equity_invested != null
+            ? `Foots: ${mm(data.equity_invested)} invested + the five legs = ${mm(layout.computedTotal)}, equal to the ${mm(layout.equityReturned)} returned to equity (Σ levered cash flow, returns engine).`
             : data.unavailable.length > 0
               ? `Does not foot yet — ${data.unavailable.length === 1 ? 'one leg is' : `${data.unavailable.length} legs are`} unavailable on this run (${data.legs.filter((l) => l.status === 'unavailable').map((l) => l.label).join(', ')}).`
               : `Does not foot: the legs sum to ${layout.computedTotal != null ? mm(layout.computedTotal) : '—'} against ${layout.equityReturned != null ? mm(layout.equityReturned) : '—'} returned — the run's pieces disagree; re-run the model.`}

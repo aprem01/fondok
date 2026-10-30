@@ -2,7 +2,8 @@
 // All endpoints documented in apps/worker/app/api/*.py.
 //
 // When NEXT_PUBLIC_WORKER_URL is unset, `isWorkerConnected()` returns false
-// and consumers should fall back to `lib/mockData.ts`.
+// and every data surface renders the "Worker not configured" state
+// (components/WorkerNotConfigured) — there is no fixture fallback.
 
 import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
@@ -792,6 +793,8 @@ export interface NewDealBody {
   service?: string | null;
   // FON-46 — deal classification set in the onboarding wizard.
   deal_type?: string | null;
+  /** Acquisition stage chosen on the wizard's first step (Teaser / Under NDA / LOI / PSA). */
+  deal_stage?: string | null;
   // FON-59 / R-048 — existing brand (blank → sourced from the OM) and the
   // analyst's proposed brand, as two separate fields.
   brand?: string | null;
@@ -1162,11 +1165,27 @@ export interface StaleRun {
   missing_blocks: Record<string, string[]>;
 }
 
+/**
+ * One engine the run could not complete, as the worker reports it on the run
+ * and engine-outputs payloads (go-live Wave 0, D4). `reason` is a stable
+ * machine code (e.g. `missing_input`, `validation_error`, `upstream_failed`);
+ * `message` is the sentence the analyst reads. The tabs that read this
+ * engine's figures render a banner naming the engine and reason instead of a
+ * blank or a zero.
+ */
+export interface EngineFailure {
+  engine: EngineName | string;
+  reason: string;
+  message: string;
+}
+
 export interface EngineOutputsResponse {
   deal_id: string;
   engines: Record<EngineName, EngineOutputResponse>;
   /** Null (or absent, on an older worker) whenever the run is current. */
   stale_run?: StaleRun | null;
+  /** Engines that did not complete on this run; empty / absent when all did. */
+  failures?: EngineFailure[] | null;
 }
 
 export interface EngineRunKickoffResponse {
@@ -1180,6 +1199,8 @@ export interface EngineRunStatusResponse {
   deal_id: string;
   run_id: string;
   engines: EngineOutputResponse[];
+  /** Engines that did not complete on this run; empty / absent when all did. */
+  failures?: EngineFailure[] | null;
 }
 
 // ── Regression baselines: run list + run compare (2026-10-16) ─────────

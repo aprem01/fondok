@@ -7,8 +7,6 @@ import {
   WorkerDeal,
   WorkerDealStatus,
 } from '@/lib/api';
-import { projects as mockProjects, Project } from '@/lib/mockData';
-
 const POLL_MS = 3000;
 // E-003 (FON-59) — while a deal is still extracting, re-read the deal row
 // (not just /status) this often, so keys / brand / city the worker fills in
@@ -22,31 +20,16 @@ const POLL_STATUSES = new Set([
   'PROCESSING',
 ]);
 
-function projectToDeal(p: Project): WorkerDeal {
-  // The mock `Project` shape doesn't carry a brand.
-  return {
-    id: String(p.id),
-    tenant_id: 'mock-tenant',
-    name: p.name,
-    city: p.city,
-    keys: p.keys,
-    service: p.service,
-    brand: null,
-    status: p.status,
-    deal_stage: p.dealStage,
-    risk: p.risk,
-    ai_confidence: p.aiConfidence / 100,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-}
-
 export interface DealState {
   deal: WorkerDeal | null;
   status: WorkerDealStatus | null;
   loading: boolean;
   error: string | null;
-  fromMock: boolean;
+  /**
+   * False when `NEXT_PUBLIC_WORKER_URL` is unset. The deal page then renders
+   * `WorkerNotConfigured`; `deal` stays null — never a sample deal.
+   */
+  workerConfigured: boolean;
   refresh: () => void;
 }
 
@@ -54,8 +37,8 @@ export interface DealState {
  * Fetches a single deal by id. Polls /status every 3s while the deal is
  * actively being extracted/processed.
  *
- * Falls back to mockData for the Kimpton Angler deal (id=7) when the worker
- * isn't reachable, so the demo deal still renders without a backend.
+ * Without a worker URL nothing is fetched and `deal` stays null: the page
+ * shows the "Worker not configured" state. There is no fixture fallback.
  */
 export function useDeal(id: string | number | null | undefined): DealState {
   const [deal, setDeal] = useState<WorkerDeal | null>(null);
@@ -67,23 +50,18 @@ export function useDeal(id: string | number | null | undefined): DealState {
   const lastDealFetch = useRef(0);
 
   const idStr = id == null ? '' : String(id);
-  // Only the worker-less demo build reads mock projects; a numeric id with the
-  // service connected is "not found", never a fixture.
-  const fromMock = !isWorkerConnected();
+  const workerConfigured = isWorkerConnected();
 
   const fetchOnce = useCallback(
     async (signal?: AbortSignal) => {
       if (!idStr) return;
       if (!isWorkerConnected()) {
-        const mock = mockProjects.find((p) => String(p.id) === idStr);
-        if (mock) setDeal(projectToDeal(mock));
-        else setDeal(null);
+        setDeal(null);
         setLoading(false);
         return;
       }
-      // Numeric ids belong to the worker-less demo build; the worker only
-      // knows UUIDs. With Fondok's service connected such an id is simply a
-      // deal that does not exist — never a sample fixture dressed as a deal.
+      // The worker only knows UUIDs. A numeric id (a legacy demo link) is
+      // simply a deal that does not exist — never a sample dressed as a deal.
       if (/^\d+$/.test(idStr)) {
         setDeal(null);
         setError('This deal was not found. It may have been archived, or the link is out of date.');
@@ -144,7 +122,7 @@ export function useDeal(id: string | number | null | undefined): DealState {
   // creation-time nulls ("0 keys") while Overview, reading engine output,
   // showed 132. Two refetch rules now: the deal row is re-read every
   // DEAL_REFRESH_MS while extraction runs, and once more the moment the
-  // status leaves the polling set. Mock / numeric ids are untouched.
+  // status leaves the polling set. Numeric ids never poll.
   const pollable = isWorkerConnected() && !!idStr && !/^\d+$/.test(idStr);
   const dealStatus = status?.status ?? deal?.status;
   const polling = pollable && !!dealStatus && POLL_STATUSES.has(dealStatus);
@@ -186,5 +164,5 @@ export function useDeal(id: string | number | null | undefined): DealState {
     wasPolling.current = polling;
   }, [polling, pollable, fetchOnce]);
 
-  return { deal, status, loading, error, fromMock, refresh };
+  return { deal, status, loading, error, workerConfigured, refresh };
 }

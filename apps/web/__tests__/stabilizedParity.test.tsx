@@ -138,7 +138,7 @@ vi.mock('@/lib/hooks/useDeal', () => ({
       id: 'deal-uuid-1', name: 'Kimpton Angler', keys: 132, city: 'Miami Beach, FL',
       deal_type: 'acquisition', return_profile: 'value-add', field_overrides: {},
     },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 vi.mock('@/lib/hooks/useEngineRun', () => ({
@@ -180,7 +180,7 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 import OverviewTab from '@/components/project/OverviewTab';
 import ICMemoTab from '@/components/project/ICMemoTab';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 
 const PROJECT = { id: 0, name: 'Kimpton Angler' } as unknown as Project;
 

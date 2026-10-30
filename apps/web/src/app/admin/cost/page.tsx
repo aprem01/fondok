@@ -3,7 +3,9 @@
 //
 // Renders `GET /admin/cost` from the worker: total spend across
 // 24h/7d/30d, top agents, model split, and top deals by cost.
-// Gated to org:admin + email == kpremks@gmail.com.
+// Gated to org:admin + an email on the NEXT_PUBLIC_ADMIN_COST_EMAILS
+// allowlist (comma-separated, inlined at build time). An unset or empty list
+// means NOBODY — the page never hard-codes a person.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Lock, DollarSign, Bot, Cpu, TrendingUp, RefreshCw } from 'lucide-react';
@@ -21,6 +23,14 @@ const fmtUSD = (n: number) =>
   }).format(n);
 
 const fmtNum = (n: number) => new Intl.NumberFormat('en-US').format(n);
+
+/** The allowlist, lower-cased and trimmed; empty when the variable is unset. */
+export function adminCostEmails(raw: string | undefined = process.env.NEXT_PUBLIC_ADMIN_COST_EMAILS): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0);
+}
 const fmtPct = (r: number) =>
   `${(r * 100).toFixed(r > 0 ? 1 : 0)}%`;
 
@@ -32,7 +42,8 @@ export default function AdminCostPage() {
   // throwing "useUser must be within ClerkProvider" during static export.
   const currentUser = useCurrentUser();
   const userEmail = currentUser.email;
-  const isAuthorized = isAdmin && userEmail === 'kpremks@gmail.com';
+  const allowlist = useMemo(() => adminCostEmails(), []);
+  const isAuthorized = isAdmin && allowlist.includes(userEmail.trim().toLowerCase());
 
   const [data, setData] = useState<AdminCostResponse | null>(null);
   // deal id → project name, so the "Top deals by cost" table reads names, not
@@ -94,7 +105,9 @@ export default function AdminCostPage() {
           <Lock className="mx-auto h-10 w-10 text-ink-300" />
           <h2 className="mt-4 text-[15px] font-semibold text-ink-900">Access restricted</h2>
           <p className="mt-2 text-[12.5px] text-ink-500">
-            Cost data is available only to kpremks@gmail.com.
+            {allowlist.length === 0
+              ? 'No cost-dashboard emails are configured for this build.'
+              : 'Cost data is available only to the configured admin emails.'}
           </p>
           <p className="mt-3 text-[11.5px] text-ink-500">
             Your email:{' '}

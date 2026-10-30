@@ -370,7 +370,7 @@ export function useDocuments(dealId: string | null | undefined): DocumentsState 
   const tick = useRef(0);
 
   const idStr = dealId == null ? '' : String(dealId);
-  // Numeric ids belong to mockData; the worker only knows UUIDs.
+  // The worker only knows UUIDs; a numeric id is never a deal.
   const live = isWorkerConnected() && !!idStr && !/^\d+$/.test(idStr);
 
   // Subscribe to the shared per-deal store FIRST (before the initial refresh

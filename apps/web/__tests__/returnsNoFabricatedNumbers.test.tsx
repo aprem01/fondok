@@ -101,17 +101,31 @@ function fullRun(): EngineOutputsResponse {
 }
 
 // Mutable fixture the mocked hook hands back — each test sets it.
-const outputsRef = vi.hoisted(() => ({ value: null as unknown }));
+const outputsRef = vi.hoisted(() => ({
+  value: null as unknown,
+  error: null as string | null,
+  refresh: vi.fn(async () => {}),
+}));
 vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   const actual = await vi.importActual<typeof import('@/lib/hooks/useEngineOutputs')>('@/lib/hooks/useEngineOutputs');
   return {
     ...actual,
     useEngineOutputs: () => ({
       outputs: outputsRef.value, previous: null, loading: false, settled: true, lastRunAt: null,
-      refresh: vi.fn(async () => {}),
+      error: outputsRef.error,
+      refresh: outputsRef.refresh,
     }),
   };
 });
+// B1 — the worker's `assumption_sources` tags, per test. Empty = untagged.
+const provenance = vi.hoisted(() => ({ sources: {} as Record<string, string> }));
+vi.mock('@/lib/hooks/useDealProvenance', () => ({
+  useSource: (key?: string) =>
+    key && provenance.sources[key] ? { source: provenance.sources[key], value: null, reason: null } : null,
+}));
+vi.mock('@/lib/hooks/useEngineRun', () => ({
+  useEngineRun: () => ({ run: vi.fn(async () => {}), status: 'idle' }),
+}));
 
 const previewSpy = vi.fn();
 vi.mock('@/lib/api', async () => {
@@ -123,7 +137,7 @@ vi.mock('@/lib/api', async () => {
   };
 });
 vi.mock('@/lib/hooks/useDeal', () => ({
-  useDeal: () => ({ deal: null, status: null, loading: false, error: null, fromMock: false, refresh: vi.fn() }),
+  useDeal: () => ({ deal: null, status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn() }),
 }));
 vi.mock('@/components/project/PricingSensitivityPanel', () => ({ default: () => null }));
 vi.mock('@/components/project/MaxPricePanel', () => ({ default: () => null }));
@@ -136,6 +150,7 @@ vi.mock('@/components/help/Traced', () => ({
 vi.mock('@/lib/hooks/useFlash', () => ({ useFlash: () => false }));
 
 import ReturnsTab from '@/components/project/ReturnsTab';
+import { sourceLabel } from '@/lib/provenance';
 
 /** Drop keys from the returns engine's outputs (or inputs.assumptions). */
 function withReturns(
@@ -168,6 +183,9 @@ beforeEach(() => {
   window.sessionStorage.clear();
   nav.params = new URLSearchParams('');
   outputsRef.value = fullRun();
+  outputsRef.error = null;
+  outputsRef.refresh.mockClear();
+  provenance.sources = {};
 });
 
 describe('Returns Summary — a complete run shows only engine figures', () => {
@@ -359,6 +377,65 @@ describe('Returns section — no engine run at all', () => {
     expect(screen.getByTestId('overview-returns-unavailable')).toHaveTextContent(/Returns engine unavailable/);
     expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
+  });
+
+  // Go-live Wave 0 (D1 / D4) — "no returns on screen" has three causes, and
+  // the section names the one that applies instead of a single "unavailable".
+  it('read failed → an error card with Retry, not "engine unavailable"', () => {
+    outputsRef.value = null;
+    outputsRef.error = "Fondok's service didn't respond. Try again.";
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('engine-outputs-error')).toHaveTextContent('Couldn’t load the returns');
+    expect(screen.queryByTestId('overview-returns-unavailable')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(outputsRef.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('an engine failed → the banner names the engine and the reason, not "engine unavailable"', () => {
+    outputsRef.value = {
+      deal_id: 'deal-1',
+      engines: {},
+      failures: [{ engine: 'returns', reason: 'missing_input', message: 'Returns: no purchase price on the deal.' }],
+    };
+    render(<ReturnsTab />);
+    const banner = screen.getByTestId('engine-failures-banner');
+    expect(banner).toHaveTextContent('The Returns model didn’t finish');
+    expect(banner).toHaveTextContent('no purchase price on the deal.');
+    expect(banner).toHaveTextContent('reason: missing input');
+    expect(screen.queryByTestId('overview-returns-unavailable')).toBeNull();
+  });
+});
+
+// Go-live Wave 0 (B1) — the Exit Assumptions badges read the worker's
+// `assumption_sources`; they were hard-coded "Linked" whatever the tag said.
+describe('Exit Assumptions — Hold Period / Exit Cap provenance comes from assumption_sources', () => {
+  it('no tag → "Source unknown" with the awaiting-data dot, never "Linked"', () => {
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('exit-assumption-source-hold_years')).toHaveTextContent('Source unknown');
+    expect(screen.getByTestId('exit-assumption-source-exit_cap_rate')).toHaveTextContent('Source unknown');
+    expect(screen.queryByRole('img', { name: 'Linked' })).toBeNull();
+    const dots = screen.getAllByRole('img', { name: 'Awaiting data' });
+    expect(dots.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an analyst override reads as an Assumption with the override label; a deal-row value reads as Document sourced', () => {
+    provenance.sources = { hold_years: 'analyst_override', exit_cap_rate: 'deal_row' };
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('exit-assumption-source-hold_years')).toHaveTextContent(sourceLabel('analyst_override'));
+    expect(screen.getByTestId('exit-assumption-source-exit_cap_rate')).toHaveTextContent(sourceLabel('deal_row'));
+    expect(screen.getAllByRole('img', { name: 'Assumption' }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole('img', { name: 'Document sourced' }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole('img', { name: 'Linked' })).toBeNull();
+    // The value itself is the hover primitive every other tab uses.
+    expect(screen.getByLabelText(`Source: ${sourceLabel('analyst_override')}`)).toHaveTextContent('5 years');
+  });
+
+  it('a platform default reads as an Assumption labelled as the default — never dressed as Linked', () => {
+    provenance.sources = { exit_cap_rate: 'seed' };
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('exit-assumption-source-exit_cap_rate')).toHaveTextContent(sourceLabel('seed'));
+    expect(sourceLabel('seed')).toMatch(/default/i);
+    expect(screen.queryByRole('img', { name: 'Linked' })).toBeNull();
   });
 });
 

@@ -173,7 +173,7 @@ vi.mock('@/lib/hooks/useDeal', () => ({
     status: null,
     loading: false,
     error: null,
-    fromMock: false,
+    workerConfigured: true,
     refresh: vi.fn(),
   }),
 }));

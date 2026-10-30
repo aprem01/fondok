@@ -156,7 +156,11 @@ describe('cashFlowStatement — pure view-model helpers', () => {
 
 // ─────────────────── Component render (populated + fallback) ───────────────
 
-const hoisted = vi.hoisted(() => ({ outputs: null as EngineOutputsResponse | null }));
+const hoisted = vi.hoisted(() => ({
+  outputs: null as EngineOutputsResponse | null,
+  error: null as string | null,
+  refresh: vi.fn(async () => {}),
+}));
 
 // Mutable routing state (FON-59 #4) - `params` is a REAL URLSearchParams, what
 // Next's ReadonlyURLSearchParams behaves like, so `useSubTab`'s toString()
@@ -187,8 +191,10 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
       outputs: hoisted.outputs,
       previous: null,
       loading: false,
+      settled: true,
+      error: hoisted.error,
       lastRunAt: null,
-      refresh: vi.fn(),
+      refresh: hoisted.refresh,
     }),
   };
 });
@@ -196,7 +202,35 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
 import CashFlowTab from '@/components/project/CashFlowTab';
 
 describe('CashFlowTab — render', () => {
-  beforeEach(() => cleanup());
+  beforeEach(() => {
+    cleanup();
+    hoisted.error = null;
+    hoisted.refresh.mockClear();
+  });
+
+  // Go-live Wave 0 (D1 / D4) — three reasons for "no statement", three cards.
+  it('read failed → an error card with Retry, never the not-published copy', () => {
+    hoisted.outputs = null;
+    hoisted.error = "Fondok's service didn't respond. Try again.";
+    render(<CashFlowTab />);
+    const card = screen.getByTestId('engine-outputs-error');
+    expect(card).toHaveTextContent('Couldn’t load the cash-flow statement');
+    expect(screen.queryByTestId('cashflow-not-published')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('an engine failed → the banner names the engine and reason, never the not-published copy', () => {
+    hoisted.outputs = {
+      ...envelope(null),
+      failures: [{ engine: 'cash_flow', reason: 'upstream_failed', message: 'Cash Flow: Returns did not finish.' }],
+    } as EngineOutputsResponse;
+    render(<CashFlowTab />);
+    const banner = screen.getByTestId('engine-failures-banner');
+    expect(banner).toHaveTextContent('The Cash flow model didn’t finish');
+    expect(banner).toHaveTextContent('reason: upstream failed');
+    expect(screen.queryByTestId('cashflow-not-published')).toBeNull();
+  });
 
   it('renders the canonical statement (Summary + Levered) from the cash_flow output', () => {
     hoisted.outputs = envelope(CF);

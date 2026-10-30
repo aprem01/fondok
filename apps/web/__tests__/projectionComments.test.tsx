@@ -50,7 +50,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
   return { ...actual, useEngineOutputs: () => ({ outputs: OUTPUTS, previous: null, loading: false, settled: true, lastRunAt: null, refresh: vi.fn(async () => {}) }) };
 });
 vi.mock('@/lib/hooks/useDeal', () => ({
-  useDeal: () => ({ deal: { id: 'deal-uuid-1', name: 'D', keys: 132, field_overrides: {} }, status: null, loading: false, error: null, fromMock: false, refresh: vi.fn() }),
+  useDeal: () => ({ deal: { id: 'deal-uuid-1', name: 'D', keys: 132, field_overrides: {} }, status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn() }),
 }));
 vi.mock('@/lib/hooks/useEngineRun', () => ({ useEngineRun: () => ({ run: vi.fn(async () => {}), running: false, status: 'idle', error: null }) }));
 vi.mock('@/lib/hooks/useDealProvenance', () => ({ useSource: () => null }));

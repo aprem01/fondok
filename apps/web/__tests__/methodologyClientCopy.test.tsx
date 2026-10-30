@@ -70,6 +70,14 @@ describe('/methodology — client copy discipline', () => {
     expect(document.querySelectorAll('code')).toHaveLength(0);
   });
 
+  it('states the dash rule in plain words — a figure with no source renders as —', () => {
+    render(<MethodologyPage />);
+    const rule = screen.getByTestId('dash-rule');
+    expect(rule).toHaveTextContent('A figure with no source renders as —.');
+    expect(rule).toHaveTextContent(/Nothing is filled in with a zero, an estimate or a sample figure/);
+    expect(rule).toHaveTextContent(/exported workbook leaves the same cell empty/);
+  });
+
   it('has no unrecorded-video placeholder and no "coming soon"', () => {
     render(<MethodologyPage />);
     const text = visibleText();

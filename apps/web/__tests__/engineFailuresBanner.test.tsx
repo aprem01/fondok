@@ -35,6 +35,7 @@ vi.mock('@/lib/hooks/useEngineRun', () => ({
 
 import {
   EngineFailuresBanner,
+  engineFailures,
   humanizeEngineError,
 } from '@/components/project/EngineFailuresBanner';
 
@@ -207,5 +208,61 @@ describe('EngineFailuresBanner', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Re-run models/ }));
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Go-live Wave 0 (D4) — the worker's per-engine failure list ─────────────
+describe('EngineFailuresBanner · failures list', () => {
+  const withFailures = (
+    rows: EngineOutputResponse[],
+    failures: EngineOutputsResponse['failures'],
+  ): EngineOutputsResponse => ({ ...outputs(rows), failures });
+
+  it('engineFailures() reads the list first and adds failed rows the list does not name', () => {
+    const snapshot = withFailures(
+      [row('debt', 'failed', LEGACY_ZERO_ERROR), row('returns', 'failed', 'Returns: upstream Debt did not finish.')],
+      [{ engine: 'debt', reason: 'validation_error', message: DEBT_SENTENCE }],
+    );
+    const entries = engineFailures(snapshot);
+    expect(entries.map((e) => e.engine)).toEqual(['debt', 'returns']);
+    expect(entries[0]).toMatchObject({ reason: 'validation_error', raw: DEBT_SENTENCE });
+    expect(entries[1]).toMatchObject({ reason: null, raw: 'Returns: upstream Debt did not finish.' });
+  });
+
+  it('names the engine AND the reason, and shows the list’s message verbatim', () => {
+    render(
+      <EngineFailuresBanner
+        outputs={withFailures(
+          [row('revenue', 'complete')],
+          [{ engine: 'sensitivity', reason: 'missing_input', message: 'Sensitivity: no base-case returns to flex.' }],
+        )}
+        dealId="deal-uuid-1"
+      />,
+    );
+    const banner = screen.getByTestId('engine-failures-banner');
+    expect(banner).toHaveTextContent('The Sensitivity model didn’t finish');
+    const item = within(banner).getByTestId('engine-failure-sensitivity');
+    expect(within(item).getByTestId('engine-failure-lead')).toHaveTextContent('Sensitivity:');
+    expect(within(item).getByTestId('engine-failure-message')).toHaveTextContent('no base-case returns to flex.');
+    expect(within(item).getByTestId('engine-failure-reason')).toHaveTextContent('reason: missing input');
+    expect(within(item).getByTestId('engine-failure-reason')).toHaveAttribute('title', 'Reason code: missing_input');
+  });
+
+  it('a failure the list reports is shown even when its row is absent from `engines`', () => {
+    render(
+      <EngineFailuresBanner
+        outputs={withFailures([row('revenue', 'complete')], [{ engine: 'cash_flow', reason: 'upstream_failed', message: 'Cash Flow: Returns did not finish.' }])}
+        dealId="deal-uuid-1"
+      />,
+    );
+    expect(screen.getByTestId('engine-failure-cash_flow')).toBeInTheDocument();
+    expect(screen.getByTestId('engine-failure-lead')).toHaveTextContent('Cash Flow:');
+  });
+
+  it('an empty list and healthy rows render nothing', () => {
+    const { container } = render(
+      <EngineFailuresBanner outputs={withFailures([row('debt', 'complete')], [])} dealId="deal-uuid-1" />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 });
