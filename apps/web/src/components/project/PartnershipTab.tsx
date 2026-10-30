@@ -96,8 +96,9 @@ const PARTNERSHIP_SOURCE = {
 interface SeedTier {
   hurdle: number | undefined;
   gp: number | undefined;
-  /** assumption_sources tags either field `seed` — the platform suggestion. */
-  seeded: boolean;
+  /** assumption_sources tags this field `seed` — the platform suggestion. */
+  hurdleSeeded: boolean;
+  gpSeeded: boolean;
 }
 /** The badge a worker reference term carries wherever it is shown. */
 const PLATFORM_DEFAULT_NOTE = 'Platform default — no partnership terms on this deal yet; set yours to replace it';
@@ -344,7 +345,7 @@ export default function PartnershipTab() {
       // Without a declared count the ladder is the contiguous run of bands
       // the payload carries.
       if (declared == null && hurdle == null && gp == null) break;
-      tiers.push({ hurdle, gp, seeded: hurdleSrc?.source === 'seed' || gpSrc?.source === 'seed' });
+      tiers.push({ hurdle, gp, hurdleSeeded: hurdleSrc?.source === 'seed', gpSeeded: gpSrc?.source === 'seed' });
     }
     return tiers;
   }, [lookupSource]);
@@ -564,8 +565,9 @@ export default function PartnershipTab() {
   // `seed`), not a term the deal carries (`partnership_doc`, an override).
   // The badge follows the SOURCE: whenever assumption_sources tags the term
   // `seed`, the value on screen (even an engine run's) rests on the platform
-  // suggestion. Only an override saved in this session — which the payload
-  // has not re-read yet — takes it off.
+  // suggestion. Any analyst override with a finite value takes it off —
+  // one loaded from `deal.field_overrides` as well as one saved in this
+  // session that the payload has not re-read yet.
   const gpPctIsDefault = gpPctOverride == null && gpPctSource?.source === 'seed';
 
   const prefOverrideRaw = readOverrideNum(overrides, 'pref_rate', NaN);
@@ -1542,7 +1544,10 @@ function PromoteWaterfall({
     const incomplete = !(gpComplete && hurdleComplete);
     // C3 — a band resting on the platform suggestion (source `seed`) says so,
     // unless the analyst has overridden this tier since the payload was read.
-    const tierIsDefault = !!seed?.seeded && !(gpPath in overrides) && !(hurdlePath in overrides);
+    // Per field, with the same finite-override test as the terms: overriding
+    // only the hurdle leaves the GP split badged, and vice versa.
+    const hurdleIsDefault = !!seed?.hurdleSeeded && !Number.isFinite(readOverrideNum(overrides, hurdlePath, NaN));
+    const gpIsDefault = !!seed?.gpSeeded && !Number.isFinite(readOverrideNum(overrides, gpPath, NaN));
     const last = pos === visibleCount - 1;
     // FON-66 follow-up — EVERY promote tier is removable (mid-stack included),
     // as long as one survives.
@@ -1629,9 +1634,14 @@ function PromoteWaterfall({
             {incomplete
               ? 'Set the hurdle and GP split to activate this tier'
               : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
-            {tierIsDefault && (
-              <span data-testid={`tier-${i}-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
-                Platform default — set this tier to replace it
+            {hurdleIsDefault && (
+              <span data-testid={`tier-${i}-hurdle-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
+                Hurdle: platform default — set it to replace it
+              </span>
+            )}
+            {gpIsDefault && (
+              <span data-testid={`tier-${i}-gp-platform-default`} style={{ display: 'block', color: palette.textMuted }}>
+                GP split: platform default — set it to replace it
               </span>
             )}
           </span>

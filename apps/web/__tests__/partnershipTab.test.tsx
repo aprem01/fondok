@@ -720,7 +720,13 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
 
   /** The Platform default note under the Summary's GP-ownership / pref rows. */
   const termNotes = () => screen.queryAllByText(/^Platform default — no partnership terms on this deal yet/);
-  const tierBadge = (i: number) => screen.queryByTestId(`tier-${i}-platform-default`);
+  /** Both per-field band badges present (hurdle AND GP split) → the element, else null. */
+  const tierBadge = (i: number) => {
+    const h = screen.queryByTestId(`tier-${i}-hurdle-platform-default`);
+    const g = screen.queryByTestId(`tier-${i}-gp-platform-default`);
+    if (!!h !== !!g) throw new Error(`tier ${i}: hurdle badge ${!!h}, gp badge ${!!g}`);
+    return h;
+  };
 
   it('present → the worker value renders, badged as a platform default (terms and bands)', async () => {
     activeOutputs = bareOutputs();
@@ -755,6 +761,21 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
     // The promote bands are still the platform suggestion → badged.
     expect(tierBadge(0)).toBeInTheDocument();
     expect(tierBadge(1)).toBeInTheDocument();
+  });
+
+  it('overriding only a band\u2019s hurdle leaves its GP split badged (per-field badge)', async () => {
+    activeOutputs = bareOutputs();
+    mockDeal.field_overrides = { 'partnership.waterfall.0.hurdle_rate': { value: 0.14, note: 'JV term sheet' } };
+    try {
+      renderWithSources();
+      await waitFor(() => expect(screen.getByTestId('tier-0-gp-platform-default')).toBeInTheDocument());
+      expect(screen.queryByTestId('tier-0-hurdle-platform-default')).toBeNull();
+      // The untouched band keeps both.
+      expect(screen.getByTestId('tier-1-hurdle-platform-default')).toBeInTheDocument();
+      expect(screen.getByTestId('tier-1-gp-platform-default')).toBeInTheDocument();
+    } finally {
+      mockDeal.field_overrides = {};
+    }
   });
 
   it('an analyst_override source carries no badge — terms or bands', async () => {
