@@ -20,7 +20,8 @@ import { formatKeys } from '@/lib/formatKeys';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
-import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES } from '@/components/project/EngineFailuresBanner';
+import { useVariance } from '@/lib/hooks/useVariance';
 import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
@@ -154,9 +155,7 @@ export default function ProjectDetailPage() {
         toast(`Archive failed: ${msg}`, { type: 'error' });
       }
     } else {
-      toast('This sample deal can’t be archived.', {
-        type: 'info',
-      });
+      toast('Worker not configured — nothing to archive.', { type: 'info' });
     }
   };
   const onDeleteForever = async () => {
@@ -254,14 +253,14 @@ export default function ProjectDetailPage() {
     // `formatKeys(deal?.keys)`, a dash until then, never a fabricated 0.
     keys: deal.keys,
     service: deal.service ?? '—',
-    status: (deal.status as ProjectStatus) || 'Draft',
-    dealStage: (deal.deal_stage as DealStage) || 'Teaser',
+    // Absent on the row → null → no badge. Never an invented "Draft" / "Teaser".
+    status: (deal.status as ProjectStatus) || null,
+    dealStage: (deal.deal_stage as DealStage) || null,
     risk: ((deal.risk as Risk) || 'Medium'),
-    // Null until an extraction has scored a field — the pill reads "Awaiting
-    // docs"; a persisted 0.0 is not a measured 0%.
+    // Null until the worker has scored the deal — the pill reads "Awaiting
+    // docs"; a number (even 0) is the worker's own figure.
     aiConfidence: displayConfidence(deal.ai_confidence),
     assignee: '—',
-    docs: '0/0',
     // Deterministic (UTC / en-US). ``toLocaleDateString()`` depends on the
     // renderer's zone + locale, so any render path that has ``deal`` on both
     // the server and the first client render would hydrate-mismatch (React
@@ -269,7 +268,6 @@ export default function ProjectDetailPage() {
     // so the header date can never diverge from the server or by viewer zone.
     updatedAt: deal.updated_at ? fmtDate(deal.updated_at) : '—',
     createdAt: deal.created_at ? fmtDate(deal.created_at) : undefined,
-    noDocs: true,
   } : null;
 
   // Header pill state — popovers/drawers/tooltips. We keep all four
@@ -297,7 +295,7 @@ export default function ProjectDetailPage() {
   const EXPECTED_DOC_COUNT = 5;
   const liveDocsLabel = liveMode
     ? `${liveDocs.length}/${Math.max(EXPECTED_DOC_COUNT, liveDocs.length)}`
-    : (projectOrNull?.docs ?? '0/0');
+    : '—';
 
   // Esc closes any open header overlay.
   useEffect(() => {
@@ -326,9 +324,10 @@ export default function ProjectDetailPage() {
   // field scored yet) prints a dash in the breakdown, never 0%.
   const docCount = drawerDocs.length;
   const avgFieldConfidence = projectOrNull?.aiConfidence ?? null;
-  // Variance flags surface on the Analysis tab (live worker variance); the
-  // deal header no longer carries a mock count.
-  const varianceFlagCount = 0;
+  // The worker's variance report for this deal — the same hook the Analysis
+  // tab reads. Null until it has answered (or when it could not): "—".
+  const variance = useVariance(rawId);
+  const varianceFlagCount: number | null = variance.flags === null ? null : variance.flags.length;
 
   const activeTab = searchParams.get('tab') || '';
   const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? TAB_LABEL.dataRoom;
@@ -570,7 +569,7 @@ export default function ProjectDetailPage() {
                 {project.name}
               </h1>
               <span title="Where this deal stands. Draft = early stage, no IC review yet. In Review = team is reviewing. IC Ready = ready for the investment committee.">
-                <StatusBadge value={project.status} />
+                {project.status && <StatusBadge value={project.status} />}
               </span>
             </div>
           </div>
@@ -618,7 +617,7 @@ export default function ProjectDetailPage() {
                   <div className="space-y-1 tabular-nums">
                     <div className="flex justify-between"><span className="text-ink-500">Doc count</span><span className="font-medium text-ink-900">{docCount}</span></div>
                     <div className="flex justify-between"><span className="text-ink-500">Avg field confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence == null ? '—' : `${avgFieldConfidence}%`}</span></div>
-                    <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount == null ? '—' : varianceFlagCount}</span></div>
                   </div>
                 </div>
               )}
@@ -766,7 +765,14 @@ export default function ProjectDetailPage() {
           across tabs; the content column flexes narrower when it's open. */}
       <div className="flex items-start">
       <div className="p-8 max-w-[1800px] w-full min-w-0 flex-1" role="tabpanel" aria-label={`${activeLabel} content`}>
-        <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />
+        {/* One banner per failure: the Overview (Returns section), Cash Flow and
+            Scenario Analysis tabs report their own engines inline, so those are
+            left out here while that tab is active. */}
+        <EngineFailuresBanner
+          outputs={pageEngineOutputs}
+          dealId={rawId}
+          excludeEngines={TAB_OWNED_ENGINES[activeTab] ?? []}
+        />
         {/* FON-75 — a model CRASHED is the banner above; a model MOVED ON is
             this one. Page-level because a run that predates a block blanks a
             section on whichever tab happens to read it. */}

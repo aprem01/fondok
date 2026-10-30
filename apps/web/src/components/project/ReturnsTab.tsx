@@ -53,7 +53,7 @@ import { Traced } from '@/components/help/Traced';
 import { Sourced } from '@/components/help/Sourced';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceExplanation, sourceLabel, valueStateForSource } from '@/lib/provenance';
-import { EngineFailuresBanner, engineFailures } from './EngineFailuresBanner';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
 import {
   SubTabNav,
@@ -126,10 +126,12 @@ export function ReturnsSection() {
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const hasWorkerReturns = wReturnsIrr != null;
   // D1 / D4 — with no returns on screen, say WHY before saying "unavailable":
-  // the read failed (Retry), or an engine failed (the banner names it and the
-  // reason). Only a healthy snapshot with no returns is "not run yet".
+  // the read failed (Retry), or one of THIS section's engines failed (the
+  // banner names it and the reason; the page-level banner leaves these
+  // engines to us on the Overview tab, so each failure shows once). Only a
+  // healthy snapshot with no returns is "not run yet".
   const readFailed = outputsError != null && outputs == null;
-  const failures = engineFailures(outputs);
+  const ownedFailures = engineFailures(outputs, { only: TAB_OWNED_ENGINES.overview });
 
   return (
     <section
@@ -139,6 +141,9 @@ export function ReturnsSection() {
       aria-label="Returns"
       style={{ scrollMarginTop: 16 }}
     >
+      {ownedFailures.length > 0 && (
+        <EngineFailuresBanner outputs={outputs} dealId={dealId} engines={TAB_OWNED_ENGINES.overview} />
+      )}
       {hasWorkerReturns ? (
         // Output-only: every view reads the canonical worker engine outputs.
         // The Live Assumptions sliders are a local, ephemeral sandbox
@@ -152,11 +157,7 @@ export function ReturnsSection() {
         <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
           <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the returns" />
         </SectionCard>
-      ) : failures.length > 0 ? (
-        <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
-          <EngineFailuresBanner outputs={outputs} dealId={dealId} />
-        </SectionCard>
-      ) : (
+      ) : ownedFailures.length > 0 ? null : (
         <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: palette.textMuted, lineHeight: 1.5 }}>
             <TrendingUp size={18} aria-hidden="true" style={{ flexShrink: 0 }} />

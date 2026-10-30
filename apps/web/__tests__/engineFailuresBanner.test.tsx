@@ -259,6 +259,30 @@ describe('EngineFailuresBanner · failures list', () => {
     expect(screen.getByTestId('engine-failure-lead')).toHaveTextContent('Cash Flow:');
   });
 
+  it('`engines` keeps only the surface’s own engines; `excludeEngines` drops them — one banner per failure', () => {
+    const snapshot = withFailures(
+      [row('revenue', 'complete')],
+      [
+        { engine: 'returns', reason: 'missing_input', message: 'Returns: no purchase price.' },
+        { engine: 'debt', reason: 'validation_error', message: 'Debt: negative NOI.' },
+      ],
+    );
+    expect(engineFailures(snapshot, { only: ['returns', 'sensitivity'] }).map((f) => f.engine)).toEqual(['returns']);
+    expect(engineFailures(snapshot, { exclude: ['returns', 'sensitivity'] }).map((f) => f.engine)).toEqual(['debt']);
+
+    render(<EngineFailuresBanner outputs={snapshot} dealId="deal-uuid-1" engines={['returns']} />);
+    expect(screen.getByTestId('engine-failure-returns')).toBeInTheDocument();
+    expect(screen.queryByTestId('engine-failure-debt')).toBeNull();
+    cleanup();
+    render(<EngineFailuresBanner outputs={snapshot} dealId="deal-uuid-1" excludeEngines={['returns']} />);
+    expect(screen.getByTestId('engine-failure-debt')).toBeInTheDocument();
+    expect(screen.queryByTestId('engine-failure-returns')).toBeNull();
+    cleanup();
+    // Nothing left for this surface → nothing rendered.
+    const { container } = render(<EngineFailuresBanner outputs={snapshot} dealId="deal-uuid-1" engines={['cash_flow']} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('an empty list and healthy rows render nothing', () => {
     const { container } = render(
       <EngineFailuresBanner outputs={withFailures([row('debt', 'complete')], [])} dealId="deal-uuid-1" />,

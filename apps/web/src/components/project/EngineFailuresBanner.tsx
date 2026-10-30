@@ -119,11 +119,35 @@ export interface EngineFailureEntry {
 }
 
 /**
+ * Which engines each deal-page tab reports failures for ITSELF (in-tab
+ * banner), so the page-level banner can leave them out on that tab and every
+ * failure appears exactly once on screen. Keys are `?tab=` ids.
+ */
+export const TAB_OWNED_ENGINES: Record<string, readonly string[]> = {
+  // The Returns section lives on Overview (R-061) and reads returns + the
+  // sensitivity grids.
+  overview: ['returns', 'sensitivity'],
+  'cash-flow': ['cash_flow', 'cashflow'],
+  scenarios: ['sensitivity'],
+};
+
+export interface EngineFailureFilter {
+  /** Keep only these engines. */
+  only?: readonly string[];
+  /** Drop these engines. */
+  exclude?: readonly string[];
+}
+
+/**
  * Every engine that did not complete on this snapshot — from the worker's
  * `failures` list first, then any `status: 'failed'` row the list does not
- * already cover. Empty when every engine is healthy.
+ * already cover. Empty when every engine is healthy. `filter` scopes the
+ * list to (or away from) the engines a surface owns.
  */
-export function engineFailures(outputs: EngineOutputsResponse | null): EngineFailureEntry[] {
+export function engineFailures(
+  outputs: EngineOutputsResponse | null,
+  filter: EngineFailureFilter = {},
+): EngineFailureEntry[] {
   if (!outputs) return [];
   const byEngine = new Map<string, EngineFailureEntry>();
   for (const f of (outputs.failures ?? []) as EngineFailure[]) {
@@ -141,7 +165,11 @@ export function engineFailures(outputs: EngineOutputsResponse | null): EngineFai
     if (row?.status !== 'failed' || byEngine.has(engine)) continue;
     byEngine.set(engine, { engine, reason: null, raw: row.error ?? null });
   }
-  return [...byEngine.values()];
+  return [...byEngine.values()].filter(
+    (f) =>
+      (!filter.only || filter.only.includes(f.engine)) &&
+      !(filter.exclude && filter.exclude.includes(f.engine)),
+  );
 }
 
 /** `missing_input` → "missing input" — the stable code, readable. */
@@ -150,15 +178,21 @@ const humanizeReason = (reason: string) => reason.replace(/[_-]+/g, ' ').trim();
 export function EngineFailuresBanner({
   outputs,
   dealId,
+  engines,
+  excludeEngines,
 }: {
   outputs: EngineOutputsResponse | null;
   dealId: string;
+  /** In-tab use: only the engines this surface reads. */
+  engines?: readonly string[];
+  /** Page-level use: leave out the engines the active tab's own banner shows. */
+  excludeEngines?: readonly string[];
 }) {
   // Re-run the full chain (run-all) so dependent engines recompute in order.
   const { run, status } = useEngineRun(dealId, 'returns', { runMode: 'all' });
   const running = status === 'running' || status === 'queued';
 
-  const failed = engineFailures(outputs);
+  const failed = engineFailures(outputs, { only: engines, exclude: excludeEngines });
 
   if (failed.length === 0) return null;
 

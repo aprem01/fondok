@@ -34,6 +34,12 @@ vi.mock('@/lib/hooks/useDeal', () => ({
 vi.mock('@/lib/hooks/useDocuments', () => ({
   useDocuments: () => ({ documents: [] }),
 }));
+vi.mock('@/lib/hooks/useVariance', () => ({
+  useVariance: () => ({
+    flags: null, critical: 0, warn: 0, info: 0, note: null, loading: false, error: null,
+    workerConfigured: true, refresh: vi.fn(),
+  }),
+}));
 
 vi.mock('@/lib/hooks/useEngineOutputs', () => ({
   useEngineOutputs: () => ({ outputs: null }),

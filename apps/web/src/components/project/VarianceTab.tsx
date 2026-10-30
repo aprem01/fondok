@@ -184,22 +184,26 @@ export default function VarianceTab() {
   // top-three flags by absolute NOI impact, prefixed with severity.
   const totalFlags = varianceFlags.length;
 
-  // Prefer the dedicated NOI flag for the headline overstate $; fall
-  // back to the sum of broker-vs-T12 deltas across flags so a deal
-  // without an explicit NOI flag still shows a directional anchor.
+  // Prefer the dedicated NOI flag for the headline overstate $; fall back to
+  // the sum of broker-vs-T-12 deltas across the flags that carry BOTH sides.
+  // With no NOI flag and no comparable pair there is no figure: null → "—",
+  // never a $0 / 0.0% that reads as "the broker was right".
   const liveNoiFlag = varianceFlags.find((f) => f.metric.toLowerCase() === 'noi');
-  const noiOverstateUsd =
+  const comparable = varianceFlags.filter((f) => f.broker_value != null && f.t12_value != null);
+  const noiOverstateUsd: number | null =
     liveNoiFlag && liveNoiFlag.broker_value != null && liveNoiFlag.t12_value != null
       ? liveNoiFlag.broker_value - liveNoiFlag.t12_value
-      : varianceFlags.reduce(
-          (s, f) =>
-            s + Math.max(0, f.broker_value ?? 0) - Math.max(0, f.t12_value ?? 0),
-          0,
-        );
-  const noiOverstatePct =
+      : comparable.length > 0
+        ? comparable.reduce(
+            (s, f) => s + Math.max(0, f.broker_value as number) - Math.max(0, f.t12_value as number),
+            0,
+          )
+        : null;
+  // The % is only meaningful against the NOI flag's own T-12 base.
+  const noiOverstatePct: number | null =
     liveNoiFlag && liveNoiFlag.t12_value && liveNoiFlag.broker_value != null
       ? liveNoiFlag.broker_value / liveNoiFlag.t12_value - 1
-      : 0;
+      : null;
 
   // Top three NOI drivers — sorted by absolute NOI impact, NOI flag
   // itself excluded since it's the rollup. Each driver renders as a
@@ -236,8 +240,8 @@ export default function VarianceTab() {
 
   // Direction-aware verb so a broker who *understated* NOI (rare, but
   // happens on stabilized refis) isn't framed as "overstated".
-  const noiVerb = noiOverstateUsd >= 0 ? 'overstated' : 'understated';
-  const showLiveNoiHeadline = Math.abs(noiOverstateUsd) >= 1_000;
+  const noiVerb = noiOverstateUsd != null && noiOverstateUsd < 0 ? 'understated' : 'overstated';
+  const showLiveNoiHeadline = noiOverstateUsd != null && Math.abs(noiOverstateUsd) >= 1_000;
 
   return (
     <div className="space-y-5">
@@ -266,8 +270,8 @@ export default function VarianceTab() {
                 <>
                   {' '}Most material: broker NOI {noiVerb} by{' '}
                   <span className="font-semibold text-danger-700">
-                    {fmtCurrency(Math.abs(noiOverstateUsd), { compact: true })}
-                    {noiOverstatePct !== 0 && (
+                    {fmtCurrency(Math.abs(noiOverstateUsd as number), { compact: true })}
+                    {noiOverstatePct != null && (
                       <> ({(Math.abs(noiOverstatePct) * 100).toFixed(1)}%)</>
                     )}
                   </span>
@@ -312,8 +316,14 @@ export default function VarianceTab() {
         />
         <KpiCard
           label="NOI Variance"
-          value={fmtCurrency(noiOverstateUsd, { compact: true })}
-          sub={`${(Math.abs(noiOverstatePct) * 100).toFixed(1)}% overstate`}
+          value={noiOverstateUsd == null ? '—' : fmtCurrency(noiOverstateUsd, { compact: true })}
+          sub={
+            noiOverstatePct != null
+              ? `${(Math.abs(noiOverstatePct) * 100).toFixed(1)}% ${noiOverstatePct < 0 ? 'understate' : 'overstate'}`
+              : noiOverstateUsd != null
+                ? 'Summed across flags — no NOI flag'
+                : 'No broker-vs-T-12 pair on this report'
+          }
           tone="danger"
           icon={ArrowDown}
         />

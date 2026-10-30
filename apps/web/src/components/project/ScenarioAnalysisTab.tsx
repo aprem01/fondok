@@ -18,7 +18,7 @@ import { ChevronDown, Grid3x3 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { cn, fmtPct, fmtCurrency } from '@/lib/format';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
-import { EngineFailuresBanner, engineFailures } from './EngineFailuresBanner';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
 
 interface SensCell {
@@ -92,14 +92,16 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
     // each gets its own card (Retry; the engine and reason) before the
     // genuine not-run state below.
     const readFailed = outputsError != null && outputs == null;
-    const failures = engineFailures(outputs);
+    // Only the sensitivity engine's failure is this tab's to report; the
+    // page-level banner carries the rest (and skips this one here).
+    const ownedFailures = engineFailures(outputs, { only: TAB_OWNED_ENGINES.scenarios });
     return (
       <div className="space-y-4">
         <ScenarioIntroCard />
         {readFailed ? (
           <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the sensitivity grids" />
-        ) : failures.length > 0 ? (
-          <EngineFailuresBanner outputs={outputs} dealId={dealId} />
+        ) : ownedFailures.length > 0 ? (
+          <EngineFailuresBanner outputs={outputs} dealId={dealId} engines={TAB_OWNED_ENGINES.scenarios} />
         ) : (
         <Card className="p-8 text-center">
           <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">

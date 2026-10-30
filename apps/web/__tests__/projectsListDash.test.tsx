@@ -110,14 +110,19 @@ describe('Projects list — a wizard deal before extraction', () => {
     expect(container.textContent).not.toMatch(/\b0 keys/);
   });
 
-  it('a stored 0.0 confidence renders no "0%" bar (grid: hidden; it is "not scored", not a score)', () => {
-    hoisted.deals = [deal({ ai_confidence: 0, document_count: 2 })];
-    const { container } = render(<ProjectsPage />);
-    expect(container.textContent).not.toMatch(/\b0%/);
+  it('an unscored (null) confidence renders no bar; a measured 0 is a value and prints 0%', () => {
+    hoisted.deals = [deal({ id: 'a', name: 'Unscored', ai_confidence: null, document_count: 2 })];
+    const first = render(<ProjectsPage />);
+    expect(first.container.textContent).not.toMatch(/\b0%/);
     expect(screen.queryByText('AI Confidence')).toBeNull();
+    cleanup();
+    hoisted.deals = [deal({ id: 'b', name: 'Scored zero', ai_confidence: 0, document_count: 2 })];
+    render(<ProjectsPage />);
+    expect(screen.getByText('AI Confidence')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
   });
 
-  it('a null confidence renders no bar either, while a real score still renders', () => {
+  it('a null confidence renders no bar, while a real score still renders', () => {
     hoisted.deals = [
       deal({ id: 'a', name: 'Unscored', ai_confidence: null, document_count: 2 }),
       deal({ id: 'b', name: 'Scored', ai_confidence: 0.87, keys: 132, document_count: 4 }),
@@ -141,5 +146,11 @@ describe('Projects list — a wizard deal before extraction', () => {
     hoisted.deals = [deal({ document_count: 0 })];
     render(<ProjectsPage />);
     expect(screen.getByText('No documents uploaded')).toBeInTheDocument();
+  });
+
+  it('a row with no status and no stage shows no badge — never an invented "Draft" / "Teaser"', () => {
+    hoisted.deals = [deal({ status: null as unknown as string, deal_stage: null, document_count: 1 })];
+    const { container } = render(<ProjectsPage />);
+    expect(container.textContent).not.toMatch(/\bDraft\b|\bTeaser\b|\bLOI\b/);
   });
 });

@@ -74,6 +74,17 @@ describe('ScenarioAnalysisTab — why there are no grids', () => {
     expect(screen.queryByText('Scenario analysis not computed')).toBeNull();
   });
 
+  it('another engine’s failure is the page banner’s to report — this tab shows its own not-computed state', () => {
+    hoisted.outputs = {
+      deal_id: 'deal-1',
+      engines: {},
+      failures: [{ engine: 'debt', reason: 'validation_error', message: 'Debt: negative NOI.' }],
+    } as unknown as EngineOutputsResponse;
+    render(<ScenarioAnalysisTab dealId="deal-1" />);
+    expect(screen.getByText('Scenario analysis not computed')).toBeInTheDocument();
+    expect(screen.queryByTestId('engine-failures-banner')).toBeNull();
+  });
+
   it('a healthy snapshot with no matrices → the not-computed state, no error, no banner', () => {
     hoisted.outputs = { deal_id: 'deal-1', engines: {} } as unknown as EngineOutputsResponse;
     render(<ScenarioAnalysisTab dealId="deal-1" />);

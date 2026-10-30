@@ -79,8 +79,9 @@ interface DisplayDeal {
   /** Room count, or null until the OM extraction fills it — rendered "—", never 0. */
   keys: number | null;
   service: string;
-  status: string;
-  dealStage: string;
+  /** Null when the row carries none → no badge, never an invented "Draft" / "Teaser". */
+  status: string | null;
+  dealStage: string | null;
   /** Acquisition basis per key, from the pipeline payload (the same figure the dashboard prints). */
   pricePerKey: number | null;
   /** Levered IRR in PERCENT (15.7 = 15.7%), from the pipeline payload. */
@@ -108,8 +109,8 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
     city: d.city ?? '—',
     keys: d.keys,
     service: d.service ?? '—',
-    status: d.status || 'Draft',
-    dealStage: d.deal_stage || 'Teaser',
+    status: d.status || null,
+    dealStage: d.deal_stage || null,
     pricePerKey: row?.price_per_key ?? null,
     irr: row?.levered_irr != null ? row.levered_irr * 100 : null,
     noi: row?.noi_y1 ?? null,
@@ -302,8 +303,8 @@ export default function ProjectsPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 mb-4">
-                  <StatusBadge value={p.status} />
-                  <StatusBadge value={p.dealStage} />
+                  {p.status && <StatusBadge value={p.status} />}
+                  {p.dealStage && <StatusBadge value={p.dealStage} />}
                 </div>
 
                 {p.noDocs ? (
@@ -400,12 +401,12 @@ export default function ProjectsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <div className="text-[13.5px] font-medium text-ink-900 truncate">{p.name}</div>
-                  <StatusBadge value={p.status} />
+                  {p.status && <StatusBadge value={p.status} />}
                 </div>
                 <div className="text-[12px] text-ink-500 mt-0.5">{p.city} · <span className="tabular-nums">{formatKeys(p.keys)}</span> keys · {p.service}</div>
               </div>
               <div className="w-20 flex justify-end">
-                <StatusBadge value={p.dealStage} />
+                {p.dealStage ? <StatusBadge value={p.dealStage} /> : <span className="text-[11px] text-ink-500">—</span>}
               </div>
               <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
               <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>

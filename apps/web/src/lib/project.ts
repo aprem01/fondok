@@ -18,25 +18,26 @@ export interface Project {
   /** Room count from the deal row; null until the OM extraction fills it. */
   keys: number | null;
   service: string;
-  status: ProjectStatus;
-  dealStage: DealStage;
+  /** Null when the deal row carries none — no badge is shown, never an invented "Draft". */
+  status: ProjectStatus | null;
+  /** Null when the deal row carries none — no badge is shown, never an invented "Teaser". */
+  dealStage: DealStage | null;
   risk: Risk;
-  /** Whole-percent confidence, or null before any field has been scored. */
+  /** Whole-percent confidence, or null when the worker has not scored the deal. */
   aiConfidence: number | null;
   assignee: string;
-  docs: string;
   createdAt?: string;
   updatedAt: string;
-  noDocs?: boolean;
 }
 
 /**
  * The deal row's `ai_confidence` (0..1) as a whole percent for display, or
- * null when there is nothing to show. The worker persists 0.0 on create and
- * only a scored extraction moves it, so a 0 is "no field scored yet", not a
- * measured 0% — it renders as the awaiting state, never as a "0%" bar.
+ * null when the worker has not scored the deal (`null` / `undefined`). The
+ * worker leaves the field null until an extraction scores it, so a number —
+ * including a genuine 0 — is a measured value and renders as one; nothing
+ * here guesses which numbers are "really" unscored.
  */
 export function displayConfidence(aiConfidence: number | null | undefined): number | null {
-  if (typeof aiConfidence !== 'number' || !Number.isFinite(aiConfidence) || aiConfidence <= 0) return null;
+  if (typeof aiConfidence !== 'number' || !Number.isFinite(aiConfidence)) return null;
   return Math.round(aiConfidence * 100);
 }

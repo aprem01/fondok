@@ -13,7 +13,7 @@ import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
-import { EngineFailuresBanner, engineFailures } from './EngineFailuresBanner';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
 import { useFlash } from '@/lib/hooks/useFlash';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -198,7 +198,9 @@ export default function CashFlowTab() {
     // cards: the read failed (Retry), an engine failed (the banner names it
     // and the reason), or the model genuinely has not published one.
     const readFailed = outputsError != null && outputs == null;
-    const failures = engineFailures(outputs);
+    // Only the cash-flow engine's own failure is this tab's to report; the
+    // page-level banner carries the rest (and skips this one here).
+    const ownedFailures = engineFailures(outputs, { only: TAB_OWNED_ENGINES['cash-flow'] });
     return (
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
@@ -226,8 +228,8 @@ export default function CashFlowTab() {
           />
           {readFailed ? (
             <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the cash-flow statement" />
-          ) : failures.length > 0 ? (
-            <EngineFailuresBanner outputs={outputs} dealId={dealId} />
+          ) : ownedFailures.length > 0 ? (
+            <EngineFailuresBanner outputs={outputs} dealId={dealId} engines={TAB_OWNED_ENGINES['cash-flow']} />
           ) : (
           <Card className="p-16 text-center" data-testid="cashflow-not-published">
             <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">

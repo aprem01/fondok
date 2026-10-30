@@ -99,13 +99,38 @@ describe('VarianceTab — states', () => {
     expect(screen.getByText(/Only the T-12 has been extracted/)).toBeInTheDocument();
   });
 
-  it('a report with flags → the flags, counted from the report', () => {
+  it('a report with flags → the flags, counted from the report, with the NOI variance from the NOI flag', () => {
     hoisted.state.flags = [FLAG];
     hoisted.state.critical = 1;
     const { container } = render(<VarianceTab />);
     expect(screen.getByText('1 Critical')).toBeInTheDocument();
     expect(container.textContent).toContain('1 variance flag');
     expect(container.textContent).toContain('Broker NOI exceeds the T-12 by 21.5%.');
+    expect(container.textContent).toContain('$919K');
+    expect(container.textContent).toContain('21.5% overstate');
     expect(container.textContent).not.toMatch(/coastal insurance|optimistic occupancy uplift/);
+  });
+
+  it('flags without a broker-vs-T-12 pair → NOI Variance "—", never "$0 · 0.0% overstate"', () => {
+    hoisted.state.flags = [{
+      ...FLAG,
+      flag_id: 'INSURANCE_PER_KEY-0',
+      rule_id: 'INSURANCE_PER_KEY',
+      metric: 'insurance',
+      field_label: 'Insurance',
+      broker_value: undefined,
+      t12_value: undefined,
+      value: 4_200,
+      variance_abs: undefined,
+      variance_pct: undefined,
+      noi_impact_usd: 0,
+      explanation: 'Insurance per key is above the coastal band.',
+    }];
+    hoisted.state.critical = 1;
+    const { container } = render(<VarianceTab />);
+    expect(container.textContent).not.toMatch(/\$0\b/);
+    expect(container.textContent).not.toMatch(/0\.0% overstate/);
+    expect(container.textContent).toContain('No broker-vs-T-12 pair on this report');
+    expect(container.textContent).not.toMatch(/Most material/);
   });
 });
