@@ -138,10 +138,10 @@ the needed type, or no field that states the figure) wherever it is printed.
 GP equity 10%, LP equity 90%, preferred return 10% a year, badged Seed until entered. A shortfall
 is funded as a dated pro-rata capital call by ownership split; the preferred return accrues on it.
 
-These terms have one definition, in the Partnership engine. The Partnership tab reads them from the
-deal's assumption sources. Every term and promote band whose source is the platform suggestion is
-labelled *Platform default* — also when the model has run on it — until you, or a partnership
-document, set it; one with no source shows a dash, never a figure of the tab's own.
+The Partnership tab shows the terms the deal carries and a dash, awaiting your input, for any it
+does not — never a figure of its own. When the engine reports the waterfall not applicable, the tab
+shows "No partnership terms on this deal" with the reason; a half-entered tier is named in a notice
+above the tabs. Neither is shown as an error.
 
 :::
 
