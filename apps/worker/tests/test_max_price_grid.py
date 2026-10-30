@@ -79,6 +79,18 @@ def _base_input(
 # ─────────────────────────── solver hurdle semantics ─────────────────
 
 
+def test_grid_and_solver_do_not_request_the_exit_schedule() -> None:
+    """FON-118 — the price bisection and the grid flex read one metric per
+    run; neither asks the returns engine for the per-exit-year table."""
+    from app.engines.max_price_grid import flex_returns_input
+    from app.engines.price_solver import _flex_price
+
+    base = _base_input()
+    assert base.exit_schedule is True
+    assert flex_returns_input(base, exit_cap_pct=0.07, noi_growth_pct=0.03).exit_schedule is False
+    assert _flex_price(base, 50_000_000.0).exit_schedule is False
+
+
 def test_solver_refuses_to_invent_a_hurdle() -> None:
     with pytest.raises(ValueError) as exc:
         solve_max_price(_base_input(), target_irr=None, target_em=None)

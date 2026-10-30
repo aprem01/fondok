@@ -93,6 +93,21 @@ def _coc_input() -> SensitivityInput:
     )
 
 
+def test_grid_cells_do_not_request_the_exit_schedule() -> None:
+    """FON-118 — a sensitivity cell reads one metric; the per-exit-year table
+    is not computed on any grid path (returns-mode flex or financing cells)."""
+    from app.engines.sensitivity import SensitivityEngine, _flex
+
+    inp = _coc_input()
+    assert inp.base_returns_input.exit_schedule is True  # the canonical run has it
+    flexed = _flex(inp.base_returns_input, "exit_cap_rate", 0.08)
+    assert flexed.exit_schedule is False
+    # The financing cells build their own copy; the output carries no table.
+    out = SensitivityEngine().run(inp)
+    assert out.matrices  # the CoC grid rendered
+    assert not hasattr(out, "exit_schedule")
+
+
 def test_year_one_coc_matrix_emitted() -> None:
     out = SensitivityEngine().run(_coc_input())
     coc = next((m for m in out.matrices if m.key == "coc_loan_rate"), None)

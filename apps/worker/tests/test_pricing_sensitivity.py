@@ -71,6 +71,16 @@ def _base_input(
 # ─────────────────────────── unit tests ─────────────────────────────
 
 
+def test_grid_cells_do_not_request_the_exit_schedule() -> None:
+    """FON-118 — every flexed cell input carries ``exit_schedule=False``."""
+    from app.engines.pricing_sensitivity import _flex_returns_input
+
+    base = _base_input()
+    assert base.exit_schedule is True
+    flexed = _flex_returns_input(base, exit_cap_pct=0.07, noi_multiplier=1.0)
+    assert flexed.exit_schedule is False
+
+
 def test_5x5_grid_has_25_cells() -> None:
     """Default grid is exactly 5x5 = 25 cells."""
     grid = run_sensitivity_grid(_base_input())

@@ -7,6 +7,7 @@ bisection fallback handles cash-flow series where Newton fails to converge.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -14,18 +15,26 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import ModelAssumptions
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
+from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.underwriting import (
     CashFlowEngineOutput,
     CashFlowYear,
+    ExitYearReturn,
     ReturnsEngineInput,
     ReturnsEngineOutput,
 )
 
 from .base import BaseEngine
-from .monthly_cashflow import MonthlyCashFlowInput, build_monthly_cashflow
+from .monthly_cashflow import (
+    MonthlyCashFlowInput,
+    MonthlyCashFlowResult,
+    build_monthly_cashflow,
+)
 from .stabilization import resolve_stabilized_year_index
 
-ExitNoiBasis = Literal["forward_12m", "stabilized"]
+# FON-44 (R-059) + FON-44 addition (2026-10-30): the analyst-selectable bases.
+# ``override`` is not selectable — it is what ``terminal_noi_override`` reports.
+ExitNoiBasis = Literal["forward_12m", "stabilized", "sale_year"]
 
 
 class _TerminalNoiCheck(BaseModel):
@@ -47,6 +56,7 @@ def _resolve_terminal_noi(
     basis: str,
     stabilized_year: int | None,
     override: float | None,
+    next_year_noi: float | None = None,
 ) -> tuple[float, str, str, int | None, str]:
     """FON-44 (R-059) — the NOI the reversion caps, and how it was chosen.
 
@@ -57,7 +67,14 @@ def _resolve_terminal_noi(
     — byte-identical to the pre-FON-44 reversion. ``stabilized`` is the
     stabilized year's NOI grown to the exit year at the same growth rate; when
     stabilization lands after the exit, the exit year's NOI is used and the
-    label says so.
+    label says so. ``sale_year`` (FON-44 addition) is the exit year's own Cash
+    NOI, not grown.
+
+    ``next_year_noi`` (FON-118) is the PROJECTED NOI of the year after the
+    sale, passed only for an interim exit-schedule row — the projection has
+    that year, so the forward 12 months are read, not grown. The headline
+    never passes it (there is no projected year after the hold), so its
+    arithmetic is untouched.
     """
     if override is not None:
         return (
@@ -101,6 +118,22 @@ def _resolve_terminal_noi(
                 "terminal_noi = stabilized_year_noi × (1 + revpar_growth)"
                 " ^ (exit_year − stabilized_year)",
             )
+    if basis == "sale_year":
+        return (
+            noi_series[-1],
+            "sale_year",
+            f"Sale-year NOI (Year {hold})",
+            hold - 1,
+            "terminal_noi = exit_year_noi",
+        )
+    if next_year_noi is not None:
+        return (
+            next_year_noi,
+            "forward_12m",
+            f"Forward 12-month NOI (Year {hold + 1}, projected)",
+            hold,
+            "terminal_noi = projected_noi[exit_year + 1]",
+        )
     return (
         noi_series[-1] * (1.0 + growth),
         "forward_12m",
@@ -462,7 +495,7 @@ def xirr(
     return (lo + hi) / 2.0
 
 
-# ─────────────── Returns engine ───────────────
+# ─────────────── Returns engine inputs / outputs ───────────────
 
 
 class ReturnsEngineInputExt(BaseModel):
@@ -550,6 +583,31 @@ class ReturnsEngineInputExt(BaseModel):
     # lineage service to infer it. The runner sets it False when it substitutes
     # the analyst's ``noi_override_by_year`` pin (FON-67).
     noi_from_expense_engine: bool = True
+    # FON-118 — returns by exit year. The inputs below feed ONLY the interim
+    # rows of ``exit_schedule``; the selected exit (the headline) reads the
+    # scalar ``loan_balance_at_exit`` exactly as before, so every existing
+    # output is byte-identical whatever is passed here.
+    #
+    # Senior ending balance per month from close (index 0 = month 1), from the
+    # debt engine's monthly_schedule. Empty → the scalar ``loan_balance_at_exit``
+    # is the payoff at every exit (legacy single-balance behaviour).
+    loan_balance_by_month: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
+    # The post-refinance balance (interest-only → constant) once the refi month
+    # has passed. None → the scalar ``loan_balance_at_exit`` stands in.
+    refi_balance: Annotated[float, Field(ge=0)] | None = None
+    # Compute the per-year table. Grid callers (sensitivity, pricing, max-price,
+    # price solver, asking-vs-bid) set False: they read one metric per run.
+    exit_schedule: bool = True
+    # Development-like deal (the runner reads ``deals.deal_type``) — used ONLY to
+    # label rows inside the analyst-stated construction window; never a number.
+    development_like: bool = False
+    # Analyst-stated construction window's last month, months from close
+    # (timeline override ``renovation_start_offset_months +
+    # renovation_duration_months``); None = not stated, so no row is dashed
+    # for construction.
+    construction_end_month: Annotated[int, Field(ge=0)] | None = None
 
 
 class ReturnsEngineOutputExt(ReturnsEngineOutput):
@@ -585,10 +643,560 @@ def _project_noi_series(
     return [year_one_noi * ((1.0 + growth) ** (y - 1)) for y in range(1, hold_years + 1)]
 
 
+# ─────────────── Exit schedule (FON-118) ───────────────
+
+#: ``monthly_cashflow.xirr`` answers a one-sign stream with these rather than
+#: 0 so the price solver's return-vs-price surface stays monotone. They are
+#: sentinels, not rates — a table never prints them as an IRR.
+_IRR_SENTINEL_HI = 10.0
+_IRR_SENTINEL_LO = -0.9999
+
+_EXIT_ROW_TRACED_FIELDS: tuple[str, ...] = (
+    "levered_irr",
+    "unlevered_irr",
+    "equity_multiple",
+    "terminal_noi",
+    "gross_sale_price",
+    "net_proceeds",
+)
+
+
+def _irr_is_sentinel(value: float) -> bool:
+    return value >= _IRR_SENTINEL_HI or value <= _IRR_SENTINEL_LO
+
+
+@dataclass
+class _ExitContext:
+    """Everything that is FIXED across every sale date of one run (§2.3):
+    the projection, the debt service, the draws and the refinance. A row
+    moves only the sale date and the payoff."""
+
+    hold: int
+    full_term: int
+    noi_series: list[float]
+    op_cfad: list[float]
+    refi_active: bool
+    refi_month: int | None
+    monthly_ds: list[float]
+    total_capital: float
+    # The stabilized year every interim row reads on the ``stabilized`` basis,
+    # resolved ONCE on the full projection (a row's truncated series must not
+    # re-resolve it).
+    row_stabilized_year: int | None
+
+
+@dataclass
+class _ExitCase:
+    """The deal sold at ``exit_month`` — one evaluation of :meth:`_exit_case`."""
+
+    exit_month: int
+    exit_year: int | None
+    selected: bool
+    status: Literal["computed", "not_available"] = "computed"
+    reason: ReasonCode | None = None
+    reason_detail: str | None = None
+    basis: str | None = None
+    label: str = ""
+    formula: str | None = None
+    source_idx: int | None = None
+    terminal_noi: float | None = None
+    gross_sale: float | None = None
+    selling_costs: float | None = None
+    transfer_tax: float | None = None
+    payoff: float | None = None
+    payoff_source: str | None = None
+    refi_included: bool = False
+    net_proceeds: float | None = None
+    # Row-facing IRRs: None when the monthly solver returned a sentinel.
+    levered_irr: float | None = None
+    unlevered_irr: float | None = None
+    equity_multiple: float | None = None
+    total_distributions: float | None = None
+    # The monthly model's raw answers (sentinels included) — the headline
+    # keeps these exactly as before.
+    raw_levered_irr: float | None = None
+    raw_unlevered_irr: float | None = None
+    monthly: MonthlyCashFlowResult | None = None
+    cfad_series: list[float] | None = None
+
+
+def _capital_deploying_through(
+    payload: ReturnsEngineInputExt, ctx: _ExitContext
+) -> int | None:
+    """The last month (from close) in which equity is still going IN, or None.
+
+    Two sources: an explicit per-month draw schedule (index 0 = close; a draw
+    at a later index is capital still deploying) and the deferred-capital
+    window the monthly model spreads ``deferred_capital`` across (the same
+    offset-aware months :func:`build_monthly_cashflow` receives).
+    """
+    last: int | None = None
+    draws = payload.equity_draw_schedule
+    for i in range(len(draws) - 1, 0, -1):
+        if draws[i] > 0:
+            last = i
+            break
+    dy = payload.deferred_capital_year
+    if payload.deferred_capital > 0 and dy is not None:
+        end = min(ctx.full_term, (dy + 1) * 12 - payload.acquisition_month_offset)
+        last = end if last is None else max(last, end)
+    return last
+
+
+def _payoff_at(
+    payload: ReturnsEngineInputExt, exit_month: int, refi_included: bool
+) -> tuple[float, str]:
+    """Loan payoff for an INTERIM sale at ``exit_month`` and where it was read.
+
+    After the refinance the post-refi balance is owed (interest-only, so
+    constant); before it the senior's monthly ending balance at that month;
+    past loan maturity the last balance stands (today's ``schedule[-1]``
+    convention). With no monthly schedule the scalar ``loan_balance_at_exit``
+    is the payoff at every exit — the legacy single-balance behaviour.
+    """
+    scalar = (
+        payload.loan_balance_at_exit
+        if payload.loan_balance_at_exit is not None
+        else payload.loan_amount
+    )
+    if refi_included:
+        if payload.refi_balance is not None:
+            return payload.refi_balance, "refi_balance"
+        return scalar, "loan_balance_at_exit"
+    if payload.loan_balance_by_month:
+        idx = min(exit_month, len(payload.loan_balance_by_month)) - 1
+        return payload.loan_balance_by_month[idx], f"loan_balance_by_month[{idx}]"
+    return scalar, "loan_balance_at_exit"
+
+
+def _exit_row(case: _ExitCase, *, is_peak: bool) -> ExitYearReturn:
+    return ExitYearReturn(
+        exit_year=case.exit_year,
+        exit_month=case.exit_month,
+        is_selected=case.selected,
+        is_peak_levered=is_peak,
+        status=case.status,
+        reason=case.reason,
+        reason_detail=case.reason_detail,
+        exit_noi_basis=case.basis,  # type: ignore[arg-type]
+        exit_noi_period_label=case.label,
+        terminal_noi=case.terminal_noi,
+        gross_sale_price=case.gross_sale,
+        selling_costs=case.selling_costs,
+        transfer_tax=case.transfer_tax,
+        loan_payoff=case.payoff,
+        refi_included=case.refi_included,
+        net_proceeds=case.net_proceeds,
+        levered_irr=case.levered_irr,
+        unlevered_irr=case.unlevered_irr,
+        equity_multiple=case.equity_multiple,
+    )
+
+
+def _exit_row_provenance(
+    idx: int,
+    case: _ExitCase,
+    *,
+    payload: ReturnsEngineInputExt,
+    ctx: _ExitContext,
+) -> dict[str, ValueTrace]:
+    """Traces for one schedule row under ``exit_schedule[i].<field>`` keys.
+
+    A field the row has no value for carries ``reason`` and no formula (the
+    web's ``Traced`` renders nothing for it); a field the row did compute
+    carries the same shape the headline's trace does, compactly.
+    """
+    key = f"exit_schedule[{idx}]"
+    a = payload.assumptions
+    m = case.exit_month
+    out: dict[str, ValueTrace] = {}
+
+    def _refused(field: str) -> ValueTrace:
+        return ValueTrace(value=0.0, reason=case.reason, note=case.reason_detail)
+
+    # terminal_noi
+    if case.terminal_noi is None:
+        out[f"{key}.terminal_noi"] = _refused("terminal_noi")
+    else:
+        inputs: list[ValueInput] = []
+        if case.source_idx is not None and case.source_idx < len(ctx.noi_series):
+            inputs.append(
+                ValueInput(
+                    name="source_year_noi",
+                    value=ctx.noi_series[case.source_idx],
+                )
+            )
+        if case.formula and "revpar_growth" in case.formula:
+            inputs.append(
+                ValueInput(
+                    name="revpar_growth",
+                    value=a.revpar_growth,
+                    assumption_key="revpar_growth",
+                )
+            )
+        if case.basis == "override":
+            inputs.append(
+                ValueInput(
+                    name="terminal_noi_override",
+                    value=case.terminal_noi,
+                    assumption_key="terminal_noi_override",
+                )
+            )
+        note = f"Exit NOI basis: {case.label}."
+        if payload.terminal_noi_override is not None and not case.selected:
+            note += (
+                " The deal's terminal_noi_override applies to the selected exit"
+                " only; this row uses the deal's basis."
+            )
+        out[f"{key}.terminal_noi"] = ValueTrace(
+            value=case.terminal_noi, formula=case.formula, inputs=inputs, note=note
+        )
+
+    # gross_sale_price
+    if case.gross_sale is None:
+        out[f"{key}.gross_sale_price"] = _refused("gross_sale_price")
+    else:
+        out[f"{key}.gross_sale_price"] = ValueTrace(
+            value=case.gross_sale,
+            formula="gross_sale_price = terminal_noi ÷ exit_cap_rate",
+            inputs=[
+                ValueInput(
+                    name="terminal_noi",
+                    value=case.terminal_noi,
+                    traces_to=f"{key}.terminal_noi",
+                ),
+                ValueInput(
+                    name="exit_cap_rate",
+                    value=a.exit_cap_rate,
+                    assumption_key="exit_cap_rate",
+                ),
+            ],
+            note=f"Direct-cap value for a sale at month {m}.",
+        )
+
+    # net_proceeds
+    if case.net_proceeds is None:
+        out[f"{key}.net_proceeds"] = _refused("net_proceeds")
+    else:
+        out[f"{key}.net_proceeds"] = ValueTrace(
+            value=case.net_proceeds,
+            formula=(
+                "net_proceeds = gross_sale_price − selling_costs − transfer_tax"
+                " − loan_payoff"
+            ),
+            inputs=[
+                ValueInput(
+                    name="gross_sale_price",
+                    value=case.gross_sale,
+                    traces_to=f"{key}.gross_sale_price",
+                ),
+                ValueInput(name="selling_costs", value=case.selling_costs),
+                ValueInput(name="transfer_tax", value=case.transfer_tax),
+                ValueInput(name="loan_payoff", value=case.payoff),
+            ],
+            note=(
+                f"Loan payoff read from {case.payoff_source}; the refinance is "
+                + ("included" if case.refi_included else "not yet drawn")
+                + f" at month {m}."
+            ),
+        )
+
+    # IRRs
+    for field, raw, what in (
+        ("levered_irr", case.levered_irr, "equity"),
+        ("unlevered_irr", case.unlevered_irr, "asset"),
+    ):
+        if raw is None:
+            out[f"{key}.{field}"] = _refused(field)
+            continue
+        out[f"{key}.{field}"] = ValueTrace(
+            value=raw,
+            formula=f"{field} = rate r where Σ CFₜ ÷ (1 + r)ᵗ = 0",
+            inputs=[
+                ValueInput(name="exit_month", value=float(m)),
+                ValueInput(
+                    name="net_proceeds",
+                    value=case.net_proceeds,
+                    traces_to=f"{key}.net_proceeds",
+                ),
+            ],
+            note=(
+                f"Monthly XIRR of the {what} cash flows of the SAME projection "
+                f"sold at month {m}: operating cash, draws, debt service and "
+                "refinance timing are held fixed; only the sale date and the "
+                "payoff move."
+            ),
+        )
+
+    # equity_multiple
+    if case.equity_multiple is None:
+        out[f"{key}.equity_multiple"] = _refused("equity_multiple")
+    else:
+        convention = (
+            "monthly model (distributions through the exit month ÷ equity drawn)"
+            if case.selected and payload.exit_month_override is not None
+            else (
+                "Σ annual cash-flow-after-debt through the exit year + "
+                "net_proceeds, ÷ equity"
+            )
+        )
+        out[f"{key}.equity_multiple"] = ValueTrace(
+            value=case.equity_multiple,
+            formula="equity_multiple = total_distributions ÷ equity",
+            inputs=[
+                ValueInput(
+                    name="total_distributions",
+                    value=(
+                        case.total_distributions
+                        if case.total_distributions is not None
+                        else case.equity_multiple * payload.equity
+                    ),
+                ),
+                ValueInput(
+                    name="equity",
+                    value=payload.equity,
+                    traces_to="capital.equity_amount",
+                ),
+            ],
+            note=f"Convention: {convention}.",
+        )
+    return out
+
+
+# ─────────────── Returns engine ───────────────
+
+
 class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
-    """Compute levered/unlevered IRR, equity multiple and cash-on-cash."""
+    """Compute levered/unlevered IRR, equity multiple and cash-on-cash.
+
+    FON-118 — ONE mechanism: :meth:`_exit_case` prices "the deal sold at
+    month m" on the canonical projection. The headline is that function at
+    the deal's own exit (``exit_month_override`` or ``hold × 12``); every
+    projection year-end is the same function at its month, and together they
+    are ``exit_schedule``. The headline's arithmetic is the pre-FON-118 code
+    statement for statement, so the Kimpton golden is byte-identical.
+    """
 
     name = "returns"
+
+    def _exit_case(
+        self,
+        payload: ReturnsEngineInputExt,
+        ctx: _ExitContext,
+        *,
+        exit_month: int,
+        exit_year: int | None,
+        selected: bool,
+    ) -> _ExitCase:
+        """Price the deal sold at ``exit_month`` (§2.3).
+
+        ``selected`` is the deal's own exit — the headline. Its branches are
+        the legacy expressions verbatim: terminal NOI on the full series with
+        the override honoured, payoff = the scalar ``loan_balance_at_exit``,
+        equity multiple on the full annual stream (monthly for an off-cycle
+        month). An interim row reads the projected forward year, the
+        schedule's balance at that month, and the annual stream truncated at
+        its year; and it REFUSES (``not_available`` + reason) where the model
+        does not price a sale — it never raises and never prints 0.
+        """
+        assumptions = payload.assumptions
+        hold = ctx.hold
+        noi_series = ctx.noi_series
+        m = exit_month
+        case = _ExitCase(exit_month=m, exit_year=exit_year, selected=selected)
+
+        if selected:
+            # Terminal NOI for the exit-cap calc: the override, else the selected
+            # basis (default: NOI in year hold + 1). FON-44 / R-059.
+            (
+                terminal_noi,
+                exit_noi_basis,
+                exit_noi_period_label,
+                terminal_src_idx,
+                terminal_formula,
+            ) = _resolve_terminal_noi(
+                noi_series=noi_series,
+                hold=hold,
+                growth=assumptions.revpar_growth,
+                basis=payload.exit_noi_basis,
+                stabilized_year=payload.stabilized_year,
+                override=payload.terminal_noi_override,
+            )
+            # FON-63 — negative operating NOI flows through, but a non-positive
+            # exit NOI has no sale value: stop here, naming ``terminal_noi``.
+            _TerminalNoiCheck(terminal_noi=terminal_noi)
+        else:
+            assert exit_year is not None
+            k = exit_year
+            (
+                terminal_noi,
+                exit_noi_basis,
+                exit_noi_period_label,
+                terminal_src_idx,
+                terminal_formula,
+            ) = _resolve_terminal_noi(
+                noi_series=noi_series[:k],
+                hold=k,
+                growth=assumptions.revpar_growth,
+                basis=payload.exit_noi_basis,
+                stabilized_year=ctx.row_stabilized_year,
+                # Open decision 3 — the pin applies to the selected exit only.
+                override=None,
+                # Open decision 1 — the projected Year k+1 Cash NOI where the
+                # projection has it; the final year is grown, as the headline.
+                next_year_noi=noi_series[k] if k < len(noi_series) else None,
+            )
+        case.basis = exit_noi_basis
+        case.label = exit_noi_period_label
+        case.formula = terminal_formula
+        case.source_idx = terminal_src_idx
+        case.terminal_noi = terminal_noi
+
+        if not selected:
+            # Refusals — ONE row, never the headline (which hard-stops above).
+            if terminal_noi <= 0:
+                case.status = "not_available"
+                case.reason = ReasonCode.NO_SALE_VALUE
+                case.reason_detail = (
+                    f"exit NOI for a sale at month {m} is not positive "
+                    f"({terminal_noi:,.0f}) — no sale value"
+                )
+                return case
+            if (
+                payload.development_like
+                and payload.construction_end_month is not None
+                and m <= payload.construction_end_month
+            ):
+                case.status = "not_available"
+                case.reason = ReasonCode.UNDER_CONSTRUCTION
+                case.reason_detail = (
+                    f"month {m} is inside the stated construction window "
+                    f"(through month {payload.construction_end_month}); a sale "
+                    "before completion is not modelled"
+                )
+                case.terminal_noi = None
+                return case
+            deploying_through = _capital_deploying_through(payload, ctx)
+            if deploying_through is not None and deploying_through > m:
+                case.status = "not_available"
+                case.reason = ReasonCode.CAPITAL_DEPLOYING
+                case.reason_detail = (
+                    f"capital still deploying through month {deploying_through}; "
+                    "a sale before completion is not modelled"
+                )
+                case.terminal_noi = None
+                return case
+
+        gross_sale = terminal_noi / assumptions.exit_cap_rate
+        selling_costs = gross_sale * assumptions.selling_costs_pct
+        # FON-67 — transfer/recordation tax on the gross sale, deducted from the
+        # reversion alongside brokerage selling costs (0 unless set).
+        transfer_tax = gross_sale * assumptions.transfer_tax_pct
+        refi_included = (
+            ctx.refi_active and ctx.refi_month is not None and ctx.refi_month <= m
+        )
+        if selected:
+            loan_balance_at_exit = (
+                payload.loan_balance_at_exit
+                if payload.loan_balance_at_exit is not None
+                else payload.loan_amount  # IO assumption — full balance still outstanding
+            )
+            payoff_source = "loan_balance_at_exit"
+        else:
+            loan_balance_at_exit, payoff_source = _payoff_at(payload, m, refi_included)
+        net_proceeds_to_equity = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
+
+        # FON-67 — a mid-hold refi returns capital to equity. For the DISPLAY
+        # stream (Cash Flow tab + equity multiple) fold the cash-out into its
+        # year; it's levered-only, so the unlevered case is untouched. An
+        # interim row keeps the years through its exit year only.
+        if selected:
+            cfad_series = list(ctx.op_cfad)
+            if ctx.refi_active:
+                cfad_series[payload.refi_year - 1] += payload.refi_cash_out
+        else:
+            cfad_series = list(ctx.op_cfad[: exit_year or hold])
+            if ctx.refi_active and payload.refi_year is not None and payload.refi_year <= (exit_year or hold):
+                cfad_series[payload.refi_year - 1] += payload.refi_cash_out
+
+        # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
+        # institutional method): operating cash accrues through the year, the
+        # refi and sale land on their real months, and IRR is XIRR over the full
+        # monthly series. See app/engines/monthly_cashflow.py.
+        dy = payload.deferred_capital_year
+        monthly = build_monthly_cashflow(
+            MonthlyCashFlowInput(
+                hold_years=hold,
+                noi_by_year=list(noi_series),
+                acquisition_month_offset=payload.acquisition_month_offset,
+                exit_month=m,
+                equity_draws=list(payload.equity_draw_schedule),
+                monthly_debt_service=ctx.monthly_ds,
+                equity_at_close=max(0.0, payload.equity - payload.deferred_capital),
+                total_capital_at_close=max(
+                    0.0, ctx.total_capital - payload.deferred_capital
+                ),
+                deferred_capital=payload.deferred_capital,
+                # Offset-aware deployment window: calendar year ``dy`` after
+                # acquisition maps to its actual months given the close date.
+                deferred_capital_start_month=(
+                    max(1, dy * 12 - payload.acquisition_month_offset + 1)
+                    if dy is not None
+                    else 1
+                ),
+                deferred_capital_end_month=(
+                    min(hold * 12, (dy + 1) * 12 - payload.acquisition_month_offset)
+                    if dy is not None
+                    else 12
+                ),
+                refi_month=ctx.refi_month,
+                refi_net_cash_out=payload.refi_cash_out if ctx.refi_active else 0.0,
+                exit_net_proceeds_levered=net_proceeds_to_equity,
+                exit_net_proceeds_unlevered=gross_sale - selling_costs - transfer_tax,
+            )
+        )
+
+        # Equity multiple. For an off-cycle exit the annual cash-flow series
+        # (built over whole hold-years) overstates the distributions, so the
+        # selected exit uses the monthly model's multiple, which stops at the
+        # real exit month; year-end rows (and a clean hold) use the annual
+        # convention — the pre-existing headline convention, preserved.
+        total_distributions = sum(cfad_series) + net_proceeds_to_equity
+        if selected and payload.exit_month_override is not None:
+            equity_multiple = monthly.equity_multiple
+        else:
+            equity_multiple = (
+                total_distributions / payload.equity if payload.equity else 0.0
+            )
+
+        case.gross_sale = gross_sale
+        case.selling_costs = selling_costs
+        case.transfer_tax = transfer_tax
+        case.payoff = loan_balance_at_exit
+        case.payoff_source = payoff_source
+        case.refi_included = refi_included
+        case.net_proceeds = net_proceeds_to_equity
+        case.cfad_series = cfad_series
+        case.total_distributions = total_distributions
+        case.equity_multiple = equity_multiple
+        case.monthly = monthly
+        case.raw_levered_irr = monthly.levered_irr
+        case.raw_unlevered_irr = monthly.unlevered_irr
+        # A one-sign stream has no IRR: the row says so instead of printing
+        # the solver's sentinel. The headline scalars keep the raw answer.
+        case.levered_irr = (
+            None if _irr_is_sentinel(monthly.levered_irr) else monthly.levered_irr
+        )
+        case.unlevered_irr = (
+            None if _irr_is_sentinel(monthly.unlevered_irr) else monthly.unlevered_irr
+        )
+        if case.levered_irr is None or case.unlevered_irr is None:
+            case.status = "not_available"
+            case.reason = ReasonCode.INCONCLUSIVE
+            case.reason_detail = (
+                f"cash flows for a sale at month {m} have one sign; no IRR"
+            )
+        return case
 
     def run(self, payload: ReturnsEngineInputExt) -> ReturnsEngineOutputExt:
         assumptions = payload.assumptions
@@ -605,57 +1213,10 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 payload.year_one_noi, assumptions.revpar_growth, hold
             )
 
-        # Terminal NOI for the exit-cap calc: the override, else the selected
-        # basis (default: NOI in year hold + 1). FON-44 / R-059.
-        (
-            terminal_noi,
-            exit_noi_basis,
-            exit_noi_period_label,
-            terminal_src_idx,
-            terminal_formula,
-        ) = _resolve_terminal_noi(
-            noi_series=noi_series,
-            hold=hold,
-            growth=assumptions.revpar_growth,
-            basis=payload.exit_noi_basis,
-            stabilized_year=payload.stabilized_year,
-            override=payload.terminal_noi_override,
-        )
-        # FON-63 — negative operating NOI flows through, but a non-positive
-        # exit NOI has no sale value: stop here, naming ``terminal_noi``.
-        _TerminalNoiCheck(terminal_noi=terminal_noi)
-        # PROVENANCE ONLY — the traced value the reversion NOI was grown from,
-        # named only when it honestly IS one of the expense engine's projected
-        # years: not pinned by an override, sourced from the expense engine, and
-        # inside the series the runner handed over (a hold longer than the P&L
-        # is extrapolated here, and no upstream value backs that).
-        terminal_noi_ref = (
-            f"expense.years[{terminal_src_idx}].noi"
-            if (
-                terminal_src_idx is not None
-                and payload.noi_from_expense_engine
-                and hold >= 1
-                and len(payload.noi_by_year) >= hold
-            )
-            else None
-        )
-        gross_sale = terminal_noi / assumptions.exit_cap_rate
-        selling_costs = gross_sale * assumptions.selling_costs_pct
-        # FON-67 — transfer/recordation tax on the gross sale, deducted from the
-        # reversion alongside brokerage selling costs (0 unless set).
-        transfer_tax = gross_sale * assumptions.transfer_tax_pct
-        loan_balance_at_exit = (
-            payload.loan_balance_at_exit
-            if payload.loan_balance_at_exit is not None
-            else payload.loan_amount  # IO assumption — full balance still outstanding
-        )
-        net_proceeds_to_equity = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
-
-        # Levered cash flow stream (Year 0 = -equity). When the
-        # caller supplies a full debt-stack DS series (Wave 4 W4.4)
-        # we honor it year-by-year; otherwise we fall back to the
-        # scalar ``annual_debt_service`` (the legacy single-loan
-        # path — preserved byte-identically).
+        # Debt service per year. When the caller supplies a full debt-stack DS
+        # series (Wave 4 W4.4) we honor it year-by-year; otherwise we fall back
+        # to the scalar ``annual_debt_service`` (the legacy single-loan path —
+        # preserved byte-identically).
         ds_series: list[float]
         if payload.debt_service_by_year:
             ds_series = list(payload.debt_service_by_year[:hold])
@@ -671,53 +1232,139 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             and payload.refi_year is not None
             and 1 <= payload.refi_year <= len(op_cfad)
         )
-        # FON-67 — a mid-hold refi returns capital to equity. For the DISPLAY
-        # stream (Cash Flow tab + equity multiple) fold the cash-out into its
-        # year; it's levered-only, so the unlevered case is untouched.
-        cfad_series = list(op_cfad)
-        if refi_active:
-            cfad_series[payload.refi_year - 1] += payload.refi_cash_out
-        levered_flows = [-payload.equity] + cfad_series[:-1] + [
-            cfad_series[-1] + net_proceeds_to_equity
-        ]
-
-        # Unlevered cash flow stream. Year 0 = TOTAL invested capital
-        # (equity + loan = purchase + renovation + closing + working
-        # capital), NOT just the purchase price — an all-cash buyer funds
-        # the whole project. Using purchase_price understated the basis and
-        # inflated unlevered IRR, which made leverage look negative even
-        # when the asset yield exceeded the debt cost.
+        # Unlevered basis: Year 0 = TOTAL invested capital (equity + loan =
+        # purchase + renovation + closing + working capital), NOT just the
+        # purchase price — an all-cash buyer funds the whole project.
         total_capital = payload.equity + payload.loan_amount
-        unlevered_flows = [-total_capital] + noi_series[:-1] + [
-            noi_series[-1] + gross_sale - selling_costs - transfer_tax
-        ]
 
-        # FON-67 — date-based levered IRR. Equity at t=0, each operating CF at
-        # its year-end, the exit at t=hold, and the refi cash-out at its ACTUAL
-        # time (refi_time_years; e.g. 2.5 for a month-30 refi). With no refi
-        # timing set the cash-out sits at its year-end, so xirr reduces exactly
-        # to the annual-period IRR — existing deals are byte-for-byte unchanged.
-        lev_times: list[float] = [0.0]
-        lev_amounts: list[float] = [-payload.equity]
-        for y in range(1, hold + 1):
-            lev_times.append(float(y))
-            lev_amounts.append(
-                op_cfad[y - 1] + (net_proceeds_to_equity if y == hold else 0.0)
-            )
-        if refi_active:
-            assert payload.refi_year is not None
-            lev_times.append(
+        # FON-67 — the refi month and the monthly debt service. The refi funds
+        # mid-hold on a much larger balance, so its interest-only payment (the
+        # post-refi annual amount) applies from the actual refi month, not the
+        # following year-end — otherwise the months between the refi and
+        # year-end under-count debt service. Senior months keep the senior
+        # schedule. Fixed across every sale date.
+        refi_month: int | None = None
+        if refi_active and payload.refi_year is not None:
+            _rt = (
                 payload.refi_time_years
                 if payload.refi_time_years is not None
                 else float(payload.refi_year)
             )
-            lev_amounts.append(payload.refi_cash_out)
+            refi_month = max(1, min(hold * 12, round(_rt * 12)))
+        _monthly_ds = [ds_series[y] / 12.0 for y in range(hold) for _ in range(12)]
+        if refi_active and refi_month is not None and ds_series:
+            _refi_monthly = ds_series[-1] / 12.0
+            for _m in range(refi_month, len(_monthly_ds)):
+                _monthly_ds[_m] = _refi_monthly
 
+        # The stabilized year the interim rows read on the ``stabilized`` basis
+        # — resolved once on the full projection (the headline resolves its
+        # own inside ``_resolve_terminal_noi``, exactly as before).
+        row_stabilized_year = payload.stabilized_year
+        if payload.exit_noi_basis == "stabilized" and row_stabilized_year is None:
+            _idx = resolve_stabilized_year_index(
+                occupancy_by_year=None,
+                stabilized_occupancy=None,
+                noi_by_year=noi_series,
+            )
+            row_stabilized_year = _idx + 1 if _idx is not None else None
+
+        full_term = hold * 12
+        ctx = _ExitContext(
+            hold=hold,
+            full_term=full_term,
+            noi_series=noi_series,
+            op_cfad=op_cfad,
+            refi_active=refi_active,
+            refi_month=refi_month,
+            monthly_ds=_monthly_ds,
+            total_capital=total_capital,
+            row_stabilized_year=row_stabilized_year,
+        )
+
+        # FON-118 — the deal's own exit. ``exit_month_override`` (FON-67) is
+        # clamped to the hold exactly as the monthly model clamps it; None is
+        # the clean hold × 12 exit. Year-end rows sit at ``12k − offset`` — the
+        # same month → calendar-year mapping ``monthly_cashflow.noi_m`` uses —
+        # so the selected exit is a year row when it lands on one.
+        offset = payload.acquisition_month_offset
+        selected_month = (
+            max(1, min(full_term, payload.exit_month_override))
+            if payload.exit_month_override is not None
+            else full_term
+        )
+        year_end_months: dict[int, int] = {12 * k - offset: k for k in range(1, hold + 1)}
+        selected_year = year_end_months.get(selected_month)
+
+        selected = self._exit_case(
+            payload, ctx, exit_month=selected_month, exit_year=selected_year, selected=True
+        )
+        if (
+            payload.exit_month_override is not None
+            and payload.exit_month_override != selected_month
+        ):
+            selected.reason_detail = (
+                f"exit_month_override {payload.exit_month_override} is past the "
+                f"hold; the sale is modelled at month {selected_month}"
+            )
+        assert selected.terminal_noi is not None  # the hard stop raised otherwise
+        assert selected.gross_sale is not None
+        assert selected.selling_costs is not None
+        assert selected.transfer_tax is not None
+        assert selected.payoff is not None
+        assert selected.net_proceeds is not None
+        assert selected.monthly is not None
+        assert selected.cfad_series is not None
+        assert selected.raw_levered_irr is not None
+        assert selected.raw_unlevered_irr is not None
+        assert selected.equity_multiple is not None
+        assert selected.total_distributions is not None
+        terminal_noi = selected.terminal_noi
+        exit_noi_basis = selected.basis or "forward_12m"
+        exit_noi_period_label = selected.label
+        terminal_src_idx = selected.source_idx
+        terminal_formula = selected.formula or ""
+        gross_sale = selected.gross_sale
+        selling_costs = selected.selling_costs
+        transfer_tax = selected.transfer_tax
+        loan_balance_at_exit = selected.payoff
+        net_proceeds_to_equity = selected.net_proceeds
+        cfad_series = selected.cfad_series
+        levered_irr = selected.raw_levered_irr
+        unlevered_irr = selected.raw_unlevered_irr
+        peak_equity_out: float | None = selected.monthly.peak_equity
+        levered_monthly_out: list[float] = list(selected.monthly.levered_monthly)
+        total_distributions = selected.total_distributions
+        equity_multiple = selected.equity_multiple
+
+        # PROVENANCE ONLY — the traced value the reversion NOI was grown from,
+        # named only when it honestly IS one of the expense engine's projected
+        # years: not pinned by an override, sourced from the expense engine, and
+        # inside the series the runner handed over (a hold longer than the P&L
+        # is extrapolated here, and no upstream value backs that).
+        terminal_noi_ref = (
+            f"expense.years[{terminal_src_idx}].noi"
+            if (
+                terminal_src_idx is not None
+                and payload.noi_from_expense_engine
+                and hold >= 1
+                and len(payload.noi_by_year) >= hold
+            )
+            else None
+        )
+
+        # Levered cash flow stream (Year 0 = -equity) — the annual DISPLAY
+        # stream the Cash Flow tab reads (``cash_flows``).
+        levered_flows = [-payload.equity] + cfad_series[:-1] + [
+            cfad_series[-1] + net_proceeds_to_equity
+        ]
+        # Unlevered cash flow stream over the total invested capital.
+        unlevered_flows = [-total_capital] + noi_series[:-1] + [
+            noi_series[-1] + gross_sale - selling_costs - transfer_tax
+        ]
         # FON-67 — phased capital deployment: shift a chunk of capital (e.g. the
         # renovation) out of the t=0 close and into its deployment year, in both
-        # the levered and unlevered streams. Deferring the outflow lifts the IRR
-        # toward a source model that draws capital over the first years. Index 0
-        # is t=0; index d is year d in every stream here.
+        # annual streams. Index 0 is t=0; index d is year d in every stream here.
         dc = payload.deferred_capital
         dy = payload.deferred_capital_year
         if dc > 0 and dy is not None and 1 <= dy <= hold:
@@ -725,89 +1372,6 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             unlevered_flows[dy] -= dc
             levered_flows[0] += dc
             levered_flows[dy] -= dc
-            lev_amounts[0] += dc
-            lev_amounts[dy] -= dc
-
-        levered_irr = xirr(lev_times, lev_amounts)
-        unlevered_irr = irr(unlevered_flows)
-        peak_equity_out: float | None = None
-        equity_multiple_override: float | None = None
-        levered_monthly_out: list[float] = []
-
-        # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
-        # institutional method): operating cash accrues through the year, the
-        # refi and sale land on their real months, and IRR is XIRR over the full
-        # monthly series. This closes the several IRR points an annual grid loses
-        # to intra-year timing + partial stub years. The annual figures above are
-        # the fallback. See app/engines/monthly_cashflow.py.
-        if hold > 0 and noi_series:
-            refi_month: int | None = None
-            if refi_active and payload.refi_year is not None:
-                _rt = (
-                    payload.refi_time_years
-                    if payload.refi_time_years is not None
-                    else float(payload.refi_year)
-                )
-                refi_month = max(1, min(hold * 12, round(_rt * 12)))
-            dy = payload.deferred_capital_year
-            # FON-67 — monthly debt service. The refi funds mid-hold on a much
-            # larger balance, so its interest-only payment (the post-refi annual
-            # amount) applies from the actual refi month, not the following
-            # year-end — otherwise the months between the refi and year-end
-            # under-count debt service (a larger loan paying the smaller senior's
-            # coupon). Senior months keep the senior schedule.
-            _monthly_ds = [ds_series[y] / 12.0 for y in range(hold) for _ in range(12)]
-            if refi_active and refi_month is not None and ds_series:
-                _refi_monthly = ds_series[-1] / 12.0
-                for _m in range(refi_month, len(_monthly_ds)):
-                    _monthly_ds[_m] = _refi_monthly
-            monthly = build_monthly_cashflow(
-                MonthlyCashFlowInput(
-                    hold_years=hold,
-                    noi_by_year=list(noi_series),
-                    acquisition_month_offset=payload.acquisition_month_offset,
-                    exit_month=payload.exit_month_override,
-                    equity_draws=list(payload.equity_draw_schedule),
-                    monthly_debt_service=_monthly_ds,
-                    equity_at_close=max(0.0, payload.equity - payload.deferred_capital),
-                    total_capital_at_close=max(
-                        0.0, total_capital - payload.deferred_capital
-                    ),
-                    deferred_capital=payload.deferred_capital,
-                    # Offset-aware deployment window: calendar year ``dy`` after
-                    # acquisition maps to its actual months given the close date.
-                    deferred_capital_start_month=(
-                        max(1, dy * 12 - payload.acquisition_month_offset + 1)
-                        if dy is not None
-                        else 1
-                    ),
-                    deferred_capital_end_month=(
-                        min(hold * 12, (dy + 1) * 12 - payload.acquisition_month_offset)
-                        if dy is not None
-                        else 12
-                    ),
-                    refi_month=refi_month,
-                    refi_net_cash_out=payload.refi_cash_out if refi_active else 0.0,
-                    exit_net_proceeds_levered=net_proceeds_to_equity,
-                    exit_net_proceeds_unlevered=gross_sale - selling_costs - transfer_tax,
-                )
-            )
-            levered_irr = monthly.levered_irr
-            unlevered_irr = monthly.unlevered_irr
-            peak_equity_out = monthly.peak_equity
-            levered_monthly_out = list(monthly.levered_monthly)
-            # For an off-cycle exit the annual cash-flow series (built over whole
-            # hold-years) overstates the distributions, so use the monthly
-            # model's equity multiple, which stops at the real exit month.
-            if payload.exit_month_override is not None:
-                equity_multiple_override = monthly.equity_multiple
-
-        total_distributions = sum(cfad_series) + net_proceeds_to_equity
-        equity_multiple = (
-            equity_multiple_override
-            if equity_multiple_override is not None
-            else (total_distributions / payload.equity if payload.equity else 0.0)
-        )
 
         year_one_coc = (
             cfad_series[0] / payload.equity if payload.equity else 0.0
@@ -817,6 +1381,42 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             if payload.equity and cfad_series
             else 0.0
         )
+
+        # FON-118 — returns by exit year: every projection year-end, in month
+        # order, with the selected exit either AS its year row or inserted as
+        # its own off-cycle row. Grid callers pass ``exit_schedule=False``.
+        cases: list[_ExitCase] = []
+        if payload.exit_schedule:
+            for m_k, k in sorted(year_end_months.items()):
+                if m_k == selected_month:
+                    cases.append(selected)
+                else:
+                    cases.append(
+                        self._exit_case(
+                            payload, ctx, exit_month=m_k, exit_year=k, selected=False
+                        )
+                    )
+            if selected_year is None:
+                pos = next(
+                    (i for i, c in enumerate(cases) if c.exit_month > selected_month),
+                    len(cases),
+                )
+                cases.insert(pos, selected)
+        peak_year: int | None = None
+        peak_irr: float | None = None
+        for c in cases:
+            if c.exit_year is None or c.status != "computed" or c.levered_irr is None:
+                continue
+            if peak_irr is None or c.levered_irr > peak_irr:
+                peak_irr = c.levered_irr
+                peak_year = c.exit_year
+        exit_schedule = [
+            _exit_row(c, is_peak=(c.exit_year is not None and c.exit_year == peak_year))
+            for c in cases
+        ]
+        row_provenance: dict[str, ValueTrace] = {}
+        for i, c in enumerate(cases):
+            row_provenance.update(_exit_row_provenance(i, c, payload=payload, ctx=ctx))
 
         return ReturnsEngineOutputExt(
             deal_id=payload.deal_id,
@@ -833,8 +1433,12 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             hold_years=hold,
             exit_cap_rate=assumptions.exit_cap_rate,
             terminal_noi=terminal_noi,
-            exit_noi_basis=exit_noi_basis,
+            exit_noi_basis=exit_noi_basis,  # type: ignore[arg-type]
             exit_noi_period_label=exit_noi_period_label,
+            exit_schedule=exit_schedule,
+            selected_exit_month=selected_month,
+            selected_exit_year=selected_year,
+            peak_levered_exit_year=peak_year,
             cash_flows=levered_flows,
             cash_flows_unlevered=unlevered_flows,
             noi_by_year=list(noi_series),
@@ -881,9 +1485,9 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     n_years=len(cfad_series),
                     equity=payload.equity,
                 ),
+                **row_provenance,
             }),
         )
-
 
 def returns_from_cash_flow(
     payload: ReturnsEngineInput, equity: float, loan_balance_at_exit: float

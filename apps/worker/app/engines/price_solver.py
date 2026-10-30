@@ -126,8 +126,9 @@ def _flex_price(
     # Simpler: original_equity + (new_price - original_price).
     delta = new_price - base.assumptions.purchase_price
     new_equity = max(1.0, base.equity + delta)
+    # FON-118 — the bisection reads one metric per step; no exit table.
     return base.model_copy(
-        update={"assumptions": new_assumptions, "equity": new_equity}
+        update={"assumptions": new_assumptions, "equity": new_equity, "exit_schedule": False}
     )
 
 
