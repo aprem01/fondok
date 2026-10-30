@@ -97,6 +97,14 @@ jobs:
         working-directory: apps/worker
         run: uv run python scripts/gen_ontology.py --check
 
+      # FON-120 — the web's methodology modules are generated from
+      # packages/methodology/sections/*.md; a markdown edit without a regen
+      # (or a generated file edited by hand) fails here. Runs from the repo
+      # root through the worker's environment (PyYAML + concept registry).
+      - name: Methodology codegen drift gate
+        working-directory: ${{ github.workspace }}
+        run: uv run --project apps/worker python scripts/gen_methodology.py --check
+
       - name: Pytest
         working-directory: apps/worker
         env:
@@ -147,6 +155,31 @@ jobs:
 
       - name: Check EXTRACTION_PIPELINE_VERSION was bumped
         run: python scripts/check_pipeline_version.py
+
+  # FON-120 — an underwriting behaviour change ships with its methodology.
+  # ``scripts/check_methodology_touched.py`` diffs the merge-base with
+  # origin/main (HEAD^ on a push to main): a change under
+  # apps/worker/app/engines/, services/engine_runner.py,
+  # services/index_methodology.py, services/stabilization*.py, api/model.py or
+  # packages/schemas-py/**/underwriting.py without a change under
+  # packages/methodology/** fails unless a commit in the range carries the
+  # ``methodology: unchanged`` trailer. Same shape as pipeline-version above;
+  # stdlib only.
+  methodology-sync:
+    name: Methodology sync guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check packages/methodology moved with the engines
+        run: python scripts/check_methodology_touched.py
 
   # Conditional eval gating ported from LogiCov: only burn a CI minute
   # on the golden set when something the engines/agents/graph/schemas/

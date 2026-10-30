@@ -7,7 +7,9 @@
 This is the single reference for how Fondok is built — the services, the
 underwriting pipeline, the engines, the provenance spine, the data model, and
 how it all deploys. Kept in sync with the code; when underwriting behavior
-changes, update this **and** `apps/web/src/app/methodology/page.tsx`.
+changes, update this **and** the owning section in `packages/methodology/sections/`
+(the Methodology page, its admin detail and Atlas all render from there — FON-120;
+CI enforces it via `scripts/check_methodology_touched.py`).
 
 **Sibling docs:** calc reference → `docs/HOW_FONDOK_CALCULATES.md` · ops →
 `docs/RUNBOOK.md` · roadmap → `docs/ROADMAP.md` · live methodology page →
