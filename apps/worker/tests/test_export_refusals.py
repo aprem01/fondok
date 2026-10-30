@@ -86,8 +86,8 @@ async def _seed_deal(
 ) -> None:
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, city, keys, field_overrides) "
-            "VALUES (:id, :tenant, :name, :city, :keys, :fo)"
+            "INSERT INTO deals (id, tenant_id, name, city, keys, purchase_price, field_overrides) "
+            "VALUES (:id, :tenant, :name, :city, :keys, 36400000, :fo)"
         ),
         {"id": deal_id, "tenant": tenant_id, "name": name, "city": city,
          "keys": keys, "fo": "{}"},
@@ -274,8 +274,8 @@ async def test_export_memo_header_carries_the_recommendation_reason() -> None:
     async with get_session_factory()() as session:
         await session.execute(
             text(
-                "INSERT INTO deals (id, tenant_id, name, city, keys, field_overrides) "
-                "VALUES (:id, :tenant, 'Confirmed', 'Tampa, FL', 150, :fo)"
+                "INSERT INTO deals (id, tenant_id, name, city, keys, purchase_price, field_overrides) "
+                "VALUES (:id, :tenant, 'Confirmed', 'Tampa, FL', 150, 36400000, :fo)"
             ),
             {
                 "id": deal_id,

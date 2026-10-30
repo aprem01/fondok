@@ -16,11 +16,17 @@ documents/{doc_id}`` endpoint, and re-assert.
 Two contracts are deliberately different, and conflating them is how a
 regression hides:
 
-* **Seeded assumptions must NOT go blank.** ``engine_runner`` falls back to
-  the Kimpton seed by contract (``_kimpton_assumptions``, label ``seed``;
+* **Labelled defaults must NOT go blank.** ``engine_runner`` keeps a
+  labelled default for the ratio / growth / financing assumptions
+  (``_default_assumptions``, label ``seed``;
   ``tests/test_engine_inputs_loader.py`` pins it). What removal must change
   is the *label* and the *reason*: source becomes ``seed`` and
   ``base["__reasons__"][key]`` carries ``no_document``.
+* **Identity inputs have no default (2026-10-30).** ``purchase_price`` /
+  ``keys`` come from the deal row, the OM or an override — nothing else.
+  Removing the OM that supplied the price leaves the key ABSENT with the
+  reason ``missing_identity_inputs``, and the capital chain refuses to run
+  rather than running on a placeholder property.
 * **Grounded actuals must genuinely vanish.** Historicals, variance actuals,
   the critic's inputs and the OM-anchored figures have no seed behind them,
   so they must return nothing at all.
@@ -59,13 +65,12 @@ _T12_PAYLOAD = _FIXTURES / "real_payloads" / "anglers_t12_real.json"
 _PNL_PAYLOAD = _FIXTURES / "real_payloads" / "anglers_annual_pnl_real.json"
 _OM_PAYLOAD = _FIXTURES / "usali_v4" / "live_extraction_anglers_om.json"
 
-# Values the Kimpton seed carries for the two anchors the T-12 grounds, and
-# for the exit cap the OM's comp set grounds. Asserted literally so a seed
-# change surfaces here instead of silently weakening the test.
+# Values the labelled defaults carry for the two anchors the T-12 grounds,
+# and for the exit cap the OM's comp set grounds. Asserted literally so a
+# default change surfaces here instead of silently weakening the test.
 _SEED_OCCUPANCY = 0.762
 _SEED_ADR = 385.0
 _SEED_EXIT_CAP = 0.07
-_SEED_PURCHASE_PRICE = 36_400_000
 
 # What the real Anglers T-12 payload grounds (the numbers that must vanish).
 _T12_OCCUPANCY = 0.828892
@@ -125,19 +130,25 @@ async def _reset_db():
 # ──────────────────────────── seeding ─────────────────────────────────
 
 
-async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
-    """A deal row with keys but NO purchase_price.
+async def _seed_deal(
+    session, *, deal_id: str, tenant_id: str, purchase_price: float | None = 36_400_000
+) -> None:
+    """A deal row with keys and (by default) an analyst-entered purchase price.
 
-    Deliberate: with a ``purchase_price`` on the row the key would resolve to
-    ``deal_row`` and carry no seed reason at all, which would make the OM
-    ablation assertion vacuous.
+    The identity inputs have no default (2026-10-30), so the row carries them
+    for the tests that exercise the OM's OTHER figures. ``purchase_price=None``
+    makes the OM the only source of the price — the case where deleting the
+    OM must leave the deal un-priced and the capital chain must refuse.
     """
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, keys, field_overrides) "
-            "VALUES (:id, :tenant, :name, :keys, '{}')"
+            "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
+            "VALUES (:id, :tenant, :name, :keys, :pp, '{}')"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Anglers Ablation", "keys": 132},
+        {
+            "id": deal_id, "tenant": tenant_id, "name": "Anglers Ablation",
+            "keys": 132, "pp": purchase_price,
+        },
     )
 
 
@@ -205,7 +216,12 @@ _HASH = {"t12": "a" * 64, "pnl": "b" * 64, "om": "c" * 64}
 
 
 async def _seed_and_run(
-    *, deal_id: str, tenant_id: str, run_id: str
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    purchase_price: float | None = 36_400_000,
+    om_extra_fields: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """T-12 + annual P&L + OM uploaded, then the full engine chain.
 
@@ -217,7 +233,9 @@ async def _seed_and_run(
     factory = get_session_factory()
     ids: dict[str, str] = {}
     async with factory() as session:
-        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        await _seed_deal(
+            session, deal_id=deal_id, tenant_id=tenant_id, purchase_price=purchase_price
+        )
         ids["t12"] = await _seed_document(
             session,
             deal_id=deal_id,
@@ -244,7 +262,7 @@ async def _seed_and_run(
             tenant_id=tenant_id,
             filename="Anglers_OM.pdf",
             doc_type="OM",
-            fields=_fields(_OM_PAYLOAD) + _OM_COMPS,
+            fields=_fields(_OM_PAYLOAD) + _OM_COMPS + list(om_extra_fields or []),
             content_hash=_HASH["om"],
         )
         await session.commit()
@@ -296,7 +314,7 @@ async def _engine_row(session, *, deal_id: str, run_id: str, engine: str) -> dic
     row = (
         await session.execute(
             text(
-                "SELECT inputs, outputs FROM engine_outputs "
+                "SELECT inputs, outputs, failure FROM engine_outputs "
                 "WHERE deal_id = :d AND run_id = :r AND engine_name = :e"
             ),
             {"d": deal_id, "r": run_id, "e": engine},
@@ -304,7 +322,7 @@ async def _engine_row(session, *, deal_id: str, run_id: str, engine: str) -> dic
     ).first()
     assert row is not None, f"no {engine} row for run {run_id}"
     out: dict[str, Any] = {}
-    for key in ("inputs", "outputs"):
+    for key in ("inputs", "outputs", "failure"):
         raw = row._mapping[key]
         if isinstance(raw, str):
             raw = json.loads(raw)
@@ -489,9 +507,10 @@ async def test_removing_the_pnl_family_produces_no_historical_baseline() -> None
 
 @pytest.mark.asyncio
 async def test_removing_the_om_falls_back_with_a_no_document_reason() -> None:
-    """``exit_cap_rate`` and ``purchase_price`` land on the Kimpton seed and
-    say ``no_document`` — the label must be ``seed`` (or ``deal_row``), never a
-    stale ``om_*``."""
+    """``exit_cap_rate`` lands on the labelled default and says ``no_document``
+    — never a stale ``om_*``. The analyst-entered ``purchase_price`` on the
+    deal row is untouched (``deal_row``, no reason): this OM never priced the
+    deal, so its deletion must not move the price either way."""
     from app.database import get_session_factory
 
     deal_id, tenant_id, run_id = str(uuid4()), str(uuid4()), str(uuid4())
@@ -511,18 +530,16 @@ async def test_removing_the_om_falls_back_with_a_no_document_reason() -> None:
         after = await _inputs(session, deal_id=deal_id, tenant_id=tenant_id)
 
     sources, reasons = after["__sources__"], (after.get("__reasons__") or {})
-    for key, seeded in (
-        ("exit_cap_rate", _SEED_EXIT_CAP),
-        ("purchase_price", _SEED_PURCHASE_PRICE),
-    ):
-        assert sources[key] in {"seed", "deal_row"}, (
-            f"{key} kept a document-grounded label {sources[key]!r} after the "
-            "OM was deleted"
-        )
-        assert after[key] == pytest.approx(seeded)
-        assert _reason_code(reasons.get(key)) == "no_document", (
-            f"{key} reason was {_reason_code(reasons.get(key))!r}, not no_document"
-        )
+    assert sources["exit_cap_rate"] == "seed", (
+        f"exit_cap_rate kept a document-grounded label {sources['exit_cap_rate']!r} "
+        "after the OM was deleted"
+    )
+    assert after["exit_cap_rate"] == pytest.approx(_SEED_EXIT_CAP)
+    assert _reason_code(reasons.get("exit_cap_rate")) == "no_document"
+    # The row-entered price is not an OM figure: label and value unchanged.
+    assert sources["purchase_price"] == "deal_row"
+    assert after["purchase_price"] == pytest.approx(36_400_000)
+    assert "purchase_price" not in reasons
     assert not {v for v in sources.values() if str(v).startswith("om_")}, (
         "an om_* source label survived the OM deletion: "
         f"{sorted(k for k, v in sources.items() if str(v).startswith('om_'))}"
@@ -591,12 +608,71 @@ async def test_no_om_grounded_figure_survives_anywhere_in_the_run() -> None:
         if v.get("document_id") == ids["om"]
     }
     assert ids["om"] not in set(source_docs.values())
-    # The exit valuation now runs off the seed, not the deleted comp set.
+    # The exit valuation now runs off the labelled default exit cap, not the
+    # deleted comp set (the price is the analyst's, on the row, so the chain
+    # still runs — see the next test for an OM-priced deal).
     assert _prov_input(
         returns_after["outputs"].get("provenance") or {},
         "gross_sale_price",
         "exit_cap_rate",
     ) == pytest.approx(_SEED_EXIT_CAP)
+
+
+@pytest.mark.asyncio
+async def test_removing_the_om_that_priced_the_deal_makes_the_capital_chain_refuse() -> None:
+    """When the OM is the ONLY source of the purchase price, deleting it must
+    not re-price the deal from a default (the 36.4M Kimpton seed did exactly
+    that until 2026-10-30): the price is absent with the reason
+    ``missing_identity_inputs``, the re-run's capital chain lands typed
+    ``missing_identity_inputs`` failures naming the price, the T-12-grounded
+    revenue chain still runs, and the deal row is never written."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    deal_id, tenant_id = str(uuid4()), str(uuid4())
+    run_before, run_after = str(uuid4()), str(uuid4())
+    asking = {"field_name": "asking_price.headline_price_usd", "value": 41_000_000.0, "source_page": 3}
+    ids = await _seed_and_run(
+        deal_id=deal_id, tenant_id=tenant_id, run_id=run_before,
+        purchase_price=None, om_extra_fields=[asking],
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        before = await _inputs(session, deal_id=deal_id, tenant_id=tenant_id)
+        returns_before = await _engine_row(
+            session, deal_id=deal_id, run_id=run_before, engine="returns"
+        )
+    # Positive control: the OM priced the deal and the chain ran on it.
+    assert before["__sources__"]["purchase_price"] == "om_broker"
+    assert before["purchase_price"] == pytest.approx(41_000_000.0)
+    assert returns_before["outputs"].get("levered_irr") is not None
+
+    await _delete_documents(deal_id=deal_id, tenant_id=tenant_id, doc_ids=[ids["om"]])
+
+    async with factory() as session:
+        after = await _inputs(session, deal_id=deal_id, tenant_id=tenant_id)
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_after
+        )
+        await session.commit()
+        row = (
+            await session.execute(
+                text("SELECT purchase_price FROM deals WHERE id = :id"), {"id": deal_id}
+            )
+        ).first()
+
+    assert "purchase_price" not in after
+    assert "purchase_price" not in after["__sources__"]
+    assert _reason_code(after["__reasons__"].get("purchase_price")) == "missing_identity_inputs"
+    for name in ("capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
+        assert results[name]["status"] == "failed", results[name]
+        assert results[name]["failure"]["code"] == "missing_identity_inputs"
+        assert results[name]["failure"]["missing"] == ["purchase_price"]
+    for name in ("revenue", "fb", "expense"):
+        assert results[name]["status"] == "complete", results[name]
+    assert "36400000" not in json.dumps(results, default=str)
+    assert row._mapping["purchase_price"] is None
 
 
 # ══════════════════════════════ 3. lineage ═══════════════════════════════════

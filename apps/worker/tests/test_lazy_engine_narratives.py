@@ -19,6 +19,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import kimpton_seed
+
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-lazy-narratives.db"
@@ -73,7 +75,7 @@ async def test_engine_run_produces_null_narratives() -> None:
     from app.database import get_session_factory
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "test-deal-null-narratives"
+    deal_id = str(uuid4())  # no deal row: the Kimpton fixture is injected
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -84,6 +86,7 @@ async def test_engine_run_produces_null_narratives() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
     # Every engine should have completed successfully.
@@ -133,7 +136,7 @@ async def test_first_read_generates_narrative() -> None:
     from app.services.engine_narratives import get_or_generate_narrative
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "test-deal-first-gen"
+    deal_id = str(uuid4())  # no deal row: the Kimpton fixture is injected
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -144,6 +147,7 @@ async def test_first_read_generates_narrative() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
     # Fetch a completed engine output row.
@@ -238,7 +242,7 @@ async def test_second_read_uses_cache() -> None:
     from app.services.engine_narratives import get_or_generate_narrative
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "test-deal-cached"
+    deal_id = str(uuid4())  # no deal row: the Kimpton fixture is injected
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -249,6 +253,7 @@ async def test_second_read_uses_cache() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
     # Fetch a completed engine output.
@@ -321,7 +326,7 @@ async def test_fallback_on_llm_failure() -> None:
     )
     from app.services.engine_runner import run_all_engines
 
-    deal_id = "test-deal-fallback"
+    deal_id = str(uuid4())  # no deal row: the Kimpton fixture is injected
     tenant_id = str(uuid4())
     run_id = str(uuid4())
 
@@ -332,6 +337,7 @@ async def test_fallback_on_llm_failure() -> None:
             deal_id=deal_id,
             tenant_id=tenant_id,
             run_id=run_id,
+            assumptions=kimpton_seed(),
         )
 
     # Fetch a completed engine output.

@@ -29,6 +29,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+
 # Force a per-test SQLite DB BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-engine-inputs-loader.db"
 if _TMP_DB.exists():
@@ -276,7 +278,7 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
     """
     from app.database import get_session_factory
     from app.services.engine_runner import (
-        _kimpton_assumptions,
+        _default_assumptions,
         _load_engine_inputs,
     )
 
@@ -287,7 +289,7 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
     async with factory() as session:
         base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
-    seed = _kimpton_assumptions()
+    seed = _default_assumptions()
     # Every Kimpton-seeded value should be present unchanged.
     for key in (
         "starting_occupancy",
@@ -725,7 +727,7 @@ async def test_run_all_engines_calls_the_lineage_hook() -> None:
     async def _recorder(session, deal_id, tenant_id, run_id):
         calls.append((deal_id, tenant_id, run_id))
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     run_id = str(uuid4())
     original = engine_runner.persist_for_run
@@ -734,7 +736,8 @@ async def test_run_all_engines_calls_the_lineage_hook() -> None:
         factory = get_session_factory()
         async with factory() as session:
             await engine_runner.run_all_engines(
-                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                assumptions=kimpton_seed(),
             )
     finally:
         engine_runner.persist_for_run = original
@@ -752,7 +755,7 @@ async def test_lineage_hook_failure_never_fails_a_run() -> None:
     async def _boom(session, deal_id, tenant_id, run_id):
         raise RuntimeError("lineage table not migrated yet")
 
-    deal_id = "kimpton-angler-2026"
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
     tenant_id = str(uuid4())
     original = engine_runner.persist_for_run
     engine_runner.persist_for_run = _boom
@@ -764,6 +767,7 @@ async def test_lineage_hook_failure_never_fails_a_run() -> None:
                 deal_id=deal_id,
                 tenant_id=tenant_id,
                 run_id=str(uuid4()),
+                assumptions=kimpton_seed(),
             )
     finally:
         engine_runner.persist_for_run = original

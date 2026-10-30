@@ -166,7 +166,7 @@ async def test_engines_that_do_not_need_a_missing_input_still_run() -> None:
     for name in ("revenue", "fb", "expense"):
         assert results[name]["status"] == "complete", results[name]
     # The operating chain ran on the deal's OWN key count, not the seed's 132:
-    # Year-1 rooms revenue = keys × 365 × occupancy × ADR (occupancy / ADR are
+    # Year-1 rooms revenue = keys x 365 x occupancy x ADR (occupancy / ADR are
     # the labelled defaults, so the ratio to the seed run is exactly 150/132).
     seed = kimpton_seed()
     y1_rooms = results["revenue"]["outputs"]["years"][0]["rooms_revenue"]
@@ -339,6 +339,44 @@ async def test_malformed_override_blob_is_a_load_error_in_the_engine_path(monkey
         )
     assert all(r["failure"]["code"] == "load_error" for r in results.values())
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_load_error_message_never_carries_the_exception_text(monkeypatch) -> None:
+    """Security review (2026-10-30): ``str(exc)`` can carry a connection string
+    or SQL. The persisted / API-facing message names the exception TYPE only;
+    the full text reaches the logger and ``report_alert`` alone."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.engine_runner import run_all_engines
+
+    calls = _alert_recorder(monkeypatch)
+    secret = "postgresql://svc:S3cr3tPassw0rd@db.internal/fondok"
+
+    async def _boom(session, **kwargs):
+        raise ConnectionError(f"could not connect to {secret}")
+
+    monkeypatch.setattr(engine_runner, "_load_t12_expense_actuals", _boom)
+    tenant_id = str(uuid4())
+    async with get_session_factory()() as session:
+        deal_id = await _insert_deal(
+            session, tenant_id=tenant_id, keys=KIMPTON_KEYS,
+            purchase_price=KIMPTON_PURCHASE_PRICE,
+        )
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    for r in results.values():
+        assert r["failure"]["code"] == "load_error"
+        assert r["failure"]["exception_type"] == "ConnectionError"
+        assert "ConnectionError" in r["failure"]["message"]
+        assert secret not in r["failure"]["message"]
+        assert secret not in r["error"]
+        assert "could not connect" not in json.dumps(r["failure"])
+    # Operators still get the full text.
+    assert len(calls) == 1
+    assert secret in str(calls[0]["exc"])
+    assert secret in calls[0]["extra"]["exception_text"]
 
 
 @pytest.mark.asyncio

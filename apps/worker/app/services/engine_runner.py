@@ -7224,12 +7224,15 @@ def _failed_result(failure: EngineFailure, *, runtime_ms: int) -> dict[str, Any]
 
 
 def _load_error_failure(engine_name: str, exc: BaseException) -> EngineFailure:
+    """The user-facing ``load_error`` record. Generic text plus the exception
+    TYPE only: ``str(exc)`` can carry a connection string or SQL and goes to
+    the logger / ``report_alert`` (``_report_load_error``), never to the API."""
     return EngineFailure(
         engine=engine_name,
         code=ReasonCode.LOAD_ERROR,
         message=(
             f"The model did not run: reading the deal's data failed "
-            f"({type(exc).__name__}: {exc}). The failure has been reported; "
+            f"({type(exc).__name__}). The failure has been reported; "
             f"run the model again once it is resolved."
         ),
         exception_type=type(exc).__name__,
@@ -7241,9 +7244,11 @@ def _report_load_error(
 ) -> None:
     """A4 / B6 / B7 — a loader failure is an infrastructure event: log it and
     page at error severity. ``report_alert`` never raises."""
+    # The full exception text is for operators only (log + alert); the
+    # persisted / API-facing message carries the type name alone.
     logger.exception(
-        "engine inputs: loader failed deal=%s run=%s — run marked load_error",
-        deal_id, run_id,
+        "engine inputs: loader failed deal=%s run=%s — run marked load_error: %s",
+        deal_id, run_id, exc,
     )
     report_alert(
         severity="error",
@@ -7252,7 +7257,11 @@ def _report_load_error(
         tenant_id=str(tenant_id),
         stage="engine.load_inputs",
         exc=exc,
-        extra={"run_id": run_id, "exception_type": type(exc).__name__},
+        extra={
+            "run_id": run_id,
+            "exception_type": type(exc).__name__,
+            "exception_text": str(exc),
+        },
     )
 
 

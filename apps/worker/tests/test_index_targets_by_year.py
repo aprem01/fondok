@@ -554,8 +554,8 @@ async def _str_deal(session, *, overrides: dict, tenant_id: str | None = None) -
     now = datetime.now(UTC)
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, status, keys, field_overrides, created_at, updated_at) "
-            "VALUES (:id, :tenant, 'By-Year Hotel', 'Draft', 132, :ov, :now, :now)"
+            "INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at) "
+            "VALUES (:id, :tenant, 'By-Year Hotel', 'Draft', 132, 36400000, :ov, :now, :now)"
         ),
         {"id": deal_id, "tenant": tenant_id, "ov": json.dumps(overrides), "now": now},
     )

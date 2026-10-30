@@ -149,8 +149,8 @@ def test_stale_engines_skips_rows_that_never_completed() -> None:
 async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, field_overrides) "
-            "VALUES (:id, :tenant, :name, '{}')"
+            "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
+            "VALUES (:id, :tenant, :name, 132, 36400000, '{}')"
         ),
         {"id": deal_id, "tenant": tenant_id, "name": "Freshness Test"},
     )

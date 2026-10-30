@@ -23,6 +23,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-scenarios.db"
@@ -77,7 +78,7 @@ _DEFAULT_TENANT = _default_tenant()
 
 
 async def _create_deal_via_api(client, *, name: str = "Scenario Hotel", **kw) -> str:
-    body = {"name": name, "city": "Denver", "keys": 120}
+    body = {"name": name, "city": "Denver", "keys": 120, "purchase_price": 36_400_000}
     body.update(kw)
     r = await client.post("/deals", json=body)
     assert r.status_code == 201, r.text
@@ -124,8 +125,8 @@ async def test_base_scenario_unique_per_deal() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :now, :now)
                 """
             ),
             {
@@ -386,8 +387,8 @@ async def test_run_scenario_without_overrides_matches_base() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
-                VALUES (:id, :tenant, 'Base Match', 'Draft', :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
+                VALUES (:id, :tenant, 'Base Match', 'Draft', 132, 36400000, :now, :now)
                 """
             ),
             {
@@ -583,8 +584,8 @@ async def test_pip_displacement_override_routes_correctly() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
-                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
+                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', 132, 36400000, :now, :now)
                 """
             ),
             {
@@ -663,8 +664,8 @@ async def test_segment_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
-                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
+                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', 132, 36400000, :now, :now)
                 """
             ),
             {
@@ -723,8 +724,8 @@ async def test_capex_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, created_at, updated_at)
-                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
+                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', 132, 36400000, :now, :now)
                 """
             ),
             {
@@ -994,11 +995,11 @@ async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
     from app.services.engine_runner import (
         SOURCE_ANALYST_OVERRIDE,
         SOURCE_SEED,
-        _kimpton_assumptions,
+        _default_assumptions,
         _load_engine_inputs,
     )
 
-    seed_adr_growth = _kimpton_assumptions()["adr_growth"]
+    seed_adr_growth = _default_assumptions()["adr_growth"]
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -1043,7 +1044,7 @@ async def test_no_growth_override_is_byte_identical() -> None:
     from app.services.engine_runner import (
         SOURCE_DERIVED_FROM_REVPAR_GROWTH,
         SOURCE_SEED,
-        _kimpton_assumptions,
+        _default_assumptions,
         _load_engine_inputs,
         run_all_engines,
     )
@@ -1065,7 +1066,7 @@ async def test_no_growth_override_is_byte_identical() -> None:
         ).first()
         tenant_id = str(row[0])
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-        assert base["adr_growth"] == _kimpton_assumptions()["adr_growth"]
+        assert base["adr_growth"] == _default_assumptions()["adr_growth"]
         assert base["__sources__"]["adr_growth"] == SOURCE_SEED
         assert base["__sources__"]["revpar_growth"] == SOURCE_SEED
         assert SOURCE_DERIVED_FROM_REVPAR_GROWTH not in base["__sources__"].values()

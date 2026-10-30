@@ -184,9 +184,9 @@ async def _deal(session, overrides: dict) -> tuple[str, str]:
     await session.execute(
         text(
             """
-            INSERT INTO deals (id, tenant_id, name, status, field_overrides,
+            INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides,
                                created_at, updated_at)
-            VALUES (:id, :tenant, :name, 'Draft', :ov, :now, :now)
+            VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :ov, :now, :now)
             """
         ),
         {

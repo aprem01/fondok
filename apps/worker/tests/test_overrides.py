@@ -174,8 +174,8 @@ async def test_load_engine_inputs_consumes_persisted_override() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, field_overrides, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :overrides, :now, :now)
                 """
             ),
             {
@@ -239,8 +239,8 @@ async def test_partnership_waterfall_tombstone_round_trips_through_loader() -> N
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, field_overrides, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :overrides, :now, :now)
                 """
             ),
             {
@@ -354,8 +354,8 @@ async def test_load_engine_inputs_routes_debt_loan_terms_and_covenants() -> None
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, field_overrides, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', :overrides, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :overrides, :now, :now)
                 """
             ),
             {

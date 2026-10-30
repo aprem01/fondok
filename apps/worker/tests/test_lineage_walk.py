@@ -79,8 +79,8 @@ async def _reset_db():
 async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, keys, field_overrides) "
-            "VALUES (:id, :tenant, :name, :keys, :fo)"
+            "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
+            "VALUES (:id, :tenant, :name, :keys, 36400000, :fo)"
         ),
         {
             "id": deal_id,

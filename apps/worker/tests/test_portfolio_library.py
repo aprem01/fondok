@@ -154,10 +154,10 @@ async def _insert_deal_row(
             text(
                 """
                 INSERT INTO deals (
-                    id, tenant_id, name, status, ai_confidence, keys,
+                    id, tenant_id, name, status, ai_confidence, keys, purchase_price,
                     positioning, created_at, updated_at
                 ) VALUES (
-                    :id, :tenant, :name, 'Underwriting', 0.0, :keys,
+                    :id, :tenant, :name, 'Underwriting', 0.0, :keys, 36400000,
                     :positioning, :ts, :ts
                 )
                 """
