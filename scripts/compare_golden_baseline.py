@@ -174,6 +174,23 @@ def _leaves(obj: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
+#: The topline method a run that predates ``revenue.topline_methodology_version``
+#: used (``app.engines.revenue.LEGACY_TOPLINE_METHODOLOGY_VERSION``).
+_LEGACY_TOPLINE_METHODOLOGY = 1
+
+
+def _topline_methodology(engines: dict[str, dict[str, Any]], header: Any) -> int:
+    """The topline methodology version of a fixture run: the revenue output's
+    field, else the baseline header, else the legacy method (1)."""
+    outputs = (engines.get("revenue") or {}).get("outputs") or {}
+    v = outputs.get("topline_methodology_version")
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v
+    if isinstance(header, int) and not isinstance(header, bool):
+        return header
+    return _LEGACY_TOPLINE_METHODOLOGY
+
+
 def _fmt(v: Any, unit: str = "") -> str:
     if v is None:
         return "—"
@@ -217,6 +234,10 @@ def main() -> int:
             "generated_from_commit": _git_head(),
             "generated_on": date.today().isoformat(),
             "regenerate": "python scripts/compare_golden_baseline.py --write evals/baselines/<name>.json",
+            # FON-116 / FON-117 — the topline method the revenue engine ran
+            # (``revenue.topline_methodology_version``), recorded in the header
+            # so a later compare can say loudly when the method moved.
+            "topline_methodology": _topline_methodology(head, None),
             "engines": head,
         }
         args.write.parent.mkdir(parents=True, exist_ok=True)
@@ -266,14 +287,40 @@ def main() -> int:
             f"Δ {dabs} ({pct})"
         )
 
+    # FON-116 / FON-117 — the topline method the revenue engine ran. A
+    # baseline cut before the field exists reads as the legacy method (1).
+    # "0 headline changes" is never claimed across methods: the line below
+    # is printed whenever the two differ.
+    base_method = _topline_methodology(base_eng, baseline.get("topline_methodology"))
+    head_method = _topline_methodology(head, None)
+    if base_method != head_method:
+        print(
+            f"TOPLINE METHODOLOGY CHANGED: baseline v{base_method} -> head v{head_method} "
+            "(revenue.topline_methodology_version) — the headline diff below compares "
+            "two methods, not one method's drift."
+        )
+
     if args.full:
         print("\nRaw numeric leaves changed (provenance excluded):")
-        n = 0
+        n_changed = 0
+        n_added = 0
+        n_removed = 0
         for eng in sorted(set(base_eng) | set(head)):
             bl = _leaves(base_eng.get(eng, {}).get("outputs") or {})
             hl = _leaves(head.get(eng, {}).get("outputs") or {})
             for key in sorted(set(bl) | set(hl)):
-                b, h = bl.get(key), hl.get(key)
+                if key not in bl:
+                    # A leaf the baseline never had (a new output field): listed
+                    # apart from a CHANGED value so "zero changed leaves, only
+                    # added keys" can be read straight off the report.
+                    n_added += 1
+                    print(f"  + {eng}.{key}: {hl[key]!r} (added)")
+                    continue
+                if key not in hl:
+                    n_removed += 1
+                    print(f"  - {eng}.{key}: {bl[key]!r} (removed)")
+                    continue
+                b, h = bl[key], hl[key]
                 same = (
                     math.isclose(b, h, rel_tol=1e-9, abs_tol=1e-6)
                     if isinstance(b, (int, float)) and isinstance(h, (int, float))
@@ -281,9 +328,9 @@ def main() -> int:
                     else b == h
                 )
                 if not same:
-                    n += 1
+                    n_changed += 1
                     print(f"  {eng}.{key}: {b!r} -> {h!r}")
-        print(f"Raw leaves changed: {n}")
+        print(f"Raw leaves changed: {n_changed} (added: {n_added}, removed: {n_removed})")
 
     if not changed and not status_moves:
         print("\nNo headline differences: the Kimpton fixture matches the baseline.")
