@@ -162,10 +162,16 @@ describe('Projects list — a draft card', () => {
     expect(container.textContent).toContain('— keys');
   });
 
-  it('opens in the wizard, not the deal page', () => {
+  it('opens in the wizard, not the deal page; its kebab sits beside the link, not inside it', () => {
     hoisted.deals = [DRAFT, ACTIVE];
     render(<ProjectsPage />);
-    expect(screen.getByTestId('draft-card')).toHaveAttribute('href', '/projects/new?draft=draft-1');
+    const card = screen.getByTestId('draft-card');
+    expect(card).toHaveAttribute('href', '/projects/new?draft=draft-1');
+    expect(within(card).queryByRole('button', { name: 'More actions' })).toBeNull();
+    const kebab = screen.getByRole('button', { name: 'More actions' });
+    expect(card.contains(kebab)).toBe(false);
+    fireEvent.click(kebab);
+    expect(screen.getByRole('button', { name: 'Discard draft' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Harbor Active/ })).toHaveAttribute('href', '/projects/active-1');
   });
 
@@ -253,6 +259,10 @@ describe('Projects list — the draft kebab', () => {
     expect(hoisted.archive).not.toHaveBeenCalled();
     await waitFor(() => expect(hoisted.refresh).toHaveBeenCalled());
     confirm.mockRestore();
+    // Resume navigates with the router (no full reload).
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'Resume' }));
+    expect(hoisted.nav.push).toHaveBeenCalledWith('/projects/new?draft=draft-1');
     // The active row keeps its own menu.
     const activeRow = screen.getByRole('link', { name: /Harbor Active/ });
     fireEvent.click(within(activeRow).getByRole('button', { name: 'More actions' }));

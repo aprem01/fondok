@@ -641,6 +641,120 @@ describe('FON-79 — Documents step on a draft', () => {
   });
 });
 
+describe('FON-79 — a lost row closes the hook (review I-1)', () => {
+  beforeEach(() => {
+    worker.state.drafts = true;
+    worker.state.draftRows = { 'd-77': SERVER_DRAFT };
+    window.localStorage.setItem(DRAFT_POINTER_KEY, JSON.stringify({ draftDealId: 'd-77', savedAt: Date.now() }));
+  });
+
+  it.each([
+    ['409 deal_not_draft (finished in another tab)', () => workerError(409, { code: 'deal_not_draft', message: 'This deal is not a draft.' }), '/projects/d-77'],
+    ['404 (discarded in another tab)', () => workerError(404, 'deal d-77 not found'), null],
+  ])('a PATCH answered %s → no further POST or PATCH, pointer cleared, keystrokes stay local', async (_label, makeErr, replaceTarget) => {
+    render(<NewProjectPage />);
+    await waitFor(() => expect(screen.getByText('Return Requirements')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+    worker.update.mockImplementationOnce(async () => { throw makeErr(); });
+    fireEvent.change(cityInput(), { target: { value: 'Lost' } });
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    await waitFor(() => expect(readPointer()).toBeNull());
+    if (replaceTarget) await waitFor(() => expect(nav.replace).toHaveBeenCalledWith(replaceTarget));
+    // Keystrokes after the loss: the wizard's local branch runs, but nothing
+    // may leave for the worker — not a replacement POST, not a PATCH.
+    fireEvent.change(cityInput(), { target: { value: 'Lost again' } });
+    await wait(800);
+    fireEvent.change(cityInput(), { target: { value: 'Lost again and again' } });
+    await wait(DRAFT_RETRY_MS + 800);
+    expect(worker.create).not.toHaveBeenCalled();
+    expect(worker.update).toHaveBeenCalledTimes(1);
+    expect(readPointer()).toBeNull();
+    expect(statusText()).toBe('Saved locally');
+  }, 10_000);
+});
+
+describe('FON-79 — deterministic failures are not retried (review I-2)', () => {
+  beforeEach(() => {
+    worker.state.drafts = true;
+    worker.state.draftRows = { 'd-77': SERVER_DRAFT };
+    window.history.replaceState({}, '', '/projects/new?draft=d-77');
+  });
+
+  it('a cleared Deal Name is left out of the PATCH body — the row keeps its last name', async () => {
+    render(<NewProjectPage />);
+    await waitFor(() => expect(screen.getByText('Return Requirements')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(1), { timeout: 2000 }); // the step change
+    fireEvent.change(dealNameInput(), { target: { value: '   ' } });
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    const patch = worker.update.mock.calls[1][1] as Record<string, unknown>;
+    expect(patch).not.toHaveProperty('name');
+    expect((patch.draft_wizard as { fields: { dealName: string } }).fields.dealName).toBe('   ');
+    await waitFor(() => expect(statusText()).toBe('Saved to Fondok · just now'));
+  });
+
+  it('a 422 is shown once with the worker’s reason and NOT retried; the next edit sends again', async () => {
+    render(<NewProjectPage />);
+    await waitFor(() => expect(screen.getByText('Return Requirements')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    worker.update.mockImplementationOnce(async () => {
+      throw workerError(422, { code: 'invalid', message: 'Keys must be a whole number.' });
+    });
+    fireEvent.change(cityInput(), { target: { value: 'Refused' } });
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    await waitFor(() => expect(statusText()).toBe('Couldn’t save — Keys must be a whole number.'));
+    await wait(DRAFT_RETRY_MS + 800);
+    expect(worker.update).toHaveBeenCalledTimes(2); // no retry storm
+    expect(statusText()).toBe('Couldn’t save — Keys must be a whole number.');
+    // A new edit is new content — it goes out once.
+    fireEvent.change(cityInput(), { target: { value: 'Refused, fixed' } });
+    await waitFor(() => expect(worker.update).toHaveBeenCalledTimes(3), { timeout: 2000 });
+    expect(worker.update.mock.calls[2][1]).toMatchObject({ city: 'Refused, fixed' });
+    await waitFor(() => expect(statusText()).toBe('Saved to Fondok · just now'));
+  }, 10_000);
+
+  it('a 422 on create is not retried either; a 5xx is', async () => {
+    window.history.replaceState({}, '', '/projects/new');
+    worker.create.mockImplementationOnce(async () => { throw workerError(422, { code: 'invalid', message: 'Name too long.' }); });
+    render(<NewProjectPage />);
+    await waitFor(() => expect(worker.pipeline).toHaveBeenCalled());
+    fireEvent.change(dealNameInput(), { target: { value: 'Refused Create' } });
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    await waitFor(() => expect(statusText()).toBe('Couldn’t save — Name too long.'));
+    await wait(DRAFT_RETRY_MS + 800);
+    expect(worker.create).toHaveBeenCalledTimes(1);
+    cleanup();
+    window.localStorage.clear();
+    worker.create.mockClear();
+    worker.create.mockImplementationOnce(async () => { throw workerError(503, 'unavailable'); });
+    render(<NewProjectPage />);
+    await waitFor(() => expect(worker.pipeline).toHaveBeenCalled());
+    fireEvent.change(dealNameInput(), { target: { value: 'Flaky Create' } });
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    await waitFor(() => expect(statusText()).toBe('Couldn’t save — retrying'));
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(2), { timeout: DRAFT_RETRY_MS + 2000 });
+    await waitFor(() => expect(statusText()).toBe('Saved to Fondok · just now'));
+    expect(readPointer()?.draftDealId).toBe('draft-1');
+  }, 20_000);
+});
+
+describe('FON-79 — capability survives a failed resume (review I-3)', () => {
+  it('a stale pointer starts the wizard fresh, and the next named autosave creates a new draft', async () => {
+    worker.state.drafts = true;
+    window.localStorage.setItem(DRAFT_POINTER_KEY, JSON.stringify({ draftDealId: 'gone', savedAt: Date.now() }));
+    render(<NewProjectPage />);
+    await waitFor(() => expect(worker.getDraft).toHaveBeenCalledWith('gone'));
+    await waitFor(() => expect(screen.getByText('Create New Deal')).toBeInTheDocument());
+    expect(readPointer()).toBeNull();
+    await waitFor(() => expect(worker.pipeline).toHaveBeenCalled());
+    fireEvent.change(dealNameInput(), { target: { value: 'After Lost Pointer' } });
+    await waitFor(() => expect(worker.create).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    expect(worker.create.mock.calls[0][0]).toMatchObject({ name: 'After Lost Pointer', lifecycle: 'draft' });
+    await waitFor(() => expect(readPointer()?.draftDealId).toBe('draft-1'));
+  });
+});
+
 describe('FON-79 — feature detection', () => {
   it('a worker whose pipeline summary has no draft_count keeps the browser-local autosave and creates only on Finish', async () => {
     worker.state.drafts = false;

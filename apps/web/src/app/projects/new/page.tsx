@@ -127,7 +127,7 @@ function draftIsMeaningful(fields: WizardFields, step: number, fileCount: number
 const sameFile = (a: DraftFileRef, b: DraftFileRef) => a.name === b.name && a.category === b.category;
 
 /** One staged file's identity (name · size · slot) for the upload bookkeeping. */
-const stagedKey = (f: WizardFile) => `${f.file.name}::${f.file.size}::${f.category}`;
+const stagedKey = (f: WizardFile) => `${f.file.name}::${f.file.size}::${f.fiscal_year ?? ''}::${f.category}`;
 
 /** How often the Documents step re-reads the draft's documents while one is
  *  still moving through the pipeline. */
@@ -143,15 +143,19 @@ function dealBodyFromFields(
   f: WizardFields,
   normalizeCity: (v: string) => string,
   marketPick: { market: string; strMarketId: string | null },
-): DraftDealPatch & { name: string } {
+): DraftDealPatch {
   // Keys is optional — the OM extraction fills `property_overview.keys`.
   // Send null when the analyst hasn't typed a number so the worker schema
   // flows through cleanly instead of pinning a placeholder key count that
   // the deal would then surface as if it were real metadata.
   const parsedKeys = Number.parseInt(f.keys, 10);
   const keysInt = Number.isFinite(parsedKeys) && parsedKeys > 0 ? parsedKeys : null;
+  const name = f.dealName.trim();
   return {
-    name: f.dealName.trim(),
+    // A blank name is not sent: the worker refuses it (422, min_length 1) and
+    // the row keeps the last name the analyst typed. Create and Finish check
+    // the name themselves.
+    ...(name ? { name } : {}),
     // R-012 — trim / comma-space / fold onto a known market spelling.
     city: normalizeCity(f.city) || null,
     market: marketPick.market || null,
@@ -289,7 +293,8 @@ export default function NewProjectPage() {
   }, [router, toast]);
   const serverDraft = useServerDraft({ onLost: onDraftLost });
   const {
-    draftId, saveStatus: serverSaveStatus, savedAt: serverSavedAt, supported: draftsSupported,
+    draftId, saveStatus: serverSaveStatus, saveError: serverSaveError, willRetry: serverWillRetry,
+    savedAt: serverSavedAt, supported: draftsSupported,
     save: saveServerDraft, create: createServerDraft, probe: probeServerDrafts, load: loadServerDraft,
   } = serverDraft;
   const serverDraftRef = useRef(serverDraft);
@@ -327,7 +332,11 @@ export default function NewProjectPage() {
       if (cancelled) return;
       setResuming(false);
       if (!res) {
+        // The pointer / id was stale. The wizard starts from whatever is
+        // local — and the worker's capability is still probed, so the next
+        // named autosave can create a fresh draft.
         restoreLocal();
+        void probeServerDrafts();
         return;
       }
       const wizardFields = res.wizard?.fields && typeof res.wizard.fields === 'object'
@@ -516,6 +525,9 @@ export default function NewProjectPage() {
         router.replace('/projects/new');
       }
     }
+    // An explicit new start reopens the hook (it closes itself when a row
+    // was lost, so a stale wizard never resurrects a discarded draft).
+    serverDraftRef.current.reset();
     clearDraft();
     clearDraftPointer();
     setData({ ...freshFields(defaultProfile), docs: [] });
@@ -613,12 +625,13 @@ export default function NewProjectPage() {
         createdRef.current = true;
         clearDraft();
         clearDraftPointer();
-        toast(`Deal created · ${activated?.name ?? body.name}`, { type: 'success' });
+        toast(`Deal created · ${activated?.name ?? data.dealName.trim()}`, { type: 'success' });
         router.push(`/projects/${id}`);
         return;
       }
 
-      const created = await api.deals.create(body);
+      // The name was checked above; the builder leaves a blank one out.
+      const created = await api.deals.create({ ...body, name: data.dealName.trim() });
       // R-011 — the deal exists now; a restored draft would only create a
       // duplicate, so drop it before the (long) upload starts.
       createdRef.current = true;
@@ -677,19 +690,18 @@ export default function NewProjectPage() {
   // Header save status. Server draft: "Saved to Fondok · just now" /
   // "Saving…" / "Couldn't save — retrying". Local: "Saving…" / "Saved locally".
   const statusNow = useNow(!!draftId && serverSaveStatus === 'saved', 30_000);
+  // A failed create (no row yet) is a server failure too — say so even
+  // while the wizard is still only saved in this browser.
+  const serverErrorText = serverSaveStatus === 'error'
+    ? (serverWillRetry ? 'Couldn’t save — retrying' : `Couldn’t save — ${serverSaveError ?? 'try again'}`)
+    : null;
   const saveStatusText: string | null = draftId
     ? serverSaveStatus === 'saving'
       ? 'Saving…'
-      : serverSaveStatus === 'error'
-        ? 'Couldn’t save — retrying'
-        : serverSavedAt != null
-          ? `Saved to Fondok · ${relativeTime(serverSavedAt, statusNow)}`
-          : null
-    : localSaveStatus === 'saving'
-      ? 'Saving…'
-      : localSaveStatus === 'saved'
-        ? 'Saved locally'
-        : null;
+      : serverErrorText
+        ?? (serverSavedAt != null ? `Saved to Fondok · ${relativeTime(serverSavedAt, statusNow)}` : null)
+    : serverErrorText
+      ?? (localSaveStatus === 'saving' ? 'Saving…' : localSaveStatus === 'saved' ? 'Saved locally' : null);
 
   return (
     <div className="px-8 py-8 max-w-[1100px] mx-auto">
@@ -703,7 +715,7 @@ export default function NewProjectPage() {
             <span
               data-testid="draft-save-status"
               aria-live="polite"
-              className={cn('text-[11.5px]', serverSaveStatus === 'error' && draftId ? 'text-warn-700' : 'text-ink-500')}
+              className={cn('text-[11.5px]', serverSaveStatus === 'error' ? 'text-warn-700' : 'text-ink-500')}
             >
               {saveStatusText}
             </span>

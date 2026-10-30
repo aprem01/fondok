@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   isWorkerConnected,
+  userMessage,
   workerErrorCode,
   WorkerError,
   type DraftWizardPayload,
@@ -30,9 +31,16 @@ import {
  *     is in flight collapse into the next (last write wins; one author);
  *   - ``create()`` issues ONE POST however often it is called — the promise
  *     is held, so a flaky first autosave cannot double-create;
- *   - a failed PATCH is retried (``'error'`` → "Couldn't save — retrying"),
- *     except when the row is gone or no longer a draft (404 / 409): the
- *     pointer is cleared and ``onLost`` tells the page;
+ *   - once the row is lost (a PATCH answered 404, or 409 ``deal_not_draft``
+ *     because another tab finished or discarded it) the hook is CLOSED: no
+ *     further POST or PATCH leaves it for the rest of the page's life — the
+ *     wizard must not resurrect a draft someone just discarded. ``reset()``
+ *     (an explicit new start) reopens it;
+ *   - a save that failed for a reason a retry can fix — the network, a
+ *     timeout, a 5xx — is retried with a bounded exponential backoff
+ *     ("Couldn't save — retrying"); a 4xx is deterministic, so it is shown
+ *     once with the worker's reason and NOT retried (the next edit sends the
+ *     latest content, which may well fix it);
  *   - ``flush()`` runs whatever is pending NOW and settles before Finish, so
  *     the last keystroke is on the row before ``activate`` clears the wizard
  *     payload (a PATCH after activate would be refused).
@@ -60,6 +68,10 @@ export interface DraftLoadResult {
 export interface ServerDraft {
   draftId: string | null;
   saveStatus: DraftSaveStatus;
+  /** With ``saveStatus === 'error'``: the reason in plain words (``userMessage``). */
+  saveError: string | null;
+  /** With ``saveStatus === 'error'``: true while a retry is scheduled. */
+  willRetry: boolean;
   /** When the row last accepted a save (ms since epoch); null before the first. */
   savedAt: number | null;
   /** Whether the worker can hold a draft — null until ``probe()`` or ``load()`` answered. */
@@ -84,7 +96,8 @@ export interface ServerDraft {
   /** The resume read. Resolves null (after ``onLost``) when the id is not a
    *  draft on this tenant any more. */
   load: (id: string) => Promise<DraftLoadResult | null>;
-  /** Forget the draft locally (after Finish navigated, or a local Discard). */
+  /** Forget the draft locally and reopen the hook (after Finish navigated,
+   *  or an explicit new start). */
   reset: () => void;
 }
 
@@ -92,8 +105,12 @@ export interface UseServerDraftOptions {
   onLost?: (reason: DraftLostReason, id: string) => void;
 }
 
-/** A failed PATCH is retried after this long. */
+/** First retry delay for a retryable failure; doubles per attempt. */
 export const DRAFT_RETRY_MS = 4000;
+/** Longest wait between retries. */
+export const DRAFT_RETRY_MAX_MS = 60_000;
+/** Retries per failed save before the hook stops and shows the reason. */
+export const DRAFT_RETRY_MAX_ATTEMPTS = 5;
 
 interface Pending {
   body: DraftDealPatch;
@@ -114,9 +131,30 @@ function lostReasonFor(err: unknown): DraftLostReason | null {
   return null;
 }
 
+/** Only failures a retry can fix: no answer, a timeout, or the worker's 5xx.
+ *  A 4xx is deterministic for the same content — retrying it is a storm. */
+export function isRetryableSaveError(err: unknown): boolean {
+  if (err instanceof WorkerError) return err.status === 0 || err.status >= 500;
+  const name = (err as { name?: string } | null)?.name;
+  if (name === 'WorkerError') {
+    const status = (err as { status?: number }).status ?? 0;
+    return status === 0 || status >= 500;
+  }
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  if (err instanceof TypeError) return true; // fetch's network failure
+  return false;
+}
+
+/** 4 s, 8 s, 16 s, 32 s, 60 s (capped). */
+export function retryDelayMs(attempt: number): number {
+  return Math.min(DRAFT_RETRY_MS * 2 ** Math.max(0, attempt), DRAFT_RETRY_MAX_MS);
+}
+
 export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [willRetry, setWillRetry] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
 
@@ -128,10 +166,13 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
   const lastErrorRef = useRef<unknown>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Consecutive failed PATCH attempts for the content now pending. */
+  const retryAttemptsRef = useRef(0);
   const createPromiseRef = useRef<Promise<string | null> | null>(null);
   const createRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const createAttemptsRef = useRef(0);
   const lastCreateArgsRef = useRef<{ body: DraftDealPatch; wizard: DraftWizardPayload } | null>(null);
-  /** Set once the row is gone / activated — no further PATCH may leave. */
+  /** Set once the row is gone / activated — no POST or PATCH may leave until ``reset()``. */
   const closedRef = useRef(false);
   const onLostRef = useRef(options.onLost);
   onLostRef.current = options.onLost;
@@ -140,6 +181,19 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
     if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
     if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
     if (createRetryRef.current) { clearTimeout(createRetryRef.current); createRetryRef.current = null; }
+  }, []);
+
+  const ok = useCallback(() => {
+    lastErrorRef.current = null;
+    setSaveError(null);
+    setWillRetry(false);
+  }, []);
+
+  const fail = useCallback((err: unknown, retrying: boolean) => {
+    lastErrorRef.current = err;
+    setSaveStatus('error');
+    setSaveError(userMessage(err));
+    setWillRetry(retrying);
   }, []);
 
   const adopt = useCallback((id: string, at: number) => {
@@ -154,6 +208,9 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
   }, []);
 
   const lose = useCallback((reason: DraftLostReason, id: string) => {
+    // Closed for the rest of the page's life: the local branch of the
+    // wizard's autosave must not POST a replacement for a row another tab
+    // just finished or discarded.
     closedRef.current = true;
     pendingRef.current = null;
     clearTimers();
@@ -161,6 +218,8 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
     draftIdRef.current = null;
     setDraftId(null);
     setSaveStatus('idle');
+    setSaveError(null);
+    setWillRetry(false);
     onLostRef.current?.(reason, id);
   }, [clearTimers]);
 
@@ -175,7 +234,8 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
       .update(id, { ...payload.body, draft_wizard: payload.wizard })
       .then(() => {
         lastSentKeyRef.current = payload.key;
-        lastErrorRef.current = null;
+        retryAttemptsRef.current = 0;
+        ok();
         const now = Date.now();
         setSavedAt(now);
         saveDraftPointer(id, now);
@@ -187,29 +247,40 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
           lose(lost, id);
           return;
         }
-        lastErrorRef.current = err;
-        setSaveStatus('error');
-        // Nothing newer arrived → put this change back and retry it.
+        // Nothing newer arrived → the failed content stays pending, so the
+        // next edit (or the retry) sends it.
         if (!pendingRef.current) pendingRef.current = payload;
-        if (!retryRef.current) {
+        const retryable = isRetryableSaveError(err) && retryAttemptsRef.current < DRAFT_RETRY_MAX_ATTEMPTS;
+        fail(err, retryable);
+        if (retryable && !retryRef.current) {
+          const delay = retryDelayMs(retryAttemptsRef.current);
+          retryAttemptsRef.current += 1;
           retryRef.current = setTimeout(() => {
             retryRef.current = null;
             pump();
-          }, DRAFT_RETRY_MS);
+          }, delay);
         }
       })
       .finally(() => {
         inFlightRef.current = null;
-        if (pendingRef.current && !retryRef.current) pump();
+        // Content that arrived during the flight goes next — unless this
+        // flight failed and the failure is waiting on its backoff (or is not
+        // retryable at all): a new edit re-enters through ``save``.
+        if (pendingRef.current && !retryRef.current && !lastErrorRef.current) pump();
       });
-  }, [lose]);
+  }, [lose, ok, fail]);
 
   const save = useCallback((body: DraftDealPatch, wizard: DraftWizardPayload) => {
     if (!draftIdRef.current || closedRef.current) return;
     const key = serialize(body, wizard);
     // Nothing changed since the row last took a save → no request.
     if (key === lastSentKeyRef.current && !pendingRef.current && !inFlightRef.current) return;
+    // Same content as the one already pending (a re-render, not an edit).
+    if (pendingRef.current?.key === key) return;
     pendingRef.current = { body, wizard, key };
+    // A new edit is new content: forget the previous failure's backoff.
+    retryAttemptsRef.current = 0;
+    if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
     setSaveStatus('saving');
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
@@ -241,22 +312,23 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
       setSupported(false);
       return false;
     }
-    let ok = false;
+    let can = false;
     try {
       const r = await api.deals.pipeline({ limit: 1 });
-      ok = typeof r?.summary?.draft_count === 'number';
+      can = typeof r?.summary?.draft_count === 'number';
     } catch {
-      ok = false;
+      can = false;
     }
     // ``load()`` may have answered meanwhile.
     if (supportedRef.current == null) {
-      supportedRef.current = ok;
-      setSupported(ok);
+      supportedRef.current = can;
+      setSupported(can);
     }
-    return supportedRef.current ?? ok;
+    return supportedRef.current ?? can;
   }, []);
 
   const create = useCallback((body: DraftDealPatch, wizard: DraftWizardPayload): Promise<string | null> => {
+    if (closedRef.current) return Promise.resolve(null);
     if (draftIdRef.current) return Promise.resolve(draftIdRef.current);
     if (createPromiseRef.current) return createPromiseRef.current;
     if (createRetryRef.current) { clearTimeout(createRetryRef.current); createRetryRef.current = null; }
@@ -265,6 +337,12 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
     const p = api.deals
       .create({ ...body, name: body.name ?? '', lifecycle: 'draft', draft_wizard: wizard })
       .then((deal) => {
+        if (closedRef.current) {
+          // Lost while the POST was out (another tab's row vanished): do not
+          // adopt a replacement. The row exists on the worker as a draft the
+          // Projects list shows; nothing here points at it.
+          return null;
+        }
         if (deal.lifecycle !== 'draft') {
           // The worker did not store a draft — it cannot hold one. Stop
           // trying for this session; the wizard stays browser-local.
@@ -275,19 +353,26 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
         }
         const now = Date.now();
         lastSentKeyRef.current = serialize(body, wizard);
-        lastErrorRef.current = null;
+        createAttemptsRef.current = 0;
+        ok();
         adopt(deal.id, now);
         return deal.id;
       })
       .catch((err: unknown) => {
-        lastErrorRef.current = err;
-        setSaveStatus('error');
-        // Try again with the latest content the page handed us.
-        createRetryRef.current = setTimeout(() => {
-          createRetryRef.current = null;
-          const args = lastCreateArgsRef.current;
-          if (args && !draftIdRef.current && !closedRef.current) void create(args.body, args.wizard);
-        }, DRAFT_RETRY_MS);
+        const retryable = isRetryableSaveError(err) && createAttemptsRef.current < DRAFT_RETRY_MAX_ATTEMPTS;
+        fail(err, retryable);
+        if (retryable) {
+          // Try again with the latest content the page handed us.
+          const delay = retryDelayMs(createAttemptsRef.current);
+          createAttemptsRef.current += 1;
+          createRetryRef.current = setTimeout(() => {
+            createRetryRef.current = null;
+            const args = lastCreateArgsRef.current;
+            if (args && !draftIdRef.current && !closedRef.current) void create(args.body, args.wizard);
+          }, delay);
+        }
+        // A 4xx is not retried here; the page's next autosave (new content)
+        // may call create() again.
         return null;
       })
       .finally(() => {
@@ -295,7 +380,7 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
       });
     createPromiseRef.current = p;
     return p;
-  }, [adopt]);
+  }, [adopt, ok, fail]);
 
   const activate = useCallback(async (): Promise<WorkerDeal> => {
     const id = draftIdRef.current;
@@ -315,11 +400,15 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
     lastErrorRef.current = null;
     lastCreateArgsRef.current = null;
     createPromiseRef.current = null;
+    retryAttemptsRef.current = 0;
+    createAttemptsRef.current = 0;
     closedRef.current = false;
     draftIdRef.current = null;
     setDraftId(null);
     setSavedAt(null);
     setSaveStatus('idle');
+    setSaveError(null);
+    setWillRetry(false);
   }, [clearTimers]);
 
   const discard = useCallback(async () => {
@@ -378,7 +467,7 @@ export function useServerDraft(options: UseServerDraftOptions = {}): ServerDraft
   useEffect(() => () => clearTimers(), [clearTimers]);
 
   return useMemo<ServerDraft>(() => ({
-    draftId, saveStatus, savedAt, supported,
+    draftId, saveStatus, saveError, willRetry, savedAt, supported,
     probe, create, save, prime, flush, activate, discard, load, reset,
-  }), [draftId, saveStatus, savedAt, supported, probe, create, save, prime, flush, activate, discard, load, reset]);
+  }), [draftId, saveStatus, saveError, willRetry, savedAt, supported, probe, create, save, prime, flush, activate, discard, load, reset]);
 }

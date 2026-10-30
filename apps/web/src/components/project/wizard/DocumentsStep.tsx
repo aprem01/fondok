@@ -54,6 +54,7 @@ import type {
   WorkerDocument,
 } from '@/lib/api';
 import { docStatusLabel, docTypeLabel } from '@/lib/docTypeLabels';
+import { isProcessingStatus } from '@/lib/progress';
 import {
   hasFinancialStatement,
   wizardCategoryForDocument,
@@ -1255,14 +1256,16 @@ function FileRow({
         </div>
       </div>
       {uploading && <UploadingChip />}
-      {spec.showYearTagging && (
+      {/* While the file is on its way up its tag and year already travelled
+          with it — the uploaded row offers them again, wired to reclassify. */}
+      {!uploading && spec.showYearTagging && (
         <YearField
           value={file.fiscal_year ?? null}
           onChange={(yr) => onUpdate(file, { fiscal_year: yr })}
           fileKey={dedupeKey(file)}
         />
       )}
-      {spec.picker && (
+      {!uploading && spec.picker && (
         <>
           <label className="sr-only" htmlFor={`type-${dedupeKey(file)}`}>
             {spec.picker.label}
@@ -1287,7 +1290,7 @@ function FileRow({
           </select>
         </>
       )}
-      {spec.lanePicker && (file.user_doc_type ?? '').toUpperCase() === 'CAPEX' && (
+      {!uploading && spec.lanePicker && (file.user_doc_type ?? '').toUpperCase() === 'CAPEX' && (
         // FON-41 / R-036 + the PIP lane — which CapEx lane this file goes
         // up under. Defaults to the slot's pin; a change rides the upload
         // as ``user_doc_subtypes[i]`` (lib/docSubtype.wizardDocSubtype).
@@ -1363,8 +1366,12 @@ function ServerDocRow({
   const IconForExt = doc.filename.toLowerCase().endsWith('.xlsx') ? FileSpreadsheet : FileText;
   const status = docStatusLabel(doc.status);
   const type = wizardDocType(doc);
-  const canRetagType = !!spec?.picker && !!onRetag;
-  const canRetagYear = !!spec?.showYearTagging && !!onRetag;
+  // No re-tag while the pipeline is reading the file: the tag it was uploaded
+  // with is what the Router is checking against right now. Once it settles
+  // (Extracted / Failed / Pending) the controls return.
+  const processing = isProcessingStatus(doc.status);
+  const canRetagType = !!spec?.picker && !!onRetag && !processing;
+  const canRetagYear = !!spec?.showYearTagging && !!onRetag && !processing;
   return (
     <div
       className="rounded-md border border-border bg-ink-50/40 px-3 py-2.5 flex items-center gap-3 flex-wrap"

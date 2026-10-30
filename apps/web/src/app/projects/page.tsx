@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Plus, Search, ChevronDown, LayoutGrid, List, Building2,
   MapPin, AlertTriangle, Upload, Loader2, RefreshCw,
@@ -41,6 +42,7 @@ const buildDraftMenu = (
   name: string,
   toast: (m: string, opts?: { type?: 'success' | 'error' | 'info' }) => void,
   onDiscarded: () => void,
+  navigate: (href: string) => void,
 ) => {
   const onDiscard = async () => {
     const expected = (name || 'this draft').trim();
@@ -55,7 +57,7 @@ const buildDraftMenu = (
     }
   };
   return [
-    { label: 'Resume', onSelect: () => { window.location.href = resumeHref(id); } },
+    { label: 'Resume', onSelect: () => navigate(resumeHref(id)) },
     { label: 'Discard draft', onSelect: onDiscard, danger: true },
   ];
 };
@@ -179,6 +181,7 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const { toast } = useToast();
+  const router = useRouter();
   // Wave 5 RBAC — hard-delete admin gate.
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
@@ -347,7 +350,15 @@ export default function ProjectsPage() {
       ) : view === 'grid' ? (
         <div className="grid grid-cols-3 gap-4">
           {filtered.map(p => (
-            <Link key={p.id} href={p.isDraft ? resumeHref(p.id) : `/projects/${p.id}`} data-testid={p.isDraft ? 'draft-card' : undefined}>
+            <div key={p.id} className="relative">
+            {/* A draft's kebab sits beside the card's link, not inside it —
+                a menu click must never also follow the link. */}
+            {p.isDraft && (
+              <div className="absolute top-3 right-3 z-10">
+                <KebabMenu items={buildDraftMenu(p.id, p.name, toast, refresh, router.push)} />
+              </div>
+            )}
+            <Link href={p.isDraft ? resumeHref(p.id) : `/projects/${p.id}`} data-testid={p.isDraft ? 'draft-card' : undefined}>
               <Card className="p-5 hover:shadow-md transition-shadow cursor-pointer">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-start gap-3 flex-1">
@@ -361,7 +372,7 @@ export default function ProjectsPage() {
                       </div>
                     </div>
                   </div>
-                  <span className="text-[11px] text-ink-500 whitespace-nowrap tabular-nums">{formatKeys(p.keys)} keys</span>
+                  <span className={cn('text-[11px] text-ink-500 whitespace-nowrap tabular-nums', p.isDraft && 'mr-7')}>{formatKeys(p.keys)} keys</span>
                 </div>
 
                 <div className="flex items-center gap-1.5 mb-4">
@@ -423,13 +434,9 @@ export default function ProjectsPage() {
                   </div>
                   <span className="text-[11px] text-ink-500">{p.docs} docs</span>
                 </div>
-                {p.isDraft && (
-                  <div className="mt-3 flex justify-end" onClick={(e) => e.preventDefault()}>
-                    <KebabMenu items={buildDraftMenu(p.id, p.name, toast, refresh)} />
-                  </div>
-                )}
               </Card>
             </Link>
+            </div>
           ))}
         </div>
       ) : (
@@ -511,7 +518,7 @@ export default function ProjectsPage() {
               <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
               <KebabMenu
                 items={p.isDraft
-                  ? buildDraftMenu(p.id, p.name, toast, refresh)
+                  ? buildDraftMenu(p.id, p.name, toast, refresh, router.push)
                   : buildProjectMenu(p.id, p.name, toast, refresh, isAdmin)}
               />
             </Link>
