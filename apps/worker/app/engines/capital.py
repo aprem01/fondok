@@ -105,10 +105,12 @@ class CapitalEngineInput(InvestmentEngineInput):
 class RenovationBreakdown(BaseModel):
     """Hard / soft / professional-fee split of the renovation budget.
 
-    B8 — ``source`` says where the split percentages came from:
-    :data:`RENOVATION_SPLIT_DEFAULT_SOURCE` (the platform default, ``note``
-    carrying :data:`RENOVATION_SPLIT_DEFAULT_REASON`) or ``analyst_override``
-    (the caller passed the percentages)."""
+    B8 — ``part_sources`` says where EACH part's percentage came from:
+    :data:`RENOVATION_SPLIT_DEFAULT_SOURCE` (the platform default) or
+    ``analyst_override`` (the caller passed that percentage). ``source`` is
+    the common label when all three agree, else ``"mixed"``; ``note`` carries
+    :data:`RENOVATION_SPLIT_DEFAULT_REASON` (naming the defaulted parts when
+    only some are) whenever any part is a default."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -117,6 +119,7 @@ class RenovationBreakdown(BaseModel):
     fees: Annotated[float, Field(ge=0)]
     source: str = RENOVATION_SPLIT_DEFAULT_SOURCE
     note: str | None = None
+    part_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class CapitalEngineOutput(InvestmentEngineOutput):
@@ -257,18 +260,40 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         # Only when there's an actual budget — otherwise leave it None so the
         # UI renders '—' rather than a $0 split.
         reno_breakdown: RenovationBreakdown | None = None
-        split_is_default = not (_RENOVATION_SPLIT_FIELDS & payload.model_fields_set)
+        part_sources = {
+            part: (
+                "analyst_override"
+                if f"renovation_{part}_pct" in payload.model_fields_set
+                else RENOVATION_SPLIT_DEFAULT_SOURCE
+            )
+            for part in ("hard", "soft", "fees")
+        }
+        defaulted = [p for p, src in part_sources.items() if src == RENOVATION_SPLIT_DEFAULT_SOURCE]
+        if len(defaulted) == 3:
+            split_note: str | None = RENOVATION_SPLIT_DEFAULT_REASON
+        elif defaulted:
+            names = {"hard": "hard costs", "soft": "soft costs", "fees": "professional fees"}
+            split_note = (
+                "Platform default split for "
+                + ", ".join(
+                    f"{names[p]} ({RENOVATION_SPLIT_DEFAULT[p]:.0%})" for p in defaulted
+                )
+                + "; the other parts were entered."
+            )
+        else:
+            split_note = None
         if payload.renovation_budget > 0:
             reno_breakdown = RenovationBreakdown(
                 hard=payload.renovation_budget * payload.renovation_hard_pct,
                 soft=payload.renovation_budget * payload.renovation_soft_pct,
                 fees=payload.renovation_budget * payload.renovation_fees_pct,
                 source=(
-                    RENOVATION_SPLIT_DEFAULT_SOURCE
-                    if split_is_default
-                    else "analyst_override"
+                    next(iter(set(part_sources.values())))
+                    if len(set(part_sources.values())) == 1
+                    else "mixed"
                 ),
-                note=RENOVATION_SPLIT_DEFAULT_REASON if split_is_default else None,
+                note=split_note,
+                part_sources=part_sources,
             )
 
         # Stamp pct on each line and append totals.
@@ -545,7 +570,12 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 prov[f"renovation_breakdown.{part}"] = ValueTrace(
                     value=getattr(reno_breakdown, part),
                     formula=f"renovation_{part} = renovation_budget × renovation_{part}_pct",
-                    note=reno_breakdown.note,
+                    note=(
+                        reno_breakdown.note
+                        if reno_breakdown.part_sources.get(part)
+                        == RENOVATION_SPLIT_DEFAULT_SOURCE
+                        else None
+                    ),
                     inputs=[
                         ValueInput(
                             name="renovation_budget",

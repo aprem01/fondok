@@ -282,3 +282,27 @@ def test_renovation_split_source_is_in_the_ontology():
     src = load_registry().sources["platform_default_renovation_split"]
     assert src.kind == "assumption"
     assert src.badge == "Platform default"
+
+
+def test_partly_entered_renovation_split_labels_each_part_by_its_source():
+    from app.engines.capital import RENOVATION_SPLIT_DEFAULT_SOURCE
+
+    out = CapitalEngine().run(
+        CapitalEngineInput(
+            deal_id=uuid4(), purchase_price=30_000_000, keys=100,
+            renovation_budget=1_000_000, renovation_hard_pct=0.75,
+        )
+    )
+    b = out.renovation_breakdown
+    assert b.part_sources == {
+        "hard": "analyst_override",
+        "soft": RENOVATION_SPLIT_DEFAULT_SOURCE,
+        "fees": RENOVATION_SPLIT_DEFAULT_SOURCE,
+    }
+    assert b.source == "mixed"
+    assert b.note == (
+        "Platform default split for soft costs (15%), professional fees (10%); "
+        "the other parts were entered."
+    )
+    assert out.provenance["renovation_breakdown.hard"].note is None
+    assert out.provenance["renovation_breakdown.soft"].note == b.note

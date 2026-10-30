@@ -2,6 +2,18 @@
 
 Authoritative reference for the Fondok production deployment.
 
+## Release notes
+
+- **Go-live Wave 3 Task 13 (2026-10-30) — existing runs read stale; re-run.**
+  The expense engine (`synthesized_lines`), the cash-flow statement
+  (`distributions_unavailable`) and the capital engine's renovation breakdown
+  (`part_sources`) publish new output blocks, so the freshness detector flags
+  every run persisted before this deploy as stale until the deal's model is
+  re-run. Re-running also applies the new rules: Partnership runs only on a
+  deal's own partnership terms (otherwise the neutral `not_applicable` status),
+  and the exit cap from comps honours the comp tab's exclusions and five-year
+  lookback.
+
 ## Topology
 
 | Tier | Host | URL |

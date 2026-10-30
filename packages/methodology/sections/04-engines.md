@@ -134,7 +134,7 @@ the needed type, or no field that states the figure) wherever it is printed.
 The renovation budget's breakdown into hard costs, soft costs and professional fees uses the
 platform default split of 75% / 15% / 10% when no itemized renovation budget is on file. The
 breakdown is badged Platform default and carries that reason; it never reads as the deal's own
-breakdown.
+breakdown. When only some parts are entered, each part is badged by its own source.
 
 :::
 
