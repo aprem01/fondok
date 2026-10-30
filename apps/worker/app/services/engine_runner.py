@@ -226,9 +226,9 @@ ENGINE_DEPS: dict[str, list[str]] = {
 # an analyst can act on, name the engines that consequently did not run
 # (derived from ``ENGINE_DEPS`` — never hard-coded), and say that the saved
 # assumptions survived (they live in ``deals.field_overrides`` and a failed
-# run never touches them). The raw pydantic text is appended verbatim after
-# ``Technical detail:`` so nothing is lost. Message-only: no validator, engine
-# math or numeric behaviour changes here.
+# run never touches them). The raw pydantic text is NOT echoed to the user
+# (it may quote deal data); it goes to the log and the alert only.
+# Message-only: no validator, engine math or numeric behaviour changes here.
 
 # Reader-facing engine names used INSIDE the stored error text. The web
 # banner recognises these at the head of a runner-formatted error
@@ -7464,8 +7464,8 @@ async def run_single_engine(
         )
         # E-023 — a pydantic ValidationError lands as a sentence the analyst
         # can act on (which input, which year, what range, what did not run,
-        # assumptions kept) with the raw text after "Technical detail:".
-        # Every other exception is stored exactly as before.
+        # assumptions kept); the raw text goes to the log and alert only.
+        # Every other exception is stored as its type plus a generic sentence.
         failure = EngineFailure(
             engine=engine_name,
             reason=ReasonCode.ENGINE_ERROR,
