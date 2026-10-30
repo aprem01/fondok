@@ -79,12 +79,14 @@ SourceKind = Literal["grounded", "assumption", "calculated", "override", "refusa
 ImpactBasis = Literal["noi", "revenue", "expense", "other"]
 Reason = Literal["no_source", "period_mismatch", "unit_unknown", "basis_excluded"]
 
-#: The 16 refusal codes shared with ``fondok_schemas.reasons`` and the web.
+#: The 19 refusal codes shared with ``fondok_schemas.reasons`` and the web.
 REASON_CODES: tuple[str, ...] = (
     "no_document", "no_source", "unit_unknown", "period_mismatch", "basis_mismatch",
     "basis_excluded", "awaiting_analyst", "needs_review", "pin_active", "str_unavailable",
     "not_knowable_as_of", "as_of_unknown", "stale_run", "engine_skipped", "inconclusive",
     "not_applicable",
+    # Wave 0 (2026-10-30) — engine-run failures.
+    "missing_identity_inputs", "load_error", "engine_error",
 )
 
 #: Engines a concept may name: the engine_runner / provenance names plus the
@@ -586,7 +588,7 @@ def _validate(reg: Registry) -> None:
     if set(reg.reasons) != set(REASON_CODES):
         missing = sorted(set(REASON_CODES) - set(reg.reasons))
         extra = sorted(set(reg.reasons) - set(REASON_CODES))
-        errors.append(f"reasons: expected the 16 shared codes; missing={missing} extra={extra}")
+        errors.append(f"reasons: expected the shared codes; missing={missing} extra={extra}")
     for sid, src in reg.sources.items():
         if src.reason is not None and src.reason not in reg.reasons:
             errors.append(f"sources[{sid}].reason {src.reason!r} is not a reason code")

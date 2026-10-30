@@ -46,6 +46,11 @@ class ReasonCode(str, Enum):
     ENGINE_SKIPPED = "engine_skipped"
     INCONCLUSIVE = "inconclusive"          # USALI scorer < 5 applicable rules
     NOT_APPLICABLE = "not_applicable"
+    # Wave 0 (2026-10-30) — engine-run failures. ``engine_skipped`` above is
+    # the fourth member of this family (an upstream engine did not complete).
+    MISSING_IDENTITY_INPUTS = "missing_identity_inputs"  # deal has no keys / purchase price
+    LOAD_ERROR = "load_error"              # the loader could not read the deal's data
+    ENGINE_ERROR = "engine_error"          # the engine raised (bad input, bug)
 
 
 class Refusal(BaseModel):
@@ -214,6 +219,33 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "explanation": (
             "This figure does not apply to the deal as configured (for example "
             "a tranche that is not funded)."
+        ),
+    },
+    ReasonCode.MISSING_IDENTITY_INPUTS: {
+        "label": "Deal inputs missing",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The deal has no key count and/or no purchase price, so the engines "
+            "that need them did not run. Enter them on the deal (or upload an "
+            "OM that carries them) and run the model again; Fondok never "
+            "substitutes a placeholder property."
+        ),
+    },
+    ReasonCode.LOAD_ERROR: {
+        "label": "Could not read deal data",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "Reading the deal's data (its row, overrides or extracted documents) "
+            "failed, so the model did not run rather than run on defaults. The "
+            "failure has been reported; run the model again once it is resolved."
+        ),
+    },
+    ReasonCode.ENGINE_ERROR: {
+        "label": "Engine failed",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The engine that produces this figure raised an error (for example "
+            "an input outside its accepted range), so there is no output to show."
         ),
     },
 }

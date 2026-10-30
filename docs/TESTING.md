@@ -19,6 +19,9 @@ git checkout evals/test-results.xml      # tests/test_observability.py regenerat
 rm -rf apps/worker/.tmp_fx
 
 # Kimpton golden — its OWN shell invocation (see "golden then pytest" below).
+# The fixture is apps/worker/tests/fixtures/kimpton_seed.py, injected through
+# run_all_engines(assumptions=...); production has no Kimpton defaults and no
+# demo deal id (2026-10-30).
 cd apps/worker && .venv/bin/python ../../scripts/compare_golden_baseline.py
 # must print "Headline fields changed: 0"
 

@@ -232,7 +232,8 @@ _SIMPLE_ROOTS: tuple[tuple[str, str, str, str, str, str], ...] = (
 
 # ───────────────────── assumption ↔ concept ↔ input names ─────────────
 #
-# The canonical assumption keys (see ``engine_runner._kimpton_assumptions``)
+# The canonical assumption keys (see ``engine_runner._default_assumptions`` +
+# ``IDENTITY_INPUT_KEYS``)
 # mapped onto the concept registry, so the fallback path can ask the registry
 # "which field on this document carries this concept, and on what page?".
 # Only keys with a real document-level concept appear; a purely modelled

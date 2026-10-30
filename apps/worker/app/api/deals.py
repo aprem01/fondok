@@ -830,22 +830,33 @@ def _override_needs_note(key: str, non_engine_keys: frozenset[str]) -> bool:
 
 
 def _coerce_overrides(value: Any) -> dict[str, Any]:
-    """Normalize JSONB column reads — Postgres may hand us a parsed
-    dict or a raw JSON string depending on driver/version. Anything
-    unexpected falls back to an empty map so the API never blows up
-    on a malformed row.
+    """Normalize a ``field_overrides`` column read — Postgres may hand us a
+    parsed dict or a raw JSON string depending on driver/version.
+
+    A NULL column is an empty map. Anything that is not a JSON object is
+    corrupt data and is an error the caller sees (HTTP 500 with a body that
+    names the column), never an empty map: the analyst's overrides must not
+    silently vanish into the Base case (D3, 2026-10-30).
     """
     if value is None:
         return {}
-    if isinstance(value, dict):
-        return value
     if isinstance(value, str):
         try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"deals.field_overrides is not valid JSON: {exc}",
+            ) from exc
+    if isinstance(value, dict):
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=(
+            "deals.field_overrides is not a JSON object "
+            f"(got {type(value).__name__})"
+        ),
+    )
 
 
 def _coerce_dt_optional(value: Any) -> datetime | None:
@@ -1235,7 +1246,9 @@ async def _load_field_overrides(
 
     Tenant-safe by construction — the predicate filters on the caller's
     ``tenant_id`` so one workspace can never read another's overrides.
-    Missing / malformed rows collapse to ``{}`` via ``_coerce_overrides``.
+    A deal that is not on this tenant is a 404 (the same answer
+    ``_assert_deal_belongs_to_tenant`` gives); a malformed column is a 500
+    via ``_coerce_overrides`` — neither is an empty Base case.
     """
     row = (
         await session.execute(
@@ -1251,7 +1264,10 @@ async def _load_field_overrides(
         )
     ).first()
     if row is None:
-        return {}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
     return _coerce_overrides(row._mapping.get("field_overrides"))
 
 
@@ -1303,7 +1319,9 @@ async def create_deal(
         "status": "Draft",
         "deal_stage": body.deal_stage,
         "risk": None,
-        "ai_confidence": 0.0,
+        # A11 — NULL until extraction produces a confidence; never 0.0 (which
+        # the UI rendered as a "0%" confidence bar on a deal nothing had read).
+        "ai_confidence": None,
         "return_profile": body.return_profile,
         "brand": body.brand,
         "positioning": body.positioning,
@@ -1455,7 +1473,7 @@ async def create_deal(
         status="Draft",
         deal_stage=body.deal_stage,
         risk=None,
-        ai_confidence=0.0,
+        ai_confidence=None,
         return_profile=body.return_profile,
         deal_type=body.deal_type,
         brand=body.brand,
