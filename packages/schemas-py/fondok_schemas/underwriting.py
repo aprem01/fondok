@@ -403,7 +403,6 @@ GrowthSource = Literal[
 ]
 BenchmarkBasis = Literal["actual", "forecast", "assumption"]
 PenetrationSource = Literal["default", "analyst_override"]
-RampSource = Literal["default", "analyst_override", "undefined"]
 #: How the ramp was applied to ONE model year (``IndexDriverYear.ramp_state``):
 #: ``ramped`` — ``P × r_y`` (y < S, ramp defined); ``stabilized`` — y ≥ S, full
 #: penetration; ``no_ramp`` — y < S but the analyst's ramp has no entry for the
@@ -520,14 +519,22 @@ class ToplineDrivers(BaseModel):
     benchmark_fallback_reason: str | None = None
     benchmark_by_year: list[BenchmarkYear] = Field(default_factory=list)
     growth_by_year: list[GrowthYear] = Field(default_factory=list)
-    #: 1-based stabilization year S (the analyst's, else the Year-3 default).
+    #: 1-based stabilization year S AS SET (the analyst's ``stabilization_year``,
+    #: else the Year-3 default) — NOT pre-clamped to the hold. The engine clamps
+    #: it for the math in one place: only Years 1..hold are evaluated, so an S
+    #: past the hold keeps the ramp applying through the last projected year,
+    #: which is stamped ``stabilization_after_hold`` ("Stabilization (Year S) is
+    #: after the hold; Year <hold> runs at ramp r"). The loader passes the raw
+    #: value so that path is live.
     stabilization_year: Annotated[int, Field(ge=1)]
     penetration_occ: PenetrationPoints = 100.0
     penetration_adr: PenetrationPoints = 100.0
     penetration_occ_source: PenetrationSource = "default"
     penetration_adr_source: PenetrationSource = "default"
+    #: ``None`` = the engine's default ramp for S; a list = the analyst's ramp.
+    #: (No separate ``ramp_source`` field: the source IS whether a list was
+    #: supplied, and the per-year record's ``ramp_state`` says how it applied.)
     ramp_by_year: list[RampFraction | None] | None = None
-    ramp_source: RampSource = "default"
     penetration_occ_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     penetration_adr_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     t12_reference: ToplineReference | None = None

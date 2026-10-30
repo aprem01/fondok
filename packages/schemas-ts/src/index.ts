@@ -514,9 +514,6 @@ export type BenchmarkBasis = z.infer<typeof BenchmarkBasis>;
 export const PenetrationSource = z.enum(['default', 'analyst_override']);
 export type PenetrationSource = z.infer<typeof PenetrationSource>;
 
-export const RampSource = z.enum(['default', 'analyst_override', 'undefined']);
-export type RampSource = z.infer<typeof RampSource>;
-
 /** How the ramp applied to ONE model year — see the Python docstring. */
 export const ToplineRampState = z.enum([
   'ramped',
@@ -605,8 +602,8 @@ export const ToplineDrivers = z.object({
   penetration_adr: PenetrationPoints.default(100),
   penetration_occ_source: PenetrationSource.default('default'),
   penetration_adr_source: PenetrationSource.default('default'),
+  // null = the engine's default ramp for S; a list = the analyst's ramp.
   ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
-  ramp_source: RampSource.default('default'),
   penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),
   penetration_adr_by_year: z.array(PenetrationPoints.nullable()).default([]),
   t12_reference: ToplineReference.nullable().optional(),
@@ -687,7 +684,9 @@ export type RevenueProjectionYear = z.infer<typeof RevenueProjectionYear>;
 // same way. See packages/schemas-py/fondok_schemas/provenance.py.
 export const ValueInput = z.object({
   name: z.string(),
-  value: z.number(),
+  // null = the input had no value (e.g. a year held flat for lack of a growth
+  // figure); a trace never writes 0 for an absence.
+  value: z.number().nullable(),
   assumption_key: z.string().nullable().optional(),
   source: z.string().nullable().optional(),
   traces_to: z.string().nullable().optional(),

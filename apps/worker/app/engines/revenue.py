@@ -179,28 +179,38 @@ def _ramp_for_year(
       when the default ramp is in use and undefined for the year (S ≥ 4, years
       3..S−1), ``no_ramp`` when the analyst's ramp has no entry for the year.
     """
-    s = topline.stabilization_year
+    s = topline.stabilization_year  # as the analyst set it — NOT pre-clamped
     if year >= s:
         return None, "stabilized", None
+    # The ONE place the hold clamps S for the math: only Years 1..hold are
+    # ever evaluated (the loop runs ``payload.hold_years``), so an S past the
+    # hold means the projection never reaches the stabilized penetration; the
+    # last projected year carries that fact.
+    after_hold = s > hold_years and year == hold_years
+    after_hold_note = (
+        f"Stabilization (Year {s}) is after the hold; Year {hold_years} runs at ramp "
+        "{ramp} and the projection never reaches the stabilized penetration."
+    )
     ramp = topline.ramp_by_year if topline.ramp_by_year is not None else default_ramp_by_year(s)
     r = ramp[year - 1] if 0 <= year - 1 < len(ramp) else None
     if r is None:
         if topline.ramp_by_year is None and s >= 4 and year >= 3:
-            return None, "undefined_for_stabilization_year", (
+            state, note = "undefined_for_stabilization_year", (
                 f"Year {year}: the default ramp is defined for stabilization in Year 3 "
                 f"(85 % / 95 %) only — with stabilization in Year {s} the ramp for "
                 f"Years 3–{s - 1} is undefined, so the year runs at 100 % of the "
                 f"stabilized penetration. Enter the ramp for Years 3–{s - 1}."
             )
-        return None, "no_ramp", (
-            f"Year {year}: no ramp entered for the year — it runs at 100 % of the "
-            "stabilized penetration."
-        )
-    if s > hold_years and year == hold_years:
-        return r, "stabilization_after_hold", (
-            f"Stabilization (Year {s}) is after the hold; Year {hold_years} runs at "
-            f"ramp {r:g} and the projection never reaches the stabilized penetration."
-        )
+        else:
+            state, note = "no_ramp", (
+                f"Year {year}: no ramp entered for the year — it runs at 100 % of the "
+                "stabilized penetration."
+            )
+        if after_hold:
+            note = f"{note} {after_hold_note.format(ramp='100 % (none defined)')}"
+        return None, state, note
+    if after_hold:
+        return r, "stabilization_after_hold", after_hold_note.format(ramp=f"{r:g}")
     return r, "ramped", None
 
 
@@ -256,8 +266,12 @@ def _plan_topline(
             adr_growth_source=gy.adr_source if gy is not None else None,
         )
         if topline.benchmark_level == "none":
+            # What the engine knows: it ran the starting figures it was given.
+            # WHICH source those are (T-12 actual, analyst override, …) is the
+            # loader's ``__sources__["starting_*"]`` entry, not the engine's.
             notes.append(
-                "No benchmark — projecting from the subject's T-12"
+                "No benchmark — projecting from the subject's own starting occupancy "
+                "and ADR as supplied"
                 + (f" ({topline.benchmark_fallback_reason})" if topline.benchmark_fallback_reason else "")
                 + "."
             )
@@ -270,10 +284,10 @@ def _plan_topline(
                 setattr(rec, f"{metric}_status", "benchmark_unavailable")
                 if topline.benchmark_level != "none":
                     notes.append(
-                        f"Subject T-12 (starting_{metric}) — no benchmark for "
-                        f"{metric_label[metric]} at the {topline.benchmark_level} level"
-                        + ("" if bench is None else f" for Year {y}")
-                        + "; penetration and ramp are not applied to it."
+                        f"Subject's own starting {metric} as supplied (no "
+                        f"{topline.benchmark_level} benchmark for {metric_label[metric]}"
+                        + ("" if bench is None else f" in Year {y}")
+                        + "); penetration and ramp are not applied to it."
                     )
                 continue
             p = topline.penetration_occ if metric == "occupancy" else topline.penetration_adr
@@ -837,10 +851,12 @@ def _rate_trace(
             flat_years: list[int] = []
             for step_year, g in growth_steps:
                 name = f"{growth_key}_y{step_year}"
+                # A year with no growth figure is an input with NO value —
+                # never 0.0 (a zero in a trace reads as a rate of zero).
                 inputs.append(
                     ValueInput(
                         name=name,
-                        value=g if g is not None else 0.0,
+                        value=g,
                         assumption_key=f"{growth_key}_by_year",
                     )
                 )
@@ -1375,7 +1391,15 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     g, from_list = growth[y - 1]
                     setattr(rec_out, f"{metric}_growth_applied", g)
                     if from_list and g is None:
-                        setattr(rec_out, f"{metric}_status", "flat_no_growth")
+                        # No growth figure: the growth state is carried by the
+                        # metric's growth source. The year's status becomes
+                        # ``flat_no_growth`` unless the more consequential
+                        # ``benchmark_unavailable`` already stands — both
+                        # signals then survive on the record.
+                        if getattr(rec_out, f"{metric}_growth_source") is None:
+                            setattr(rec_out, f"{metric}_growth_source", "unavailable")
+                        if getattr(rec_out, f"{metric}_status") != "benchmark_unavailable":
+                            setattr(rec_out, f"{metric}_status", "flat_no_growth")
             topline_records[y] = rec_out
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
             if use_resort_fee_buildup:

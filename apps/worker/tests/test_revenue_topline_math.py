@@ -33,8 +33,6 @@ import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
-from pydantic import ValidationError  # noqa: E402
-
 from fondok_schemas.underwriting import (  # noqa: E402
     BenchmarkYear,
     GrowthYear,
@@ -44,6 +42,7 @@ from fondok_schemas.underwriting import (  # noqa: E402
     ToplineDrivers,
     ToplineReference,
 )
+from pydantic import ValidationError  # noqa: E402
 
 from app.engines.revenue import (  # noqa: E402
     LEGACY_TOPLINE_METHODOLOGY_VERSION,
@@ -193,7 +192,7 @@ def test_s6_default_ramp_is_undefined_for_years_three_to_five() -> None:
 
 
 def test_analyst_ramp_replaces_the_default_for_any_s() -> None:
-    out = _run(topline=_topline(stabilization_year=4, ramp_by_year=[0.80, 0.90, 0.97], ramp_source="analyst_override"))
+    out = _run(topline=_topline(stabilization_year=4, ramp_by_year=[0.80, 0.90, 0.97]))
     rec = _by_year(out)
     assert [y.occupancy for y in out.years] == pytest.approx(
         [B_OCC * 0.80, B_OCC * 0.90, B_OCC * 0.97, B_OCC, B_OCC], rel=TOL
@@ -203,7 +202,7 @@ def test_analyst_ramp_replaces_the_default_for_any_s() -> None:
 
 
 def test_analyst_ramp_with_a_gap_is_no_ramp_for_that_year_not_undefined_default() -> None:
-    out = _run(topline=_topline(stabilization_year=4, ramp_by_year=[0.80, None, 0.97], ramp_source="analyst_override"))
+    out = _run(topline=_topline(stabilization_year=4, ramp_by_year=[0.80, None, 0.97]))
     rec = _by_year(out)
     assert out.years[1].occupancy == pytest.approx(B_OCC, rel=TOL)
     assert rec[2].ramp_state == "no_ramp" and rec[2].ramp_pct is None
@@ -219,7 +218,7 @@ def test_ramp_fractions_are_validated() -> None:
 def test_hold_shorter_than_stabilization_keeps_the_ramp_and_says_so() -> None:
     out = _run(
         hold_years=3,
-        topline=_topline(hold=3, stabilization_year=5, ramp_by_year=[0.85, 0.90, 0.95, 0.98], ramp_source="analyst_override"),
+        topline=_topline(hold=3, stabilization_year=5, ramp_by_year=[0.85, 0.90, 0.95, 0.98]),
     )
     rec = _by_year(out)
     assert [y.occupancy for y in out.years] == pytest.approx([B_OCC * 0.85, B_OCC * 0.90, B_OCC * 0.95], rel=TOL)
@@ -316,8 +315,11 @@ def test_missing_benchmark_for_one_metric_uses_the_subject_level_without_penetra
         assert rec[y].occupancy_status == "driven"
         assert rec[y].ari_target is None and rec[y].ari_target_source is None
         assert rec[y].benchmark_adr is None
-        assert "Subject T-12" in (rec[y].reason or "")
-        assert "no benchmark for ADR at the comp_set level" in (rec[y].reason or "")
+        # The engine names what it knows — the starting figure it was given —
+        # never a provenance (T-12 / seed / override) only the loader knows.
+        assert "Subject's own starting adr as supplied" in (rec[y].reason or "")
+        assert "no comp_set benchmark for ADR" in (rec[y].reason or "")
+        assert "T-12" not in (rec[y].reason or "")
     # The ADR trace is the legacy starting-assumption trace — no target named.
     adr1 = out.provenance["years[0].adr"]
     assert adr1.formula == "adr = starting_adr"
@@ -342,7 +344,8 @@ def test_no_benchmark_at_all_runs_the_subject_level_times_growth_exactly_like_th
         assert rec[y].adr_status == "benchmark_unavailable"
         assert rec[y].benchmark_level == "none"
         assert rec[y].mpi_target is None and rec[y].ari_target is None
-    assert "No benchmark" in (rec[1].reason or "")
+    assert "No benchmark — projecting from the subject's own starting occupancy and ADR as supplied" in (rec[1].reason or "")
+    assert "no STR, market study or CBRE Horizons on the deal" in (rec[1].reason or "")
     assert out.topline_methodology_version == 2
 
 
@@ -358,10 +361,12 @@ def test_missing_growth_for_one_metric_holds_it_flat_for_that_year() -> None:
     assert adr[2] == adr[1]  # held flat — growth 0 is the absence of growth
     assert adr[3] == pytest.approx(250.0 * 1.03 * 1.02, rel=TOL)
     assert adr[4] == adr[3]
-    assert rec[2].adr_status == "benchmark_unavailable"
-    assert rec[3].adr_status == "flat_no_growth"
-    assert rec[4].adr_status == "benchmark_unavailable"
-    assert rec[5].adr_status == "flat_no_growth"
+    # No benchmark is the more consequential state and keeps the status; the
+    # missing growth figure is carried by the metric's growth source.
+    for y in (2, 3, 4, 5):
+        assert rec[y].adr_status == "benchmark_unavailable", y
+    assert rec[3].adr_growth_source == "unavailable" and rec[5].adr_growth_source == "unavailable"
+    assert rec[2].adr_growth_source is None and rec[4].adr_growth_source is None
     assert rec[3].adr_growth_applied is None and rec[4].adr_growth_applied == 0.02
     # Occupancy keeps its benchmark path untouched.
     assert out.years[2].occupancy == pytest.approx(B_OCC, rel=TOL)
@@ -374,7 +379,8 @@ def test_per_year_benchmark_gap_holds_the_metric_flat_then_resumes() -> None:
     rec = _by_year(out)
     # Year 3 has no occupancy benchmark and no growth: Year 2's base carries.
     assert out.years[2].occupancy == pytest.approx(out.years[1].occupancy, rel=TOL)
-    assert rec[3].occupancy_status == "flat_no_growth"
+    assert rec[3].occupancy_status == "benchmark_unavailable"
+    assert rec[3].occupancy_growth_source == "unavailable"
     # The ramp state describes the year (ADR still runs it); occupancy has no target.
     assert rec[3].ramp_state == "stabilized" and rec[3].mpi_target is None
     # ADR for Year 3 is still driven (its benchmark exists).
@@ -515,11 +521,11 @@ def test_varying_growth_list_compounds_year_by_year_and_the_traces_name_every_st
     )
     by = _by_name(t5)
     assert by["occupancy_growth_y2"].value == 0.02 and by["occupancy_growth_y2"].assumption_key == "occupancy_growth_by_year"
-    assert by["occupancy_growth_y4"].value == 0.0
+    assert by["occupancy_growth_y4"].value is None  # no figure — never a 0 rate in a trace
     assert "held flat" in (t5.note or "")
     prod = by["starting_occupancy"].value
     for k in ("occupancy_growth_y2", "occupancy_growth_y3", "occupancy_growth_y4", "occupancy_growth_y5"):
-        prod *= 1.0 + by[k].value
+        prod *= 1.0 + (by[k].value if by[k].value is not None else 0.0)
     assert math.isclose(min(0.95, prod), t5.value, rel_tol=TOL)
     # ADR (no list) is untouched: the scalar path.
     assert out.provenance["years[4].adr"].formula == "adr = starting_adr × (1 + adr_growth) ^ years_compounded"
@@ -594,7 +600,7 @@ def _reconcile_rate(trace, cap: float | None) -> None:
         else:
             for name, inp in by.items():
                 if "_growth_y" in name:
-                    v *= 1.0 + inp.value
+                    v *= 1.0 + (inp.value if inp.value is not None else 0.0)
     if cap is not None:
         v = min(cap, v)
     for name in ("y1_occupancy_displacement_pct", "y1_adr_displacement_pct"):
@@ -610,7 +616,7 @@ def _reconcile_rate(trace, cap: float | None) -> None:
     "kw",
     [
         dict(topline=_topline()),
-        dict(topline=_topline(stabilization_year=5, ramp_by_year=[0.8, 0.85, 0.9, 0.95], ramp_source="analyst_override")),
+        dict(topline=_topline(stabilization_year=5, ramp_by_year=[0.8, 0.85, 0.9, 0.95])),
         dict(topline=_topline(benchmark_by_year=_bench(5, adr=None)), adr_growth_by_year=[None, 0.03, None, 0.02, 0.01]),
         dict(topline=_topline(benchmark_by_year=_bench(5, gaps={3: {"adr": None}})), adr_growth_by_year=[None, 0.03, 0.03, 0.03, 0.03]),
         dict(topline=_topline(benchmark_by_year=_bench(5, occ=0.93), penetration_occ=120.0, penetration_occ_source="analyst_override"), y1_occupancy_displacement_pct=0.1),
@@ -630,3 +636,63 @@ def test_rate_traces_reconcile_and_point_nowhere_dangling(kw: dict[str, Any]) ->
         for inp in trace.inputs:
             if inp.traces_to:
                 assert inp.traces_to in out.provenance, (key, inp.traces_to)
+
+
+# ─────────────────────────── coordinator review fixes ───────────────────────────
+
+
+def test_raw_stabilization_year_past_the_hold_is_clamped_by_the_engine() -> None:
+    """The engine receives S AS SET (not pre-clamped). With S = 6 and a 5-year
+    hold: only Years 1..5 are evaluated, no year is ``stabilized``, the ramp
+    keeps applying, and Year 5 says ``stabilization_after_hold``."""
+    out = _run(
+        hold_years=5,
+        topline=_topline(hold=5, stabilization_year=6, ramp_by_year=[0.80, 0.85, 0.90, 0.95, 0.98]),
+    )
+    rec = _by_year(out)
+    assert sorted(rec) == [1, 2, 3, 4, 5] and len(out.years) == 5  # the clamp
+    assert "stabilized" not in {rec[y].ramp_state for y in rec}
+    assert [y.occupancy for y in out.years] == pytest.approx(
+        [B_OCC * r for r in (0.80, 0.85, 0.90, 0.95, 0.98)], rel=TOL
+    )
+    assert rec[5].ramp_state == "stabilization_after_hold" and rec[5].ramp_pct == 0.98
+    assert "Stabilization (Year 6) is after the hold; Year 5 runs at ramp 0.98" in (rec[5].reason or "")
+    assert [rec[y].ramp_state for y in (1, 2, 3, 4)] == ["ramped"] * 4
+    # The input itself still carries the raw value.
+    assert _topline(hold=5, stabilization_year=6).stabilization_year == 6
+
+
+def test_raw_stabilization_year_past_the_hold_with_the_undefined_default_says_both() -> None:
+    out = _run(hold_years=5, topline=_topline(hold=5, stabilization_year=6))
+    rec = _by_year(out)
+    assert rec[5].ramp_state == "undefined_for_stabilization_year"
+    assert "Enter the ramp for Years 3–5" in (rec[5].reason or "")
+    assert "Stabilization (Year 6) is after the hold; Year 5 runs at ramp 100 % (none defined)" in (rec[5].reason or "")
+    assert "after the hold" not in (rec[4].reason or "")
+
+
+def test_no_benchmark_and_no_growth_keeps_both_signals_on_the_record() -> None:
+    """``benchmark_unavailable`` (the more consequential state) is the status;
+    the missing growth figure survives as ``*_growth_source == "unavailable"``
+    with ``*_growth_applied is None`` — neither overwrites the other."""
+    out = _run(
+        topline=_topline(benchmark_by_year=_bench(5, adr=None)),
+        adr_growth_by_year=[None, None, None, None, None],
+    )
+    rec = _by_year(out)
+    for y in range(2, 6):
+        assert rec[y].adr_status == "benchmark_unavailable", y
+        assert rec[y].adr_growth_source == "unavailable", y
+        assert rec[y].adr_growth_applied is None, y
+        assert out.years[y - 1].adr == 250.0  # held at the starting level
+    # A GrowthYear source supplied by the loader is never overwritten.
+    growth = [GrowthYear(year=3, occupancy_growth=0.01, adr_growth=None, occupancy_source="cbre_horizons", adr_source="withheld_by_policy", label="withheld")]
+    out2 = _run(
+        topline=_topline(benchmark_by_year=_bench(5, adr=None), growth_by_year=growth),
+        adr_growth_by_year=[None, None, None, None, None],
+        occupancy_growth_by_year=[None, None, 0.01, None, None],
+    )
+    assert _by_year(out2)[3].adr_growth_source == "withheld_by_policy"
+    # On the legacy path (no benchmark concept) the status is flat_no_growth.
+    legacy = _by_year(_run(adr_growth_by_year=[None, None]))
+    assert legacy[2].adr_status == "flat_no_growth" and legacy[2].adr_growth_source == "unavailable"
