@@ -626,7 +626,9 @@ export interface IndexMethodologyResponse {
  *  Mirrors fondok_schemas.provenance.ValueInput. */
 export interface ValueInput {
   name: string;
-  value: number;
+  /** null when the input had no figure (a growth year held flat because no
+   *  market forecast exists) — the trace then carries the reason, never 0. */
+  value: number | null;
   /** __sources__ key when the input is an underwriting assumption —
    *  lets the UI chain a computed value back to its assumption badge. */
   assumption_key?: string | null;
