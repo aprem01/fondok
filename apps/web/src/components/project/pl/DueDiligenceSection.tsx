@@ -359,7 +359,7 @@ export default function DueDiligenceSection({ dealId }: { dealId: string }) {
           ))}
           {visible.length === 0 && (
             <div className="text-center text-[12px] text-ink-500 py-8">
-              No questions in this category. Switch filter to "All" to see the full packet.
+              No questions in this category. Switch filter to &quot;All&quot; to see the full packet.
             </div>
           )}
         </div>

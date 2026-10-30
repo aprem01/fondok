@@ -95,7 +95,7 @@ import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
 import type { ReasonCode } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceLabel } from '@/lib/provenance';
-import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/mockData';
+import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
 import {
   KpiTile,
   SectionCard,
@@ -409,7 +409,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   }, [dealId, liveMode, metaToken]);
 
   // ─── Investment Profile persistence + debounced re-run ─────────────────
-  const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
+  // Memoised on the deal row's own object so the save callbacks below keep a
+  // stable identity between renders that did not change the overrides.
+  const dealFieldOverrides = deal?.field_overrides;
+  const overrides = useMemo(
+    () => (dealFieldOverrides ?? {}) as Record<string, unknown>,
+    [dealFieldOverrides],
+  );
   const fullRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
   const rerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (rerunRef.current) clearTimeout(rerunRef.current); }, []);

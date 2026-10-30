@@ -192,7 +192,9 @@ export function UsaliDeviationsAccordion({
       ? n.applicableCount != null
         ? `${n.applicableCount} USALI rule${n.applicableCount === 1 ? '' : 's'} applicable — need ≥ 5 to produce a score.`
         : 'Insufficient applicable rules to produce a USALI score.'
-      : `${n.applicableCount ?? 0} rule${(n.applicableCount ?? 0) === 1 ? '' : 's'} applicable, ${n.passedCount ?? 0} passed.`;
+      : n.applicableCount != null && n.passedCount != null
+        ? `${n.applicableCount} rule${n.applicableCount === 1 ? '' : 's'} applicable, ${n.passedCount} passed.`
+        : 'Rule counts not reported for this score.';
 
   return (
     <Card

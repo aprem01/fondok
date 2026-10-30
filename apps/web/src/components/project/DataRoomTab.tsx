@@ -14,7 +14,6 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import Modal from '@/components/ui/Modal';
-import { engines } from '@/lib/mockData';
 import { docTypeLabel } from '@/lib/docTypeLabels';
 import {
   api,
@@ -30,6 +29,7 @@ import {
 } from '@/lib/api';
 import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useDocuments } from '@/lib/hooks/useDocuments';
+import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import {
   REEXTRACT_CONSEQUENCES,
   planReextractAll,
@@ -250,7 +250,7 @@ function formatValue(v: unknown, unit: string | null, fieldName?: string): strin
 export default function DataRoomTab({ projectId }: { projectId: number | string }) {
   const router = useRouter();
   const params = useParams();
-  // Raw id from the URL — always a string. Could be a numeric mock id or a
+  // Raw id from the URL — always a string. Could be a legacy numeric id or a
   // real worker UUID. Never coerce through Number() to avoid stringifying
   // NaN into the API path.
   const projectIdStr = String(projectId);
@@ -475,7 +475,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     });
   }, [documents, extractions, toast]);
 
-  // When we're on a real (UUID) deal, use live documents; otherwise mock.
+  // Live documents need a worker and a real (UUID) deal id.
   const liveMode = isWorkerConnected() && !isMockId;
 
   // FON-19: how many financial docs are still moving through the pipeline
@@ -710,24 +710,21 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
       .map(([label, n]) => `${n} ${label}`);
   }, [docs]);
 
-  // Engine readiness — derived from live engine outputs when available,
-  // otherwise the static mock progress per engine label.
-  const { outputs: engineOutputs } = useEngineOutputs(liveMode ? rawId : '');
+  // Engine readiness — derived from the live engine outputs and nothing else.
+  // A row with no output yet is 0% ready (the engine has not run); the card
+  // itself renders the not-configured / failed-to-load states instead of a
+  // number when there is nothing to derive from.
+  const { outputs: engineOutputs, error: engineOutputsError, refresh: refreshEngineOutputs } =
+    useEngineOutputs(liveMode ? rawId : '');
 
   const engineRows = ENGINE_STATUS_ROWS.map((row) => {
-    if (liveMode && engineOutputs?.engines) {
-      const pcts = row.engines.map((name) =>
-        engineStatusReadiness(engineOutputs.engines[name]?.status),
-      );
-      const avg = pcts.length
-        ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length)
-        : 0;
-      return { ...row, progress: avg };
-    }
-    // Mock fallback — re-use the existing mock engines list keyed by id
-    // so the visual stays identical for non-live deals.
-    const mock = engines.find((e) => e.id === row.id);
-    return { ...row, progress: mock?.progress ?? 0 };
+    const pcts = row.engines.map((name) =>
+      engineStatusReadiness(engineOutputs?.engines?.[name]?.status),
+    );
+    const avg = pcts.length
+      ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length)
+      : 0;
+    return { ...row, progress: avg };
   });
 
   // ─── Run Full Underwriting (Data Room CTA) ─────────────────────────
@@ -791,7 +788,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     },
   });
 
-  // Live worker uses raw `EXTRACTED`; mock kimpton rows use `'Extracted'`.
+  // The worker uses raw `EXTRACTED`; `statusLabel` maps it to `'Extracted'`.
   const hasExtractedDoc = docs.some(
     (d) => d.rawStatus === 'EXTRACTED' || d.rawStatus === 'Extracted',
   );
@@ -1152,7 +1149,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           Data Room so missing-year flags greet the user before they
           start scrolling through the upload list. The same component
           also renders on the Validation tab (different mount, same
-          backend). Auto-hides for mock/numeric ids. */}
+          backend). Auto-hides for numeric ids. */}
       <CoachMark
         anchorId="dataroom-gap-chips"
         viewKey="dataroom"
@@ -1472,10 +1469,9 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
         </Card>
         )}
 
-        {/* Engine Status — per-engine readiness derived from live worker
-            engine outputs when available, mock progress otherwise.
-            Currently hidden via SHOW_ENGINE_STATUS until confidence
-            scores are calibrated. */}
+        {/* Engine Status — per-engine readiness derived from the live worker
+            engine outputs. Currently hidden via SHOW_ENGINE_STATUS until
+            confidence scores are calibrated. */}
         {SHOW_ENGINE_STATUS && (
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-1">
@@ -1487,6 +1483,15 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
             percentage is how confident the engine is, based on which documents
             you&apos;ve uploaded.
           </p>
+          {!isWorkerConnected() ? (
+            <WorkerNotConfigured surface="engine readiness" compact />
+          ) : engineOutputsError && !engineOutputs ? (
+            <div role="alert" data-testid="engine-status-load-error" className="rounded-md border border-danger-500/30 bg-danger-50 px-3.5 py-3 text-[12px] text-danger-700">
+              <div className="font-semibold">Engine status did not load</div>
+              <p className="mt-0.5 text-danger-700/80">{engineOutputsError}</p>
+              <Button variant="secondary" size="sm" className="mt-2" onClick={() => { void refreshEngineOutputs(); }}>Retry</Button>
+            </div>
+          ) : (
           <div className="space-y-3.5">
             {engineRows.map((e) => {
               const Icon = e.icon;
@@ -1512,6 +1517,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               );
             })}
           </div>
+          )}
           <div className="text-[11px] text-ink-500 mt-4 pt-4 border-t border-border">
             Upload more documents to increase confidence.
           </div>
@@ -1637,7 +1643,8 @@ function InlineDocumentReview({
   const [sectionFacet, setSectionFacet] = useState<string>('all');
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const fields = doc.fieldList ?? [];
+  const docFieldList = doc.fieldList;
+  const fields = useMemo(() => docFieldList ?? [], [docFieldList]);
 
   // Group extracted fields under section labels, in first-appearance (schema)
   // order so the table reads like the document.

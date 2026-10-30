@@ -91,7 +91,7 @@ import { useVariance } from '@/lib/hooks/useVariance';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { api, isWorkerConnected } from '@/lib/api';
 import type { ValueState } from '@/lib/api';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 import { ProvenanceDot, palette } from '@/components/design';
 import { useToast } from '@/components/ui/Toast';
 import { openLineage } from '@/components/project/LineageDrawer';
@@ -865,8 +865,16 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const pendingLabel = PENDING_DECISION;
   const recommendationLabel = decidedVerdict ?? pendingLabel;
   const effThesis = thesisText ?? rec?.thesis ?? '';
-  const effHighlights: MemoPoint[] = highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []);
-  const effRisks: MemoPoint[] = risks ?? (rec ? rec.risks.map((t) => ({ t, ai: true })) : []);
+  // Memoised: both feed `current` (useCallback) below, so a fresh array per
+  // render would re-create that callback on every render.
+  const effHighlights: MemoPoint[] = useMemo(
+    () => highlights ?? (rec ? rec.highlights.map((t) => ({ t, ai: true })) : []),
+    [highlights, rec],
+  );
+  const effRisks: MemoPoint[] = useMemo(
+    () => risks ?? (rec ? rec.risks.map((t) => ({ t, ai: true })) : []),
+    [risks, rec],
+  );
 
   // ── FON-54: is each drafted section provably the CURRENT underwriting? ──
   // `runSig` is read from the outputs the figures above came from, so the

@@ -6,7 +6,7 @@
  * The ids mirror the worker's `OperatingModel` literal in
  * `apps/worker/app/api/deals.py`.
  */
-import { rulesById } from '@/lib/varianceData';
+import { rulesById } from '@/lib/variance';
 
 export type OperatingModelId = 'owner_operated' | 'third_party' | 'brand_managed';
 

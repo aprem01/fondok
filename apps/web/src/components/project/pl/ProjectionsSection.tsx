@@ -198,20 +198,24 @@ interface ProjYear {
   days: number;
   rooms: number;
   availableRooms: number;
-  occupiedRooms: number;
-  occupancy: number;     // 0..1
-  adr: number;           // dollars
-  revpar: number;        // dollars
-  roomsRevenue: number;  // dollars
-  fbRevenue: number;     // dollars
+  // Every figure below is `undefined` when the engine did not publish it for
+  // this year — rendered "—" and exported as an empty cell, never 0 (go-live
+  // Wave 0, A12). Occupied Rooms is derived, so it is undefined with occupancy.
+  occupiedRooms?: number;
+  occupancy?: number;     // 0..1
+  adr?: number;           // dollars
+  revpar?: number;        // dollars
+  roomsRevenue?: number;  // dollars
+  fbRevenue?: number;     // dollars
   // USALI 11th: Other Operated Departments (spa, golf, parking,
   // rentals — anything ancillary that runs as its own department)
-  // sits as its own revenue line. Distinct from Resort Fees and
-  // Misc. Income, both of which are smaller / non-departmental.
-  otherOperatedRevenue: number;
-  resortFees: number;
-  miscRevenue: number;   // dollars (Other Misc Income only — small ancillary)
-  totalRevenue: number;  // dollars
+  // sits as its own revenue line. Distinct from Resort Fees, which are
+  // smaller / non-departmental. (The engine carries no separate
+  // Misc. Income line, so the table has none — a line the model does not
+  // produce is not shown as 0.)
+  otherOperatedRevenue?: number;
+  resortFees?: number;
+  totalRevenue?: number;  // dollars
   // Optional expense + downstream lines (worker output only;
   // demo path leaves them undefined and the export skips them).
   deptRoomsExpense?: number;
@@ -745,23 +749,32 @@ export default function ProjectionsSection({
     const orMap = years.map(y => y.occupiedRooms);
     // The Exit Year column is display-only on every row but the forward NOI.
     const EXIT_BLANKS: XlsxCell[] = ['', '', '', ''];
-    const expand = (label: string, vals: number[], asPct = false) => {
+    // A year the engine did not publish is an EMPTY cell (and empty derived
+    // cells), never a 0 — the sheet says the same thing the table does.
+    const expand = (label: string, vals: (number | undefined)[], asPct = false) => {
       const cells: XlsxCell[] = [label];
       vals.forEach((v, i) => {
+        if (v == null) {
+          cells.push('', '', '', '');
+          return;
+        }
         // Keep numerics as numbers so Excel can re-sum / re-format. The
         // % Rev / PAR / POR columns stay blank when the row itself is a
         // percentage (e.g. Occupancy) — those derivations don't apply.
         const amount = asPct
           ? Number((v * 100).toFixed(1))
           : Number(v.toFixed(0));
-        const pctRev = trMap[i] > 0 && !asPct
-          ? Number(((v / trMap[i]) * 100).toFixed(1))
+        const tr = trMap[i];
+        const ar = arMap[i];
+        const or = orMap[i];
+        const pctRev = tr != null && tr > 0 && !asPct
+          ? Number(((v / tr) * 100).toFixed(1))
           : '';
-        const par = arMap[i] > 0 && !asPct
-          ? Number(((v / arMap[i]) * 1000).toFixed(2))
+        const par = ar > 0 && !asPct
+          ? Number(((v / ar) * 1000).toFixed(2))
           : '';
-        const por = orMap[i] > 0 && !asPct
-          ? Number(((v / orMap[i]) * 1000).toFixed(2))
+        const por = or != null && or > 0 && !asPct
+          ? Number(((v / or) * 1000).toFixed(2))
           : '';
         cells.push(amount, pctRev, par, por);
       });
@@ -785,22 +798,19 @@ export default function ProjectionsSection({
     rows.push(['Days', ...years.flatMap(y => [y.days, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
     rows.push(['Number of Rooms', ...years.flatMap(y => [y.rooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
     rows.push(['Available Rooms', ...years.flatMap(y => [y.availableRooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
-    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms, '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
+    rows.push(['Occupied Rooms', ...years.flatMap(y => [y.occupiedRooms ?? '', '', '', '']) as XlsxCell[], ...EXIT_BLANKS]);
     expand('Occupancy', years.map(y => y.occupancy), true);
     expand('Average Rate', years.map(y => y.adr));
     expand('RevPAR', years.map(y => y.revpar));
 
     // REVENUES — USALI 11th order. Rooms → F&B → Other Operated
     // Departments (its own line per Sam's P4 ask) → Resort Fees →
-    // Misc Income → Total Revenue.
+    // Total Revenue.
     expand('Rooms Revenue', years.map(y => y.roomsRevenue));
     expand('Food & Beverage Revenue', years.map(y => y.fbRevenue));
     expand('Other Operated Departments', years.map(y => y.otherOperatedRevenue));
-    if (years.some(y => y.resortFees > 0)) {
+    if (years.some(y => hasResortFees(y))) {
       expand('Resort Fees', years.map(y => y.resortFees));
-    }
-    if (years.some(y => y.miscRevenue > 0)) {
-      expand('Miscellaneous Income', years.map(y => y.miscRevenue));
     }
     expand('Total Revenue', years.map(y => y.totalRevenue));
 
@@ -1061,6 +1071,9 @@ export default function ProjectionsSection({
 // Builders
 // ────────────────────────────────────────────────────────────────────
 
+/** The Resort Fees line is shown only when the run carries a non-zero fee. */
+const hasResortFees = (y: ProjYear): boolean => y.resortFees != null && y.resortFees > 0;
+
 function buildFromWorker(
   revenueYears: RevenueYearWorker[],
   fbYears: FBYearWorker[] | null,
@@ -1079,12 +1092,15 @@ function buildFromWorker(
     const e = expenseYears[i];
     const days = DAYS_PER_PROJECTION_YEAR;
     const availableRooms = keys * days;
-    const occupiedRooms = Math.round(availableRooms * (r.occupancy ?? 0));
-    const totalRevenue = e?.total_revenue ?? r.total_revenue;
+    // Derived from occupancy — undefined (never 0) when the engine did not
+    // publish an occupancy for this year.
+    const occupiedRooms = r.occupancy == null ? undefined : Math.round(availableRooms * r.occupancy);
+    const totalRevenue = e?.total_revenue ?? r.total_revenue ?? undefined;
     // OOD revenue is its own USALI line — split it out from the
-    // Misc bucket (Sam P4 ask). Resort fees are separate again.
-    const otherOperatedRevenue = f?.other_revenue ?? r.other_revenue ?? 0;
-    const resortFees = f?.resort_fees ?? 0;
+    // Misc bucket (Sam P4 ask). Resort fees are separate again. Neither is
+    // coalesced to 0: a line the run does not carry renders "—".
+    const otherOperatedRevenue = f?.other_revenue ?? r.other_revenue ?? undefined;
+    const resortFees = f?.resort_fees ?? undefined;
     // Pull the expense waterfall when the worker engine has emitted
     // it. Older engine_outputs rows may not carry every field — fall
     // back to undefined so the xlsx export simply skips those rows.
@@ -1103,14 +1119,13 @@ function buildFromWorker(
       rooms: keys,
       availableRooms,
       occupiedRooms,
-      occupancy: r.occupancy ?? 0,
-      adr: r.adr ?? 0,
-      revpar: r.revpar ?? 0,
-      roomsRevenue: f?.rooms_revenue ?? r.rooms_revenue ?? 0,
-      fbRevenue: f?.fb_revenue ?? r.fb_revenue ?? 0,
+      occupancy: r.occupancy ?? undefined,
+      adr: r.adr ?? undefined,
+      revpar: r.revpar ?? undefined,
+      roomsRevenue: f?.rooms_revenue ?? r.rooms_revenue ?? undefined,
+      fbRevenue: f?.fb_revenue ?? r.fb_revenue ?? undefined,
       otherOperatedRevenue,
       resortFees,
-      miscRevenue: 0, // Engine output doesn't carry a separate misc line yet.
       totalRevenue,
       deptRoomsExpense: e?.dept_expenses?.rooms,
       deptFbExpense: e?.dept_expenses?.food_beverage,
@@ -1356,7 +1371,7 @@ function ProjectionsTable({
   const revparGrowth = years.map((y, i) => {
     if (i === 0) return null;
     const prev = years[i - 1].revpar;
-    return prev > 0 ? (y.revpar - prev) / prev : null;
+    return prev != null && prev > 0 && y.revpar != null ? (y.revpar - prev) / prev : null;
   });
 
   // Helpers for sub-columns. `toLocaleString` never emits scientific
@@ -1378,12 +1393,14 @@ function ProjectionsTable({
 
   // Index column helper labels (growth-rate references shown for Year 1).
   const indexLabel = (key: string): string => {
-    if (key === 'occupancy') return `${(years[0].occupancy * 100).toFixed(1)}%`;
+    if (key === 'occupancy') {
+      const occ = years[0]?.occupancy;
+      return occ == null ? '—' : `${(occ * 100).toFixed(1)}%`;
+    }
     if (key === 'adr') return 'Growth';
     if (key === 'revpar') return '';
     if (key === 'rooms') return 'Mkt';
     if (key === 'fb') return 'Mkt';
-    if (key === 'misc') return 'Mkt';
     return '';
   };
 
@@ -1580,7 +1597,7 @@ function ProjectionsTable({
             indexLabel={indexLabel('occupancy')}
             unit="%"
             years={years}
-            value={(y) => y.occupancy * 100}
+            value={(y) => (y.occupancy == null ? undefined : y.occupancy * 100)}
             fmt={(v) => `${v.toFixed(1)}%`}
             sourceKey="starting_occupancy"
             overrideKey="starting_occupancy"
@@ -1689,8 +1706,8 @@ function ProjectionsTable({
             tracePath={(i) => `years[${i}].other_revenue`}
           />
           {/* Resort Fees — distinct from rooms and from OOD. Hidden
-              when zero across every year (most deals don't carry them). */}
-          {years.some((y) => y.resortFees > 0) && (
+              when absent or zero across every year (most deals don't carry them). */}
+          {years.some((y) => hasResortFees(y)) && (
             <FullRow
               label="Resort Fees"
               indexLabel={indexLabel('resort_fees')}
@@ -1700,18 +1717,6 @@ function ProjectionsTable({
               {...rowShared}
               traceEngine="revenue"
               tracePath={(i) => `years[${i}].resort_fees`}
-            />
-          )}
-          {/* Misc. Income — only renders when present so the table
-              stays tight on deals that don't carry the bucket. */}
-          {years.some((y) => y.miscRevenue > 0) && (
-            <FullRow
-              label="Misc. Income"
-              indexLabel={indexLabel('misc')}
-              unit="$"
-              years={years}
-              amountOf={(y) => y.miscRevenue}
-              {...rowShared}
             />
           )}
           {/* Total Revenue */}
@@ -1803,7 +1808,7 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => (y.deptTotalExpense == null ? undefined : y.totalRevenue - y.deptTotalExpense)}
+                amountOf={(y) => (y.deptTotalExpense == null || y.totalRevenue == null ? undefined : y.totalRevenue - y.deptTotalExpense)}
                 {...rowShared}
                 bold
               />
@@ -1950,16 +1955,20 @@ function ProjectionsTable({
                   $
                 </td>
                 {years.map((y, i) => {
-                  const ebitda = (y.gop ?? 0) - (y.mgmtFee ?? 0) - (y.incentiveMgmtFee ?? 0);
-                  const exitVal = exitCapRate > 0 ? ebitda / exitCapRate : 0;
+                  // Same definition as the EBITDA row above: undefined (→ "—")
+                  // when GOP or the base fee is missing; the incentive fee is
+                  // genuinely zero when the run modelled none.
+                  const ebitda =
+                    y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee - (y.incentiveMgmtFee ?? 0);
+                  const exitVal = ebitda != null && exitCapRate > 0 ? ebitda / exitCapRate : undefined;
                   return (
                     <td
                       key={`ev-${i}`}
                       colSpan={spanFor(i)}
-                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%) — ${fmtAmount(exitVal, { decimals: 2, prefix: '$' })}`}
+                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%)${exitVal != null ? ` — ${fmtAmount(exitVal, { decimals: 2, prefix: '$' })}` : ''}`}
                       className={cn('px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums', yearGroupClass(i, true))}
                     >
-                      {exitCapRate > 0 ? fmtAmount(exitVal, { prefix: '$' }) : '—'}
+                      {exitVal != null ? fmtAmount(exitVal, { prefix: '$' }) : '—'}
                     </td>
                   );
                 })}
@@ -2431,7 +2440,8 @@ function SimpleRow({
   indexLabel: string;
   unit: string;
   years: ProjYear[];
-  value: (y: ProjYear) => number;
+  /** Undefined when the engine did not publish the figure for that year → a dash. */
+  value: (y: ProjYear) => number | undefined;
   fmt: (v: number) => string;
   // FON-27 provenance (base-year anchor only): a source key + optional
   // override key (→ click-open source/override panel), OR a derived-value
@@ -2462,14 +2472,15 @@ function SimpleRow({
         {indexLabel || unit}
       </td>
       {years.map((y, i) => {
-        const shown = fmt(value(y));
+        const raw = value(y);
+        const shown = raw == null ? '—' : fmt(raw);
         const traced = traceEngine && tracePath;
         const trace =
           traced && dealId
             ? lineageRequestFor(dealId, traceEngine, tracePath(i), label, columnHeading(i))
             : undefined;
         const lineageWrap = (node: ReactNode) =>
-          traced ? (
+          traced && raw != null ? (
             <LineageCell
               engine={traceEngine}
               path={tracePath(i)}
@@ -2481,14 +2492,14 @@ function SimpleRow({
             </LineageCell>
           ) : node;
         const cell =
-          i === 0 && sourceKey && overrideKey ? (
+          i === 0 && sourceKey && overrideKey && raw != null ? (
             <AssumptionCell
               sourceKey={sourceKey}
               overrideKey={overrideKey}
               unit={overrideUnit ?? 'dollar'}
               label={label}
               display={shown}
-              editValue={value(y)}
+              editValue={raw}
               trace={trace}
             />
           ) : i === 0 && sourceKey ? (
@@ -2616,7 +2627,7 @@ function FullRow({
             pct={pct}
             pctBasis={ratioOf ? ratioBasis ?? 'department revenue' : undefined}
             par={amt == null ? null : par(amt, y.availableRooms)}
-            por={amt == null ? null : por(amt, y.occupiedRooms)}
+            por={amt == null || y.occupiedRooms == null ? null : por(amt, y.occupiedRooms)}
             fmtAmount={fmtAmount}
             tracedAmount={tracedAmount}
             benchmarkKey={benchmarkKey}

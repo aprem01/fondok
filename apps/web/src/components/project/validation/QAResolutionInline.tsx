@@ -263,7 +263,7 @@ export function QAResolutionInline({
         </div>
         <p className="text-[11.5px] text-ink-500 mt-1 leading-relaxed">
           The QA resolver is comparing the reply against the variance
-          snapshot and the deal's current assumptions. ~5s.
+          snapshot and the deal&apos;s current assumptions. ~5s.
         </p>
       </div>
     );

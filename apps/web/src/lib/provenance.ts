@@ -20,6 +20,7 @@ import {
   SOURCE_EXPLANATION_FROM_REGISTRY,
   SOURCE_REGISTRY_KIND,
 } from '@/lib/ontology/adapters';
+import type { ValueState } from '@/lib/api';
 
 export type SourceKind = 'grounded' | 'benchmark' | 'override';
 
@@ -113,6 +114,19 @@ export function sourceKind(source: string): SourceKind {
   if (OVERRIDE_SOURCES.has(source)) return 'override';
   if (GROUNDED_SOURCES.has(source)) return 'grounded';
   return 'benchmark'; // seed / cbre_horizons / pnl_benchmark / *_default
+}
+
+/**
+ * The 6-state provenance badge (`ProvenanceDot`) for an ASSUMPTION the worker
+ * tagged in `assumption_sources`. A grounded tag (T-12, OM, deal record) is
+ * `document_sourced`; an override or a seed / benchmark default is an
+ * `assumption` (an input someone or something chose); NO tag is
+ * `awaiting_data` — the "source unknown" state — never `linked`: a value is
+ * only as sourced as the worker says it is (go-live Wave 0, B1).
+ */
+export function valueStateForSource(source: string | null | undefined): ValueState {
+  if (!source) return 'awaiting_data';
+  return sourceKind(source) === 'grounded' ? 'document_sourced' : 'assumption';
 }
 
 /**

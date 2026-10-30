@@ -12,13 +12,16 @@ import { StatusBadge } from '@/components/ui/Badge';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
-import { projects } from '@/lib/mockData';
+import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
+import { displayConfidence, type Project } from '@/lib/project';
+import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { cn, fmtDate } from '@/lib/format';
 import { formatKeys } from '@/lib/formatKeys';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
 import { ValueTraceProvider } from '@/lib/hooks/useValueTrace';
-import { EngineFailuresBanner } from '@/components/project/EngineFailuresBanner';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES } from '@/components/project/EngineFailuresBanner';
+import { useVariance } from '@/lib/hooks/useVariance';
 import { StaleRunBanner } from '@/components/project/StaleRunBanner';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useDocuments } from '@/lib/hooks/useDocuments';
@@ -106,25 +109,18 @@ export default function ProjectDetailPage() {
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
   const rawId = (params?.id as string | undefined) ?? '';
+  // The worker only knows UUIDs. A numeric id is a legacy demo link to a deal
+  // that does not exist — it renders "not found" below, never a sample.
   const isMockId = /^\d+$/.test(rawId);
-  // For real (UUID) deals we keep the raw string so children can pass it
-  // to API calls without ever stringifying NaN into a URL path.
-  const id: number | string = isMockId ? Number(rawId) : rawId;
+  // Children get the raw string so API calls never stringify NaN into a path.
+  const id: string = rawId;
   const { deal, loading: dealLoading, error: dealError, refresh: refreshDeal } = useDeal(rawId);
   const workerConnected = isWorkerConnected();
-  // The static sample deal exists ONLY for the demo/marketing build (no
-  // worker). In the live app every deal is worker-backed, so numeric/mock
-  // ids never resolve to the fixture — they redirect to the deal list below.
-  const mockMatch = isMockId && !workerConnected
-    ? projects.find(p => p.id === Number(rawId))
-    : undefined;
   // Page-level engine outputs — powers the failure banner so a crashed
   // engine is loud on EVERY tab, not silently dashed.
   const { outputs: pageEngineOutputs } = useEngineOutputs(rawId);
 
-  // The static sample/demo deal is not a real, editable deal — it only backs
-  // the worker-less marketing build. In the live app, bounce any numeric/mock
-  // id straight to the real deal list so no one lands on a read-only fixture.
+  // A numeric id is not a deal Fondok knows: send the reader to the deal list.
   useEffect(() => {
     if (workerConnected && isMockId) router.replace('/projects');
   }, [workerConnected, isMockId, router]);
@@ -134,11 +130,10 @@ export default function ProjectDetailPage() {
   // Excel live, PDF/PPTX Coming Soon per FON-54). The old kebab Excel/PDF items
   // used an unauthenticated window.location.href and disagreed with that card.
   // FON-54 #9 — persist IC-Ready status (was a stub toast) so the header pill
-  // + pipeline reflect it. Mock/demo deals just toast.
+  // + pipeline reflect it.
   const onMarkICReady = async () => {
     if (!workerConnected || isMockId) {
-      // Nothing is persisted on the sample deal — never a success toast.
-      toast('This sample deal can’t be marked IC Ready.', { type: 'info' });
+      toast('Worker not configured — nothing to update.', { type: 'info' });
       return;
     }
     try {
@@ -160,16 +155,12 @@ export default function ProjectDetailPage() {
         toast(`Archive failed: ${msg}`, { type: 'error' });
       }
     } else {
-      toast('This sample deal can’t be archived.', {
-        type: 'info',
-      });
+      toast('Worker not configured — nothing to archive.', { type: 'info' });
     }
   };
   const onDeleteForever = async () => {
     if (!workerConnected || isMockId) {
-      toast('This sample deal can’t be deleted.', {
-        type: 'info',
-      });
+      toast('Worker not configured — nothing to delete.', { type: 'info' });
       return;
     }
     // Two-step confirm: hard-delete cascades documents + extractions +
@@ -209,9 +200,7 @@ export default function ProjectDetailPage() {
   const duplicateName = (deal?.name || `deal ${rawId}`).trim();
   const onDuplicate = () => {
     if (!workerConnected || isMockId) {
-      toast('This sample deal can’t be duplicated.', {
-        type: 'info',
-      });
+      toast('Worker not configured — nothing to duplicate.', { type: 'info' });
       return;
     }
     if (duplicating) return;
@@ -247,38 +236,31 @@ export default function ProjectDetailPage() {
       : []),
   ];
 
-  // Build a unified Project-shaped record so the existing UI keeps working.
-  // For real (UUID) deals we synthesize a minimal record from the worker payload.
+  // The header view-model, built from the worker payload and nothing else.
   // (Hoisted above the header-pill / confidence helpers below so they can read it.)
   //
-  // CRITICAL — UUID deals MUST NEVER fall back to ``projects[0]``: when the
-  // worker fetch is in flight or errored, a stale fallback would render the
-  // wrong deal's name/city/brand (data-leak adjacent — Sam QA Wave 4). For
-  // UUID deals we render explicit loading / error states below before
-  // reaching the main UI; ``project`` is only consumed when ``deal`` exists.
-  //
-  // Mock ids still legitimately resolve to ``projects.find(...)`` and we
-  // leave ``projects[0]`` as the last-resort fallback for unknown mock ids
-  // (existing behavior — the only mock entry that matters for the demo is
-  // Kimpton id=7).
-  const projectOrNull = mockMatch ?? (deal ? {
+  // CRITICAL — this MUST NEVER fall back to a sample record: when the worker
+  // fetch is in flight or errored, a stale fallback would render the wrong
+  // deal's name/city/brand (data-leak adjacent — Sam QA Wave 4). We render
+  // explicit loading / error states below before reaching the main UI;
+  // ``project`` is only consumed when ``deal`` exists.
+  const projectOrNull: Project | null = deal ? {
     id: 0,
     name: deal.name,
     city: deal.city ?? '—',
-    // E-003 (FON-59) — the header does NOT read this. The wizard sends keys
-    // as null and the worker fills it from the OM a minute later, so `?? 0`
-    // here would be a fabricated room count; it only satisfies the `Project`
-    // shape ICMemoTab takes. The meta line renders `formatKeys(deal?.keys)`.
-    keys: deal.keys ?? 0,
+    // E-003 (FON-59) — the wizard sends keys as null and the worker fills it
+    // from the OM a minute later. Null stays null: the meta line renders
+    // `formatKeys(deal?.keys)`, a dash until then, never a fabricated 0.
+    keys: deal.keys,
     service: deal.service ?? '—',
-    status: (deal.status as typeof projects[number]['status']) || 'Draft',
-    dealStage: (deal.deal_stage as typeof projects[number]['dealStage']) || 'Teaser',
-    revpar: 0,
-    irr: 0,
-    risk: ((deal.risk as typeof projects[number]['risk']) || 'Medium'),
-    aiConfidence: Math.round((deal.ai_confidence ?? 0) * 100),
+    // Absent on the row → null → no badge. Never an invented "Draft" / "Teaser".
+    status: (deal.status as ProjectStatus) || null,
+    dealStage: (deal.deal_stage as DealStage) || null,
+    risk: ((deal.risk as Risk) || 'Medium'),
+    // Null until the worker has scored the deal — the pill reads "Awaiting
+    // docs"; a number (even 0) is the worker's own figure.
+    aiConfidence: displayConfidence(deal.ai_confidence),
     assignee: '—',
-    docs: '0/0',
     // Deterministic (UTC / en-US). ``toLocaleDateString()`` depends on the
     // renderer's zone + locale, so any render path that has ``deal`` on both
     // the server and the first client render would hydrate-mismatch (React
@@ -286,8 +268,7 @@ export default function ProjectDetailPage() {
     // so the header date can never diverge from the server or by viewer zone.
     updatedAt: deal.updated_at ? fmtDate(deal.updated_at) : '—',
     createdAt: deal.created_at ? fmtDate(deal.created_at) : undefined,
-    noDocs: true,
-  } : (isMockId && !workerConnected ? projects[0] : null));
+  } : null;
 
   // Header pill state — popovers/drawers/tooltips. We keep all four
   // independent so opening one doesn't smash the others. Each closes on
@@ -300,7 +281,7 @@ export default function ProjectDetailPage() {
   const collabBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Pull live worker docs when on a real (UUID) deal so the Docs drawer
-  // reflects what's actually in the data room. Mock deals show no drawer docs.
+  // reflects what's actually in the data room.
   const liveMode = workerConnected && !isMockId;
   const { documents: liveDocs } = useDocuments(liveMode ? rawId : '');
   const drawerDocs = liveMode
@@ -310,12 +291,11 @@ export default function ProjectDetailPage() {
   // Standard institutional underwriting checklist size (OM, T-12, STR
   // report, rent roll, PIP estimate). Used as the denominator in the
   // header "Docs N/M" pill so the count keeps moving as more documents
-  // land. The mock fixtures use their own format (e.g. "8/8" for the
-  // Kimpton demo) — we only synthesize the string for live deals.
+  // land.
   const EXPECTED_DOC_COUNT = 5;
   const liveDocsLabel = liveMode
     ? `${liveDocs.length}/${Math.max(EXPECTED_DOC_COUNT, liveDocs.length)}`
-    : (projectOrNull?.docs ?? '0/0');
+    : '—';
 
   // Esc closes any open header overlay.
   useEffect(() => {
@@ -340,13 +320,18 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // Confidence breakdown — derive from project shape. Mock projects keep
-  // their static numbers; live deals lean on the worker payload via useDeal.
+  // Confidence breakdown — from the worker payload via useDeal; null (no
+  // field scored yet) prints a dash in the breakdown, never 0%.
   const docCount = drawerDocs.length;
-  const avgFieldConfidence = projectOrNull?.aiConfidence ?? 0;
-  // Variance flags surface on the Analysis tab (live worker variance); the
-  // deal header no longer carries a mock count.
-  const varianceFlagCount = 0;
+  const avgFieldConfidence = projectOrNull?.aiConfidence ?? null;
+  // The worker's variance report for this deal — the same hook the Analysis
+  // tab reads. Null until it has answered (or when it could not): "—".
+  // Fetched ONLY while the deal is loaded and the tooltip is open: an empty
+  // id short-circuits the hook, so no request fires on mount, on the load /
+  // error path, or on every tab for the life of the page (and the Analysis
+  // tab's own poller is not doubled). Closing the tooltip stops the poll.
+  const variance = useVariance(deal && confidenceOpen ? rawId : '');
+  const varianceFlagCount: number | null = variance.flags === null ? null : variance.flags.length;
 
   const activeTab = searchParams.get('tab') || '';
   const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? TAB_LABEL.dataRoom;
@@ -459,23 +444,35 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // ─── UUID deal load gate (Wave 4 reliability fix — Bug #1) ─────────
-  // UUID deals MUST resolve to a real worker payload before rendering
-  // the project chrome. The previous fallback to ``projects[0]`` (=
-  // mock Hilton Garden Inn Austin) under fetch-in-flight or fetch-error
-  // conditions surfaced a completely different deal at /projects/<uuid>,
-  // which is data-leak-adjacent (Sam QA reproduced across tabs).
+  // ─── Deal load gate (Wave 4 reliability fix — Bug #1) ─────────────
+  // A deal MUST resolve to a real worker payload before rendering the
+  // project chrome. The previous fallback to a sample record (a fictitious
+  // Austin hotel) under fetch-in-flight or fetch-error conditions surfaced
+  // a completely different deal at /projects/<uuid>, which is
+  // data-leak-adjacent (Sam QA reproduced across tabs).
   //
+  // Without a worker URL there is no deal to load at all: say so (the one
+  // "Worker not configured" state every data surface shares).
+  if (!workerConnected) {
+    return (
+      <div className="px-8 pt-7 pb-8">
+        <Link
+          href="/projects"
+          className="inline-flex items-center gap-1 text-[12px] text-ink-500 hover:text-ink-900 mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded eyebrow normal-case tracking-wide"
+        >
+          <ArrowLeft size={13} aria-hidden="true" /> Back to Projects
+        </Link>
+        <WorkerNotConfigured surface="deal" />
+      </div>
+    );
+  }
   // We early-return a deal-id-scoped skeleton on load and an error card
   // on failure. Both render the requested ``rawId`` at the top so the
   // analyst can confirm the URL is the deal they meant to open — and
-  // neither leaks any mock-data names. Mock-id deals (digit-only ``id``)
-  // keep the legacy projects[0] fallback so demo URLs continue to work.
-  // Live app: a numeric id is not a deal Fondok knows — the sample fixture
-  // exists only in the worker-less build. Say so plainly, with the way back,
-  // instead of a blank frame (the effect above also sends the reader to the
-  // deal list).
-  if (isMockId && workerConnected) {
+  // neither shows any other deal's identifiers. A numeric id is not a deal
+  // Fondok knows: say so plainly, with the way back, instead of a blank
+  // frame (the effect above also sends the reader to the deal list).
+  if (isMockId) {
     return (
       <div className="px-8 pt-7 pb-8">
         <Link
@@ -493,7 +490,7 @@ export default function ProjectDetailPage() {
       </div>
     );
   }
-  if (!isMockId && !projectOrNull) {
+  if (!projectOrNull) {
     return (
         <div className="px-8 pt-7 pb-8">
           <Link
@@ -553,15 +550,10 @@ export default function ProjectDetailPage() {
     );
   }
 
-  // Past the gate, ``projectOrNull`` is guaranteed non-null: mock ids
-  // fell through to ``projects.find(...) ?? projects[0]``; UUID ids
-  // only reached here when ``deal`` resolved. Tying ``project`` to the
-  // narrowed value keeps the existing JSX downstream unchanged.
-  const project = projectOrNull as NonNullable<typeof projectOrNull>;
+  // Past the gate ``projectOrNull`` is non-null: we only reach here when
+  // ``deal`` resolved.
+  const project: Project = projectOrNull;
 
-  // Only the Kimpton Angler deal (id=7) has the live assumption sliders wired.
-  // For other deals we render without the provider; tabs that need it use the
-  // optional accessor and fall back to static mockData.
   const inner = (
     <div>
       {/* Header */}
@@ -581,7 +573,7 @@ export default function ProjectDetailPage() {
                 {project.name}
               </h1>
               <span title="Where this deal stands. Draft = early stage, no IC review yet. In Review = team is reviewing. IC Ready = ready for the investment committee.">
-                <StatusBadge value={project.status} />
+                {project.status && <StatusBadge value={project.status} />}
               </span>
             </div>
           </div>
@@ -609,13 +601,13 @@ export default function ProjectDetailPage() {
                 onMouseLeave={() => setConfidenceOpen(false)}
                 onFocus={() => setConfidenceOpen(true)}
                 onBlur={() => setConfidenceOpen(false)}
-                aria-label={project.aiConfidence === 0 ? 'Awaiting documents' : `AI confidence ${project.aiConfidence}%`}
+                aria-label={project.aiConfidence == null ? 'Awaiting documents' : `AI confidence ${project.aiConfidence}%`}
                 aria-describedby={confidenceOpen ? 'ai-confidence-tooltip' : undefined}
                 title="The AI's certainty in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set."
                 className="h-8 px-2.5 bg-brand-50 hover:bg-brand-100 border border-brand-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Sparkles size={12} aria-hidden="true" />
-                {project.aiConfidence === 0 ? 'Awaiting docs' : (
+                {project.aiConfidence == null ? 'Awaiting docs' : (
                   <span className="tabular-nums"><span className="font-semibold">{project.aiConfidence}%</span> AI Confidence</span>
                 )}
               </button>
@@ -628,8 +620,8 @@ export default function ProjectDetailPage() {
                   <div className="text-[12px] font-semibold text-ink-900 mb-1.5">AI Confidence Breakdown</div>
                   <div className="space-y-1 tabular-nums">
                     <div className="flex justify-between"><span className="text-ink-500">Doc count</span><span className="font-medium text-ink-900">{docCount}</span></div>
-                    <div className="flex justify-between"><span className="text-ink-500">Avg field confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence}%</span></div>
-                    <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-500">Avg field confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence == null ? '—' : `${avgFieldConfidence}%`}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount == null ? '—' : varianceFlagCount}</span></div>
                   </div>
                 </div>
               )}
@@ -705,7 +697,7 @@ export default function ProjectDetailPage() {
           <div className="w-px h-3 bg-ink-200" aria-hidden="true" />
           <div className="flex items-center gap-1.5">
             <Building2 size={12} className="text-ink-400" aria-hidden="true" />{' '}
-            <span className="tabular-nums">{formatKeys(deal?.keys ?? mockMatch?.keys)}</span> keys
+            <span className="tabular-nums">{formatKeys(deal?.keys)}</span> keys
             {/* The service type is optional — omit the segment rather than print a bare dash. */}
             {project.service && project.service !== '—' ? ` · ${project.service}` : ''}
           </div>
@@ -717,21 +709,6 @@ export default function ProjectDetailPage() {
             </>
           )}
         </div>
-
-        {/* Demo-deal banner — numeric (seeded) deal ids render a fixed
-            sample dataset regardless of uploads. Without this, uploading
-            real docs to a demo deal looks like a broken model (the QA
-            "FON-13 regression" was exactly this confusion). */}
-        {isMockId && !workerConnected && (
-          <div className="flex items-start gap-2.5 px-3.5 py-2.5 my-3 rounded-lg bg-warn-50 border border-warn-500/30 text-[12.5px] text-warn-800">
-            <AlertTriangle size={15} className="text-warn-600 mt-0.5 shrink-0" aria-hidden="true" />
-            <div>
-              <span className="font-semibold">Sample deal.</span>{' '}
-              This build shows a fixed example dataset to illustrate the product; documents dropped here
-              are not modelled.
-            </div>
-          </div>
-        )}
 
         {/* Tabs */}
         <nav
@@ -792,12 +769,19 @@ export default function ProjectDetailPage() {
           across tabs; the content column flexes narrower when it's open. */}
       <div className="flex items-start">
       <div className="p-8 max-w-[1800px] w-full min-w-0 flex-1" role="tabpanel" aria-label={`${activeLabel} content`}>
-        {!isMockId && <EngineFailuresBanner outputs={pageEngineOutputs} dealId={rawId} />}
+        {/* One banner per failure: the Overview (Returns section), Cash Flow and
+            Scenario Analysis tabs report their own engines inline, so those are
+            left out here while that tab is active. */}
+        <EngineFailuresBanner
+          outputs={pageEngineOutputs}
+          dealId={rawId}
+          excludeEngines={TAB_OWNED_ENGINES[activeTab] ?? []}
+        />
         {/* FON-75 — a model CRASHED is the banner above; a model MOVED ON is
             this one. Page-level because a run that predates a block blanks a
             section on whichever tab happens to read it. */}
-        {!isMockId && <StaleRunBanner outputs={pageEngineOutputs} dealId={rawId} />}
-        {!isMockId && (
+        <StaleRunBanner outputs={pageEngineOutputs} dealId={rawId} />
+        {(
           <IntroCard
             dismissKey="trace-hint"
             title="Every number traces back"

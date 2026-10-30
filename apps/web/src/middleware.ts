@@ -2,12 +2,14 @@
  * Auth middleware — feature-flagged by `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`.
  *
  * When Clerk is configured, we wrap the app with `clerkMiddleware` and
- * protect every route except the public surfaces (`/`, `/sign-in/*`,
- * `/sign-up/*`, `/diag`). When unset (demo mode), we export a no-op
- * pass-through so the app boots without any auth backend.
+ * protect every route except the public surfaces listed in
+ * `lib/publicRoutes` (`/`, `/sign-in/*`, `/sign-up/*`, `/diag`). When unset
+ * (demo mode), we export a no-op pass-through so the app boots without any
+ * auth backend.
  */
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest } from 'next/server';
+import { PUBLIC_ROUTES } from '@/lib/publicRoutes';
 
 const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const isClerkConfigured =
@@ -15,16 +17,7 @@ const isClerkConfigured =
   (clerkKey.startsWith('pk_test_') || clerkKey.startsWith('pk_live_')) &&
   !clerkKey.endsWith('_dummy');
 
-const isPublicRoute = createRouteMatcher([
-  '/',
-  '/sign-in(.*)',
-  '/sign-up(.*)',
-  '/diag',
-  // Deploy verification — the post-deploy smoke polls this without a session.
-  '/api/version',
-  '/landing',
-  '/test-documents(.*)',
-]);
+const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 const middleware = isClerkConfigured
   ? clerkMiddleware(async (auth, request) => {

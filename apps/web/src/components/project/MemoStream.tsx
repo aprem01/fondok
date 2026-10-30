@@ -8,8 +8,8 @@
  *          event per Opus draft, terminated by a ``done`` event.
  *
  * If ``NEXT_PUBLIC_WORKER_URL`` is unset (preview deploys) or the
- * browser lacks ``EventSource``, we render the cached Kimpton memo
- * from ``mockData`` so the page never goes blank.
+ * browser lacks ``EventSource``, the card says streaming is unavailable
+ * here — nothing is rendered from a fixture.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';

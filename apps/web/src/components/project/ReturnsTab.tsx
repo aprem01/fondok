@@ -50,6 +50,11 @@ import {
 import { useFlash } from '@/lib/hooks/useFlash';
 import { CoachMark } from '@/components/help/CoachMark';
 import { Traced } from '@/components/help/Traced';
+import { Sourced } from '@/components/help/Sourced';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import { sourceExplanation, sourceLabel, valueStateForSource } from '@/lib/provenance';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
+import { EngineOutputsError } from './EngineOutputsError';
 import {
   SubTabNav,
   KpiTile,
@@ -103,7 +108,7 @@ const awaitingRun = (field: string) => `Awaiting model run — ${field} is not o
 export function ReturnsSection() {
   const params = useParams();
   const dealId = (params?.id as string | undefined) ?? '';
-  const { outputs } = useEngineOutputs(dealId);
+  const { outputs, error: outputsError, refresh: refreshOutputs } = useEngineOutputs(dealId);
   const searchParams = useSearchParams();
   const sectionRef = useRef<HTMLElement | null>(null);
   const internalNav = useRef(false);
@@ -120,6 +125,13 @@ export function ReturnsSection() {
   // render the placeholder or the live UI.
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const hasWorkerReturns = wReturnsIrr != null;
+  // D1 / D4 — with no returns on screen, say WHY before saying "unavailable":
+  // the read failed (Retry), or one of THIS section's engines failed (the
+  // banner names it and the reason; the page-level banner leaves these
+  // engines to us on the Overview tab, so each failure shows once). Only a
+  // healthy snapshot with no returns is "not run yet".
+  const readFailed = outputsError != null && outputs == null;
+  const ownedFailures = engineFailures(outputs, { only: TAB_OWNED_ENGINES.overview });
 
   return (
     <section
@@ -129,6 +141,9 @@ export function ReturnsSection() {
       aria-label="Returns"
       style={{ scrollMarginTop: 16 }}
     >
+      {ownedFailures.length > 0 && (
+        <EngineFailuresBanner outputs={outputs} dealId={dealId} engines={TAB_OWNED_ENGINES.overview} />
+      )}
       {hasWorkerReturns ? (
         // Output-only: every view reads the canonical worker engine outputs.
         // The Live Assumptions sliders are a local, ephemeral sandbox
@@ -138,7 +153,11 @@ export function ReturnsSection() {
           dealId={dealId}
           onInternalNav={() => { internalNav.current = true; }}
         />
-      ) : (
+      ) : readFailed ? (
+        <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
+          <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the returns" />
+        </SectionCard>
+      ) : ownedFailures.length > 0 ? null : (
         <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: palette.textMuted, lineHeight: 1.5 }}>
             <TrendingUp size={18} aria-hidden="true" style={{ flexShrink: 0 }} />
@@ -973,12 +992,29 @@ function SandboxChip({ variant = 'white' }: { variant?: 'white' | 'navy' }) {
 }
 
 // ── Exit Assumptions — read-only; exit cap / hold / etc. are Investment- and
-// Debt-owned, so they are shown linked/calculated here with an "Edit in
-// Investment →" link. Values from the returns engine outputs (no fabrication;
-// missing values render as —). ──
+// Debt-owned, so they carry an "Edit in CAPEX →" link. Values from the returns
+// engine outputs (no fabrication; missing values render as —). The Hold
+// Period and Exit Cap badges read the worker's `assumption_sources` tag for
+// the key — document-sourced, an assumption (override / default), or, with no
+// tag, "Source unknown" — exactly as the Overview's assumption rows do. They
+// are never hard-coded "linked" (go-live Wave 0, B1). ──
 function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEdit: () => void }) {
   const holdYears = getEngineField<number>(outputs, 'returns', 'hold_years');
   const exitCap = getEngineField<number>(outputs, 'returns', 'exit_cap_rate');
+  const holdSource = useSource('hold_years');
+  const exitCapSource = useSource('exit_cap_rate');
+  const taggedRow = (resolved: { source: string } | null) => {
+    const src = resolved?.source || null;
+    const state = valueStateForSource(src);
+    return {
+      state,
+      source: src ? sourceLabel(src) : 'Source unknown',
+      color: state === 'document_sourced' ? prov.green : state === 'assumption' ? prov.blue : palette.textFaint,
+      title: src ? sourceExplanation(src) : 'No source recorded for this value on this run',
+    };
+  };
+  const holdTag = taggedRow(holdSource);
+  const exitCapTag = taggedRow(exitCapSource);
   const grossSale = getEngineField<number>(outputs, 'returns', 'gross_sale_price');
   const sellingCosts = getEngineField<number>(outputs, 'returns', 'selling_costs');
   const exitNoiPeriod = exitNoiPeriodLabel(outputs);
@@ -1000,16 +1036,16 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
     color: string;
     weight: number;
     title: string;
+    /** `assumption_sources` key — wraps the value in <Sourced> for the hover. */
+    sourceKey?: string;
   }
   const rows: Row[] = [
     {
       label: 'Hold Period',
       value: holdYears != null ? `${holdYears} years` : '—',
-      source: TAB_LABEL.investment,
-      state: 'linked',
-      color: prov.green,
+      ...holdTag,
       weight: 400,
-      title: 'Linked from CAPEX → Exit / Reversion',
+      sourceKey: 'hold_years',
     },
     {
       label: 'Exit Year',
@@ -1023,11 +1059,9 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
     {
       label: 'Exit Cap Rate',
       value: exitCap != null ? fmtPct(exitCap, 2) : '—',
-      source: TAB_LABEL.investment,
-      state: 'linked',
-      color: prov.green,
+      ...exitCapTag,
       weight: 400,
-      title: 'Linked from CAPEX → Exit / Reversion',
+      sourceKey: 'exit_cap_rate',
     },
     {
       label: 'Gross Sale Price',
@@ -1096,9 +1130,12 @@ function ExitAssumptionsCard({ outputs, onEdit }: { outputs: EngineOutputs; onEd
           </span>
           <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ color: r.color, fontWeight: r.weight, fontVariantNumeric: 'tabular-nums' }}>
-              {r.value}
+              {r.sourceKey ? <Sourced sourceKey={r.sourceKey}>{r.value}</Sourced> : r.value}
             </span>
-            <span style={{ fontSize: 10.5, color: palette.textFaint, whiteSpace: 'nowrap' }}>
+            <span
+              style={{ fontSize: 10.5, color: palette.textFaint, whiteSpace: 'nowrap' }}
+              data-testid={r.sourceKey ? `exit-assumption-source-${r.sourceKey}` : undefined}
+            >
               {r.source}
             </span>
           </span>

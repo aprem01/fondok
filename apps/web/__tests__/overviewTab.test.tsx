@@ -161,7 +161,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: mockDealRef.deal, status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    deal: mockDealRef.deal, status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 

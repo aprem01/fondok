@@ -277,8 +277,8 @@ export default function PipelinePage() {
             eyebrow
           />
           <div className="text-display-lg text-ink-900 mt-2 tabular-nums font-display">
-            {summary
-              ? `${summary.deals_meeting_target_irr}/${summary.deals_with_target_irr || 0}`
+            {summary && summary.deals_with_target_irr != null
+              ? `${summary.deals_meeting_target_irr}/${summary.deals_with_target_irr}`
               : '—'}
           </div>
           {summary && summary.deals_with_target_irr === 0 && (

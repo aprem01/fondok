@@ -46,7 +46,7 @@ neither project reads the production database. Two things catch it:
 What this suite *did* get out of that incident is the other half of the defect:
 the screen gave the analyst five dashes and no way to know a re-run fixes it.
 The banner that now says so is locked by
-`08-overview-noi-basis.spec.ts` and `__tests__/stabilizedParity.test.tsx`.
+`e2e/worker/07-overview-noi-basis.spec.ts` and `__tests__/stabilizedParity.test.tsx`.
 
 ### Where to put a test that doesn't belong here
 
@@ -68,17 +68,18 @@ only when someone explicitly opts in.
 | `worker-stub` | 3001 | `/__e2e-worker`          | `e2e/worker/*`     | yes                   |
 | `prod`        | —    | the deployed build's     | `e2e/prod/*`       | post-deploy only      |
 
-**`mock`** — `isWorkerConnected()` is false, the API client never fetches, and
-every tab falls back to `src/lib/mockData.ts`. This is the shell: routing,
-the new-deal wizard, tab navigation, and the Overview surfaces that render
-without engine data.
+**`mock`** — `isWorkerConnected()` is false and the API client never fetches.
+Since 2026-10-30 (go-live Wave 0, C4) there is NO fixture behind it: the deal
+list and the deal page render the one "Worker not configured" state
+(`components/WorkerNotConfigured`) instead of the four fictitious hotels and
+the "Kimpton Angler" sample deal they used to show. This is the shell:
+routing, the new-deal wizard, the methodology page, and
+`03-worker-not-configured.spec.ts`, which locks that state in a real browser.
 
-Its blind spot is large and worth naming: with no engine output, big parts of
-the app render their *empty* state. Financials shows "No P&L output yet", so
-the sub-tabs and the Historicals worksheet never mount. Scenario Analysis has
-no scenario list, so the chip row renders nothing. On Overview every figure is
-a dash. A `mock`-project spec asserting "this is a dash" is therefore asserting
-almost nothing about the dash logic — say so in the spec when you write one.
+Nothing deal-shaped can be asserted here any more — the two specs that used
+to open the sample deal (`03-deal-workspace` tab navigation and
+`08-overview-noi-basis`) moved to `e2e/worker/` as `06-` and `07-`, where they
+run against the stubbed worker deal.
 
 **`worker-stub`** — built against a same-origin path nothing serves, so
 `isWorkerConnected()` is true and the app takes its real worker-connected code

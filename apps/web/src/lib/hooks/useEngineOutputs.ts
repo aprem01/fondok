@@ -7,6 +7,7 @@ import {
   EngineOutputResponse,
   EngineOutputsResponse,
   isWorkerConnected,
+  userMessage,
 } from '@/lib/api';
 
 // ────────────────────────────────────────────────────────────────────
@@ -99,6 +100,14 @@ export interface UseEngineOutputsResult {
   /** True once the first fetch has completed (success or failure) — lets
    *  consumers hold a skeleton instead of an empty state during it. */
   settled: boolean;
+  /**
+   * The last fetch FAILED (worker unreachable, 5xx, timeout) — a different
+   * state from "the model has not run", which is `outputs` null with no
+   * error. Consumers render an error card with Retry (`refresh`) for the
+   * former and the not-run empty state only for the latter. Cleared by the
+   * next successful fetch; null when the worker is not configured.
+   */
+  error: string | null;
   lastRunAt: Date | null;
   refresh: () => Promise<void>;
 }
@@ -109,6 +118,7 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
   const [previous, setPrevious] = useState<EngineOutputsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [settled, setSettled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [lastRunAt, setLastRunAt] = useState<Date | null>(null);
 
   const refresh = useCallback(async () => {
@@ -119,6 +129,7 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
     setLoading(true);
     try {
       const data = await api.engines.getAll(String(dealId));
+      setError(null);
       // Snapshot previous before swapping.
       setPrevious(previousRef.current);
       previousRef.current = data;
@@ -130,8 +141,10 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
         ),
       );
       if (latest > 0) setLastRunAt(new Date(latest));
-    } catch {
-      // Silent — fall back to mock data in callers.
+    } catch (err: unknown) {
+      // Keep the last good snapshot on screen, and say the refresh failed —
+      // a failed read is never dressed up as "model not run".
+      setError(userMessage(err));
     } finally {
       setLoading(false);
       setSettled(true);
@@ -151,7 +164,7 @@ export function useEngineOutputs(dealId: string | number): UseEngineOutputsResul
     });
   }, [dealId, refresh]);
 
-  return { outputs, previous, loading, settled, lastRunAt, refresh };
+  return { outputs, previous, loading, settled, error, lastRunAt, refresh };
 }
 
 export function useEngineRunHistory(dealId: string | number): EngineRunRecord[] {
@@ -165,8 +178,8 @@ export function useEngineRunHistory(dealId: string | number): EngineRunRecord[] 
 
 // ────────────────────────────────────────────────────────────────────
 // Field accessor — outputs from the worker are loosely-typed JSON, so
-// we expose a tiny safe getter that callers can use to override mock
-// values when the worker has data.
+// we expose a tiny safe getter; an absent field is `undefined` and the
+// caller renders "—".
 // ────────────────────────────────────────────────────────────────────
 
 export function getEngineField<T = unknown>(

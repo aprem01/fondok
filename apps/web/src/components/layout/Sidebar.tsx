@@ -66,7 +66,7 @@ export default function Sidebar({
   const userRef = useRef<HTMLDivElement>(null);
 
   // Auth-aware user + org. In the worker-less demo build these resolve to
-  // the neutral "Demo Workspace / Demo Analyst" persona (mockData.ts). When
+  // the neutral "Demo Workspace / Demo Analyst" persona (lib/auth.ts). When
   // Clerk is configured they hydrate from the active session/org.
   const currentUser = useCurrentUser();
   const workspace = useCurrentOrg();
@@ -136,7 +136,7 @@ export default function Sidebar({
       </div>
 
       {/* Workspace switcher — Clerk OrganizationSwitcher when configured,
-          otherwise the neutral demo-workspace pill from mockData.
+          otherwise the neutral demo-workspace pill from lib/auth.
           The typeof guard defends against a Clerk bundle that loaded but
           where the component export came back undefined (dev-key against
           a prod origin can produce this) — without it, React throws #130

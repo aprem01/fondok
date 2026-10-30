@@ -18,6 +18,8 @@ import { ChevronDown, Grid3x3 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { cn, fmtPct, fmtCurrency } from '@/lib/format';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
+import { EngineOutputsError } from './EngineOutputsError';
 
 interface SensCell {
   row_value: number;
@@ -72,7 +74,7 @@ function heatBg(v: number, min: number, max: number): string {
 }
 
 export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
-  const { outputs } = useEngineOutputs(dealId);
+  const { outputs, error: outputsError, refresh: refreshOutputs } = useEngineOutputs(dealId);
 
   const matrices = useMemo<SensMatrix[]>(() => {
     const raw = getEngineField<SensMatrix[]>(outputs, 'sensitivity', 'matrices');
@@ -86,9 +88,21 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
   );
 
   if (matrices.length === 0 || !selected) {
+    // D1 / D4 — a failed read and a failed engine are not "not computed":
+    // each gets its own card (Retry; the engine and reason) before the
+    // genuine not-run state below.
+    const readFailed = outputsError != null && outputs == null;
+    // Only the sensitivity engine's failure is this tab's to report; the
+    // page-level banner carries the rest (and skips this one here).
+    const ownedFailures = engineFailures(outputs, { only: TAB_OWNED_ENGINES.scenarios });
     return (
       <div className="space-y-4">
         <ScenarioIntroCard />
+        {readFailed ? (
+          <EngineOutputsError error={outputsError} onRetry={refreshOutputs} what="the sensitivity grids" />
+        ) : ownedFailures.length > 0 ? (
+          <EngineFailuresBanner outputs={outputs} dealId={dealId} engines={TAB_OWNED_ENGINES.scenarios} />
+        ) : (
         <Card className="p-8 text-center">
           <div className="w-12 h-12 mx-auto rounded-lg bg-brand-50 flex items-center justify-center mb-3">
             <Grid3x3 size={20} className="text-brand-500" />
@@ -99,6 +113,7 @@ export default function ScenarioAnalysisTab({ dealId }: { dealId: string }) {
             Levered IRR and Equity Multiple flexed across exit cap, RevPAR growth, and entry basis.
           </p>
         </Card>
+        )}
       </div>
     );
   }

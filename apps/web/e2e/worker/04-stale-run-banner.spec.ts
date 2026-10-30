@@ -8,15 +8,14 @@ import { gotoDeal, stubWorker, STUB_DEAL_ID } from '../fixtures/workerStub';
  * Overview rendering five dashes. Nothing was broken: the deal's persisted
  * engine output had been written before `expense.stabilization` existed, and
  * no surface said so. Two banners now cover that — the section banner
- * (`stabilization-needs-rerun`, locked by `08-overview-noi-basis.spec.ts`) is
+ * (`stabilization-needs-rerun`, locked by `07-overview-noi-basis.spec.ts`) is
  * the specific message where the dashes are; this page-level one is the
  * general net, driven by `stale_run.missing_blocks` off the engines endpoint,
  * so the NEXT block addition is covered the day it deploys.
  *
  * This runs on the `worker-stub` project because the banner only mounts when
- * `isWorkerConnected()` is true and the deal id is a real (non-mock) one — the
- * mock project at :3000 gates both banners off, which is exactly the reason
- * `08-` cannot assert this half.
+ * `isWorkerConnected()` is true and the deal id is a real (non-numeric) one —
+ * the mock project at :3000 has no deal at all.
  *
  * Route ordering note: Playwright runs the most recently added handler first,
  * so the per-test `/engines` route below wins over `stubWorker`'s catch-all.

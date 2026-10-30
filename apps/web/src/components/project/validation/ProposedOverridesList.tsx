@@ -114,8 +114,8 @@ export function ProposedOverridesList({
         role="status"
         className="mt-3 p-3 rounded-md bg-ink-100 border border-ink-200 text-[12.5px] text-ink-600 leading-relaxed"
       >
-        Resolver did not propose any engine-input changes for this Q&A.
-        The broker's reply has been logged on this question's history;
+        Resolver did not propose any engine-input changes for this Q&amp;A.
+        The broker&apos;s reply has been logged on this question&apos;s history;
         no analyst confirmation needed.
       </div>
     );

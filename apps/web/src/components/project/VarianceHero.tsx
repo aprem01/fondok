@@ -16,7 +16,7 @@ import { AlertTriangle, ArrowRight, ShieldCheck } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { cn } from '@/lib/format';
 import { useVariance } from '@/lib/hooks/useVariance';
-import type { VarianceFlag } from '@/lib/varianceData';
+import type { VarianceFlag } from '@/lib/variance';
 
 function fmtValue(v: number | undefined, format: VarianceFlag['format']): string {
   if (v == null || Number.isNaN(v)) return '—';
@@ -86,7 +86,7 @@ export function VarianceHero({ dealId }: { dealId: string }) {
             <div className="text-[15px] font-semibold text-danger-700 mt-0.5">
               Broker {headline.field_label}{' '}
               {overstated ? 'overstated' : 'understated'} by{' '}
-              {fmtValue(Math.abs(headline.variance_abs ?? 0), headline.format)}
+              {fmtValue(headline.variance_abs == null ? undefined : Math.abs(headline.variance_abs), headline.format)}
               {headline.variance_pct != null && (
                 <span> ({fmtPct(headline.variance_pct)})</span>
               )}

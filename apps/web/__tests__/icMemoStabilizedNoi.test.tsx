@@ -111,7 +111,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async (importOriginal) => {
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
     deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', keys: 132, field_overrides: {} },
-    status: null, loading: false, error: null, fromMock: false, refresh: vi.fn(),
+    status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn(),
   }),
 }));
 
@@ -140,7 +140,7 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 
 import ICMemoTab from '@/components/project/ICMemoTab';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 
 const PROJECT = { id: 0, name: 'Kimpton Angler' } as unknown as Project;
 

@@ -175,7 +175,7 @@ const mockDeal: { id: string; keys: number; field_overrides: Record<string, unkn
 const refreshDealSpy = vi.fn();
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: mockDeal, status: null, loading: false, error: null, fromMock: false, refresh: refreshDealSpy,
+    deal: mockDeal, status: null, loading: false, error: null, workerConfigured: true, refresh: refreshDealSpy,
   }),
 }));
 vi.mock('@/lib/hooks/useHistoricalBaseline', () => ({ useHistoricalBaseline: () => ({ baseline: null }) }));

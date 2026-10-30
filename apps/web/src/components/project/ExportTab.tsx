@@ -8,7 +8,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import type { Project } from '@/lib/mockData';
+import type { Project } from '@/lib/project';
 import { useToast } from '@/components/ui/Toast';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useEngineOutputs } from '@/lib/hooks/useEngineOutputs';

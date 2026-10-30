@@ -2,50 +2,29 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, isWorkerConnected, userMessage, WorkerDeal } from '@/lib/api';
-import { projects as mockProjects, Project } from '@/lib/mockData';
 
 export interface DealsState {
   deals: WorkerDeal[];
   loading: boolean;
   error: string | null;
-  /** True when reading from mockData because the worker isn't configured. */
-  fromMock: boolean;
+  /**
+   * False when `NEXT_PUBLIC_WORKER_URL` is unset. There is then nothing to
+   * list — the page renders `WorkerNotConfigured`, never a sample deal.
+   */
+  workerConfigured: boolean;
   refresh: () => void;
 }
 
-/** Adapt a mockData Project row to the worker's DealSummary shape. */
-function projectToDeal(p: Project): WorkerDeal {
-  // Mock `Project` doesn't carry a brand.
-  return {
-    id: String(p.id),
-    tenant_id: 'mock-tenant',
-    name: p.name,
-    city: p.city,
-    keys: p.keys,
-    service: p.service,
-    brand: null,
-    status: p.status,
-    deal_stage: p.dealStage,
-    risk: p.risk,
-    ai_confidence: p.aiConfidence / 100,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-}
-
-const mockDeals: WorkerDeal[] = mockProjects.map(projectToDeal);
-
 export function useDeals(): DealsState {
-  const [deals, setDeals] = useState<WorkerDeal[]>(
-    isWorkerConnected() ? [] : mockDeals,
-  );
-  const [loading, setLoading] = useState<boolean>(isWorkerConnected());
+  const workerConfigured = isWorkerConnected();
+  const [deals, setDeals] = useState<WorkerDeal[]>([]);
+  const [loading, setLoading] = useState<boolean>(workerConfigured);
   const [error, setError] = useState<string | null>(null);
   const tick = useRef(0);
 
   const refresh = useCallback(() => {
     if (!isWorkerConnected()) {
-      setDeals(mockDeals);
+      setDeals([]);
       setLoading(false);
       return;
     }
@@ -80,7 +59,7 @@ export function useDeals(): DealsState {
     deals,
     loading,
     error,
-    fromMock: !isWorkerConnected(),
+    workerConfigured,
     refresh,
   };
 }

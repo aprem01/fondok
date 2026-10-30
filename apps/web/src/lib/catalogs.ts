@@ -1,78 +1,17 @@
 // Reference catalogs for the web app — brands, return profiles, positioning
-// tiers, deal stages, sourcing channels, document types — plus the legacy demo
-// workspace / project list that the mock-id (numeric) routes still read.
+// tiers, deal stages, sourcing channels, project statuses.
 //
-// Standing rule (no invented data): this file carries NO numeric deal, market
-// or analysis fixtures. Every displayed figure traces to an engine output or an
-// extracted document field; a figure the engine did not produce renders as "—"
-// with the missing field named. The former Kimpton Angler / Miami Beach number
-// sets (overview, documents, market, analysis, scenarios, critic findings) were
-// removed 2026-10-14 — nothing imported them, and nothing may again.
-
-// The worker-less demo build's persona. Deliberately neutral: it must never
-// name a real institution or a real person — if Clerk fails to hydrate on a
-// preview deploy, THIS is what every visitor would see in the sidebar.
-export const workspace = {
-  name: 'Demo Workspace',
-  plan: 'Demo',
-  url: 'demo',
-};
-
-export const currentUser = {
-  name: 'Demo Analyst',
-  role: 'Analyst',
-  initials: 'DA',
-  email: 'analyst@example.com',
-};
+// Standing rule (no invented data): this file carries NO deal, market or
+// analysis fixtures and no demo deals. Every displayed figure traces to an
+// engine output or an extracted document field; a figure the engine did not
+// produce renders as "—" with the missing field named. The former demo
+// project list (four fictitious hotels) and the static engine progress map
+// were removed 2026-10-30 with the worker-less fallback itself: without a
+// worker URL the app shows "Worker not configured", never a fixture.
 
 export type ProjectStatus = 'Draft' | 'In Review' | 'IC Ready' | 'Archived';
 export type DealStage = 'Teaser' | 'Under NDA' | 'LOI' | 'PSA';
 export type Risk = 'Low' | 'Medium' | 'High';
-
-export interface Project {
-  id: number;
-  name: string;
-  city: string;
-  keys: number;
-  service: string;
-  status: ProjectStatus;
-  dealStage: DealStage;
-  revpar: number;
-  irr: number;
-  risk: Risk;
-  aiConfidence: number;
-  assignee: string;
-  docs: string;
-  noi?: number;
-  createdAt?: string;
-  updatedAt: string;
-  noDocs?: boolean;
-}
-
-export const projects: Project[] = [
-  {
-    id: 9, name: 'Hilton Garden Inn Downtown', city: 'Austin, TX', keys: 186, service: 'Select-Service',
-    status: 'In Review', dealStage: 'Teaser', revpar: 142, irr: 15.7, risk: 'Medium',
-    aiConfidence: 65, assignee: 'JR', docs: '3/3', noi: 2_840_000,
-    createdAt: 'Apr 24, 2026', updatedAt: 'just now',
-  },
-  {
-    id: 7, name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, service: 'Full-Service',
-    status: 'IC Ready', dealStage: 'Under NDA', revpar: 385, irr: 23.48, risk: 'Low',
-    aiConfidence: 87, assignee: 'EA', docs: '8/8', noi: 4_281_000,
-    createdAt: 'Apr 19, 2026', updatedAt: '1d ago',
-  },
-  {
-    id: 8, name: 'Marriott Magnificent Mile', city: 'Chicago, IL', keys: 312, service: 'Full-Service',
-    status: 'In Review', dealStage: 'LOI', revpar: 189, irr: 18.2, risk: 'Low',
-    aiConfidence: 72, assignee: 'MK', docs: '5/5', noi: 7_120_000, updatedAt: '2d ago',
-  },
-  {
-    id: 10, name: 'Hyatt Regency Waterfront', city: 'Seattle, WA', keys: 425, service: 'Full-Service',
-    status: 'Draft', dealStage: 'Under NDA', revpar: 210, irr: 14.3, risk: 'Low',
-    aiConfidence: 0, assignee: 'SP', docs: '0/0', noDocs: true, updatedAt: '7d ago',
-  },
-];
 
 export const dealStages: DealStage[] = ['Teaser', 'Under NDA', 'LOI', 'PSA'];
 
@@ -119,22 +58,6 @@ export const projectStatuses: (ProjectStatus | 'All Status')[] = [
   'All Status', 'Draft', 'In Review', 'IC Ready', 'Archived',
 ];
 
-export const documentChecklist = [
-  'Financials (3-Year P&L, TTM, Monthly)',
-  'Room Revenue Reports', 'STR Reports', 'Offering Memorandum (OM)',
-  'Room Mix / Unit Mix', 'Historical CapEx', 'Property Taxes',
-  'Basic Property Info', 'Leases & Agreements', 'Surveys & Reviews',
-];
-
-export const engines = [
-  { id: 'investment', label: 'Investment', progress: 35 },
-  { id: 'pl', label: 'P&L', progress: 0 },
-  { id: 'debt', label: 'Debt', progress: 70 },
-  { id: 'cash-flow', label: 'Cash Flow', progress: 35 },
-  { id: 'returns', label: 'Returns', progress: 70 },
-  { id: 'partnership', label: 'Partnership', progress: 0 },
-];
-
 // Brand catalog. Originally backfilled from evals/golden-set/brand-catalog.json
 // (191 brands across 12 families). R-020 / R-021 / R-022 (2026-10-08) re-audited
 // every group against an official or authoritative source, recorded per family
@@ -156,7 +79,7 @@ export const engines = [
 // brand's default positioning in the wizard / Overview.
 //
 // Brand names use the canonical catalog form (e.g., "Hampton by Hilton") with the
-// shorter mockData aliases retained as substring-matchable prefixes for legacy deal
+// shorter legacy aliases retained as substring-matchable prefixes for legacy deal
 // records that store just the short brand (e.g., an extracted brand of "Kimpton").
 export type ChainScale = 'Luxury' | 'Upper Upscale' | 'Upscale' | 'Upper Midscale' | 'Midscale' | 'Economy';
 export type Brand = {
@@ -619,28 +542,4 @@ export function brandChain(name: string | null | undefined): string | null {
   if (!hit) return null;
   const fam = brandFamilies.find(f => f.family === hit.family);
   return fam ? brandFamilyShort(fam) : hit.family;
-}
-
-// Project 7 — Kimpton Angler — Deep data for the IC Ready demo deal
-// ─────────────────── Critic finding shape ───────────────────
-// The Critic agent reads the broker proforma + T-12 + market context and
-// surfaces cross-field issues that a per-field variance pass would miss.
-// Each finding grounds in a USALI rule_id (or a MULTI_FIELD_* rule from
-// the cross-field rule additions). Severity ordered CRITICAL → WARN → INFO.
-// TYPES ONLY — the live findings come from GET /deals/{id}/critic
-// (AnalysisTab maps the worker JSON onto this shape). The names keep their
-// historical "Kimpton" prefix for import stability.
-export type KimptonCriticSeverity = 'CRITICAL' | 'WARN' | 'INFO';
-
-export interface KimptonCriticFinding {
-  id: string;
-  ruleId: string;
-  title: string;
-  narrative: string;
-  severity: KimptonCriticSeverity;
-  citedFields: string[];
-  citedPages: number[];
-  citedDocumentId?: string;
-  citedDocumentName?: string;
-  impactEstimateUsd?: number;
 }

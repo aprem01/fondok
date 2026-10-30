@@ -271,7 +271,7 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
   };
 });
 vi.mock('@/lib/hooks/useDeal', () => ({
-  useDeal: () => ({ deal: DEAL_WITH_TARGETS, status: null, loading: false, error: null, fromMock: false, refresh: vi.fn() }),
+  useDeal: () => ({ deal: DEAL_WITH_TARGETS, status: null, loading: false, error: null, workerConfigured: true, refresh: vi.fn() }),
 }));
 vi.mock('@/components/project/EngineHeader', () => ({ default: () => null }));
 vi.mock('@/components/project/EngineRightRail', () => ({ default: () => null }));

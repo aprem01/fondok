@@ -91,7 +91,7 @@ export function CompSetDriftCallout({ dealId }: { dealId: string }) {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[12px] text-danger-700">
             <AlertTriangle size={13} aria-hidden="true" />
-            <span>Couldn't load comp-set drift — {state.error}</span>
+            <span>Couldn&apos;t load comp-set drift — {state.error}</span>
           </div>
           <Button
             size="sm"
@@ -204,8 +204,8 @@ function DriftBlock({ drift }: { drift: CompSetDrift }) {
 }
 
 function UncertainChip({ match }: { match: CompSetUncertainMatch }) {
-  const pct = Math.round((match.similarity ?? 0) * 100);
-  const title = `Possibly the same property under a different name.\n${match.from_name} → ${match.to_name}\n${pct}% name similarity`;
+  const similarity = match.similarity == null ? null : `${Math.round(match.similarity * 100)}% name similarity`;
+  const title = `Possibly the same property under a different name.\n${match.from_name} → ${match.to_name}${similarity ? `\n${similarity}` : ''}`;
   return (
     <span
       className={cn(
@@ -214,13 +214,15 @@ function UncertainChip({ match }: { match: CompSetUncertainMatch }) {
         'cursor-help',
       )}
       title={title}
-      aria-label={`Uncertain match: ${match.from_name} to ${match.to_name}, ${pct} percent similarity`}
+      aria-label={`Uncertain match: ${match.from_name} to ${match.to_name}${similarity ? `, ${similarity}` : ''}`}
     >
       ?{' '}
       <span className="truncate max-w-[180px]">
         {match.from_name} → {match.to_name}
       </span>
-      <span className="text-[10px] text-warn-700/70 tabular-nums">{pct}%</span>
+      <span className="text-[10px] text-warn-700/70 tabular-nums">
+        {match.similarity == null ? '—' : `${Math.round(match.similarity * 100)}%`}
+      </span>
     </span>
   );
 }
