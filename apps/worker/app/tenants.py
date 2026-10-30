@@ -91,30 +91,51 @@ class TenantDataPolicies(BaseModel):
     def as_dict(self) -> dict[str, Any]:
         return self.model_dump()
 
+    @classmethod
+    def withheld(cls) -> TenantDataPolicies:
+        """Every key at ``withhold`` — what an UNREADABLE row resolves to."""
+        return cls.model_validate({k: "withhold" for k in cls.model_fields})
+
 
 #: The policy keys the admin surfaces enumerate (health posture, Settings card).
 DATA_POLICY_KEYS: tuple[str, ...] = tuple(TenantDataPolicies.model_fields)
 
 
-def _parse_data_policies(raw: Any) -> TenantDataPolicies:
-    """Decode the stored column. A row written before the column existed
-    (``NULL`` / ``''``) is the default. An unparseable value is logged and
-    read as the default too — it cannot have been written through the typed
-    API, and a broken policy blob must not make every request 500."""
+def _parse_data_policies(raw: Any, *, tenant_id: Any) -> tuple[TenantDataPolicies, str | None]:
+    """Decode the stored column → ``(policies, error)``.
+
+    A row written before the column existed (``NULL`` / ``''`` / ``{}``) is
+    the default (``allow``) with no error. Anything else that is not a valid
+    policy document — not JSON, not an object, an unknown key, a misspelt
+    value such as ``"withold"`` — **fails closed**: every key reads as
+    ``withhold`` and ``error`` says why. Such a value cannot have been
+    written through the typed API, so it is a manual edit or corruption; the
+    one thing it must never do is serve a CoStar default to a tenant whose
+    operator meant to withhold it. The error is logged with the tenant and
+    surfaced as ``invalid_rows`` on ``/admin/health``.
+    """
     if raw is None or raw == "" or raw == {}:
-        return TenantDataPolicies()
+        return TenantDataPolicies(), None
     data: Any = raw
+    error: str | None = None
     if isinstance(raw, (str, bytes)):
         try:
             data = json.loads(raw)
-        except ValueError:
-            logger.warning("tenants: data_policies column is not JSON (%r)", raw[:80])
-            return TenantDataPolicies()
-    try:
-        return TenantDataPolicies.model_validate(data or {})
-    except ValidationError as exc:
-        logger.warning("tenants: data_policies column fails validation: %s", exc)
-        return TenantDataPolicies()
+        except ValueError as exc:
+            error = f"not JSON ({exc})"
+    if error is None:
+        try:
+            if not isinstance(data, dict):
+                raise TypeError(f"expected a JSON object, got {type(data).__name__}")
+            return TenantDataPolicies.model_validate(data), None
+        except (ValidationError, TypeError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
+    logger.warning(
+        "tenants: data_policies row for tenant %s is invalid and reads as withhold for every key — %s",
+        tenant_id,
+        error,
+    )
+    return TenantDataPolicies.withheld(), error
 
 
 @dataclass(frozen=True)
@@ -126,6 +147,9 @@ class Tenant:
     status: str
     created_at: datetime | None = None
     data_policies: TenantDataPolicies = field(default_factory=TenantDataPolicies)
+    #: Why the stored policy row could not be read (then ``data_policies`` is
+    #: every key ``withhold``); ``None`` for a valid or absent row.
+    data_policies_error: str | None = None
 
     @property
     def is_internal(self) -> bool:
@@ -144,6 +168,7 @@ class Tenant:
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "data_policies": self.data_policies.as_dict(),
+            "data_policies_error": self.data_policies_error,
         }
 
 
@@ -181,6 +206,7 @@ def _row_to_tenant(row: Any) -> Tenant:
             created = datetime.fromisoformat(created)
         except ValueError:
             created = None
+    policies, policy_error = _parse_data_policies(m.get("data_policies"), tenant_id=m["id"])
     return Tenant(
         id=UUID(str(m["id"])),
         clerk_org_id=str(m["clerk_org_id"]),
@@ -188,7 +214,8 @@ def _row_to_tenant(row: Any) -> Tenant:
         kind=str(m["kind"]),
         status=str(m["status"]),
         created_at=created,
-        data_policies=_parse_data_policies(m.get("data_policies")),
+        data_policies=policies,
+        data_policies_error=policy_error,
     )
 
 
@@ -254,8 +281,15 @@ async def is_internal(tenant_id: UUID | str) -> bool:
     return tenant is not None and tenant.is_serving and tenant.is_internal
 
 
-async def list_tenants() -> list[Tenant]:
-    """Every registry row, oldest first. Empty on a DB without the table."""
+async def list_tenants(*, raise_on_error: bool = False) -> list[Tenant]:
+    """Every registry row, oldest first.
+
+    A read failure (no table, connection error) logs and returns ``[]`` by
+    default — the informational admin list degrades to "no rows". With
+    ``raise_on_error=True`` it raises :class:`TenantRegistryUnavailable`
+    instead, for callers that must not confuse an outage with an empty
+    registry (the ``/admin/health`` posture).
+    """
     try:
         async with get_engine().connect() as conn:
             rows = (
@@ -265,6 +299,8 @@ async def list_tenants() -> list[Tenant]:
             ).fetchall()
     except Exception as exc:
         logger.warning("tenants: list failed (%s)", exc)
+        if raise_on_error:
+            raise TenantRegistryUnavailable(f"{type(exc).__name__}: {exc}") from exc
         return []
     return [_row_to_tenant(r) for r in rows]
 
@@ -405,29 +441,52 @@ async def set_tenant_data_policies(
     the next ``load_tenant_data_policy`` / read-cache fingerprint sees it.
     """
     engine = get_engine()
-    blob = json.dumps(policies.as_dict(), sort_keys=True)
-    # JSONB needs an explicit cast on Postgres; SQLite stores the JSON text.
-    value_frag = ":p" if engine.dialect.name == "sqlite" else "CAST(:p AS JSONB)"
     async with engine.begin() as conn:
-        result = await conn.execute(
-            text(f"UPDATE tenants SET data_policies = {value_frag} WHERE id = :id"),
-            {"id": str(UUID(str(tenant_id))), "p": blob},
+        touched = await write_tenant_data_policies(
+            conn, tenant_id=tenant_id, policies=policies, dialect_name=engine.dialect.name
         )
-        touched = int(result.rowcount or 0)
     reset_tenant_cache()
     if touched == 0:
         return None
     return await get_tenant(tenant_id, use_cache=False)
 
 
+async def write_tenant_data_policies(
+    executor: Any, *, tenant_id: UUID | str, policies: TenantDataPolicies, dialect_name: str
+) -> int:
+    """Execute the policy UPDATE on ``executor`` (an ``AsyncConnection`` or an
+    ``AsyncSession``) inside the CALLER's transaction and return the row
+    count. No commit, no cache reset — the caller owns both, which is what
+    lets the admin API write the policy and its audit row atomically
+    (:func:`set_tenant_data_policies` is the one-shot form)."""
+    blob = json.dumps(policies.as_dict(), sort_keys=True)
+    # JSONB needs an explicit cast on Postgres; SQLite stores the JSON text.
+    value_frag = ":p" if dialect_name == "sqlite" else "CAST(:p AS JSONB)"
+    result = await executor.execute(
+        text(f"UPDATE tenants SET data_policies = {value_frag} WHERE id = :id"),
+        {"id": str(UUID(str(tenant_id))), "p": blob},
+    )
+    return int(result.rowcount or 0)
+
+
 async def data_policies_posture() -> dict[str, Any]:
     """The ``data_policies`` block of ``GET /admin/health``: how many
-    registered tenants exist and how many withhold anything. Counts only —
-    no tenant is named."""
-    rows = await list_tenants()
+    registered tenants exist, how many withhold anything and how many rows
+    could not be read (and therefore withhold everything). Counts only — no
+    tenant is named. A registry outage is reported as ``error`` (the
+    exception type), never as zero tenants."""
+    try:
+        rows = await list_tenants(raise_on_error=True)
+    except Exception as exc:
+        cause = exc.__cause__
+        return {
+            "error": type(cause).__name__ if cause is not None else type(exc).__name__,
+            "keys": list(DATA_POLICY_KEYS),
+        }
     return {
         "tenants_total": len(rows),
         "tenants_with_withhold": sum(1 for t in rows if t.data_policies.withholds_anything),
+        "invalid_rows": sum(1 for t in rows if t.data_policies_error is not None),
         "keys": list(DATA_POLICY_KEYS),
     }
 
@@ -451,4 +510,5 @@ __all__ = [
     "set_tenant_data_policies",
     "update_tenant",
     "upsert_tenant",
+    "write_tenant_data_policies",
 ]

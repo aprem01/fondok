@@ -1927,6 +1927,9 @@ export interface RegisteredTenant {
   created_at: string | null;
   /** Absent on a worker that predates FON-116 — the Settings card hides itself. */
   data_policies?: TenantDataPolicies;
+  /** Set when the stored policy row could not be read; the worker then reads
+   *  every key as ``withhold`` (fail closed) and says why here. */
+  data_policies_error?: string | null;
 }
 export interface AdminTenantsResponse {
   /** ``all`` for an internal tenant's admin, ``own`` for anyone else. */

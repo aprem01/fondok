@@ -110,6 +110,11 @@ export default function DataPoliciesCard() {
                     {t.kind === 'internal' ? 'Internal' : 'External'}
                   </Badge>
                   {t.status !== 'active' && <Badge tone="amber">{t.status.replace('_', ' ')}</Badge>}
+                  {t.data_policies_error && (
+                    <span title={t.data_policies_error} data-testid={`data-policy-invalid-${t.id}`}>
+                      <Badge tone="red">stored row invalid — withheld</Badge>
+                    </span>
+                  )}
                 </div>
                 <div className="text-[12px] text-ink-500 mt-0.5">
                   CoStar-derived defaults:{' '}

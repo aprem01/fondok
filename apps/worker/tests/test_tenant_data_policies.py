@@ -320,6 +320,7 @@ async def test_admin_health_carries_data_policies_posture(_rsa_key) -> None:
         assert r.json()["data_policies"] == {
             "tenants_total": 2,
             "tenants_with_withhold": 0,
+            "invalid_rows": 0,
             "keys": ["costar_derived_defaults"],
         }
         await set_tenant_data_policies(customer.id, TenantDataPolicies(costar_derived_defaults="withhold"))
@@ -327,6 +328,171 @@ async def test_admin_health_carries_data_policies_posture(_rsa_key) -> None:
         assert r.json()["data_policies"]["tenants_with_withhold"] == 1
         # The public probe never carries it.
         assert "data_policies" not in (await c.get("/health")).json()
+
+
+@pytest.mark.asyncio
+async def test_admin_health_reports_a_registry_outage_as_error_not_zero(_rsa_key, monkeypatch) -> None:
+    """``{tenants_total: 0}`` must never be what an outage looks like."""
+    from app import tenants as tenants_mod
+
+    await _register(INTERNAL_ORG, "Fondok Internal", "internal")
+
+    # Direct: a dead engine surfaces the underlying exception type.
+    real_engine = tenants_mod.get_engine
+
+    class _Broken:
+        def connect(self):
+            raise ConnectionRefusedError("db down")
+
+    monkeypatch.setattr(tenants_mod, "get_engine", lambda: _Broken())
+    assert await tenants_mod.data_policies_posture() == {
+        "error": "ConnectionRefusedError",
+        "keys": ["costar_derived_defaults"],
+    }
+    monkeypatch.setattr(tenants_mod, "get_engine", real_engine)
+
+    # Through the route: the gate still passes (the admin's own row is read
+    # before the list dies), and the block says "error", not zeros.
+    async def _dead_list(*, raise_on_error: bool = False):
+        raise tenants_mod.TenantRegistryUnavailable("OperationalError: table gone")
+
+    monkeypatch.setattr(tenants_mod, "list_tenants", _dead_list)
+    async with await _client() as c:
+        r = await c.get("/admin/health", headers=_admin(_rsa_key, INTERNAL_ORG))
+        assert r.status_code == 200, r.text
+        block = r.json()["data_policies"]
+        assert block["error"] == "TenantRegistryUnavailable"
+        assert "tenants_total" not in block and "tenants_with_withhold" not in block
+
+
+# ─────────────────────────── fail closed ───────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"costar_derived_defaults": "withold"}',  # misspelt value
+        '{"costar_derived_default": "allow"}',  # misspelt key
+        "not json at all",
+        "[]",  # not an object
+        "42",
+    ],
+)
+async def test_invalid_stored_policy_reads_as_withhold_and_is_counted(raw: str, caplog) -> None:
+    """A manual edit or corruption of the column must never serve a CoStar
+    default: every key reads as ``withhold``, the tenant is named in the
+    warning, and ``/admin/health`` counts the row."""
+    import logging
+
+    from sqlalchemy import text
+
+    from app.database import get_engine
+    from app.tenants import (
+        TenantDataPolicies,
+        data_policies_posture,
+        get_tenant,
+        load_tenant_data_policy,
+        reset_tenant_cache,
+    )
+
+    customer = await _register(CUSTOMER_ORG, "Harbor Point", "external")
+    assert (await load_tenant_data_policy(customer.id)).costar_derived_defaults == "allow"
+
+    async with get_engine().begin() as conn:
+        await conn.execute(
+            text("UPDATE tenants SET data_policies = :raw WHERE id = :id"),
+            {"raw": raw, "id": str(customer.id)},
+        )
+    reset_tenant_cache()
+
+    with caplog.at_level(logging.WARNING, logger="app.tenants"):
+        policy = await load_tenant_data_policy(customer.id)
+    assert policy == TenantDataPolicies.withheld()
+    assert policy.costar_derived_defaults == "withhold" and policy.withholds_anything
+    warning = next(r for r in caplog.records if "data_policies row" in r.getMessage())
+    assert str(customer.id) in warning.getMessage()
+    assert "withhold for every key" in warning.getMessage()
+
+    row = await get_tenant(customer.id, use_cache=False)
+    assert row is not None and row.data_policies_error
+    assert row.as_dict()["data_policies"] == {"costar_derived_defaults": "withhold"}
+    assert row.as_dict()["data_policies_error"] == row.data_policies_error
+
+    posture = await data_policies_posture()
+    assert posture["invalid_rows"] == 1
+    assert posture["tenants_with_withhold"] == 1
+
+    # A valid write through the typed path heals it.
+    from app.tenants import set_tenant_data_policies
+
+    healed = await set_tenant_data_policies(customer.id, TenantDataPolicies())
+    assert healed is not None and healed.data_policies_error is None
+    assert (await data_policies_posture())["invalid_rows"] == 0
+
+
+def test_absent_or_empty_row_is_the_default_not_invalid() -> None:
+    from app.tenants import TenantDataPolicies, _parse_data_policies
+
+    for raw in (None, "", {}, "{}"):
+        assert _parse_data_policies(raw, tenant_id="t") == (TenantDataPolicies(), None)
+    assert TenantDataPolicies.withheld().as_dict() == {"costar_derived_defaults": "withhold"}
+
+
+# ─────────────────────────── atomic PATCH ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_patch_rolls_the_flip_back_when_the_audit_write_fails(_rsa_key, monkeypatch) -> None:
+    from sqlalchemy import text
+
+    from app.api import admin_tenants as admin_mod
+    from app.database import get_engine
+    from app.tenants import load_tenant_data_policy
+
+    await _register(INTERNAL_ORG, "Fondok Internal", "internal")
+    customer = await _register(CUSTOMER_ORG, "Harbor Point", "external")
+    path = f"/admin/tenants/{customer.id}/data_policies"
+
+    async def _audit_down(session, **kwargs):
+        if kwargs.get("raise_on_error"):
+            raise RuntimeError("audit_log unavailable")
+
+    monkeypatch.setattr(admin_mod, "log_audit", _audit_down)
+    async with await _client() as c:
+        r = await c.patch(path, json={"costar_derived_defaults": "withhold"}, headers=_admin(_rsa_key, INTERNAL_ORG))
+        assert r.status_code == 503, r.text
+        assert r.json()["detail"] == "data_policy_audit_unavailable"
+        # Nothing landed: not the policy, not the audit row, not the cache.
+        r = await c.get(path, headers=_admin(_rsa_key, INTERNAL_ORG))
+        assert r.json()["data_policies"] == {"costar_derived_defaults": "allow"}
+    assert (await load_tenant_data_policy(customer.id)).costar_derived_defaults == "allow"
+    async with get_engine().connect() as conn:
+        n = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM audit_log WHERE action = 'tenant.data_policy_changed'")
+            )
+        ).scalar()
+    assert n == 0
+
+
+@pytest.mark.asyncio
+async def test_log_audit_raises_only_when_asked() -> None:
+    from app.audit import log_audit
+
+    class _DeadSession:
+        bind = None
+
+        async def execute(self, *a, **k):
+            raise RuntimeError("no audit_log")
+
+        async def flush(self):  # pragma: no cover — execute raises first
+            pass
+
+    kwargs = dict(tenant_id=uuid4(), action="x.y", resource_type="tenant")
+    await log_audit(_DeadSession(), **kwargs)  # default: swallowed, logged
+    with pytest.raises(RuntimeError):
+        await log_audit(_DeadSession(), raise_on_error=True, **kwargs)
 
 
 # ─────────────────────────── read cache ───────────────────────────

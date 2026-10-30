@@ -81,9 +81,22 @@ afterEach(cleanup);
 
 describe('Data policies card', () => {
   it('shows every workspace with its policy for an internal admin and never says CoStar is licensed', async () => {
-    hoisted.list.mockResolvedValue(listing([INTERNAL, { ...CUSTOMER, data_policies: { costar_derived_defaults: 'withhold' } }]));
+    hoisted.list.mockResolvedValue(
+      listing([
+        INTERNAL,
+        {
+          ...CUSTOMER,
+          // What the worker serves for a corrupt stored row: fail-closed withhold + why.
+          data_policies: { costar_derived_defaults: 'withhold' },
+          data_policies_error: "ValidationError: 'withold' is not allowed",
+        },
+      ]),
+    );
     render(<DataPoliciesCard />);
     const card = await screen.findByTestId('settings-data-policies');
+    expect(screen.getByTestId(`data-policy-invalid-${CUSTOMER.id}`)).toHaveTextContent('stored row invalid — withheld');
+    expect(screen.getByTestId(`data-policy-invalid-${CUSTOMER.id}`)).toHaveAttribute('title', "ValidationError: 'withold' is not allowed");
+    expect(screen.queryByTestId(`data-policy-invalid-${INTERNAL.id}`)).toBeNull();
     expect(within(card).getByText('Data policies')).toBeInTheDocument();
     expect(screen.getByTestId(`data-policy-state-${INTERNAL.id}`)).toHaveTextContent('offered');
     expect(screen.getByTestId(`data-policy-state-${CUSTOMER.id}`)).toHaveTextContent('withheld (licence pending)');

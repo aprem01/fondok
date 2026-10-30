@@ -120,8 +120,13 @@ async def log_audit(
     severity: str = "info",
     tags: list[str] | None = None,
     deal_id: UUID | str | None = None,
+    raise_on_error: bool = False,
 ) -> None:
-    """Insert one append-only ``audit_log`` row. Never raises out.
+    """Insert one append-only ``audit_log`` row. Never raises out — unless
+    the caller passes ``raise_on_error=True`` because the audit row IS part
+    of the mutation's contract (a tenant data-policy flip must not land
+    unaudited): then the write failure propagates after being logged, and
+    the caller rolls its transaction back.
 
     Parameters
     ----------
@@ -270,7 +275,7 @@ async def log_audit(
             },
         )
         await session.flush()
-    except Exception as exc:  # noqa: BLE001 — audit must never raise out
+    except Exception as exc:  # noqa: BLE001 — audit must never raise out (unless asked to)
         logger.warning(
             "log_audit write failed (action=%s rtype=%s rid=%s): %s",
             action,
@@ -278,6 +283,8 @@ async def log_audit(
             resource_id,
             exc,
         )
+        if raise_on_error:
+            raise
 
 
 # Columns returned by ``list_audit_log`` + ``search_audit_log`` so the

@@ -43,8 +43,9 @@ from ..tenants import (
     TenantDataPolicies,
     get_tenant,
     list_tenants,
-    set_tenant_data_policies,
+    reset_tenant_cache,
     upsert_tenant,
+    write_tenant_data_policies,
 )
 from .deals import coerce_org_tenant_id
 
@@ -53,6 +54,7 @@ router = APIRouter()
 
 TENANT_DATA_POLICIES_REQUIRE_INTERNAL_TENANT = "tenant_data_policies_require_internal_tenant"
 TENANT_NOT_REGISTERED = "tenant_not_registered"
+DATA_POLICY_AUDIT_UNAVAILABLE = "data_policy_audit_unavailable"
 DATA_POLICY_CHANGED_ACTION = "tenant.data_policy_changed"
 
 
@@ -213,23 +215,53 @@ async def patch_tenant_data_policies(
     )
     if after == before:
         return _policy_response(target)
-    stored = await set_tenant_data_policies(target.id, after)
-    if stored is None:  # the row vanished between the read and the write
+    # The policy row and its audit row land in ONE transaction: a flip that
+    # cannot be audited does not happen (503, nothing written), and a row
+    # that vanished between the read and the write is a 404 with nothing
+    # written either.
+    dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
+    try:
+        touched = await write_tenant_data_policies(
+            session, tenant_id=target.id, policies=after, dialect_name=dialect
+        )
+        if touched == 0:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)
+        await log_audit(
+            session,
+            tenant_id=me.id,
+            actor_id=auth.user_id,
+            action=DATA_POLICY_CHANGED_ACTION,
+            resource_type="tenant",
+            resource_id=target.id,
+            before=before.as_dict(),
+            after=after.as_dict(),
+            metadata={"target_tenant_id": str(target.id), "target_clerk_org_id": target.clerk_org_id},
+            severity="warning",
+            tags=["data_policy"],
+            raise_on_error=True,
+        )
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.error(
+            "admin/tenants: data policy change for tenant=%s NOT applied — audit/write failed: %s",
+            target.id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=DATA_POLICY_AUDIT_UNAVAILABLE,
+        ) from exc
+    finally:
+        # Whatever happened, the registry cache must not serve a value the
+        # database does not hold.
+        reset_tenant_cache()
+    stored = await get_tenant(target.id, use_cache=False)
+    if stored is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)
-    await log_audit(
-        session,
-        tenant_id=me.id,
-        actor_id=auth.user_id,
-        action=DATA_POLICY_CHANGED_ACTION,
-        resource_type="tenant",
-        resource_id=target.id,
-        before=before.as_dict(),
-        after=after.as_dict(),
-        metadata={"target_tenant_id": str(target.id), "target_clerk_org_id": target.clerk_org_id},
-        severity="warning",
-        tags=["data_policy"],
-    )
-    await session.commit()
     logger.info(
         "admin/tenants: %s changed data policies of tenant=%s %s -> %s",
         auth.user_id or auth.source,
