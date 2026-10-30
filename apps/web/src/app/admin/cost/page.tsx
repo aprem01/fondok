@@ -7,6 +7,7 @@
 // allowlist (comma-separated, inlined at build time). An unset or empty list
 // means NOBODY — the page never hard-codes a person.
 
+import { adminCostEmails } from '@/lib/adminCostEmails';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Lock, DollarSign, Bot, Cpu, TrendingUp, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
@@ -24,13 +25,6 @@ const fmtUSD = (n: number) =>
 
 const fmtNum = (n: number) => new Intl.NumberFormat('en-US').format(n);
 
-/** The allowlist, lower-cased and trimmed; empty when the variable is unset. */
-export function adminCostEmails(raw: string | undefined = process.env.NEXT_PUBLIC_ADMIN_COST_EMAILS): string[] {
-  return (raw ?? '')
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter((e) => e.length > 0);
-}
 const fmtPct = (r: number) =>
   `${(r * 100).toFixed(r > 0 ? 1 : 0)}%`;
 

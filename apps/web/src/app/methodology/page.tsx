@@ -1041,7 +1041,7 @@ export default function MethodologyPage() {
         id="reasons"
         number="7"
         title="What a dash means"
-        intro="Where Fondok cannot produce a figure it shows a dash — never a placeholder, a zero, or a number carried over from a prototype. Every such refusal has one of the reasons below, and hovering the dash shows it."
+        intro="Where Fondok cannot produce a figure it shows a dash — never a placeholder, a zero, or a number carried over from a prototype. A deal with no key count or purchase price does not run at all: the model never substitutes a placeholder property, and the run names the missing inputs. Every such refusal has one of the reasons below, and hovering the dash shows it."
       >
         <Card className="p-0 overflow-hidden">
           <div className="overflow-x-auto">

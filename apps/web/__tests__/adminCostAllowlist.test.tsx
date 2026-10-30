@@ -25,7 +25,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
-import AdminCostPage, { adminCostEmails } from '@/app/admin/cost/page';
+import AdminCostPage from '@/app/admin/cost/page';
+import { adminCostEmails } from '@/lib/adminCostEmails';
 
 const ENV = 'NEXT_PUBLIC_ADMIN_COST_EMAILS';
 let saved: string | undefined;
