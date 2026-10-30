@@ -727,6 +727,17 @@ describe('PartnershipTab — reference terms come from the worker (C3)', () => {
     expect(screen.getAllByText(/Platform default/).length).toBeGreaterThan(0);
   });
 
+  it('a term the deal itself carries (partnership_doc) is shown without the Platform default badge', async () => {
+    activeOutputs = bareOutputs();
+    sources.payload = {
+      ...WORKER_SEED_PAYLOAD,
+      sources: { ...WORKER_SEED_PAYLOAD.sources, 'partnership.pref_rate': 'partnership_doc', 'partnership.gp_equity_pct': 'partnership_doc' },
+    };
+    renderWithSources();
+    await waitFor(() => expect(rowFor('Preferred Return')).toHaveTextContent('9%'));
+    expect(screen.queryByText(/Platform default/)).toBeNull();
+  });
+
   it('an engine-published pref wins over the worker reference term', async () => {
     activeOutputs = withPartnershipOutputs({ lp_pref_pct: 0.07 });
     renderWithSources();

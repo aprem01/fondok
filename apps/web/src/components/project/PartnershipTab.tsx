@@ -341,8 +341,10 @@ export default function PartnershipTab() {
     }
     return tiers;
   }, [lookupSource]);
-  const seedPrefRate = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.prefRate));
-  const seedGpPct = sourcedNum(lookupSource(PARTNERSHIP_SOURCE.gpEquityPct));
+  const prefSource = lookupSource(PARTNERSHIP_SOURCE.prefRate);
+  const gpPctSource = lookupSource(PARTNERSHIP_SOURCE.gpEquityPct);
+  const seedPrefRate = sourcedNum(prefSource);
+  const seedGpPct = sourcedNum(gpPctSource);
 
   // ─── FON-66 Part A: variable promote-tier count ────────────────────
   // How many promote tiers this deal has. An analyst override wins; absent →
@@ -551,13 +553,16 @@ export default function PartnershipTab() {
     : undefined;
   const gpPct: number | undefined = gpPctOverride ?? gpPctComputed ?? seedGpPct;
   const lpPct = has(gpPct) ? 1 - gpPct : undefined;
-  // True when the shown split is the worker's reference term, not the deal's.
-  const gpPctIsDefault = gpPctOverride == null && gpPctComputed == null && seedGpPct != null;
+  // True when the shown split is the worker's platform suggestion (source
+  // `seed`), not a term the deal carries (`partnership_doc`, an override).
+  const gpPctIsDefault = gpPctOverride == null && gpPctComputed == null && seedGpPct != null
+    && gpPctSource?.source === 'seed';
 
   const prefOverrideRaw = readOverrideNum(overrides, 'pref_rate', NaN);
   const prefOverride = Number.isFinite(prefOverrideRaw) ? prefOverrideRaw : undefined;
   const prefRate: number | undefined = prefOverride ?? (has(wLpPrefPct) ? wLpPrefPct : seedPrefRate);
-  const prefIsDefault = prefOverride == null && !has(wLpPrefPct) && seedPrefRate != null;
+  const prefIsDefault = prefOverride == null && !has(wLpPrefPct) && seedPrefRate != null
+    && prefSource?.source === 'seed';
 
   const hasWorkerPartnership = wGp != null || wLp != null
     || (tierAllocations != null && tierAllocations.length > 0)
