@@ -39,34 +39,16 @@ from .base import BaseEngine
 from .returns import irr, xirr
 
 
-# ─────────── C3 / B5 (go-live audit) — the partnership suggestions ───────────
+# ─────────── C3 / B5 (go-live audit) — no default partnership terms ───────────
 #
-# THE one definition of Fondok's partnership suggestions. Until 2026-10-30
-# three copies disagreed (this module defaulted the pref to 8%, the runner's
-# seed said 10%, the web's Partnership tab carried its own 10% / promote
-# stack) and the runner ran EVERY deal's waterfall on the Kimpton Angler
-# benchmark stack, unbadged. Now:
-#
-# * these values are SUGGESTIONS only: ``GET /deals/{id}/assumption_sources``
-#   publishes them as ``partnership.*`` with source ``seed`` (reason
-#   ``awaiting_analyst``) so the Partnership tab can offer them;
-# * the engine never applies them — the waterfall runs only on terms the deal
-#   carries (an analyst override or an extracted partnership document), and
-#   reports ``not_applicable`` / :data:`NO_PARTNERSHIP_TERMS_REASON` otherwise.
-SUGGESTED_GP_EQUITY_PCT: float = 0.10
-SUGGESTED_LP_EQUITY_PCT: float = 0.90
-SUGGESTED_PREF_RATE: float = 0.10
-#: Promote tiers as ``(hurdle_rate, gp_split)``; ``lp_split = 1 − gp_split``.
-#: Tier 1 (0% GP to a 10% hurdle) is the preferred return; the top tier
-#: (hurdle 50%) is the ">30% IRR" band.
-SUGGESTED_PROMOTE_TIERS: tuple[tuple[float, float], ...] = (
-    (0.10, 0.00),
-    (0.15, 0.20),
-    (0.20, 0.25),
-    (0.25, 0.25),
-    (0.30, 0.25),
-    (0.50, 0.50),
-)
+# Until 2026-10-30 three copies of partnership defaults disagreed (this module
+# defaulted the pref to 8%, the runner seeded 10% and a 10 / 90 split, the web
+# carried its own stack) and the runner ran EVERY deal's waterfall on the
+# Kimpton Angler JV stack, unbadged. There are no partnership defaults or
+# suggestions anywhere now: the engine runs only on terms the deal carries (an
+# analyst entry or an extracted partnership document) and reports
+# ``not_applicable`` with :data:`NO_PARTNERSHIP_TERMS_REASON` otherwise. The
+# Kimpton terms live only in the test fixture.
 #: Why the partnership engine did not run on a deal without terms.
 NO_PARTNERSHIP_TERMS_REASON = "no partnership terms on this deal"
 #: What a view over the waterfall (the cash-flow statement's distribution
@@ -925,10 +907,6 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
 __all__ = [
     "NO_PARTNERSHIP_TERMS_REASON",
     "NO_WATERFALL_REASON",
-    "SUGGESTED_GP_EQUITY_PCT",
-    "SUGGESTED_LP_EQUITY_PCT",
-    "SUGGESTED_PREF_RATE",
-    "SUGGESTED_PROMOTE_TIERS",
     "PartnershipEngine",
     "PartnershipInputExt",
     "PartnershipOutputExt",

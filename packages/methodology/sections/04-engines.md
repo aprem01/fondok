@@ -141,7 +141,7 @@ breakdown.
 ::: card
 #### Partnership — the deal's own terms, or not applicable
 
-<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT 0.10, SUGGESTED_LP_EQUITY_PCT 0.90, SUGGESTED_PREF_RATE 0.10, SUGGESTED_PROMOTE_TIERS, NO_PARTNERSHIP_TERMS_REASON), apps/worker/app/services/engine_runner.py (partnership_terms, _incomplete_tiers, STATUS_NOT_APPLICABLE, _partnership_terms_view, OPTIONAL_WHEN_NOT_APPLICABLE), apps/worker/app/api/deals.py (assumption_sources partnership.*) -->
+<!-- source: apps/worker/app/engines/partnership.py (NO_PARTNERSHIP_TERMS_REASON), apps/worker/app/services/engine_runner.py (partnership_terms, _incomplete_tiers, STATUS_NOT_APPLICABLE, _partnership_terms_view, OPTIONAL_WHEN_NOT_APPLICABLE), apps/worker/app/api/deals.py (assumption_sources partnership.*) -->
 The waterfall runs only on partnership terms the deal carries — from an uploaded partnership / JV
 document or entered on the Partnership tab: the GP / LP equity split (one side derives the other),
 the preferred return and at least one promote tier (a hurdle and a split). Without them the
@@ -152,12 +152,11 @@ than being dropped from the stack. The Partnership sheet of the Excel export sta
 reason, and the Cash Flow statement runs without distribution lines and says why. No benchmark
 waterfall is ever applied in their place.
 
-<!-- source: apps/worker/app/engines/partnership.py (SUGGESTED_GP_EQUITY_PCT, SUGGESTED_LP_EQUITY_PCT, SUGGESTED_PREF_RATE, SUGGESTED_PROMOTE_TIERS), apps/worker/app/engines/partnership.py (PartnershipEngine deficit capital call) -->
-The platform's suggested terms — GP 10% / LP 90%, a 10% preferred return, and promote tiers of 0%
-GP to 10%, 20% to 15%, 25% to 20%, 25% to 25%, 25% to 30% and 50% above 30% — are defined once and
-offered on the Partnership tab badged Seed (awaiting your decision). They never reach the model
-until entered. A shortfall is funded as a dated pro-rata capital call by ownership split; the
-preferred return accrues on it.
+<!-- source: apps/worker/app/services/engine_runner.py (_default_assumptions carries no partnership term; _partnership_terms_view), apps/worker/app/engines/partnership.py (PartnershipEngine deficit capital call) -->
+Fondok has no default or suggested partnership terms: the Partnership tab shows only the terms you
+or a partnership document have entered, and a term not entered shows a dash awaiting your input.
+A shortfall is funded as a dated pro-rata capital call by ownership split; the preferred return
+accrues on it.
 
 :::
 

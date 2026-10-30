@@ -106,10 +106,6 @@ from ..engines import (
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
 from ..engines.partnership import (
     NO_PARTNERSHIP_TERMS_REASON,
-    SUGGESTED_GP_EQUITY_PCT,
-    SUGGESTED_LP_EQUITY_PCT,
-    SUGGESTED_PREF_RATE,
-    SUGGESTED_PROMOTE_TIERS,
     promote_tier_label,
 )
 from ..engines.comp_sales import (
@@ -681,9 +677,8 @@ def _default_assumptions() -> dict[str, Any]:
         # B5 / C3 (go-live audit) — NO partnership terms here. The GP / LP
         # split, the preferred return and the promote tiers come only from an
         # analyst override or an extracted partnership document; without them
-        # the partnership engine reports ``not_applicable``. The platform's
-        # SUGGESTED terms (``engines.partnership.SUGGESTED_*``) are published
-        # to the web as ``partnership.*`` (source ``seed``) and never applied.
+        # the partnership engine reports ``not_applicable``. There is no
+        # platform suggestion for any of them.
     }
 
 
@@ -2782,8 +2777,8 @@ async def _load_engine_inputs(
         if seg_key in sources and sources[seg_key] != SOURCE_ANALYST_OVERRIDE:
             sources[seg_key] = sources.get("adr_growth", SOURCE_SEED)
     base["__sources__"] = sources
-    # C3 — the partnership terms view (carried terms + the platform's
-    # suggestions) the Partnership tab reads off assumption_sources.
+    # C3 — the partnership terms view (the terms the deal carries) the
+    # Partnership tab reads off assumption_sources.
     base[PARTNERSHIP_TERMS_VIEW_KEY] = _partnership_terms_view(base, sources)
     base["__source_fields__"] = {
         key: sf.as_dict() for key, sf in source_fields.items()
@@ -3496,8 +3491,7 @@ def _parse_debt_stack_override_path(path: str) -> tuple[str, int | None, str] | 
 # always sum to 1.0; entering one side derives the other in the builder, so a
 # single-field entry never trips the ``WaterfallTier`` validator. Until
 # 2026-10-30 every deal's stack was seeded from the Kimpton Angler benchmark
-# (unbadged); that seed is gone — the platform's SUGGESTED stack lives in
-# ``engines.partnership.SUGGESTED_PROMOTE_TIERS`` and is never applied.
+# (unbadged); that seed is gone, and no platform stack replaces it.
 _PARTNERSHIP_WATERFALL_FIELDS: tuple[str, ...] = (
     "hurdle_rate",
     "gp_split",
@@ -3856,35 +3850,38 @@ PARTNERSHIP_TERMS_VIEW_KEY = "__partnership_terms__"
 def _partnership_terms_view(
     base: Mapping[str, Any], sources: Mapping[str, str]
 ) -> dict[str, dict[str, Any]]:
-    """C3 — ``{"values", "sources", "reasons"}`` keyed ``partnership.*``.
+    """C3 — ``{"values", "sources", "reasons"}`` keyed ``partnership.*``: the
+    partnership terms the deal CARRIES, each with its own label
+    (``partnership_doc`` / ``analyst_override``).
 
-    Each term the deal carries is published with its own value and label
-    (``partnership_doc`` / ``analyst_override``); every term it does not
-    carry is published as the platform SUGGESTION
-    (``engines.partnership.SUGGESTED_*``) with source ``seed`` and reason
-    ``awaiting_analyst`` — the ONE definition the Partnership tab reads, never
-    applied by the engine.
+    A term the deal does not carry is OMITTED — there is no platform
+    suggestion (review fix 3: the old suggested split, pref and promote stack
+    were one deal's terms under a new name). The GP / LP split is one term:
+    when only one side is carried the other is published as its complement,
+    labelled with the carried side's source.
     """
     values: dict[str, Any] = {}
     srcs: dict[str, str] = {}
     reasons: dict[str, str] = {}
 
-    def _suggest(key: str, value: Any) -> None:
-        values[key] = value
-        srcs[key] = SOURCE_SEED
-        reasons[key] = ReasonCode.AWAITING_ANALYST.value
-
-    for key, suggestion in (
-        ("gp_equity_pct", SUGGESTED_GP_EQUITY_PCT),
-        ("lp_equity_pct", SUGGESTED_LP_EQUITY_PCT),
-        ("pref_rate", SUGGESTED_PREF_RATE),
-    ):
-        carried = _num_or_none(base.get(key))
-        if carried is not None:
-            values[f"partnership.{key}"] = carried
-            srcs[f"partnership.{key}"] = sources.get(key, SOURCE_SEED)
-        else:
-            _suggest(f"partnership.{key}", suggestion)
+    gp = _num_or_none(base.get("gp_equity_pct"))
+    lp = _num_or_none(base.get("lp_equity_pct"))
+    pref = _num_or_none(base.get("pref_rate"))
+    if gp is not None:
+        values["partnership.gp_equity_pct"] = gp
+        srcs["partnership.gp_equity_pct"] = sources.get("gp_equity_pct", SOURCE_SEED)
+    if lp is not None:
+        values["partnership.lp_equity_pct"] = lp
+        srcs["partnership.lp_equity_pct"] = sources.get("lp_equity_pct", SOURCE_SEED)
+    if gp is not None and lp is None:
+        values["partnership.lp_equity_pct"] = round(1.0 - gp, 6)
+        srcs["partnership.lp_equity_pct"] = srcs["partnership.gp_equity_pct"]
+    if lp is not None and gp is None:
+        values["partnership.gp_equity_pct"] = round(1.0 - lp, 6)
+        srcs["partnership.gp_equity_pct"] = srcs["partnership.lp_equity_pct"]
+    if pref is not None:
+        values["partnership.pref_rate"] = pref
+        srcs["partnership.pref_rate"] = sources.get("pref_rate", SOURCE_SEED)
 
     overrides = base.get("partnership_waterfall_overrides") or {}
     tier_count = base.get("partnership_waterfall_tier_count")
@@ -3929,23 +3926,6 @@ def _partnership_terms_view(
                 srcs[key] = sources.get(
                     f"partnership.waterfall.{idx}.hurdle_rate", SOURCE_SEED
                 )
-    else:
-        _suggest("partnership.waterfall.tier_count", len(SUGGESTED_PROMOTE_TIERS))
-        n = len(SUGGESTED_PROMOTE_TIERS)
-        for idx, (hurdle, gp_split) in enumerate(SUGGESTED_PROMOTE_TIERS):
-            _suggest(f"partnership.waterfall.{idx}.hurdle_rate", hurdle)
-            _suggest(f"partnership.waterfall.{idx}.gp_split", gp_split)
-            _suggest(f"partnership.waterfall.{idx}.lp_split", round(1.0 - gp_split, 6))
-            _suggest(
-                f"partnership.waterfall.{idx}.label",
-                promote_tier_label(
-                    idx,
-                    hurdle=hurdle,
-                    gp_split=gp_split,
-                    prev_hurdle=SUGGESTED_PROMOTE_TIERS[idx - 1][0] if idx else None,
-                    is_top=idx == n - 1 and n > 1,
-                ),
-            )
     return {"values": values, "sources": srcs, "reasons": reasons}
 
 

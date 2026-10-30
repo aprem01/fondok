@@ -1,6 +1,6 @@
 """B5 / C3 (go-live audit) — the partnership waterfall runs only on terms the
-deal carries; the platform's suggested terms are defined once and published
-as badged ``seed`` suggestions, never applied."""
+deal carries; no default or suggested partnership term exists anywhere, and
+``assumption_sources`` publishes only the carried terms."""
 
 from __future__ import annotations
 
@@ -63,28 +63,20 @@ async def _run(overrides: dict) -> tuple[dict, str, str]:
 # ─────────────────────────── one definition (C3) ───────────────────────────
 
 
-def test_suggestions_are_defined_once_and_never_defaults() -> None:
+def test_no_partnership_default_or_suggestion_exists() -> None:
     import inspect
 
+    import app.engines.partnership as partnership
     import app.services.engine_runner as runner
-    from app.engines.partnership import (
-        SUGGESTED_GP_EQUITY_PCT,
-        SUGGESTED_LP_EQUITY_PCT,
-        SUGGESTED_PREF_RATE,
-        SUGGESTED_PROMOTE_TIERS,
-        PartnershipInputExt,
-    )
+    from app.engines.partnership import PartnershipInputExt
 
-    assert (SUGGESTED_GP_EQUITY_PCT, SUGGESTED_LP_EQUITY_PCT, SUGGESTED_PREF_RATE) == (
-        0.10, 0.90, 0.10,
-    )
-    assert len(SUGGESTED_PROMOTE_TIERS) == 6
     defaults = runner._default_assumptions()
     for key in ("gp_equity_pct", "lp_equity_pct", "pref_rate"):
         assert key not in defaults
         # The engine input carries no default of its own either.
         assert PartnershipInputExt.model_fields[key].is_required()
     assert not hasattr(runner, "_KIMPTON_WATERFALL_REFERENCE")
+    assert not [n for n in dir(partnership) if n.startswith("SUGGESTED")]
     assert "Kimpton" not in inspect.getsource(runner._build_partnership_waterfall)
 
 
@@ -168,7 +160,7 @@ async def test_not_applicable_run_is_complete_in_the_run_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_assumption_sources_publish_suggestions_as_seed() -> None:
+async def test_assumption_sources_publish_only_carried_terms() -> None:
     from uuid import UUID
 
     from app.api.deals import _compute_assumption_sources
@@ -179,24 +171,41 @@ async def test_assumption_sources_publish_suggestions_as_seed() -> None:
         resp = await _compute_assumption_sources(
             session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
         )
+        bare_id, _ = await _deal(session, {})
+        bare = await _compute_assumption_sources(
+            session, deal_id=UUID(bare_id), tenant_id=UUID(tenant_id)
+        )
     v, s, r = resp.values, resp.sources, resp.reasons
     # Carried term: the deal's own value and label.
     assert v["partnership.pref_rate"] == 0.08
     assert s["partnership.pref_rate"] == "analyst_override"
-    assert "partnership.pref_rate" not in r
-    # Not carried: the platform suggestion, badged seed / awaiting the analyst.
-    assert v["partnership.gp_equity_pct"] == 0.10
-    assert s["partnership.gp_equity_pct"] == "seed"
-    assert r["partnership.gp_equity_pct"] == "awaiting_analyst"
-    assert v["partnership.lp_equity_pct"] == 0.90
-    assert v["partnership.waterfall.tier_count"] == 6
-    assert (v["partnership.waterfall.0.hurdle_rate"], v["partnership.waterfall.0.gp_split"]) == (0.10, 0.0)
-    assert v["partnership.waterfall.0.label"] == "Preferred (to 10%)"
-    assert v["partnership.waterfall.5.label"] == "Tier 6 (>30%)"
-    assert v["partnership.waterfall.5.lp_split"] == 0.5
-    assert s["partnership.waterfall.3.gp_split"] == "seed"
-    # The suggestion never became an engine input.
-    assert "gp_equity_pct" not in v
+    # Not carried: ABSENT — no suggested value, no source, no reason.
+    for key in (
+        "partnership.gp_equity_pct",
+        "partnership.lp_equity_pct",
+        "partnership.waterfall.tier_count",
+        "partnership.waterfall.0.hurdle_rate",
+    ):
+        assert key not in v and key not in s and key not in r
+    assert not any(k.startswith("partnership.") for k in bare.values)
+    assert not any(k.startswith("partnership.") for k in bare.sources)
+
+
+@pytest.mark.asyncio
+async def test_lp_is_published_as_the_complement_only_when_gp_is_carried() -> None:
+    from uuid import UUID
+
+    from app.api.deals import _compute_assumption_sources
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as session:
+        deal_id, tenant_id = await _deal(session, {"gp_equity_pct": 0.2})
+        resp = await _compute_assumption_sources(
+            session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
+        )
+    assert resp.values["partnership.gp_equity_pct"] == 0.2
+    assert resp.values["partnership.lp_equity_pct"] == pytest.approx(0.8)
+    assert resp.sources["partnership.lp_equity_pct"] == "analyst_override"
 
 
 @pytest.mark.asyncio

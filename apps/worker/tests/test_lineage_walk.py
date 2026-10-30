@@ -726,16 +726,7 @@ async def test_assumption_sources_exposes_source_fields_aliases_and_bare_reasons
     assert entry["source_page"] == 4
     assert entry["extraction_result_id"] == str(er_id)
     # Bare code strings, never a Refusal object.
-    # (B5 / C3 — the partnership suggestions carry ``awaiting_analyst`` on
-    # their own ``partnership.*`` keys; every other reason is the loader's.)
-    assert {
-        k: v for k, v in response.reasons.items() if not k.startswith("partnership.")
-    } == {"exit_cap_rate": "no_source"}
-    assert all(
-        v == "awaiting_analyst"
-        for k, v in response.reasons.items()
-        if k.startswith("partnership.")
-    )
+    assert response.reasons == {"exit_cap_rate": "no_source"}
     # And nothing pre-existing moved.
     assert response.sources["starting_occupancy"] == "t12_actual"
     assert response.source_documents["starting_occupancy"] == str(doc_id)
