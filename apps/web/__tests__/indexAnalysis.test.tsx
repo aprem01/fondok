@@ -454,8 +454,9 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     // Anchor column (2024): subject FY 64.0% / $250 ; comp = 0.716 ÷ 1.032 = 69.38%, 288 ÷ 0.942 = $305.73.
-    const fso = at('index-penetration-fair-share-occ')[5];
-    expect(fso).toHaveTextContent('65.7%'); // (132×0.64 + 61×0.6938) ÷ 193
+    // Rows mount before the comp-set figures arrive — wait for the figure.
+    await waitFor(() => expect(at('index-penetration-fair-share-occ')[5]).toHaveTextContent('65.7%'));
+    const fso = at('index-penetration-fair-share-occ')[5]; // (132×0.64 + 61×0.6938) ÷ 193
     expect(within(fso).getByText('65.7%').getAttribute('title')).toMatch(/subject rooms 132 × subject occupancy 64\.0%/);
     const share = at('index-penetration-actual-share')[5];
     expect(share).toHaveTextContent('66.62%'); // 84.48 ÷ (84.48 + 42.32)
@@ -469,7 +470,7 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     render(<IndexAnalysisSection dealId={DEAL} />);
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
-    expect(at('index-penetration-occ-var')[5]).toHaveTextContent('−5.4 pts'); // 64.0 − 69.38
+    await waitFor(() => expect(at('index-penetration-occ-var')[5]).toHaveTextContent('−5.4 pts')); // 64.0 − 69.38
     expect(at('index-penetration-adr-var')[5]).toHaveTextContent('−$56'); // 250 − 305.73
     expect(at('index-penetration-adr-var-pct')[5]).toHaveTextContent('−18.2%'); // 250 ÷ 305.73 − 1
     expect(at('index-penetration-revpar-var')[5]).toHaveTextContent('−$52'); // 160 − 212.14
@@ -492,8 +493,8 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     await screen.findByText('Penetration Index');
     const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
     // At par: (212.14 − 160) × 132 × 366 = $2,518,…  (positive: the subject is below par).
+    await waitFor(() => expect(at('index-penetration-oppty-par')[5]).toHaveTextContent(/^\$2,5\d\d,\d{3}$/));
     const par = at('index-penetration-oppty-par')[5];
-    expect(par).toHaveTextContent(/^\$2,5\d\d,\d{3}$/);
     expect(within(par).getByText(/^\$/).getAttribute('title')).toMatch(/signed: negative means the subject already out-earns par/);
     // At target: MPI 103.2 / ARI 105 → target RevPAR = 0.6938×1.032 × 305.73×1.05 = $229.86 → (229.86 − 160) × 132 × 366.
     const target = at('index-penetration-oppty-target')[5];
@@ -509,8 +510,8 @@ describe('Index Analysis — penetration rows (FON-95)', () => {
     } as unknown as HistoricalBaselineResponse;
     render(<IndexAnalysisSection dealId={DEAL} />);
     await screen.findByText('Penetration Index');
-    const cells = Array.from(screen.getByTestId('index-penetration-oppty-par').querySelectorAll('td')).slice(1);
-    expect(cells[5]).toHaveTextContent(/^−\$[\d,]+$/);
+    const cells = () => Array.from(screen.getByTestId('index-penetration-oppty-par').querySelectorAll('td')).slice(1);
+    await waitFor(() => expect(cells()[5]).toHaveTextContent(/^−\$[\d,]+$/));
   });
 
   it('with no target set the at-target row is "—" and says so on the label', async () => {
