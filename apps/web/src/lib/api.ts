@@ -1118,17 +1118,17 @@ export type EngineName =
  *  failure — never in `failures`; the row carries `not_applicable`. */
 export type EngineStatus = 'queued' | 'running' | 'complete' | 'failed' | 'not_applicable';
 
-/** Why an engine row is `not_applicable` (worker `EngineNotApplicable`).
- *  `reason` is `not_applicable` (the deal carries none of the terms) or
- *  `awaiting_analyst` (some are entered; `incomplete` names each half-entered
- *  item, e.g. "Tier 3 has a GP split but no hurdle"). `message` is the
- *  sentence the UI prints verbatim. */
 /** An engine row that will not change any more: done, failed, or not
  *  applicable to the deal. Run polling stops once every row is terminal. */
 export function isTerminalEngineStatus(status: string | null | undefined): boolean {
   return status === 'complete' || status === 'failed' || status === 'not_applicable';
 }
 
+/** Why an engine row is `not_applicable` (worker `EngineNotApplicable`).
+ *  `reason` is `not_applicable` (the deal carries none of the terms) or
+ *  `awaiting_analyst` (some are entered; `incomplete` names each half-entered
+ *  item, e.g. "Tier 3 has a GP split but no hurdle"). `message` is the
+ *  sentence the UI prints verbatim. */
 export interface EngineNotApplicable {
   engine: string;
   reason: string;
