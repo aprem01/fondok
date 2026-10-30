@@ -96,6 +96,7 @@ from ..database import get_session
 from .deals import (
     DealRecord,
     _deal_columns,
+    _in_flight_statuses,
     _row_to_record,
     assert_deal_active,
     get_tenant_id,
@@ -104,19 +105,8 @@ from .deals import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-def _in_flight_statuses() -> frozenset[str]:
-    """Document statuses owned by a running background task. Copying such a
-    row would strand the copy mid-pipeline (no task drives it), so we refuse.
-
-    This is the pipeline's own set, not a re-declaration: ``api.documents``
-    defines it and the watchdog / ``/extract`` / ``/reprocess`` guards read
-    it. Imported lazily (``documents`` imports ``deals``, as this module does;
-    the watchdog takes the same route) and read at call time.
-    """
-    from . import documents as _documents
-
-    return frozenset(_documents.DOC_PROCESSING_STATUSES)
-
+# ``_in_flight_statuses`` (the pipeline's own ``DOC_PROCESSING_STATUSES``) is
+# shared with ``DELETE /deals/{id}/draft`` and lives in ``api.deals``.
 
 COPIED_COMMENT_PREFIX = "[Copied from "
 

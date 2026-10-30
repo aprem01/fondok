@@ -107,9 +107,8 @@ async def _create(client, headers: dict[str, str] = HDR_A, **body: Any) -> dict[
 
 
 async def _create_draft(client, headers: dict[str, str] = HDR_A, **extra: Any) -> dict[str, Any]:
-    return await _create(
-        client, headers, name="Draft Hotel", lifecycle="draft", draft_wizard=WIZARD, **extra
-    )
+    extra.setdefault("name", "Draft Hotel")
+    return await _create(client, headers, lifecycle="draft", draft_wizard=WIZARD, **extra)
 
 
 async def _audit_rows(deal_id: str, action: str, tenant: str = TENANT_A) -> list[dict[str, Any]]:
@@ -662,3 +661,375 @@ async def test_upload_onto_a_draft_works_and_metadata_sync_fills_keys() -> None:
         # The list (the only endpoint that joins ``documents``) sees the upload.
         r = await client.get("/deals", params={"lifecycle": "draft"}, headers=HDR_A)
         assert [d["document_count"] for d in r.json()] == [1]
+
+
+# ─────────────────────────── review fixes (coordinator, 2026-10-30) ───────────────────────────
+
+
+def _deal_id_tables_in(entries: list[tuple[str, str]]) -> set[str]:
+    """Every table a migration list creates with a ``deal_id`` or a
+    ``document_id`` column (parsed from the CREATE TABLE statements)."""
+    import re
+
+    found: set[str] = set()
+    for _name, sql in entries:
+        m = re.search(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*)\)", sql, re.S)
+        if not m:
+            continue
+        cols = {
+            line.strip().split()[0]
+            for line in m.group(2).splitlines()
+            if line.strip() and not line.strip().startswith(("--", "UNIQUE", "PRIMARY", "CHECK", "FOREIGN", "CONSTRAINT"))
+        }
+        if {"deal_id", "document_id"} & cols:
+            found.add(m.group(1))
+    return found
+
+
+def test_the_cascade_names_every_deal_id_table_in_both_migration_sets() -> None:
+    """A new table with a ``deal_id`` must be added to ``_DEAL_CASCADE`` (or
+    deliberately to ``_DEAL_CASCADE_KEPT``) — otherwise discard / hard delete
+    would leave its rows behind on SQLite and on every Postgres table without
+    ``ON DELETE CASCADE``."""
+    from app.api.deals import _DEAL_CASCADE, _DEAL_CASCADE_KEPT
+    from app.migrations import MIGRATIONS, SQLITE_MIGRATIONS
+
+    cascade = {table for table, _ in _DEAL_CASCADE}
+    schema = (_deal_id_tables_in(MIGRATIONS) | _deal_id_tables_in(SQLITE_MIGRATIONS)) - {"deals"}
+    missing = schema - cascade - _DEAL_CASCADE_KEPT
+    assert not missing, f"deal_id table(s) missing from the cascade: {sorted(missing)}"
+    unknown = cascade - schema
+    assert not unknown, f"cascade names table(s) no migration creates: {sorted(unknown)}"
+    assert {"audit_log", "memo_edits"} == _DEAL_CASCADE_KEPT  # both append-only (Postgres triggers)
+    # Children of documents go before documents; the deal row goes last.
+    order = [t for t, _ in _DEAL_CASCADE]
+    assert order.index("extraction_results") < order.index("documents")
+    assert order.index("document_chunks") < order.index("documents")
+    assert order.index("broker_qa_pairs") < order.index("broker_questions")
+    assert order[-1] == "documents"
+
+
+async def _seed_every_child_table(deal_id: str, doc_id: str, tenant: str = TENANT_A) -> list[str]:
+    """One row per live table that carries ``deal_id``, filled from
+    ``PRAGMA table_info`` (every NOT NULL column without a default gets a
+    type-appropriate probe value). Returns the tables seeded."""
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    seeded: list[str] = []
+    async with factory() as session:
+        tables = [
+            str(r[0])
+            for r in (
+                await session.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
+            ).fetchall()
+        ]
+        for table in tables:
+            info = (await session.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+            names = {str(r[1]) for r in info}
+            if table == "deals" or "deal_id" not in names:
+                continue
+            row: dict[str, Any] = {}
+            for _cid, name, ctype, notnull, dflt, pk in info:
+                name, ctype = str(name), str(ctype or "").upper()
+                if name == "deal_id":
+                    row[name] = deal_id
+                elif name == "tenant_id":
+                    row[name] = tenant
+                elif name == "document_id":
+                    row[name] = doc_id
+                elif pk or name == "id" or name.endswith("_id"):
+                    row[name] = str(uuid4())
+                elif notnull and dflt is None:
+                    row[name] = 1 if "INT" in ctype else 1.0 if "REAL" in ctype else "probe"
+            if "created_at" in names and "created_at" not in row:
+                row["created_at"] = "2026-10-30T00:00:00+00:00"
+            if "status" in names and "status" not in row and table == "documents":
+                row["status"] = "EXTRACTED"
+            cols = ", ".join(row)
+            binds = ", ".join(f":{c}" for c in row)
+            await session.execute(text(f"INSERT INTO {table} ({cols}) VALUES ({binds})"), row)
+            seeded.append(table)
+        await session.commit()
+    return seeded
+
+
+async def _rows_by_table(deal_id: str, tables: list[str], tenant: str = TENANT_A) -> dict[str, int]:
+    return {t: await _count(t, deal_id) for t in tables}
+
+
+@pytest.mark.asyncio
+async def test_discard_empties_every_child_table_and_spares_the_sibling_deal() -> None:
+    """Rows in EVERY live table with a ``deal_id`` — including the ones with
+    no FK (``model_calls``, ``lineage_records``, ``verification_reports``,
+    ``critic_*``, ``cell_comments``, ``pending_batches``, ``due_diligence_questions``)
+    — are gone after discard, except the two append-only trails; a sibling
+    deal's rows in the same tables are untouched."""
+    from app.api.deals import _DEAL_CASCADE_KEPT
+
+    async with _client() as client:
+        draft = await _create_draft(client)
+        sibling = await _create_draft(client, name="Sibling Draft")
+        doc_draft = str(uuid4())
+        doc_sibling = str(uuid4())
+        tables = await _seed_every_child_table(draft["id"], doc_draft)
+        assert await _seed_every_child_table(sibling["id"], doc_sibling) == tables
+        expected_tables = {"documents", "extraction_results", "model_calls", "lineage_records",
+                           "verification_reports", "critic_findings", "critic_reports",
+                           "cell_comments", "pending_batches", "due_diligence_questions",
+                           "engine_outputs", "scenarios", "broker_questions", "broker_qa_pairs",
+                           "memo_edits", "audit_log"}
+        assert not (expected_tables - set(tables)), expected_tables - set(tables)
+        before = await _rows_by_table(draft["id"], tables)
+        assert all(n >= 1 for n in before.values()), before
+
+        r = await client.delete(f"/deals/{draft['id']}/draft", headers=HDR_A)
+        assert r.status_code == 204, r.text
+
+    after = await _rows_by_table(draft["id"], tables)
+    gone = {t: n for t, n in after.items() if t not in _DEAL_CASCADE_KEPT}
+    assert all(n == 0 for n in gone.values()), {t: n for t, n in gone.items() if n}
+    # The append-only trails stay (Postgres refuses their DELETE by trigger):
+    # the seeded audit row plus the discard's own row; the memo edit.
+    assert after["memo_edits"] == 1
+    assert after["audit_log"] >= 2
+    # The sibling is whole.
+    sibling_after = await _rows_by_table(sibling["id"], tables)
+    assert all(n >= 1 for n in sibling_after.values()), sibling_after
+    assert await _count("deals", sibling["id"], column="id") == 1
+
+    rows = await _audit_rows(draft["id"], "deal.draft_discarded")
+    counts = rows[0]["metadata"]["cascade_counts"]
+    for t in tables:
+        if t not in _DEAL_CASCADE_KEPT:
+            assert counts[t] == before[t], (t, counts.get(t), before[t])
+    assert counts["deals"] == 1
+
+
+@pytest.mark.asyncio
+async def test_discard_refuses_while_a_document_is_in_flight() -> None:
+    """A background parse / extract owns the row; deleting the deal under it
+    would make the task fail (Postgres) or re-insert orphans (SQLite)."""
+    from sqlalchemy import text
+
+    from app.api import documents as documents_api
+    from app.api.deals import _in_flight_statuses
+    from app.database import get_session_factory
+
+    assert _in_flight_statuses() == documents_api.DOC_PROCESSING_STATUSES  # the pipeline's own set
+    async with _client() as client:
+        draft = await _create_draft(client)
+        _doc, storage_key = await _seed_document_with_object(draft["id"])
+        factory = get_session_factory()
+        for in_flight_status in sorted(_in_flight_statuses()):
+            async with factory() as session:
+                await session.execute(
+                    text("UPDATE documents SET status = :s WHERE deal_id = :d AND tenant_id = :t"),
+                    {"s": in_flight_status, "d": draft["id"], "t": TENANT_A},
+                )
+                await session.commit()
+            r = await client.delete(f"/deals/{draft['id']}/draft", headers=HDR_A)
+            assert r.status_code == 409, (in_flight_status, r.text)
+            assert r.json()["detail"]["code"] == "documents_in_flight"
+            assert r.json()["detail"]["count"] == 1
+        # Nothing was deleted meanwhile.
+        assert await _count("documents", draft["id"]) == 1
+        assert _object_exists(storage_key)
+        assert await _audit_rows(draft["id"], "deal.draft_discarded") == []
+
+        async with factory() as session:
+            await session.execute(
+                text("UPDATE documents SET status = 'EXTRACTED' WHERE deal_id = :d AND tenant_id = :t"),
+                {"d": draft["id"], "t": TENANT_A},
+            )
+            await session.commit()
+        r = await client.delete(f"/deals/{draft['id']}/draft", headers=HDR_A)
+        assert r.status_code == 204, r.text
+    assert not _object_exists(storage_key)
+
+
+@pytest.mark.asyncio
+async def test_archive_on_a_draft_is_409_so_a_draft_is_never_archived() -> None:
+    async with _client() as client:
+        draft = await _create_draft(client)
+        r = await client.delete(f"/deals/{draft['id']}", headers=HDR_A)
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "deal_is_draft"
+        r = await client.get(f"/deals/{draft['id']}", headers=HDR_A)
+        assert r.json()["status"] == "Draft" and r.json()["lifecycle"] == "draft"
+        # Archive still works on an underwriting.
+        active = await _create(client, name="Active Hotel")
+        r = await client.delete(f"/deals/{active['id']}", headers=HDR_A)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "Archived"
+
+
+@pytest.mark.asyncio
+async def test_include_of_an_unknown_token_is_422() -> None:
+    async with _client() as client:
+        draft = await _create_draft(client)
+        r = await client.get(f"/deals/{draft['id']}", params={"include": "bogus"}, headers=HDR_A)
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["code"] == "unknown_include"
+        assert r.json()["detail"]["include"] == ["bogus"]
+        r = await client.get(
+            f"/deals/{draft['id']}", params={"include": "draft_wizard,bogus"}, headers=HDR_A
+        )
+        assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_draft_created_audit_actor_is_the_jwt_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A.6.4 — the Projects card shows who started a draft, read from the
+    ``deal.draft_created`` actor. Minted like ``tests/test_rbac.py``: a local
+    RS256 key published through the JWKS cache, no Clerk call."""
+    import base64
+    import time
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    from app.api.deals import _coerce_tenant_id
+    from app.auth import clerk_jwt
+
+    def _b64url_uint(value: int) -> str:
+        raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = key.public_key().public_numbers()
+    jwk = {"kty": "RSA", "kid": "test-kid-drafts", "use": "sig", "alg": "RS256",
+           "n": _b64url_uint(numbers.n), "e": _b64url_uint(numbers.e)}
+    keys = {"test-kid-drafts": RSAAlgorithm.from_jwk(jwk)}
+    monkeypatch.setattr(clerk_jwt, "_JWKS_KEYS", keys)
+    monkeypatch.setattr(clerk_jwt, "_JWKS_FETCHED_AT", time.monotonic())
+    monkeypatch.setattr(clerk_jwt, "_load_jwks", lambda *, force=False: keys)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    org_id = "org_DRAFTS"
+    token = pyjwt.encode(
+        {"iat": int(time.time()), "exp": int(time.time()) + 300, "sub": "user_draft_author",
+         "org_id": org_id, "org_role": "org:member"},
+        pem, algorithm="RS256", headers={"kid": "test-kid-drafts"},
+    )
+    tenant = str(_coerce_tenant_id(org_id))
+
+    async with _client() as client:
+        r = await client.post(
+            "/deals", json={"name": "Authored Draft", "lifecycle": "draft", "draft_wizard": WIZARD},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 201, r.text
+        deal_id = r.json()["id"]
+        assert r.json()["tenant_id"] == tenant
+        # A member can discard their own draft (no require_role on the route).
+        r = await client.delete(f"/deals/{deal_id}/draft", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 204, r.text
+
+    created = await _audit_rows(deal_id, "deal.draft_created", tenant=tenant)
+    assert [row["actor_id"] for row in created] == ["user_draft_author"]
+    discarded = await _audit_rows(deal_id, "deal.draft_discarded", tenant=tenant)
+    assert [row["actor_id"] for row in discarded] == ["user_draft_author"]
+
+
+@pytest.fixture
+def _lifecycle_columns_absent(monkeypatch: pytest.MonkeyPatch):
+    """Simulate a database the startup migration has not reached: the probe
+    reports the three FON-79 columns absent (every other column as it is), so
+    every read takes the ``'active'`` / NULL stand-in path."""
+    from app.services import schema_probe
+
+    real = schema_probe.table_has_column
+
+    async def _probe(session, table, column, *, cache_key=None):
+        if table == "deals" and column in {"lifecycle", "draft_wizard", "activated_at"}:
+            return False
+        return await real(session, table, column, cache_key=cache_key)
+
+    monkeypatch.setattr(schema_probe, "table_has_column", _probe)
+    yield
+
+
+@pytest.mark.asyncio
+async def test_un_migrated_schema_reads_every_deal_as_active_and_refuses_drafts(
+    _lifecycle_columns_absent,
+) -> None:
+    """The fallback contract the market columns use: no 500s. Every row reads
+    ``active`` / NULL, ``?lifecycle=draft`` is empty, the pipeline counts no
+    drafts, and a draft CREATE is refused (503) rather than silently stored
+    as an underwriting."""
+    async with _client() as client:
+        active = await _create(client, name="Active Hotel")
+        assert active["lifecycle"] == "active"
+
+        r = await client.post(
+            "/deals", json={"name": "X", "lifecycle": "draft", "draft_wizard": WIZARD}, headers=HDR_A
+        )
+        assert r.status_code == 503, r.text
+        assert r.json()["detail"]["code"] == "drafts_unavailable"
+        r = await client.get("/deals", headers=HDR_A)
+        assert [d["id"] for d in r.json()] == [active["id"]]  # nothing half-stored
+
+        r = await client.get("/deals", params={"lifecycle": "draft"}, headers=HDR_A)
+        assert r.status_code == 200 and r.json() == []
+        r = await client.get("/deals", params={"lifecycle": "active"}, headers=HDR_A)
+        assert [d["id"] for d in r.json()] == [active["id"]]
+        r = await client.get(f"/deals/{active['id']}", params={"include": "draft_wizard"}, headers=HDR_A)
+        assert r.status_code == 200, r.text
+        assert r.json()["lifecycle"] == "active"
+        assert r.json()["draft_wizard"] is None and r.json()["activated_at"] is None
+
+        r = await client.patch(f"/deals/{active['id']}", json={"draft_wizard": WIZARD}, headers=HDR_A)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "deal_not_draft"
+        r = await client.post(f"/deals/{active['id']}/activate", headers=HDR_A)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "deal_not_draft"
+        r = await client.delete(f"/deals/{active['id']}/draft", headers=HDR_A)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "deal_not_draft"
+
+        r = await client.get("/deals/pipeline", headers=HDR_A)
+        assert r.status_code == 200, r.text
+        assert r.json()["summary"]["deal_count"] == 1
+        assert r.json()["summary"]["draft_count"] == 0
+        # The guard reads 'active' — an underwriting route still works.
+        r = await client.post(
+            f"/deals/{active['id']}/transition", json={"next_state": "VALIDATING"}, headers=HDR_A
+        )
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_digest_kpi_block_carries_the_live_draft_count() -> None:
+    """``pipeline_digest.build_digest_payload`` counts drafts the same way the
+    pipeline endpoint does (live, beside the filtered rows — the snapshot it
+    filters never contains a draft)."""
+    from app.database import get_session_factory
+    from app.services.pipeline_digest import build_digest_payload
+
+    async with _client() as client:
+        await _create_draft(client)
+        await _create_draft(client, name="Second Draft")
+        active = await _create(client, name="Active Hotel")
+    schedule = {
+        "id": str(uuid4()),
+        "tenant_id": TENANT_A,
+        "cadence": "daily",
+        "include_kpi_summary": True,
+        "include_recently_mutated": False,
+        "include_deals_meeting_target": False,
+        "include_full_table": False,
+    }
+    factory = get_session_factory()
+    async with factory() as session:
+        payload = await build_digest_payload(session, tenant_id=TENANT_A, schedule=schedule)
+    assert payload.kpi_block is not None
+    assert payload.kpi_block["deal_count"] == 1
+    assert payload.kpi_block["draft_count"] == 2
+    assert payload.deal_count == 1
+    assert active["id"]  # the one counted deal

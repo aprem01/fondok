@@ -61,4 +61,49 @@ async def table_has_column(
     return answer
 
 
-__all__ = ["table_has_column"]
+async def table_exists(session: AsyncSession, table: str) -> bool:
+    """Does ``table`` exist on the live database? Same contract as
+    :func:`table_has_column` (catalog only, False on any failure, memoised on
+    ``session.info``). Used where a statement must not be attempted against a
+    table a given dialect or an older schema never created — a failed
+    statement inside an open transaction poisons the session."""
+    key = f"fondok_table_exists_{table}"
+    try:
+        cached = session.info.get(key)
+    except Exception:
+        cached = None
+    if isinstance(cached, bool):
+        return cached
+    try:
+        is_sqlite = (
+            session.bind is not None and session.bind.dialect.name == "sqlite"
+        )
+        if is_sqlite:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = :table"
+                    ),
+                    {"table": table},
+                )
+            ).first()
+        else:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_name = :table AND table_schema = current_schema()"
+                    ),
+                    {"table": table},
+                )
+            ).first()
+        answer = row is not None
+    except Exception:
+        answer = False
+    with contextlib.suppress(Exception):
+        session.info[key] = answer
+    return answer
+
+
+__all__ = ["table_exists", "table_has_column"]

@@ -1498,15 +1498,17 @@ async def list_deals(
 async def create_deal(
     body: CreateDealBody,
     session: Annotated[AsyncSession, Depends(get_session)],
-    tenant_id: Annotated[UUID, Depends(get_tenant_id)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
 ) -> DealRecord:
     """Insert a new deal row + audit log entry.
 
     FON-79 — ``lifecycle='draft'`` creates the wizard's server-side draft
     (``status='Draft'``, audit ``deal.draft_created``); the default
     ``active`` is today's direct create, now ``status='In Review'`` so the
-    word "Draft" means one thing from go-live (A.6.1).
+    word "Draft" means one thing from go-live (A.6.1). The audit actor is
+    the real caller (A.6.4: the Projects card shows who started a draft).
     """
+    tenant_id = auth.tenant_id
     tenant_id_str = str(tenant_id)
     deal_id = uuid4()
     now = _now()
@@ -1657,7 +1659,7 @@ async def create_deal(
         session,
         tenant_id=tenant_id_str,
         deal_id=str(deal_id),
-        actor_id="system",
+        actor_id=auth.user_id or "system",
         action="deal.draft_created" if is_draft else "deal.created",
         payload={
             "lifecycle": body.lifecycle,
@@ -2268,27 +2270,52 @@ async def update_deal(
     return _row_to_record(dict(refreshed._mapping))
 
 
-#: Children of a deal, FK-safest order (children before parents). Each table
-#: either has FK ON DELETE CASCADE or is deleted explicitly here — explicit is
-#: safer: Postgres and SQLite agree on order without perfect FK plumbing.
-#: audit_log rows are KEPT: they are the compliance trail of the deletion
-#: itself ("tenant X deleted deal Y at T").
-_DEAL_CASCADE_SQL: tuple[tuple[str, str], ...] = (
-    # Children of documents (extraction_results FK -> documents.id).
-    (
-        "DELETE FROM extraction_results "
-        "WHERE document_id IN ("
-        "  SELECT id FROM documents WHERE deal_id = :deal AND tenant_id = :tenant"
-        ")",
-        "extraction_results",
-    ),
-    # Direct children of the deal.
-    ("DELETE FROM broker_questions WHERE deal_id = :deal AND tenant_id = :tenant", "broker_questions"),
-    ("DELETE FROM broker_qa_pairs WHERE deal_id = :deal AND tenant_id = :tenant", "broker_qa_pairs"),
-    ("DELETE FROM scenarios WHERE deal_id = :deal AND tenant_id = :tenant", "scenarios"),
-    ("DELETE FROM engine_outputs WHERE deal_id = :deal AND tenant_id = :tenant", "engine_outputs"),
-    ("DELETE FROM documents WHERE deal_id = :deal AND tenant_id = :tenant", "documents"),
+#: Every table that carries a ``deal_id`` (or reaches the deal through
+#: ``documents.document_id``), children before parents, so Postgres and SQLite
+#: agree whatever the FK plumbing: Postgres has ``ON DELETE CASCADE`` on some
+#: of these and nothing on the rest (``model_calls``, ``lineage_records``,
+#: ``verification_reports``, ``critic_*``, ``engine_outputs``,
+#: ``pending_batches``); SQLite enforces no FK at all. Each entry is
+#: ``(table, predicate)``; the row DELETE runs only when the table exists on
+#: this database (``document_chunks`` is Postgres-only; an older schema may
+#: lack a newer table) — a statement against a missing table would poison the
+#: transaction. ``tests/test_deals_drafts.py`` checks this list against the
+#: migrations so a new ``deal_id`` table cannot be forgotten.
+#:
+#: KEPT on purpose — the two append-only tables, whose Postgres triggers
+#: refuse UPDATE / DELETE (``audit_log_no_update_delete``,
+#: ``memo_edits_no_update_delete``): ``audit_log`` is the compliance trail of
+#: the deletion itself ("tenant X deleted deal Y at T"); ``memo_edits`` is the
+#: analyst's edit history and is tenant-scoped on every read.
+_BY_DEAL = "deal_id = :deal AND tenant_id = :tenant"
+#: The two document-children carry ``deal_id`` as well as ``document_id``:
+#: match either path, so a row tagged with the deal but pointing at a
+#: document that no longer exists (or the reverse) cannot be left behind.
+_BY_DEAL_OR_DOCUMENT = (
+    f"({_BY_DEAL}) OR document_id IN (SELECT id FROM documents "
+    "WHERE deal_id = :deal AND tenant_id = :tenant)"
 )
+_DEAL_CASCADE: tuple[tuple[str, str], ...] = (
+    # Children of documents (before documents: the subquery needs its rows).
+    ("document_chunks", _BY_DEAL_OR_DOCUMENT),
+    ("extraction_results", _BY_DEAL_OR_DOCUMENT),
+    # Children of the deal, grandchildren first.
+    ("broker_qa_pairs", _BY_DEAL),  # FK -> broker_questions
+    ("broker_questions", _BY_DEAL),
+    ("due_diligence_questions", _BY_DEAL),
+    ("cell_comments", _BY_DEAL),
+    ("critic_findings", _BY_DEAL),
+    ("critic_reports", _BY_DEAL),
+    ("verification_reports", _BY_DEAL),
+    ("lineage_records", _BY_DEAL),
+    ("model_calls", _BY_DEAL),
+    ("pending_batches", _BY_DEAL),
+    ("scenarios", _BY_DEAL),
+    ("engine_outputs", _BY_DEAL),
+    ("documents", _BY_DEAL),
+)
+#: Tables with a ``deal_id`` that the cascade deliberately leaves in place.
+_DEAL_CASCADE_KEPT: frozenset[str] = frozenset({"audit_log", "memo_edits"})
 
 
 async def _cascade_delete_deal(
@@ -2324,10 +2351,16 @@ async def _cascade_delete_deal(
         ).fetchall()
     ]
 
+    from ..services.schema_probe import table_exists
+
     deleted_counts: dict[str, int] = {}
-    for sql, label in _DEAL_CASCADE_SQL:
-        result = await session.execute(text(sql), bind)
-        deleted_counts[label] = result.rowcount or 0
+    for table, predicate in _DEAL_CASCADE:
+        if not await table_exists(session, table):
+            continue  # Postgres-only table, or an older schema without it
+        result = await session.execute(
+            text(f"DELETE FROM {table} WHERE {predicate}"), bind
+        )
+        deleted_counts[table] = result.rowcount or 0
     result = await session.execute(
         text("DELETE FROM deals WHERE id = :deal AND tenant_id = :tenant"), bind
     )
@@ -2347,6 +2380,39 @@ async def _cascade_delete_deal(
         if still is None:
             orphan_keys.append(key)
     return deleted_counts, orphan_keys
+
+
+def _in_flight_statuses() -> frozenset[str]:
+    """Document statuses owned by a running background task
+    (``_run_parse_and_extract``). Duplicating such a row would strand the copy
+    mid-pipeline; discarding its deal would leave the task to fail on
+    Postgres or re-insert orphans on SQLite — both routes refuse with 409.
+
+    This is the pipeline's own set, not a re-declaration: ``api.documents``
+    defines ``DOC_PROCESSING_STATUSES`` and the watchdog / ``/extract`` /
+    ``/reprocess`` guards read it. Imported lazily (``documents`` imports this
+    module) and read at call time.
+    """
+    from . import documents as _documents
+
+    return frozenset(_documents.DOC_PROCESSING_STATUSES)
+
+
+async def _count_documents_in_flight(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> int:
+    """How many of the deal's documents a background task currently owns."""
+    rows = (
+        await session.execute(
+            text(
+                "SELECT status FROM documents "
+                "WHERE deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+    ).fetchall()
+    in_flight = _in_flight_statuses()
+    return sum(1 for r in rows if str(r[0] or "").upper() in in_flight)
 
 
 async def _delete_raw_objects(keys: list[str], *, deal_id: str) -> int:
@@ -2498,7 +2564,8 @@ async def discard_draft(
     so this route can never delete an underwriting — which is also why it
     needs no ``require_role``: a draft is the analyst's own scratch work.
     Audited at tenant level as ``deal.draft_discarded`` (the deal id stops
-    existing). Cross-tenant guesses 404.
+    existing). Cross-tenant guesses 404. 409 ``documents_in_flight`` (with the
+    count) while a background parse / extract still owns one of its documents.
     """
     tenant_id = auth.tenant_id
     tenant_id_str = str(tenant_id)
@@ -2520,6 +2587,21 @@ async def discard_draft(
     if str(existing._mapping.get("lifecycle") or "active") != "draft":
         raise _deal_not_draft_error()
     deal_name = existing._mapping.get("name")
+    in_flight = await _count_documents_in_flight(
+        session, deal_id=deal_id_str, tenant_id=tenant_id_str
+    )
+    if in_flight:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "documents_in_flight",
+                "count": in_flight,
+                "message": (
+                    f"{in_flight} document(s) are still being processed. Wait "
+                    "for extraction to finish, then discard the draft."
+                ),
+            },
+        )
 
     deleted_counts, orphan_keys = await _cascade_delete_deal(
         session, deal_id=deal_id_str, tenant_id=tenant_id_str
@@ -2641,8 +2723,13 @@ async def archive_deal(
     session: Annotated[AsyncSession, Depends(get_session)],
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> DealRecord:
-    """Soft-delete: flip status to ``Archived``. The row is kept."""
+    """Soft-delete: flip status to ``Archived``. The row is kept.
+
+    FON-79 — a lifecycle draft is 409 ``deal_is_draft``: a draft is discarded
+    (``DELETE /deals/{id}/draft``), never parked as ``Archived``.
+    """
     tenant_id_str = str(tenant_id)
+    await assert_deal_active(session, deal_id=deal_id, tenant_id=tenant_id)
 
     existing = (
         await session.execute(
