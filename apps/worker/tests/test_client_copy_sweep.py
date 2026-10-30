@@ -103,44 +103,38 @@ async def test_legacy_stub_routes_are_not_mounted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_export_of_a_non_uuid_deal_id_is_404_unless_demo_slug_enabled(monkeypatch) -> None:
+async def test_export_of_a_non_uuid_deal_id_is_always_404() -> None:
+    """There is no demo slug: a non-UUID export id answers exactly like an
+    unknown or foreign UUID, with the same sentence and no hotel name."""
     from app.api.export import DEAL_NOT_FOUND_DETAIL
-    from app.config import get_settings
 
-    monkeypatch.setenv("DEMO_EXPORT_SLUGS", "")
-    get_settings.cache_clear()
-    try:
-        async with _client() as c:
-            for path in ("export/excel", "export/memo.pdf", "export/presentation.pptx"):
-                r = await c.get(f"/deals/kimpton-angler-2026/{path}", headers=_h())
-                assert r.status_code == 404, (path, r.status_code, r.text[:200])
+    async with _client() as c:
+        for path in ("export/excel", "export/memo.pdf", "export/presentation.pptx"):
+            for bad_id in ("kimpton-angler-2026", "typo-d-url"):
+                r = await c.get(f"/deals/{bad_id}/{path}", headers=_h())
+                assert r.status_code == 404, (path, bad_id, r.status_code, r.text[:200])
                 assert r.json()["detail"] == DEAL_NOT_FOUND_DETAIL
                 assert "kimpton" not in r.text.lower()
-                r = await c.get(f"/deals/typo-d-url/{path}", headers=_h())
-                assert r.status_code == 404, (path, r.status_code)
-            # A UUID this tenant does not own answers the same sentence.
-            r = await c.get(f"/deals/{uuid4()}/export/excel", headers=_h())
-            assert r.status_code == 404 and r.json()["detail"] == DEAL_NOT_FOUND_DETAIL
+        # A UUID this tenant does not own answers the same sentence.
+        r = await c.get(f"/deals/{uuid4()}/export/excel", headers=_h())
+        assert r.status_code == 404 and r.json()["detail"] == DEAL_NOT_FOUND_DETAIL
 
-        # Explicitly enabled (a demo environment) → the fixture workbook serves.
-        monkeypatch.setenv("DEMO_EXPORT_SLUGS", "kimpton-angler-2026, other-demo")
-        get_settings.cache_clear()
-        assert get_settings().demo_export_slugs() == {"kimpton-angler-2026", "other-demo"}
-        async with _client() as c:
-            r = await c.get("/deals/kimpton-angler-2026/export/excel", headers=_h())
-            assert r.status_code == 200, r.text[:200]
-            r = await c.get("/deals/still-not-listed/export/excel", headers=_h())
-            assert r.status_code == 404
-    finally:
-        get_settings.cache_clear()
+
+def test_no_demo_export_setting_or_fixture_module_in_production_code() -> None:
+    """The fixture lives under tests/ and nothing in ``app`` can reach it."""
+    import importlib.util
+
+    from app.config import Settings
+
+    assert "DEMO_EXPORT_SLUGS" not in Settings.model_fields
+    assert importlib.util.find_spec("app.export.fixtures") is None
 
 
 @pytest.mark.asyncio
 async def test_memo_payload_loader_never_builds_the_fixture_for_a_db_backed_call() -> None:
-    """``_load_deal_payload`` with a session: a deal that is not on the tenant
-    raises (code ``deal_not_found``) instead of falling through to the Kimpton
-    fixture; a real deal gets only its own documents (an empty list, never the
-    fixture's fictional ``STR_MarketReport_Q1.pdf`` excerpts)."""
+    """``_load_deal_payload``: a deal that is not on the tenant raises (code
+    ``deal_not_found``); there is no fixture to fall through to, and the
+    loader requires a session + tenant by signature."""
     from app.api.deals import MemoInputMissing, _load_deal_payload
     from app.database import get_session_factory
 
@@ -154,10 +148,6 @@ async def test_memo_payload_loader_never_builds_the_fixture_for_a_db_backed_call
         with pytest.raises(MemoInputMissing) as exc:
             await _load_deal_payload(foreign, session=session, tenant_id=_TENANT)
         assert exc.value.code == "deal_not_found"
-
-    # The fixture path still exists for the session-less demo / smoke flow.
-    payload = await _load_deal_payload("kimpton-angler-2026")
-    assert all(d.document_id.startswith("doc-") for d in payload.source_documents)
 
 
 def test_dossier_field_source_vocabulary_names_no_hotel() -> None:
@@ -209,7 +199,7 @@ def test_line_and_source_labels_are_words_not_slugs() -> None:
 
 
 def test_memo_pdf_historical_walk_prints_noi_and_gop_in_caps() -> None:
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
     from app.export.memo_pdf import _render_historical_walk
 
     html_str = _render_historical_walk(kimpton_model()["historical_baseline"])
@@ -240,7 +230,7 @@ def test_excel_historical_walk_and_provenance_and_comps_use_display_labels(tmp_p
     from openpyxl import load_workbook
 
     from app.export.excel import build_excel
-    from app.export.fixtures import kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_model
 
     model = copy.deepcopy(kimpton_model())
     # Fewer than 3 comps → method "none": the label is a sentence and the cap

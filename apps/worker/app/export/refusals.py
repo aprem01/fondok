@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from fondok_schemas.reasons import REASON_META, REFUSAL_GLYPH, ReasonCode, Refusal
 
@@ -55,6 +56,129 @@ def refuse(
     if log is not None:
         log.append(Refusal(code=code, detail=detail, concept=concept))
     return REFUSAL_GLYPH
+
+
+#: Export-side prefix for a value the builder declined to invent. Where a
+#: workbook / memo / deck cell would otherwise hold a number, the cell reads
+#: ``not available: <reason>`` (go-live rule: an unknown is never 0 / 0% / $0).
+NOT_AVAILABLE_PREFIX = "not available"
+
+
+def unavailable(
+    code: ReasonCode,
+    detail: str,
+    concept: str | None = None,
+) -> str:
+    """Record a refusal and return the export sentence ``not available: <detail>``.
+
+    The glyph form (:func:`refuse`) suits dense tables whose header names the
+    field; this form suits headline cells, label/value rows and section notes,
+    where the reader needs the reason on the page itself. Both record the same
+    typed :class:`Refusal`, so the Refusals sheet / memo footnote list it.
+    """
+    refuse(code, detail, concept)
+    return f"{NOT_AVAILABLE_PREFIX}: {detail}"
+
+
+def as_float(value: Any) -> float | None:
+    """Coerce a payload scalar to float; ``None`` / blank / non-numeric stays
+    ``None`` — a missing number is never read as 0."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sum_strict(*values: float | None) -> float | None:
+    """Sum only when EVERY component is present; ``None`` if any is missing.
+
+    A total built over a missing component would silently read the gap as
+    zero — a sum is stated only when every part is (go-live rule 1).
+    """
+    if any(v is None for v in values):
+        return None
+    return float(sum(values))  # type: ignore[arg-type]
+
+
+# ── refusal-aware formatters — the ONE implementation the memo PDF and the
+# deck share (each binds its own precision). A ``None`` means the payload
+# omitted the key rather than carrying a zero, so the default code is
+# ``no_source``; ``concept`` names what the dash stands for.
+
+
+def fmt_usd(
+    v: float | int | None,
+    *,
+    scale: int = 1,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"${float(v) / scale:,.0f}"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def fmt_usd_m(
+    v: float | int | None,
+    *,
+    decimals: int = 2,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"${float(v) / 1_000_000:.{decimals}f}M"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def fmt_pct(
+    v: float | None,
+    *,
+    decimals: int = 2,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"{float(v) * 100:.{decimals}f}%"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def fmt_mult(
+    v: float | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"{float(v):.2f}x"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
+
+
+def fmt_int(
+    v: float | int | None,
+    *,
+    code: ReasonCode = ReasonCode.NO_SOURCE,
+    concept: str | None = None,
+) -> str:
+    if v is None:
+        return refuse(code, "no value on the export payload", concept)
+    try:
+        return f"{round(float(v)):,}"
+    except (TypeError, ValueError):
+        return refuse(code, f"value {v!r} is not a number", concept)
 
 
 @contextmanager
@@ -137,13 +261,22 @@ def reason_explanation(code: ReasonCode) -> str:
 
 
 __all__ = [
+    "NOT_AVAILABLE_PREFIX",
     "REFUSAL_GLYPH",
     "ReasonCode",
     "Refusal",
+    "as_float",
     "collect_refusals",
     "dedupe",
     "distinct_codes",
+    "fmt_int",
+    "fmt_mult",
+    "fmt_pct",
+    "fmt_usd",
+    "fmt_usd_m",
     "reason_explanation",
     "reason_label",
     "refuse",
+    "sum_strict",
+    "unavailable",
 ]

@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001, RUF003
+# ruff: noqa: RUF001
 """IC presentation deck builder (PowerPoint .pptx).
 
 8 slides following an institutional-investor template:
@@ -10,6 +10,13 @@
   6. Returns Summary + 3-Scenario card
   7. Risk Assessment + Sensitivities
   8. Recommendation
+
+No-fake-data contract (go-live rule 1): every figure on a slide comes off the
+payload. A missing value renders as the refusal glyph (dense tables) or as
+``not available: <reason>`` (headline cells / notes) — never a default, a
+sample value or a synthesized grid. The sensitivity heat-map is the persisted
+``sensitivity`` engine output (``model["sensitivity_engine"]``) or a sentence
+saying why there is none.
 """
 
 from __future__ import annotations
@@ -18,12 +25,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from fondok_schemas.reasons import ReasonCode
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.slide import Slide
 from pptx.util import Inches, Pt
+
+from .refusals import (
+    collect_refusals,
+    fmt_int,
+    fmt_mult,
+    fmt_pct,
+    fmt_usd,
+    fmt_usd_m,
+    refuse,
+    unavailable,
+)
 
 # ─────────────────────────── palette ───────────────────────────
 SLATE = RGBColor(0x1F, 0x29, 0x37)
@@ -40,40 +59,38 @@ AMBER_50 = RGBColor(0xFF, 0xFB, 0xEB)
 RED_50 = RGBColor(0xFE, 0xE2, 0xE2)
 
 
-def _fmt_usd(v: float | int | None) -> str:
+# Formatters are the shared refusal-aware ones in :mod:`app.export.refusals`,
+# bound to the deck's precision (1 dp percentages, $x.xM).
+
+
+def _fmt_usd(v: float | int | None, concept: str | None = None) -> str:
+    return fmt_usd(v, concept=concept)
+
+
+def _fmt_usd_m(v: float | int | None, concept: str | None = None) -> str:
+    return fmt_usd_m(v, decimals=1, concept=concept)
+
+
+def _fmt_pct(v: float | None, concept: str | None = None) -> str:
+    return fmt_pct(v, decimals=1, concept=concept)
+
+
+def _fmt_mult(v: float | None, concept: str | None = None) -> str:
+    return fmt_mult(v, concept=concept)
+
+
+def _fmt_int(v: float | int | None, concept: str | None = None) -> str:
+    return fmt_int(v, concept=concept)
+
+
+def _fmt_thousands(v: float | int | None, concept: str | None = None) -> str:
+    """Proforma cell (already in USD thousands)."""
     if v is None:
-        return "—"
+        return refuse(ReasonCode.NO_SOURCE, "year not projected on the proforma", concept)
     try:
-        return f"${float(v):,.0f}"
+        return f"{float(v):,.0f}"
     except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_usd_m(v: float | int | None) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"${float(v) / 1_000_000:.1f}M"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_pct(v: float | None) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{float(v) * 100:.1f}%"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_mult(v: float | None) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{float(v):.2f}x"
-    except (TypeError, ValueError):
-        return "—"
+        return refuse(ReasonCode.NO_SOURCE, f"value {v!r} is not a number", concept)
 
 
 # ─────────────────────────── shared chrome ───────────────────────────
@@ -266,9 +283,11 @@ def _slide_title(prs: Presentation, deal: dict[str, Any]) -> None:
     # FONDOK wordmark
     _add_textbox(slide, 0.6, 0.6, 4, 0.5, "FONDOK", 14, True, AMBER)
 
-    # Title block
-    name = deal.get("name", deal.get("subject_property", "Hotel"))
-    location = deal.get("city", deal.get("location", ""))
+    # Title block — the payload names the property or says it cannot.
+    name = deal.get("name") or deal.get("subject_property") or unavailable(
+        ReasonCode.NO_SOURCE, "no property name on the deal", "property_overview.name"
+    )
+    location = deal.get("city") or deal.get("location") or ""
     brand = deal.get("brand", "")
     keys = deal.get("keys", "")
 
@@ -313,9 +332,21 @@ def _slide_exec_summary(prs: Presentation, memo: dict[str, Any], model: dict[str
     takeaways = takeaways[:4] or ["—"]
     _add_bullet_list(slide, 0.8, 1.4, 11.5, 4.8, takeaways, font_size=14)
 
-    # Confidence footer
-    confidence = (memo.get("appendix") or {}).get("ai_confidence", 0)
-    _add_textbox(slide, 0.8, 6.6, 11.5, 0.4, f"AI Confidence: {int(confidence * 100)}%   ·   Engines: {len((memo.get('appendix') or {}).get('engines_run', []))}", 10, False, INK_500)
+    # Confidence footer — stated only when the deal recorded one.
+    appendix = memo.get("appendix") or {}
+    confidence = appendix.get("ai_confidence")
+    confidence_txt = (
+        f"{round(float(confidence) * 100)}%"
+        if confidence is not None
+        else unavailable(
+            ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"
+        )
+    )
+    _add_textbox(
+        slide, 0.8, 6.6, 11.5, 0.4,
+        f"AI Confidence: {confidence_txt}   ·   Engines: {len(appendix.get('engines_run', []))}",
+        10, False, INK_500,
+    )
 
 
 def _slide_property_market(prs: Presentation, deal: dict[str, Any], model: dict[str, Any]) -> None:
@@ -329,16 +360,22 @@ def _slide_property_market(prs: Presentation, deal: dict[str, Any], model: dict[
     # Left column — hotel facts
     _add_filled_box(slide, 0.5, 1.3, 6.0, 5.6, GRAY_50)
     _add_textbox(slide, 0.8, 1.5, 5.5, 0.4, "Hotel Facts", 14, True, INK)
+    def fact(key: str, concept: str, what: str) -> str:
+        v = deal.get(key)
+        if v is None or v == "":
+            return refuse(ReasonCode.NO_SOURCE, f"no {what} on the deal", concept)
+        return str(v)
+
     facts = [
-        ("Property", deal.get("name", "—")),
-        ("Brand", deal.get("brand", "—")),
-        ("Location", deal.get("city", "—")),
-        ("Keys", str(deal.get("keys", "—"))),
-        ("Year Built", str(deal.get("year_built", deal.get("yearBuilt", "—")))),
-        ("Service Tier", deal.get("service", "Lifestyle Boutique")),
-        ("Purchase Price", _fmt_usd(inv.get("purchase_price_usd"))),
-        ("Price / Key", _fmt_usd(inv.get("price_per_key_usd"))),
-        ("Total Capital", _fmt_usd(inv.get("total_capital_usd"))),
+        ("Property", fact("name", "property_overview.name", "property name")),
+        ("Brand", fact("brand", "deal.brand", "brand")),
+        ("Location", fact("city", "deal.city", "city")),
+        ("Keys", fact("keys", "deal.keys", "key count")),
+        ("Year Built", fact("year_built", "property_overview.year_built", "year built")),
+        ("Service Tier", fact("service", "deal.service", "service level")),
+        ("Purchase Price", _fmt_usd(inv.get("purchase_price_usd"), "purchase_price")),
+        ("Price / Key", _fmt_usd(inv.get("price_per_key_usd"), "price_per_key")),
+        ("Total Capital", _fmt_usd(inv.get("total_capital_usd"), "total_capital")),
     ]
     y = 2.1
     for k, v in facts:
@@ -349,16 +386,11 @@ def _slide_property_market(prs: Presentation, deal: dict[str, Any], model: dict[
     # Right column — submarket KPIs
     _add_filled_box(slide, 6.85, 1.3, 6.0, 5.6, GRAY_50)
     _add_textbox(slide, 7.15, 1.5, 5.5, 0.4, "Submarket KPIs", 14, True, INK)
+    # Only what the payload states — never a sample submarket.
     kpis = market.get("kpis") or {
-        "Submarket": "Miami Beach / South Beach, FL",
-        "RevPAR (TTM)": "$238",
-        "ADR (TTM)": "$312",
-        "Occupancy": "76.2%",
-        "RGI": "112.2",
-        "Supply Pipeline": "414 rooms (2.2%)",
-        "Demand Growth": "4.8%",
-        "Supply Growth": "1.2%",
-        "Comp Set Avg Cap": "6.1%",
+        "Submarket": unavailable(
+            ReasonCode.NO_SOURCE, "no market data on the deal", "market.kpis"
+        )
     }
     y = 2.1
     for k, v in kpis.items():
@@ -379,20 +411,71 @@ def _slide_operating(prs: Presentation, model: dict[str, Any]) -> None:
     rows = []
     bold_rows: set[int] = set()
     for i, line in enumerate(lines, start=1):
+        label = str(line.get("label", ""))
+        cagr = line.get("cagr")
         row = [
-            line.get("label", ""),
-            f"{line.get('y1', 0):,}",
-            f"{line.get('y2', 0):,}",
-            f"{line.get('y3', 0):,}",
-            f"{line.get('y4', 0):,}",
-            f"{line.get('y5', 0):,}",
-            f"{line.get('cagr', 0) * 100:.1f}%" if line.get("cagr") else "",
+            label,
+            *[_fmt_thousands(line.get(f"y{n}"), f"proforma.{label}") for n in range(1, 6)],
+            f"{float(cagr) * 100:.1f}%" if cagr is not None else "",
         ]
         rows.append(row)
         if line.get("bold"):
             bold_rows.add(i)
 
+    if not rows:
+        _add_textbox(
+            slide, 0.5, 1.3, 12.3, 0.5,
+            "Operating proforma "
+            + unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                "no revenue / expense engine output on the deal's canonical run",
+                "proforma",
+            ),
+            12, False, INK_500,
+        )
+        return
     _add_table(slide, 0.5, 1.3, 12.3, 5.6, header, rows, bold_rows=bold_rows)
+
+
+def _su_rows(
+    items: list[dict[str, Any]], total_label: str, concept: str, what: str
+) -> list[list[str]]:
+    """``[label, amount, %]`` rows plus a total — amounts only as stated.
+
+    The total and the shares are computed only when every line carries an
+    amount; otherwise the total cell says what is missing (no silent zero).
+    """
+    lines = [x for x in items if isinstance(x, dict) and not x.get("total")]
+    if not lines:
+        return [[
+            unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                f"no {what} on the deal's capital engine output",
+                concept,
+            ),
+            "",
+            "",
+        ]]
+    amounts = [x.get("amount") for x in lines]
+    complete = all(isinstance(a, (int, float)) for a in amounts)
+    total = float(sum(amounts)) if complete else None  # type: ignore[arg-type]
+    rows: list[list[str]] = []
+    for x in lines:
+        amt = x.get("amount")
+        pct = (
+            f"{float(amt) / total * 100:.1f}%"
+            if total and isinstance(amt, (int, float))
+            else refuse(ReasonCode.NO_SOURCE, f"{what} share needs every line's amount", concept)
+        )
+        rows.append([str(x.get("label", "")), _fmt_usd(amt, concept), pct])
+    rows.append([
+        total_label,
+        _fmt_usd(total, concept) if total is not None else unavailable(
+            ReasonCode.NO_SOURCE, f"a {what} line has no amount", concept
+        ),
+        "100.0%" if total else "",
+    ])
+    return rows
 
 
 def _slide_sources_uses(prs: Presentation, model: dict[str, Any]) -> None:
@@ -400,41 +483,12 @@ def _slide_sources_uses(prs: Presentation, model: dict[str, Any]) -> None:
     slide = prs.slides.add_slide(blank)
     _add_top_ribbon(slide, "Sources & Uses · Capital Stack")
 
-    inv = model.get("investment_engine", {})
     debt = model.get("debt_engine", {})
-
-    sources = model.get("sources") or [
-        {"label": "Senior Debt", "amount": debt.get("loan_amount_usd", 0)},
-        {"label": "Equity", "amount": inv.get("total_capital_usd", 0) - debt.get("loan_amount_usd", 0)},
-    ]
-    src_total = sum(s.get("amount", 0) for s in sources if not s.get("total"))
-    src_rows = []
-    for s in sources:
-        if s.get("total"):
-            continue
-        amt = s.get("amount", 0)
-        pct = (amt / src_total) if src_total else 0
-        src_rows.append([s.get("label", ""), _fmt_usd(amt), f"{pct * 100:.1f}%"])
-    src_rows.append(["Total Sources", _fmt_usd(src_total), "100.0%"])
-
-    uses = model.get("uses") or [
-        {"label": "Purchase Price", "amount": inv.get("purchase_price_usd", 0)},
-        {"label": "Closing Costs", "amount": inv.get("closing_costs_usd", 0)},
-        {"label": "Renovation", "amount": inv.get("renovation_budget_usd", 0)},
-        {"label": "Soft Costs", "amount": inv.get("soft_costs_usd", 0)},
-        {"label": "Contingency", "amount": inv.get("contingency_usd", 0)},
-        {"label": "Working Capital", "amount": inv.get("working_capital_usd", 0)},
-        {"label": "Loan Costs", "amount": inv.get("loan_costs_usd", 0)},
-    ]
-    use_total = sum(u.get("amount", 0) for u in uses if not u.get("total"))
-    use_rows = []
-    for u in uses:
-        if u.get("total"):
-            continue
-        amt = u.get("amount", 0)
-        pct = (amt / use_total) if use_total else 0
-        use_rows.append([u.get("label", ""), _fmt_usd(amt), f"{pct * 100:.1f}%"])
-    use_rows.append(["Total Uses", _fmt_usd(use_total), "100.0%"])
+    # Sources / uses come from the capital engine's own line items. There is
+    # no fallback that rebuilds them from scalar fields — a missing list is
+    # stated as such.
+    src_rows = _su_rows(model.get("sources") or [], "Total Sources", "sources", "sources")
+    use_rows = _su_rows(model.get("uses") or [], "Total Uses", "uses", "uses")
 
     _add_textbox(slide, 0.5, 1.3, 5.5, 0.4, "Sources", 13, True, INK)
     _add_table(
@@ -449,17 +503,17 @@ def _slide_sources_uses(prs: Presentation, model: dict[str, Any]) -> None:
     # Capital stack summary
     _add_filled_box(slide, 0.5, 6.2, 12.3, 0.9, AMBER_50, AMBER)
     _add_textbox(slide, 0.8, 6.35, 4, 0.3, "CAPITAL STACK", 9, True, AMBER)
-    _add_textbox(
-        slide,
-        0.8,
-        6.6,
-        12.0,
-        0.4,
-        f"LTC {_fmt_pct(debt.get('ltc'))}   ·   LTV {_fmt_pct(debt.get('ltv_value'))}   ·   Rate {_fmt_pct(debt.get('interest_rate_pct'))}   ·   DSCR Y1 {_fmt_mult(debt.get('year1_dscr'))}   ·   Debt Yield Y1 {_fmt_pct(debt.get('year1_debt_yield'))}",
-        12,
-        True,
-        INK,
+    stack_line = (
+        f"LTC {_fmt_pct(debt.get('ltc'), 'ltc')}   ·   LTV {_fmt_pct(debt.get('ltv_value'), 'ltv')}"
+        f"   ·   Rate {_fmt_pct(debt.get('interest_rate_pct'), 'interest_rate')}"
+        f"   ·   DSCR Y1 {_fmt_mult(debt.get('year1_dscr'), 'dscr')}"
+        f"   ·   Debt Yield Y1 {_fmt_pct(debt.get('year1_debt_yield'), 'debt_yield')}"
     )
+    # B9 — the flat-SOFR provenance note travels with the debt figures.
+    note = debt.get("benchmark_note")
+    if note:
+        stack_line += f"\n{note}"
+    _add_textbox(slide, 0.8, 6.6, 12.0, 0.4, stack_line, 12 if not note else 10, True, INK)
 
 
 def _slide_returns(prs: Presentation, model: dict[str, Any]) -> None:
@@ -472,10 +526,10 @@ def _slide_returns(prs: Presentation, model: dict[str, Any]) -> None:
 
     # Top metrics tiles
     tiles = [
-        ("Levered IRR", _fmt_pct(ret.get("levered_irr"))),
-        ("Equity Multiple", _fmt_mult(ret.get("equity_multiple"))),
-        ("Year 1 CoC", _fmt_pct(ret.get("year1_cash_on_cash"))),
-        ("Hold (yrs)", str(ret.get("hold_years", 0))),
+        ("Levered IRR", _fmt_pct(ret.get("levered_irr"), "levered_irr")),
+        ("Equity Multiple", _fmt_mult(ret.get("equity_multiple"), "equity_multiple")),
+        ("Year 1 CoC", _fmt_pct(ret.get("year1_cash_on_cash"), "year_one_coc")),
+        ("Hold (yrs)", _fmt_int(ret.get("hold_years"), "hold_years")),
     ]
     x = 0.5
     for k, v in tiles:
@@ -486,6 +540,17 @@ def _slide_returns(prs: Presentation, model: dict[str, Any]) -> None:
 
     # Scenario cards
     _add_textbox(slide, 0.5, 3.05, 12, 0.4, "3-SCENARIO ANALYSIS", 11, True, AMBER)
+    if not scenarios:
+        _add_textbox(
+            slide, 0.5, 3.5, 12, 0.4,
+            "Scenario analysis "
+            + unavailable(
+                ReasonCode.ENGINE_SKIPPED,
+                "no saved scenario has a completed run on this deal",
+                "scenarios",
+            ),
+            11, False, INK_500,
+        )
     if scenarios:
         x = 0.5
         for sc in scenarios:
@@ -495,11 +560,11 @@ def _slide_returns(prs: Presentation, model: dict[str, Any]) -> None:
             _add_filled_box(slide, x, 3.5, 4.1, 3.5, tone, line)
             _add_textbox(slide, x + 0.25, 3.65, 3.7, 0.4, name.upper(), 11, True, INK)
             metrics = [
-                ("IRR", _fmt_pct(sc.get("irr"))),
-                ("Unlev IRR", _fmt_pct(sc.get("unlevered_irr"))),
-                ("Multiple", _fmt_mult(sc.get("multiple"))),
-                ("Avg CoC", _fmt_pct(sc.get("avg_coc"))),
-                ("Exit Value", _fmt_usd_m(sc.get("exit_value_usd"))),
+                ("IRR", _fmt_pct(sc.get("irr"), "scenario.levered_irr")),
+                ("Unlev IRR", _fmt_pct(sc.get("unlevered_irr"), "scenario.unlevered_irr")),
+                ("Multiple", _fmt_mult(sc.get("multiple"), "scenario.equity_multiple")),
+                ("Avg CoC", _fmt_pct(sc.get("avg_coc"), "scenario.avg_coc")),
+                ("Exit Value", _fmt_usd_m(sc.get("exit_value_usd"), "scenario.exit_value")),
             ]
             yy = 4.05
             for k, v in metrics:
@@ -507,6 +572,145 @@ def _slide_returns(prs: Presentation, model: dict[str, Any]) -> None:
                 _add_textbox(slide, x + 2.2, yy, 1.8, 0.3, v, 11, True, INK)
                 yy += 0.5
             x += 4.27
+
+
+#: Display names for the sensitivity engine's axis variables / metrics
+#: (``engines/sensitivity.py`` ``SensitivityVariable`` / ``SensitivityMetric``).
+_SENS_VARIABLE_LABEL: dict[str, str] = {
+    "exit_cap_rate": "Exit Cap",
+    "revpar_growth": "RevPAR Growth",
+    "ltv": "LTV",
+    "interest_rate": "Interest Rate",
+    "hold_years": "Hold (yrs)",
+    "purchase_price": "Purchase Price",
+    "loan_amount": "Loan Amount",
+}
+_SENS_METRIC_LABEL: dict[str, str] = {
+    "levered_irr": "Levered IRR",
+    "unlevered_irr": "Unlevered IRR",
+    "equity_multiple": "Equity Multiple",
+    "year_one_coc": "Year 1 CoC",
+    "gross_sale_price": "Gross Sale Price",
+}
+
+
+def _fmt_sens_axis(variable: str | None, value: float | None) -> str:
+    """Axis tick for a sensitivity variable, in that variable's own unit.
+
+    Rates / LTV ticks are 50bp or finer apart, so they carry two decimals
+    (``6.50%`` / ``6.75%``); growth ticks are whole points apart (one
+    decimal); hold years are integers; prices / loans are $M.
+    """
+    if value is None:
+        return refuse(ReasonCode.NO_SOURCE, "axis value missing on the sensitivity output", "sensitivity")
+    if variable == "hold_years":
+        return f"{value:.0f}"
+    if variable in ("purchase_price", "loan_amount"):
+        return f"${value / 1_000_000:.1f}M"
+    if variable in ("exit_cap_rate", "interest_rate", "ltv"):
+        return f"{value * 100:.2f}%"
+    return f"{value * 100:.1f}%"
+
+
+def _fmt_sens_metric(metric: str | None, value: float | None) -> str:
+    if value is None:
+        return refuse(ReasonCode.NO_SOURCE, "cell value missing on the sensitivity output", "sensitivity")
+    if metric == "equity_multiple":
+        return f"{value:.2f}x"
+    if metric == "gross_sale_price":
+        return f"${value / 1_000_000:.1f}M"
+    return f"{value * 100:.1f}%"
+
+
+def _render_sensitivity_grid(slide: Slide, sens: dict[str, Any]) -> None:
+    """The persisted sensitivity engine grid, coloured relative to the base
+    cell (green at/above base, amber within 2pp / 0.1x below, red further).
+    Colouring is presentation only — every number is the engine's."""
+    rows = [r for r in (sens.get("rows") or []) if r is not None]
+    cols = [c for c in (sens.get("cols") or []) if c is not None]
+    cells = sens.get("cells") or []
+    row_var = sens.get("row_variable")
+    col_var = sens.get("col_variable")
+    metric = sens.get("metric")
+    lookup: dict[tuple[float, float], dict[str, Any]] = {}
+    for c in cells:
+        rv, cv = c.get("row_value"), c.get("col_value")
+        if rv is None or cv is None:
+            continue
+        lookup[(round(float(rv), 9), round(float(cv), 9))] = c
+    base = next((c for c in cells if c.get("is_base")), None)
+    base_val = base.get("value") if base else None
+    # Amber band below base, in the metric's own unit: 2pp for the rate
+    # metrics (IRRs, cash-on-cash), 0.1x for the multiple, 2% of the base
+    # value for the sale price (a dollar figure has no absolute band).
+    if metric == "equity_multiple":
+        tolerance = 0.1
+    elif metric == "gross_sale_price":
+        tolerance = abs(base_val) * 0.02 if base_val is not None else 0.0
+    else:
+        tolerance = 0.02
+
+    title = (
+        f"{_SENS_METRIC_LABEL.get(str(metric), str(metric))} — "
+        f"{_SENS_VARIABLE_LABEL.get(str(row_var), str(row_var))} × "
+        f"{_SENS_VARIABLE_LABEL.get(str(col_var), str(col_var))}"
+    )
+    _add_textbox(slide, 6.85, 1.3, 5.5, 0.4, title, 13, True, INK)
+
+    n_cols = len(cols) + 1
+    n_rows = len(rows) + 1
+    table_shape = slide.shapes.add_table(n_rows, n_cols, Inches(6.85), Inches(1.7), Inches(6.0), Inches(3.5))
+    table = table_shape.table
+
+    table.cell(0, 0).text = ""
+    table.cell(0, 0).fill.solid()
+    table.cell(0, 0).fill.fore_color.rgb = SLATE
+    for j, cv in enumerate(cols, start=1):
+        cell = table.cell(0, j)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = SLATE
+        p = cell.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = _fmt_sens_axis(col_var, cv)
+        r.font.color.rgb = WHITE
+        r.font.bold = True
+        r.font.size = Pt(9)
+
+    for i, rv in enumerate(rows):
+        cell = table.cell(i + 1, 0)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = GRAY_100
+        p = cell.text_frame.paragraphs[0]
+        rr = p.add_run()
+        rr.text = _fmt_sens_axis(row_var, rv)
+        rr.font.bold = True
+        rr.font.size = Pt(9)
+        for j, cv in enumerate(cols):
+            data = lookup.get((round(float(rv), 9), round(float(cv), 9)))
+            val = data.get("value") if data else None
+            cell = table.cell(i + 1, j + 1)
+            cell.fill.solid()
+            if val is None or base_val is None:
+                cell.fill.fore_color.rgb = WHITE
+            elif val >= base_val:
+                cell.fill.fore_color.rgb = GREEN_50
+            elif val >= base_val - tolerance:
+                cell.fill.fore_color.rgb = AMBER_50
+            else:
+                cell.fill.fore_color.rgb = RED_50
+            p = cell.text_frame.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER
+            r = p.add_run()
+            r.text = _fmt_sens_metric(metric, val)
+            r.font.size = Pt(9)
+            r.font.bold = bool(data and data.get("is_base"))
+            r.font.color.rgb = INK
+    _add_textbox(
+        slide, 6.85, 5.25, 6.0, 0.3,
+        "Source: sensitivity engine (canonical run). Bold = base case; shading relative to base.",
+        8, False, INK_500,
+    )
 
 
 def _slide_risk_sensitivity(prs: Presentation, memo: dict[str, Any], model: dict[str, Any]) -> None:
@@ -524,69 +728,41 @@ def _slide_risk_sensitivity(prs: Presentation, memo: dict[str, Any], model: dict
     _add_textbox(slide, 0.5, 1.3, 5.5, 0.4, "Risk Profile", 13, True, INK)
     risk_rows = []
     for r in risks:
-        risk_rows.append([r.get("name", ""), r.get("tier", ""), str(r.get("score", 0))])
+        risk_rows.append([
+            r.get("name") or refuse(ReasonCode.NO_SOURCE, "risk subscore has no name", "risk.name"),
+            r.get("tier") or refuse(ReasonCode.NO_SOURCE, "risk subscore has no tier", "risk.tier"),
+            _fmt_int(r.get("score"), "risk.score"),
+        ])
     if not risk_rows:
-        risk_rows = [["—", "—", "—"]]
+        risk_rows = [[
+            unavailable(
+                ReasonCode.AWAITING_ANALYST,
+                "no risk assessment section on the memo",
+                "risk_assessment",
+            ),
+            "",
+            "",
+        ]]
     _add_table(slide, 0.5, 1.7, 6.0, 3.5, ["Risk", "Tier", "Score"], risk_rows)
 
-    # Sensitivity heatmap (right) — 5x5 IRR vs Exit Cap × RevPAR Growth
-    _add_textbox(slide, 6.85, 1.3, 5.5, 0.4, "Levered IRR — Exit Cap × RevPAR Growth", 13, True, INK)
-    base_irr = float(model.get("returns_engine", {}).get("levered_irr", 0.23))
-    cap_vals = [0.060, 0.065, 0.070, 0.075, 0.080]
-    rev_vals = [0.02, 0.03, 0.05, 0.06, 0.08]
-
-    n_cols = len(rev_vals) + 1
-    n_rows = len(cap_vals) + 1
-    table_shape = slide.shapes.add_table(n_rows, n_cols, Inches(6.85), Inches(1.7), Inches(6.0), Inches(3.5))
-    table = table_shape.table
-
-    # Header row
-    table.cell(0, 0).text = ""
-    table.cell(0, 0).fill.solid()
-    table.cell(0, 0).fill.fore_color.rgb = SLATE
-    for j, rv in enumerate(rev_vals, start=1):
-        cell = table.cell(0, j)
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = SLATE
-        p = cell.text_frame.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
-        r = p.add_run()
-        r.text = f"{rv * 100:.0f}%"
-        r.font.color.rgb = WHITE
-        r.font.bold = True
-        r.font.size = Pt(9)
-
-    mid_r = (len(cap_vals) - 1) / 2
-    mid_c = (len(rev_vals) - 1) / 2
-    for i, cv in enumerate(cap_vals):
-        cell = table.cell(i + 1, 0)
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = GRAY_100
-        p = cell.text_frame.paragraphs[0]
-        rr = p.add_run()
-        rr.text = f"{cv * 100:.1f}%"
-        rr.font.bold = True
-        rr.font.size = Pt(9)
-        for j in range(len(rev_vals)):
-            drow = (i - mid_r) / max(mid_r, 1)
-            dcol = (j - mid_c) / max(mid_c, 1)
-            val = base_irr * (1 + 0.5 * (dcol - drow) / 2)
-            cell = table.cell(i + 1, j + 1)
-            cell.fill.solid()
-            norm = (val - base_irr * 0.5) / (base_irr * 1.0) if base_irr else 0.5
-            norm = max(0.0, min(1.0, norm))
-            if norm > 0.66:
-                cell.fill.fore_color.rgb = GREEN_50
-            elif norm > 0.33:
-                cell.fill.fore_color.rgb = AMBER_50
-            else:
-                cell.fill.fore_color.rgb = RED_50
-            p = cell.text_frame.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER
-            r = p.add_run()
-            r.text = f"{val * 100:.1f}%"
-            r.font.size = Pt(9)
-            r.font.color.rgb = INK
+    # Sensitivity heat-map (right) — A1: the sensitivity ENGINE's persisted
+    # output, or a sentence saying why there is none. Never synthesized.
+    sens = model.get("sensitivity_engine")
+    if isinstance(sens, dict) and sens.get("cells") and sens.get("rows") and sens.get("cols"):
+        _render_sensitivity_grid(slide, sens)
+    else:
+        reason = (
+            str(sens.get("unavailable_reason"))
+            if isinstance(sens, dict) and sens.get("unavailable_reason")
+            else "no sensitivity engine output on the export payload"
+        )
+        refuse(ReasonCode.ENGINE_SKIPPED, reason, "sensitivity")
+        _add_textbox(slide, 6.85, 1.3, 5.5, 0.4, "Sensitivities", 13, True, INK)
+        _add_textbox(
+            slide, 6.85, 1.7, 6.0, 1.0,
+            f"Sensitivity analysis not available: {reason}",
+            11, False, INK_500,
+        )
 
     # Variance disclosure footer
     var_body = ""
@@ -606,12 +782,21 @@ def _slide_recommendation(prs: Presentation, memo: dict[str, Any], model: dict[s
     _add_top_ribbon(slide, "Recommendation")
 
     header = memo.get("header", {})
-    rec_text = header.get("recommendation", "PROCEED TO LOI")
+    # The analyst's confirmed IC verdict, or the fact that it is pending —
+    # never a default verdict.
+    rec_text = header.get("recommendation") or unavailable(
+        ReasonCode.AWAITING_ANALYST,
+        "no IC recommendation confirmed by the analyst",
+        "ic_recommendation",
+    )
+    pending = not header.get("recommendation") or (
+        header.get("recommendation_reason") == ReasonCode.AWAITING_ANALYST.value
+    )
 
     # Big recommendation card
-    _add_filled_box(slide, 0.5, 1.3, 12.3, 2.0, GREEN_50, GREEN_500)
-    _add_textbox(slide, 0.8, 1.45, 12, 0.4, "INVESTMENT COMMITTEE RECOMMENDATION", 11, True, GREEN_500)
-    _add_textbox(slide, 0.8, 1.85, 12, 1.0, rec_text, 30, True, INK)
+    _add_filled_box(slide, 0.5, 1.3, 12.3, 2.0, AMBER_50 if pending else GREEN_50, AMBER if pending else GREEN_500)
+    _add_textbox(slide, 0.8, 1.45, 12, 0.4, "INVESTMENT COMMITTEE RECOMMENDATION", 11, True, AMBER if pending else GREEN_500)
+    _add_textbox(slide, 0.8, 1.85, 12, 1.0, rec_text, 30 if not pending else 18, True, INK)
 
     # Pull rec body
     rec_body = ""
@@ -622,30 +807,14 @@ def _slide_recommendation(prs: Presentation, memo: dict[str, Any], model: dict[s
     if rec_body:
         _add_textbox(slide, 0.8, 2.65, 12, 0.6, rec_body, 11, False, INK)
 
-    # Action items
-    _add_textbox(slide, 0.5, 3.5, 12, 0.4, "Next Steps", 13, True, INK)
-    next_steps = [
-        "Submit Letter of Intent at current ask",
-        "Engage independent valuation firm and operator due diligence",
-        "Confirm senior debt term sheet with lender",
-        "Finalize PIP scope with Kimpton brand standards team",
-        "Schedule IC vote — Mark project as IC Ready",
-    ]
-    _add_bullet_list(slide, 0.6, 3.95, 12, 2.5, next_steps, font_size=12)
+    # A2 — no "Next Steps" block: the deck carries no action list unless the
+    # deal supplies one, and today no engine or table does. Nothing generic.
 
-    # Footer signature line
+    # Footer signature line — the analyst's name only when the memo names one.
     today = datetime.now(UTC).strftime("%B %d, %Y")
-    _add_textbox(
-        slide,
-        0.5,
-        6.85,
-        12.3,
-        0.3,
-        f"Prepared by Fondok AI · {header.get('lead_analyst', 'Analyst')} · {today}",
-        9,
-        False,
-        INK_500,
-    )
+    analyst = header.get("lead_analyst")
+    footer = f"Prepared by Fondok AI · {analyst} · {today}" if analyst else f"Prepared by Fondok AI · {today}"
+    _add_textbox(slide, 0.5, 6.85, 12.3, 0.3, footer, 9, False, INK_500)
 
 
 # ─────────────────────────── public API ───────────────────────────
@@ -657,7 +826,22 @@ def build_pptx(
     memo: dict[str, Any],
     output_path: Path,
 ) -> Path:
-    """Build the 8-slide IC presentation deck."""
+    """Build the 8-slide IC presentation deck.
+
+    The build runs inside a refusal collector so every dash / not-available
+    the slides write is typed; the deck itself has no refusals page — the
+    collector keeps the channel consistent with the workbook and memo.
+    """
+    with collect_refusals():
+        return _build_pptx_slides(deal, model, memo, output_path)
+
+
+def _build_pptx_slides(
+    deal: dict[str, Any],
+    model: dict[str, Any],
+    memo: dict[str, Any],
+    output_path: Path,
+) -> Path:
     prs = Presentation()
     # 16:9 slide
     prs.slide_width = Inches(13.33)

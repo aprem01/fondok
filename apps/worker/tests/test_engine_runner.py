@@ -617,7 +617,7 @@ async def test_unknown_engine_raises() -> None:
 # ``_kimpton_assumptions()`` seeded 528K/528K on EVERY deal (a demo-fixture
 # leftover); the capital engine emitted them as two extra uses and the returns
 # basis carried them. The seed is now 0/0 (the demo export's own fixture in
-# ``app/export/fixtures.py`` is untouched); ``working_capital`` stays at 500K.
+# ``tests/fixtures/kimpton_export_payload.py`` is untouched); ``working_capital`` stays at 500K.
 
 
 def test_kimpton_seed_carries_no_universal_soft_costs_or_contingency() -> None:

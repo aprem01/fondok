@@ -16,7 +16,9 @@ Kimpton fixture carries. These tests lock:
     3. transaction comps extracted on the deal populate ``market_comps``;
     4. extracted P&L years populate ``historical_baseline`` + its YoY walk;
     5. the variance-flag mapper preserves the UI's severity / values;
-    6. the slug/demo Kimpton path is untouched.
+    6. (go-live Wave 0) pricing solves ONLY against the deal's own return
+       targets — a deal without one gets the canonical "not available"
+       sentence and no solver output in the payload, the workbook or the memo.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-live-payload-w23.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
+
+from app.export.labels import OP_RATIO_ALL_SEED_NOTE  # noqa: E402
 
 # Strings that only exist in the Kimpton fixture — none may leak into a real
 # deal's export payload.
@@ -79,6 +83,12 @@ async def _reset_db() -> None:
     yield
 
 
+#: Return targets a test deal carries when it should price (deliberately not
+#: the retired 15% / 1.8x literals, so a leak of either would show).
+_TARGET_IRR = 0.14
+_TARGET_MOIC = 1.9
+
+
 async def _seed_deal(
     session,
     *,
@@ -87,11 +97,14 @@ async def _seed_deal(
     name: str = "Harbor House Test",
     city: str = "Tampa, FL",
     keys: int = 150,
+    target_irr: float | None = None,
+    target_moic: float | None = None,
 ) -> None:
     await session.execute(
         text(
-            "INSERT INTO deals (id, tenant_id, name, city, keys, field_overrides) "
-            "VALUES (:id, :tenant, :name, :city, :keys, :fo)"
+            "INSERT INTO deals (id, tenant_id, name, city, keys, field_overrides, "
+            "target_irr, target_moic) "
+            "VALUES (:id, :tenant, :name, :city, :keys, :fo, :irr, :moic)"
         ),
         {
             "id": deal_id,
@@ -100,6 +113,8 @@ async def _seed_deal(
             "city": city,
             "keys": keys,
             "fo": "{}",
+            "irr": target_irr,
+            "moic": target_moic,
         },
     )
 
@@ -217,7 +232,10 @@ async def test_live_payload_wires_scenarios_capex_and_pricing() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        await _seed_deal(
+            session, deal_id=deal_id, tenant_id=tenant_id,
+            target_irr=_TARGET_IRR, target_moic=_TARGET_MOIC,
+        )
         base = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=base_run
         )
@@ -291,8 +309,11 @@ async def test_live_payload_wires_scenarios_capex_and_pricing() -> None:
     assert all(r["pip_usd"] == 0.0 for r in capex[1:])
     assert sum(r["total_capex_usd"] for r in capex) > 0
 
-    # ── Pricing trio (same math as the Pricing panel endpoints) ────────
+    # ── Pricing (same math as the Pricing panel endpoints), solved against
+    # ── the DEAL's targets — never a default hurdle.
+    assert "pricing_unavailable" not in model
     grid = model["sensitivity_grid"]
+    assert grid["target_irr"] == _TARGET_IRR
     assert len(grid["cells"]) == 25
     assert {round(c["exit_cap_pct"], 6) for c in grid["cells"]} and {
         c["noi_multiplier"] for c in grid["cells"]
@@ -307,11 +328,26 @@ async def test_live_payload_wires_scenarios_capex_and_pricing() -> None:
         assert all(isinstance(c[key], float) for c in grid["cells"])
 
     mp = model["max_price"]
+    assert mp["target_irr"] == _TARGET_IRR and mp["target_em"] == _TARGET_MOIC
     assert mp["max_price_for_irr"] > 0 and mp["max_price_for_em"] > 0
     assert mp["binding_constraint"] in ("irr", "em", "both")
     assert mp["final_price_per_key"] == pytest.approx(
         min(mp["max_price_for_irr"], mp["max_price_for_em"]) / 150
     )
+
+    # ── The deck's heat-map source: the persisted sensitivity engine row.
+    sens = model["sensitivity_engine"]
+    assert sens["cells"] and sens["rows"] and sens["cols"]
+    assert "unavailable_reason" not in sens
+    assert sens["metric"] == base["sensitivity"]["outputs"]["metric"]
+    assert any(c["is_base"] for c in sens["cells"])
+
+    # ── B2: op-ratio provenance is ALWAYS present for a modelled deal, and
+    # ── an all-seed deal says so in words instead of hiding the sheet.
+    op_prov = model["op_ratio_provenance"]
+    assert op_prov["all_seed"] is True
+    assert op_prov["note"] == OP_RATIO_ALL_SEED_NOTE
+    assert op_prov["lines"] and all(line["source"] == "seed" for line in op_prov["lines"])
 
     # LOI is intentionally OMITTED for live deals (product decision): the
     # one-click draft carries template placeholders ([TBD] parties, default
@@ -323,7 +359,6 @@ async def test_live_payload_wires_scenarios_capex_and_pricing() -> None:
     for absent in (
         "variance_flags", "market_comps", "comp_sales",
         "historical_baseline", "str_forecast", "pip_displacement",
-        "op_ratio_provenance",
     ):
         assert absent not in model, f"{absent} must be omitted with no live data"
 
@@ -354,7 +389,10 @@ async def test_live_payload_builds_full_excel_with_new_sheets(tmp_path: Path) ->
 
     factory = get_session_factory()
     async with factory() as session:
-        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)
+        await _seed_deal(
+            session, deal_id=deal_id, tenant_id=tenant_id,
+            target_irr=_TARGET_IRR, target_moic=_TARGET_MOIC,
+        )
         await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=base_run)
         await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=scen_run, overrides=_DOWNSIDE
@@ -376,22 +414,199 @@ async def test_live_payload_builds_full_excel_with_new_sheets(tmp_path: Path) ->
     names = set(wb.sheetnames)
     wb.close()
 
-    for present in ("Named Scenarios", "Capital Plan", "Pricing Sensitivity"):
+    for present in ("Named Scenarios", "Capital Plan", "Pricing Sensitivity",
+                    "Op-Ratio Provenance"):
         assert present in names, f"{present} missing from live workbook: {sorted(names)}"
     # Conditional sheets whose live source is empty on a bare deal must NOT
     # render (Revenue Mix needs an STR_SEGMENTATION extraction; the rest need
-    # OM comps / P&L history / STR history / a PIP spec / grounded op-ratios).
-    # LOI Appendix is intentionally omitted for live deals (template-placeholder
-    # terms — no-fake-data product decision).
+    # OM comps / P&L history / STR history / a PIP spec). LOI Appendix is
+    # intentionally omitted for live deals (template-placeholder terms —
+    # no-fake-data product decision).
     for absent in ("Revenue Mix", "Renovation Plan", "Comparable Sales",
-                   "Historical Baseline", "STR Forecast", "Op-Ratio Provenance",
-                   "LOI Appendix"):
+                   "Historical Baseline", "STR Forecast", "LOI Appendix"):
         assert absent not in names, f"{absent} must not render with no live data"
+    # B2 — the all-seed deal's Op-Ratio sheet SAYS it is all seed.
+    wb = load_workbook(out, read_only=True)
+    op_vals = [c.value for row in wb["Op-Ratio Provenance"].iter_rows() for c in row if c.value]
+    wb.close()
+    assert OP_RATIO_ALL_SEED_NOTE in op_vals
+    # Pricing solved against the deal's targets: the IRR grid header names it.
+    wb = load_workbook(out, read_only=True)
+    ps_vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value]
+    wb.close()
+    assert any(v.startswith("LEVERED IRR (deal target = 14.00%)") for v in ps_vals), ps_vals[:12]
     # Always-on legacy sheets still ship (Variance / Market Comps render empty
     # tables rather than fixture rows when the deal has no flags / comps).
     assert {"Cover", "Assumptions", "Sources & Uses", "Operating Proforma",
             "Debt Schedule", "Returns", "Partnership", "Variance",
             "Market Comps"} <= names
+
+
+@pytest.mark.asyncio
+async def test_live_payload_without_a_return_target_refuses_pricing(tmp_path: Path) -> None:
+    """A3 — no target on the deal → no solver output anywhere, and the same
+    sentence in the payload, the workbook and the memo. Never 15% / 1.8x."""
+    from openpyxl import load_workbook
+
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.export.labels import PRICING_NO_TARGET_NOTE
+    from app.export.live_payload import load_live_payload
+    from app.export.memo_pdf import _render_html
+    from app.services.engine_runner import run_all_engines
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id)  # no targets
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
+        await session.commit()
+        _deal, model, memo = await load_live_payload(session, deal_id, tenant_id)
+
+    assert "sensitivity_grid" not in model and "max_price" not in model
+    assert model["pricing_unavailable"] == PRICING_NO_TARGET_NOTE
+    assert any(
+        r.concept == "pricing.return_target" and r.code.value == "awaiting_analyst"
+        for r in model["refusals"]
+    )
+
+    out = build_excel(deal_id, model, tmp_path / "no-target.xlsx")
+    wb = load_workbook(out, read_only=True)
+    assert "Pricing Sensitivity" in wb.sheetnames
+    vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value]
+    wb.close()
+    assert PRICING_NO_TARGET_NOTE in vals
+    assert not any("MAX-PRICE" in v or "LEVERED IRR" in v for v in vals), vals
+    blob = " ".join(vals)
+    assert "15.00%" not in blob and "1.80" not in blob
+
+    html_str = _render_html(memo, model)
+    assert PRICING_NO_TARGET_NOTE in html_str
+    assert "Max-Price Findings" not in html_str
+    assert "Pricing Sensitivity (5x5 Grid)" not in html_str
+
+
+@pytest.mark.asyncio
+async def test_live_payload_em_only_target_keeps_max_price_and_states_grid_reason(
+    tmp_path: Path,
+) -> None:
+    """A deal with ONLY a target equity multiple: the max price is solved
+    against that EM target and rendered everywhere; the IRR grid is replaced
+    by a stated reason in the payload, the workbook and the memo."""
+    from openpyxl import load_workbook
+
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.export.labels import IRR_GRID_NO_TARGET_NOTE
+    from app.export.live_payload import load_live_payload
+    from app.export.memo_pdf import _render_html
+    from app.services.engine_runner import run_all_engines
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id, target_moic=_TARGET_MOIC)
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
+        await session.commit()
+        _deal, model, memo = await load_live_payload(session, deal_id, tenant_id)
+
+    assert "pricing_unavailable" not in model
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == IRR_GRID_NO_TARGET_NOTE
+    mp = model["max_price"]
+    assert mp["target_irr"] is None and mp["target_em"] == _TARGET_MOIC
+    assert mp["irr_status"] == "not_requested" and mp["binding_constraint"] == "em"
+    assert mp["max_price_for_em"] > 0 and mp["max_price"] == mp["max_price_for_em"]
+    assert mp["final_price_per_key"] == pytest.approx(mp["max_price_for_em"] / 150)
+
+    out = build_excel(deal_id, model, tmp_path / "em-only.xlsx")
+    wb = load_workbook(out, read_only=True)
+    assert "Pricing Sensitivity" in wb.sheetnames
+    vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value is not None]
+    wb.close()
+    assert "MAX-PRICE FINDINGS" in vals and "Max Price for EM target" in vals
+    assert str(mp["max_price_for_em"]) in vals
+    assert "not available: no IRR target set on this deal" in vals  # the IRR price cell
+    assert IRR_GRID_NO_TARGET_NOTE in vals
+    assert not any(v.startswith("LEVERED IRR") for v in vals)
+
+    html_str = _render_html(memo, model)
+    assert "Max-Price Findings" in html_str
+    assert f"Max price for {_TARGET_MOIC:.2f}x EM" in html_str
+    assert "Max price for" in html_str and "IRR:</strong>" not in html_str
+    assert IRR_GRID_NO_TARGET_NOTE in html_str
+    assert "Pricing Sensitivity (5x5 Grid)" not in html_str
+
+
+async def _irr_deal_payload(tmp_path: Path, monkeypatch, fake_grid):
+    """An IRR-target deal whose grid solver is replaced by ``fake_grid``;
+    returns ``(model, memo, pricing-sheet values, memo html)``."""
+    from openpyxl import load_workbook
+
+    import app.engines.pricing_sensitivity as ps
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.export.live_payload import load_live_payload
+    from app.export.memo_pdf import _render_html
+    from app.services.engine_runner import run_all_engines
+
+    monkeypatch.setattr(ps, "run_sensitivity_grid", fake_grid)
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_deal(session, deal_id=deal_id, tenant_id=tenant_id, target_irr=_TARGET_IRR)
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
+        await session.commit()
+        _deal, model, memo = await load_live_payload(session, deal_id, tenant_id)
+    out = build_excel(deal_id, model, tmp_path / "grid-failure.xlsx")
+    wb = load_workbook(out, read_only=True)
+    vals = [str(c.value) for row in wb["Pricing Sensitivity"].iter_rows() for c in row if c.value is not None]
+    wb.close()
+    return model, memo, vals, _render_html(memo, model)
+
+
+@pytest.mark.asyncio
+async def test_irr_deal_grid_solver_error_states_the_error_type(tmp_path: Path, monkeypatch) -> None:
+    """The grid solver raised on an IRR-target deal: the reason names the
+    exception TYPE (never the no-target sentence, never the message)."""
+    from app.export.labels import IRR_GRID_ENGINE_ERROR_NOTE, IRR_GRID_NO_TARGET_NOTE
+
+    def boom(*_a, **_k):
+        raise ZeroDivisionError("secret deal figure 12345")
+
+    model, _memo, vals, html_str = await _irr_deal_payload(tmp_path, monkeypatch, boom)
+    note = IRR_GRID_ENGINE_ERROR_NOTE.format(error="ZeroDivisionError")
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == note
+    assert "12345" not in model["sensitivity_grid_unavailable"]
+    assert model["max_price"]["target_irr"] == _TARGET_IRR  # the solve still ran
+    assert note in vals and IRR_GRID_NO_TARGET_NOTE not in vals
+    assert "MAX-PRICE FINDINGS" in vals
+    assert note in html_str and IRR_GRID_NO_TARGET_NOTE not in html_str
+    assert "Max-Price Findings" in html_str
+
+
+@pytest.mark.asyncio
+async def test_irr_deal_grid_with_no_cells_states_so(tmp_path: Path, monkeypatch) -> None:
+    from app.engines.pricing_sensitivity import SensitivityGrid
+    from app.export.labels import IRR_GRID_NO_CELLS_NOTE, IRR_GRID_NO_TARGET_NOTE
+
+    def empty(base_input, *, target_irr, **_k):
+        return SensitivityGrid(
+            base_exit_cap_pct=base_input.assumptions.exit_cap_rate,
+            base_stabilized_noi=base_input.year_one_noi,
+            cells=[],
+        )
+
+    model, _memo, vals, html_str = await _irr_deal_payload(tmp_path, monkeypatch, empty)
+    assert "sensitivity_grid" not in model
+    assert model["sensitivity_grid_unavailable"] == IRR_GRID_NO_CELLS_NOTE
+    assert IRR_GRID_NO_CELLS_NOTE in vals and IRR_GRID_NO_TARGET_NOTE not in vals
+    assert IRR_GRID_NO_CELLS_NOTE in html_str and IRR_GRID_NO_TARGET_NOTE not in html_str
+    assert "Pricing Sensitivity (5x5 Grid)" not in html_str
 
 
 # ─────────────────── 3. transaction comps → Market Comps rows ───────────────────
@@ -551,18 +766,3 @@ def test_variance_flags_mapper_preserves_ui_rows() -> None:
     assert rows[2]["metric"] == "Occupancy"
     for k in ("broker_value", "t12_value", "variance_pct", "recommended_action"):
         assert k not in rows[2]
-
-
-# ─────────────────── 6. demo/slug Kimpton path untouched ───────────────────
-
-
-def test_demo_payload_unchanged() -> None:
-    from app.export.fixtures import kimpton_deal, kimpton_memo, kimpton_model, load_demo_payload
-
-    deal, model, memo = load_demo_payload("kimpton-angler-2026")
-    assert model == kimpton_model()
-    assert memo == kimpton_memo()
-    expected_deal = kimpton_deal()
-    expected_deal["id"] = "kimpton-angler-2026"
-    assert deal == expected_deal
-    assert len(model["scenario_outputs"]) == 3 and len(model["variance_flags"]) == 5

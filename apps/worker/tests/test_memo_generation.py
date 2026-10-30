@@ -625,21 +625,6 @@ async def test_load_deal_payload_uses_real_extracted_documents() -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_deal_payload_falls_back_to_fixture_without_session() -> None:
-    """Demo path (no DB session) keeps the Kimpton fixture so the
-    streaming smoke flow stays green."""
-    from app.api.deals import _load_deal_payload
-
-    payload = await _load_deal_payload("kimpton-angler-2026")
-
-    # Fixture path emits the synthetic ``doc-NN`` ids.
-    assert len(payload.source_documents) > 0
-    for d in payload.source_documents:
-        assert d.document_id.startswith("doc-")
-        assert d.doc_type == "reference"
-
-
-@pytest.mark.asyncio
 async def test_load_deal_payload_requires_tenant_with_session() -> None:
     """FON-93: a DB-backed load without a tenant is a programming error —
     it must raise, never fall back to DEFAULT_TENANT_ID."""
@@ -649,17 +634,43 @@ async def test_load_deal_payload_requires_tenant_with_session() -> None:
     factory = get_session_factory()
     async with factory() as session:
         with pytest.raises(ValueError, match="tenant_id is required"):
-            await _load_deal_payload(str(uuid4()), session=session)
+            await _load_deal_payload(str(uuid4()), session=session, tenant_id="")
+
+
+@pytest.mark.asyncio
+async def test_load_deal_payload_has_no_session_less_fixture_path() -> None:
+    """Go-live: the Kimpton fixture branch is gone. The loader is DB-only by
+    signature — a call without a session is a TypeError, not a demo payload."""
+    import inspect
+
+    from app.api.deals import _load_deal_payload
+
+    params = inspect.signature(_load_deal_payload).parameters
+    assert params["session"].default is inspect.Parameter.empty
+    assert params["tenant_id"].default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        await _load_deal_payload("kimpton-angler-2026")  # type: ignore[call-arg]
 
 
 @pytest.mark.asyncio
 async def test_load_deal_payload_stamps_callers_tenant() -> None:
     """FON-93: the AnalystInput carries the caller's tenant, not the default."""
     from app.api.deals import _load_deal_payload
+    from app.database import get_session_factory
 
-    other = "33333333-3333-3333-3333-333333333333"  # deliberately not DEFAULT_TENANT_ID
-    payload = await _load_deal_payload("kimpton-angler-2026", tenant_id=other)
-    assert payload.tenant_id == other
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_extracted_document(deal_id)
+    tenant = "00000000-0000-0000-0000-000000000001"  # the tenant _insert_deal uses
+    factory = get_session_factory()
+    async with factory() as session:
+        payload = await _load_deal_payload(
+            str(deal_id), session=session, tenant_id=tenant
+        )
+    assert payload.tenant_id == tenant
+    assert payload.deal_id == str(deal_id)
+    # Real documents only — never the fixture's synthetic ``doc-NN`` ids.
+    assert all(not d.document_id.startswith("doc-") for d in payload.source_documents)
 
 
 # ─────────────────── 7. Real numeric inputs replace fixture spread ───────────────────

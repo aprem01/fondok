@@ -5,7 +5,7 @@
       "city": "\u2014",
       "keys": "\u2014",
       "location": "\u2014",
-      "name": "Hotel",
+      "name": "\u2014",
       "service": "\u2014",
       "year_built": "\u2014"
     },
@@ -30,12 +30,16 @@
           "Submarket": "\u2014"
         }
       },
-      "model_version": "fondok-engine-live"
+      "model_version": "fondok-engine-live",
+      "sensitivity_engine": {
+        "unavailable_reason": "the sensitivity engine has not run on this deal's canonical run"
+      }
     },
     "model_keys": [
       "deal_name",
       "market",
-      "model_version"
+      "model_version",
+      "sensitivity_engine"
     ]
   },
   "modeled": {
@@ -81,14 +85,15 @@
       "keys",
       "location",
       "market",
-      "max_price",
       "model_version",
       "named_scenarios",
+      "op_ratio_provenance",
       "p_and_l_engine_proforma",
       "partnership_engine",
+      "pricing_unavailable",
       "returns_engine",
       "scenario_outputs",
-      "sensitivity_grid",
+      "sensitivity_engine",
       "sources",
       "uses"
     ]

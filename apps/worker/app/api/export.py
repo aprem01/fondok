@@ -1,26 +1,25 @@
 """Export endpoints — Excel acquisition model, IC memo PDF, IC deck PPTX.
 
-Each endpoint loads the deal payload (currently a hard-coded Kimpton
-Angler fixture; switches to a DB read once the agent runtime persists
-EngineOutputs), invokes the matching builder in ``app.export``, and
-streams the resulting file back via ``FileResponse`` with the right
+Each endpoint loads the deal's live payload (:func:`load_live_payload` —
+the canonical engine snapshot, the cached memo with analyst overrides, the
+real uploaded documents), invokes the matching builder in ``app.export``,
+and streams the resulting file back via ``FileResponse`` with the right
 MIME type.
 
-The route accepts ``deal_id`` as a free-form string and coerces it to
-a UUID internally. Fondok deals are sometimes addressed by slug
-(``kimpton-angler-2026``) and sometimes by UUID; FastAPI rejecting
-non-UUID strings here was returning 422s for every export attempt.
+There is exactly one payload source. A deal id that is not a UUID the
+caller's tenant owns answers ``404 Deal not found.`` like every other deal
+route — no fixture, no demo slug (go-live rule 3: no demo forks in
+production modules).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -28,10 +27,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
-from ..config import get_settings
 from ..database import get_session
 from ..export import build_excel, build_memo_pdf, build_pptx
-from ..export.fixtures import load_demo_payload
 from ..export.live_payload import load_live_payload
 from .deals import get_tenant_id
 
@@ -40,119 +37,55 @@ router = APIRouter()
 
 
 #: What a caller sees for a deal id this tenant cannot export — a foreign or
-#: unknown UUID, or a non-UUID id that is not an enabled demo slug.
+#: unknown UUID, or any id that is not a UUID at all.
 DEAL_NOT_FOUND_DETAIL = "Deal not found."
 
 
-def _is_real_uuid(deal_id: str) -> bool:
-    """True for a real DB deal id (UUID), False for a slug/demo id.
+def _parse_deal_uuid(deal_id: str) -> UUID | None:
+    """The deal id as a UUID, or ``None`` when it is not one.
 
-    Slug deals (``kimpton-angler-2026``) keep the hard-coded fixture ONLY when
-    ``DEMO_EXPORT_SLUGS`` lists them (empty in prod — see :mod:`app.config`);
-    real UUID deals render the live deal via :func:`load_live_payload`.
+    The route accepts ``deal_id`` as a free-form string so a non-UUID id
+    answers the same ``404 Deal not found.`` as an unknown UUID instead of
+    FastAPI's 422 — the two must be indistinguishable to a stranger.
     """
     try:
-        UUID(deal_id)
-        return True
+        return UUID(deal_id)
     except (TypeError, ValueError):
-        return False
+        return None
 
 
 async def _load_payload(
     session: AsyncSession, deal_id: str, tenant_id: UUID
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return ``(deal, model, memo)`` for either a live UUID deal or a demo slug.
+    """Return ``(deal, model, memo)`` for a deal the caller's tenant owns.
 
-    Live deals assemble from the canonical engine snapshot + cached memo +
-    real uploaded docs (:func:`load_live_payload`). Demo/slug deals keep the
-    Kimpton fixture, with the memo appendix's ``documents_reviewed`` swapped to
-    any real uploads (a no-op for the pure Kimpton slug — see
-    :func:`_real_documents_reviewed`).
+    FON-93 — the deal must be on the caller's tenant. ``load_live_payload``
+    never raises for missing data: every query it runs is tenant-scoped, so
+    for a foreign (or unknown) deal id it would assemble an EMPTY payload and
+    the route would serve a blank workbook / PDF / deck with a 200 — no data
+    crossed, but a stranger got a file where every other deal route answers
+    404 (found by scripts/isolation_check.py, 2026-10-17). So ownership is
+    checked here first.
     """
-    if _is_real_uuid(deal_id):
-        # FON-93 — the deal must be on the caller's tenant. ``load_live_payload``
-        # never raises for missing data: every query it runs is tenant-scoped,
-        # so for a foreign (or unknown) deal id it assembled an EMPTY payload
-        # and the route served a blank workbook / PDF / deck with a 200 — no
-        # data crossed, but a stranger got a file where every other deal
-        # route answers 404 (found by scripts/isolation_check.py, 2026-10-17).
-        owned = (
-            await session.execute(
-                text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
-                {"id": deal_id, "tenant": str(tenant_id)},
-            )
-        ).first()
-        if owned is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=DEAL_NOT_FOUND_DETAIL,
-            )
-        return await load_live_payload(session, deal_id, str(tenant_id))
-    # A non-UUID id reaches the fixture only when explicitly enabled. Without
-    # that, a typo'd / shared URL must answer like every other unknown deal.
-    if deal_id not in get_settings().demo_export_slugs():
-        logger.info(
-            "export: refused non-UUID deal id %r (not in DEMO_EXPORT_SLUGS)", deal_id
-        )
+    deal_uuid = _parse_deal_uuid(deal_id)
+    if deal_uuid is None:
+        logger.info("export: refused non-UUID deal id %r", deal_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=DEAL_NOT_FOUND_DETAIL,
         )
-    deal, model, memo = load_demo_payload(deal_id)
-    real_docs = await _real_documents_reviewed(
-        session, deal_id=deal_id, tenant_id=str(tenant_id)
-    )
-    _patch_memo_appendix(memo, real_docs)
-    return deal, model, memo
-
-
-async def _real_documents_reviewed(
-    session: AsyncSession, *, deal_id: str, tenant_id: str
-) -> list[str]:
-    """Return the actual filenames uploaded to ``deal_id``.
-
-    Sam re-test: the Kimpton fixture's ``appendix.documents_reviewed``
-    listed eight fictional filenames (STR_MarketReport_Q1.pdf,
-    Lender_Term_Sheet.pdf, etc.) which leaked into every export PDF /
-    PPTX. Replace that list with the real uploaded documents so the
-    appendix reflects the actual data room. Falls back to ``[]`` when
-    no docs exist; the caller decides whether to keep the fixture
-    list or render an empty appendix.
-    """
-    try:
-        UUID(deal_id)
-    except (TypeError, ValueError):
-        # Slug deal id (e.g. Kimpton demo) — no DB row to read from.
-        return []
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT filename
-                  FROM documents
-                 WHERE deal_id = :id AND tenant_id = :tenant
-                 ORDER BY uploaded_at ASC
-                """
-            ),
-            {"id": deal_id, "tenant": tenant_id},
+    owned = (
+        await session.execute(
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": str(deal_uuid), "tenant": str(tenant_id)},
         )
-    except Exception:  # noqa: BLE001 - degrade gracefully
-        return []
-    return [r._mapping["filename"] for r in rows.fetchall()]
-
-
-def _patch_memo_appendix(memo: dict[str, Any], real_docs: list[str]) -> None:
-    """Mutate ``memo['appendix']['documents_reviewed']`` to ``real_docs``
-    when we have any real uploads. Leaves the fixture list intact for
-    slug-id demo deals so the Kimpton golden-set export stays
-    presentation-ready out of the box.
-    """
-    if not real_docs:
-        return
-    appendix = memo.setdefault("appendix", {}) if isinstance(memo, dict) else None
-    if isinstance(appendix, dict):
-        appendix["documents_reviewed"] = real_docs
+    ).first()
+    if owned is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=DEAL_NOT_FOUND_DETAIL,
+        )
+    return await load_live_payload(session, str(deal_uuid), str(tenant_id))
 
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -160,21 +93,7 @@ PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presen
 PDF_MIME = "application/pdf"
 
 
-_DEAL_NAMESPACE = UUID("00000000-0000-0000-0000-000000000000")
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _coerce_deal_uuid(deal_id: str) -> UUID:
-    """Accept either a UUID string or an opaque slug.
-
-    Slugs (e.g. ``kimpton-angler-2026``) are mapped through ``uuid5`` so
-    the same slug always resolves to the same UUID — matches the same
-    coercion the engine runner uses elsewhere in the worker.
-    """
-    try:
-        return UUID(deal_id)
-    except (TypeError, ValueError):
-        return uuid5(_DEAL_NAMESPACE, deal_id)
 
 
 def _safe_filename_part(deal_id: str) -> str:
@@ -221,7 +140,8 @@ async def _audit_export(
         },
         diff_summary=(
             f"downloaded {file_label} "
-            f"({size or 0:,} bytes)"
+            f"({size:,} bytes)" if size is not None
+            else f"downloaded {file_label} (size unknown)"
         ),
         tags=["export", "download"],
         metadata={"deal_id": deal_id},
@@ -236,10 +156,9 @@ async def export_excel(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the multi-tab Excel acquisition model."""
-    deal_uuid = _coerce_deal_uuid(deal_id)
     _deal, model, _memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, ".xlsx")
-    build_excel(deal_uuid, model, out)
+    build_excel(UUID(deal_id), model, out)
     logger.info("excel export built deal=%s size=%s", deal_id, out.stat().st_size)
     await _audit_export(
         session,
@@ -263,7 +182,6 @@ async def export_memo_pdf(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the IC memo PDF."""
-    _coerce_deal_uuid(deal_id)
     _deal, model, memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, "-memo.pdf")
     build_memo_pdf(memo, model, out)
@@ -290,7 +208,6 @@ async def export_pptx(
     tenant_id: Annotated[UUID, Depends(get_tenant_id)],
 ) -> FileResponse:
     """Build and stream the 8-slide IC presentation."""
-    _coerce_deal_uuid(deal_id)
     deal, model, memo = await _load_payload(session, deal_id, tenant_id)
     out = _tmp_path(deal_id, "-deck.pptx")
     build_pptx(deal, model, memo, out)

@@ -445,7 +445,7 @@ def _engine_error_text(engine_name: str, exc: BaseException) -> str:
 def _kimpton_assumptions() -> dict[str, Any]:
     """Default underwriting assumptions matching the Kimpton fixture.
 
-    Mirrors ``apps/worker/app/export/fixtures.py`` so a single Run Model
+    Mirrors ``apps/worker/tests/fixtures/kimpton_export_payload.py`` so a single Run Model
     click on the demo deal reproduces the headline numbers shown in the
     seeded UI (~$4.7M Y1 NOI, ~23% levered IRR) — except ``soft_costs`` /
     ``contingency``, which are 0 here (FON-44, see below) while the demo

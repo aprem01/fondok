@@ -135,7 +135,7 @@ def test_segments_section_renders_when_segments_present() -> None:
 
     OTA row (channel_cost_pct=0.18) should flip the warn callout on.
     """
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -152,7 +152,7 @@ def test_segments_section_renders_when_segments_present() -> None:
 
 def test_segments_section_absent_when_segments_empty() -> None:
     """Empty segment list -> section is omitted entirely."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     model = copy.deepcopy(kimpton_model())
@@ -169,7 +169,7 @@ def test_segments_section_absent_when_segments_empty() -> None:
 def test_pip_section_renders_when_pip_displacement_set() -> None:
     """Renovation Plan section renders strategy chip + monthly schedule
     + Y1 displacement $ + Y2 recovery curve."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -185,7 +185,7 @@ def test_pip_section_renders_when_pip_displacement_set() -> None:
 def test_pip_section_absent_when_pip_displacement_none() -> None:
     """Closure strategy 'none' (or missing pip_displacement entirely)
     -> Renovation Plan section omitted."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     model = copy.deepcopy(kimpton_model())
@@ -206,7 +206,7 @@ def test_pip_section_absent_when_pip_displacement_none() -> None:
 
 def test_capex_three_bucket_table_includes_phasing() -> None:
     """Capital Plan renders the 3 buckets x 5 years with totals row."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -227,7 +227,7 @@ def test_capex_three_bucket_table_includes_phasing() -> None:
 def test_op_ratio_provenance_callout_shows_winning_source_per_line() -> None:
     """Each op-ratio line shows its winning source chip with the right
     display label."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -248,7 +248,7 @@ def test_op_ratio_provenance_callout_shows_winning_source_per_line() -> None:
 def test_pricing_sensitivity_grid_renders_5x5() -> None:
     """Sensitivity grid renders 5 NOI rows x 5 cap columns + a legend
     with the breakeven scalars."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -270,7 +270,7 @@ def test_pricing_sensitivity_grid_renders_5x5() -> None:
 
 def test_max_price_callout_renders_both_constraints() -> None:
     """Max-price callout shows both IRR and EM price + binding chip."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -287,7 +287,7 @@ def test_max_price_callout_renders_both_constraints() -> None:
 def test_historical_walk_section_renders_when_coverage_high() -> None:
     """Historical Baseline Walk renders the per-year P&L table + YoY
     chips when coverage_pct > 0."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -305,7 +305,7 @@ def test_historical_walk_section_renders_when_coverage_high() -> None:
 def test_loi_appendix_renders_markdown_as_html() -> None:
     """LOI rendered_markdown body is converted to HTML and lands in
     the appendix block at the end of the memo."""
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
     from app.export.memo_pdf import _render_html
 
     html_str = _render_html(kimpton_memo(), kimpton_model())
@@ -344,7 +344,7 @@ def test_memo_pdf_builds_end_to_end_with_all_wave2_sections(
     )
 
     from app.export import build_memo_pdf
-    from app.export.fixtures import kimpton_memo, kimpton_model
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
 
     out = tmp_out / "kimpton-wave2-memo.pdf"
     build_memo_pdf(kimpton_memo(), kimpton_model(), out)

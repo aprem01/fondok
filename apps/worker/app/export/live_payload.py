@@ -1,9 +1,9 @@
 """Assemble the export payload for a *live* (real UUID) deal.
 
 The export builders (:mod:`app.export.excel` / ``memo_pdf`` / ``presentation``)
-consume a ``(deal, model, memo)`` triple shaped exactly like the hard-coded
-Kimpton fixture in :mod:`app.export.fixtures`. This module produces that same
-shape from a live deal instead — reading:
+consume a ``(deal, model, memo)`` triple. This module is the ONLY source of
+that triple in production (the test fixture under ``tests/fixtures``
+mirrors the shape for builder tests) — assembled from a live deal by reading:
 
     * the deal row (name / city / keys / brand / service / stage / confidence),
     * the extracted subject-property name (OM-first; distinct from the project
@@ -18,9 +18,9 @@ shape from a live deal instead — reading:
 No-fake-data contract (see ``feedback_no_fake_data``)
 ----------------------------------------------------
 Every field is mapped from a genuine live source. Where the live deal lacks a
-value the Kimpton fixture carried, the key is **omitted** so the builders render
-``—`` / an empty section — the fixture value is NEVER carried into a real
-deal's export. A handful of standard display ratios (entry cap on Y1 UW NOI,
+value, the key is **omitted** (or carried as ``None``) so the builders render
+``—`` / ``not available: <reason>`` / an empty section — never a zero and never
+a default. A handful of standard display ratios (entry cap on Y1 UW NOI,
 Y1 yield-on-cost, per-key figures, annual cash-flow-after-debt) are derived
 arithmetically from two live engine outputs; these are presentation-layer
 aggregations, not new engine math.
@@ -62,8 +62,17 @@ from fondok_schemas.reasons import ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .labels import CASH_NOI, noi_before_reserve_label
-from .refusals import collect_refusals, dedupe, refuse
+from .labels import (
+    BENCHMARK_DEFAULT_NOTE,
+    CASH_NOI,
+    IRR_GRID_ENGINE_ERROR_NOTE,
+    IRR_GRID_NO_CELLS_NOTE,
+    IRR_GRID_NO_TARGET_NOTE,
+    OP_RATIO_ALL_SEED_NOTE,
+    PRICING_NO_TARGET_NOTE,
+    noi_before_reserve_label,
+)
+from .refusals import as_float, collect_refusals, dedupe, refuse, sum_strict
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +80,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────── small helpers ───────────────────────────
 
 
-def _num(value: Any) -> float | None:
-    """Coerce a JSON scalar to float, or None when absent / non-numeric."""
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+_num = as_float
 
 
 def _outputs(snapshot: dict[str, dict[str, Any]], engine: str) -> dict[str, Any]:
@@ -86,6 +88,21 @@ def _outputs(snapshot: dict[str, dict[str, Any]], engine: str) -> dict[str, Any]
     row = snapshot.get(engine) or {}
     out = row.get("outputs")
     return out if isinstance(out, dict) else {}
+
+
+def _inputs(snapshot: dict[str, dict[str, Any]], engine: str) -> dict[str, Any]:
+    """The serialized ``inputs`` the engine actually ran on, or ``{}``.
+
+    An engine's persisted inputs are deal facts the run used (the partnership
+    pref rate and waterfall tiers, for instance) — stating them in an export
+    is stating what the model ran on, not inventing a term.
+    """
+    row = snapshot.get(engine) or {}
+    inp = row.get("inputs")
+    return inp if isinstance(inp, dict) else {}
+
+
+_sum_strict = sum_strict
 
 
 def _set(target: dict[str, Any], key: str, value: Any) -> None:
@@ -183,36 +200,41 @@ def _build_proforma_and_cf(
     rev_by = {int(y.get("year")): y for y in rev_years if y.get("year") is not None}
     exp_by = {int(y.get("year")): y for y in exp_years if y.get("year") is not None}
 
-    ds_series = debt.get("debt_service_by_year")
-    if not isinstance(ds_series, list) or not ds_series:
+    ds_series: list[float | None]
+    raw_ds = debt.get("debt_service_by_year")
+    if isinstance(raw_ds, list) and raw_ds:
+        ds_series = [_num(v) for v in raw_ds]
+    else:
         sched = debt.get("schedule")
         if isinstance(sched, list) and sched:
-            ds_series = [_num(r.get("debt_service")) or 0.0 for r in sched]
+            ds_series = [_num(r.get("debt_service")) for r in sched]
         else:
             ann = _num(debt.get("annual_debt_service"))
-            ds_series = [ann or 0.0] * horizon
+            # No debt engine output at all → every debt-service cell is
+            # unknown (``None``), never a silent zero.
+            ds_series = [ann] * horizon
 
-    def k(v: float | None) -> float:
-        """USD → USD thousands, rounded (builder scale)."""
-        return round((v or 0.0) / 1000.0)
+    def k(v: float | None) -> float | None:
+        """USD → USD thousands, rounded (builder scale); ``None`` stays ``None``."""
+        return None if v is None else round(v / 1000.0)
 
     years = sorted(set(rev_by) & set(exp_by))[:horizon]
     if not years:
         return {}, {}, None
 
-    room: dict[int, float] = {}
-    fb: dict[int, float] = {}
-    other: dict[int, float] = {}
-    total_rev: dict[int, float] = {}
-    opex: dict[int, float] = {}
-    mgmt: dict[int, float] = {}
+    room: dict[int, float | None] = {}
+    fb: dict[int, float | None] = {}
+    other: dict[int, float | None] = {}
+    total_rev: dict[int, float | None] = {}
+    opex: dict[int, float | None] = {}
+    mgmt: dict[int, float | None] = {}
     # Sam #9 — the opt-in incentive management fee; empty when the run
     # modelled none, and then no row is emitted.
-    incentive: dict[int, float] = {}
-    ffe: dict[int, float] = {}
-    noi: dict[int, float] = {}
-    noi_before_reserve: dict[int, float] = {}
-    cfad: dict[int, float] = {}
+    incentive: dict[int, float | None] = {}
+    ffe: dict[int, float | None] = {}
+    noi: dict[int, float | None] = {}
+    noi_before_reserve: dict[int, float | None] = {}
+    cfad: dict[int, float | None] = {}
     noi_y1_usd: float | None = None
     # False when NO year carried ``noi_institutional`` — a pre-upgrade run,
     # whose before-reserve row is really an after-reserve number.
@@ -232,15 +254,15 @@ def _build_proforma_and_cf(
         if noi_inst_usd is not None:
             noi_basis_confirmed = True
         if n == 1:
-            noi_y1_usd = noi_inst_usd or noi_usd
-        ds = ds_series[n - 1] if n - 1 < len(ds_series) else (ds_series[-1] if ds_series else 0.0)
-        ds = _num(ds) or 0.0
+            noi_y1_usd = noi_inst_usd if noi_inst_usd is not None else noi_usd
+        ds = ds_series[n - 1] if n - 1 < len(ds_series) else (ds_series[-1] if ds_series else None)
+        ds = _num(ds)
 
         room[n] = k(_num(r.get("rooms_revenue")))
         fb[n] = k(_num(r.get("fb_revenue")))
-        other[n] = k((_num(r.get("other_revenue")) or 0.0) + (_num(r.get("resort_fees")) or 0.0))
+        other[n] = k(_sum_strict(_num(r.get("other_revenue")), _num(r.get("resort_fees"))))
         total_rev[n] = k(_num(r.get("total_revenue")))
-        opex[n] = k((_num(dept) or 0.0) + (_num(undist) or 0.0) + (_num(fixed) or 0.0))
+        opex[n] = k(_sum_strict(_num(dept), _num(undist), _num(fixed)))
         mgmt[n] = k(_num(e.get("mgmt_fee")))
         incentive_usd = _num(e.get("incentive_mgmt_fee"))
         if incentive_usd is not None:
@@ -248,20 +270,22 @@ def _build_proforma_and_cf(
         ffe[n] = k(_num(e.get("ffe_reserve")))
         noi[n] = k(noi_usd)
         noi_before_reserve[n] = k(noi_inst_usd if noi_inst_usd is not None else noi_usd)
-        cfad[n] = k((noi_usd or 0.0) - ds)
+        cfad[n] = k(None if noi_usd is None or ds is None else noi_usd - ds)
 
-    def row(label: str, src: dict[int, float], **extra: Any) -> dict[str, Any]:
+    def row(label: str, src: dict[int, float | None], **extra: Any) -> dict[str, Any]:
+        """One proforma line. A year the run did not project is ``None`` —
+        the builders print a dash / not-available for it, never 0."""
         d: dict[str, Any] = {"label": label}
         for n in range(1, horizon + 1):
-            d[f"y{n}"] = src.get(n, 0)
+            d[f"y{n}"] = src.get(n)
         d.update(extra)
         return d
 
-    ds_row: dict[int, float] = {}
+    ds_row: dict[int, float | None] = {}
     for n in years:
         idx = n - 1
-        ds_val = ds_series[idx] if idx < len(ds_series) else (ds_series[-1] if ds_series else 0.0)
-        ds_row[n] = k(_num(ds_val) or 0.0)
+        ds_val = ds_series[idx] if idx < len(ds_series) else (ds_series[-1] if ds_series else None)
+        ds_row[n] = k(_num(ds_val))
 
     lines = [
         row("Room Revenue", room),
@@ -331,10 +355,57 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
     _set(out, "interest_rate_pct", _num(debt.get("interest_rate")))
     _set(out, "amortization_years", _num(debt.get("amortization_years")))
     _set(out, "term_years", _num(debt.get("term_years")))
+    _set(out, "interest_only_period_months", _num(debt.get("interest_only_months")))
     _set(out, "annual_debt_service_usd", _num(debt.get("annual_debt_service")))
     _set(out, "year1_dscr", _num(debt.get("year_one_dscr")))
     _set(out, "year1_debt_yield", _num(debt.get("year_one_debt_yield")))
+
+    # The engine's own month-by-month schedule — the workbook prints THIS,
+    # it never re-derives a schedule from headline terms.
+    schedule = debt.get("monthly_schedule")
+    if isinstance(schedule, list) and schedule:
+        rows = [
+            {
+                "month": int(m["month"]),
+                "interest": _num(m.get("interest")),
+                "principal": _num(m.get("principal")),
+                "payment": _num(m.get("payment")),
+                "ending_balance": _num(m.get("ending_balance")),
+            }
+            for m in schedule
+            if isinstance(m, dict) and m.get("month") is not None
+        ]
+        if rows:
+            out["monthly_schedule"] = rows
+
+    # B9 — a priced floating tranche whose index is the engine's flat SOFR
+    # default carries the same provenance note the Debt tab shows, so every
+    # exported debt figure that rides on that rate says so.
+    note = _benchmark_default_note(stack)
+    if note:
+        out["benchmark_note"] = note
     return out
+
+
+def _benchmark_default_note(stack: dict[str, Any]) -> str | None:
+    """``"Benchmark SOFR 4.30% is Fondok's flat SOFR assumption, ..."`` when a
+    priced floating tranche ran on the engine's default index; else ``None``.
+
+    Reads the tranche echo the debt engine persists (``benchmark_is_default``
+    / ``benchmark_name`` / ``benchmark_rate``) — the rate printed is the one
+    the model actually used, never a literal.
+    """
+    tranches = stack.get("tranches") if isinstance(stack.get("tranches"), list) else []
+    for t in tranches:
+        if not isinstance(t, dict) or t.get("terms_pending"):
+            continue
+        if t.get("benchmark_is_default") is not True:
+            continue
+        name = str(t.get("benchmark_name") or "SOFR")
+        rate = _num(t.get("benchmark_rate"))
+        rate_txt = f" {rate * 100:.2f}%" if rate is not None else ""
+        return f"Benchmark {name}{rate_txt} is {BENCHMARK_DEFAULT_NOTE}"
+    return None
 
 
 def _build_returns(returns: dict[str, Any]) -> dict[str, Any]:
@@ -354,23 +425,56 @@ def _build_returns(returns: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _build_partnership(partnership: dict[str, Any]) -> dict[str, Any]:
-    """``partnership_engine`` block (Excel-only) from the partnership engine."""
+def _build_partnership(
+    partnership: dict[str, Any], partnership_inputs: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """``partnership_engine`` block (Excel-only) from the partnership engine.
+
+    Returns from the engine OUTPUT (equity, IRR, multiple, distributions per
+    partner); the waterfall terms — pref rate and promote tiers — from the
+    engine's persisted INPUTS, i.e. the terms this run actually used. Total
+    equity is stated only when both partners' equity is present (D5): a
+    missing component is named, never summed as zero.
+    """
     lp = partnership.get("lp") if isinstance(partnership.get("lp"), dict) else {}
     gp = partnership.get("gp") if isinstance(partnership.get("gp"), dict) else {}
     if not lp and not gp:
         return {}
+    inputs = partnership_inputs or {}
     out: dict[str, Any] = {"structure": "GP/LP waterfall"}
     lp_eq = _num(lp.get("contributed_equity"))
     gp_eq = _num(gp.get("contributed_equity"))
     _set(out, "lp_equity_usd", lp_eq)
     _set(out, "gp_equity_usd", gp_eq)
-    if lp_eq is not None or gp_eq is not None:
-        out["total_equity_usd"] = (lp_eq or 0.0) + (gp_eq or 0.0)
+    total = _sum_strict(lp_eq, gp_eq)
+    if total is not None:
+        out["total_equity_usd"] = total
+    else:
+        missing = [n for n, v in (("LP", lp_eq), ("GP", gp_eq)) if v is None]
+        out["total_equity_missing"] = (
+            f"{' and '.join(missing)} contributed equity not on the partnership engine output"
+        )
     _set(out, "lp_irr_after_promote", _num(lp.get("irr")))
     _set(out, "gp_irr_after_promote", _num(gp.get("irr")))
     _set(out, "lp_equity_multiple", _num(lp.get("equity_multiple")))
     _set(out, "gp_equity_multiple", _num(gp.get("equity_multiple")))
+    _set(out, "lp_distributions_usd", _num(lp.get("distributions")))
+    _set(out, "gp_distributions_usd", _num(gp.get("distributions")))
+    _set(out, "lp_pref_pct", _num(inputs.get("pref_rate")))
+    tiers_in = inputs.get("waterfall") if isinstance(inputs.get("waterfall"), list) else []
+    tiers: list[dict[str, Any]] = []
+    for t in sorted(
+        (t for t in tiers_in if isinstance(t, dict)),
+        key=lambda t: _num(t.get("hurdle_rate")) or 0.0,
+    ):
+        tier: dict[str, Any] = {}
+        _set(tier, "label", t.get("label"))
+        _set(tier, "hurdle_rate", _num(t.get("hurdle_rate")))
+        _set(tier, "gp_split", _num(t.get("gp_split")))
+        if tier:
+            tiers.append(tier)
+    if tiers:
+        out["waterfall_tiers"] = tiers
     return out
 
 
@@ -1071,7 +1175,7 @@ def _build_capex_schedule(
     if hold <= 0:
         return None
 
-    revenue_by_year = [_num(y.get("total_revenue")) or 0.0 for y in rev_years if isinstance(y, dict)]
+    revenue_by_year = [_num(y.get("total_revenue")) for y in rev_years if isinstance(y, dict)]
     ffe_by_year: dict[int, float | None] = {}
     for y in exp_years:
         if isinstance(y, dict) and y.get("year") is not None:
@@ -1142,20 +1246,30 @@ def _build_capex_schedule(
     any_nonzero = False
     for y in range(1, hold + 1):
         share = timing[y - 1] if y - 1 < len(timing) else 0.0
-        pip_usd = (pip_total or 0.0) * share
-        rev_y = revenue_by_year[y - 1] if y - 1 < len(revenue_by_year) else 0.0
+        # No renovation line on the run → the PIP bucket is genuinely zero
+        # (the capital engine drops zero-value uses), not unknown.
+        pip_usd = (pip_total if pip_total is not None else 0.0) * share
+        rev_y = revenue_by_year[y - 1] if y - 1 < len(revenue_by_year) else None
+        non_pip: float | None
         if plan_non_pip is not None:
-            non_pip = max(
-                max(0.0, rev_y) * float(plan_non_pip.annual_pct_of_revenue),
-                max(0, keys or 0) * float(plan_non_pip.minimum_per_key_per_year),
+            # The analyst's plan formula needs the year's revenue; without
+            # it the bucket is unknown, not zero.
+            non_pip = (
+                None
+                if rev_y is None
+                else max(
+                    max(0.0, rev_y) * float(plan_non_pip.annual_pct_of_revenue),
+                    max(0, keys or 0) * float(plan_non_pip.minimum_per_key_per_year),
+                )
             )
         else:
-            non_pip = ffe_by_year.get(y) or 0.0
+            non_pip = ffe_by_year.get(y)
         roi = roi_rows.get(y)
+        # No ROI projects persisted → the ROI bucket is genuinely zero.
         roi_inv = float(roi.roi_investment_usd) if roi is not None else 0.0
         roi_lift = float(roi.roi_noi_lift_usd) if roi is not None else 0.0
-        total = pip_usd + non_pip + roi_inv
-        if total > 0 or roi_lift > 0:
+        total = _sum_strict(pip_usd, non_pip, roi_inv)
+        if (total is not None and total > 0) or roi_lift > 0:
             any_nonzero = True
         schedule.append(
             {
@@ -1196,14 +1310,18 @@ _OP_RATIO_CATALOG: tuple[tuple[str, str], ...] = (
 )
 
 
-def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any] | None:
+def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any]:
     """Op-Ratio Provenance rows from the loader's ``__sources__`` map.
 
     One line per catalog ratio that the loader resolved AND tagged with a
     source (``t12_actual`` / ``portfolio_pnl`` / ``cbre_horizons`` /
     ``pnl_benchmark`` / ``analyst_override`` / ``seed``). Untagged values are
-    skipped rather than guessed. The sheet is omitted when every resolved ratio
-    is a seed — that would only restate the fixture defaults.
+    skipped rather than guessed.
+
+    B2 — ALWAYS emitted for a modelled deal. When every resolved ratio is a
+    hotel-type seed the block says so in words (``note``) instead of being
+    omitted: a reader must learn that the operating ratios are defaults, not
+    be left to infer it from a missing sheet.
     """
     sources = base.get("__sources__") if isinstance(base.get("__sources__"), dict) else {}
     overrides = base.get("overrides") if isinstance(base.get("overrides"), dict) else {}
@@ -1217,9 +1335,14 @@ def _build_op_ratio_provenance(base: dict[str, Any]) -> dict[str, Any] | None:
         if source != "seed":
             non_seed = True
         lines.append({"field": label, "value": value, "source": source, "document_id": None})
-    if not lines or not non_seed:
-        return None
-    return {"lines": lines}
+    out: dict[str, Any] = {"lines": lines, "all_seed": bool(lines) and not non_seed}
+    if not lines:
+        reason = "no operating ratio resolved with a source on this deal's run"
+        refuse(ReasonCode.ENGINE_SKIPPED, reason, "op_ratio.lines")
+        out["note"] = reason
+    elif not non_seed:
+        out["note"] = OP_RATIO_ALL_SEED_NOTE
+    return out
 
 
 async def _pricing_sheets(
@@ -1227,78 +1350,153 @@ async def _pricing_sheets(
     deal_id: str,
     tenant_id: str,
     *,
-    asset_name: str,
-    asset_address: str,
-    rooms: int,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
-    """``(sensitivity_grid, max_price, loi_draft)`` — the Pricing panel's math.
+    rooms: int | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None, str | None]:
+    """``(sensitivity_grid, max_price, pricing_unavailable, grid_unavailable)``
+    — the Pricing panel's math, solved ONLY against the deal's own targets.
 
-    Reuses ``analysis._build_returns_input_for_deal`` (the read-only in-memory
-    chain walk behind ``POST /analysis/{id}/pricing/*``) and the three
-    endpoints' request-model defaults (target IRR / EM; template LOI terms).
-    The LOI is the same one-click draft the panel renders: the proposed price
-    is the live max-price-for-IRR solve; buyer / seller / EMD / DD days are the
-    generator's documented placeholders, not deal data — the analyst edits
-    them in the panel. Any of the three is ``None`` on failure.
+    Targets come from :func:`app.api.analysis._deal_return_targets` — the
+    same Investment Profile read the in-app ``/pricing/*`` routes resolve
+    through before they refuse. With neither hurdle set the grid and the
+    solve are skipped and ``unavailable_reason`` carries the canonical
+    sentence (:data:`PRICING_NO_TARGET_NOTE`); there is no default hurdle
+    (FON-68 / A3). The grid additionally needs the levered-IRR hurdle (its
+    breakeven sweep is against it) — with only an equity-multiple target
+    ``max_price`` solves the EM constraint alone and ``grid_unavailable``
+    carries :data:`IRR_GRID_NO_TARGET_NOTE` so every export states why the
+    grid is missing instead of dropping it.
+
+    The LOI is never shipped in an LP-facing export: its parties / EMD / DD
+    terms are template placeholders, not deal data.
     """
     try:
-        from ..api.analysis import (
-            _MaxPriceRequest,
-            _SensitivityRequest,
-            _build_returns_input_for_deal,
-        )
+        from ..api.analysis import _build_returns_input_for_deal, _deal_return_targets
         from ..engines.price_solver import solve_max_price
         from ..engines.pricing_sensitivity import run_sensitivity_grid
 
+        target_irr, target_em = await _deal_return_targets(
+            session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("live export: return-target read failed", exc_info=True)
+        return None, None, "Pricing to target not available: the deal's return targets could not be read", None
+
+    if target_irr is None and target_em is None:
+        refuse(
+            ReasonCode.AWAITING_ANALYST,
+            "no return target set on this deal",
+            "pricing.return_target",
+        )
+        return None, None, PRICING_NO_TARGET_NOTE, None
+
+    try:
         base_input = await _build_returns_input_for_deal(
             session, deal_id=UUID(deal_id), tenant_id=UUID(tenant_id)
         )
     except Exception:  # noqa: BLE001
         logger.debug("live export: pricing base input failed", exc_info=True)
-        return None, None, None
+        return None, None, "Pricing to target not available: the engine chain could not be built for this deal", None
 
     grid_d: dict[str, Any] | None = None
-    try:
-        sens_req = _SensitivityRequest()
-        kwargs = {
-            k: getattr(sens_req, k)
-            for k in ("target_irr", "cap_axis", "noi_axis")
-            if hasattr(sens_req, k)
-        }
-        grid = run_sensitivity_grid(base_input, **kwargs)
-        grid_d = asdict(grid)
-        _set(grid_d, "target_irr", kwargs.get("target_irr"))
-        if not grid_d.get("cells"):
+    grid_unavailable: str | None = None
+    if target_irr is None:
+        refuse(
+            ReasonCode.AWAITING_ANALYST,
+            "no IRR target set on this deal — the sensitivity grid needs one",
+            "pricing.target_irr",
+        )
+        grid_unavailable = IRR_GRID_NO_TARGET_NOTE
+    else:
+        # Every way the grid can be missing states its own reason — never
+        # the no-target sentence for a deal that HAS an IRR target.
+        try:
+            grid = run_sensitivity_grid(base_input, target_irr=target_irr)
+            grid_d = asdict(grid)
+            grid_d["target_irr"] = target_irr
+            if not grid_d.get("cells"):
+                grid_d = None
+                grid_unavailable = IRR_GRID_NO_CELLS_NOTE
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("live export: sensitivity grid failed", exc_info=True)
             grid_d = None
-    except Exception:  # noqa: BLE001
-        logger.debug("live export: sensitivity grid failed", exc_info=True)
-        grid_d = None
+            # Exception type only — the message may quote deal data.
+            grid_unavailable = IRR_GRID_ENGINE_ERROR_NOTE.format(error=type(exc).__name__)
+        if grid_unavailable:
+            refuse(ReasonCode.ENGINE_SKIPPED, grid_unavailable, "pricing.sensitivity_grid")
 
     mp_d: dict[str, Any] | None = None
-    mpr: Any = None
     try:
-        mp_req = _MaxPriceRequest()
         mpr = solve_max_price(
             base_input,
-            target_irr=mp_req.target_irr,
-            target_em=mp_req.target_em,
-            rooms=rooms or None,
+            target_irr=target_irr,
+            target_em=target_em,
+            rooms=rooms,
         )
         mp_d = asdict(mpr)
+        # The solver reports 0.0 per key when it has no room count; the
+        # export states "not available" for that instead.
+        if rooms is None or rooms <= 0:
+            mp_d["final_price_per_key"] = None
+        if mp_d.get("max_price") is None:
+            mp_d["final_price_per_key"] = None
     except Exception:  # noqa: BLE001
         logger.debug("live export: max-price solve failed", exc_info=True)
-        mpr = None
         mp_d = None
 
-    # LOI: the one-click draft carries TEMPLATE placeholders — buyer/seller
-    # "[TBD]", a default EMD and DD period — with only price / name / keys as
-    # real deal data. Per the no-fake-data rule we do NOT ship placeholder LOI
-    # terms in an LP-facing export, so the LOI sheet is OMITTED for live deals
-    # until real LOI terms are captured. (The Pricing panel still renders the
-    # one-click draft in-app, where the analyst fills the terms in.)
-    loi_d: dict[str, Any] | None = None
+    return grid_d, mp_d, None, grid_unavailable
 
-    return grid_d, mp_d, loi_d
+
+def _build_sensitivity_engine(snapshot: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The persisted ``sensitivity`` engine output for the deck heat-map.
+
+    The row is the canonical run's ``engine_outputs`` envelope. A complete
+    row with cells passes through as-is (``row_variable`` / ``col_variable``
+    / ``metric`` / ``rows`` / ``cols`` / ``cells`` / ``matrices``). Anything
+    else — no row, a failed or still-running row, an empty grid — yields
+    ``{"unavailable_reason": ...}`` and records a typed refusal, so the slide
+    reads "Sensitivity analysis not available: <reason>" (A1).
+    """
+    row = snapshot.get("sensitivity")
+    if not isinstance(row, dict):
+        reason = "the sensitivity engine has not run on this deal's canonical run"
+        refuse(ReasonCode.ENGINE_SKIPPED, reason, "sensitivity")
+        return {"unavailable_reason": reason}
+    status = str(row.get("status") or "")
+    if status != "complete":
+        err = str(row.get("error") or "").strip()
+        reason = f"the sensitivity engine run is {status or 'incomplete'}"
+        if err:
+            reason += f" — {err}"
+        refuse(ReasonCode.ENGINE_SKIPPED, reason, "sensitivity")
+        return {"unavailable_reason": reason}
+    out = row.get("outputs")
+    cells = out.get("cells") if isinstance(out, dict) else None
+    if not isinstance(cells, list) or not cells:
+        reason = "the sensitivity engine output carries no grid cells"
+        refuse(ReasonCode.ENGINE_SKIPPED, reason, "sensitivity")
+        return {"unavailable_reason": reason}
+    assert isinstance(out, dict)
+    block: dict[str, Any] = {
+        "row_variable": out.get("row_variable"),
+        "col_variable": out.get("col_variable"),
+        "metric": out.get("metric"),
+        "rows": [_num(v) for v in (out.get("rows") or [])],
+        "cols": [_num(v) for v in (out.get("cols") or [])],
+        "cells": [
+            {
+                "row_value": _num(c.get("row_value")),
+                "col_value": _num(c.get("col_value")),
+                "value": _num(c.get("value")),
+                "is_base": bool(c.get("is_base")),
+            }
+            for c in cells
+            if isinstance(c, dict)
+        ],
+    }
+    matrices = out.get("matrices")
+    if isinstance(matrices, list) and matrices:
+        block["matrices"] = matrices
+    return block
 
 
 # ─────────────────────────── public entrypoint ───────────────────────────
@@ -1379,6 +1577,7 @@ async def _assemble_live_payload(
     debt = _outputs(snapshot, "debt")
     returns = _outputs(snapshot, "returns")
     partnership = _outputs(snapshot, "partnership")
+    partnership_inputs = _inputs(snapshot, "partnership")
 
     proforma, cash_flow_engine, noi_y1 = _build_proforma_and_cf(revenue, expense, debt)
 
@@ -1407,9 +1606,13 @@ async def _assemble_live_payload(
         model["returns_engine"] = returns_block
     if cash_flow_engine:
         model["cash_flow_engine"] = cash_flow_engine
-    partnership_block = _build_partnership(partnership)
+    partnership_block = _build_partnership(partnership, partnership_inputs)
     if partnership_block:
         model["partnership_engine"] = partnership_block
+
+    # A1 — the IC deck's heat-map reads the sensitivity ENGINE's persisted
+    # output for this run, or states why there is none. Never synthesized.
+    model["sensitivity_engine"] = _build_sensitivity_engine(snapshot)
 
     sources, uses = _build_sources_uses(capital)
     if sources:
@@ -1475,31 +1678,20 @@ async def _assemble_live_payload(
         )
         if capex:
             model["capex_schedule"] = capex
-        op_prov = _build_op_ratio_provenance(engine_base)
-        if op_prov:
-            model["op_ratio_provenance"] = op_prov
+        # B2 — always present for a modelled deal (says so when all-seed).
+        model["op_ratio_provenance"] = _build_op_ratio_provenance(engine_base)
 
-        grid, max_price, loi = await _pricing_sheets(
-            session,
-            deal_id,
-            tenant_id,
-            asset_name=property_name
-            or deal_name
-            or refuse(
-                ReasonCode.NO_SOURCE,
-                "no extracted property name and no project name on the deal",
-                "property_overview.name",
-            ),
-            asset_address=city
-            or refuse(ReasonCode.NO_SOURCE, "no city on the deal row", "deal.city"),
-            rooms=keys or 0,
+        grid, max_price, pricing_unavailable, grid_unavailable = await _pricing_sheets(
+            session, deal_id, tenant_id, rooms=keys
         )
         if grid:
             model["sensitivity_grid"] = grid
         if max_price:
             model["max_price"] = max_price
-        if loi:
-            model["loi_draft"] = loi
+        if pricing_unavailable:
+            model["pricing_unavailable"] = pricing_unavailable
+        if grid_unavailable:
+            model["sensitivity_grid_unavailable"] = grid_unavailable
 
     # ── Deal dict (title + property/market slides). String-safe values with
     # ── "—" for absent fields so the deck never shows "None" or a fixture
@@ -1510,7 +1702,13 @@ async def _assemble_live_payload(
     )
     deal: dict[str, Any] = {
         "id": deal_id,
-        "name": property_name or deal_name or "Hotel",
+        "name": property_name
+        or deal_name
+        or refuse(
+            ReasonCode.NO_SOURCE,
+            "no extracted property name and no project name on the deal",
+            "property_overview.name",
+        ),
         "city": _city,
         "location": _city,
         "brand": brand

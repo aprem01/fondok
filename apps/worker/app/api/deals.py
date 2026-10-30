@@ -3230,154 +3230,91 @@ async def _count_extracted_documents(
 async def _load_deal_payload(
     deal_id: str,
     *,
-    session: AsyncSession | None = None,
-    tenant_id: str | None = None,
+    session: AsyncSession,
+    tenant_id: str,
 ) -> Any:
     """Build an ``AnalystInput`` from the persisted deal + engine state.
 
     Validation contract:
 
-    * If a DB ``session`` is supplied AND the deal exists in the DB,
-      we require at least one ``EXTRACTED`` document — otherwise we
-      raise :class:`MemoInputMissing` so the route can return 400 with
-      a clear "upload an OM + T-12 first" message instead of 500.
-    * If no session is supplied (legacy / fixture path) we fall through
-      to the Kimpton Angler fixture so the streaming endpoint demos
-      end-to-end. This branch exists to keep ``test_streaming.py`` and
-      the seed-data demo flow green; production callers always pass a
-      real session via the route layer.
+    * The deal must exist on the caller's tenant — otherwise
+      :class:`MemoInputMissing` (``code="deal_not_found"``). FON-93: a
+      DB-backed load MUST name its tenant; the old fallback to
+      DEFAULT_TENANT_ID meant a caller that forgot the tenant read (and
+      stamped the memo with) the shared catch-all tenant.
+    * The deal needs at least one ``EXTRACTED`` document — otherwise we
+      raise :class:`MemoInputMissing` so the route can return 400 with a
+      clear "upload an OM + T-12 first" message instead of 500.
 
-    Source-document handling:
+    Source-document handling: ``source_documents`` is hydrated from the
+    deal's real ``EXTRACTED`` documents — their actual UUIDs, filenames, doc
+    types, and per-page text from ``documents.extraction_data`` — so the
+    Analyst has real material to cite and the UI's citation chips deep-link
+    back to the cited PDF page. A deal with no parsed source documents gets
+    an EMPTY document list.
 
-    * When real ``EXTRACTED`` documents exist on the deal, we hydrate
-      ``source_documents`` with their actual UUIDs, filenames, doc
-      types, and per-page text from ``documents.extraction_data``.
-      That gives the Analyst real material to cite and lets the UI's
-      citation chips deep-link back to the cited PDF page.
-    * Fixture documents (Kimpton appendix) are only used as a fallback
-      when no real docs are present (the legacy demo path).
-
-    With a session the payload is built ONLY from the deal's own rows
-    (``_build_real_analyst_fields`` + the parsed source documents); a deal
-    that is not on the tenant raises ``MemoInputMissing(code="deal_not_found")``.
-    The Kimpton fixture is reached solely by the session-less demo /
-    streaming-smoke call, which is the one place it is imported.
+    Every numeric input traces back to the deal's extractions / engine runs
+    (``_build_real_analyst_fields``). If any layer is sparse the Analyst sees
+    None / empty for that layer. There is no fixture path: the session-less
+    Kimpton branch that once served the seed-data demo was removed for
+    go-live (rule 3 — no demo forks in production modules).
     """
-    from ..agents.analyst import AnalystInput, AnalystSourceDocument
+    from ..agents.analyst import AnalystInput
 
-    settings = get_settings()
-
-    real_source_docs: list[AnalystSourceDocument] = []
-    real_payload_fields: dict[str, Any] | None = None
-
-    if session is not None:
-        # Confirm the deal exists in this tenant's DB before we even
-        # think about loading inputs. Routes already 404 on missing
-        # deals, but we double-check here so the agent layer never
-        # silently materializes a fixture for a deleted deal.
-        # FON-93: a DB-backed load MUST name its tenant. The old fallback
-        # to DEFAULT_TENANT_ID meant a caller that forgot the tenant read
-        # (and stamped the memo with) the shared catch-all tenant.
-        if not tenant_id:
-            raise ValueError(
-                "_load_deal_payload: tenant_id is required when a session is supplied"
-            )
-        effective_tenant = str(tenant_id)
-        deal_row = (
-            await session.execute(
-                # tenant-scope predicate required by tenant_middleware
-                text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
-                {"id": deal_id, "tenant": effective_tenant},
-            )
-        ).first()
-        if deal_row is None:
-            # Not this tenant's deal (or no such deal). The route's
-            # ``_assert_deal_belongs_to_tenant`` already 404s before we get
-            # here; this keeps the loader itself from ever reaching the
-            # fixture branch below for a DB-backed call — the Analyst must
-            # never be fed another hotel's numbers under a real deal id.
-            raise MemoInputMissing("Deal not found.", code="deal_not_found")
-        if deal_row is not None:
-            docs_total, docs_extracted = await _count_extracted_documents(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            )
-            if docs_total == 0:
-                raise MemoInputMissing(
-                    "Memo generation requires extracted broker proforma and "
-                    "T-12. Upload an OM and a T-12 document first.",
-                    code="memo_inputs_missing",
-                    missing=["proforma", "t12"],
-                )
-            if docs_extracted == 0:
-                raise MemoInputMissing(
-                    "Memo generation requires at least one fully extracted "
-                    "document. Wait for extraction to finish (or fix the "
-                    "failed parse) before generating the memo.",
-                    code="memo_inputs_extraction_pending",
-                    missing=["extraction"],
-                )
-            # Hydrate real source documents from the persisted parser cache.
-            real_source_docs = await _load_source_documents(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            )
-            # Hydrate the rest of the Analyst payload (deal metadata,
-            # spread, engine outputs, deterministic variance report)
-            # from real DB state. We bias to real data wherever possible
-            # so the Analyst never grounds its numbers in the fixture
-            # while citing pages of a real T-12.
-            real_payload_fields = await _build_real_analyst_fields(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            )
-
-    if session is not None:
-        # Real-data path — every numeric input traces back to the deal's
-        # extractions / engine runs. If any layer is sparse the Analyst
-        # sees None / empty for that layer rather than a fixture lie. No
-        # fixture object is constructed on this path at all: a real deal
-        # with no parsed source documents gets an EMPTY document list, not
-        # the demo's fictional ``STR_MarketReport_Q1.pdf`` excerpts.
-        if real_payload_fields is None:  # set whenever deal_row exists
-            raise MemoInputMissing("Deal not found.", code="deal_not_found")
-        return AnalystInput(
-            tenant_id=str(tenant_id),
-            deal_id=deal_id,
-            deal_data=real_payload_fields["deal_data"],
-            normalized_spread=real_payload_fields["normalized_spread"],
-            engine_results=real_payload_fields["engine_results"],
-            variance_report=real_payload_fields["variance_report"],
-            source_documents=real_source_docs,
+    if not tenant_id:
+        raise ValueError(
+            "_load_deal_payload: tenant_id is required when a session is supplied"
         )
-
-    # Fixture path (no session): the seed-data demo / streaming smoke flow.
-    # The only place the Kimpton fixture is imported, and the only remaining
-    # DEFAULT_TENANT_ID use — that flow has no caller tenant. A caller that
-    # does name a tenant is honoured.
-    from ..export.fixtures import kimpton_deal, kimpton_memo, kimpton_model
-
-    deal = kimpton_deal()
-    deal["id"] = deal_id
-    model = kimpton_model()
-    memo = kimpton_memo()
-    docs = [
-        AnalystSourceDocument(
-            document_id=f"doc-{idx:02d}",
-            filename=fname,
-            doc_type="reference",
-            page_count=1,
-            excerpts_by_page={1: f"Reference excerpt for {fname}."},
+    effective_tenant = str(tenant_id)
+    deal_row = (
+        await session.execute(
+            # tenant-scope predicate required by tenant_middleware
+            text("SELECT id FROM deals WHERE id = :id AND tenant_id = :tenant"),
+            {"id": deal_id, "tenant": effective_tenant},
         )
-        for idx, fname in enumerate(
-            memo.get("appendix", {}).get("documents_reviewed", []), start=1
+    ).first()
+    if deal_row is None:
+        # Not this tenant's deal (or no such deal). The route's
+        # ``_assert_deal_belongs_to_tenant`` already 404s before we get
+        # here; this keeps the loader itself honest for any other caller —
+        # the Analyst must never be fed another hotel's numbers under a
+        # real deal id.
+        raise MemoInputMissing("Deal not found.", code="deal_not_found")
+    docs_total, docs_extracted = await _count_extracted_documents(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
+    if docs_total == 0:
+        raise MemoInputMissing(
+            "Memo generation requires extracted broker proforma and "
+            "T-12. Upload an OM and a T-12 document first.",
+            code="memo_inputs_missing",
+            missing=["proforma", "t12"],
         )
-    ]
+    if docs_extracted == 0:
+        raise MemoInputMissing(
+            "Memo generation requires at least one fully extracted "
+            "document. Wait for extraction to finish (or fix the "
+            "failed parse) before generating the memo.",
+            code="memo_inputs_extraction_pending",
+            missing=["extraction"],
+        )
+    # Hydrate real source documents from the persisted parser cache.
+    real_source_docs = await _load_source_documents(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
+    # Hydrate the rest of the Analyst payload (deal metadata, spread,
+    # engine outputs, deterministic variance report) from real DB state.
+    real_payload_fields = await _build_real_analyst_fields(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
     return AnalystInput(
-        tenant_id=str(tenant_id) if tenant_id else settings.DEFAULT_TENANT_ID,
+        tenant_id=effective_tenant,
         deal_id=deal_id,
-        deal_data=deal,
-        normalized_spread=None,
-        engine_results=model,
-        variance_report=None,
-        source_documents=docs,
+        deal_data=real_payload_fields["deal_data"],
+        normalized_spread=real_payload_fields["normalized_spread"],
+        engine_results=real_payload_fields["engine_results"],
+        variance_report=real_payload_fields["variance_report"],
+        source_documents=real_source_docs,
     )
 
 

@@ -1,14 +1,21 @@
-"""Demo fixtures for the export endpoints.
+"""Kimpton Angler export payload — a TEST fixture for the export builders.
 
-Until the agent runtime persists EngineOutputs to the database, the
-export endpoints load a hard-coded Kimpton Angler dataset reconciled
-to ``apps/web/src/lib/mockData.ts.kimptonAnglerOverview`` and
-``evals/golden-set/kimpton-angler/expected/{model,memo}.json``.
+A complete ``(deal, model, memo)`` triple in the shape ``load_live_payload``
+produces, carrying every conditional section so the Excel / memo PDF / deck
+builders can be exercised end-to-end without a database. It lives under
+``tests/`` and is imported ONLY by tests: production modules never load a
+fixture (go-live rule 3 — one mechanism per concern, no demo forks).
+
+The numbers are illustrative test data reconciled to
+``evals/golden-set/kimpton-angler/expected/{model,memo}.json``; nothing here
+is read at runtime.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from app.export.labels import CASH_NOI, NOI_BEFORE_RESERVE
 
 
 def kimpton_deal() -> dict[str, Any]:
@@ -60,8 +67,9 @@ def kimpton_model() -> dict[str, Any]:
                 {"label": "Total Revenue", "y1": 15080, "y2": 15834, "y3": 16626, "y4": 17457, "y5": 18330, "cagr": 0.05, "bold": True},
                 {"label": "Operating Expenses", "y1": 9320, "y2": 9660, "y3": 10010, "y4": 10372, "y5": 10745},
                 {"label": "Management Fee", "y1": 452, "y2": 475, "y3": 499, "y4": 524, "y5": 550},
+                {"label": NOI_BEFORE_RESERVE, "y1": 5308, "y2": 5699, "y3": 6117, "y4": 6561, "y5": 7035, "cagr": 0.073, "bold": True},
                 {"label": "FF&E Reserve", "y1": 603, "y2": 633, "y3": 665, "y4": 698, "y5": 733},
-                {"label": "Net Operating Income", "y1": 4705, "y2": 5066, "y3": 5452, "y4": 5863, "y5": 6302, "cagr": 0.075, "bold": True},
+                {"label": CASH_NOI, "y1": 4705, "y2": 5066, "y3": 5452, "y4": 5863, "y5": 6302, "cagr": 0.075, "bold": True},
                 {"label": "Debt Service", "y1": 1610, "y2": 1610, "y3": 1610, "y4": 1610, "y5": 1610},
                 {"label": "Cash Flow After Debt", "y1": 3095, "y2": 3456, "y3": 3842, "y4": 4253, "y5": 4692, "bold": True},
             ],
@@ -78,6 +86,9 @@ def kimpton_model() -> dict[str, Any]:
             "year1_dscr": 1.57,
             "year1_debt_yield": 0.1986,
             "interest_only_period_months": 0,
+            "monthly_schedule": _amortizing_schedule(
+                loan=23_683_922, annual_rate=0.0680, amortization_years=30, months=60
+            ),
         },
         "refi_engine": {
             "refi_year": 4,
@@ -115,15 +126,20 @@ def kimpton_model() -> dict[str, Any]:
             "gp_equity_usd": 1_962_598,
             "total_equity_usd": 19_625_984,
             "lp_pref_pct": 0.08,
-            "gp_promote_tier_1_pct": 0.20,
-            "gp_promote_tier_1_irr_hurdle": 0.12,
-            "gp_promote_tier_2_pct": 0.30,
-            "gp_promote_tier_2_irr_hurdle": 0.18,
+            "waterfall_tiers": [
+                {"label": "Tier 1 — Pref + Promote", "hurdle_rate": 0.12, "gp_split": 0.20},
+                {"label": "Tier 2 — Catch-up + Promote", "hurdle_rate": 0.18, "gp_split": 0.30},
+            ],
             "lp_irr_after_promote": 0.1820,
             "gp_irr_after_promote": 0.4870,
             "lp_equity_multiple": 1.85,
             "gp_equity_multiple": 4.45,
+            "lp_distributions_usd": 32_677_264,
+            "gp_distributions_usd": 8_733_561,
         },
+        # The sensitivity ENGINE output (engines/sensitivity.py shape) - what
+        # the IC deck's heat-map reads. Rows = exit cap, cols = RevPAR growth.
+        "sensitivity_engine": _sensitivity_engine_output(),
         "scenario_outputs": [
             {"name": "Downside", "irr": 0.148, "unlevered_irr": 0.092, "multiple": 1.65, "avg_coc": 0.032, "exit_value_usd": 58_200_000},
             {"name": "Base Case", "irr": 0.2348, "unlevered_irr": 0.1684, "multiple": 2.12, "avg_coc": 0.046, "exit_value_usd": 73_142_000, "base": True},
@@ -557,7 +573,7 @@ def kimpton_model() -> dict[str, Any]:
             "subject_chain_scale": "luxury",
             "lookback_years": 5,
         },
-        # str_forecast: 24 historical + 24 forecast months × 3 scenarios (W3.3).
+        # str_forecast: 24 historical + 24 forecast months x 3 scenarios (W3.3).
         "str_forecast": {
             "deal_id": "kimpton-angler-2026",
             "coverage_quality": "high",
@@ -785,20 +801,60 @@ def kimpton_memo() -> dict[str, Any]:
     }
 
 
-def load_demo_payload(deal_id: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return (deal, model, memo) for the export endpoints.
+def _amortizing_schedule(
+    *, loan: float, annual_rate: float, amortization_years: int, months: int
+) -> list[dict[str, float | int]]:
+    """A level-payment schedule in the debt engine's ``monthly_schedule`` shape."""
+    r = annual_rate / 12.0
+    n = amortization_years * 12
+    pmt = loan * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+    rows: list[dict[str, float | int]] = []
+    bal = loan
+    for m in range(1, months + 1):
+        interest = bal * r
+        principal = pmt - interest
+        bal -= principal
+        rows.append(
+            {
+                "month": m,
+                "interest": round(interest, 2),
+                "principal": round(principal, 2),
+                "payment": round(pmt, 2),
+                "ending_balance": round(bal, 2),
+            }
+        )
+    return rows
 
-    Today every deal_id resolves to the Kimpton Angler fixture so the
-    exports work end-to-end before the DB-backed fetch lands.
-    """
-    deal = kimpton_deal()
-    deal["id"] = deal_id  # echo the requested id back
-    return deal, kimpton_model(), kimpton_memo()
+
+def _sensitivity_engine_output() -> dict[str, Any]:
+    """A ``SensitivityOutput``-shaped block: 5x5 levered IRR over exit cap x
+    RevPAR growth, base cell in the middle (test data)."""
+    rows = [0.060, 0.065, 0.070, 0.075, 0.080]
+    cols = [0.01, 0.02, 0.03, 0.04, 0.05]
+    cells = []
+    for i, rv in enumerate(rows):
+        for j, cv in enumerate(cols):
+            value = round(0.2348 - (i - 2) * 0.021 + (j - 2) * 0.016, 4)
+            cells.append(
+                {
+                    "row_value": rv,
+                    "col_value": cv,
+                    "value": value,
+                    "is_base": i == 2 and j == 2,
+                }
+            )
+    return {
+        "row_variable": "exit_cap_rate",
+        "col_variable": "revpar_growth",
+        "metric": "levered_irr",
+        "rows": rows,
+        "cols": cols,
+        "cells": cells,
+    }
 
 
 __all__ = [
     "kimpton_deal",
     "kimpton_memo",
     "kimpton_model",
-    "load_demo_payload",
 ]
