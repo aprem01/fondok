@@ -382,3 +382,87 @@ async def test_export_route_carries_the_parity_rows_from_the_deals_own_run() -> 
         )
     assert preview["computed_edits"] == []
     assert preview["changes"] == [] and preview["mapping_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_noi_is_shown_and_the_sheet_ties_out() -> None:
+    """``noi_override_by_year`` pins Year 1 at $1M: Net Cash Flow stays the cash
+    flow's, the pinned NOI gets its own read-only row, the pinned year's Net
+    Cash Flow cell says so, and every year ties out on the sheet itself. The
+    import ignores the new row."""
+    from app.database import get_session_factory
+    from app.export.pl_workbooks import (
+        CASH_FLOW_NOI_PIN_LABEL,
+        parse_projections_import,
+    )
+    from app.services.engine_runner import run_all_engines
+
+    base = await _kimpton_outputs()
+    unpinned = [y["noi"] for y in base["expense"]["years"]]
+    pin = [1_000_000.0, *unpinned[1:]]
+    async with get_session_factory()() as s:
+        results = await run_all_engines(
+            s, deal_id=KIMPTON_FIXTURE_DEAL_ID, tenant_id=str(uuid4()),
+            run_id=str(uuid4()),
+            assumptions={**kimpton_seed(), "noi_override_by_year": pin},
+        )
+    assert all(r["status"] == "complete" for r in results.values())
+    out = {k: v["outputs"] for k, v in results.items()}
+    assert out["returns"]["noi_by_year"][0] == pytest.approx(1_000_000.0)
+
+    data, values, n = _build(out)
+    ws = load_workbook(io.BytesIO(data))["Future P&L"]
+    rows, cols = _grid(ws)
+    hs = _headers(n)
+    assert CASH_FLOW_NOI_PIN_LABEL in rows
+    assert rows["FF&E Reserve"] < rows[CASH_FLOW_NOI_PIN_LABEL] < rows["Net Cash Flow"]
+    assert ws.cell(row=rows[CASH_FLOW_NOI_PIN_LABEL], column=1).value.startswith(
+        "fondok_readonly:")
+
+    def amt(label: str, i: int):
+        return ws.cell(row=rows[label], column=cols[f"{hs[i]} Amount"]).value
+
+    for i in range(n):
+        ffe = amt("FF&E Reserve", i)
+        ncf = amt("Net Cash Flow", i)
+        ncf_cell = ws.cell(row=rows["Net Cash Flow"], column=cols[f"{hs[i]} Amount"])
+        if i == 0:
+            # Pinned: the pin row + the sheet's own FF&E line = Net Cash Flow.
+            assert ncf == pytest.approx(1_000_000.0)
+            assert amt(CASH_FLOW_NOI_PIN_LABEL, i) - ffe == pytest.approx(ncf)
+            assert ncf_cell.comment is not None
+            assert "noi_override_by_year" in ncf_cell.comment.text
+            # … and it is visibly NOT the operating NOI above it.
+            assert amt("NOI (before FF&E reserve)", i) - ffe != pytest.approx(ncf)
+        else:
+            # Unpinned years: the NOI lines above tie out on their own.
+            assert amt(CASH_FLOW_NOI_PIN_LABEL, i) == "—"
+            assert amt("NOI (before FF&E reserve)", i) - ffe == pytest.approx(ncf)
+            assert ncf_cell.comment is None
+
+    # Unpinned deal: no pin row at all.
+    plain = load_workbook(io.BytesIO(_build(base)[0]))["Future P&L"]
+    assert CASH_FLOW_NOI_PIN_LABEL not in _grid(plain)[0]
+
+    # Typed over, the pin row is not an edit.
+    wb = load_workbook(io.BytesIO(data))
+    w = wb["Future P&L"]
+    for i in range(n):
+        w.cell(row=rows[CASH_FLOW_NOI_PIN_LABEL], column=cols[f"{hs[i]} Amount"]).value = 7
+    buf = io.BytesIO()
+    wb.save(buf)
+    p = parse_projections_import(
+        buf.getvalue(), deal_id="deal-1", current_values=values,
+        current_assumptions={a["key"]: a["value"] for a in _assumptions()},
+        needs_note=lambda k: True,
+    )
+    assert p["computed_edits"] == [] and p["changes"] == [] and p["mapping_errors"] == []
+
+
+def test_ratio_message_names_zero_and_negative_denominators_apart() -> None:
+    from app.export.pl_workbooks import _ratio
+
+    assert _ratio(5.0, "X", 0.0, "Total Revenue") == (
+        "not available: Total Revenue is zero for this year")
+    assert _ratio(5.0, "X", -3.0, "Total Revenue") == (
+        "not available: Total Revenue is negative for this year")

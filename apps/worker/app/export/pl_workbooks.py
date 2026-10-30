@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -876,6 +877,19 @@ FORWARD_NOI_LABEL = "Forward 12-Month Cash NOI (after FF&E reserve)"
 EXIT_NOI_LABEL = "Exit NOI (after FF&E reserve)"
 EXIT_COLUMN_LABEL = "Exit Year"
 NET_CASH_FLOW_LABEL = "Net Cash Flow"
+#: Shown only when the cash flow's NOI differs from the expense engine's in at
+#: least one year — the deal carries ``noi_override_by_year`` (an analyst pin),
+#: which the returns / cash-flow engines run on and the expense lines do not.
+CASH_FLOW_NOI_PIN_LABEL = "NOI used by the cash flow (analyst pin)"
+#: Comment on a Net Cash Flow cell built on that pinned NOI.
+CASH_FLOW_PIN_NOTE = (
+    "This year's Net Cash Flow is built on the analyst-pinned NOI "
+    "(noi_override_by_year), not the NOI lines above: see the row "
+    f"'{CASH_FLOW_NOI_PIN_LABEL}'. Pinned NOI before the FF&E reserve less FF&E "
+    "Reserve = Net Cash Flow."
+)
+#: The cash flow and the expense engine agree to the cent on an unpinned year.
+_PIN_TOLERANCE = 0.01
 
 #: The room-count rows, in the browser builder's order: (row id, label).
 OPERATING_ROWS: tuple[tuple[str, str], ...] = (
@@ -923,6 +937,9 @@ class ProjectionExtras:
     engines: frozenset[str]
     operating: Mapping[str, tuple[Sourced, ...]]
     net_cash_flow: tuple[Sourced, ...]
+    #: The cash flow's own NOI before the FF&E reserve, per year, where it
+    #: differs from the expense engine's (an analyst pin); None elsewhere.
+    cash_flow_noi_pin: tuple[float | None, ...]
     exit_noi: Sourced
     exit_noi_label: str
     exit_calendar_year: int | None
@@ -983,6 +1000,9 @@ def projection_extras(
         ))
 
     ncf: list[Sourced] = []
+    pins: list[float | None] = []
+    exp = engine_outputs.get("expense") if "expense" in engines else None
+    exp_years = exp.get("years") if isinstance(exp, Mapping) else None
     cf = engine_outputs.get("cash_flow") if "cash_flow" in engines else None
     lines: dict[str, list[Any]] = {}
     if isinstance(cf, Mapping):
@@ -990,6 +1010,7 @@ def projection_extras(
             if isinstance(line, Mapping) and isinstance(line.get("values"), list):
                 lines.setdefault(str(line.get("label")), line["values"])
     for i in range(year_count):
+        pins.append(None)
         if cf is None:
             ncf.append(_engine_missing("cash-flow"))
             continue
@@ -1002,6 +1023,13 @@ def projection_extras(
             ))
         else:
             ncf.append(Sourced(noi_v + ffe_v))
+            # Pinned year: the cash flow's after-reserve NOI is not the
+            # expense engine's. Without an expense NOI there is nothing on
+            # the sheet for it to contradict, so nothing is flagged.
+            ey = exp_years[i] if isinstance(exp_years, list) and i < len(exp_years) else None
+            exp_noi = to_number(ey.get("noi")) if isinstance(ey, Mapping) else None
+            if exp_noi is not None and abs((noi_v + ffe_v) - exp_noi) > _PIN_TOLERANCE:
+                pins[i] = noi_v
 
     ret = engine_outputs.get("returns") if "returns" in engines else None
     basis = ret.get("exit_noi_basis") if isinstance(ret, Mapping) else None
@@ -1024,6 +1052,7 @@ def projection_extras(
         engines=engines,
         operating={k: tuple(v) for k, v in operating.items()},
         net_cash_flow=tuple(ncf),
+        cash_flow_noi_pin=tuple(pins),
         exit_noi=exit_noi,
         exit_noi_label=label,
         exit_calendar_year=last + 1 if isinstance(last, int) else None,
@@ -1052,8 +1081,10 @@ def _ratio(
         return unavailable(ReasonCode.NO_SOURCE, f"no {amount_label} for this year")
     if denom is None:
         return unavailable(ReasonCode.NO_SOURCE, f"no {denom_label} for this year")
-    if denom <= 0:
+    if denom == 0:
         return unavailable(ReasonCode.NOT_APPLICABLE, f"{denom_label} is zero for this year")
+    if denom < 0:
+        return unavailable(ReasonCode.NOT_APPLICABLE, f"{denom_label} is negative for this year")
     return amount / denom
 
 
@@ -1167,6 +1198,9 @@ def build_projections_workbook(
         if exit_col is not None:
             _write(ws, r, exit_col, _not_applicable("the Exit Year column carries the exit NOI only"),
                    _AMOUNT_FMT)
+        if bm_col is not None and ws.cell(row=r, column=1).value.startswith(READONLY_ROW_PREFIX):
+            _write(ws, r, bm_col,
+                   _not_applicable("the benchmark covers P&L expense lines only"), _AMOUNT_FMT)
 
     r = 3
     for rid, label in OPERATING_ROWS:
@@ -1201,10 +1235,27 @@ def build_projections_workbook(
         exit_dash(r)
         if bm_col is not None and benchmark is not None:
             bv = benchmark.get(dotted)
-            bc = ws.cell(row=r, column=bm_col, value=bv)
+            bc = ws.cell(row=r, column=bm_col, value=bv if bv is not None else refuse(
+                ReasonCode.NO_SOURCE, f"the benchmark publishes no ratio for {label}", dotted))
             bc.fill = _READONLY_FILL
             if bv is not None:
                 bc.number_format = "0.0%"
+        r += 1
+
+    pins = extras.cash_flow_noi_pin
+    pinned = [i < len(pins) and pins[i] is not None for i in range(n)]
+    if any(pinned):
+        ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}cash_flow_noi_pin")
+        ws.cell(row=r, column=2, value=CASH_FLOW_NOI_PIN_LABEL)
+        for i in range(n):
+            if pinned[i]:
+                _write(ws, r, amount_col(i), pins[i], _AMOUNT_FMT)
+                ratio_cells(r, i, pins[i], CASH_FLOW_NOI_PIN_LABEL, TOTAL_REVENUE_PATH)
+            else:
+                _write(ws, r, amount_col(i), _not_applicable(
+                    "no pin this year: the cash flow uses the NOI above"), _AMOUNT_FMT)
+                dash_ratios(r, i, "no pin this year")
+        exit_dash(r)
         r += 1
 
     ws.cell(row=r, column=1, value=f"{READONLY_ROW_PREFIX}net_cash_flow")
@@ -1217,6 +1268,8 @@ def build_projections_workbook(
                amt if amt is not None
                else unavailable(src.code, src.reason or "not in the run", "net_cash_flow"),
                _AMOUNT_FMT)
+        if pinned[i]:
+            ws.cell(row=r, column=amount_col(i)).comment = Comment(CASH_FLOW_PIN_NOTE, "Fondok")
         ratio_cells(r, i, amt, NET_CASH_FLOW_LABEL, TOTAL_REVENUE_PATH)
     exit_dash(r)
     r += 1
@@ -1290,6 +1343,12 @@ def build_projections_workbook(
             "Rooms come from the revenue engine; Net Cash Flow (NOI after the FF&E reserve) from "
             "the cash-flow engine; the Exit Year column holds only the NOI the reversion is "
             "valued on, from the returns engine, with its basis in the row label.",
+            "Analyst NOI pin: when the deal pins NOI by year (noi_override_by_year), the "
+            "returns and cash-flow engines run on the pinned NOI while the P&L lines above "
+            "show the operating projection. In any year where they differ, the row "
+            f"'{CASH_FLOW_NOI_PIN_LABEL}' shows the cash flow's NOI before the FF&E reserve, "
+            "and that year's Net Cash Flow cell carries a comment: pinned NOI less FF&E Reserve "
+            "= Net Cash Flow. The row is read-only and ignored on import.",
             "A cell reading 'not available: <reason>' is a figure the model run did not "
             "produce; '—' means the column does not apply to that row. Neither is ever a 0. "
             "The % Rev / PAR / POR / Exit Year columns and those rows are read-only and "
@@ -1525,6 +1584,7 @@ __all__ = [
     "EXIT_NOI_LABEL",
     "FORWARD_NOI_LABEL",
     "NET_CASH_FLOW_LABEL",
+    "CASH_FLOW_NOI_PIN_LABEL",
     "OPERATING_ROWS",
     "READONLY_ROW_PREFIX",
     "ProjectionExtras",

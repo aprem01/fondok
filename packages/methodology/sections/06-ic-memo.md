@@ -47,13 +47,18 @@ It carries the rows and columns of the on-screen table:
   departmental expense is over its own department's revenue, the same basis as the Benchmark %
   column. PAR divides the amount by Available Rooms and POR by Occupied Rooms. Rates such as
   occupancy and ADR take no ratio and show a dash.
-- **Net Cash Flow**: NOI after the FF&E reserve, from the cash-flow engine.
+- **Net Cash Flow**: NOI after the FF&E reserve, from the cash-flow engine. When the deal pins NOI
+  by year (a reconciliation pin), the cash flow and returns run on the pinned NOI while the P&L lines
+  show the operating projection. In any year where the two differ, the workbook adds a row, *NOI used
+  by the cash flow (analyst pin)*, with the pinned figure before the reserve, and that year's Net Cash
+  Flow cell carries a note: the pinned NOI less the FF&E reserve is the Net Cash Flow.
 - **An Exit Year column** with the NOI the reversion is valued on, from the returns engine. The row
   is labelled with its basis: the forward 12 months after the sale by default, or the stabilized,
   sale-year or override figure when the deal uses one.
 
 A figure the model run did not produce reads *not available* with the reason, never a zero or an
-empty cell. These rows and columns are read-only: importing an edited workbook ignores them, and only
+empty cell. A column that does not apply to a row (a ratio on occupancy, the Exit Year on an
+operating line, a Benchmark % the benchmark does not publish) shows a dash. These rows and columns are read-only: importing an edited workbook ignores them, and only
 the Assumptions sheet is applied.
 
 :::

@@ -556,8 +556,8 @@ def test_projection_export_benchmark_column_is_read_only_and_after_the_years() -
     rooms = rows["expense.dept_expenses.rooms"]
     assert wp.cell(row=rooms, column=bm_col).value == 0.25
     assert wp.cell(row=rooms, column=bm_col).number_format == "0.0%"
-    # A line the benchmark did not publish is blank — never zero-filled.
-    assert wp.cell(row=rows["revenue.occupancy"], column=bm_col).value is None
+    # A line the benchmark did not publish is a dash — never zero-filled or blank.
+    assert wp.cell(row=rows["revenue.occupancy"], column=bm_col).value == "—"
     # The year cells are exactly what they were without a benchmark.
     assert wp.cell(row=rooms, column=3).value == 2_800_000.0
 
@@ -657,9 +657,9 @@ async def test_projection_export_route_feeds_benchmark_from_market_data() -> Non
     assert wp.cell(
         row=rows["expense.undistributed.administrative_general"], column=bm_col
     ).value == pytest.approx(by_key["administrative_general"].ratio)
-    # Insurance was priced POR-only: present in the block with no ratio → blank cell.
+    # Insurance was priced POR-only: present in the block with no ratio → a dash.
     assert by_key["insurance"].ratio is None
-    assert wp.cell(row=rows["expense.fixed_charges.insurance"], column=bm_col).value is None
+    assert wp.cell(row=rows["expense.fixed_charges.insurance"], column=bm_col).value == "—"
 
 
 # ─────────────────── FON-95 part 2 — penetration targets by year ───────────────────
