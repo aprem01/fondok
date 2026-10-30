@@ -224,9 +224,11 @@ vi.mock('@/lib/hooks/useFlash', () => ({ useFlash: () => false }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import ReturnsTab from '@/components/project/ReturnsTab';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   previewSpy.mockClear();
   runOneSpy.mockClear();
   runAllSpy.mockClear();

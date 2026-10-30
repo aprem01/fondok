@@ -180,14 +180,11 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 import MarketTab from '@/components/project/MarketTab';
 import { api } from '@/lib/api';
 import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
+import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
   cleanup();
-  // Routing state is module-level: a routing test that leaves ?sub=index-analysis
-  // behind would open the next test (in shuffled order) on the wrong sub-tab.
-  nav.params = new URLSearchParams('');
-  nav.push.mockClear();
-  nav.replace.mockClear();
+  resetRouter(nav);
   mockOverrides = {};
   mockSources = {};
   mockReasons = {};

@@ -219,6 +219,7 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 
 import PartnershipTab from '@/components/project/PartnershipTab';
 import { ProvenanceProvider } from '@/lib/hooks/useDealProvenance';
+import { resetRouter } from './helpers/mockRouter';
 
 /** Partnership terms the deal CARRIES (a partnership document), as the worker
  *  publishes them on assumption_sources. The worker suggests none. */
@@ -255,6 +256,7 @@ function renderWithSources() {
 
 beforeEach(() => {
   cleanup();
+  resetRouter(nav);
   sources.payload = CARRIED_TERMS_PAYLOAD;
   assumptionSourcesSpy.mockClear();
   activeOutputs = OUTPUTS;
