@@ -796,6 +796,9 @@ export const DebtEngineOutput = z.object({
   total_shortfall_usd: z.number().nonnegative().default(0),
   negative_noi_years: z.array(z.number().int().min(1)).default([]),
   noi_warning: z.string().nullable().optional(),
+  // The loan matures before the sale (term < hold) and no refinance replaces
+  // it: the model carries the maturity balance to the sale; this discloses it.
+  maturity_warning: z.string().nullable().optional(),
   provenance: ProvenanceMap.default({}),
 });
 export type DebtEngineOutput = z.infer<typeof DebtEngineOutput>;

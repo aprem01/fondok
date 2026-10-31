@@ -925,6 +925,10 @@ class DebtEngineOutput(BaseModel):
     total_shortfall_usd: Annotated[float, Field(ge=0)] = 0.0
     negative_noi_years: list[int] = Field(default_factory=list)
     noi_warning: str | None = None
+    # The loan matures before the sale (term < hold) and no refinance replaces
+    # it: the model carries the maturity balance to the sale and keeps the
+    # same debt service, and this is the one sentence that discloses it.
+    maturity_warning: str | None = None
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "schedule[0].debt_service". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)

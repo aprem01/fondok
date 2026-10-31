@@ -269,7 +269,9 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # analyst sets a refi year; empty/zero keeps single-phase deals unchanged.
     # ``debt_service_by_year`` is the phased DS (senior then refi) the Returns
     # engine consumes; ``refi_cash_out`` is the net proceeds returned to equity
-    # at ``refi_year``; ``balance_at_exit`` is the loan balance at the sale.
+    # at ``refi_year``; ``balance_at_exit`` is the loan balance at the sale —
+    # the post-refi balance after a refinance, else the senior's ending
+    # balance at the end of the hold (never the balance at loan maturity).
     debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
         default_factory=list
     )
@@ -678,6 +680,35 @@ def _negative_noi_warning(
     return "; ".join(parts)
 
 
+def balance_at_horizon(
+    schedule: list[DebtServiceYear], horizon: int
+) -> float | None:
+    """Senior ending balance at the end of hold Year ``horizon`` — the balance
+    a sale at the hold-year end repays. Past maturity (``horizon`` beyond the
+    schedule) the last row's balance stands; ``horizon`` 0 (no projection)
+    reads the last row too. None on an empty schedule."""
+    if not schedule:
+        return None
+    if horizon <= 0:
+        return schedule[-1].ending_balance
+    return schedule[min(horizon, len(schedule)) - 1].ending_balance
+
+
+def _maturity_warning(
+    term_years: int, horizon: int, maturity_balance: float | None
+) -> str | None:
+    """The one sentence the Debt tab shows when the loan matures before the
+    sale (term < hold) and no refinance replaces it. None otherwise."""
+    if term_years <= 0 or horizon <= term_years or maturity_balance is None:
+        return None
+    return (
+        f"The loan matures in Year {term_years}, before the Year {horizon} sale; "
+        f"the model carries the {_usd(maturity_balance)} maturity balance to the "
+        "sale and keeps the same debt service. Model a refinance or set the loan "
+        "term to cover the hold."
+    )
+
+
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
     """Build the debt service schedule and DSCR / debt-yield headline metrics."""
 
@@ -964,9 +995,12 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         refi_cash_out = 0.0
         refi_year_out: int | None = None
         refi_detail: dict[str, Any] | None = None
-        balance_at_exit_out: float | None = (
-            schedule[-1].ending_balance if schedule else None
-        )
+        # The loan balance carried to the SALE: the senior's ending balance at
+        # the end of the hold horizon (Year ``len(noi_by_year)``), not at loan
+        # maturity — a 10-year loan sold in Year 5 repays its Year-5 balance.
+        # A loan that matures before the sale carries its maturity balance
+        # (the last schedule row) and ``maturity_warning`` says so.
+        balance_at_exit_out: float | None = balance_at_horizon(schedule, horizon)
         if refi is not None and horizon > 0:
             senior_ds_by_year = [
                 schedule[i].debt_service if i < len(schedule) else senior_annual_ds
@@ -983,6 +1017,16 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_year_out,
                     refi_detail,
                 ) = computed
+
+        # The loan matures before the sale and no refinance replaces it: the
+        # model does NOT invent a refinance or extension — it carries the
+        # maturity balance to the sale and keeps the same debt service — but
+        # it says so, once, on the Debt tab.
+        maturity_warning = (
+            _maturity_warning(len(schedule), horizon, balance_at_exit_out)
+            if refi_detail is None
+            else None
+        )
 
         # FON-72 follow-up — surface the refi detail the model already computed.
         # refi_ltv prefers the input LTV (the sizing basis); when the loan was
@@ -1196,6 +1240,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             total_shortfall_usd=total_shortfall_usd,
             negative_noi_years=negative_noi_years,
             noi_warning=noi_warning,
+            maturity_warning=maturity_warning,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,

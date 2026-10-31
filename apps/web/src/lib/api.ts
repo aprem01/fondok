@@ -3942,6 +3942,9 @@ export interface DebtNoiShortfallExtras {
   negative_noi_years?: number[];
   /** The engine's one-line warning; rendered verbatim when present. */
   noi_warning?: string | null;
+  /** The loan matures before the sale (term < hold) and no refinance
+   *  replaces it; the engine's one sentence, rendered verbatim on Debt. */
+  maturity_warning?: string | null;
 }
 
 /** FON-44 — which NOI the reversion capitalizes. `sale_year` (FON-118) is
