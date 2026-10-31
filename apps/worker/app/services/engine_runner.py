@@ -105,7 +105,7 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
-from ..engines.debt import balance_at_horizon
+from ..engines.debt import returns_debt_inputs
 from ..engines.partnership import (
     NO_PARTNERSHIP_TERMS_REASON,
     promote_tier_label,
@@ -6928,6 +6928,27 @@ def _coerce_incentive_mgmt_fee_pct(value: Any) -> float | None:
     return max(0.0, min(0.5, v))
 
 
+def _exit_month_override(base: dict[str, Any]) -> int | None:
+    """FON-67 — the off-cycle disposition month (e.g. a 52-month hold) the
+    analyst set, or None for the clean hold × 12 exit."""
+    raw = base.get("exit_month")
+    if raw in (None, ""):
+        return None
+    try:
+        month = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    return month if month > 0 else None
+
+
+def _selected_exit_month(base: dict[str, Any]) -> int:
+    """The selected exit month from close, exactly as the returns engine
+    resolves it: the override clamped to [1, hold × 12], else hold × 12."""
+    full_term = int(base["hold_years"]) * 12
+    override = _exit_month_override(base)
+    return max(1, min(full_term, override)) if override is not None else full_term
+
+
 def _build_input_for(
     engine_name: str,
     deal_id: str,
@@ -7214,6 +7235,11 @@ def _build_input_for(
             # FON-63 — analyst per-tranche edits (Senior rate/principal/amort,
             # activated PACE, etc.) layered over the default stack.
             debt_stack_overrides=base.get("debt_stack_overrides"),
+            # The sale the loan is repaid at — the SAME selected exit the
+            # returns engine prices (override clamped to hold × 12, else
+            # hold × 12), so Balance at Exit is the payoff Returns deducts.
+            hold_years=int(base["hold_years"]),
+            exit_month=_selected_exit_month(base),
             # FON-63 — seed the senior tranche's origination fee from the deal's
             # own senior loan fee so Debt renders 1.50% / $354,900, not 0.00%/$0.
             # An analyst edit on the same field is layered over this seed.
@@ -7276,19 +7302,14 @@ def _build_input_for(
             closing_costs_pct=base["closing_costs_pct"],
         )
         # FON-67 — forward the debt engine's phased debt service + refinance
-        # cash-out + post-refi exit balance. All default to the single-phase
-        # values when no refi is modeled, so non-refi deals are unchanged.
-        # The exit balance is the balance at the SALE (end of the hold), never
-        # at loan maturity; the debt engine publishes it as balance_at_exit.
-        debt_exit_balance = (
-            debt_out.balance_at_exit
-            if getattr(debt_out, "balance_at_exit", None) is not None
-            else balance_at_horizon(
-                list(debt_out.schedule or []), int(base["hold_years"])
-            )
+        # cash-out + post-refi exit balance, plus (FON-118) the per-month
+        # senior balance and the post-refi balance that price the payoff of
+        # every sale at its own month. One mapping (``returns_debt_inputs``),
+        # shared with the sensitivity financing grid. All default to the
+        # single-phase values when no refi is modeled.
+        debt_returns_fields = returns_debt_inputs(
+            debt_out, fallback_loan=capital_out.debt_amount
         )
-        if debt_exit_balance is None:
-            debt_exit_balance = capital_out.debt_amount
         # FON-67 — date-based IRR timing: a `refi_month` override (months from
         # acquisition) places the cash-out at its actual time (month 30 → 2.5y).
         # None keeps the cash-out at its year-end, so the IRR is unchanged.
@@ -7333,12 +7354,8 @@ def _build_input_for(
             noi_from_expense_engine=noi_from_expense_engine,
             exit_noi_basis=exit_noi_basis,
             stabilized_year=stabilized_year,
-            annual_debt_service=debt_out.annual_debt_service,
-            debt_service_by_year=getattr(debt_out, "debt_service_by_year", []) or [],
             loan_amount=capital_out.debt_amount,
-            loan_balance_at_exit=debt_exit_balance,
-            refi_cash_out=getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
-            refi_year=getattr(debt_out, "refi_year", None),
+            **debt_returns_fields,
             refi_time_years=refi_time_years,
             # FON-67 — reconciliation overrides: pin the exit-year terminal NOI
             # (for the reversion) to the source model's stabilized NOI when set.
@@ -7359,33 +7376,13 @@ def _build_input_for(
                 else 0
             ),
             # FON-67 — off-cycle disposition month (e.g. a 52-month hold).
-            exit_month_override=(
-                int(float(base["exit_month"]))
-                if base.get("exit_month") not in (None, "")
-                and int(float(base["exit_month"])) > 0
-                else None
-            ),
+            exit_month_override=_exit_month_override(base),
             # FON-67 — explicit per-month equity draw schedule.
             equity_draw_schedule=(
                 [float(x) for x in base["equity_draw_schedule"]]
                 if isinstance(base.get("equity_draw_schedule"), list)
                 and base["equity_draw_schedule"]
                 else []
-            ),
-            # FON-118 — returns by exit year. The senior's per-month ending
-            # balance prices the payoff of EVERY sale — the selected exit (the
-            # headline) and each interim row — at its own month; the post-refi
-            # balance once the refi month has passed. ``loan_balance_at_exit``
-            # above is the fallback when no monthly schedule exists.
-            loan_balance_by_month=[
-                float(m.ending_balance)
-                for m in (getattr(debt_out, "monthly_schedule", None) or [])
-            ],
-            refi_balance=(
-                float(debt_out.balance_at_exit)
-                if getattr(debt_out, "refi_year", None) is not None
-                and getattr(debt_out, "balance_at_exit", None) is not None
-                else None
             ),
             # FON-118 — a development-like deal labels the rows inside the
             # analyst-stated construction window; never changes a number.

@@ -799,6 +799,9 @@ export const DebtEngineOutput = z.object({
   // The loan matures before the sale (term < hold) and no refinance replaces
   // it: the model carries the maturity balance to the sale; this discloses it.
   maturity_warning: z.string().nullable().optional(),
+  // The refinance raises less than the senior balance it retires (+ fee): the
+  // paydown equity would fund is not modelled; this discloses it.
+  refi_warning: z.string().nullable().optional(),
   provenance: ProvenanceMap.default({}),
 });
 export type DebtEngineOutput = z.infer<typeof DebtEngineOutput>;

@@ -3945,6 +3945,9 @@ export interface DebtNoiShortfallExtras {
   /** The loan matures before the sale (term < hold) and no refinance
    *  replaces it; the engine's one sentence, rendered verbatim on Debt. */
   maturity_warning?: string | null;
+  /** The refinance raises less than the senior balance it retires (+ fee);
+   *  the paydown equity would fund is not modelled. Rendered verbatim. */
+  refi_warning?: string | null;
 }
 
 /** FON-44 — which NOI the reversion capitalizes. `sale_year` (FON-118) is

@@ -65,6 +65,14 @@ class DebtEngineInputExt(DebtEngineInput):
     # placeholder an analyst activates by entering a principal. Optional so
     # legacy callers are byte-for-byte unaffected.
     debt_stack_overrides: dict[str, Any] | None = None
+    # The SALE the loan is repaid at. ``hold_years`` is the deal's hold and
+    # ``exit_month`` the selected exit month from close (the returns engine's
+    # ``exit_month_override`` clamped to hold × 12, else hold × 12). They set
+    # ``balance_at_exit`` (the balance at that month) and the maturity /
+    # refinance horizon. None (grid callers, legacy) → the projection length
+    # ``len(noi_by_year)`` stands in for the hold, sold at its year-end.
+    hold_years: Annotated[int, Field(ge=1)] | None = None
+    exit_month: Annotated[int, Field(ge=1)] | None = None
     # FON-63 — a monthly forward SOFR curve (annualized rate per hold-month,
     # index 0 = month 1), e.g. the Chatham 1-Month Term SOFR Forward Curve.
     # When present alongside a spread, the floating senior (and refi) price off
@@ -270,8 +278,9 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # ``debt_service_by_year`` is the phased DS (senior then refi) the Returns
     # engine consumes; ``refi_cash_out`` is the net proceeds returned to equity
     # at ``refi_year``; ``balance_at_exit`` is the loan balance at the sale —
-    # the post-refi balance after a refinance, else the senior's ending
-    # balance at the end of the hold (never the balance at loan maturity).
+    # the post-refi balance once the refinance precedes the sale, else the
+    # senior's ending balance at the sale month (``exit_month``, else the end
+    # of the hold) — never the balance at loan maturity.
     debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
         default_factory=list
     )
@@ -601,8 +610,12 @@ def _compute_refi(
         )
         sizers = [x for x in (by_dy, by_dscr) if x > 0]
         refi_proceeds = min(sizers) if sizers else 0.0
+    # A refinance after maturity retires the CARRIED maturity balance (the
+    # model keeps the matured loan outstanding until the refinance), never 0.
     senior_balance_at_k = (
-        schedule[k - 1].ending_balance if k - 1 < len(schedule) else 0.0
+        schedule[k - 1].ending_balance
+        if k - 1 < len(schedule)
+        else (schedule[-1].ending_balance if schedule else 0.0)
     )
     # Net the refi loan fee out of the cash-out to equity (source: 1.00% fee).
     refi_fee = refi_proceeds * refi.get("fee_pct", 0.0)
@@ -685,28 +698,110 @@ def balance_at_horizon(
 ) -> float | None:
     """Senior ending balance at the end of hold Year ``horizon`` — the balance
     a sale at the hold-year end repays. Past maturity (``horizon`` beyond the
-    schedule) the last row's balance stands; ``horizon`` 0 (no projection)
-    reads the last row too. None on an empty schedule."""
-    if not schedule:
+    schedule) the last row's balance stands. None on an empty schedule and
+    for ``horizon`` ≤ 0: with no hold there is no sale, and the maturity
+    balance is never a stand-in for one."""
+    if not schedule or horizon <= 0:
         return None
-    if horizon <= 0:
-        return schedule[-1].ending_balance
     return schedule[min(horizon, len(schedule)) - 1].ending_balance
 
 
+def _sale_label(sale_month: int) -> str:
+    """``60`` → ``"Year 5 sale"``; an off-cycle ``52`` → ``"month 52 sale"``."""
+    if sale_month % 12 == 0:
+        return f"Year {sale_month // 12} sale"
+    return f"month {sale_month} sale"
+
+
 def _maturity_warning(
-    term_years: int, horizon: int, maturity_balance: float | None
+    maturity_year: int, sale_month: int | None, maturity_balance: float | None
 ) -> str | None:
     """The one sentence the Debt tab shows when the loan matures before the
-    sale (term < hold) and no refinance replaces it. None otherwise."""
-    if term_years <= 0 or horizon <= term_years or maturity_balance is None:
+    sale and no refinance replaces it. None otherwise."""
+    if (
+        maturity_year <= 0
+        or sale_month is None
+        or sale_month <= maturity_year * 12
+        or maturity_balance is None
+    ):
         return None
     return (
-        f"The loan matures in Year {term_years}, before the Year {horizon} sale; "
-        f"the model carries the {_usd(maturity_balance)} maturity balance to the "
-        "sale and keeps the same debt service. Model a refinance or set the loan "
-        "term to cover the hold."
+        f"The loan matures in Year {maturity_year}, before the "
+        f"{_sale_label(sale_month)}; the model carries the "
+        f"{_usd(maturity_balance)} maturity balance to the sale and keeps the "
+        "same debt service. Model a refinance or set the loan term to cover the "
+        "hold."
     )
+
+
+def _maturity_before_refi_warning(
+    maturity_year: int, refi_year: int, maturity_balance: float
+) -> str:
+    """The loan matures before the refinance retires it: the model carries the
+    maturity balance (and the same debt service) to the refinance."""
+    return (
+        f"The loan matures in Year {maturity_year}, before the Year {refi_year} "
+        f"refinance; the model carries the {_usd(maturity_balance)} maturity "
+        "balance to the refinance and keeps the same debt service until then. "
+        "Set the loan term to reach the refinance."
+    )
+
+
+def _refi_shortfall_warning(detail: dict[str, Any], refi_year: int) -> str | None:
+    """The refinance raises less than the senior balance it retires (+ fee).
+    The model does NOT charge the paydown equity would fund (a modelling
+    decision pending) — it says so. None when the proceeds cover it."""
+    proceeds = float(detail.get("new_loan_proceeds") or 0.0)
+    balance = float(detail.get("existing_balance_repaid") or 0.0)
+    fee = float(detail.get("financing_costs") or 0.0)
+    if proceeds >= balance + fee:
+        return None
+    if proceeds < balance:
+        return (
+            f"The Year {refi_year} refinance raises {_usd(proceeds)} against a "
+            f"{_usd(balance)} balance; the {_usd(balance - proceeds)} shortfall "
+            "(plus fees) that equity would fund is not modelled."
+        )
+    return (
+        f"The Year {refi_year} refinance raises {_usd(proceeds)} against a "
+        f"{_usd(balance)} balance; the {_usd(balance + fee - proceeds)} of "
+        "refinance fees that equity would fund is not modelled."
+    )
+
+
+def returns_debt_inputs(debt_out: Any, *, fallback_loan: float) -> dict[str, Any]:
+    """The debt engine's output mapped onto the returns engine's input fields
+    — the ONE mapping the runner and the sensitivity financing grid share, so
+    a grid cell priced at the deal's own loan reproduces the headline.
+
+    ``fallback_loan`` stands in for the exit balance only when the debt engine
+    published none (an empty schedule)."""
+    balance_at_exit = getattr(debt_out, "balance_at_exit", None)
+    refi_year = getattr(debt_out, "refi_year", None)
+    refi_balance = getattr(debt_out, "refi_new_loan_proceeds", None)
+    if refi_balance is None:
+        refi_balance = balance_at_exit
+    return {
+        "annual_debt_service": debt_out.annual_debt_service,
+        "debt_service_by_year": list(getattr(debt_out, "debt_service_by_year", None) or []),
+        "loan_balance_at_exit": (
+            balance_at_exit if balance_at_exit is not None else fallback_loan
+        ),
+        "refi_cash_out": getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
+        "refi_year": refi_year,
+        "loan_balance_by_month": [
+            float(m.ending_balance)
+            for m in (getattr(debt_out, "monthly_schedule", None) or [])
+        ],
+        # The post-refinance balance (interest-only → the refi proceeds). Not
+        # ``balance_at_exit``: a sale set BEFORE the refinance publishes the
+        # senior's balance there, while later year-end rows still owe the refi.
+        "refi_balance": (
+            float(refi_balance)
+            if refi_year is not None and refi_balance is not None
+            else None
+        ),
+    }
 
 
 class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
@@ -973,7 +1068,20 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # senior schedule) is unchanged, and a deal with no refi year is
         # byte-for-byte the single-phase model.
         refi = _refi_params(payload.debt_stack_overrides)
-        horizon = len(payload.noi_by_year)
+        # The hold the loan is sold at: the deal's hold when the runner passes
+        # it, else the projection length (grid callers / legacy).
+        horizon = (
+            payload.hold_years
+            if payload.hold_years is not None
+            else len(payload.noi_by_year)
+        )
+        # The sale month from close: the selected exit (clamped to the hold),
+        # else the hold's last month. None with no hold at all.
+        sale_month: int | None = (
+            max(1, min(payload.exit_month, horizon * 12))
+            if payload.exit_month is not None and horizon > 0
+            else (horizon * 12 if horizon > 0 else None)
+        )
         # FON-63 — price the (interest-only) refinance off the SOFR curve when
         # one is supplied: rate = average curve over the post-refi months +
         # refi spread. For IO debt the period average reproduces the exact
@@ -996,11 +1104,16 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         refi_year_out: int | None = None
         refi_detail: dict[str, Any] | None = None
         # The loan balance carried to the SALE: the senior's ending balance at
-        # the end of the hold horizon (Year ``len(noi_by_year)``), not at loan
-        # maturity — a 10-year loan sold in Year 5 repays its Year-5 balance.
-        # A loan that matures before the sale carries its maturity balance
-        # (the last schedule row) and ``maturity_warning`` says so.
-        balance_at_exit_out: float | None = balance_at_horizon(schedule, horizon)
+        # the sale month (the selected exit, else the hold's year-end), not at
+        # loan maturity — a 10-year loan sold in Year 5 repays its Year-5
+        # balance. A loan that matures before the sale carries its maturity
+        # balance (the last month) and ``maturity_warning`` says so.
+        senior_balance_at_sale: float | None = (
+            monthly_schedule[min(sale_month, len(monthly_schedule)) - 1].ending_balance
+            if monthly_schedule and sale_month is not None
+            else balance_at_horizon(schedule, horizon)
+        )
+        balance_at_exit_out: float | None = senior_balance_at_sale
         if refi is not None and horizon > 0:
             senior_ds_by_year = [
                 schedule[i].debt_service if i < len(schedule) else senior_annual_ds
@@ -1018,15 +1131,42 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_detail,
                 ) = computed
 
+        # A sale BEFORE the refinance repays the senior at the sale month.
+        # The refinance month is the same one the returns engine switches the
+        # payoff at: the ``refi_month`` override when set, else the refi
+        # year-end.
+        if refi_year_out is not None and sale_month is not None:
+            _rm = (payload.debt_stack_overrides or {}).get("refi_month")
+            try:
+                _refi_m = (
+                    round(float(_rm)) if _rm is not None and float(_rm) > 0
+                    else refi_year_out * 12
+                )
+            except (TypeError, ValueError):
+                _refi_m = refi_year_out * 12
+            _refi_m = max(1, min(horizon * 12, _refi_m))
+            if sale_month < _refi_m:
+                balance_at_exit_out = senior_balance_at_sale
+
         # The loan matures before the sale and no refinance replaces it: the
         # model does NOT invent a refinance or extension — it carries the
         # maturity balance to the sale and keeps the same debt service — but
-        # it says so, once, on the Debt tab.
-        maturity_warning = (
-            _maturity_warning(len(schedule), horizon, balance_at_exit_out)
-            if refi_detail is None
-            else None
-        )
+        # it says so, once, on the Debt tab. A refinance that lands AFTER
+        # maturity replaces the matured loan only from its year: that gap is
+        # disclosed the same way.
+        maturity_year = len(schedule)
+        maturity_warning: str | None = None
+        refi_warning: str | None = None
+        if refi_detail is None or refi_year_out is None:
+            maturity_warning = _maturity_warning(
+                maturity_year, sale_month, senior_balance_at_sale
+            )
+        else:
+            if schedule and refi_year_out > maturity_year:
+                maturity_warning = _maturity_before_refi_warning(
+                    maturity_year, refi_year_out, schedule[-1].ending_balance
+                )
+            refi_warning = _refi_shortfall_warning(refi_detail, refi_year_out)
 
         # FON-72 follow-up — surface the refi detail the model already computed.
         # refi_ltv prefers the input LTV (the sizing basis); when the loan was
@@ -1241,6 +1381,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             negative_noi_years=negative_noi_years,
             noi_warning=noi_warning,
             maturity_warning=maturity_warning,
+            refi_warning=refi_warning,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,

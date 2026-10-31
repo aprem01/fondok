@@ -693,9 +693,13 @@ class _ExitContext:
     # re-resolve it).
     row_stabilized_year: int | None
     # The month from which the sale repays the post-refinance balance. It is
-    # ``refi_month`` when the refinance returns cash; a refinance that returns
-    # none (cash-out 0 — ``refi_active`` False) still replaces the senior, so
-    # the payoff switches at its month all the same. None without a refinance.
+    # ``refi_month`` when the refinance returns cash. A refinance whose
+    # cash-out is 0 (``refi_active`` False) still replaces the senior, so the
+    # payoff switches at its month all the same. A cash-out of 0 covers both a
+    # refinance whose proceeds just cover the balance + fee AND one that raises
+    # LESS than the balance: the latter's paydown is not charged here (a
+    # modelling decision pending) and the debt engine's ``refi_warning``
+    # discloses it. None without a refinance.
     refi_payoff_month: int | None = None
 
 
@@ -1290,7 +1294,8 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             row_stabilized_year = _idx + 1 if _idx is not None else None
 
         # The payoff switches to the refi balance from the refinance month —
-        # also for a refinance that returned no cash (``refi_active`` False).
+        # also for a refinance whose cash-out is 0 (``refi_active`` False; see
+        # ``_ExitContext.refi_payoff_month`` and the debt ``refi_warning``).
         refi_payoff_month: int | None = refi_month
         if (
             refi_payoff_month is None

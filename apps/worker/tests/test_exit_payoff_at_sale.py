@@ -46,19 +46,23 @@ NOI = [5_000_000.0] * 5
 EQUITY = 22_000_000.0
 
 
-def _debt(term: int, loan: float = LOAN, rate: float = RATE):
-    return DebtEngine().run(
-        DebtEngineInputExt(
-            deal_id=uuid4(),
-            loan_amount=loan,
-            ltv=0.6,
-            interest_rate=rate,
-            term_years=term,
-            amortization_years=30,
-            interest_only_years=0,
-            noi_by_year=list(NOI),
-        )
+def _debt_input(term: int, loan: float = LOAN, rate: float = RATE, **kw: object) -> DebtEngineInputExt:
+    base: dict[str, object] = dict(
+        deal_id=uuid4(),
+        loan_amount=loan,
+        ltv=0.6,
+        interest_rate=rate,
+        term_years=term,
+        amortization_years=30,
+        interest_only_years=0,
+        noi_by_year=list(NOI),
     )
+    base.update(kw)
+    return DebtEngineInputExt(**base)  # type: ignore[arg-type]
+
+
+def _debt(term: int, loan: float = LOAN, rate: float = RATE, **kw: object):
+    return DebtEngine().run(_debt_input(term, loan, rate, **kw))
 
 
 def _returns_input(debt_out, *, loan: float = LOAN, scalar: float | None = None, **kw: object):
@@ -153,10 +157,11 @@ def test_refi_deal_headline_still_pays_the_refi_balance() -> None:
     assert sel.loan_payoff == 55_000_000.0
 
 
-def test_cash_neutral_refi_headline_still_pays_the_refi_balance() -> None:
-    # A refinance that returns no cash (proceeds ≤ payoff + fee → cash-out 0)
-    # still replaces the senior loan: the sale repays the refi balance, never
-    # the senior's schedule as if no refinance happened.
+def test_cash_in_refi_sale_repays_the_refi_balance() -> None:
+    # A refinance that raises LESS than the senior balance (cash-out clamped
+    # to 0) still replaces the senior loan: the sale repays the refi balance.
+    # The paydown equity would fund is NOT modelled — the debt engine's
+    # ``refi_warning`` discloses it (see the debt tests below).
     debt = _debt(10)
     out = ReturnsEngine().run(
         _returns_input(
@@ -173,6 +178,29 @@ def test_cash_neutral_refi_headline_still_pays_the_refi_balance() -> None:
     rows = {r.exit_year: r for r in out.exit_schedule if r.exit_year}
     assert rows[2].loan_payoff == debt.monthly_schedule[23].ending_balance
     assert rows[4].loan_payoff == 36_000_000.0
+
+
+def test_true_cash_neutral_refi_sale_repays_the_refi_balance() -> None:
+    # Proceeds exactly cover the senior balance + fee: cash-out is 0 only
+    # because of the max(0, …) clamp, and the sale repays the refi balance.
+    debt = _debt(10)
+    senior_at_refi = debt.monthly_schedule[35].ending_balance
+    fee_pct = 0.01
+    proceeds = senior_at_refi / (1.0 - fee_pct)
+    assert proceeds - senior_at_refi - proceeds * fee_pct == pytest.approx(0.0, abs=1e-6)
+    out = ReturnsEngine().run(
+        _returns_input(
+            debt,
+            scalar=proceeds,
+            refi_balance=proceeds,
+            refi_cash_out=0.0,
+            refi_year=3,
+        )
+    )
+    assert _selected(out).loan_payoff == proceeds
+    rows = {r.exit_year: r for r in out.exit_schedule if r.exit_year}
+    assert rows[2].loan_payoff == debt.monthly_schedule[23].ending_balance
+    assert rows[3].loan_payoff == proceeds and rows[4].loan_payoff == proceeds
 
 
 # ─────────────── debt engine — the published scalar ───────────────
@@ -194,6 +222,84 @@ def test_balance_at_exit_is_the_hold_horizon_balance(term: int, expected: int, w
         )
     else:
         assert out.maturity_warning is None
+
+
+def test_balance_at_exit_reads_the_hold_not_the_noi_pin_length() -> None:
+    # A 10-year NOI pin on a 5-year hold: the sale is month 60.
+    ten = [5_000_000.0] * 10
+    out = _debt(10, noi_by_year=ten, hold_years=5)
+    assert out.balance_at_exit == out.monthly_schedule[59].ending_balance
+    assert round(out.balance_at_exit) == 37_444_391
+    assert out.maturity_warning is None
+    # Term 5 on that pin: the loan matures AT the Year-5 sale — no warning.
+    assert _debt(5, noi_by_year=ten, hold_years=5).maturity_warning is None
+    # A 3-year pin on a 5-year hold: still the month-60 balance.
+    short = _debt(10, noi_by_year=[5_000_000.0] * 3, hold_years=5)
+    assert short.balance_at_exit == short.monthly_schedule[59].ending_balance
+
+
+def test_balance_at_exit_reads_the_selected_exit_month() -> None:
+    out = _debt(10, hold_years=5, exit_month=52)
+    assert out.balance_at_exit == out.monthly_schedule[51].ending_balance
+    assert out.maturity_warning is None
+
+
+def test_maturity_warning_compares_maturity_to_the_sale() -> None:
+    out = _debt(3, hold_years=5)
+    assert out.maturity_warning == (
+        "The loan matures in Year 3, before the Year 5 sale; the model carries "
+        "the $38,566,897 maturity balance to the sale and keeps the same debt "
+        "service. Model a refinance or set the loan term to cover the hold."
+    )
+    assert _debt(5, hold_years=5).maturity_warning is None
+
+
+def test_balance_at_horizon_zero_is_none() -> None:
+    from app.engines.debt import balance_at_horizon
+
+    sched = _debt(5).schedule
+    assert balance_at_horizon(sched, 0) is None
+    assert balance_at_horizon([], 5) is None
+    assert balance_at_horizon(sched, 9) == sched[-1].ending_balance
+
+
+_CASH_IN_REFI = {"refi_test_year": 3, "refi_market_ltv_pct": 0.5, "refi_stabilized_value": 60e6}
+_CASH_OUT_REFI = {"refi_test_year": 3, "refi_market_ltv_pct": 0.75, "refi_stabilized_value": 60e6}
+
+
+def test_refi_warning_discloses_a_shortfall_the_model_does_not_charge() -> None:
+    out = _debt(10, hold_years=5, debt_stack_overrides=dict(_CASH_IN_REFI))
+    assert out.refi_year == 3 and out.refi_cash_out == 0.0
+    assert round(out.schedule[2].ending_balance) == 38_566_897
+    assert out.refi_warning == (
+        "The Year 3 refinance raises $30,000,000 against a $38,566,897 balance; "
+        "the $8,566,897 shortfall (plus fees) that equity would fund is not modelled."
+    )
+
+
+def test_no_refi_warning_when_the_refi_covers_the_balance() -> None:
+    assert _debt(10, hold_years=5, debt_stack_overrides=dict(_CASH_OUT_REFI)).refi_warning is None
+    assert _debt(10, hold_years=5).refi_warning is None
+
+
+def test_refi_after_maturity_retires_the_carried_maturity_balance() -> None:
+    out = _debt(
+        3,
+        hold_years=5,
+        debt_stack_overrides={
+            "refi_test_year": 4, "refi_market_ltv_pct": 0.75, "refi_stabilized_value": 60e6,
+        },
+    )
+    maturity_balance = out.schedule[-1].ending_balance
+    assert round(maturity_balance) == 38_566_897
+    assert out.refi_year == 4
+    assert out.refi_existing_balance_repaid == maturity_balance
+    assert out.refi_cash_out == pytest.approx(45_000_000.0 - maturity_balance)
+    assert out.maturity_warning == (
+        "The loan matures in Year 3, before the Year 4 refinance; the model carries "
+        "the $38,566,897 maturity balance to the refinance and keeps the same debt "
+        "service until then. Set the loan term to reach the refinance."
+    )
 
 
 # ─────────────── sensitivity financing grid ───────────────
@@ -270,6 +376,52 @@ def test_financing_grid_cell_prices_its_own_loan_balance() -> None:
     assert cell.value == pytest.approx(expected, abs=1e-12)
 
 
+def test_financing_grid_base_cell_reproduces_the_headline_on_a_refi_deal() -> None:
+    from app.engines.debt import returns_debt_inputs
+
+    din = _debt_input(10, hold_years=5, debt_stack_overrides=dict(_CASH_OUT_REFI))
+    d = DebtEngine().run(din)
+    assert d.refi_year == 3 and d.refi_cash_out > 0
+    base_in = _returns_input(d).model_copy(
+        update=returns_debt_inputs(d, fallback_loan=LOAN)
+    )
+    headline = ReturnsEngine().run(base_in).levered_irr
+    big = 45_000_000.0
+    total_capital = LOAN + EQUITY
+    spec = SensitivitySpec(
+        key="g", label="g", row_variable="loan_amount", row_values=[LOAN, big],
+        col_variable="interest_rate", col_values=[RATE, 0.07],
+        metric="levered_irr", mode="financing",
+    )
+    out = SensitivityEngine().run(
+        SensitivityInput(
+            deal_id=base_in.deal_id, base_returns_input=base_in,
+            row_variable="exit_cap_rate", row_values=[0.07, 0.075],
+            col_variable="revpar_growth", col_values=[0.02, 0.03],
+            metric="levered_irr", specs=[spec],
+            base_debt_input=din, total_capital=total_capital,
+        )
+    )
+    grid = next(m for m in out.matrices if m.key == "g")
+    base_cell = next(c for c in grid.cells if c.is_base)
+    assert base_cell.value == pytest.approx(headline, abs=1e-9)
+    # The $45M cell carries ITS refi cash-out, not the base loan's.
+    d_big = DebtEngine().run(din.model_copy(update={"loan_amount": big}))
+    assert d_big.refi_cash_out != pytest.approx(d.refi_cash_out)
+    own = base_in.model_copy(
+        update={
+            **returns_debt_inputs(d_big, fallback_loan=big),
+            "loan_amount": big,
+            "equity": total_capital - big,
+            "exit_schedule": False,
+        }
+    )
+    big_cell = next(
+        c for c in grid.cells if abs(c.row_value - big) < 1.0 and abs(c.col_value - RATE) < 1e-12
+    )
+    assert big_cell.value == pytest.approx(ReturnsEngine().run(own).levered_irr, abs=1e-12)
+
+
 # ─────────────── runner-level: Cash Flow statement + Investment Bridge ───────────────
 
 
@@ -313,7 +465,8 @@ async def test_cash_flow_and_bridge_use_the_returns_payoff(overrides: dict, mont
     sel = next(r for r in ret["exit_schedule"] if r["is_selected"])
     sale_balance = debt["monthly_schedule"][month - 1]["ending_balance"]
     assert sel["loan_payoff"] == sale_balance
-    assert debt["balance_at_exit"] == debt["monthly_schedule"][59]["ending_balance"]
+    # The Debt tab's Balance at Exit IS the payoff Returns deducted.
+    assert debt["balance_at_exit"] == sel["loan_payoff"]
     assert debt.get("maturity_warning") is None
 
     values = _exit_debt_payoff(rows)
@@ -324,3 +477,18 @@ async def test_cash_flow_and_bridge_use_the_returns_payoff(overrides: dict, mont
     fin = next(leg for leg in bridge["legs"] if leg["key"] == "financing")
     payoff = next(c for c in fin["components"] if c["label"] == "Loan payoff at exit")
     assert payoff["value"] == pytest.approx(-sale_balance, abs=0.01)
+
+
+def test_sale_before_the_refinance_repays_the_senior_and_later_rows_owe_the_refi() -> None:
+    from app.engines.debt import returns_debt_inputs
+
+    d = _debt(10, hold_years=5, exit_month=30, debt_stack_overrides=dict(_CASH_OUT_REFI))
+    assert d.refi_year == 3
+    senior_m30 = d.monthly_schedule[29].ending_balance
+    assert d.balance_at_exit == senior_m30
+    fields = returns_debt_inputs(d, fallback_loan=LOAN)
+    assert fields["refi_balance"] == d.refi_new_loan_proceeds == 45_000_000.0
+    out = ReturnsEngine().run(
+        _returns_input(d).model_copy(update={**fields, "exit_month_override": 30})
+    )
+    assert _selected(out).loan_payoff == senior_m30 == d.balance_at_exit

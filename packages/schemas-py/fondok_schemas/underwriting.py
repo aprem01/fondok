@@ -929,6 +929,10 @@ class DebtEngineOutput(BaseModel):
     # it: the model carries the maturity balance to the sale and keeps the
     # same debt service, and this is the one sentence that discloses it.
     maturity_warning: str | None = None
+    # The refinance raises less than the senior balance it retires (+ fee):
+    # the paydown equity would fund is NOT charged by the model; this is the
+    # one sentence that discloses it.
+    refi_warning: str | None = None
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "schedule[0].debt_service". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
