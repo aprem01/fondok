@@ -491,6 +491,13 @@ export default function DebtTab() {
   // The loan matures before the sale and no refinance replaces it — the
   // engine's one sentence, rendered verbatim (absent on older runs).
   const wMaturityWarning = getEngineField<string | null>(outputs, 'debt', 'maturity_warning');
+  // The refinance raises less than the balance it retires; the paydown is
+  // not modelled — the engine's one sentence, rendered verbatim.
+  const wRefiWarning = getEngineField<string | null>(outputs, 'debt', 'refi_warning');
+  const debtWarnings: { testId: string; text: string }[] = [
+    { testId: 'maturity-warning-strip', text: wMaturityWarning },
+    { testId: 'refi-warning-strip', text: wRefiWarning },
+  ].flatMap((w) => (typeof w.text === 'string' && w.text.trim() ? [{ testId: w.testId, text: w.text.trim() }] : []));
   // FON-72 follow-up — refinance detail + entry/stabilized credit split.
   const wRefiValue = getEngineField<number>(outputs, 'debt', 'refi_value_at_refinance');
   const wRefiLtv = getEngineField<number>(outputs, 'debt', 'refi_ltv');
@@ -1225,17 +1232,19 @@ export default function DebtTab() {
         {/* FON-63 — negative-NOI warning (a warning, not the failure banner). */}
         <NoiWarningStrip outputs={outputs} />
 
-        {/* The loan matures before the sale — same warning strip style. */}
-        {typeof wMaturityWarning === 'string' && wMaturityWarning.trim() ? (
+        {/* Loan matures before the sale / refinance shortfall not modelled —
+            the engine's sentences, same warning strip style as the NOI one. */}
+        {debtWarnings.map((w) => (
           <div
+            key={w.testId}
             role="status"
-            data-testid="maturity-warning-strip"
+            data-testid={w.testId}
             className="mb-3 flex items-center gap-2 rounded-md border border-warn-500/40 bg-warn-50 px-3 py-2 text-[12px] font-medium text-warn-700"
           >
             <AlertTriangle size={14} className="flex-shrink-0" aria-hidden="true" />
-            <span>{wMaturityWarning.trim()}</span>
+            <span>{w.text}</span>
           </div>
-        ) : null}
+        ))}
 
         {/* Manual-inputs banner (canonical) — honest about the current release:
             loan terms are entered manually, not extracted from financing docs. */}

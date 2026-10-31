@@ -1194,3 +1194,21 @@ describe('DebtTab — loan matures before the sale', () => {
     expect(screen.queryByTestId('maturity-warning-strip')).toBeNull();
   });
 });
+
+describe('DebtTab — refinance shortfall not modelled', () => {
+  const SENTENCE =
+    'The Year 3 refinance raises $30,000,000 against a $38,566,897 balance; the $8,566,897 shortfall (plus fees) that equity would fund is not modelled.';
+
+  it('renders the engine refi_warning verbatim with the maturity warning', () => {
+    currentOutputs = makeOutputs({ refi_warning: SENTENCE, maturity_warning: 'Matures early.' });
+    render(<DebtTab />);
+    expect(screen.getByTestId('refi-warning-strip')).toHaveTextContent(SENTENCE);
+    expect(screen.getByTestId('maturity-warning-strip')).toHaveTextContent('Matures early.');
+  });
+
+  it('renders nothing when the refinance covers the balance', () => {
+    currentOutputs = makeOutputs({ refi_warning: null });
+    render(<DebtTab />);
+    expect(screen.queryByTestId('refi-warning-strip')).toBeNull();
+  });
+});
