@@ -65,7 +65,7 @@ import {
 } from 'react';
 import { useParams } from 'next/navigation';
 import { useSubTab } from '@/lib/hooks/useSubTab';
-import { DollarSign } from 'lucide-react';
+import { AlertTriangle, DollarSign } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
@@ -488,6 +488,9 @@ export default function DebtTab() {
   const wRefiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
   const wRefiCashOut = getEngineField<number>(outputs, 'debt', 'refi_cash_out');
   const wBalanceAtExit = getEngineField<number>(outputs, 'debt', 'balance_at_exit');
+  // The loan matures before the sale and no refinance replaces it — the
+  // engine's one sentence, rendered verbatim (absent on older runs).
+  const wMaturityWarning = getEngineField<string | null>(outputs, 'debt', 'maturity_warning');
   // FON-72 follow-up — refinance detail + entry/stabilized credit split.
   const wRefiValue = getEngineField<number>(outputs, 'debt', 'refi_value_at_refinance');
   const wRefiLtv = getEngineField<number>(outputs, 'debt', 'refi_ltv');
@@ -1221,6 +1224,18 @@ export default function DebtTab() {
 
         {/* FON-63 — negative-NOI warning (a warning, not the failure banner). */}
         <NoiWarningStrip outputs={outputs} />
+
+        {/* The loan matures before the sale — same warning strip style. */}
+        {typeof wMaturityWarning === 'string' && wMaturityWarning.trim() ? (
+          <div
+            role="status"
+            data-testid="maturity-warning-strip"
+            className="mb-3 flex items-center gap-2 rounded-md border border-warn-500/40 bg-warn-50 px-3 py-2 text-[12px] font-medium text-warn-700"
+          >
+            <AlertTriangle size={14} className="flex-shrink-0" aria-hidden="true" />
+            <span>{wMaturityWarning.trim()}</span>
+          </div>
+        ) : null}
 
         {/* Manual-inputs banner (canonical) — honest about the current release:
             loan terms are entered manually, not extracted from financing docs. */}

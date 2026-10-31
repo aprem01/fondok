@@ -1175,3 +1175,22 @@ describe('DebtTab — stabilized credit cards carry the stabilization anchor cap
     expect(screen.getByText('12.4%')).toBeInTheDocument();
   });
 });
+
+describe('DebtTab — loan matures before the sale', () => {
+  const SENTENCE =
+    'The loan matures in Year 3, before the Year 5 sale; the model carries the $38,566,897 maturity balance to the sale and keeps the same debt service. Model a refinance or set the loan term to cover the hold.';
+
+  it('renders the engine maturity_warning verbatim beside the NOI warning', () => {
+    currentOutputs = makeOutputs({ maturity_warning: SENTENCE });
+    render(<DebtTab />);
+    const strip = screen.getByTestId('maturity-warning-strip');
+    expect(strip).toHaveTextContent(SENTENCE);
+    expect(strip).toHaveAttribute('role', 'status');
+  });
+
+  it('renders nothing when the loan term covers the hold', () => {
+    currentOutputs = makeOutputs({ maturity_warning: null });
+    render(<DebtTab />);
+    expect(screen.queryByTestId('maturity-warning-strip')).toBeNull();
+  });
+});
