@@ -248,8 +248,15 @@ capitalised from it.
   default package — a covenant without an entered threshold shows its live Current reading, an “Enter
   threshold” input, and no pass / fail verdict. Entered thresholds are tested against the modeled
   Year-1 metrics (LTV / LTC at close).
-- **Maturity.** The schedule runs to maturity. A take-out before exit is modeled on the Refinance
-  sub-tab; without one the loan balance at the end of the schedule is what the model repays at sale.
+- **Maturity and the payoff at sale.** The schedule runs to maturity, but the sale repays the loan
+  balance outstanding at the **sale month**, not the balance at maturity: a 10-year loan sold in Year
+  5 repays its Year-5 balance. After a refinance (modeled on the Refinance sub-tab) the sale repays
+  the refinanced loan's balance. **Balance at Exit** on the Debt tab is that sale-year balance, and
+  the Cash Flow statement's **Exit Debt Payoff** is the payoff the Returns engine actually deducted.
+  When the loan **matures before the sale** and no refinance replaces it, the model does not invent a
+  refinance or an extension: it carries the maturity balance to the sale and keeps the same debt
+  service, and the Debt tab says so in one warning — the maturity year, the sale year, the balance
+  carried — asking you to model a refinance or set a term that covers the hold.
 - **Senior origination fee.** The senior loan's origination fee is a **Fondok seed of 1.50% of the
   senior loan** — a platform default, not a figure read from a term sheet or an OM, and it carries the
   Seed badge {{badge:seed}} until you change it. It is editable on Financing, and Financing is its
