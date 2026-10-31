@@ -6930,14 +6930,18 @@ def _coerce_incentive_mgmt_fee_pct(value: Any) -> float | None:
 
 def _exit_month_override(base: dict[str, Any]) -> int | None:
     """FON-67 — the off-cycle disposition month (e.g. a 52-month hold) the
-    analyst set, or None for the clean hold × 12 exit."""
+    analyst set, or None for the clean hold × 12 exit (unset, or ≤ 0).
+
+    A value that is not a number of months FAILS CLOSED (ValueError): pricing
+    the hold × 12 sale instead would be a different sale from the one the
+    analyst entered, with no disclosure."""
     raw = base.get("exit_month")
     if raw in (None, ""):
         return None
     try:
         month = int(float(raw))
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"exit_month {raw!r} is not a number of months") from exc
     return month if month > 0 else None
 
 
