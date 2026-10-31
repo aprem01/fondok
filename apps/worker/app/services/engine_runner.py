@@ -105,6 +105,7 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
+from ..engines.debt import balance_at_horizon
 from ..engines.partnership import (
     NO_PARTNERSHIP_TERMS_REASON,
     promote_tier_label,
@@ -7277,15 +7278,17 @@ def _build_input_for(
         # FON-67 — forward the debt engine's phased debt service + refinance
         # cash-out + post-refi exit balance. All default to the single-phase
         # values when no refi is modeled, so non-refi deals are unchanged.
+        # The exit balance is the balance at the SALE (end of the hold), never
+        # at loan maturity; the debt engine publishes it as balance_at_exit.
         debt_exit_balance = (
             debt_out.balance_at_exit
             if getattr(debt_out, "balance_at_exit", None) is not None
-            else (
-                debt_out.schedule[-1].ending_balance
-                if debt_out.schedule
-                else capital_out.debt_amount
+            else balance_at_horizon(
+                list(debt_out.schedule or []), int(base["hold_years"])
             )
         )
+        if debt_exit_balance is None:
+            debt_exit_balance = capital_out.debt_amount
         # FON-67 — date-based IRR timing: a `refi_month` override (months from
         # acquisition) places the cash-out at its actual time (month 30 → 2.5y).
         # None keeps the cash-out at its year-end, so the IRR is unchanged.
@@ -7370,9 +7373,10 @@ def _build_input_for(
                 else []
             ),
             # FON-118 — returns by exit year. The senior's per-month ending
-            # balance prices the payoff of an INTERIM sale; the post-refi
-            # balance once the refi month has passed. The selected exit keeps
-            # ``loan_balance_at_exit`` above, so the headline is unchanged.
+            # balance prices the payoff of EVERY sale — the selected exit (the
+            # headline) and each interim row — at its own month; the post-refi
+            # balance once the refi month has passed. ``loan_balance_at_exit``
+            # above is the fallback when no monthly schedule exists.
             loan_balance_by_month=[
                 float(m.ending_balance)
                 for m in (getattr(debt_out, "monthly_schedule", None) or [])

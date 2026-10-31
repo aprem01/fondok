@@ -205,8 +205,21 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
     loan = _num(ret_in.get("loan_amount"))
     ds_raw = ret_in.get("debt_service_by_year")
     annual_ds = _num(ret_in.get("annual_debt_service"))
+    # The payoff the returns engine actually deducted: the selected exit's
+    # ``loan_payoff`` (balance outstanding at the sale month); runs without an
+    # exit schedule fall back to the scalar input.
+    payoff_source = "returns.inputs.loan_balance_at_exit (debt engine)"
     payoff_in = ret_in.get("loan_balance_at_exit")
     payoff = _num(payoff_in) if payoff_in is not None else loan
+    _sched = ret_out.get("exit_schedule")
+    if isinstance(_sched, list):
+        for _i, _row in enumerate(_sched):
+            if isinstance(_row, dict) and _row.get("is_selected"):
+                _sel = _num(_row.get("loan_payoff"))
+                if _sel is not None:
+                    payoff = _sel
+                    payoff_source = f"returns.exit_schedule[{_i}].loan_payoff"
+                break
     refi_cash = _num(ret_in.get("refi_cash_out")) or 0.0
     refi_year = _num(ret_in.get("refi_year"))
     if not ret_in or loan is None or hold is None or annual_ds is None or payoff is None:
@@ -250,7 +263,7 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
             _component(
                 "Loan payoff at exit",
                 -payoff,
-                "returns.inputs.loan_balance_at_exit (debt engine)",
+                payoff_source,
             )
         )
         legs.append(

@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 
 from .base import BaseEngine
-from .debt import DebtEngine, DebtEngineInputExt
+from .debt import DebtEngine, DebtEngineInputExt, balance_at_horizon
 from .returns import ReturnsEngine, ReturnsEngineInputExt
 
 
@@ -257,7 +257,10 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
 
         For each cell we re-run the Debt engine with the flexed loan amount and
         interest rate, back equity out of the fixed total capital, and feed the
-        fresh debt service + exit balance into a copy of the returns input.
+        fresh debt service + exit balances into a copy of the returns input.
+        The returns engine prices the payoff at the sale month from
+        ``loan_balance_by_month`` / ``refi_balance``, so the cell must carry
+        ITS loan's balances — the base deal's would price the wrong loan.
         """
         base_loan = base_debt_input.loan_amount
         base_rate = base_debt_input.interest_rate
@@ -270,17 +273,28 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
                     )
                 )
                 equity = max(1.0, total_capital - loan)
-                exit_balance = (
-                    debt_out.schedule[-1].ending_balance
-                    if debt_out.schedule
-                    else loan
-                )
+                # The balance at the sale (hold horizon), never at maturity.
+                exit_balance = debt_out.balance_at_exit
+                if exit_balance is None:
+                    exit_balance = balance_at_horizon(
+                        debt_out.schedule, len(base_debt_input.noi_by_year)
+                    )
+                if exit_balance is None:
+                    exit_balance = loan
                 trial = base_input.model_copy(
                     update={
                         "loan_amount": loan,
                         "annual_debt_service": debt_out.annual_debt_service,
                         "debt_service_by_year": [],  # use the fresh scalar
                         "loan_balance_at_exit": exit_balance,
+                        "loan_balance_by_month": [
+                            m.ending_balance for m in debt_out.monthly_schedule
+                        ],
+                        "refi_balance": (
+                            debt_out.balance_at_exit
+                            if debt_out.refi_year is not None
+                            else None
+                        ),
                         "equity": equity,
                         "assumptions": base_input.assumptions.model_copy(
                             update={"interest_rate": rate}

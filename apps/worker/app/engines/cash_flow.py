@@ -398,12 +398,26 @@ class CashFlowStatementEngine(
                         )
                     )
 
-        payoff = _blank()
-        payoff[hold] = -float(
-            debt.balance_at_exit
-            if debt.balance_at_exit is not None
-            else (debt.schedule[-1].ending_balance if debt.schedule else cap.debt_amount)
+        # The payoff the returns engine ACTUALLY deducted: the selected exit's
+        # ``loan_payoff`` (the balance outstanding at the sale month). Runs
+        # without an exit schedule fall back to the debt engine's balance at
+        # the end of the hold.
+        selected_payoff = next(
+            (
+                r.loan_payoff
+                for r in (ret.exit_schedule or [])
+                if r.is_selected and r.loan_payoff is not None
+            ),
+            None,
         )
+        if selected_payoff is None:
+            selected_payoff = (
+                debt.balance_at_exit
+                if debt.balance_at_exit is not None
+                else cap.debt_amount
+            )
+        payoff = _blank()
+        payoff[hold] = -float(selected_payoff)
         lev_lines.append(
             CashFlowStatementLine(
                 label="Exit Debt Payoff", values=payoff, kind="linked",
