@@ -252,7 +252,8 @@ capitalised from it.
   balance outstanding at the **sale month** — the hold's last month, or the disposition month when
   one is set — not the balance at maturity: a 10-year loan sold in Year 5 repays its Year-5 balance.
   After a refinance (modeled on the Refinance sub-tab) the sale repays the refinanced loan's balance;
-  a sale set before the refinance repays the senior balance at that month. **Balance at Exit** on
+  a sale set before the refinance repays the senior balance at that month and draws no refinance
+  cash-out (Returns, Cash Flow and the Investment Bridge all leave it out). **Balance at Exit** on
   the Debt tab is exactly that payoff, and the Cash Flow statement's **Exit Debt Payoff** is the
   payoff the Returns engine deducted. When the loan **matures before the sale** and no refinance
   replaces it, the model does not invent a refinance or an extension: it carries the maturity
@@ -263,7 +264,8 @@ capitalised from it.
 - **Refinance shortfall.** When the refinance raises less than the senior balance it retires (plus
   its fee), the cash-out is zero and the paydown equity would fund is **not charged** in this
   release. The Debt tab says so in one warning — the refinance year, the proceeds, the balance and
-  the shortfall — rather than modeling an equity contribution nobody has decided on.
+  the shortfall — rather than modeling an equity contribution nobody has decided on. A refinance set
+  in or after the sale year never happens, so it is not modelled, and the Debt tab says so.
 - **Senior origination fee.** The senior loan's origination fee is a **Fondok seed of 1.50% of the
   senior loan** — a platform default, not a figure read from a term sheet or an OM, and it carries the
   Seed badge {{badge:seed}} until you change it. It is editable on Financing, and Financing is its
