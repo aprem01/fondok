@@ -492,3 +492,84 @@ def test_sale_before_the_refinance_repays_the_senior_and_later_rows_owe_the_refi
         _returns_input(d).model_copy(update={**fields, "exit_month_override": 30})
     )
     assert _selected(out).loan_payoff == senior_m30 == d.balance_at_exit
+
+
+# ─────────────── round 3 ───────────────
+
+
+def test_non_numeric_exit_month_fails_closed() -> None:
+    from app.services.engine_runner import _exit_month_override, _selected_exit_month
+
+    with pytest.raises(ValueError, match="exit_month"):
+        _exit_month_override({"exit_month": "52 months"})
+    with pytest.raises(ValueError, match="exit_month"):
+        _selected_exit_month({"hold_years": 5, "exit_month": "soon"})
+    assert _exit_month_override({"exit_month": None}) is None
+    assert _exit_month_override({"exit_month": ""}) is None
+    assert _exit_month_override({}) is None
+    assert _exit_month_override({"exit_month": "52"}) == 52
+    assert _selected_exit_month({"hold_years": 5, "exit_month": 999}) == 60
+
+
+def test_refi_at_or_after_the_sale_is_disclosed() -> None:
+    out = _debt(
+        10,
+        hold_years=5,
+        debt_stack_overrides={**_CASH_OUT_REFI, "refi_test_year": 5},
+    )
+    assert out.refi_year is None
+    assert out.refi_warning == (
+        "The Year 5 refinance is at or after the Year 5 sale and is not modelled."
+    )
+
+
+def test_sale_before_the_refi_keeps_the_cash_out_out_of_the_annual_stream() -> None:
+    from app.engines.debt import returns_debt_inputs
+
+    d = _debt(10, hold_years=5, exit_month=30, debt_stack_overrides=dict(_CASH_OUT_REFI))
+    assert d.refi_cash_out > 0
+    inp = _returns_input(d).model_copy(
+        update={**returns_debt_inputs(d, fallback_loan=LOAN), "exit_month_override": 30}
+    )
+    out = ReturnsEngine().run(inp)
+    assert _selected(out).refi_included is False
+    # Year 3 of the display stream: NOI − debt service, no refinance cash-out.
+    ds = inp.debt_service_by_year
+    assert out.cash_flows[3] == pytest.approx(NOI[2] - ds[2], abs=1e-6)
+
+
+def test_maturity_warning_names_the_sale_when_it_precedes_the_refi() -> None:
+    out = _debt(
+        2,
+        hold_years=5,
+        exit_month=30,
+        debt_stack_overrides={**_CASH_OUT_REFI, "refi_test_year": 4},
+    )
+    assert out.refi_year == 4
+    bal = out.schedule[-1].ending_balance
+    assert out.maturity_warning == (
+        f"The loan matures in Year 2, before the month 30 sale; the model carries "
+        f"the ${round(bal):,} maturity balance to the sale and keeps the same debt "
+        "service. Model a refinance or set the loan term to cover the hold."
+    )
+
+
+@pytest.mark.asyncio
+async def test_cash_flow_statement_omits_the_refi_when_the_sale_precedes_it() -> None:
+    rows = await _run_kimpton(
+        term_years=10,
+        exit_month=30,
+        debt_stack_overrides={
+            "refi_test_year": 3, "refi_market_ltv_pct": 0.75, "refi_stabilized_value": 60e6,
+        },
+    )
+    assert rows["debt"]["outputs"]["refi_year"] == 3
+    assert rows["cash_flow"]["status"] == "complete", rows["cash_flow"]
+    labels = [r["label"] for r in rows["cash_flow"]["outputs"]["levered"]]
+    assert "Net Refinance Cash-Out" not in labels
+    assert "Refinance Proceeds" not in labels
+    # …and the Investment Bridge still foots to the same stream.
+    from app.services.investment_bridge import build_investment_bridge
+
+    bridge = build_investment_bridge(rows)
+    assert bridge["reconciles"] is True, bridge["residual"]

@@ -1131,7 +1131,10 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         # interim row keeps the years through its exit year only.
         if selected:
             cfad_series = list(ctx.op_cfad)
-            if ctx.refi_active:
+            # Only a refinance that precedes the sale returns its cash-out: a
+            # sale set before the refi month never draws it (the monthly IRR
+            # already excludes it; the annual display stream must too).
+            if ctx.refi_active and refi_included:
                 cfad_series[payload.refi_year - 1] += payload.refi_cash_out
         else:
             # The cash-out enters an interim row's multiple on the SAME rule

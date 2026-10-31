@@ -1135,6 +1135,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # The refinance month is the same one the returns engine switches the
         # payoff at: the ``refi_month`` override when set, else the refi
         # year-end.
+        sale_before_refi = False
         if refi_year_out is not None and sale_month is not None:
             _rm = (payload.debt_stack_overrides or {}).get("refi_month")
             try:
@@ -1146,6 +1147,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                 _refi_m = refi_year_out * 12
             _refi_m = max(1, min(horizon * 12, _refi_m))
             if sale_month < _refi_m:
+                sale_before_refi = True
                 balance_at_exit_out = senior_balance_at_sale
 
         # The loan matures before the sale and no refinance replaces it: the
@@ -1157,10 +1159,26 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         maturity_year = len(schedule)
         maturity_warning: str | None = None
         refi_warning: str | None = None
-        if refi_detail is None or refi_year_out is None:
+        if refi_detail is None or refi_year_out is None or sale_before_refi:
+            # No refinance — or the sale comes first, so the sale is the
+            # event the matured loan is carried to.
             maturity_warning = _maturity_warning(
                 maturity_year, sale_month, senior_balance_at_sale
             )
+            if refi is not None and refi_year_out is None and horizon > 0:
+                # The analyst set a refinance the model rejects: it lands in or
+                # after the sale year, so it never happens — said, not dropped.
+                _sale = (
+                    _sale_label(sale_month)
+                    if sale_month is not None
+                    else f"Year {horizon} sale"
+                )
+                refi_warning = (
+                    f"The Year {int(refi['year'])} refinance is at or after the "
+                    f"{_sale} and is not modelled."
+                )
+            elif refi_detail is not None and refi_year_out is not None:
+                refi_warning = _refi_shortfall_warning(refi_detail, refi_year_out)
         else:
             if schedule and refi_year_out > maturity_year:
                 maturity_warning = _maturity_before_refi_warning(

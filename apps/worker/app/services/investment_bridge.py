@@ -211,6 +211,9 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
     payoff_source = "returns.inputs.loan_balance_at_exit (debt engine)"
     payoff_in = ret_in.get("loan_balance_at_exit")
     payoff = _num(payoff_in) if payoff_in is not None else loan
+    # A sale set before the refinance never draws its cash-out (the returns
+    # stream leaves it out), so neither does the bridge.
+    refi_precedes_sale = True
     _sched = ret_out.get("exit_schedule")
     if isinstance(_sched, list):
         for _i, _row in enumerate(_sched):
@@ -219,6 +222,8 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
                 if _sel is not None:
                     payoff = _sel
                     payoff_source = f"returns.exit_schedule[{_i}].loan_payoff"
+                if _row.get("refi_included") is False:
+                    refi_precedes_sale = False
                 break
     refi_cash = _num(ret_in.get("refi_cash_out")) or 0.0
     refi_year = _num(ret_in.get("refi_year"))
@@ -239,7 +244,12 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
                 ds.append(annual_ds)
         else:
             ds = [annual_ds] * hold
-        refi_active = refi_cash > 0 and refi_year is not None and 1 <= int(refi_year) <= hold
+        refi_active = (
+            refi_precedes_sale
+            and refi_cash > 0
+            and refi_year is not None
+            and 1 <= int(refi_year) <= hold
+        )
         fee = sum(a for lbl, a in use_lines if lbl == LOAN_FEE_LABEL)
         comps = [_component("Loan proceeds", loan, "returns.inputs.loan_amount (= capital.debt_amount)")]
         if fee:

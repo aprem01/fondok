@@ -317,7 +317,18 @@ class CashFlowStatementEngine(
                 )
             )
 
-        if debt.refi_cash_out and debt.refi_cash_out > 0 and debt.refi_year:
+        # A sale set before the refinance never draws it: the returns engine
+        # leaves the cash-out out of the stream, so the statement does too.
+        selected_row = next(
+            (r for r in (ret.exit_schedule or []) if r.is_selected), None
+        )
+        refi_precedes_sale = selected_row is None or bool(selected_row.refi_included)
+        if (
+            refi_precedes_sale
+            and debt.refi_cash_out
+            and debt.refi_cash_out > 0
+            and debt.refi_year
+        ):
             ry = int(debt.refi_year)
             if 1 <= ry <= hold:
                 # Canonical 4-row refinance split (design/canonical/Cash Flow
