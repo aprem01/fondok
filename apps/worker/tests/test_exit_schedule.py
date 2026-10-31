@@ -88,7 +88,7 @@ def test_hold_year_row_is_the_headline_bit_for_bit() -> None:
     assert sel.gross_sale_price == out.gross_sale_price
     assert sel.selling_costs == out.selling_costs
     assert sel.net_proceeds == out.net_proceeds
-    assert sel.loan_payoff == LOAN  # the scalar loan_balance_at_exit → loan_amount
+    assert sel.loan_payoff == LOAN  # no schedule and no scalar → loan_amount
     assert sel.exit_noi_basis == out.exit_noi_basis == "forward_12m"
     assert sel.exit_noi_period_label == out.exit_noi_period_label == "Forward 12-month NOI (Year 6)"
     assert out.selected_exit_month == 60
@@ -303,15 +303,19 @@ def test_clamped_override_is_reported_on_the_selected_row() -> None:
     assert sel.levered_irr == out.levered_irr
 
 
-def test_interim_payoff_reads_the_monthly_schedule_and_the_selected_keeps_the_scalar() -> None:
+def test_every_payoff_reads_the_monthly_schedule_at_its_sale_month() -> None:
+    # The selected exit (the headline) repays the balance at ITS month exactly
+    # like the interim rows — not the scalar, which a runner may have built at
+    # a different month (e.g. loan maturity).
     by_month = [LOAN - 10_000.0 * m for m in range(1, 61)]
     out = _run(loan_balance_by_month=by_month, loan_balance_at_exit=23_000_000.0)
-    for k, row in enumerate(out.exit_schedule[:4], start=1):
+    for k, row in enumerate(out.exit_schedule, start=1):
         assert row.loan_payoff == by_month[12 * k - 1]
         assert "loan_balance_by_month" in (out.provenance[f"exit_schedule[{k - 1}].net_proceeds"].note or "")
     sel = out.exit_schedule[4]
-    assert sel.loan_payoff == 23_000_000.0  # exactly the headline's figure
+    assert sel.is_selected and sel.loan_payoff == by_month[59]
     assert sel.net_proceeds == out.net_proceeds
+    assert out.net_proceeds == out.gross_sale_price - out.selling_costs - by_month[59]
 
 
 def test_legacy_single_balance_when_no_monthly_schedule_is_given() -> None:
@@ -417,7 +421,7 @@ def test_fon67_52_month_exit_reconciles_and_the_schedule_reads_each_date() -> No
     assert sel.levered_irr == out.levered_irr
     assert sel.equity_multiple == out.equity_multiple
     assert sel.refi_included is True
-    assert sel.loan_payoff == 51_240_548.0  # the headline's scalar: the refi balance
+    assert sel.loan_payoff == 51_240_548.0  # the refi balance: the refinance (month 30) precedes the sale
     assert sel.exit_noi_basis == "override" and sel.terminal_noi == 4_440_841.0
     # Within 2 pts of the source's 39.59%, as the monthly test already pins.
     assert abs(out.levered_irr - 0.3959) < 0.02, out.levered_irr

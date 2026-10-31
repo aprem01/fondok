@@ -591,10 +591,11 @@ class ReturnsEngineInputExt(BaseModel):
     # lineage service to infer it. The runner sets it False when it substitutes
     # the analyst's ``noi_override_by_year`` pin (FON-67).
     noi_from_expense_engine: bool = True
-    # FON-118 — returns by exit year. The inputs below feed ONLY the interim
-    # rows of ``exit_schedule``; the selected exit (the headline) reads the
-    # scalar ``loan_balance_at_exit`` exactly as before, so every existing
-    # output is byte-identical whatever is passed here.
+    # FON-118 — returns by exit year. The inputs below price the loan payoff
+    # of EVERY sale — the selected exit (the headline) and each interim row of
+    # ``exit_schedule`` — at that sale's own month (see ``_payoff_at``): the
+    # balance outstanding when the asset is sold, never the balance at loan
+    # maturity.
     #
     # Senior ending balance per month from close (index 0 = month 1), from the
     # debt engine's monthly_schedule. Empty → the scalar ``loan_balance_at_exit``
@@ -691,6 +692,11 @@ class _ExitContext:
     # resolved ONCE on the full projection (a row's truncated series must not
     # re-resolve it).
     row_stabilized_year: int | None
+    # The month from which the sale repays the post-refinance balance. It is
+    # ``refi_month`` when the refinance returns cash; a refinance that returns
+    # none (cash-out 0 — ``refi_active`` False) still replaces the senior, so
+    # the payoff switches at its month all the same. None without a refinance.
+    refi_payoff_month: int | None = None
 
 
 @dataclass
@@ -754,13 +760,15 @@ def _capital_deploying_through(
 def _payoff_at(
     payload: ReturnsEngineInputExt, exit_month: int, refi_included: bool
 ) -> tuple[float, str]:
-    """Loan payoff for an INTERIM sale at ``exit_month`` and where it was read.
+    """Loan payoff for a sale at ``exit_month`` and where it was read — the
+    selected exit (the headline) and every interim row alike.
 
     After the refinance the post-refi balance is owed (interest-only, so
     constant); before it the senior's monthly ending balance at that month;
-    past loan maturity the last balance stands (today's ``schedule[-1]``
-    convention). With no monthly schedule the scalar ``loan_balance_at_exit``
-    is the payoff at every exit — the legacy single-balance behaviour.
+    past loan maturity the last balance stands (the loan is not refinanced or
+    extended by the model; the debt engine's ``maturity_warning`` discloses
+    it). With no monthly schedule the scalar ``loan_balance_at_exit`` is the
+    payoff at every exit — the legacy single-balance behaviour.
     """
     scalar = (
         payload.loan_balance_at_exit
@@ -983,7 +991,8 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
     the deal's own exit (``exit_month_override`` or ``hold × 12``); every
     projection year-end is the same function at its month, and together they
     are ``exit_schedule``. The headline's arithmetic is the pre-FON-118 code
-    statement for statement, so the Kimpton golden is byte-identical.
+    statement for statement, except the loan payoff, which every sale (the
+    headline included) reads at its own month via ``_payoff_at``.
     """
 
     name = "returns"
@@ -1000,12 +1009,14 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         """Price the deal sold at ``exit_month`` (§2.3).
 
         ``selected`` is the deal's own exit — the headline. Its branches are
-        the legacy expressions verbatim: terminal NOI on the full series with
-        the override honoured, payoff = the scalar ``loan_balance_at_exit``,
-        equity multiple on the full annual stream (monthly for an off-cycle
-        month). An interim row reads the projected forward year, the
-        schedule's balance at that month, and the annual stream truncated at
-        its year; and it REFUSES (``not_available`` + reason) where the model
+        the legacy expressions: terminal NOI on the full series with the
+        override honoured, equity multiple on the full annual stream (monthly
+        for an off-cycle month). Every sale — selected or interim — repays the
+        loan balance outstanding at ITS month (``_payoff_at``: the senior's
+        balance at that month, the refi balance once the refinance has
+        happened), never the balance at loan maturity. An interim row reads
+        the projected forward year and the annual stream truncated at its
+        year; and it REFUSES (``not_available`` + reason) where the model
         does not price a sale — it never raises and never prints 0.
         """
         assumptions = payload.assumptions
@@ -1103,16 +1114,11 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         transfer_tax = gross_sale * assumptions.transfer_tax_pct
         refi_included = (
             ctx.refi_active and ctx.refi_month is not None and ctx.refi_month <= m
-        )
-        if selected:
-            loan_balance_at_exit = (
-                payload.loan_balance_at_exit
-                if payload.loan_balance_at_exit is not None
-                else payload.loan_amount  # IO assumption — full balance still outstanding
-            )
-            payoff_source = "loan_balance_at_exit"
-        else:
-            loan_balance_at_exit, payoff_source = _payoff_at(payload, m, refi_included)
+        ) or (ctx.refi_payoff_month is not None and ctx.refi_payoff_month <= m)
+        # The loan balance outstanding at the sale month — the headline and
+        # every interim row alike (a 10-year loan sold in Year 5 repays its
+        # Year-5 balance, not its maturity balance).
+        loan_balance_at_exit, payoff_source = _payoff_at(payload, m, refi_included)
         net_proceeds_to_equity = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
 
         # FON-67 — a mid-hold refi returns capital to equity. For the DISPLAY
@@ -1283,6 +1289,22 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             )
             row_stabilized_year = _idx + 1 if _idx is not None else None
 
+        # The payoff switches to the refi balance from the refinance month —
+        # also for a refinance that returned no cash (``refi_active`` False).
+        refi_payoff_month: int | None = refi_month
+        if (
+            refi_payoff_month is None
+            and payload.refi_year is not None
+            and payload.refi_balance is not None
+            and 1 <= payload.refi_year <= hold
+        ):
+            _rt = (
+                payload.refi_time_years
+                if payload.refi_time_years is not None
+                else float(payload.refi_year)
+            )
+            refi_payoff_month = max(1, min(hold * 12, round(_rt * 12)))
+
         full_term = hold * 12
         ctx = _ExitContext(
             hold=hold,
@@ -1294,6 +1316,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             monthly_ds=_monthly_ds,
             total_capital=total_capital,
             row_stabilized_year=row_stabilized_year,
+            refi_payoff_month=refi_payoff_month,
         )
 
         # FON-118 — the deal's own exit. ``exit_month_override`` (FON-67) is
