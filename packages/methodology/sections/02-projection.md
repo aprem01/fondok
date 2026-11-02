@@ -634,14 +634,19 @@ managed or brand-managed. The Overview shows it and the Future P&L shows it next
 fee. It moves no number: the fee check is the general USALI 2–6% of total revenue range for every
 operating model, and nothing below changes the management fee assumption — the analyst sets it.
 
-**Fee terms from the management agreement.** An extracted hotel management agreement (LEASES /
-CONTRACT document) sets `mgmt_fee_pct` from its base-fee % and `ffe_reserve_pct` from its FF&E
-reserve %, badged `management_agreement` with the row behind each; they outrank a portfolio P&L
-ratio and the seed, and an analyst override still wins. Its incentive fee is modelled
-(`incentive_mgmt_fee_pct_of_gop`) only when the agreement states the basis as gross operating
-profit with no hurdle; otherwise (the Angler HMA: 15% over a 10% hurdle) the assumption carries
-`awaiting_analyst` with the stated terms and the sentence that it is not modelled. A fee in lieu /
-minimum fee is not modelled.
+**Fee terms from the management agreement.** A LEASES / CONTRACT document counts as the hotel
+management agreement only with evidence — its filename (HMA / management agreement), a row naming
+the agreement, or a row's own text; any other lease sets no fee term. The agreement sets
+`mgmt_fee_pct` from its base-fee % and `ffe_reserve_pct` from its FF&E reserve %, badged
+`management_agreement`; the provenance shows the file and the agreement's own words ("Base Fee:
+3.25% of Hotel Gross Revenues and $76,000 in Lieu Fee"), not the extractor path. They outrank a
+portfolio P&L ratio and the seed, and an analyst override still wins. A stated **fee in lieu** is
+its own *Management fee in lieu* line every year (`expense.years[].mgmt_fee_in_lieu`, deducted with
+the base fee before NOI and in the incentive base), escalated only at a rate the agreement states,
+else flat — the trace says which. Its incentive fee is modelled (`incentive_mgmt_fee_pct_of_gop`)
+only when the agreement states the basis as gross operating profit with no hurdle; otherwise the
+assumption carries `awaiting_analyst` quoting the agreement (the Angler: "15% of Hotel Net
+Operating Profit above 10% of Total Hotel Cost") and saying why it is not modelled.
 
 {testid=methodology-incentive-fee} **Base vs incentive management fee.** The management fee (`mgmt_fee_pct`) is the *base* fee: a share
 of each year's total revenue, Year 1 included. The T-12 management-fee dollars are history: they

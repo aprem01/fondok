@@ -60,6 +60,7 @@ const fbYear = (i: number) => ({
 });
 // Sam #9 — the incentive fee the stub expense run carries (null = none modelled).
 let INCENTIVE_FEE: number | null = null;
+let FEE_IN_LIEU: number | null = null;
 const expYear = (i: number) => ({
   year: i + 1,
   total_revenue: TOTAL_REVENUE,
@@ -74,6 +75,7 @@ const expYear = (i: number) => ({
   },
   mgmt_fee: 408_000,
   incentive_mgmt_fee: INCENTIVE_FEE,
+  mgmt_fee_in_lieu: FEE_IN_LIEU,
   ffe_reserve: 552_613,
   fixed_charges: { property_taxes: 700_000, insurance: 300_000, rent: 0, other_fixed: 0, total: 1_000_000 },
   gop: 5_400_000,
@@ -177,6 +179,7 @@ beforeEach(() => {
   fx.run.mockClear();
   CALENDAR_YEARS = CALENDAR;
   INCENTIVE_FEE = null;
+  FEE_IN_LIEU = null;
   FIELD_OVERRIDES = { acquisition_close_date: { value: '2025-09-30', note: 'PSA' } };
 });
 
@@ -464,5 +467,24 @@ describe('Sam #9 · Incentive management fee', () => {
     await waitFor(() => expect(fx.update).toHaveBeenCalledTimes(1));
     const [, body] = fx.update.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
     expect(body.field_overrides[key]).toEqual({ value: 0.1, note: 'HMA §7: 10% of GOP after the base fee' });
+  });
+});
+
+// ── 7. Review R3-I-1 — the management agreement's fee in lieu ─────────
+describe('R3-I-1 · Management fee in lieu', () => {
+  it('unset: no row, EBITDA unchanged', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect(screen.queryByTestId('row-mgmt-fee-in-lieu')).toBeNull();
+    expect(screen.getByTestId('row-ebitda').textContent).toContain('$4,992,000');
+  });
+
+  it('stated: its own row under the base fee, and EBITDA deducts it', () => {
+    FEE_IN_LIEU = 76_000;
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const row = screen.getByTestId('row-mgmt-fee-in-lieu');
+    expect(row.textContent).toContain('Management fee in lieu');
+    expect(row.textContent).toContain('$76,000');
+    expect(screen.getByTestId('row-mgmt-fee').nextElementSibling).toBe(row);
+    expect(screen.getByTestId('row-ebitda').textContent).toContain('$4,916,000');
   });
 });

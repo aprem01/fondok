@@ -2649,3 +2649,95 @@ async def test_the_ledger_keeps_an_earlier_reason_code_visible() -> None:
         engine_runner._load_engine_inputs = real
     assert resp.reasons["starting_occupancy"] == "needs_review"
     assert resp.reasons_also["starting_occupancy"] == ["as_of_unknown"]
+
+
+# ═══════ Review R3 — fee in lieu, the stated incentive basis, HMA evidence ═══════
+
+_ANGLER_HMA = [
+    {"field_name": "property_overview.management_agreement_type", "value": "Hotel Management Agreement",
+     "source_page": 1, "raw_text": "Kimpton Angler's Hotel Management Agreement – Key Terms"},
+    {"field_name": "broker_proforma.management_fee_base_pct", "value": 0.0325, "source_page": 1,
+     "raw_text": "Base Fee: 3.25% of Hotel Gross Revenues and $76,000 in Lieu Fee"},
+    {"field_name": "broker_proforma.management_fee_in_lieu_usd", "value": 76000, "source_page": 1,
+     "raw_text": "$76,000 in Lieu Fee"},
+    {"field_name": "broker_proforma.incentive_management_fee_pct", "value": 0.15, "source_page": 1,
+     "raw_text": "Incentive Fee: 15% of Hotel Net Operating Profit above 10% of Total Hotel Cost"},
+    {"field_name": "broker_proforma.incentive_management_fee_hurdle_pct", "value": 0.1, "source_page": 1,
+     "raw_text": "above 10% of Total Hotel Cost"},
+    {"field_name": "broker_proforma.ffe_reserve_pct", "value": 0.04, "source_page": 1,
+     "raw_text": "FF&E Reserve: 4% of Hotel Gross Revenues"},
+]
+
+
+async def _insert_named_leases(deal_id: UUID, filename: str, fields: list[dict[str, object]]):
+    return await _insert_financial_extraction(
+        deal_id, doc_type="LEASES", filename=filename, fields=fields, ts=datetime.now(UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_hma_fee_in_lieu_is_a_sourced_line_and_flat_without_escalation() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler HMA", keys=132, purchase=36_400_000)
+    await _insert_named_leases(deal_id, "Angler_s HMA Summary.docx", _ANGLER_HMA)
+    base = await _base_for(deal_id)
+    assert base["mgmt_fee_in_lieu_usd"] == pytest.approx(76_000.0)
+    assert base["__sources__"]["mgmt_fee_in_lieu_usd"] == "management_agreement"
+    assert base.get("mgmt_fee_in_lieu_escalation") is None
+    exp_in = await _expense_input_for(base, deal_id)
+    assert exp_in.mgmt_fee_in_lieu_usd == pytest.approx(76_000.0)
+    assert exp_in.mgmt_fee_in_lieu_escalation is None
+
+
+@pytest.mark.asyncio
+async def test_stated_fee_in_lieu_escalation_is_read() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler HMA esc", keys=132, purchase=36_400_000)
+    await _insert_named_leases(
+        deal_id,
+        "Angler_s HMA Summary.docx",
+        [*_ANGLER_HMA, {"field_name": "broker_proforma.management_fee_in_lieu_escalation_pct",
+                        "value": 3.0, "raw_text": "In Lieu Fee escalates 3% annually"}],
+    )
+    base = await _base_for(deal_id)
+    assert base["mgmt_fee_in_lieu_escalation"] == pytest.approx(0.03)
+
+
+@pytest.mark.asyncio
+async def test_incentive_notice_quotes_the_agreement_basis() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler HMA incentive", keys=132, purchase=36_400_000)
+    await _insert_named_leases(deal_id, "Angler_s HMA Summary.docx", _ANGLER_HMA)
+    base = await _base_for(deal_id)
+    detail = base["__reasons__"]["incentive_mgmt_fee_pct_of_gop"]["detail"]
+    assert "Net Operating Profit above 10% of Total Hotel Cost" in detail
+    assert "not modelled" in detail
+    assert "no stated basis" not in detail
+
+
+@pytest.mark.asyncio
+async def test_agreement_provenance_shows_the_document_and_its_text() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler HMA prov", keys=132, purchase=36_400_000)
+    await _insert_named_leases(deal_id, "Angler_s HMA Summary.docx", _ANGLER_HMA)
+    base = await _base_for(deal_id)
+    sf = base["__source_fields__"]["mgmt_fee_pct"]
+    assert sf["field"] == "Base Fee: 3.25% of Hotel Gross Revenues and $76,000 in Lieu Fee"
+    assert sf["filename"] == "Angler_s HMA Summary.docx"
+    assert base["__source_fields__"]["mgmt_fee_in_lieu_usd"]["field"] == "$76,000 in Lieu Fee"
+
+
+@pytest.mark.asyncio
+async def test_a_lease_that_is_not_a_management_agreement_sets_no_fee_terms() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Ground lease", keys=132, purchase=36_400_000)
+    await _insert_named_leases(
+        deal_id,
+        "Parking Ground Lease.pdf",
+        [{"field_name": "broker_proforma.ffe_reserve_pct", "value": 0.05, "raw_text": "Reserve: 5% of rent"},
+         {"field_name": "broker_proforma.management_fee_base_pct", "value": 0.02, "raw_text": "Admin fee 2%"}],
+    )
+    base = await _base_for(deal_id)
+    assert base["__sources__"]["mgmt_fee_pct"] != "management_agreement"
+    assert base["__sources__"]["ffe_reserve_pct"] != "management_agreement"
+    assert base["mgmt_fee_pct"] == pytest.approx(0.03)

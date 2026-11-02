@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import statistics
 import time
 from collections.abc import Callable, Mapping
@@ -2078,6 +2079,9 @@ async def _load_engine_inputs(
     for key, term in (
         ("mgmt_fee_pct", hma.base_fee),
         ("ffe_reserve_pct", hma.ffe_reserve),
+        # Review R3-I-1 — the fee in lieu (and an escalation only if stated).
+        ("mgmt_fee_in_lieu_usd", hma.fee_in_lieu),
+        ("mgmt_fee_in_lieu_escalation", hma.fee_in_lieu_escalation),
     ):
         if term is not None:
             base[key] = term.value
@@ -7652,6 +7656,10 @@ class _AgreementTerms:
 
     base_fee: _AgreementTerm | None = None
     ffe_reserve: _AgreementTerm | None = None
+    #: Review R3-I-1 — a stated annual fee in lieu (USD) and, only when the
+    #: agreement states one, its annual escalation.
+    fee_in_lieu: _AgreementTerm | None = None
+    fee_in_lieu_escalation: _AgreementTerm | None = None
     incentive: _AgreementTerm | None = None
     #: True when the incentive's stated basis is GOP after the base fee with
     #: no hurdle — the one structure the expense engine models.
@@ -7673,6 +7681,28 @@ _HMA_INCENTIVE_FIELDS = frozenset(
 _HMA_INCENTIVE_BASIS_FIELDS = frozenset(
     {"incentive_management_fee_basis", "incentive_fee_basis"}
 )
+#: Review R3-M-2 — a LEASES / CONTRACT document counts as the hotel
+#: management agreement only with evidence: its filename, an extracted row
+#: that names the agreement, or a row's own text.
+_HMA_EVIDENCE_RE = re.compile(
+    r"(?<![a-z])hma(?![a-z])|management[\s_-]*agreement", re.IGNORECASE
+)
+
+
+def _is_management_agreement(filename: str | None, fields: list[Any]) -> bool:
+    """True when the document shows it IS a hotel management agreement."""
+    if filename and _HMA_EVIDENCE_RE.search(filename):
+        return True
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        name = str(f.get("field_name") or "")
+        if "management_agreement" in name.lower() or name.lower().rsplit(".", 1)[-1].startswith("hma_"):
+            return True
+        for text_value in (f.get("raw_text"), f.get("value")):
+            if isinstance(text_value, str) and _HMA_EVIDENCE_RE.search(text_value):
+                return True
+    return False
 
 
 def _hma_pct(value: Any, *, high: float) -> float | None:
@@ -7703,14 +7733,21 @@ async def _load_management_agreement_terms(
       is disclosed (``awaiting_analyst``) as not modelled, never mapped onto a
       different structure.
 
-    A fee in lieu / minimum fee is not modelled. A read failure propagates.
+    * a stated fee in lieu (USD) → ``mgmt_fee_in_lieu_usd``, its own expense
+      line every year; escalated only at a rate the agreement states
+      (``mgmt_fee_in_lieu_escalation``), otherwise flat (review R3-I-1).
+
+    Only a document with management-agreement evidence is read (its filename,
+    a row naming the agreement, or a row's text — review R3-M-2); each term's
+    provenance shows the agreement's own words and the file. A read failure
+    propagates.
     """
     rows = await session.execute(
         text(
             # tenant-scope predicate required by tenant_middleware
             """
             SELECT er.id AS er_id, er.document_id AS doc_id, er.fields,
-                   UPPER(COALESCE(d.doc_type, '')) AS doc_type
+                   UPPER(COALESCE(d.doc_type, '')) AS doc_type, d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
@@ -7733,6 +7770,10 @@ async def _load_management_agreement_terms(
                 continue
         if not isinstance(blob, list):
             continue
+        # R3-M-2 — a lease that is not the management agreement (a ground or
+        # retail lease, a mis-typed broker pro forma) sets no fee term.
+        if not _is_management_agreement(m["filename"], blob):
+            continue
         for f in blob:
             if not isinstance(f, dict):
                 continue
@@ -7744,6 +7785,16 @@ async def _load_management_agreement_terms(
                 term, parsed = "base", _hma_pct(value, high=0.10)
             elif leaf in _HMA_FFE_FIELDS:
                 term, parsed = "ffe", _hma_pct(value, high=0.10)
+            elif "lieu" in leaf and "escalat" in leaf:
+                term, parsed = "lieu_escalation", _hma_pct(value, high=0.50)
+            elif "lieu" in leaf and (leaf.endswith("_usd") or leaf.endswith("_fee")):
+                term, parsed = "lieu", (
+                    float(value)
+                    if isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and value > 0
+                    else None
+                )
             elif leaf in _HMA_INCENTIVE_FIELDS:
                 term, parsed = "incentive", _hma_pct(value, high=0.50)
             elif "incentive" in leaf and "hurdle" in leaf:
@@ -7752,24 +7803,37 @@ async def _load_management_agreement_terms(
                 term, parsed = "basis", value.strip() or None
             if term is None or parsed is None or term in found:
                 continue
-            found[term] = (parsed, f, m["doc_id"], m["er_id"], m["doc_type"])
+            found[term] = (parsed, f, m["doc_id"], m["er_id"], m["doc_type"], m["filename"])
 
     def _term(key: str, canonical: str) -> _AgreementTerm | None:
         hit = found.get(key)
         if hit is None:
             return None
-        value, field, doc_id, er_id, doc_type = hit
-        return _AgreementTerm(
+        value, field, doc_id, er_id, doc_type, filename = hit
+        prov = _row_provenance(
+            canonical=canonical,
+            field=field,
             value=float(value),
-            provenance=_row_provenance(
-                canonical=canonical,
-                field=field,
-                value=float(value),
-                doc_type=doc_type,
-                document_id=doc_id,
-                extraction_result_id=er_id,
-            ),
+            doc_type=doc_type,
+            document_id=doc_id,
+            extraction_result_id=er_id,
         )
+        # R3-M-2 — show the agreement's own words and the file, never the
+        # extractor's path (``broker_proforma.*`` is only the namespace a
+        # schema-less LEASES document is extracted under).
+        raw = field.get("raw_text")
+        shown = (
+            str(raw).strip()
+            if isinstance(raw, str) and raw.strip()
+            else f"{filename or 'Management agreement'} (management agreement)"
+        )
+        prov = dataclasses.replace(
+            prov,
+            extra=prov.extra
+            + (("field", shown), ("source_text", raw if isinstance(raw, str) else None))
+            + ((("filename", filename),) if filename else ()),
+        )
+        return _AgreementTerm(value=float(value), provenance=prov)
 
     incentive = _term("incentive", INCENTIVE_MGMT_FEE_KEY)
     modelled = False
@@ -7785,16 +7849,37 @@ async def _load_management_agreement_terms(
             stated = f"an incentive fee of {incentive.value:.1%}"
             if hurdle is not None:
                 stated += f" over a {hurdle:.1%} hurdle"
-            stated += f" (basis: {basis})" if basis else " with no stated basis"
+            if basis:
+                stated += f" (basis: {basis})"
+            else:
+                # R3-M-1 — no basis field was extracted, but the agreement's
+                # own text usually states it: quote it.
+                raw = found["incentive"][1].get("raw_text")
+                stated += (
+                    f"; the agreement reads: “{str(raw).strip()}”"
+                    if isinstance(raw, str) and raw.strip()
+                    else "; its basis was not extracted"
+                )
             disclosure = (
                 f"The management agreement states {stated}. The model's incentive "
-                "fee is a share of GOP after the base fee with no hurdle, so this "
-                "fee is not modelled — enter an incentive rate on the Future P&L "
-                "if it applies."
+                "fee is a share of GOP after the base fee with no hurdle"
+                + (
+                    " and no owner's-return threshold"
+                    if hurdle is not None
+                    else ""
+                )
+                + ", so this fee is not modelled — enter an incentive rate on the "
+                "Future P&L if it applies."
             )
     return _AgreementTerms(
         base_fee=_term("base", "mgmt_fee_pct"),
         ffe_reserve=_term("ffe", "ffe_reserve_pct"),
+        fee_in_lieu=_term("lieu", "mgmt_fee_in_lieu_usd"),
+        fee_in_lieu_escalation=(
+            _term("lieu_escalation", "mgmt_fee_in_lieu_escalation")
+            if "lieu" in found
+            else None
+        ),
         incentive=incentive,
         incentive_modelled=modelled,
         incentive_disclosure=disclosure,
@@ -8114,6 +8199,28 @@ def _selected_exit_month(base: dict[str, Any]) -> int:
     return max(1, min(full_term, override)) if override is not None else full_term
 
 
+def _optional_nonneg(raw: Any) -> float | None:
+    """A non-negative number, else None (blank / unreadable → no value)."""
+    if raw in (None, "") or isinstance(raw, bool):
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if v >= 0 else None
+
+
+def _optional_rate(raw: Any) -> float | None:
+    """An annual rate within ±50%, else None."""
+    if raw in (None, "") or isinstance(raw, bool):
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if -0.5 <= v <= 0.5 else None
+
+
 def _analyst_year_one_dollars(base: Mapping[str, Any], key: str) -> float | None:
     """The analyst's explicit Year-1 ``mgmt_fee`` / ``ffe_reserve`` dollars,
     else ``None``.
@@ -8323,6 +8430,12 @@ def _build_input_for(
             mgmt_fee_y1_override=_analyst_year_one_dollars(base, "mgmt_fee"),
             # Review I-3 — the FF&E reserve, the same rule.
             ffe_reserve_y1_override=_analyst_year_one_dollars(base, "ffe_reserve"),
+            # Review R3-I-1 — the management agreement's fee in lieu (or an
+            # analyst override of it); absent → no line.
+            mgmt_fee_in_lieu_usd=_optional_nonneg(base.get("mgmt_fee_in_lieu_usd")),
+            mgmt_fee_in_lieu_escalation=_optional_rate(
+                base.get("mgmt_fee_in_lieu_escalation")
+            ),
             # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine
             # publishes it (it is the one engine holding revenue AND NOI on the
             # same year index); these are the inputs it cannot derive itself.

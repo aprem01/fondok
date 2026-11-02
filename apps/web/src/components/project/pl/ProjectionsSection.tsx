@@ -175,6 +175,9 @@ interface ExpenseYearWorker {
   // Sam #9 — the opt-in incentive management fee (share of GOP after the base
   // fee). null / absent = no incentive fee modelled on this run.
   incentive_mgmt_fee?: number | null;
+  // Review R3-I-1 — the management agreement's fee in lieu for the year.
+  // null / absent = the agreement states none.
+  mgmt_fee_in_lieu?: number | null;
   ffe_reserve?: number;
   fixed_charges?: {
     property_taxes: number;
@@ -237,6 +240,8 @@ interface ProjYear {
   mgmtFee?: number;
   /** Sam #9 — undefined when the run modelled no incentive fee. */
   incentiveMgmtFee?: number;
+  /** Review R3-I-1 — undefined when the agreement states no fee in lieu. */
+  mgmtFeeInLieu?: number;
   fixedPropertyTaxes?: number;
   fixedInsurance?: number;
   fixedRent?: number;
@@ -1002,6 +1007,7 @@ function buildFromWorker(
       undistTotal: e?.undistributed?.total,
       mgmtFee: e?.mgmt_fee,
       incentiveMgmtFee: e?.incentive_mgmt_fee ?? undefined,
+      mgmtFeeInLieu: e?.mgmt_fee_in_lieu ?? undefined,
       fixedPropertyTaxes: e?.fixed_charges?.property_taxes,
       fixedInsurance: e?.fixed_charges?.insurance,
       fixedRent: e?.fixed_charges?.rent,
@@ -1229,6 +1235,8 @@ function ProjectionsTable({
   const hasFixedDetail = years.some((y) => y.fixedTotal != null);
   // Sam #9 — the incentive fee row exists only when the run modelled one.
   const hasIncentiveFee = years.some((y) => y.incentiveMgmtFee != null);
+  // Review R3-I-1 — the fee-in-lieu row exists only when the agreement states one.
+  const hasFeeInLieu = years.some((y) => y.mgmtFeeInLieu != null);
   const impliedCells = useMemo(
     () => impliedValueByYear(years.map((y) => y.netCashFlow), exitCapRate),
     [years, exitCapRate],
@@ -1786,6 +1794,22 @@ function ProjectionsTable({
                 rowTestId="row-mgmt-fee"
                 benchmarkKey="mgmt_fee"
               />
+              {/* Review R3-I-1 — the management agreement's fee in lieu
+                  (worker mgmt_fee_in_lieu): a stated annual $ amount, flat
+                  unless the agreement escalates it. Shown only when stated. */}
+              {hasFeeInLieu && (
+                <FullRow
+                  label="Management fee in lieu"
+                  indexLabel=""
+                  unit="$"
+                  years={years}
+                  amountOf={(y) => y.mgmtFeeInLieu}
+                  {...rowShared}
+                  traceEngine="expense"
+                  tracePath={(i) => `years[${i}].mgmt_fee_in_lieu`}
+                  rowTestId="row-mgmt-fee-in-lieu"
+                />
+              )}
               {/* Sam #9 — Incentive management fee: a share of GOP after the
                   base fee (worker incentive_mgmt_fee), deducted before NOI.
                   Shown only when the run modelled one. */}
@@ -1810,7 +1834,7 @@ function ProjectionsTable({
                 indexLabel=""
                 unit="$"
                 years={years}
-                amountOf={(y) => (y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee - (y.incentiveMgmtFee ?? 0))}
+                amountOf={(y) => (y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee - (y.mgmtFeeInLieu ?? 0) - (y.incentiveMgmtFee ?? 0))}
                 {...rowShared}
                 bold
                 rowTestId="row-ebitda"

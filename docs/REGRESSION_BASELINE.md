@@ -250,3 +250,12 @@ extracted management agreement move: `mgmt_fee_pct` / `ffe_reserve_pct` take
 the agreement's stated % (Angler copy: base fee 3.25% instead of the 3.0%
 seed), badged `management_agreement`; an incentive fee with a hurdle (the
 Angler's 15% over 10%) is disclosed as not modelled.
+
+### Round 4 (review R3-I-1, R3-M-1, R3-M-2): fee in lieu, incentive basis, HMA evidence
+
+No golden headline move (the fixture has no management agreement); the
+headline set is identical to round 1. Added leaves:
+`expense.years[*].mgmt_fee_in_lieu` (None on the fixture). Live Angler deals
+move: a $76,000 "Management fee in lieu" line every year (flat — the HMA
+states no escalation), so NOI before and after the reserve falls by $76,000
+a year.

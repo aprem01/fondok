@@ -133,6 +133,9 @@ PROJ_LINES: tuple[tuple[str, str, str], ...] = (
     ("expense", "undistributed.total", "Total Undistributed Expenses"),
     ("expense", "gop", "Gross Operating Profit"),
     ("expense", "mgmt_fee", "Management Fee"),
+    # Review R3-I-1 — the management agreement's fee in lieu; written only
+    # when the run carries one (``OPTIONAL_PROJ_PATHS``).
+    ("expense", "mgmt_fee_in_lieu", "Management Fee in Lieu"),
     # Sam #9 — only written when the run modelled an incentive fee (see
     # ``OPTIONAL_PROJ_PATHS``); otherwise the row is omitted, never blank-filled.
     ("expense", "incentive_mgmt_fee", "Incentive Management Fee"),
@@ -148,7 +151,9 @@ PROJ_LINES: tuple[tuple[str, str, str], ...] = (
 #: ``PROJ_LINES`` rows written only when the run carries a value for them in
 #: at least one year. Sam #9 — the incentive management fee is opt-in, so a
 #: deal without one gets no row at all rather than a row of blanks.
-OPTIONAL_PROJ_PATHS: frozenset[str] = frozenset({"expense.incentive_mgmt_fee"})
+OPTIONAL_PROJ_PATHS: frozenset[str] = frozenset(
+    {"expense.incentive_mgmt_fee", "expense.mgmt_fee_in_lieu"}
+)
 
 #: FON-97 — the Future P&L sheet's read-only "Benchmark %" column header.
 #: The import parser skips any column whose header starts with this word.

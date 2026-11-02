@@ -231,6 +231,8 @@ def _build_proforma_and_cf(
     # Sam #9 — the opt-in incentive management fee; empty when the run
     # modelled none, and then no row is emitted.
     incentive: dict[int, float | None] = {}
+    # Review R3-I-1 — the agreement's fee in lieu; empty when none is stated.
+    in_lieu: dict[int, float | None] = {}
     ffe: dict[int, float | None] = {}
     noi: dict[int, float | None] = {}
     noi_before_reserve: dict[int, float | None] = {}
@@ -267,6 +269,9 @@ def _build_proforma_and_cf(
         incentive_usd = _num(e.get("incentive_mgmt_fee"))
         if incentive_usd is not None:
             incentive[n] = k(incentive_usd)
+        in_lieu_usd = _num(e.get("mgmt_fee_in_lieu"))
+        if in_lieu_usd is not None:
+            in_lieu[n] = k(in_lieu_usd)
         ffe[n] = k(_num(e.get("ffe_reserve")))
         noi[n] = k(noi_usd)
         noi_before_reserve[n] = k(noi_inst_usd if noi_inst_usd is not None else noi_usd)
@@ -294,6 +299,7 @@ def _build_proforma_and_cf(
         row("Total Revenue", total_rev, cagr=_num(revenue.get("total_revenue_cagr")), bold=True),
         row("Operating Expenses", opex),
         row("Management Fee", mgmt),
+        *([row("Management Fee in Lieu", in_lieu)] if in_lieu else []),
         # Sam #9 — deducted between the base fee and NOI, so the workbook
         # still foots when an incentive fee is modelled; absent otherwise.
         *([row("Incentive Management Fee", incentive)] if incentive else []),

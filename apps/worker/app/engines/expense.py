@@ -212,6 +212,15 @@ class ExpenseEngineInput(BaseModel):
     # Only an analyst's explicit Year-1 reserve (a fixed dollar figure that
     # does not follow displacement) wins for Year 1.
     ffe_reserve_y1_override: Annotated[float, Field(ge=0.0)] | None = None
+    # Review R3-I-1 (2026-11) — a management fee IN LIEU stated by the hotel
+    # management agreement (the Angler HMA: "Base Fee: 3.25% of Hotel Gross
+    # Revenues and $76,000 in Lieu Fee"): a fixed annual dollar amount on its
+    # own line, deducted with the base fee before NOI. It escalates only at a
+    # rate the agreement states (``mgmt_fee_in_lieu_escalation``); otherwise it
+    # is flat and its trace says so. None (the default) → no line, and every
+    # figure is byte-identical to before.
+    mgmt_fee_in_lieu_usd: Annotated[float, Field(ge=0.0)] | None = None
+    mgmt_fee_in_lieu_escalation: Annotated[float, Field(ge=-0.5, le=0.5)] | None = None
     overrides: dict[str, float] = Field(default_factory=dict)
     grow_opex_independently: bool = Field(
         default=False,
@@ -305,6 +314,9 @@ class ExpenseYear(BaseModel):
     # base ``mgmt_fee`` and before NOI. ``None`` when the deal carries no
     # ``incentive_mgmt_fee_pct_of_gop`` (no incentive fee modelled).
     incentive_mgmt_fee: Annotated[float, Field(ge=0)] | None = None
+    # Review R3-I-1 — the agreement's fee in lieu for the year (None when the
+    # deal carries none). Deducted after GOP with the base fee.
+    mgmt_fee_in_lieu: Annotated[float, Field(ge=0)] | None = None
     ffe_reserve: Annotated[float, Field(ge=0)]
     fixed_charges: FixedCharges
     gop: float
@@ -968,10 +980,54 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # ``None`` and nothing below changes (``incentive_deduction`` 0.0
             # is never added, so NOI keeps its exact float arithmetic).
             idx = len(years)
+            # Review R3-I-1 — the agreement's fee in lieu, its own line.
+            in_lieu: float | None = None
+            if payload.mgmt_fee_in_lieu_usd is not None:
+                esc = payload.mgmt_fee_in_lieu_escalation
+                in_lieu = (
+                    payload.mgmt_fee_in_lieu_usd * (1.0 + esc) ** idx
+                    if esc is not None
+                    else payload.mgmt_fee_in_lieu_usd
+                )
+                in_lieu_inputs = [
+                    ValueInput(
+                        name="mgmt_fee_in_lieu_usd",
+                        value=payload.mgmt_fee_in_lieu_usd,
+                        assumption_key="mgmt_fee_in_lieu_usd",
+                    )
+                ]
+                if esc is not None:
+                    in_lieu_inputs.append(
+                        ValueInput(
+                            name="mgmt_fee_in_lieu_escalation",
+                            value=esc,
+                            assumption_key="mgmt_fee_in_lieu_escalation",
+                        )
+                    )
+                prov[f"years[{idx}].mgmt_fee_in_lieu"] = ValueTrace(
+                    value=in_lieu,
+                    formula=(
+                        f"mgmt_fee_in_lieu = mgmt_fee_in_lieu_usd × "
+                        f"(1 + mgmt_fee_in_lieu_escalation)^{idx}"
+                        if esc is not None
+                        else "mgmt_fee_in_lieu = mgmt_fee_in_lieu_usd"
+                    ),
+                    inputs=in_lieu_inputs,
+                    assumption_key="mgmt_fee_in_lieu_usd",
+                    note=(
+                        f"Management fee in lieu stated by the management agreement, "
+                        f"escalated at the agreement's stated {esc:.2%} a year."
+                        if esc is not None
+                        else "Management fee in lieu stated by the management "
+                        "agreement, held flat: the agreement states no escalation."
+                    ),
+                )
             incentive_pct = payload.incentive_mgmt_fee_pct_of_gop
             incentive_fee: float | None = None
             if incentive_pct is not None:
-                incentive_base = max(0.0, gop - mgmt_fee)
+                incentive_base = max(
+                    0.0, gop - mgmt_fee - (in_lieu if in_lieu is not None else 0.0)
+                )
                 incentive_fee = incentive_base * incentive_pct
                 prov[f"years[{idx}].incentive_mgmt_fee"] = ValueTrace(
                     value=incentive_fee,
@@ -1009,6 +1065,11 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # Management Fee minus Fixed Charges, BEFORE the FF&E
             # reserve. This is what UI consumers should label "NOI".
             noi_institutional = gop - mgmt_fee - fixed_total
+            if in_lieu is not None:
+                # Deducted only when the agreement states one (byte-identical
+                # NOI otherwise).
+                noi -= in_lieu
+                noi_institutional -= in_lieu
             if incentive_fee is not None:
                 # Deducted only when set, so an unset deal's NOI is the exact
                 # same float expression as before (byte-identical goldens).
@@ -1079,24 +1140,42 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     "fixed, so it names no single assumption."
                 ),
             )
+            if in_lieu is not None:
+                # R3-I-1 — name the fee in lieu in the NOI trace only when set.
+                noi_trace = prov[f"years[{idx}].noi"]
+                prov[f"years[{idx}].noi"] = noi_trace.model_copy(
+                    update={
+                        "formula": noi_trace.formula.replace(
+                            "management_fee −", "management_fee − management_fee_in_lieu −", 1
+                        ),
+                        "inputs": [
+                            *noi_trace.inputs[:2],
+                            ValueInput(
+                                name="management_fee_in_lieu",
+                                value=in_lieu,
+                                traces_to=f"years[{idx}].mgmt_fee_in_lieu",
+                            ),
+                            *noi_trace.inputs[2:],
+                        ],
+                    }
+                )
             if incentive_fee is not None:
                 # Sam #9 — name the incentive fee in the NOI trace only when it
                 # is modelled; an unset deal's trace is unchanged.
                 noi_trace = prov[f"years[{idx}].noi"]
                 prov[f"years[{idx}].noi"] = noi_trace.model_copy(
                     update={
-                        "formula": (
-                            "noi = gop − management_fee − incentive_management_fee "
-                            "− ffe_reserve − fixed_charges"
+                        "formula": noi_trace.formula.replace(
+                            "− ffe_reserve", "− incentive_management_fee − ffe_reserve", 1
                         ),
                         "inputs": [
-                            *noi_trace.inputs[:2],
+                            *noi_trace.inputs[: 3 if in_lieu is not None else 2],
                             ValueInput(
                                 name="incentive_management_fee",
                                 value=incentive_fee,
                                 traces_to=f"years[{idx}].incentive_mgmt_fee",
                             ),
-                            *noi_trace.inputs[2:],
+                            *noi_trace.inputs[3 if in_lieu is not None else 2 :],
                         ],
                     }
                 )
@@ -1114,6 +1193,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     undistributed=undist,
                     mgmt_fee=mgmt_fee,
                     incentive_mgmt_fee=incentive_fee,
+                    mgmt_fee_in_lieu=in_lieu,
                     ffe_reserve=ffe,
                     fixed_charges=fixed,
                     gop=gop,
