@@ -344,6 +344,8 @@ _DOCUMENT_LABELS: frozenset[str] = frozenset(
         # FON-101 — the renovation budget read off a PIP / CapEx document.
         "pip_document",
         "partnership_doc",
+        # Review I-1 — fee terms read off the hotel management agreement.
+        "management_agreement",
         "portfolio_pnl",
         "pnl_benchmark",
         "cbre_horizons",

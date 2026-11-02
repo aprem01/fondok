@@ -242,3 +242,11 @@ No golden move (the fixture has no T-12). Live T-12 deals move: Year-1 FF&E
 reserve becomes `ffe_reserve_pct` × (displaced) Year-1 revenue (Angler copy
 480,135 = 3.98% → 4%; orig 539,269 = 4.21% → 4%). An analyst Year-1 fee or
 reserve override is a fixed dollar figure, labelled as such.
+
+### Round 2 (review I-1): fee terms from the hotel management agreement
+
+No golden move (the fixture carries no documents). Live deals with an
+extracted management agreement move: `mgmt_fee_pct` / `ffe_reserve_pct` take
+the agreement's stated % (Angler copy: base fee 3.25% instead of the 3.0%
+seed), badged `management_agreement`; an incentive fee with a hurdle (the
+Angler's 15% over 10%) is disclosed as not modelled.

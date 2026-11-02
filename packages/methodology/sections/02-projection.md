@@ -398,7 +398,8 @@ hotel-type default 5.50% of total revenue (select)”).
 
 <!-- source: apps/worker/app/engines/expense.py (mgmt_fee_pct, ffe_reserve_pct, incentive_mgmt_fee_pct_of_gop), evals/golden-set/usali-rules.csv (MGMT_FEE_RANGE, INCENTIVE_MGMT_FEE_RANGE) -->
 Base management fee and FF&E reserve: a share of each year's total revenue, Year 1 included (never
-the T-12 dollars; an analyst's Year-1 override wins as a fixed dollar amount); defaults 3.0% / 4.0%. Both accept 0–10%. The USALI check warns
+the T-12 dollars; an analyst's Year-1 override wins as a fixed dollar amount); the management
+agreement's stated % outranks a portfolio ratio; defaults 3.0% / 4.0%. Both accept 0–10%. The USALI check warns
 when the base fee is outside 2–6% of total revenue; it is a warning, not a correction, and applies
 to every operating model. Incentive fee: optional, 0–50% of gross operating profit after the base
 fee, computed each year as max(0, GOP − base fee) × rate; the USALI check notes an incentive fee
@@ -620,6 +621,15 @@ there without a new value drops the old value, because its units belonged to the
 managed or brand-managed. The Overview shows it and the Future P&L shows it next to the management
 fee. It moves no number: the fee check is the general USALI 2–6% of total revenue range for every
 operating model, and nothing below changes the management fee assumption — the analyst sets it.
+
+**Fee terms from the management agreement.** An extracted hotel management agreement (LEASES /
+CONTRACT document) sets `mgmt_fee_pct` from its base-fee % and `ffe_reserve_pct` from its FF&E
+reserve %, badged `management_agreement` with the row behind each; they outrank a portfolio P&L
+ratio and the seed, and an analyst override still wins. Its incentive fee is modelled
+(`incentive_mgmt_fee_pct_of_gop`) only when the agreement states the basis as gross operating
+profit with no hurdle; otherwise (the Angler HMA: 15% over a 10% hurdle) the assumption carries
+`awaiting_analyst` with the stated terms and the sentence that it is not modelled. A fee in lieu /
+minimum fee is not modelled.
 
 {testid=methodology-incentive-fee} **Base vs incentive management fee.** The management fee (`mgmt_fee_pct`) is the *base* fee: a share
 of each year's total revenue, Year 1 included. The T-12 management-fee dollars are history: they

@@ -1720,3 +1720,85 @@ async def test_ffe_reserve_t12_dollars_never_reach_year_one_but_an_analyst_figur
     await _insert_t12_extraction(analyst, fields=rows)
     exp_in = await _expense_input_for(await _base_for(analyst), analyst)
     assert exp_in.ffe_reserve_y1_override == pytest.approx(500_000.0)
+
+
+# ═══════ Review I-1 — the management agreement (LEASES) sets the fee terms ═══════
+
+from fondok_schemas.reasons import ReasonCode  # noqa: E402
+
+
+async def _insert_hma(deal_id: UUID, fields: list[dict[str, object]]) -> tuple[UUID, UUID]:
+    return await _insert_financial_extraction(
+        deal_id,
+        doc_type="LEASES",
+        filename="Angler_s HMA Summary.docx",
+        fields=fields,
+        ts=datetime.now(UTC),
+    )
+
+
+_HMA_ROWS = [
+    {"field_name": "broker_proforma.management_fee_base_pct", "value": 0.0325, "source_page": 2},
+    {"field_name": "incentive_management_fee_pct", "value": 0.15, "source_page": 3},
+    {"field_name": "incentive_management_fee_hurdle_pct", "value": 0.10, "source_page": 3},
+    {"field_name": "management_fee_in_lieu_usd", "value": 76_000.0},
+]
+
+
+@pytest.mark.asyncio
+async def test_hma_base_fee_sets_mgmt_fee_pct_with_its_row() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="HMA deal", keys=132, purchase=36_400_000)
+    _doc, er = await _insert_hma(deal_id, _HMA_ROWS)
+    base = await _base_for(deal_id)
+    assert base["mgmt_fee_pct"] == pytest.approx(0.0325)
+    assert base["__sources__"]["mgmt_fee_pct"] == "management_agreement"
+    src = base["__source_fields__"]["mgmt_fee_pct"]
+    assert src["field_name"] == "broker_proforma.management_fee_base_pct"
+    assert src["doc_type"] == "LEASES"
+    assert src["extraction_result_id"] == str(er)
+
+
+@pytest.mark.asyncio
+async def test_hma_incentive_with_a_hurdle_is_disclosed_not_modelled() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="HMA incentive", keys=132, purchase=36_400_000)
+    await _insert_hma(deal_id, _HMA_ROWS)
+    base = await _base_for(deal_id)
+    assert base.get("incentive_mgmt_fee_pct_of_gop") is None
+    r = base["__reasons__"]["incentive_mgmt_fee_pct_of_gop"]
+    assert r["code"] is ReasonCode.AWAITING_ANALYST
+    assert "15.0%" in r["detail"] and "10.0%" in r["detail"]
+    assert "not modelled" in r["detail"]
+
+
+@pytest.mark.asyncio
+async def test_hma_incentive_on_gop_without_hurdle_is_modelled() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="HMA GOP incentive", keys=132, purchase=36_400_000)
+    await _insert_hma(
+        deal_id,
+        [
+            {"field_name": "management_fee_base_pct", "value": 3.0},
+            {"field_name": "incentive_management_fee_pct", "value": 10.0},
+            {"field_name": "incentive_management_fee_basis", "value": "Gross Operating Profit after base fee"},
+        ],
+    )
+    base = await _base_for(deal_id)
+    assert base["mgmt_fee_pct"] == pytest.approx(0.03)
+    assert base["incentive_mgmt_fee_pct_of_gop"] == pytest.approx(0.10)
+    assert base["__sources__"]["incentive_mgmt_fee_pct_of_gop"] == "management_agreement"
+    assert "incentive_mgmt_fee_pct_of_gop" not in base["__reasons__"]
+
+
+@pytest.mark.asyncio
+async def test_analyst_fee_override_beats_the_hma() -> None:
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id, name="HMA override", keys=132, purchase=36_400_000,
+        field_overrides={"mgmt_fee_pct": {"value": 0.04, "note": "amended HMA"}},
+    )
+    await _insert_hma(deal_id, _HMA_ROWS)
+    base = await _base_for(deal_id)
+    assert base["mgmt_fee_pct"] == pytest.approx(0.04)
+    assert base["__sources__"]["mgmt_fee_pct"] == "analyst_override"

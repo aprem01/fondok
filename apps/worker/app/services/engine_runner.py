@@ -815,6 +815,10 @@ SOURCE_DERIVED_FROM_REVPAR_GROWTH = "derived_from_revpar_growth"
 # waterfall). An analyst override wins over it. B5 — there is no seed beneath
 # it: without either, the partnership engine reports ``not_applicable``.
 SOURCE_PARTNERSHIP_DOC = "partnership_doc"
+# Review I-1 (2026-11) — fee terms read off the deal's hotel management
+# agreement (an extracted LEASES / CONTRACT document): the base management fee
+# %, the FF&E reserve %, and an incentive fee whose basis the model supports.
+SOURCE_MANAGEMENT_AGREEMENT = "management_agreement"
 # Phase 2.1 (as-of gate) — the market-report siblings of
 # ``str_forecast_unavailable``. A CBRE Horizons report or an OM comp table
 # published AFTER the deal's underwriting as-of date is not knowable at that
@@ -2021,6 +2025,30 @@ async def _load_engine_inputs(
                 base[key] = value
             sources[key] = SOURCE_PORTFOLIO_PNL
 
+    # Review I-1 (2026-11) — the hotel management agreement is the contract
+    # the fee is paid under, so its stated terms outrank a portfolio ratio and
+    # the seed; an analyst override (the loop below) still wins.
+    hma = await _load_management_agreement_terms(
+        session, deal_id=deal_id, tenant_id=effective_tenant
+    )
+    for key, term in (
+        ("mgmt_fee_pct", hma.base_fee),
+        ("ffe_reserve_pct", hma.ffe_reserve),
+    ):
+        if term is not None:
+            base[key] = term.value
+            sources[key] = SOURCE_MANAGEMENT_AGREEMENT
+            source_fields[key] = term.provenance
+    if hma.incentive is not None:
+        if hma.incentive_modelled:
+            base[INCENTIVE_MGMT_FEE_KEY] = hma.incentive.value
+            sources[INCENTIVE_MGMT_FEE_KEY] = SOURCE_MANAGEMENT_AGREEMENT
+            source_fields[INCENTIVE_MGMT_FEE_KEY] = hma.incentive.provenance
+        else:
+            reasons[INCENTIVE_MGMT_FEE_KEY] = _reason(
+                ReasonCode.AWAITING_ANALYST, hma.incentive_disclosure
+            )
+
     # FON-66 Slice B — partnership/JV terms extracted from an uploaded
     # PARTNERSHIP document (gp/lp/pref scalars + the per-tier promote
     # waterfall), tagged SOURCE_PARTNERSHIP_DOC. They share the
@@ -2836,6 +2864,9 @@ async def _load_engine_inputs(
     # read by no engine). PR 3 passes it as ``policy`` to resolve_growth_by_year
     # / resolve_benchmark; until then it moves nothing.
     base[DATA_POLICY_KEY] = data_policy
+    # Review I-1 — an analyst's incentive fee settles the HMA disclosure.
+    if INCENTIVE_MGMT_FEE_KEY in analyst_override_paths:
+        reasons.pop(INCENTIVE_MGMT_FEE_KEY, None)
     # Review C-1 — an analyst-entered departmental expense is not the
     # statement's figure, so it no longer pairs with the statement's revenue:
     # the expense engine prices it on projected, undisplaced Year-1 revenue.
@@ -3100,8 +3131,8 @@ _SEED_REASON_DOC_TYPES: dict[str, tuple[str, ...]] = {
     "revpar_growth": ("CBRE_HORIZONS",),
     # FON-109 — a PNL_BENCHMARK no longer grounds these (it is a suggestion
     # the analyst applies as an override), so only a portfolio P&L counts.
-    "mgmt_fee_pct": ("PORTFOLIO_PNL",),
-    "ffe_reserve_pct": ("PORTFOLIO_PNL",),
+    "mgmt_fee_pct": ("PORTFOLIO_PNL", "LEASES"),
+    "ffe_reserve_pct": ("PORTFOLIO_PNL", "LEASES"),
 }
 
 
@@ -4347,6 +4378,7 @@ _SOURCE_TO_DOC_TYPES: dict[str, tuple[str, ...]] = {
     SOURCE_OM_COMPS: ("OM",),
     SOURCE_OM_BROKER: ("OM",),
     SOURCE_PARTNERSHIP_DOC: ("PARTNERSHIP",),
+    SOURCE_MANAGEMENT_AGREEMENT: ("LEASES", "CONTRACT"),
     # A9 — a segment field the STR Segmentation report states.
     SOURCE_STR_SEGMENTATION: ("STR_SEGMENTATION",),
     # FON-101 — coarse fallback only; ``source_fields.renovation_budget``
@@ -6765,6 +6797,167 @@ async def _load_portfolio_library_overrides(
         )
         out[key] = median
     return out
+
+
+@dataclass(frozen=True)
+class _AgreementTerm:
+    value: float
+    provenance: "SourceField"
+
+
+@dataclass(frozen=True)
+class _AgreementTerms:
+    """Fee terms read off the deal's hotel management agreement (review I-1)."""
+
+    base_fee: _AgreementTerm | None = None
+    ffe_reserve: _AgreementTerm | None = None
+    incentive: _AgreementTerm | None = None
+    #: True when the incentive's stated basis is GOP after the base fee with
+    #: no hurdle — the one structure the expense engine models.
+    incentive_modelled: bool = False
+    #: The sentence shown when an extracted incentive fee is NOT modelled.
+    incentive_disclosure: str | None = None
+
+
+#: Last dotted segment of an agreement row → the term it states.
+_HMA_BASE_FEE_FIELDS = frozenset(
+    {"management_fee_base_pct", "base_management_fee_pct", "base_management_fee_pct_of_revenue"}
+)
+_HMA_FFE_FIELDS = frozenset(
+    {"ffe_reserve_pct", "ffe_reserve_pct_of_revenue", "ffe_reserve_rate_pct"}
+)
+_HMA_INCENTIVE_FIELDS = frozenset(
+    {"incentive_management_fee_pct", "incentive_fee_pct"}
+)
+_HMA_INCENTIVE_BASIS_FIELDS = frozenset(
+    {"incentive_management_fee_basis", "incentive_fee_basis"}
+)
+
+
+def _hma_pct(value: Any, *, high: float) -> float | None:
+    """A stated percentage as a fraction (3.25 → 0.0325) inside (0, high]."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    v = float(value)
+    if 1.0 < v <= 100.0:
+        v /= 100.0
+    return v if 0.0 < v <= high else None
+
+
+async def _load_management_agreement_terms(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> _AgreementTerms:
+    """The fee terms the deal's hotel management agreement states.
+
+    Review I-1 (2026-11): the Angler HMA (an extracted LEASES document) states
+    a 3.25% base fee, a 15% incentive over a 10% hurdle and a fee in lieu, and
+    nothing read them. Reads every extracted LEASES / CONTRACT document, newest
+    first, the first stated value per term winning:
+
+    * base management fee % → ``mgmt_fee_pct`` (0–10%);
+    * FF&E reserve % → ``ffe_reserve_pct`` (0–10%);
+    * incentive fee % (0–50%): modelled as ``incentive_mgmt_fee_pct_of_gop``
+      only when the agreement states its basis as gross operating profit and
+      states no hurdle — the structure the expense engine runs. Otherwise it
+      is disclosed (``awaiting_analyst``) as not modelled, never mapped onto a
+      different structure.
+
+    A fee in lieu / minimum fee is not modelled. A read failure propagates.
+    """
+    rows = await session.execute(
+        text(
+            # tenant-scope predicate required by tenant_middleware
+            """
+            SELECT er.id AS er_id, er.document_id AS doc_id, er.fields,
+                   UPPER(COALESCE(d.doc_type, '')) AS doc_type
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id = :deal
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+               AND UPPER(COALESCE(d.doc_type, '')) IN ('LEASES', 'CONTRACT')
+             ORDER BY er.created_at DESC
+            """
+        ),
+        {"deal": deal_id, "tenant": tenant_id},
+    )
+    found: dict[str, tuple[float | str, Mapping[str, Any], Any, Any, str]] = {}
+    for r in rows.fetchall():
+        m = r._mapping
+        blob = m["fields"]
+        if isinstance(blob, str):
+            try:
+                blob = json.loads(blob) if blob else None
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(blob, list):
+            continue
+        for f in blob:
+            if not isinstance(f, dict):
+                continue
+            leaf = str(f.get("field_name") or "").strip().lower().rsplit(".", 1)[-1]
+            value = f.get("value")
+            term: str | None = None
+            parsed: float | str | None = None
+            if leaf in _HMA_BASE_FEE_FIELDS:
+                term, parsed = "base", _hma_pct(value, high=0.10)
+            elif leaf in _HMA_FFE_FIELDS:
+                term, parsed = "ffe", _hma_pct(value, high=0.10)
+            elif leaf in _HMA_INCENTIVE_FIELDS:
+                term, parsed = "incentive", _hma_pct(value, high=0.50)
+            elif "incentive" in leaf and "hurdle" in leaf:
+                term, parsed = "hurdle", _hma_pct(value, high=1.0)
+            elif leaf in _HMA_INCENTIVE_BASIS_FIELDS and isinstance(value, str):
+                term, parsed = "basis", value.strip() or None
+            if term is None or parsed is None or term in found:
+                continue
+            found[term] = (parsed, f, m["doc_id"], m["er_id"], m["doc_type"])
+
+    def _term(key: str, canonical: str) -> _AgreementTerm | None:
+        hit = found.get(key)
+        if hit is None:
+            return None
+        value, field, doc_id, er_id, doc_type = hit
+        return _AgreementTerm(
+            value=float(value),
+            provenance=_row_provenance(
+                canonical=canonical,
+                field=field,
+                value=float(value),
+                doc_type=doc_type,
+                document_id=doc_id,
+                extraction_result_id=er_id,
+            ),
+        )
+
+    incentive = _term("incentive", INCENTIVE_MGMT_FEE_KEY)
+    modelled = False
+    disclosure: str | None = None
+    if incentive is not None:
+        basis = str(found["basis"][0]) if "basis" in found else None
+        hurdle = float(found["hurdle"][0]) if "hurdle" in found else None
+        on_gop = basis is not None and (
+            "gop" in basis.lower() or "gross operating profit" in basis.lower()
+        )
+        modelled = on_gop and hurdle is None
+        if not modelled:
+            stated = f"an incentive fee of {incentive.value:.1%}"
+            if hurdle is not None:
+                stated += f" over a {hurdle:.1%} hurdle"
+            stated += f" (basis: {basis})" if basis else " with no stated basis"
+            disclosure = (
+                f"The management agreement states {stated}. The model's incentive "
+                "fee is a share of GOP after the base fee with no hurdle, so this "
+                "fee is not modelled — enter an incentive rate on the Future P&L "
+                "if it applies."
+            )
+    return _AgreementTerms(
+        base_fee=_term("base", "mgmt_fee_pct"),
+        ffe_reserve=_term("ffe", "ffe_reserve_pct"),
+        incentive=incentive,
+        incentive_modelled=modelled,
+        incentive_disclosure=disclosure,
+    )
 
 
 async def _load_per_deal_portfolio_pnl_overrides(

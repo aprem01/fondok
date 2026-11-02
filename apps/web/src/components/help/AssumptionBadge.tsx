@@ -275,6 +275,9 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   deal_type_default: { tone: TONE.neutral, Icon: Sparkles },
   roi_user: { tone: TONE.input, Icon: Pencil },
   partnership_doc: { tone: TONE.brand, Icon: FileText },
+  // Review I-1 — fee terms (base fee %, FF&E reserve %, a GOP incentive) read
+  // off the hotel management agreement. Tooltip copy comes from the registry.
+  management_agreement: { tone: TONE.grounded, Icon: FileText },
   // FON-61 / E-028 — an analyst's Index Analysis assumption (market growth or
   // an MPI / ARI penetration target) applied while the STR basis is on.
   index_assumption: {

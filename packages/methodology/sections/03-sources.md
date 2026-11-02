@@ -385,10 +385,11 @@ read, with the file each one is read from.
 Every modelled assumption carries one source id — seed, deal_row, t12_actual, cbre_horizons,
 om_comps, om_broker, pnl_benchmark (older runs only), portfolio_pnl, analyst_override,
 str_subject_ttm, str_comp_set, str_forecast, str_forecast_unavailable, derived_from_revpar_growth,
-index_assumption, deal_type_default — and the badge text comes from the concept registry. The
-loader starts every key as a platform default with a reason (no document of the needed type, or
-no field that resolves to the concept), then lets grounded sources overwrite it, then the firm's
-portfolio P&L ratios, then analyst overrides; a P&L benchmark is never applied by the loader —
+index_assumption, deal_type_default, management_agreement — and the badge text comes from the
+concept registry. The loader starts every key as a platform default with a reason (no document of
+the needed type, or no field that resolves to the concept), then lets grounded sources overwrite
+it, then the firm's portfolio P&L ratios, then the hotel management agreement's fee terms (base fee
+% and FF&E reserve %, from an extracted LEASES / CONTRACT document), then analyst overrides; a P&L benchmark is never applied by the loader —
 it is a suggestion the analyst applies, after which the value reads as an analyst override.
 
 :::
