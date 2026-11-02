@@ -15,7 +15,7 @@
         "engines_run": []
       },
       "header": {
-        "deal_stage": "Draft",
+        "deal_stage": "In Progress",
         "location": "",
         "recommendation": "Pending analyst decision",
         "subject_property": "\u2014",
@@ -68,7 +68,7 @@
         ]
       },
       "header": {
-        "deal_stage": "Draft",
+        "deal_stage": "In Progress",
         "location": "Tampa, FL",
         "recommendation": "Pending analyst decision",
         "subject_property": "Harbor House Test",

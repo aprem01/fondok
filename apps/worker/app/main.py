@@ -39,7 +39,7 @@ from .api import settings as settings_router
 from .api import webhooks as webhooks_router
 from .config import get_settings
 from .database import dispose_engine, dispose_migrations_engine, get_engine
-from .migrations import run_startup_migrations
+from .migrations import FatalMigrationError, run_startup_migrations
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
 from .services.engine_runner import EngineInputsLoadError, MissingIdentityInputsError
@@ -95,9 +95,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.warning("langsmith setup failed: %s", exc)
     # Idempotent schema additions — creates deals/documents/audit_log
-    # on Postgres, no-ops on SQLite (dev). Never raises out of lifespan.
+    # on Postgres, no-ops on SQLite (dev). Raises out of lifespan only for a
+    # FATAL_MIGRATIONS entry (a data migration the code depends on): the
+    # worker then refuses to boot and the deploy's health check fails.
     try:
         await run_startup_migrations()
+    except FatalMigrationError:
+        logger.critical("startup migrations: a fatal migration failed — not starting")
+        raise
     except Exception as exc:
         logger.exception("startup migrations failed: %s", exc)
     # FON-93 — the owner-DSN engine (``DATABASE_URL_MIGRATIONS``) exists

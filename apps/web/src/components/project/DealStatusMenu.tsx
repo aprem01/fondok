@@ -10,9 +10,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Loader2 } from 'lucide-react';
 import { StatusBadge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
-import { api, userMessage } from '@/lib/api';
+import { userMessage } from '@/lib/api';
 import type { ManualDealStatus, ProjectStatus } from '@/lib/catalogs';
-import { DEAL_STATUS_HELP, needsModelRun, settableStatuses } from '@/lib/dealStatus';
+import { DEAL_STATUS_HELP, needsModelRun, setDealStatus, settableStatuses } from '@/lib/dealStatus';
 import { cn } from '@/lib/format';
 
 export default function DealStatusMenu({
@@ -23,8 +23,8 @@ export default function DealStatusMenu({
 }: {
   dealId: string;
   status: ProjectStatus | null;
-  /** The served run has finished — enables the three IC statuses (a hint;
-   *  the worker decides). */
+  /** The served run finished with no failed engine — enables the three IC
+   *  statuses (a hint; the worker decides). */
   hasCompletedRun: boolean;
   onChanged: () => void;
 }) {
@@ -62,7 +62,7 @@ export default function DealStatusMenu({
     if (next === status || busy) return;
     setBusy(true);
     try {
-      await api.deals.setStatus(dealId, next);
+      await setDealStatus(dealId, next, status);
       toast(`Status set to ${next}`, { type: 'success' });
       onChanged();
     } catch (err) {
@@ -119,7 +119,7 @@ export default function DealStatusMenu({
                 <span className="flex-1 min-w-0">
                   <span className="block text-[12.5px] text-ink-900">{label}</span>
                   <span className="block text-[11px] text-ink-500">
-                    {gated ? 'Run the model first — needs a completed model run.' : DEAL_STATUS_HELP[s]}
+                    {gated ? 'Run the model first — needs a completed model run with no failed engine.' : DEAL_STATUS_HELP[s]}
                   </span>
                 </span>
               </button>

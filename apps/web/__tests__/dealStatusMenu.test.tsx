@@ -35,7 +35,7 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: hoisted.toas
 
 import DealStatusMenu from '@/components/project/DealStatusMenu';
 import { WorkerError } from '@/lib/api';
-import { hasCompletedModelRun, settableStatuses } from '@/lib/dealStatus';
+import { hasCompletedModelRun, onboardingStateLabel, settableStatuses } from '@/lib/dealStatus';
 import { DEAL_STATUSES, projectStatuses } from '@/lib/catalogs';
 
 beforeEach(() => {
@@ -69,7 +69,7 @@ describe('DealStatusMenu', () => {
     for (const s of ['IC Ready', 'IC Approved', 'IC Not Approved']) {
       const item = within(menu).getByRole('menuitemradio', { name: new RegExp(`^${s}`) });
       expect(item).toBeDisabled();
-      expect(item).toHaveTextContent('Run the model first');
+      expect(item).toHaveTextContent('Run the model first — needs a completed model run with no failed engine.');
     }
     expect(within(menu).getByRole('menuitemradio', { name: /^Ready for Review/ })).not.toBeDisabled();
   });
@@ -79,7 +79,8 @@ describe('DealStatusMenu', () => {
     render(<DealStatusMenu dealId="deal-1" status="In Progress" hasCompletedRun onChanged={onChanged} />);
     fireEvent.click(within(open('In Progress')).getByRole('menuitemradio', { name: /^IC Approved/ }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
-    expect(hoisted.setStatus).toHaveBeenCalledWith('deal-1', 'IC Approved');
+    // The write carries the status the control was showing (stale-write guard).
+    expect(hoisted.setStatus).toHaveBeenCalledWith('deal-1', 'IC Approved', 'In Progress');
     expect(hoisted.update).not.toHaveBeenCalled();
     expect(hoisted.toast).toHaveBeenCalledWith('Status set to IC Approved', { type: 'success' });
   });
@@ -113,7 +114,7 @@ describe('DealStatusMenu', () => {
     expect(items[0]).toHaveTextContent('Restore to In Progress');
     fireEvent.click(items[0]);
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    expect(hoisted.setStatus).toHaveBeenCalledWith('deal-1', 'In Progress');
+    expect(hoisted.setStatus).toHaveBeenCalledWith('deal-1', 'In Progress', 'Archived');
   });
 
   it('a draft shows its badge with no menu', () => {
@@ -131,6 +132,15 @@ describe('deal status vocabulary (web)', () => {
     expect(projectStatuses).toEqual(['All Status', ...DEAL_STATUSES]);
   });
 
+  it('the Pipeline state column never borrows a status word (review M3)', () => {
+    expect(onboardingStateLabel('ONBOARDING')).toBe('Onboarding');
+    expect(onboardingStateLabel('VALIDATING')).toBe('Validating');
+    expect(onboardingStateLabel('READY')).toBe('Ready');
+    for (const s of ['ONBOARDING', 'VALIDATING', 'READY']) {
+      expect(DEAL_STATUSES as readonly string[]).not.toContain(onboardingStateLabel(s));
+    }
+  });
+
   it('settableStatuses follows the lifecycle', () => {
     expect(settableStatuses('Draft')).toEqual([]);
     expect(settableStatuses(null)).toEqual([]);
@@ -138,7 +148,7 @@ describe('deal status vocabulary (web)', () => {
     expect(settableStatuses('IC Approved')).toHaveLength(5);
   });
 
-  it('hasCompletedModelRun: a finished run, never an empty or in-flight one', () => {
+  it('hasCompletedModelRun: a finished run with no failed engine — never an empty, in-flight or failed one', () => {
     const env = (statuses: string[]) => ({
       deal_id: 'd',
       engines: Object.fromEntries(statuses.map((s, i) => [`e${i}`, { status: s }])),
@@ -147,6 +157,7 @@ describe('deal status vocabulary (web)', () => {
     expect(hasCompletedModelRun(env([]))).toBe(false);
     expect(hasCompletedModelRun(env(['complete', 'running']))).toBe(false);
     expect(hasCompletedModelRun(env(['failed']))).toBe(false);
-    expect(hasCompletedModelRun(env(['complete', 'failed', 'not_applicable']))).toBe(true);
+    expect(hasCompletedModelRun(env(['complete', 'failed', 'not_applicable']))).toBe(false);
+    expect(hasCompletedModelRun(env(['complete', 'not_applicable']))).toBe(true);
   });
 });

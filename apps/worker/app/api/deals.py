@@ -3038,6 +3038,11 @@ class SetDealStatusBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str
+    #: The status the caller last saw. When sent and the deal has moved on
+    #: since (another tab, the other control on the page), the change is
+    #: refused 409 ``status_changed`` instead of silently overwriting — e.g.
+    #: a stale "Mark as IC Ready" must never downgrade an IC decision.
+    expected_status: str | None = None
 
     @field_validator("status")
     @classmethod
@@ -3053,6 +3058,29 @@ class SetDealStatusBody(BaseModel):
 STATUS_NOT_SETTABLE_CODE = "status_not_settable"
 DEAL_ARCHIVED_CODE = "deal_archived"
 MODEL_RUN_REQUIRED_CODE = "model_run_required"
+STATUS_CHANGED_CODE = "status_changed"
+
+
+def _model_run_required_message(target: str, gate: Any) -> str:
+    """The refusal sentence for the run gate (``services.deal_status``)."""
+    if gate.reason == "failed_engines":
+        from ..services.engine_runner import _ENGINE_LABELS
+
+        names = ", ".join(_ENGINE_LABELS.get(e, e) for e in gate.failed_engines)
+        return (
+            f"The latest model run has a failed engine ({names}) — {target} needs "
+            "a completed model run with no failed engine. Fix the inputs and "
+            "re-run the model."
+        )
+    if gate.reason == "in_flight":
+        return (
+            f"The model is still running — {target} needs a completed model run "
+            "with no failed engine."
+        )
+    return (
+        f"Run the model first — {target} needs a completed model run with no "
+        "failed engine."
+    )
 
 
 @router.post("/{deal_id}/status", response_model=DealRecord)
@@ -3075,7 +3103,13 @@ async def set_deal_status(
     * 409 ``deal_archived`` — an archived deal is only restored, to
       ``In Progress``;
     * 409 ``model_run_required`` — IC Ready / IC Approved / IC Not Approved
-      need a completed model run (:mod:`app.services.deal_status`).
+      need the latest run finished with no failed engine
+      (:mod:`app.services.deal_status`);
+    * 409 ``status_changed`` — ``expected_status`` was sent and the deal is
+      no longer at it (a stale page never overwrites a newer status).
+
+    The deal row is read ``FOR UPDATE`` on Postgres, so two concurrent
+    changes serialise and each audit row's ``from`` is the status it replaced.
 
     Setting the current status again is a no-op (no write, no audit row).
     A change is audited ``deal.status_changed`` with ``from`` / ``to`` and the
@@ -3096,11 +3130,13 @@ async def set_deal_status(
             },
         )
 
+    is_postgres = session.bind is not None and session.bind.dialect.name == "postgresql"
     existing = (
         await session.execute(
             text(
                 f"SELECT {await _deal_columns(session)} FROM deals "
                 "WHERE id = :id AND tenant_id = :tenant"
+                + (" FOR UPDATE" if is_postgres else "")
             ),
             {"id": deal_id_str, "tenant": tenant_id_str},
         )
@@ -3114,6 +3150,18 @@ async def set_deal_status(
     if str(row.get("lifecycle") or "active") == "draft":
         raise _deal_is_draft_error()
     current = row.get("status")
+    if body.expected_status is not None and body.expected_status != current:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": STATUS_CHANGED_CODE,
+                "current": current,
+                "message": (
+                    f"The deal's status changed to {current} since this page "
+                    "loaded. Nothing was changed — check the status and try again."
+                ),
+            },
+        )
     if current == DealStatus.ARCHIVED.value and target != DealStatus.IN_PROGRESS.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3128,19 +3176,19 @@ async def set_deal_status(
     if current == target:
         return _row_to_record(row)
     if target in RUN_GATED_DEAL_STATUSES:
-        from ..services.deal_status import has_completed_model_run
+        from ..services.deal_status import model_run_gate
 
-        if not await has_completed_model_run(
+        gate = await model_run_gate(
             session, deal_id=deal_id_str, tenant_id=tenant_id_str
-        ):
+        )
+        if not gate.ok:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": MODEL_RUN_REQUIRED_CODE,
-                    "message": (
-                        f"Run the model first — {target} needs a completed "
-                        "model run."
-                    ),
+                    "reason": gate.reason,
+                    "failed_engines": list(gate.failed_engines),
+                    "message": _model_run_required_message(target, gate),
                 },
             )
 

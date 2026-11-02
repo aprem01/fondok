@@ -486,10 +486,10 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
 
     fireEvent.click(markReady);
     // Wave 5 — written through POST /deals/{id}/status, never a PATCH and
-    // never local-only state; the deal is re-read.
-    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'IC Ready'));
+    // never local-only state (the shared-state test covers the re-read).
+    // It carries the status the card was showing, so a stale card is refused.
+    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'IC Ready', 'In Progress'));
     expect(updateSpy).not.toHaveBeenCalled();
-    await waitFor(() => expect(fx.refreshDealSpy).toHaveBeenCalled());
 
     // The re-read deal carries the persisted status.
     fx.status = 'IC Ready';
@@ -503,7 +503,7 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
     render(<ICMemoTab project={PROJECT} />);
     expect(screen.getByText('✓ This deal is IC Ready')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Undo IC Ready' }));
-    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'In Progress'));
+    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'In Progress', 'IC Ready'));
     expect(updateSpy).not.toHaveBeenCalled();
   });
 

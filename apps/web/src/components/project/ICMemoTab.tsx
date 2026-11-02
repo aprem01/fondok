@@ -95,6 +95,8 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { api, isWorkerConnected, userMessage } from '@/lib/api';
+import { setDealStatus } from '@/lib/dealStatus';
+import { isProjectStatus } from '@/lib/catalogs';
 import type { ValueState } from '@/lib/api';
 import type { Project } from '@/lib/project';
 import { ProvenanceDot, palette } from '@/components/design';
@@ -1237,17 +1239,20 @@ export default function ICMemoTab({ project }: { project: Project }) {
   }, [metrics, scenariosAvailable, openCritical, ack, verdictConfirmed]);
   const blockers = checklist.filter((c) => !c.ok).length;
   const canMark = blockers === 0 || (openCritical > 0 && ack);
-  // Mark → IC Ready; Undo → back to In Progress. The worker gates IC Ready on
-  // a completed model run and refuses with its own sentence, shown verbatim.
+  // Mark → IC Ready; Undo → back to In Progress. Never offered at an IC
+  // outcome (the button is not rendered). The write carries the status this
+  // card shows, so a stale card is refused (409 status_changed) rather than
+  // overwrite a newer status; either way every view of the deal re-reads it.
+  // The worker gates IC Ready on a completed run with no failed engine and
+  // refuses with its own sentence, shown verbatim.
   const toggleIcReady = async () => {
     if (statusBusy || icDecided || !liveMode) return;
     if (!icReady && !canMark) return;
     const next = icReady ? 'In Progress' : 'IC Ready';
     setStatusBusy(true);
     try {
-      await api.deals.setStatus(dealId, next);
+      await setDealStatus(dealId, next, isProjectStatus(dealStatus) ? dealStatus : null);
       toast(icReady ? 'IC Ready undone — status set to In Progress' : 'Marked as IC Ready', { type: 'success' });
-      refresh();
     } catch (err) {
       toast(`Couldn't change the status — ${userMessage(err)}`, { type: 'error' });
     } finally {

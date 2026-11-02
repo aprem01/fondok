@@ -2486,9 +2486,17 @@ export const api = {
      *  refuses it. 409 ``model_run_required`` for the three IC statuses before
      *  a completed run; 409 ``deal_archived`` unless restoring an archived
      *  deal to In Progress; 409 ``deal_is_draft``; 422
-     *  ``status_not_settable`` for Draft / Archived. Audited with from → to. */
-    setStatus: (id: string, status: ManualDealStatus) =>
-      request<WorkerDeal>('POST', `/deals/${id}/status`, { status }),
+     *  ``status_not_settable`` for Draft / Archived; 409 ``status_changed``
+     *  when ``expectedStatus`` (the status the caller was showing) is no
+     *  longer current — a stale page never overwrites a newer status.
+     *  Audited with from → to. Call through ``setDealStatus`` (lib/dealStatus),
+     *  which re-reads the deal everywhere on the page afterwards. */
+    setStatus: (id: string, status: ManualDealStatus, expectedStatus?: string | null) =>
+      request<WorkerDeal>(
+        'POST',
+        `/deals/${id}/status`,
+        expectedStatus != null ? { status, expected_status: expectedStatus } : { status },
+      ),
     /** Per-category coverage score for the workspace CompletenessCard
      *  + wizard right-rail (Wave 1 #1). Returns the 11 canonical
      *  categories with covered/doc_count/required_for_ic. The percent

@@ -137,19 +137,26 @@ async def _audit(deal_id: str, action: str, tenant: str = TENANT_A) -> list[dict
     return out
 
 
-async def _seed_run(deal_id: str, *, status: str = "complete", tenant: str = TENANT_A) -> None:
+async def _seed_run(
+    deal_id: str,
+    *,
+    status: str = "complete",
+    tenant: str = TENANT_A,
+    per_engine: dict[str, str] | None = None,
+) -> None:
     """A full canonical engine chain (one run_id across every base engine)."""
     from app.services.engine_runner import CANONICAL_ENGINES
 
     run_id = str(uuid4())
     for name in CANONICAL_ENGINES:
+        engine_status = (per_engine or {}).get(name, status)
         await _sql(
             "INSERT INTO engine_outputs (id, deal_id, tenant_id, run_id, engine_name, "
             "status, inputs, outputs, started_at, completed_at) VALUES "
             "(:id, :deal, :t, :run, :name, :status, '{}', '{}', "
             "'2026-10-30 00:00:00', '2026-10-30 00:00:01')",
             {"id": str(uuid4()), "deal": deal_id, "t": tenant, "run": run_id,
-             "name": name, "status": status},
+             "name": name, "status": engine_status},
         )
 
 
@@ -231,8 +238,10 @@ async def test_ic_statuses_are_refused_without_a_completed_model_run(target: str
         assert r.status_code == 409, r.text
         detail = r.json()["detail"]
         assert detail["code"] == "model_run_required"
-        assert "Run the model" in detail["message"]
-        assert target in detail["message"]
+        assert detail["message"] == (
+            f"Run the model first — {target} needs a completed model run with no "
+            "failed engine."
+        )
         assert await _status_of(deal["id"]) == "In Progress"
         assert not await _audit(deal["id"], "deal.status_changed")
 
@@ -250,6 +259,81 @@ async def test_a_run_still_in_flight_is_not_a_completed_run() -> None:
         r = await _set(client, deal["id"], "IC Ready")
         assert r.status_code == 409, r.text
         assert r.json()["detail"]["code"] == "model_run_required"
+
+
+@pytest.mark.parametrize("target", ["IC Ready", "IC Approved", "IC Not Approved"])
+@pytest.mark.asyncio
+async def test_a_run_with_a_failed_engine_does_not_unlock_the_ic_statuses(target: str) -> None:
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"], per_engine={"returns": "failed", "debt": "failed"})
+        r = await _set(client, deal["id"], target)
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "model_run_required"
+        assert detail["reason"] == "failed_engines"
+        assert detail["failed_engines"] == ["debt", "returns"]
+        assert detail["message"] == (
+            f"The latest model run has a failed engine (Debt, Returns) — {target} "
+            "needs a completed model run with no failed engine. Fix the inputs and "
+            "re-run the model."
+        )
+        assert await _status_of(deal["id"]) == "In Progress"
+
+
+@pytest.mark.asyncio
+async def test_a_not_applicable_engine_is_fine() -> None:
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"], per_engine={"partnership": "not_applicable"})
+        r = await _set(client, deal["id"], "IC Ready")
+        assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_only_the_latest_run_counts() -> None:
+    """A clean older run does not unlock the statuses when the latest failed."""
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"])
+        await _sql(
+            "UPDATE engine_outputs SET started_at = '2026-10-01 00:00:00' "
+            "WHERE deal_id = :d AND tenant_id = :t",
+            {"d": deal["id"], "t": TENANT_A},
+        )
+        await _seed_run(deal["id"], per_engine={"returns": "failed"})
+        r = await _set(client, deal["id"], "IC Ready")
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["reason"] == "failed_engines"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_expected_status_is_refused_and_changes_nothing() -> None:
+    """A page that still shows In Progress must not overwrite IC Approved."""
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"])
+        assert (await _set(client, deal["id"], "IC Approved")).status_code == 200
+        r = await client.post(
+            f"/deals/{deal['id']}/status",
+            json={"status": "IC Ready", "expected_status": "In Progress"},
+            headers=HDR_A,
+        )
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "status_changed"
+        assert detail["current"] == "IC Approved"
+        assert "IC Approved" in detail["message"]
+        assert await _status_of(deal["id"]) == "IC Approved"
+        assert len(await _audit(deal["id"], "deal.status_changed")) == 1
+
+        r = await client.post(
+            f"/deals/{deal['id']}/status",
+            json={"status": "IC Ready", "expected_status": "IC Approved"},
+            headers=HDR_A,
+        )
+        assert r.status_code == 200, r.text
+        assert await _status_of(deal["id"]) == "IC Ready"
 
 
 @pytest.mark.asyncio
@@ -416,9 +500,14 @@ async def test_backfill_moves_finished_wizards_to_in_progress_and_is_idempotent(
         ("active", "IC Ready"): "IC Ready",
         ("active", "Archived"): "Archived",
         ("draft", "Draft"): "Draft",
-        # A draft PATCHed to another label before this change: Draft holds
-        # iff the wizard is unfinished.
+        # The brief: IC Ready and Archived keep their status — a wizard
+        # draft's too.
+        ("draft", "IC Ready"): "IC Ready",
+        ("draft", "Archived"): "Archived",
+        # A draft PATCHed to another label before this change goes back to
+        # Draft (the wizard is unfinished).
         ("draft", "In Review"): "Draft",
+        ("draft", "Onboarding"): "Draft",
         # Junk a free-text PATCH could store: the lifecycle decides, so the
         # CHECK can always be added.
         ("active", "Active"): "In Progress",
@@ -460,14 +549,68 @@ async def test_the_guard_refuses_any_value_outside_the_seven() -> None:
         await _plant("active", "Under Review")
 
 
-def test_postgres_check_constraint_lists_exactly_the_seven() -> None:
-    from app.migrations import MIGRATIONS
+def test_postgres_status_migration_is_one_time_rls_safe_and_fatal() -> None:
+    from app.migrations import FATAL_MIGRATIONS, MIGRATIONS
 
     by_name = dict(MIGRATIONS)
     names = [n for n, _ in MIGRATIONS]
-    assert names.index("deals.status_v2_backfill") < names.index("deals.add_status_chk")
-    chk = by_name["deals.add_status_chk"]
-    assert "deals_status_chk" in chk
+    assert names.index("deals.status_default_in_progress") < names.index("deals.status_v2")
+    assert "SET DEFAULT 'In Progress'" in by_name["deals.status_default_in_progress"]
+    sql = by_name["deals.status_v2"]
+    # One-time: the whole block is skipped once the CHECK exists.
+    assert "IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'deals_status_chk')" in sql
+    # Forced RLS is lifted for the backfill and restored in the same block.
+    for table in ("deals", "audit_log"):
+        assert f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY" in sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in sql
+    assert sql.index("NO FORCE") < sql.index("UPDATE deals") < sql.index("ADD CONSTRAINT deals_status_chk")
+    assert sql.index("ADD CONSTRAINT deals_status_chk") < sql.index("ALTER TABLE deals FORCE")
+    chk = sql[sql.index("ADD CONSTRAINT deals_status_chk"):]
     for value in SEVEN:
         assert f"'{value}'" in chk
     assert "'In Review'" not in chk
+    assert "deals.status_v2" in FATAL_MIGRATIONS
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_omits_status_is_an_in_progress_deal() -> None:
+    deal_id = str(uuid4())
+    await _sql(
+        "INSERT INTO deals (id, tenant_id, name, created_at, updated_at) "
+        "VALUES (:id, :t, 'Bare row', '2026-10-01', '2026-10-01')",
+        {"id": deal_id, "t": TENANT_A},
+    )
+    assert await _status_of(deal_id) == "In Progress"
+
+
+@pytest.mark.asyncio
+async def test_a_fatal_migration_failure_stops_the_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.migrations as migrations
+
+    broken = [*migrations.SQLITE_MIGRATIONS, ("deals.status_v2_backfill", "UPDATE no_such_table SET x = 1")]
+    monkeypatch.setattr(migrations, "SQLITE_MIGRATIONS", broken)
+    with pytest.raises(migrations.FatalMigrationError, match=r"deals\.status_v2_backfill"):
+        await migrations.run_startup_migrations()
+
+
+@pytest.mark.asyncio
+async def test_a_non_fatal_migration_failure_is_only_logged(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.migrations as migrations
+
+    broken = [*migrations.SQLITE_MIGRATIONS, ("probe.not_fatal", "UPDATE no_such_table SET x = 1")]
+    monkeypatch.setattr(migrations, "SQLITE_MIGRATIONS", broken)
+    await migrations.run_startup_migrations()  # no raise
+
+
+@pytest.mark.asyncio
+async def test_lifespan_refuses_to_start_on_a_fatal_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.main as main_mod
+    from app.migrations import FatalMigrationError
+
+    async def _boom() -> None:
+        raise FatalMigrationError("migration deals.status_v2 failed")
+
+    monkeypatch.setattr(main_mod, "run_startup_migrations", _boom)
+    with pytest.raises(FatalMigrationError):
+        async with main_mod.app.router.lifespan_context(main_mod.app):
+            pass

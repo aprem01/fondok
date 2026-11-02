@@ -1,38 +1,50 @@
 """Wave 5 — the seven-status deal lifecycle: the run gate.
 
 ``IC Ready``, ``IC Approved`` and ``IC Not Approved`` need a completed model
-run (``fondok_schemas.RUN_GATED_DEAL_STATUSES``). "Completed" means the deal
-has a canonical run — the most recent full base-engine chain that is not a
-non-base scenario's run (FON-73, :func:`get_canonical_run_id`, the same run
-every deal-wide tab reads) — and that run has finished: no engine of it is
-still ``running`` and at least one is ``complete``. A failed engine inside a
-finished run does not block the status; the tabs already show that failure.
+run (``fondok_schemas.RUN_GATED_DEAL_STATUSES``). "Completed" means the deal's
+latest run — its canonical run, the most recent full base-engine chain that is
+not a non-base scenario's run (FON-73, :func:`get_canonical_run_id`, the same
+run every deal-wide tab reads) — has finished with no engine failed: every
+base engine of it is ``complete`` or ``not_applicable`` (an engine that does
+not apply to the deal, e.g. Partnership without terms, is fine). A committee
+never sees a deal whose Returns or Debt the model withheld.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .engine_runner import CANONICAL_ENGINES, get_canonical_run_id
+from .engine_runner import CANONICAL_ENGINES, STATUS_NOT_APPLICABLE, get_canonical_run_id
 
-#: The engine-row status a run still in flight carries.
-_RUNNING = "running"
 _COMPLETE = "complete"
+_FINISHED_OK: frozenset[str] = frozenset({_COMPLETE, STATUS_NOT_APPLICABLE})
 
 
-async def has_completed_model_run(
+@dataclass(frozen=True)
+class RunGate:
+    """Whether the run gate is open, and why not."""
+
+    ok: bool
+    #: ``no_run`` | ``in_flight`` | ``failed_engines`` | None when ok.
+    reason: str | None = None
+    #: Base engines of the latest run that failed (``failed_engines``).
+    failed_engines: tuple[str, ...] = ()
+
+
+async def model_run_gate(
     session: AsyncSession,
     *,
     deal_id: str,
     tenant_id: str,
-) -> bool:
-    """True when the deal's canonical run exists and has finished."""
+) -> RunGate:
+    """The run gate for the three IC statuses (see module docstring)."""
     run_id = await get_canonical_run_id(session, deal_id=deal_id, tenant_id=tenant_id)
     if run_id is None:
-        return False
+        return RunGate(ok=False, reason="no_run")
     placeholders = ", ".join(f":canon_{i}" for i in range(len(CANONICAL_ENGINES)))
     params: dict[str, Any] = {"deal": deal_id, "tenant": tenant_id, "run": run_id}
     for i, name in enumerate(CANONICAL_ENGINES):
@@ -41,7 +53,7 @@ async def has_completed_model_run(
         text(
             # tenant-scope predicate required by tenant_middleware
             f"""
-            SELECT status
+            SELECT engine_name, status
               FROM engine_outputs
              WHERE deal_id = :deal AND tenant_id = :tenant AND run_id = :run
                AND engine_name IN ({placeholders})
@@ -49,8 +61,13 @@ async def has_completed_model_run(
         ),
         params,
     )
-    statuses = {str(r._mapping["status"]) for r in rows.fetchall()}
-    return _RUNNING not in statuses and _COMPLETE in statuses
+    by_engine = {str(r._mapping["engine_name"]): str(r._mapping["status"]) for r in rows.fetchall()}
+    failed = tuple(e for e in CANONICAL_ENGINES if by_engine.get(e) == "failed")
+    if failed:
+        return RunGate(ok=False, reason="failed_engines", failed_engines=failed)
+    if any(s not in _FINISHED_OK for s in by_engine.values()) or _COMPLETE not in by_engine.values():
+        return RunGate(ok=False, reason="in_flight")
+    return RunGate(ok=True)
 
 
-__all__ = ["has_completed_model_run"]
+__all__ = ["RunGate", "model_run_gate"]
