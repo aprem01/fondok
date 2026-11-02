@@ -355,3 +355,41 @@ no T-12, so it is a topline fixture, not the reference model's P&L).
   `market_forecast_unavailable`).
 * `tests/test_exit_schedule_runner.py` and `test_run_all_engines_kimpton`
   re-pinned / re-banded with the reason in each docstring.
+
+### Re-cut 2026-11-02 (topline review fix I-2: the exit-growth convention)
+
+The same file was re-cut in the commit that changed the exit-growth
+convention (trailer `golden: expected`). The seed fixture does not move (0
+leaves: it has no growth and no long-run figure, so its exit growth stays 0).
+The documents fixture moves in the exit only, 16 headline fields / 414 raw
+leaves, all from one cause.
+
+Cause: Returns' exit-year growth (when the analyst set no RevPAR growth) was
+the last projected year's `(1 + occupancy growth) × (1 + ADR growth) − 1`. On
+CoStar data that is a single forecast year — on the defaults path 2029, a
+recovery year (+3.0% occupancy, +2.8% ADR, 5.884%) — compounded for ever, and
+mostly from occupancy. The convention is now the source's long-run average
+(CBRE Hotel Horizons long-run RevPAR change, else its ADR change) when one is
+on file, else the last projected year's ADR growth with occupancy held at its
+stabilized level. The documents fixture carries no CBRE report, and its Year 5
+(2030) is the reference tab's own 0.5% occupancy / 2.0% ADR, so exit growth
+goes from 2.51% to 2.0%.
+
+| Headline field (documents fixture) | Before | After | Why |
+| --- | --- | --- | --- |
+| Exit NOI | 3,235,684.37 | 3,219,586.44 | Year-5 Cash NOI × 1.020 instead of × 1.0251 |
+| Exit value (gross sale price) / net sale proceeds | 46,224,062.47 / 23,076,313.72 | 45,994,092.01 / 22,850,942.67 | exit NOI ÷ 7.0%, less costs and payoff |
+| Levered / unlevered IRR | 8.4911% / 7.7223% | 8.3050% / 7.6321% | the lower sale |
+| Equity multiple | 1.4467x | 1.4352x | the same |
+| Exit Year 5 (selected) row | 8.4911% / 7.7223% / 1.4467x / 23,076,313.72 | 8.3050% / 7.6321% / 1.4352x / 22,850,942.67 | the same |
+| LP / GP IRR, equity multiple | 8.3012%, 1.4467x | 8.1185%, 1.4352x | the same (below the first hurdle) |
+| LP / GP distributions | 25,523,359.44 / 2,835,928.83 | 25,320,525.50 / 2,813,391.72 | the same |
+
+Also moved (same cause): the exit-year cash-flow rows, the partnership tier
+allocation, and the sensitivity grids whose RevPAR-growth axis is centred on
+the exit growth (columns 0.51%…4.51% → 0%…4%). Unchanged: every operating
+year, the capital stack, debt, exit years 1–4.
+
+Same commit series, no golden move: occupancy no longer repeats its last
+forecast growth after a series ends (it holds; ADR carries) — the documents
+fixture keys 2030 itself, so nothing is carried there.

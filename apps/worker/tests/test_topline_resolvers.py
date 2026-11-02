@@ -61,10 +61,13 @@ def test_precedence_override_then_cbre_then_costar_then_carried() -> None:
     # 2027 occupancy: CBRE's series ended in 2026, but CoStar prints 2027 — a
     # document forecast wins over carrying CBRE forward.
     assert g.year(2, "occupancy").source == "costar_submarket_forecast"
-    # 2030: past CoStar's last forecast year (2029) → carried forward from 2029.
-    occ30 = g.year(5, "occupancy")
-    assert occ30.source == "carried_forward" and occ30.value == pytest.approx(0.03)
-    assert "carried forward from CoStar Miami Beach submarket" in occ30.label and "2029" in occ30.label
+    # 2030: past CoStar's last forecast year (2029) → ADR carried forward from
+    # 2029, occupancy HELD at its 2029 level (review I-2).
+    occ30, adr30 = g.year(5, "occupancy"), g.year(5, "adr")
+    assert occ30.source == "carried_forward" and occ30.value == 0.0
+    assert "held at its 2029 level" in occ30.label and "CoStar Miami Beach submarket" in occ30.label
+    assert adr30.source == "carried_forward" and adr30.value == pytest.approx(0.028)
+    assert "carried forward from CoStar Miami Beach submarket" in adr30.label
 
 
 def test_all_years_scalar_beats_documents_and_legacy_key_reads_as_scalar() -> None:
@@ -246,11 +249,12 @@ def test_explicit_year_one_override_is_not_penetrated_but_str_noted_one_is() -> 
     assert legacy.legacy_flags[0]["treatment"] == "treated_as_legacy_seed"
 
 
-def test_terminal_growth_is_the_last_years_revpar_growth() -> None:
+def test_terminal_growth_is_the_last_years_adr_growth() -> None:
+    """Review I-2 (the full contract: ``test_topline_terminal_growth.py``)."""
     inputs = read_topline_inputs({}, {}, set())
     build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=4, t12=None)
-    # Year 4 = 2029: CoStar L&UU +3.0% occupancy, +2.8% ADR.
-    assert build.terminal_revpar_growth == pytest.approx(1.03 * 1.028 - 1)
+    # Year 4 = 2029: CoStar L&UU +2.8% ADR; its +3.0% occupancy does not enter.
+    assert build.terminal_revpar_growth == pytest.approx(0.028)
     assert build.terminal_revpar_source == "costar_submarket_forecast"
 
 

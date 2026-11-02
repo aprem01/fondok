@@ -323,6 +323,17 @@ def read_topline_inputs(
     )
 
 
+@dataclass(frozen=True)
+class LongRunGrowth:
+    """A source's own long-run growth figure (CBRE Hotel Horizons "Long Run
+    Average" RevPAR change, else its ADR change) — the terminal growth
+    convention when one is on file (review I-2)."""
+
+    value: float
+    source_id: str
+    label: str
+
+
 @dataclass
 class ToplineBuild:
     drivers: ToplineDrivers
@@ -333,8 +344,9 @@ class ToplineBuild:
     #: penetration × ramp, occupancy under the cap); ``None`` = not set by it.
     year1_occupancy: float | None = None
     year1_adr: float | None = None
-    #: Returns' terminal growth when the analyst set none: the last projected
-    #: year's resolved RevPAR growth, and its source id.
+    #: Returns' terminal growth when the analyst set none (review I-2): the
+    #: source's long-run average, else the last projected year's ADR growth
+    #: (occupancy held at its stabilized level), else 0; and its source id.
     terminal_revpar_growth: float = 0.0
     terminal_revpar_source: str = "market_forecast_unavailable"
     applied_years: list[int] = field(default_factory=list)
@@ -364,6 +376,7 @@ def build_topline(
     *,
     hold_years: int,
     t12: ToplineReference | None,
+    long_run: LongRunGrowth | None = None,
 ) -> ToplineBuild:
     hold = max(1, int(hold_years))
     cal = growth.calendar_years
@@ -480,21 +493,19 @@ def build_topline(
         v = bv * pen / 100.0
         year1[metric] = min(OCCUPANCY_CAP, v) if metric == "occupancy" else v
 
-    # Returns' terminal growth (when the analyst set no revpar_growth).
-    last_occ, last_adr = growth.year(hold, "occupancy"), growth.year(hold, "adr")
-    term = (1.0 + (last_occ.value or 0.0)) * (1.0 + (last_adr.value or 0.0)) - 1.0
-    if last_occ.value is None and last_adr.value is None:
-        term_source = "market_forecast_unavailable"
-    elif last_adr.value is not None:
-        term_source = last_adr.source_id
-    else:
-        term_source = last_occ.source_id
+    # Returns' terminal growth (when the analyst set no revpar_growth) —
+    # review I-2: never a single (recovery) year's occupancy gain carried in
+    # perpetuity. The source's long-run average when one is on file, else the
+    # last projected year's ADR growth with occupancy held at its stabilized
+    # level, else 0 (no figure).
+    terminal = _terminal_growth(growth.year(hold, "adr"), hold, long_run)
+    term, term_source = terminal["value"], terminal["source_id"]
 
     state = growth.state(applied_years)
     status = _status(
         bench, growth, inputs, drivers,
         hold=hold, applied_years=applied_years, state=state, notes=notes, t12=t12,
-        terminal=(term, term_source),
+        terminal=terminal,
     )
     return ToplineBuild(
         drivers=drivers,
@@ -509,6 +520,33 @@ def build_topline(
     )
 
 
+def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None) -> dict[str, Any]:
+    """``{value, source_id, basis, label}`` of the exit-year growth convention."""
+    if long_run is not None:
+        return {
+            "value": long_run.value,
+            "source_id": long_run.source_id,
+            "basis": "long_run_average",
+            "label": f"{long_run.label} (the source's long-run average)",
+        }
+    if last_adr.value is not None:
+        return {
+            "value": last_adr.value,
+            "source_id": last_adr.source_id,
+            "basis": "last_year_adr_growth",
+            "label": (
+                f"Year {hold} ADR growth {last_adr.value * 100:+.1f}% — occupancy held at its "
+                f"stabilized level ({last_adr.label})"
+            ),
+        }
+    return {
+        "value": 0.0,
+        "source_id": "market_forecast_unavailable",
+        "basis": "unavailable",
+        "label": f"No ADR growth for Year {hold} and no long-run average on file — the exit NOI is not grown",
+    }
+
+
 def _status(
     bench: BenchmarkResolution,
     growth: GrowthResolution,
@@ -520,7 +558,7 @@ def _status(
     state: str,
     notes: list[str],
     t12: ToplineReference | None,
-    terminal: tuple[float, str],
+    terminal: dict[str, Any],
 ) -> dict[str, Any]:
     """The ``topline_status`` block (API contract — see the topline report)."""
     s = drivers.stabilization_year
@@ -577,7 +615,6 @@ def _status(
                 "note_prefill": SUGGESTION_NOTE,
             }
         )
-    term, term_source = terminal
     return {
         "methodology_version": TOPLINE_METHODOLOGY_VERSION,
         "benchmark": bench.as_dict(),
@@ -606,7 +643,7 @@ def _status(
         "ramp_state": ramp_state,
         "explicit_metrics": list(inputs.explicit_metrics),
         "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
-        "terminal_revpar_growth": {"value": term, "source_id": term_source},
+        "terminal_revpar_growth": dict(terminal),
         "suggestions": suggestions,
         "legacy_flags": list(inputs.legacy_flags),
         "problems": list(inputs.problems),
@@ -619,6 +656,7 @@ __all__ = [
     "KEY_ADR_GROWTH_BY_YEAR",
     "KEY_OCC_GROWTH_BY_YEAR",
     "KEY_RAMP_BY_YEAR",
+    "LongRunGrowth",
     "LEGACY_ADR_GROWTH",
     "LEGACY_OCC_GROWTH",
     "LEGACY_STR_SEED_FLAG",

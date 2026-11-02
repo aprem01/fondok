@@ -18,8 +18,11 @@ ONE mechanism decides the occupancy / ADR growth applied INTO each model year
    overall series, labelled. A bucket series that lacks a year inside its own
    range is NOT patched from another bucket.
 4. ``carried_forward`` — a calendar year past the last year of the document
-   series the previous year was read from reuses the previous year's growth
-   (an assumption, labelled with the report and year it carries).
+   series the previous year was read from: ADR reuses the previous year's
+   growth; OCCUPANCY HOLDS at its last level (growth 0) — a forecast's
+   recovery-year occupancy gain cannot repeat every year (review I-2; the
+   95 % cap still applies). Both are assumptions, labelled with the report
+   and year they carry.
 5. ``unavailable`` — nothing at all: the figure is ``None`` and the engine
    holds the metric flat (``flat_no_growth``). Growth 0 is the absence of
    growth, never a seeded rate.
@@ -425,10 +428,14 @@ def resolve_growth_by_year(
                 if hit is None and prev is not None and prev.value is not None and (
                     prev.series_last_year is not None and c > prev.series_last_year
                 ):
+                    held = metric == "occupancy"
                     hit = MetricGrowth(
-                        value=prev.value, source="carried_forward",
+                        value=0.0 if held else prev.value, source="carried_forward",
                         label=(
-                            f"Assumption · carried forward from {prev.report} {prev.series_last_year}"
+                            f"Assumption · occupancy held at its {prev.series_last_year} level — "
+                            f"the {prev.report} forecast ends {prev.series_last_year}"
+                            if held
+                            else f"Assumption · carried forward from {prev.report} {prev.series_last_year}"
                             f" ({_fmt(prev.value)})"
                         ),
                         doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,

@@ -87,8 +87,9 @@ async def test_documents_deal_runs_the_reference_path_through_the_loader() -> No
     # No growth seed: the scalars are absent; the per-year lists carry the growth.
     assert "occupancy_growth" not in base and "adr_growth" not in base
     assert base["adr_growth_by_year"][:3] == pytest.approx([-0.02, -0.006, 0.038])
-    # Returns' terminal growth = Year 5 (2030): 0.5% occupancy, 2.0% ADR (overrides).
-    assert base["revpar_growth"] == pytest.approx(1.005 * 1.02 - 1)
+    # Returns' terminal growth = Year 5 (2030) ADR growth 2.0% (override) — the
+    # 0.5% occupancy step does not compound in perpetuity (review I-2).
+    assert base["revpar_growth"] == pytest.approx(0.02)
     assert base["__sources__"]["revpar_growth"] == "analyst_override"
 
 
@@ -104,8 +105,10 @@ async def test_defaults_on_the_documents_deal_ramp_and_carry_the_forecast() -> N
     assert status["ramp_by_year"] == [0.85, 0.95]
     assert base["starting_occupancy"] == pytest.approx(0.754959 * 0.988 * 0.85, rel=1e-5)
     assert [r["adr"]["source"] for r in status["growth_by_year"]] == ["costar_submarket_forecast"] * 4 + ["carried_forward"]
-    # Terminal growth = 2030, carried forward from CoStar 2029 (+3.0% / +2.8%).
-    assert base["revpar_growth"] == pytest.approx(1.03 * 1.028 - 1)
+    # Terminal growth = 2030 ADR, carried forward from CoStar 2029 (+2.8%); the
+    # recovery year's +3.0% occupancy is held, not compounded (review I-2).
+    assert base["revpar_growth"] == pytest.approx(0.028)
+    assert [r["occupancy"]["value"] for r in status["growth_by_year"]][4] == 0.0
     assert base["__sources__"]["revpar_growth"] == "growth_carried_forward"
 
 
@@ -164,7 +167,8 @@ async def test_analyst_scalar_growth_still_applies_on_the_seam() -> None:
     assert base["occupancy_growth_by_year"] == [None, 0.008, 0.008, 0.008, 0.008]
     assert base["adr_growth_by_year"] == [None, 0.04, 0.04, 0.04, 0.04]
     assert base["__topline_status__"]["growth_state"] == "override"
-    assert base["revpar_growth"] == pytest.approx(1.008 * 1.04 - 1)
+    # Exit growth = the last year's ADR growth; occupancy held (review I-2).
+    assert base["revpar_growth"] == pytest.approx(0.04)
 
 
 @pytest.mark.asyncio
@@ -237,3 +241,40 @@ async def test_stabilization_year_ends_the_ramp_on_a_benchmark_deal() -> None:
     # Year 1 is the same (85% either way); the drivers differ from Year 2.
     assert s2["starting_occupancy"] == pytest.approx(s3["starting_occupancy"])
     assert s2["topline"]["stabilization_year"] == 2 and s3["topline"]["stabilization_year"] == 3
+
+
+@pytest.mark.asyncio
+async def test_exit_growth_uses_the_cbre_long_run_average_when_on_file() -> None:
+    """Review I-2 — the source's long-run average is the exit-growth
+    convention when a CBRE Hotel Horizons report carries one."""
+    from app.database import get_session_factory
+
+    deal_id, tenant_id = await _docs_deal()
+    doc_id, ext_id = str(uuid4()), str(uuid4())
+    fields = [
+        {"field_name": "cbre_horizons.long_run_avg.revpar_change_pct", "value": 3.1, "unit": "%"},
+        {"field_name": "cbre_horizons.long_run_avg.adr_change_pct", "value": 2.6, "unit": "%"},
+    ]
+    async with get_session_factory()() as s:
+        await s.execute(
+            text(
+                "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, status, uploaded_at) "
+                "VALUES (:id, :deal, :tenant, 'Horizons.xlsx', 'CBRE_HORIZONS', 'EXTRACTED', CURRENT_TIMESTAMP)"
+            ),
+            {"id": doc_id, "deal": deal_id, "tenant": tenant_id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO extraction_results (id, document_id, deal_id, tenant_id, fields, "
+                "confidence_report, agent_version, created_at) "
+                "VALUES (:id, :doc, :deal, :tenant, :f, '{}', 'fixture', CURRENT_TIMESTAMP)"
+            ),
+            {"id": ext_id, "doc": doc_id, "deal": deal_id, "tenant": tenant_id, "f": json.dumps(fields)},
+        )
+        await s.commit()
+    base = await _load(deal_id, tenant_id)
+    term = base["__topline_status__"]["terminal_revpar_growth"]
+    assert term["basis"] == "long_run_average"
+    assert term["value"] == pytest.approx(0.031)
+    assert base["revpar_growth"] == pytest.approx(0.031)
+    assert base["__sources__"]["revpar_growth"] == "cbre_horizons"

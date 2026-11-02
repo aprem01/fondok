@@ -2977,7 +2977,9 @@ def _apply_topline(
         first_calendar_year=(bench.base_calendar_year + 1) if bench.base_calendar_year is not None else None,
         gated_doc_types=gated,
     )
-    build = build_topline(bench, growth, inputs, hold_years=hold, t12=t12)
+    build = build_topline(
+        bench, growth, inputs, hold_years=hold, t12=t12, long_run=_long_run_growth(base, sources)
+    )
     base["topline"] = build.drivers.model_dump(mode="json")
     base["occupancy_growth_by_year"] = build.occupancy_growth_by_year
     base["adr_growth_by_year"] = build.adr_growth_by_year
@@ -3037,6 +3039,28 @@ def _apply_topline(
                 "No market forecast for the last projected year — the exit-year NOI is not grown "
                 "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
             )
+
+
+def _long_run_growth(base: Mapping[str, Any], sources: Mapping[str, str]) -> Any:
+    """Review I-2 — the source's long-run growth for the exit year: CBRE Hotel
+    Horizons' long-run average RevPAR change, else its long-run ADR change
+    (both loaded as-of gated by ``_load_cbre_horizons_overrides``). None when
+    neither is on file."""
+    from .topline import LongRunGrowth
+
+    for key, what in (
+        ("long_run_avg_revpar_growth", "RevPAR change"),
+        ("long_run_avg_adr_change", "ADR change"),
+    ):
+        value = base.get(key)
+        if sources.get(key) != SOURCE_CBRE_HORIZONS or not isinstance(value, (int, float)):
+            continue
+        return LongRunGrowth(
+            value=float(value),
+            source_id=SOURCE_CBRE_HORIZONS,
+            label=f"CBRE Hotel Horizons long-run average {what} {float(value) * 100:+.1f}%",
+        )
+    return None
 
 
 def _apply_revenue_basis(
