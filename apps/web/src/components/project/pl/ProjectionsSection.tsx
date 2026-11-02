@@ -990,7 +990,7 @@ export default function ProjectionsSection({
                     exitNoiPeriodLabel: returnsHead.exitNoiPeriodLabel,
                   }),
                   // The formula the Exit Year column shows for its one figure.
-                  formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + RevPAR growth ${revparGrowthAssumption == null ? '—' : `${(revparGrowthAssumption * 100).toFixed(1)}%`})`,
+                  formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + exit-year RevPAR growth ${revparGrowthAssumption == null ? '—' : `${(revparGrowthAssumption * 100).toFixed(1)}%`})`,
                 }
               : null
           }
@@ -3388,11 +3388,13 @@ function AssumptionsPanel({
     (typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : ovValue(overrides, 'exit_cap_rate'))
     ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
   const cur = (key: string) => ovValue(overrides, key) ?? ASSUMPTION_DEFAULTS[key];
-  // FON-116 — RevPAR growth has no default: the analyst's value, else the
-  // figure the worker resolved (its terminal growth), else blank.
-  const revparSrc = useSource('revpar_growth');
-  const revparGrowth: number | null =
-    ovValue(overrides, 'revpar_growth') ?? (typeof revparSrc?.value === 'number' ? revparSrc.value : null);
+  // FON-116 / final review I-2 — the "drives ADR" field is the analyst's
+  // all-years RevPAR growth and nothing else. When none is set the loader
+  // still writes ``revpar_growth`` = the exit-year growth (0.0 with no
+  // forecast, else a long-run / last-year figure); that is not a growth that
+  // drives ADR, so it is never shown here — it has its own labelled line
+  // ("Exit-year growth", Growth by year). Blank = not set.
+  const revparGrowth: number | null = ovValue(overrides, 'revpar_growth');
   // FF&E reserve: the analyst's override, else the value the loader is on
   // (its provenance payload, else the benchmark suggestion's "in use"), else
   // blank — never a number the browser made up.

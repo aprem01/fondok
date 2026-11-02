@@ -210,7 +210,9 @@ or forced to the competitive set, submarket or market), the stabilization year, 
 stabilization for occupancy and ADR (100 by default, with the hotel's current STR index printed
 beside it) and the ramp for each year before stabilization. The Growth card shows the market growth
 into each year with its source, editable year by year; RevPAR growth stays as an all-years
-shorthand and shows no figure unless you or the market data set one. Every change asks for a
+shorthand and shows only your own value — blank until you set one. The growth the exit year is
+valued on when you set none (the source's long-run average, else the last year's ADR growth, else
+0%) is shown on its own labelled line under the growth table, never in that field. Every change asks for a
 justification and re-runs the model. The Excel export's Assumptions sheet carries the same inputs —
 growth for each year, the ramp for each year before stabilization, the two penetrations and the
 benchmark level — and re-imports them under the same justification rule.

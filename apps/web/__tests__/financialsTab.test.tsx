@@ -140,10 +140,13 @@ let mockSources: Record<string, string> = {};
 // ReasonCode). EMPTY unless a test sets one, so every pre-existing
 // expectation below sees exactly the object it saw before.
 let mockReasons: Record<string, string> = {};
+// The resolved value the worker publishes beside a source tag (e.g. the
+// exit-year RevPAR growth the loader always writes when no one set it).
+let mockValues: Record<string, number> = {};
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useSource: (key: string | undefined) =>
     key && (mockSources[key] || mockReasons[key])
-      ? { source: mockSources[key] ?? '', value: null, reason: mockReasons[key] ?? null }
+      ? { source: mockSources[key] ?? '', value: mockValues[key] ?? null, reason: mockReasons[key] ?? null }
       : null,
 }));
 
@@ -189,6 +192,7 @@ beforeEach(() => {
   cleanup();
   mockSources = {};
   mockReasons = {};
+  mockValues = {};
   mockFieldOverrides = {};
   updateSpy.mockClear();
   engineRunSpy.mockClear();
@@ -321,6 +325,33 @@ describe('Financials · Projections — the retired STR basis chip is gone', () 
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const input = screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement;
     expect(input.value).toBe('');
+  });
+
+  // Final review I-2 — the loader ALWAYS writes revpar_growth (the exit-year
+  // growth: 0.0 market_forecast_unavailable, or a long-run / last-year figure)
+  // when the analyst set none. That is not an all-years RevPAR growth that
+  // drives ADR, so the field shows only the analyst's own value.
+  it('the worker’s exit-year figure never fills the "drives ADR" field', () => {
+    mockSources = { revpar_growth: 'market_forecast_unavailable' };
+    mockValues = { revpar_growth: 0 };
+    const { unmount } = render(<ProjectionsSection dealId="deal-uuid-1" />);
+    let input = screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(input.placeholder).toBe('—');
+    unmount();
+    mockSources = { revpar_growth: 'cbre_horizons' };
+    mockValues = { revpar_growth: 0.028 };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    input = screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('the analyst’s own RevPAR growth is shown', () => {
+    mockSources = { revpar_growth: 'analyst_override' };
+    mockValues = { revpar_growth: 0.03 };
+    mockFieldOverrides = { revpar_growth: { value: 0.03, note: 'Broker' } };
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    expect((screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement).value).toBe('3');
   });
 });
 

@@ -215,6 +215,9 @@ describe('Future P&L — the topline basis line and badges (plan §4.2)', () => 
       'Benchmark: STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx',
     );
     expect(screen.getByTestId('topline-clause-ramp')).toHaveTextContent('Ramp 85/95/100 (default)');
+    // Final review I-2 — the exit-year growth is on its own labelled line, not in the RevPAR field.
+    expect(screen.getByTestId('topline-terminal-growth')).toHaveTextContent('Exit-year growth: +2.0%');
+    expect((screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement).value).toBe('');
   });
 
   it('every projected Occupancy / ADR column carries the benchmark year’s basis chip, titled with the engine chain (review I-1)', () => {
