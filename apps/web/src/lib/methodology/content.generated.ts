@@ -81,6 +81,7 @@ export const METHODOLOGY_SECTIONS: readonly MethodologySection[] = [
       "benchmark-suggestions-methodology",
       "correction-note-methodology",
       "exit-noi-basis-methodology",
+      "implied-value-methodology",
       "methodology-capex-lanes",
       "methodology-displacement-explicit-only",
       "methodology-displacement-schedule",

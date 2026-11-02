@@ -310,8 +310,20 @@ describe('Historicals worksheet — a correction to a line with no derived total
 describe('Historicals worksheet — footing check is honest about what it cannot foot', () => {
   it('a statement with no stated total shows a dash with the reason, never a fabricated total', () => {
     render(<GroundedWorksheet dealId={DEAL_ID} />);
-    // GOP foots on this fixture; both rows render with the "calculated" label.
+    // GOP foots on this fixture; all three footing rows (revenue, GOP, and
+    // Wave 5's NOI) render with the "calculated" label.
     expect(within(screen.getByTestId('footing-gop')).getByText('✓ foots')).toBeInTheDocument();
-    expect(screen.getAllByText('calculated')).toHaveLength(2);
+    expect(screen.getByTestId('footing-noi')).toBeInTheDocument();
+    expect(screen.getAllByText('calculated')).toHaveLength(3);
+  });
+
+  it('Wave 5 — Non-Operating Income, which the engine does not model, is a dash in every column, never $0', () => {
+    render(<GroundedWorksheet dealId={DEAL_ID} />);
+    const row = screen.getAllByText('Non-Operating Income')
+      .map((el) => el.closest('tr'))
+      .find((tr) => tr && tr.querySelectorAll('td').length > 1) as HTMLTableRowElement;
+    const cells = Array.from(row.querySelectorAll('td')).slice(1).map((td) => (td.textContent ?? '').trim());
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells).toEqual(cells.map(() => '—'));
   });
 });

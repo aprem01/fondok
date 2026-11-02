@@ -7,6 +7,7 @@ anchors:
   - benchmark-suggestions-methodology
   - correction-note-methodology
   - exit-noi-basis-methodology
+  - implied-value-methodology
   - methodology-capex-lanes
   - methodology-displacement-explicit-only
   - methodology-displacement-schedule
@@ -127,6 +128,15 @@ trail, the same as a model override: a corrected statement value is model input.
 the inputs behind it — starting value, growth, index or penetration where present — down to the
 source rows. When no trace was recorded for a cell the drawer says so; Fondok never prints a formula
 it did not record.
+
+{testid=implied-value-methodology} **Implied Value.** The Future P&L's last row values the hotel the
+way the sale is priced. Each operating year shows that year's Cash NOI — after property taxes,
+insurance and the FF&E reserve — divided by the exit cap rate the returns model ran on: what the
+hotel would be worth on that year's earnings. The Exit Year column shows the returns model's own
+gross sale price (forward 12-month Cash NOI ÷ exit cap), the figure every IRR and the equity multiple
+are computed from. The row never capitalises EBITDA, which sits above taxes, insurance and the
+reserve. Until the returns model has run the row is a dash with the reason; no default cap rate
+stands in.
 
 {testid=benchmark-column-methodology} **Benchmark column.** When the deal carries a P&L benchmark report (CBRE or HotStats), the Base-year
 column gains a Benchmark sub-column showing the comparable set's ratio for thirteen lines on the
@@ -622,6 +632,15 @@ value-lineage drawer for its engine field (`revenue.years[i].adr`,
 value, growth, index or penetration where present — down to the source rows. When the lineage record
 carries no walk for a cell the drawer says "No trace available for this cell."; the app never prints
 a formula it did not record.
+
+**Implied Value row.** `IMPLIED_VALUE_LABEL` "Implied Value (Cash NOI ÷ exit cap)", below the Forward
+12-Month Cash NOI row (`lib/impliedExitValue.ts`). Operating year *i* = `expense.years[i].noi` ÷ the
+exit cap the returns engine ran on (`returns.exit_cap_rate`, else the provenance value of
+`exit_cap_rate` the run resolved). The Exit Year cell = `returns.gross_sale_price` (= `terminal_noi ÷
+exit_cap_rate`), as published. Each cell's tooltip states its basis; a missing cap rate, Cash NOI or
+sale price renders "—" with the reason, and no hard-coded default cap rate is used. Until Wave 5 the
+row (then "Implied Exit Value") capitalised GOP − management fee, about 50% above the engine's sale
+price on the Kimpton deals.
 
 **Ratios.** The "% Rev" sub-column (the *Show %* switch, on by default) is each line as a share of
 that year's Total Revenue. Departmental expense lines follow the USALI convention instead — Rooms

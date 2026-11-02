@@ -91,6 +91,14 @@ import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverr
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { headlineReturns } from '@/lib/engines/returns';
+import {
+  IMPLIED_VALUE_LABEL,
+  exitSaleCell,
+  impliedValueByYear,
+  resolveEngineExitCap,
+  type ImpliedValueCell,
+} from '@/lib/impliedExitValue';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { api } from '@/lib/api';
 import {
@@ -243,6 +251,9 @@ interface ProjYear {
   ffeReserve?: number;
   // Net cash flow after FF&E reserve = NOI - FF&E.
   netCashFlow?: number;
+  /** ``expense.years[i].noi`` — the engine's Cash NOI (after the FF&E
+   *  reserve), the basis the Returns engine capitalises. */
+  cashNoi?: number;
 }
 
 // The revenue engine projects on a flat 365-day year
@@ -582,18 +593,16 @@ export default function ProjectionsSection({
     }
   }, [overrides, terminalNoiPinned, dealId, refreshDeal, run, toast]);
 
-  // Exit cap rate drives the Implied Exit Value line at the bottom of the
-  // forward statement. It's owned by the Investment tab, so we resolve it the
-  // same way the Assumptions panel does: live provenance source → override →
-  // engine default. Capitalising each year's EBITDA at this rate mirrors the
-  // canonical Projections statement's "Implied Exit Value" line.
+  // Wave 5 (Sam #1) — the Implied Value row is valued on the Returns engine's
+  // basis: the exit cap rate the engine ran on (``returns.exit_cap_rate``), or
+  // the resolved assumption the run used. Never a hard-coded default — with
+  // neither, the row dashes and says why.
   const exitCapSrc = useSource('exit_cap_rate');
-  const exitCapRate = useMemo(() => {
-    if (typeof exitCapSrc?.value === 'number' && Number.isFinite(exitCapSrc.value)) {
-      return exitCapSrc.value;
-    }
-    return ovValue(overrides, 'exit_cap_rate') ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
-  }, [exitCapSrc, overrides]);
+  const returnsHead = headlineReturns(getEngineField<Record<string, unknown>>(outputs, 'returns'));
+  const exitCapRate = resolveEngineExitCap(
+    returnsHead.exitCapRate,
+    typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : null,
+  );
 
   // Resolve key count: real deal.keys; default 0 until known.
   const keys = deal?.keys && deal.keys > 0 ? deal.keys : 0;
@@ -895,6 +904,12 @@ export default function ProjectionsSection({
               ? {
                   calendarYear: exitCalendarYear,
                   terminalNoi,
+                  sale: exitSaleCell({
+                    grossSalePrice: returnsHead.grossSalePrice,
+                    terminalNoi: returnsHead.terminalNoi,
+                    exitCapRate,
+                    exitNoiPeriodLabel: returnsHead.exitNoiPeriodLabel,
+                  }),
                   // The formula the Exit Year column shows for its one figure.
                   formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + RevPAR growth ${(revparGrowthAssumption * 100).toFixed(1)}%)`,
                 }
@@ -994,6 +1009,7 @@ function buildFromWorker(
       noiBasisConfirmed,
       ffeReserve: ffe,
       netCashFlow,
+      cashNoi: typeof e?.noi === 'number' ? e.noi : undefined,
     });
   }
   return out;
@@ -1007,6 +1023,8 @@ interface ExitColumnSpec {
   calendarYear?: number;
   /** ``returns.terminal_noi`` — the forward 12-month Cash NOI. */
   terminalNoi?: number;
+  /** Wave 5 — the Returns engine's gross sale price (or why there is none). */
+  sale: ImpliedValueCell;
   formula: string;
 }
 
@@ -1167,7 +1185,8 @@ function ProjectionsTable({
   benchmark = null,
 }: {
   years: ProjYear[];
-  exitCapRate: number;
+  /** The Returns engine's exit cap rate; null when it has none. */
+  exitCapRate: number | null;
   closeDateIso: string | null;
   exitColumn: ExitColumnSpec | null;
   /** 0-based index of the published stabilized year — badges that column. */
@@ -1208,6 +1227,10 @@ function ProjectionsTable({
   const hasFixedDetail = years.some((y) => y.fixedTotal != null);
   // Sam #9 — the incentive fee row exists only when the run modelled one.
   const hasIncentiveFee = years.some((y) => y.incentiveMgmtFee != null);
+  const impliedCells = useMemo(
+    () => impliedValueByYear(years.map((y) => y.cashNoi), exitCapRate),
+    [years, exitCapRate],
+  );
   // FON-59 #1 / FON-67 #2 — name the NOI basis honestly: a pre-upgrade run
   // with no `noi_institutional` is an after-reserve number.
   const noiLabel = noiBeforeReserveLabel(years.some((y) => y.noiBasisConfirmed));
@@ -1790,38 +1813,6 @@ function ProjectionsTable({
                 bold
                 rowTestId="row-ebitda"
               />
-              {/* Implied Exit Value — each year's EBITDA capitalised at the
-                  exit cap rate (canonical: ExitValue = EBITDA ÷ exit_cap_rate).
-                  Rendered as a single spanning stat value per year (a valuation,
-                  not an operating %Rev/PAR/POR breakdown). */}
-              <tr className="border-b border-border/60 bg-brand-50/30 font-semibold">
-                <td className="px-3 py-2 text-[11px] text-ink-900 font-semibold border-r border-border bg-bg/30">
-                  Implied Exit Value
-                </td>
-                <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
-                  $
-                </td>
-                {years.map((y, i) => {
-                  // Same definition as the EBITDA row above: undefined (→ "—")
-                  // when GOP or the base fee is missing; the incentive fee is
-                  // genuinely zero when the run modelled none.
-                  const ebitda =
-                    y.gop == null || y.mgmtFee == null ? undefined : y.gop - y.mgmtFee - (y.incentiveMgmtFee ?? 0);
-                  const exitVal = ebitda != null && exitCapRate > 0 ? ebitda / exitCapRate : undefined;
-                  return (
-                    <td
-                      key={`ev-${i}`}
-                      colSpan={spanFor(i)}
-                      title={`Implied Exit Value = EBITDA ÷ exit cap rate (${(exitCapRate * 100).toFixed(1)}%)${exitVal != null ? ` — ${fmtAmount(exitVal, { decimals: 2, prefix: '$' })}` : ''}`}
-                      className={cn('px-2 py-2 text-center text-[11px] text-ink-900 font-semibold tabular-nums', yearGroupClass(i, true))}
-                    >
-                      {exitVal != null ? fmtAmount(exitVal, { prefix: '$' }) : '—'}
-                    </td>
-                  );
-                })}
-                <ExitCells />
-              </tr>
-
               {/* FIXED CHARGES — the engine deducts these BEFORE the FF&E
                   reserve (noi_institutional = gop − mgmt_fee − fixed). */}
               {hasFixedDetail && (
@@ -1958,6 +1949,51 @@ function ProjectionsTable({
                   </span>
                 </ComputedValue>
               </ExitCells>
+            </tr>
+          )}
+          {/* Wave 5 (Sam #1) — Implied Value on the Returns engine's basis.
+              Each operating year: that year's Cash NOI (after property taxes,
+              insurance and the FF&E reserve) ÷ the engine's exit cap rate.
+              The Exit Year: the engine's own gross_sale_price (forward-year
+              Cash NOI ÷ exit cap) — the reversion IRR is computed from. It
+              used to capitalise EBITDA, ~50% above the engine's sale price. */}
+          {hasExpenseDetail && (
+            <tr className="border-b border-border/60 bg-brand-50/30 font-semibold" data-testid="row-implied-value">
+              <td
+                className="px-3 py-2 text-[11px] text-ink-900 font-semibold border-r border-border bg-bg/30"
+                title="Operating years: that year's Cash NOI (after property taxes, insurance and FF&E reserve) ÷ the exit cap rate the Returns engine ran on. Exit Year: the Returns engine's gross sale price."
+              >
+                {IMPLIED_VALUE_LABEL}
+              </td>
+              <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
+                $
+              </td>
+              {impliedCells.map((c, i) => (
+                <td
+                  key={`iv-${i}`}
+                  colSpan={spanFor(i)}
+                  title={c.note}
+                  className={cn(
+                    'px-2 py-2 text-center text-[11px] font-semibold tabular-nums',
+                    c.value != null ? 'text-ink-900' : 'text-ink-400',
+                    yearGroupClass(i, true),
+                  )}
+                >
+                  {c.value != null ? fmtAmount(c.value, { prefix: '$' }) : '—'}
+                </td>
+              ))}
+              {hasExit && (
+                <td
+                  colSpan={subCols}
+                  title={exitColumn!.sale.note}
+                  className={cn(
+                    'px-2 py-2 text-center text-[11px] font-semibold tabular-nums border-l-2 border-ink-300/70',
+                    exitColumn!.sale.value != null ? 'text-ink-900' : 'text-ink-400',
+                  )}
+                >
+                  {exitColumn!.sale.value != null ? fmtAmount(exitColumn!.sale.value, { prefix: '$' }) : '—'}
+                </td>
+              )}
             </tr>
           )}
         </tbody>

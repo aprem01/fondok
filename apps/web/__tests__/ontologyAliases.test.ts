@@ -140,12 +140,26 @@ describe('ontology adapters — worksheet rows', () => {
   };
   const rows = pinned.worksheet_rows as PinnedRow[];
 
+  // Wave 5 (Sam #3) — deliberate additions on top of the pinned contract (the
+  // fixture stays as pinned): the FF&E row now reads the statement's own
+  // reserve line (metaKey ``ffe``), and the fixed block gains Rent, Other
+  // Non-Operating Expense and a Non-Operating Income section so a historical
+  // NOI reconciles to GOP. Every pinned row keeps its id, order and keys.
+  const WAVE5_META: Record<string, string> = { ffe: 'ffe' };
+  const WAVE5_ROWS: { after: string; id: string; metaKey?: string }[] = [
+    { after: 'insurance', id: 'rent', metaKey: 'rent' },
+    { after: 'rent', id: 'other_nonop', metaKey: 'other_nonop' },
+    { after: 'fixed_total', id: 's_nonop' },
+    { after: 's_nonop', id: 'nonop_income', metaKey: 'nonop_income' },
+  ];
+  const wave5Ids = new Set(WAVE5_ROWS.map((r) => r.id));
+
   for (const row of rows.filter((r) => r.kind !== 'section')) {
     it(`${row.id} — registry binding reproduces the hand-written keys`, () => {
       const b = worksheetBinding(row.id);
       expect(b.override_key ?? undefined, 'overrideKey').toBe(row.overrideKey);
       expect(b.review_key ?? undefined, 'reviewKey').toBe(row.reviewKey);
-      expect(b.meta_key ?? undefined, 'metaKey').toBe(row.metaKey);
+      expect(b.meta_key ?? undefined, 'metaKey').toBe(WAVE5_META[row.id] ?? row.metaKey);
       expect(b.y1_read.length ? b.y1_read : undefined, 'y1Read').toEqual(row.y1Read);
       expect(b.y1_src ?? undefined, 'y1Src').toBe(row.y1Src);
       expect(b.fmt === 'currency' ? undefined : b.fmt, 'fmt').toBe(row.fmt);
@@ -153,8 +167,17 @@ describe('ontology adapters — worksheet rows', () => {
   }
 
   it('the rendered row model still has the same ids and metaKeys, in order', () => {
-    expect(WORKSHEET_ROWS.map((r) => r.id)).toEqual(rows.map((r) => r.id));
-    expect(WORKSHEET_ROWS.map((r) => r.metaKey)).toEqual(rows.map((r) => r.metaKey));
+    const pinnedRows = WORKSHEET_ROWS.filter((r) => !wave5Ids.has(r.id));
+    expect(pinnedRows.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+    expect(pinnedRows.map((r) => r.metaKey)).toEqual(rows.map((r) => WAVE5_META[r.id] ?? r.metaKey));
+  });
+
+  it('Wave 5 rows sit where the USALI block puts them, bound to their concepts', () => {
+    const ids = WORKSHEET_ROWS.map((r) => r.id);
+    for (const w of WAVE5_ROWS) {
+      expect(ids.indexOf(w.id), w.id).toBe(ids.indexOf(w.after) + 1);
+      expect(WORKSHEET_ROWS.find((r) => r.id === w.id)?.metaKey, w.id).toBe(w.metaKey);
+    }
   });
 });
 

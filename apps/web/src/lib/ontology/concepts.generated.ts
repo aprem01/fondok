@@ -3722,8 +3722,8 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "recognizer": "ffe_reserve",
       "worksheet": {
         "row": "ffe",
-        "hist_key": null,
-        "meta_key": null,
+        "hist_key": "ffe_reserve",
+        "meta_key": "ffe",
         "review_key": null,
         "override_key": "ffe_reserve",
         "y1_src": null,
@@ -4150,7 +4150,19 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null,
+      "worksheet": {
+        "row": "rent",
+        "hist_key": "rent",
+        "meta_key": "rent",
+        "review_key": null,
+        "override_key": null,
+        "y1_src": null,
+        "y1_read": [
+          "fixed_charges",
+          "rent"
+        ],
+        "fmt": "currency"
+      },
       "engine_field": null
     },
     "aliases": {
@@ -4221,7 +4233,16 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null,
+      "worksheet": {
+        "row": "nonop_income",
+        "hist_key": "nonop_income",
+        "meta_key": "nonop_income",
+        "review_key": null,
+        "override_key": null,
+        "y1_src": null,
+        "y1_read": [],
+        "fmt": "currency"
+      },
       "engine_field": null
     },
     "aliases": {
@@ -4282,7 +4303,19 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "scorer_synonyms": [],
       "scorer_variants": {},
       "recognizer": null,
-      "worksheet": null,
+      "worksheet": {
+        "row": "other_nonop",
+        "hist_key": "other_nonop_expense",
+        "meta_key": "other_nonop",
+        "review_key": null,
+        "override_key": null,
+        "y1_src": null,
+        "y1_read": [
+          "fixed_charges",
+          "other_fixed"
+        ],
+        "fmt": "currency"
+      },
       "engine_field": null
     },
     "aliases": {

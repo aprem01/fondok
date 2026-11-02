@@ -80,30 +80,35 @@ so registry alias ORDER cannot change which field wins — only membership can.
 
 ---
 
-## 4. `other_revenue` vs `misc_revenue` — the Misc. Income collapse
+## 4. `other_revenue` vs `misc_revenue` — the Other Revenue sum
 
-Worker §3.2. The registry keeps two concepts; Historicals has one
-"Misc. Income" column, and `other_revenue.bindings.worksheet.hist_key = misc`
-records the collapse. Per the handover the adapter must not pick one and drop
-the other, so **`HISTORICALS_ALIASES.misc` is the UNION of both concepts'
-alias lists** — exactly what the hand-written list was. Splitting the row into
-two is a product decision, not a refactor.
+Worker §3.2. The registry keeps two concepts; the worksheet has one
+"Other Revenue (Other Operated + Misc. Income)" row, and
+`other_revenue.bindings.worksheet.hist_key = misc` records it.
+`HISTORICALS_ALIASES.misc` stays the UNION of both concepts' alias lists (the
+pinned contract of what the row may read), but Wave 5 (Sam #3) stopped reading
+it with one `findField` call — that returned whichever line matched first and
+dropped the other (Kimpton FY2023 was short by exactly its Misc. Income).
+`buildHistYear` now resolves each concept on its own
+(`OTHER_REVENUE_PART_ALIASES`) and `HistYear.misc` is their SUM, a field
+counted once; `meta.misc.parts` lists both lines.
 
-Consequence to keep in mind: the worksheet's `total_rev` row still sums
-`rooms + fb + other` (three rendered columns), while the registry's
-`total_revenue` identity is `rooms + fb + other + misc + resort`. The
-worksheet's "other" column already carries misc, so the arithmetic agrees;
-`resort_fees` is not a worksheet row at all.
+The worksheet's `total_rev` row sums `rooms + fb + other`; with "other" now
+carrying misc the arithmetic matches the registry's `total_revenue` identity
+except `resort_fees`, which is not a worksheet row.
 
 ## 5. "Fixed charges" — the UI subtotals are not the concept
 
-Worker §3.3. `HistYear.fixed_expenses` = `property_tax + insurance +
-mgmt_fee`; the worksheet's `fixed_total` row = `mgmt + ffe + taxes +
-insurance`; the registry's `fixed_charges` concept is `property_taxes +
-insurance + rent_expense + other_nonop_expense − nonop_income`. The registry
-binds `fixed_charges` to the `fixed_total` ROW and to the
-`fixed_expenses` hist key (so the cell reads the same number it always did),
-but the composition stays the web's — these are UI subtotals, unchanged here.
+Worker §3.3. Wave 5 (Sam #3): `HistYear.fixed_expenses` and the worksheet's
+`fixed_total` row are both `mgmt + ffe + taxes + insurance + rent +
+other_nonop` (over the lines a statement states), and non-operating income is
+its own row added back on the way to NOI, so a historical column's NOI =
+GOP − Total Fees & Fixed + non-operating income reconciles where the statement
+states the lines (the "NOI footing" row names the gap where it does not). The
+registry's `fixed_charges` concept is `property_taxes + insurance +
+rent_expense + other_nonop_expense − nonop_income` (no mgmt fee or FF&E); the
+registry binds `fixed_charges` to the `fixed_total` ROW and the
+`fixed_expenses` hist key, but the composition is the web's.
 
 ---
 

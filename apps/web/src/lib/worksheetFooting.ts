@@ -16,9 +16,11 @@
  *     it does not. The footing below always compares that SUM
  *     (``histDerivedTotalRevenue``) against the stated total — never the
  *     cell against itself. Total Fees & Fixed stays a client-side sum
- *     (``fixed_expenses`` = mgmt fee + property tax + insurance at
- *     column-build time). GOP and NOI are the statement's own stated lines
- *     (``HIST_KEY_BY_ROW``).
+ *     (``fixed_expenses`` = mgmt fee + FF&E reserve + property tax +
+ *     insurance + rent + other non-operating expense at column-build time,
+ *     Wave 5). GOP and NOI are the statement's own stated lines
+ *     (``HIST_KEY_BY_ROW``); the NOI footing checks GOP − Total Fees & Fixed
+ *     + non-operating income against the stated NOI.
  *   • There is no worker footing / variance output for historical
  *     statements (``footing`` exists only as a cash-flow-statement concept),
  *     so every number here is computed in the browser and labelled
@@ -33,7 +35,7 @@ import { fmtCurrency } from '@/lib/format';
 export const FOOTING_TOLERANCE_USD = 1;
 
 export interface Footing {
-  id: 'total_rev' | 'gop';
+  id: 'total_rev' | 'gop' | 'noi';
   /** The noun after "stated": "total" for revenue, "GOP" for GOP. */
   statedLabel: string;
   /** Σ of the extracted lines (calculated client-side). */
@@ -80,6 +82,30 @@ export function footGop(h: HistYear): FootingResult {
   if (totalRev == null || parts.some((p) => p == null)) return { ok: false, reason: 'lines_missing' };
   const lines = totalRev - (parts as number[]).reduce((a, b) => a + b, 0);
   return build('gop', 'GOP', lines, stated);
+}
+
+/**
+ * Wave 5 (Sam #3) — stated GOP − Total Fees & Fixed + non-operating income vs
+ * the statement's stated NOI. Total Fees & Fixed is mgmt fee + FF&E reserve +
+ * property tax + insurance + rent + other non-operating expense over the lines
+ * the statement states (``fixed_expenses``), so a statement that states every
+ * line below GOP foots; one that does not shows the gap — never a silent
+ * mismatch between the NOI row and the rows above it.
+ */
+export function footNoi(h: HistYear): FootingResult {
+  const stated = nOrNull(h.noi);
+  const gop = nOrNull(h.gop);
+  if (stated == null || gop == null) return { ok: false, reason: 'no_stated_total' };
+  const fixed = nOrNull(h.fixed_expenses);
+  if (fixed == null) return { ok: false, reason: 'lines_missing' };
+  const lines = gop - fixed + (nOrNull(h.nonop_income) ?? 0);
+  return build('noi', 'NOI', lines, stated);
+}
+
+/** The NOI footing cell: "✓ foots", or the gap named as a source gap. */
+export function footingGapText(f: Footing): string {
+  if (f.foots) return '✓ foots';
+  return `doesn\u2019t foot by ${fmtCurrency(Math.abs(f.difference))} — source gap`;
 }
 
 /** "+$5" / "−$5" / "$0". */
