@@ -355,13 +355,15 @@ and an analyst override replaces it.
 ::: card
 #### Occupancy and ADR — topline methodology v2
 
-<!-- source: apps/worker/app/services/topline.py, topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline) -->
+<!-- source: apps/worker/app/services/topline.py (DEFAULT_RAMP_POLICY, default_ramp_applies), topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline, _ramp_for_year) -->
 For each projected year y with stabilization year S, benchmark B, stabilized penetration P (index
 points, default 100), ramp r and a per-year penetration V you may set:
 penetration = V when set; P × r(y) when y \< S and the ramp defines the year; P otherwise.
 Occupancy = min(95%, B occupancy × penetration ÷ 100); ADR = B ADR × penetration ÷ 100. Renovation
 displacement multiplies on top, unchanged. Default ramp: 85% / 95% for S = 3, 85% for S = 2;
-undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4.
+undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4. The default ramp applies to every deal (ramp policy
+"all deals"); your own ramp always wins. Under another policy a deal outside it runs the stabilized
+penetration from Year 1 and each of its ramp years says so.
 
 <!-- source: apps/worker/app/services/topline_benchmark.py (resolve_benchmark), services/topline.py (build_topline) -->
 Benchmark level, first available unless you force one: competitive set (STR TTM blend = subject

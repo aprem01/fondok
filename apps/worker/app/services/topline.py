@@ -93,6 +93,53 @@ TOPLINE_STATUS_KEY = "__topline_status__"
 
 _RAMP_MAX = 1.5
 
+#: Review I-1 — WHICH deals the default 85 / 95 ramp applies to. The ONE
+#: policy point: the domain lead's decision is a change of this line.
+#:   ``all_deals``          — every deal (Sam, 2026-11-01; current).
+#:   ``repositioning_only`` — only a deal with a reopening date or an explicit
+#:                            renovation displacement (Year-1 displacement %,
+#:                            PIP closure schedule or displacement schedule):
+#:                            the ramp is a lease-up concept; a stabilized
+#:                            operating asset runs at the stabilized
+#:                            penetration from Year 1.
+#:   ``never``              — no default ramp on any deal.
+#: An analyst's ``penetration_ramp_by_year`` always wins over the policy.
+RAMP_POLICIES: tuple[str, ...] = ("all_deals", "repositioning_only", "never")
+DEFAULT_RAMP_POLICY = "all_deals"
+
+_DISPLACEMENT_KEYS = (
+    "y1_occupancy_displacement_pct",
+    "y1_adr_displacement_pct",
+    "pip_displacement_overrides",
+    "renovation_displacement_schedule",
+)
+
+
+def default_ramp_applies(base: Mapping[str, Any], policy: str = DEFAULT_RAMP_POLICY) -> bool:
+    """Does the default ramp apply to the deal described by ``base`` under
+    ``policy``? See :data:`DEFAULT_RAMP_POLICY`."""
+    if policy == "all_deals":
+        return True
+    if policy == "never":
+        return False
+    if base.get("reopening_date") not in (None, ""):
+        return True
+    for key in _DISPLACEMENT_KEYS:
+        v = base.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if v > 0:
+                return True
+        elif v:
+            return True
+    return False
+
+
+def _ramp_policy_note(policy: str) -> str:
+    return (
+        f"the default ramp does not apply to this deal (ramp policy: {policy}) — the stabilized "
+        "penetration applies from Year 1. Enter a ramp to phase it in."
+    )
+
 
 @dataclass(frozen=True)
 class ToplineInputs:
@@ -108,6 +155,10 @@ class ToplineInputs:
     explicit_metrics: tuple[str, ...] = ()
     legacy_flags: tuple[dict[str, Any], ...] = ()
     problems: tuple[str, ...] = ()
+    #: Review I-1 — the ramp policy in force, and whether it switched the
+    #: default ramp off for this deal (``ramp`` is then ``()``).
+    ramp_policy: str = DEFAULT_RAMP_POLICY
+    ramp_off_by_policy: bool = False
 
 
 def coerce_ramp_list(raw: Any) -> tuple[list[float | None], list[str]]:
@@ -176,6 +227,7 @@ def read_topline_inputs(
     *,
     str_noted_keys: frozenset[str] | set[str] = frozenset(),
     derived_adr_source: str = "derived_from_revpar_growth",
+    ramp_policy: str = DEFAULT_RAMP_POLICY,
 ) -> ToplineInputs:
     """Everything the topline reads off the resolved assumptions."""
     applied = analyst_override_paths
@@ -235,6 +287,9 @@ def read_topline_inputs(
         lst, rp = coerce_ramp_list(ramp_raw)
         problems += [f"Ramp — {p} (ignored)" for p in rp]
         ramp = tuple(lst)
+    ramp_off = False
+    if ramp is None and not default_ramp_applies(base, ramp_policy):
+        ramp, ramp_off = (), True
 
     from .engine_runner import STABILIZATION_YEAR_KEY, _coerce_stabilization_year
 
@@ -320,6 +375,8 @@ def read_topline_inputs(
         explicit_metrics=tuple(explicit),
         legacy_flags=tuple(legacy),
         problems=tuple(problems),
+        ramp_policy=ramp_policy,
+        ramp_off_by_policy=ramp_off,
     )
 
 
@@ -551,6 +608,7 @@ def build_topline(
         penetration_occ_source="analyst_override" if inputs.penetration_occ is not None else "default",
         penetration_adr_source="analyst_override" if inputs.penetration_adr is not None else "default",
         ramp_by_year=list(inputs.ramp) if inputs.ramp is not None else None,
+        ramp_policy_note=_ramp_policy_note(inputs.ramp_policy) if inputs.ramp_off_by_policy else None,
         penetration_occ_by_year=list(inputs.penetration_occ_by_year)[:hold],
         penetration_adr_by_year=list(inputs.penetration_adr_by_year)[:hold],
         explicit_year1=list(inputs.explicit_metrics),
@@ -642,7 +700,11 @@ def _status(
 ) -> dict[str, Any]:
     """The ``topline_status`` block (API contract — see the topline report)."""
     s = drivers.stabilization_year
-    if drivers.ramp_by_year is not None:
+    if inputs.ramp_off_by_policy:
+        ramp = []
+        ramp_source = "not_applied_by_policy"
+        ramp_state = "defined"
+    elif drivers.ramp_by_year is not None:
         ramp = list(drivers.ramp_by_year)
         ramp_source = "analyst_override"
         ramp_state = "defined"
@@ -720,6 +782,7 @@ def _status(
         "current_ari": current_index("adr"),
         "ramp_by_year": ramp,
         "ramp_source": ramp_source,
+        "ramp_policy": inputs.ramp_policy,
         "ramp_state": ramp_state,
         "explicit_metrics": list(inputs.explicit_metrics),
         "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
@@ -737,6 +800,9 @@ __all__ = [
     "KEY_OCC_GROWTH_BY_YEAR",
     "KEY_RAMP_BY_YEAR",
     "CalendarAnchor",
+    "DEFAULT_RAMP_POLICY",
+    "RAMP_POLICIES",
+    "default_ramp_applies",
     "LongRunGrowth",
     "NO_CALENDAR_ANCHOR",
     "calendar_anchor",

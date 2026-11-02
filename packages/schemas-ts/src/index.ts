@@ -679,6 +679,7 @@ export const ToplineDrivers = z.object({
   penetration_adr_source: PenetrationSource.default('default'),
   // null = the engine's default ramp for S; a list = the analyst's ramp.
   ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
+  ramp_policy_note: z.string().nullable().optional(),
   penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),
   penetration_adr_by_year: z.array(PenetrationPoints.nullable()).default([]),
   t12_reference: ToplineReference.nullable().optional(),

@@ -201,6 +201,8 @@ def _ramp_for_year(
                 f"Years 3–{s - 1} is undefined, so the year runs at 100 % of the "
                 f"stabilized penetration. Enter the ramp for Years 3–{s - 1}."
             )
+        elif topline.ramp_policy_note:
+            state, note = "no_ramp", f"Year {year}: {topline.ramp_policy_note}"
         else:
             state, note = "no_ramp", (
                 f"Year {year}: no ramp entered for the year — it runs at 100 % of the "

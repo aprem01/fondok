@@ -546,6 +546,10 @@ class ToplineDrivers(BaseModel):
     #: (No separate ``ramp_source`` field: the source IS whether a list was
     #: supplied, and the per-year record's ``ramp_state`` says how it applied.)
     ramp_by_year: list[RampFraction | None] | None = None
+    #: Review I-1 — set when the default ramp does NOT apply to this deal under
+    #: the ramp policy (``services.topline.DEFAULT_RAMP_POLICY``); ``ramp_by_year``
+    #: is then ``[]`` and each pre-stabilization year's record says why.
+    ramp_policy_note: str | None = None
     penetration_occ_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     penetration_adr_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     #: Metrics whose Year-1 value the analyst entered explicitly
