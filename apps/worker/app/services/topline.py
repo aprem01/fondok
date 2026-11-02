@@ -380,15 +380,12 @@ def read_topline_inputs(
     )
 
 
-#: Review I-4 — where the model calendar comes from, most specific first. The
-#: same order the comp lookback measures from (``engine_runner.
-#: comp_lookback_anchor``), behind the deal's own close date.
+#: Review I-4 / R2-I1 — where the model calendar comes from: the deal's own
+#: close date, else its underwriting as-of date. Nothing else places it.
 CALENDAR_ANCHOR_CLOSE = "acquisition_close"
 CALENDAR_ANCHOR_LABELS: dict[str, str] = {
     CALENDAR_ANCHOR_CLOSE: "the acquisition close",
     "underwriting_as_of": "the underwriting as-of date",
-    "comp_report_as_of": "the comp report's as-of date",
-    "run_date": "the run date",
 }
 
 
@@ -399,9 +396,9 @@ class CalendarAnchor:
     Operating Year 1 is the calendar year of the first operating month (the
     anchor + 1 month — ``revenue.projection_start_year``, FON-41): a
     2025-09-30 close puts Year 1 on 2025, a 2025-12-31 close on 2026. With no
-    close date the anchor is ASSUMED (underwriting as-of, else the comp
-    report's as-of, else the run date) and used only to place a document
-    forecast; the statement's calendar stays blank."""
+    close date the anchor is ASSUMED from the underwriting as-of date and used
+    only to place a document forecast; the statement's calendar stays blank.
+    With neither there is no anchor (R2-I1)."""
 
     source: str | None
     date: date | None
@@ -416,7 +413,7 @@ class CalendarAnchor:
     @property
     def label(self) -> str:
         if self.source is None or self.date is None:
-            return "No acquisition close date and no market forecast to place — the model years carry no calendar."
+            return "No acquisition close date and no underwriting as-of date — the model years carry no calendar."
         where = CALENDAR_ANCHOR_LABELS.get(self.source, self.source)
         if not self.assumed:
             return (
@@ -446,18 +443,17 @@ def calendar_anchor(
     close: date | None,
     *,
     underwriting_as_of: date | None,
-    comp_report_dates: Sequence[date],
-    today: date,
 ) -> CalendarAnchor:
     """The model-calendar anchor: the acquisition close; else (assumed) the
-    underwriting as-of date, the latest comp report as-of, the run date."""
+    underwriting as-of date; else none. Review round 2 (R2-I1): no comp-report
+    date and never the run date — a deal's forecast must not move with the
+    clock. With neither date a document forecast stays unplaced
+    (``calendar_unknown``)."""
     if close is not None:
         return CalendarAnchor(source=CALENDAR_ANCHOR_CLOSE, date=close, assumed=False)
     if underwriting_as_of is not None:
         return CalendarAnchor(source="underwriting_as_of", date=underwriting_as_of, assumed=True)
-    if comp_report_dates:
-        return CalendarAnchor(source="comp_report_as_of", date=max(comp_report_dates), assumed=True)
-    return CalendarAnchor(source="run_date", date=today, assumed=True)
+    return NO_CALENDAR_ANCHOR
 
 
 @dataclass(frozen=True)
@@ -789,6 +785,7 @@ def _status(
         "bucket_label": growth.bucket_label,
         "bucket_note": growth.bucket_note,
         "calendar_known": growth.calendar_known,
+        "calendar_unknown": growth.calendar_unknown,
         "growth_state": state,
         "growth_by_year": growth_rows,
         "stabilization_year": s,

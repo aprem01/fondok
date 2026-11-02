@@ -389,9 +389,12 @@ Model years sit on the calendar from the acquisition close: Year 1 is the calend
 operating month (close + 1 month), so a 30 September 2025 close puts Year 1 on 2025 and a
 31 December 2025 close puts it on 2026. A benchmark whose own period is Year 1's calendar year is
 used as reported; growth applies from the next year. With no close date a document forecast is
-still used: it is placed on a calendar assumed from the underwriting as-of date, else the comp
-report's as-of date, else the run date (the comp lookback's order), and the status names the anchor
-and asks for the close date. Only when there is no forecast at all does "no market forecast" show. Retired settings are read with {{reason:legacy_key_translated}}: the Index
+still used when the deal has an underwriting as-of date: it is placed on a calendar assumed from
+that date, and the status names the anchor and asks for the close date. With neither date the
+forecast is not placed on a guessed calendar — never the comp report's date, never the run date,
+so a deal does not move with the clock: every year shows {{reason:calendar_unknown}} ("Set the
+acquisition close date to place the market forecast"), ranked above the labelled 4.5% suggestion.
+Only when there is no forecast at all does "no market forecast" show. Retired settings are read with {{reason:legacy_key_translated}}: the Index
 Analysis market growth reads as your all-years growth, the "Use STR rates" switch is ignored, and a
 Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year).
 

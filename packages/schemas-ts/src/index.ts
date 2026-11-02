@@ -329,6 +329,7 @@ export const ReasonCode = z.enum([
   "legacy_key_translated",
   "no_revenue_basis",
   "reextract_needed",
+  "calendar_unknown",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -513,6 +514,12 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series.",
+  },
+  calendar_unknown: {
+    label: "Close date needed",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A market forecast is on file but the deal has no acquisition close date (and no underwriting as-of date), so the forecast cannot be placed on the model's years — set the acquisition close date to place it; the model never guesses a calendar.",
   },
 };
 

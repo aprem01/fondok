@@ -93,6 +93,7 @@ REASON_CODES: tuple[str, ...] = (
     "no_market_forecast", "no_benchmark", "license_withheld", "legacy_key_translated",
     "no_revenue_basis",
     "reextract_needed",
+    "calendar_unknown",
 )
 
 #: Engines a concept may name: the engine_runner / provenance names plus the

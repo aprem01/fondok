@@ -5,11 +5,14 @@
     ``revenue.projection_start_year``, FON-41): Sam's deal closes 2025-09-30,
     so Year 1 = 2025 — the TTM benchmark's own year, used as reported — and
     Year 2 = 2026 is the first year grown by a forecast.
-(b) A deal with NO close date still gets its CoStar / CBRE forecast: the
-    growth is placed on a calendar assumed from the same anchor order the
-    comp lookback uses — the underwriting as-of date, else the comp report's
-    as-of date, else the run date — and the status says which anchor was used.
-    It never says "no market forecast" while a forecast is in the report.
+(b) A deal with NO close date still gets its CoStar / CBRE forecast when it
+    has an underwriting as-of date: the growth is placed on a calendar
+    assumed from that date, and the status says so.
+(c) Review round 2 (R2-I1): with neither date the forecast is NOT placed on
+    a guessed calendar — no comp-report date, never the run date (a deal must
+    not move year to year with the clock). Growth is unavailable with its own
+    reason ``calendar_unknown`` ("Set the acquisition close date to place the
+    market forecast"), never "no market forecast" while one is on file.
 """
 
 from __future__ import annotations
@@ -82,20 +85,30 @@ async def _status(deal_id: str, tenant_id: str) -> dict:
 # ─────────────────────────── the anchor order ───────────────────────────
 
 
-def test_calendar_anchor_order_matches_the_comp_lookback() -> None:
+def test_calendar_anchor_is_the_close_else_the_as_of_else_none() -> None:
+    import inspect
+
     from app.services.topline import calendar_anchor
 
-    today = date(2026, 11, 2)
-    a = calendar_anchor(date(2025, 9, 30), underwriting_as_of=date(2025, 6, 30), comp_report_dates=[], today=today)
+    a = calendar_anchor(date(2025, 9, 30), underwriting_as_of=date(2025, 6, 30))
     assert (a.source, a.date, a.assumed) == ("acquisition_close", date(2025, 9, 30), False)
-    a = calendar_anchor(None, underwriting_as_of=date(2025, 6, 30), comp_report_dates=[date(2025, 1, 1)], today=today)
+    a = calendar_anchor(None, underwriting_as_of=date(2025, 6, 30))
     assert (a.source, a.date, a.assumed) == ("underwriting_as_of", date(2025, 6, 30), True)
-    a = calendar_anchor(None, underwriting_as_of=None, comp_report_dates=[date(2024, 3, 1), date(2025, 2, 1)], today=today)
-    assert (a.source, a.date) == ("comp_report_as_of", date(2025, 2, 1))
-    a = calendar_anchor(None, underwriting_as_of=None, comp_report_dates=[], today=today)
-    assert (a.source, a.date) == ("run_date", today)
-    assert a.first_model_year == 2026  # first month after 2026-11-02 is in 2026
-    assert calendar_anchor(None, underwriting_as_of=date(2025, 12, 15), comp_report_dates=[], today=today).first_model_year == 2026
+    assert calendar_anchor(None, underwriting_as_of=date(2025, 12, 15)).first_model_year == 2026
+    a = calendar_anchor(None, underwriting_as_of=None)
+    assert (a.source, a.date) == (None, None)
+    # R2-I1 — no clock and no comp-report date can place the forecast.
+    params = inspect.signature(calendar_anchor).parameters
+    assert "today" not in params and "comp_report_dates" not in params
+
+
+def test_nothing_reads_the_clock_for_calendar_placement() -> None:
+    import inspect
+
+    from app.services import engine_runner, topline
+
+    assert "today()" not in inspect.getsource(topline.calendar_anchor)
+    assert "today()" not in inspect.getsource(engine_runner._apply_topline)
 
 
 # ─────────────────────────── (b) no close date ───────────────────────────
@@ -122,15 +135,36 @@ async def test_no_close_date_places_the_costar_forecast_on_the_underwriting_as_o
 
 
 @pytest.mark.asyncio
-async def test_no_close_and_no_as_of_falls_back_to_the_run_date_and_says_so() -> None:
-    from app.engines.revenue import projection_start_year
-
+async def test_no_close_and_no_as_of_is_calendar_unknown_not_the_run_date() -> None:
     deal_id, tenant_id = await _docs_deal(acquisition_close_date=None)
     st = await _status(deal_id, tenant_id)
-    assert st["calendar_anchor"]["source"] == "run_date"
-    assert st["calendar_anchor"]["date"] == date.today().isoformat()
-    assert st["growth_by_year"][0]["calendar_year"] == projection_start_year(date.today().isoformat())
-    assert st["growth_state"] != "unavailable"
+    assert st["calendar_anchor"]["source"] is None
+    assert st["calendar_known"] is False
+    assert st["calendar_unknown"] is True
+    assert st["growth_state"] == "unavailable"
+    for row in st["growth_by_year"]:
+        assert row["calendar_year"] is None
+        for metric in ("occupancy", "adr"):
+            g = row[metric]
+            assert g["value"] is None
+            assert g["reason"] == "calendar_unknown"
+            assert g["label"] == "Set the acquisition close date to place the market forecast"
+    assert "No market" not in json.dumps(st["growth_by_year"])
+
+
+@pytest.mark.asyncio
+async def test_calendar_unknown_is_the_growth_reason_ranked_above_the_suggestion() -> None:
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    deal_id, tenant_id = await _docs_deal(acquisition_close_date=None)
+    async with get_session_factory()() as s:
+        base = await _load_engine_inputs(s, deal_id, tenant_id=tenant_id)
+    reasons = base["__reasons__"]
+    assert reasons["occupancy_growth"]["code"] == "calendar_unknown"
+    assert reasons["adr_growth"]["code"] == "calendar_unknown"
+    assert reasons["revpar_growth"]["code"] == "calendar_unknown"
+    assert "Set the acquisition close date" in reasons["revpar_growth"]["detail"]
 
 
 @pytest.mark.asyncio
@@ -146,6 +180,8 @@ async def test_no_close_date_and_no_forecast_keeps_the_calendar_unknown() -> Non
     st = base["__topline_status__"]
     assert st["calendar_known"] is False
     assert st["calendar_anchor"]["source"] is None
+    # Nothing on file to place: the reason is the absent forecast, not the date.
+    assert st["calendar_unknown"] is False
 
 
 # ─────────────────────────── (a) the real close date ───────────────────────────

@@ -11,7 +11,7 @@ export interface ReasonMeta {
   explanation: string;
 }
 
-export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value" | "no_market_forecast" | "no_benchmark" | "license_withheld" | "legacy_key_translated" | "no_revenue_basis" | "reextract_needed";
+export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value" | "no_market_forecast" | "no_benchmark" | "license_withheld" | "legacy_key_translated" | "no_revenue_basis" | "reextract_needed" | "calendar_unknown";
 
 export const REASON_CODES: readonly ReasonCode[] = [
   "no_document",
@@ -41,7 +41,8 @@ export const REASON_CODES: readonly ReasonCode[] = [
   "license_withheld",
   "legacy_key_translated",
   "no_revenue_basis",
-  "reextract_needed"
+  "reextract_needed",
+  "calendar_unknown"
 ];
 
 export const REASONS: Record<ReasonCode, ReasonMeta> = {
@@ -184,6 +185,11 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
     "label": "Re-extract needed",
     "ui": "—",
     "explanation": "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series."
+  },
+  "calendar_unknown": {
+    "label": "Close date needed",
+    "ui": "—",
+    "explanation": "A market forecast is on file but the deal has no acquisition close date (and no underwriting as-of date), so the forecast cannot be placed on the model's years — set the acquisition close date to place it; the model never guesses a calendar."
   }
 };
 

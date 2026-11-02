@@ -64,6 +64,7 @@ class ReasonCode(str, Enum):
     LEGACY_KEY_TRANSLATED = "legacy_key_translated"
     NO_REVENUE_BASIS = "no_revenue_basis"
     REEXTRACT_NEEDED = "reextract_needed"
+    CALENDAR_UNKNOWN = "calendar_unknown"
 
 
 class Refusal(BaseModel):
@@ -326,6 +327,13 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "ui": REFUSAL_GLYPH,
         "explanation": (
             "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series."
+        ),
+    },
+    ReasonCode.CALENDAR_UNKNOWN: {
+        "label": "Close date needed",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "A market forecast is on file but the deal has no acquisition close date (and no underwriting as-of date), so the forecast cannot be placed on the model's years — set the acquisition close date to place it; the model never guesses a calendar."
         ),
     },
 }

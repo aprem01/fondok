@@ -84,6 +84,11 @@ NO_CLOSE_DATE_DETAIL = (
     "calendar. Set the acquisition close date, or set growth manually."
 )
 
+#: Review round 2 (R2-I1) — a market forecast is on file but the deal has no
+#: close date and no underwriting as-of date: the forecast is not placed on a
+#: guessed calendar (never the run date); every document year says this.
+CALENDAR_UNKNOWN_DETAIL = "Set the acquisition close date to place the market forecast"
+
 
 # ─────────────────────────── positioning → class bucket ───────────────────────────
 
@@ -214,6 +219,8 @@ class GrowthResolution:
     bucket_note: str | None = None
     #: CoStar submarket reports extracted before the class series existed.
     reextract_needed: list[str] = field(default_factory=list)
+    #: R2-I1 — a document forecast is on file but no calendar places it.
+    calendar_unknown: bool = False
 
     @property
     def calendar_known(self) -> bool:
@@ -336,6 +343,8 @@ def resolve_growth_by_year(
         cal = []  # a partial calendar is no calendar
     gated = {t.upper() for t in gated_doc_types}
     market_gated = bool(gated & {"CBRE_HORIZONS", "MARKET_STUDY", "COSTAR"})
+    #: R2-I1 — a forecast on file that no calendar can place.
+    calendar_unknown = not cal and document_growth_on_file(rows)
 
     # ── document series ──
     cbre, cbre_date = _cbre_series(rows)
@@ -510,7 +519,14 @@ def resolve_growth_by_year(
         if c is None:
             # Review I-3 — a stale extraction is the more useful reason: the
             # report on file was never read for its forecast at all.
-            return _unavailable(metric, None, None if stale_extraction else NO_CLOSE_DATE_DETAIL)
+            if stale_extraction:
+                return _unavailable(metric, None)
+            if calendar_unknown and not stale_extraction:
+                return MetricGrowth(
+                    value=None, source="unavailable", label=CALENDAR_UNKNOWN_DETAIL,
+                    reason=ReasonCode.CALENDAR_UNKNOWN, calendar_year=None,
+                )
+            return _unavailable(metric, None, NO_CLOSE_DATE_DETAIL)
         return doc_by_cal.get((metric, c)) or _unavailable(metric, c)
 
     by_year: dict[str, list[MetricGrowth]] = {"occupancy": [], "adr": []}
@@ -539,6 +555,7 @@ def resolve_growth_by_year(
         bucket_label=bucket_label if series.years else CLASS_BUCKET_LABELS.get(class_bucket, class_bucket),
         bucket_note=bucket_note,
         reextract_needed=reextract,
+        calendar_unknown=calendar_unknown and not stale_extraction,
     )
 
 

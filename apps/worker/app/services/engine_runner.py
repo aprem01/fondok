@@ -2759,15 +2759,6 @@ async def _load_engine_inputs(
     from .index_methodology import load_index_rows
 
     index_rows = await load_index_rows(session, deal_id=deal_id, tenant_id=effective_tenant)
-    # Review I-4 — with neither a close date nor an underwriting as-of date,
-    # the model calendar for a document forecast is assumed from the comp
-    # report's as-of (the comp lookback's anchor order); read only then.
-    topline_comp_dates: list[date] = []
-    if _iso_date_or_none(base.get("acquisition_close_date")) is None and underwriting_as_of is None:
-        _comps, _comp_info = await _load_comp_transactions(
-            session, deal_id=deal_id, tenant_id=effective_tenant, as_of=None, with_rows=True
-        )
-        topline_comp_dates = list(_comp_info.report_dates)
     _apply_topline(
         base,
         sources,
@@ -2780,7 +2771,6 @@ async def _load_engine_inputs(
         policy=data_policy,
         str_noted_keys=frozenset(str_noted_keys),
         t12=_t12_reference(revenue_actuals, revenue_prov),
-        comp_report_dates=topline_comp_dates,
     )
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
@@ -2938,16 +2928,14 @@ def _apply_topline(
     policy: TenantDataPolicies,
     str_noted_keys: frozenset[str],
     t12: ToplineReference | None,
-    comp_report_dates: Sequence[date] = (),
 ) -> None:
     """FON-116 / FON-117 — resolve the topline and park it on ``base``.
 
-    Review I-4 — the model calendar: the acquisition close date; with none,
-    and a document forecast on file, a calendar ASSUMED from the underwriting
-    as-of date, else the comp report's as-of (``comp_report_dates``, read by
-    the loader only when there is neither a close nor an as-of date), else
-    the run date. ``topline_status.calendar_anchor``
-    names the anchor.
+    Review I-4 / R2-I1 — the model calendar: the acquisition close date; with
+    none, and a document forecast on file, a calendar ASSUMED from the
+    underwriting as-of date; with neither, no calendar — the forecast stays
+    unplaced with reason ``calendar_unknown`` (never the run date).
+    ``topline_status.calendar_anchor`` names the anchor.
 
     Writes ``base["topline"]`` (the ``ToplineDrivers`` payload), the per-year
     growth lists, ``base[TOPLINE_STATUS_KEY]`` (the ``topline_status`` block),
@@ -2968,6 +2956,7 @@ def _apply_topline(
     from .topline import NO_CALENDAR_ANCHOR, calendar_anchor
     from .topline_benchmark import resolve_benchmark
     from .topline_growth import (
+        CALENDAR_UNKNOWN_DETAIL,
         class_bucket_from_positioning,
         document_growth_on_file,
         resolve_growth_by_year,
@@ -2997,12 +2986,7 @@ def _apply_topline(
     )
     close = parse_iso_date(_iso_date_or_none(base.get("acquisition_close_date")))
     if close is not None or document_growth_on_file(knowable):
-        anchor = calendar_anchor(
-            close,
-            underwriting_as_of=as_of,
-            comp_report_dates=list(comp_report_dates),
-            today=date.today(),
-        )
+        anchor = calendar_anchor(close, underwriting_as_of=as_of)
     else:
         anchor = NO_CALENDAR_ANCHOR
     growth = resolve_growth_by_year(
@@ -3051,8 +3035,13 @@ def _apply_topline(
         source_fields.pop(key, None)
 
     state = status["growth_state"]
+    calendar_unknown = bool(status.get("calendar_unknown"))
     growth_reason = (
         ReasonCode.LICENSE_WITHHELD if state == "withheld"
+        # R2-I1 — a forecast on file that no calendar places: the close date
+        # is the fix, ranked above the labelled 4.5% suggestion.
+        else ReasonCode.CALENDAR_UNKNOWN
+        if state in ("unavailable", "partially_sourced") and calendar_unknown
         # Review I-3 — a CoStar report extracted before the class series
         # existed is "re-extract", never "no market forecast".
         else ReasonCode.REEXTRACT_NEEDED
@@ -3071,6 +3060,7 @@ def _apply_topline(
                 growth_reason,
                 "Growth is resolved per year (topline_status.growth_by_year); "
                 + ("a CoStar forecast is withheld by the workspace's data policy." if state == "withheld"
+                   else f"{CALENDAR_UNKNOWN_DETAIL}." if growth_reason is ReasonCode.CALENDAR_UNKNOWN
                    else "; ".join(status["reextract_needed"]) if growth_reason is ReasonCode.REEXTRACT_NEEDED
                    else "no market forecast covers every projected year."),
             )
@@ -3081,6 +3071,11 @@ def _apply_topline(
         if build.terminal_revpar_source == "market_forecast_unavailable":
             reasons["revpar_growth"] = (
                 _reason(
+                    ReasonCode.CALENDAR_UNKNOWN,
+                    f"{CALENDAR_UNKNOWN_DETAIL} — until then the exit-year NOI is not grown (0%).",
+                )
+                if calendar_unknown
+                else _reason(
                     ReasonCode.REEXTRACT_NEEDED,
                     "; ".join(status["reextract_needed"])
                     + " Until then the exit-year NOI is not grown (0%).",
