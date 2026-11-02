@@ -81,4 +81,8 @@ atlas:
   # section's conceptual text (always-included first, then matched by rank);
   # pass 2 adds detailed text in the same order while it fits. A section whose
   # conceptual text alone does not fit is skipped.
-  max_chars: 32000
+  # 34000 (≈8.5k tokens), was 32000: the always-included `reasons` section
+  # renders the whole reason registry, so it grows with every reason-copy
+  # edit; at 32000 the longest matched section (projection) had 22 characters
+  # of slack and any registry wording change dropped its detailed level.
+  max_chars: 34000

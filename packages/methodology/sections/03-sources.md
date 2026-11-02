@@ -734,14 +734,15 @@ bare figure under $1,000,000 with no unit ("36400", "1,200") and a two-year peri
 not read as prices — the hint asks for M / MM or the full dollars. Text that does not read as a
 price is kept as a note and sends nothing. There is no seed price (`IDENTITY_INPUT_KEYS` have no
 default): with no price the price-dependent engines are refused with `missing_identity_inputs`, and
-the message names where to enter it. The analyst enters it at any time on Overview → Entry
-Valuation or CAPEX → Deal Summary (one shared editor, `PurchasePriceField`); the CAPEX tab renders
-the Purchase Price / Keys inputs instead of an empty state when capital failed for a missing
-identity input, pre-filled from the OM asking-price row (`asking_price.headline_price_usd`) when one
-was extracted, or stating that the OM does not give one. The entry is written as
-`field_overrides.purchase_price` `{value, note}` and triggers a run. Precedence: analyst override >
-deal row > OM asking price; the loader never derives a price from a broker cap rate or a price per
-key. The Property Name is not a deal-row field — see below.
+the message names where to enter it. The analyst enters it at any time on Overview → Entry Valuation
+or CAPEX → Deal Summary (one shared editor, `PurchasePriceField`); the CAPEX tab renders the
+Purchase Price / Keys inputs instead of an empty state when capital failed for a missing identity
+input, pre-filled from the OM asking-price row (`asking_price.headline_price_usd`,
+`asking_price.purchase_price` or `headline_price_usd`) when one was extracted, or stating that the
+OM does not give one. The entry is written as `field_overrides.purchase_price` `{value, note}` and
+triggers a run. Precedence: analyst override > deal row > OM asking price; the loader never derives
+a price from a broker cap rate or a price per key. The Property Name is not a deal-row field — see
+below.
 
 :::
 
