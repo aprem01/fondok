@@ -353,6 +353,143 @@ export interface AssumptionSourcesResponse {
    *  computed AFTER every override is applied. OPTIONAL / null on a worker
    *  whose loader does not emit it; the UI then prints nothing. */
   displacement_status?: DisplacementStatus | null;
+  /** FON-116 / FON-117 — how the topline (Year-1 and out-year occupancy / ADR)
+   *  was resolved: benchmark × penetration × ramp, market growth by year, and
+   *  every gap with its reason. Computed by the loader after every override
+   *  (`services/topline.py::_status`). OPTIONAL / null on a worker that
+   *  predates topline v2; the UI then prints nothing about it. */
+  topline_status?: ToplineStatus | null;
+}
+
+export type ToplineBenchmarkLevel = 'comp_set' | 'submarket' | 'market' | 'none';
+export type ToplineGrowthState = 'sourced' | 'partially_sourced' | 'override' | 'unavailable' | 'withheld';
+export type ToplineGrowthSource =
+  | 'analyst_override'
+  | 'cbre_horizons'
+  | 'costar_submarket_forecast'
+  | 'carried_forward'
+  | 'withheld_by_policy'
+  | 'unavailable';
+
+/** One metric's growth INTO one model year (`topline_status.growth_by_year[i].occupancy|adr`). */
+export interface ToplineMetricGrowth {
+  value: number | null;
+  source: ToplineGrowthSource | string;
+  source_id?: string | null;
+  label: string;
+  doc_name?: string | null;
+  page?: number | null;
+  report_date?: string | null;
+  bucket?: string | null;
+  bucket_label?: string | null;
+  reason?: string | null;
+}
+
+export interface ToplineGrowthRow {
+  year: number;
+  calendar_year: number | null;
+  /** False for Year 1 when the benchmark's own period already is Year 1. */
+  applied: boolean;
+  occupancy: ToplineMetricGrowth;
+  adr: ToplineMetricGrowth;
+}
+
+/** The benchmark level for one model year (`topline_status.benchmark_by_year[i]`). */
+export interface ToplineBenchmarkYear {
+  year: number;
+  calendar_year?: number | null;
+  occupancy?: number | null;
+  adr?: number | null;
+  revpar?: number | null;
+  basis?: 'actual' | 'forecast' | 'assumption' | null;
+  level: ToplineBenchmarkLevel;
+  label: string;
+  doc_name?: string | null;
+  page?: number | null;
+}
+
+export interface ToplineCurrentIndex {
+  value: number | null;
+  label: string;
+  basis: 'str_published' | 't12_over_benchmark' | null;
+}
+
+export interface ToplineSuggestion {
+  key: string;
+  value: number;
+  label: string;
+  note_prefill: string;
+}
+
+export interface ToplineLegacyFlag {
+  key: string;
+  value: unknown;
+  treatment: string;
+  reason: string;
+  detail: string;
+}
+
+export interface ToplineCalendarAnchor {
+  /** `acquisition_close` | `underwriting_as_of` | `comp_report_as_of` | `run_date`; null = no calendar. */
+  source: string | null;
+  date: string | null;
+  assumed: boolean;
+  first_model_year: number | null;
+  label: string;
+}
+
+export interface ToplineRevenueBasis {
+  state: 'missing' | 'present';
+  missing: string[];
+  message: string | null;
+}
+
+export interface ToplineStatus {
+  methodology_version: number;
+  benchmark?: Record<string, unknown> | null;
+  benchmark_level: ToplineBenchmarkLevel;
+  benchmark_label: string;
+  benchmark_fallback_reason: string | null;
+  benchmark_by_year: ToplineBenchmarkYear[];
+  class_bucket?: string | null;
+  bucket_label?: string | null;
+  bucket_note?: string | null;
+  calendar_known: boolean;
+  growth_state: ToplineGrowthState | string;
+  growth_by_year: ToplineGrowthRow[];
+  stabilization_year: number;
+  stabilization_source: string;
+  penetration_occ: number;
+  penetration_adr: number;
+  penetration_occ_source: 'default' | 'analyst_override' | string;
+  penetration_adr_source: 'default' | 'analyst_override' | string;
+  penetration_occ_by_year: (number | null)[];
+  penetration_adr_by_year: (number | null)[];
+  current_mpi: ToplineCurrentIndex;
+  current_ari: ToplineCurrentIndex;
+  /** Fractions for years 1..S−1 (the ramp the worker APPLIED). */
+  ramp_by_year: (number | null)[];
+  /** `default` | `analyst_override` | `not_applied_by_policy`. */
+  ramp_source: string;
+  ramp_policy?: string | null;
+  ramp_state: 'defined' | 'undefined_for_stabilization_year' | 'stabilization_after_hold' | string;
+  explicit_metrics: ('occupancy' | 'adr')[];
+  t12_reference: {
+    occupancy?: number | null;
+    adr?: number | null;
+    revpar?: number | null;
+    period_label?: string | null;
+    doc_name?: string | null;
+  } | null;
+  terminal_revpar_growth: { value: number; source_id: string; basis?: string; label?: string };
+  suggestions: ToplineSuggestion[];
+  legacy_flags: ToplineLegacyFlag[];
+  problems: string[];
+  notes: string[];
+  reextract_needed: string[];
+  data_policy?: Record<string, string> | null;
+  calendar_anchor?: ToplineCalendarAnchor | null;
+  revenue_basis?: ToplineRevenueBasis | null;
 }
 
 /**
@@ -651,6 +788,9 @@ export interface IndexMethodologyResponse {
   /** The STR comp set by model year (TTM grown at market growth — an
    *  assumption), whichever method is selected; absent on an older worker. */
   comp_set_by_year?: IndexCompSetYear[];
+  /** FON-116 / FON-117 — what the model actually runs on (the same block as
+   *  `assumption_sources.topline_status`). Absent on an older worker. */
+  topline_status?: ToplineStatus | null;
 }
 
 /** One named input that fed a modeled value's formula (FON-25/27).
@@ -2615,6 +2755,11 @@ export const api = {
         | 'str_market_id' | 'market' | 'submarket' | 'submarket_id' | 'deal_stage'>>
       & Partial<Pick<NewDealBody, 'sourcing_channel' | 'purchase_price'>> & {
         field_overrides?: Record<string, unknown>;
+        /** Topline review I-6 — the analyst's justification for a CHANGED
+         *  reopening date on a non-draft deal (it moves the default
+         *  stabilization year, which ends the penetration ramp). The worker
+         *  answers 422 `override_note_required` without it. */
+        reopening_date_note?: string;
         /** FON-79 — the wizard's resume payload; 409 ``deal_not_draft`` on an active deal. */
         draft_wizard?: DraftWizardPayload | null;
       },
