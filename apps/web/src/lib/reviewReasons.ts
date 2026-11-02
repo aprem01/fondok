@@ -20,7 +20,9 @@
  *     the FON-41 shared predicate), in worksheet row order;
  *   • every other document type: its own extracted fields below the 85%
  *     review threshold that no analyst has accepted / edited yet — the
- *     coverage card's long-standing non-financial count, verbatim.
+ *     coverage card's long-standing non-financial count, verbatim;
+ *   • on both: a value the worker cleared and marked "Needs review"
+ *     (`isClearedForReview`, W5 review R2-I1), which has no worksheet cell.
  * Both are strictly per-document: another upload can never add a field to
  * this document's list.
  */
@@ -48,6 +50,34 @@ export const REVIEW_THRESHOLD_PCT = 85;
  */
 export function isFlaggedField(f: Pick<ExtractionField, 'confidence' | 'reviewed'>): boolean {
   return !(Math.round((f.confidence ?? 0) * 100) >= REVIEW_THRESHOLD_PCT || !!f.reviewed);
+}
+
+/** Units that are not figures — an empty field with one of these is not a
+ *  cleared value. */
+const NON_FIGURE_UNITS = new Set(['date', 'text']);
+/** The note the worker's display-string repair writes on a cleared value. */
+export const CLEARED_NOTE_PREFIX = 'Needs review';
+
+/**
+ * W5 review R2-I1 — a numeric value the worker CLEARED (the display-string
+ * repair: value empty, confidence 0, note "Needs review: …"). It needs the
+ * analyst whether or not a worksheet cell renders it, so it joins the
+ * document's flagged list. A field that was simply never extracted carries
+ * no such note and is not flagged.
+ */
+export function isClearedForReview(
+  f: Pick<ExtractionField, 'value' | 'unit' | 'reviewed' | 'note'>,
+): boolean {
+  const empty = f.value === null || f.value === undefined || f.value === '';
+  const unit = (f.unit ?? '').trim().toLowerCase();
+  return (
+    empty &&
+    !f.reviewed &&
+    unit !== '' &&
+    !NON_FIGURE_UNITS.has(unit) &&
+    typeof f.note === 'string' &&
+    f.note.trim().startsWith(CLEARED_NOTE_PREFIX)
+  );
 }
 
 /**
@@ -85,9 +115,19 @@ export function flaggedFieldsForDoc(args: {
       if (cell.docId !== docId) continue;
       out.push(toFlagged(cell.field, cell.confidence));
     }
+    // R2-I1 — a cleared value has no worksheet cell (it renders "—"), but it
+    // still needs the analyst: it follows the cells, once.
+    const listed = new Set(out.map((f) => f.field));
+    for (const f of fields) {
+      if (listed.has(f.field_name) || !isClearedForReview(f)) continue;
+      listed.add(f.field_name);
+      out.push(toFlagged(f.field_name, f.confidence ?? 0));
+    }
     return out;
   }
-  return fields.filter(isFlaggedField).map((f) => toFlagged(f.field_name, f.confidence ?? 0));
+  return fields
+    .filter((f) => isFlaggedField(f) || isClearedForReview(f))
+    .map((f) => toFlagged(f.field_name, f.confidence ?? 0));
 }
 
 // ── Labels ────────────────────────────────────────────────────────────────

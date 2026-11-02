@@ -1061,7 +1061,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // shared review state's total — exactly the red cells the worksheet shows
   // across every statement's column (validation lives there now, not a
   // duplicate P&L here — team sync 2026-08).
-  const flaggedFinancialCount = liveMode ? reviewState.total : 0;
+  // R2-I1 — the same per-document lists the badges count (worksheet cells
+  // plus cleared "Needs review" values), so the global count is their sum.
+  const flaggedFinancialCount = liveMode
+    ? docs.reduce(
+        (n, d) => n + (FINANCIAL_DOC_TYPES.has(d.type) ? (flaggedByDoc.get(d.id)?.length ?? 0) : 0),
+        0,
+      )
+    : 0;
 
   return (
     <div className="space-y-5">
@@ -1597,6 +1604,8 @@ type ReviewField = {
   rawText: string | null;
   /** Exactly 0.5 with raw text present — a chart / multi-column table read. */
   chartTableRead: boolean;
+  /** The worker's note on this field (reconciler / critic / repair), verbatim. */
+  note: string | null;
 };
 
 function InlineDocumentReview({
@@ -1669,6 +1678,7 @@ function InlineDocumentReview({
         explanation: fieldExplanation(f.confidence, f.source_page, doc.name),
         rawText: f.raw_text ?? null,
         chartTableRead: isChartTableRead(f.confidence, f.raw_text),
+        note: typeof f.note === 'string' && f.note.trim() ? f.note.trim() : null,
       });
     }
     return order.map((label) => ({ label, fields: map.get(label)! }));
@@ -2172,6 +2182,14 @@ function ReviewFieldRow({
           <ProvenanceDot state="document_sourced" review={flagged} size={8} />
           {field.label}
         </span>
+        {field.note && (
+          <span
+            data-testid="field-note"
+            style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.45, wordBreak: 'break-word' }}
+          >
+            {field.note}
+          </span>
+        )}
         {flagged && (
           <>
             <span

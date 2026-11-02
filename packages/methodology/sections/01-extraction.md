@@ -60,7 +60,9 @@ Every grounded figure, identifier and date is pulled into a typed list, each ent
 it was read from and a confidence score. Anything not grounded in the source is dropped. A field
 below the review threshold is flagged in the Data Room and in the Historical P&L until you accept or
 correct it. A correction to a figure is a number — the editor starts from the extracted figure, and
-an abbreviation such as “$10M” is refused, because no calculation could read it.
+an abbreviation such as “$10M” is refused, because no calculation could read it. A value Fondok had
+to clear because an earlier edit saved such an abbreviation shows as “—” with a note saying why, and
+is listed under Needs review until you enter the statement's figure or re-extract the document.
 
 :::
 
@@ -224,7 +226,11 @@ whatever it holds now (`extraction/edited_figures`: a number or a plain written 
 A one-time data repair (`migrations.repair_display_string_edits`) turned the display strings already
 stored back into a number only where the field record kept the exact value they displayed; every
 other one was cleared to empty, marked Needs review and audited — a figure is never guessed from
-“$10M”.
+“$10M”. A cleared value is never hidden: `reviewReasons.isClearedForReview` (empty numeric field,
+no review, note starting “Needs review”) puts it in the document's flagged list after its worksheet
+cells, so it counts in Review Recommended, the reason line and the global count; the Data Room
+review row and the document page show it as “—” with the worker's `note`, which both now render
+for every field.
 
 A monthly financial package that also carries a dated T12 sheet — twelve consecutive month-end
 columns and a TOTAL, the month columns adding up to the TOTAL — is read as the trailing twelve

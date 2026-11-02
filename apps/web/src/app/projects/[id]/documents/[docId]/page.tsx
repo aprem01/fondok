@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/Card';
 import { cn, formatValue } from '@/lib/format';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { humanizeFieldName } from '@/lib/fieldLabels';
+import { isClearedForReview } from '@/lib/reviewReasons';
 import { api } from '@/lib/api';
 import { effectiveDocSubtype } from '@/lib/docSubtype';
 import { useToast } from '@/components/ui/Toast';
@@ -49,9 +50,14 @@ export default function DocumentDetailPage() {
   const extFields = ext?.fields;
   const fields = useMemo(() => extFields ?? [], [extFields]);
 
-  // Only fields that carry a value are shown; counts follow the visible set.
+  // Only fields that carry a value are shown — plus a value the worker CLEARED
+  // and marked "Needs review" (W5 R2-I1), shown as "—" with its note so the
+  // analyst sees why it is empty. Counts follow the visible set.
   const displayable = useMemo(
-    () => fields.filter((f) => f.value !== null && f.value !== undefined && f.value !== ''),
+    () =>
+      fields.filter(
+        (f) => (f.value !== null && f.value !== undefined && f.value !== '') || isClearedForReview(f),
+      ),
     [fields],
   );
   const needsReview = (f: { confidence?: number | null; reviewed?: string | null }) =>
@@ -194,6 +200,9 @@ export default function DocumentDetailPage() {
                         <td className="px-5 py-2 text-ink-800">
                           {humanizeFieldName(f.field_name)}
                           <span className="block text-[10px] text-ink-400 font-mono">{f.field_name}</span>
+                          {typeof f.note === 'string' && f.note.trim() && (
+                            <span className="block text-[11px] text-ink-500 mt-0.5 whitespace-normal">{f.note.trim()}</span>
+                          )}
                         </td>
                         <td className={cn('px-5 py-2 text-right tabular-nums', low ? 'text-danger-700 font-medium' : 'text-ink-900')}>
                           {isEditing ? (
