@@ -264,5 +264,5 @@ async def test_override_audit_row_carries_the_analyst_note() -> None:
     assert notes == {"exit_cap_rate": "Comp set, Q3 trades"}
     assert sorted(payload["metadata"]["changed_keys"]) == [
         "exit_cap_rate",
-        "stabilization_year",
+        "property_overview.name",
     ]
