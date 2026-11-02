@@ -1078,3 +1078,54 @@ async def test_persisted_lineage_stops_citing_a_deleted_document() -> None:
     assert not any(n.startswith(f"page:{t12_id}:") for n in ids)
     assert after.stale is True
     assert t12_id in after.meta["evidence_deleted"]
+
+
+@pytest.mark.asyncio
+async def test_a_loader_notice_on_a_grounded_assumption_reaches_unresolved_with_its_detail() -> None:
+    """The runner's ``__reasons__`` entries are ``{"code", "detail"}`` dicts.
+    A notice on a document-grounded assumption (a same-period statement
+    conflict, a clipped ratio) is a value that is USED but needs review: the
+    assumption node carries the code and ``unresolved`` carries the loader's
+    own sentence, so the drawer can name both documents."""
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.lineage import build_lineage
+
+    deal_id = str(uuid4())
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    detail = (
+        "Two statements for the same period disagree: rooms revenue "
+        "$9,496,407 in A.xlsm vs $8,900,000 in B.csv. The model uses A.xlsm."
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await _seed_and_run(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id
+        )
+        real_loader = engine_runner._load_engine_inputs
+
+        async def _with_notice(*args, **kwargs):
+            base = await real_loader(*args, **kwargs)
+            assert "starting_occupancy" in base["__source_fields__"]
+            base["__reasons__"]["starting_occupancy"] = {
+                "code": ReasonCode.NEEDS_REVIEW,
+                "detail": detail,
+            }
+            return base
+
+        engine_runner._load_engine_inputs = _with_notice
+        try:
+            record = await build_lineage(session, deal_id, tenant_id, run_id=run_id)
+        finally:
+            engine_runner._load_engine_inputs = real_loader
+
+    node = _index(record)["assumption:starting_occupancy"]
+    assert node.reason is ReasonCode.NEEDS_REVIEW
+    assert node.value is not None
+    hits = [r for r in record.unresolved if r.detail == detail]
+    assert len(hits) == 1
+    assert hits[0].code is ReasonCode.NEEDS_REVIEW

@@ -1421,9 +1421,22 @@ class _WalkContext:
 
         label = self.sources.get(key)
         concept = _LABEL_CONCEPTS.get((key, label or "")) or _ASSUMPTION_CONCEPTS.get(key)
-        reason = _coerce_reason(self.assumption_reasons.get(key))
+        raw_reason = self.assumption_reasons.get(key)
+        # The runner's entries are ``{"code", "detail"}``; tests and older
+        # callers pass a bare code. Read both.
+        reason = _coerce_reason(
+            raw_reason.get("code") if isinstance(raw_reason, dict) else raw_reason
+        )
         if reason is None and label in _REFUSAL_LABELS:
             reason = _REFUSAL_LABELS[label]
+        # A reason on a DOCUMENT-GROUNDED assumption is a notice about a value
+        # that is used but must be reviewed (W5: a same-period statement
+        # conflict, a clipped ratio). Its sentence names the documents, so it
+        # is reported as written. A seed's reason is reported by the seed
+        # path below with its own sentence, never twice.
+        detail = raw_reason.get("detail") if isinstance(raw_reason, dict) else None
+        if reason is not None and key in self.source_fields and isinstance(detail, str) and detail:
+            self.b.refuse(reason, detail=detail, concept=concept or _assumption_node(key))
         self.b.node(
             LineageNode(
                 id=assumption_id,

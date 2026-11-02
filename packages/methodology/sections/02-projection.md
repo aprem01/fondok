@@ -116,7 +116,9 @@ P&L, say), the Historical P&L shows one column, built from the primary statement
 other as supplemental on that column. The primary is the one that drives the model: the statement
 the Data Room marks “Primary source” — a full-year statement ahead of a partial one, then the fuller
 extraction, then the newer upload. Re-tag a statement's year in the Data Room to change which is
-primary.
+primary. The other statement is never averaged into Year 1; when it disagrees with the primary by
+more than 5% on rooms, F&B, total revenue or NOI, the Year-1 figures carry a review note naming both
+documents and values.
 
 {testid=correction-note-methodology} **Correcting an extracted value.** A statement figure can be corrected where it is read — from a
 flagged cell on the Historical P&L, from the Data Room review list, or by re-importing the exported
@@ -328,6 +330,13 @@ and an analyst override replaces it.
 Growth defaults when no document and no override sets them: occupancy growth 0.8% a year, ADR
 growth 4.0%, RevPAR growth 4.5%, expense growth 3.5%, F&B revenue $88.00 per occupied room, other
 revenue 6.5% of rooms revenue. Each is badged Seed until replaced.
+
+<!-- source: apps/worker/app/services/engine_runner.py (_load_engine_inputs: fb_revenue_per_occupied_room, other_revenue_pct_of_rooms, OTHER_REVENUE_PCT_CAP 0.30, uncapped_ratio / cap on the source field, _loader_notices) -->
+When the primary statement carries the lines, the two revenue-mix anchors come from it: F&B revenue
+÷ (Year-1 occupancy × keys × 365) per occupied room, and (other operated + miscellaneous revenue) ÷
+rooms revenue. The ratio is capped at 30%; a statement that reads higher is clipped with a
+{{reason:needs_review}} note giving its own ratio, and the source row records the uncapped ratio
+and the cap — a clip is never silent.
 
 :::
 

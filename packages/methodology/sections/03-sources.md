@@ -294,9 +294,16 @@ never replaced by a number, and the workspace's own uploaded figures are unaffec
 Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the
 Data Room badges as **Primary source**. The model and the badge share one ranking — full-year
 statements before partial ones, the most recent period first, a T-12 ahead of a calendar-year P&L of
-the same year. Older annual P&Ls never blend into Year 1: a line is corroborated only across
-statements that describe the same period, so every Year-1 number traces to a single row of the
+the same year, then the more detailed statement. Older annual P&Ls never blend into Year 1, and
+neither does a second statement of the same year: every Year-1 number traces to a single row of the
 primary statement. Earlier years still feed the Historical P&L and the variance checks.
+
+When two statements of the same period disagree by more than 5% on rooms revenue, F&B revenue,
+total revenue or NOI, every figure the primary grounds is marked **Needs review**, with a
+note that names both documents, both values and the one the model uses. Override the affected
+assumptions if the other statement is the one to underwrite. With three or more statements of one
+period, a primary whose headline line sits more than 25% from the others' median is set aside as a
+misread, and the next statement supplies the whole year, never a single line.
 
 :::
 
@@ -338,9 +345,11 @@ primary statement. Earlier years still feed the Historical P&L and the variance 
   through a month end, or a trailing twelve months ending at a month end, and the column header says
   which. When the basis cannot be established the column shows the bare year with a “basis unknown”
   chip, never an invented period.
-- **Cross-checked across statements.** When more than one full-year statement covers the same period,
-  each revenue and expense line is cross-checked and Year 1 is grounded on the corroborated value, so
-  one misread line cannot skew the model. A line reported by only one statement is used as-is.
+- **Cross-checked across statements, never blended.** When more than one statement covers the same
+  period, Year 1 takes every line from the primary statement and the others only check it: a
+  disagreement above 5% on a headline line is a review note naming both documents, and two
+  statements are never averaged. A line is read from its own section of the statement, so a cost
+  line labelled with a revenue name is never read as revenue.
 - **One review state, Data Room and P&L.** A value is “to review” when its extraction confidence is
   below the threshold and it has not been accepted or corrected. The Data Room's per-statement count
   is exactly the number of flagged cells in that statement's column; accepting or correcting a value
@@ -447,11 +456,23 @@ required equity and LTC.
 ::: card
 #### Which statement is the Year-1 basis
 
-<!-- source: apps/worker/app/services/engine_runner.py (primary-statement ranking shared with the Data Room badge: full-year before partial, most recent period first, T-12 ahead of a calendar-year P&L of the same year) -->
+<!-- source: apps/worker/app/services/engine_runner.py (primary-statement ranking shared with the Data Room badge: full-year before partial, most recent period first, T-12 ahead of a calendar-year P&L of the same year; _choose_period_statements: one statement per period, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25, three or more statements; _resolve_statement_lines: exact alias first, no tail match through the opposite section; _loader_notices: needs_review) -->
 One statement supplies Year-1 occupancy, ADR, revenue lines and expense lines: the one the Data
 Room badges Primary source. The ranking is full-year statements before partial ones, the most
-recent period first, a T-12 ahead of a calendar-year P&L of the same year. Older annual P&Ls never
-blend into Year 1.
+recent period first, a T-12 ahead of a calendar-year P&L of the same year, then the more complete
+extraction. Older annual P&Ls never blend into Year 1, and a second statement of the same period
+never supplies or averages a line; a line the primary does not carry falls to the next period's
+statement or to the labelled default.
+
+<!-- source: apps/worker/app/services/engine_runner.py (_resolve_statement_lines, _COST_SECTION_SEGMENTS / _REVENUE_SECTION_SEGMENTS; _choose_period_statements, _HEADLINE_LINES, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25; _loader_notices) -->
+A line resolves by its exact field path first; only when no exact path exists does a field whose
+last segment names the line count, and never one under a cost or expense section for a revenue line
+(or a revenue section for an expense line). Statements of the same period are compared on rooms
+revenue, F&B revenue, total revenue and NOI; a difference above 5% of the larger value marks every
+assumption grounded on the primary {{reason:needs_review}}, naming both documents, both values and
+the statement used. With three or more statements of the period, the primary is set aside only when
+a headline line is more than 25% from the median of the statements carrying it; the next-ranked
+statement that is not itself that far off then supplies every line.
 
 :::
 :::
@@ -936,10 +957,16 @@ Data Room badges as **Primary source**. The engines and the badge now share one 
 statements before partial ones, the most recent period first, and a T-12 ahead of a calendar-year
 P&L of the same year. A T-12 whose extraction carries no period label is still treated as a
 trailing-twelve, and when it carries no date at all it is taken as the current period, because an
-analyst uploads a T-12 as the latest statement. Older annual P&Ls never blend into Year-1: a line is
-only corroborated across statements that describe the same period (two uploads of the same T-12, or
-a summary and a detailed P&L of one year), so every Year-1 number traces to a single row of the
-primary statement. The earlier years still feed the Historical P&L grid and the variance checks.
+analyst uploads a T-12 as the latest statement. Older annual P&Ls never blend into Year-1, and
+neither does a second statement of the same period (two uploads of one T-12, or a summary and a
+detailed P&L of one year): `_choose_period_statements` keeps one statement per period key
+`(tier, recency)` and the others only corroborate it, so every Year-1 number traces to a single row
+of the primary statement. A disagreement above 5% on rooms / F&B / total revenue / NOI becomes a
+`needs_review` entry in `__reasons__` on every assumption whose `__source_fields__` row is on the
+primary (`_loader_notices`), and its detail reaches the lineage drawer's Unresolved list. With three
+or more statements of one period the median may set aside a primary more than 25% off on a headline
+line; the next statement then supplies the whole period. The earlier years still feed the
+Historical P&L grid and the variance checks.
 
 :::
 
@@ -1024,12 +1051,15 @@ Provenance runs on two levels, and every figure on the platform carries one or t
 - **Primary financial source.** When several statements cover the same periods, Fondok ranks them —
   full-year sources over partial (monthly / YTD), most-recent period, then most-detailed — and badges
   the winner “Primary source” in the Data Room so it's clear which statement drives the historicals.
-- **Cross-checked across statements.** When more than one full-year statement is uploaded, Fondok
-  doesn't just trust the top-ranked one — it cross-checks each revenue and expense line across all of
-  them and grounds Year-1 on the corroborated (median) value. So if a single statement mis-reads one
-  line — say F&B revenue comes through an order of magnitude low — the other full-year statements
-  outvote it and the model isn't skewed by one bad extraction. A line reported by only one statement
-  is used as-is.
+- **Cross-checked across statements, never blended.** When more than one statement covers the same
+  period, Year-1 takes every line from the primary statement; the others corroborate it. A
+  disagreement above 5% on rooms, F&B, total revenue or NOI is a `needs_review` note naming both
+  documents and values. Only with three or more statements of the period can the median set the
+  primary aside — when a headline line is more than 25% off, as when F&B comes through an order of
+  magnitude low — and then the next statement supplies the whole period, never one line. Lines
+  resolve exact path first (`_resolve_statement_lines`); a tail match never crosses into a cost
+  section for revenue or a revenue section for an expense, so
+  `cost_of_services.rooms_revenue_usd` is not rooms revenue.
 - **One review state, Data Room ↔ P&L.** An extracted historical value is "to review" when its
   extraction confidence is below 85% and it hasn't been accepted or corrected — and only if it has a
   cell in P&L → Historical P&L (a value with nowhere to land is never counted). The Data Room's

@@ -50,8 +50,11 @@ from ..alerting import report_alert
 # value here: the loaders keep their existing ``field_catalog`` alias
 # matching (DRIFT_NOTES §6 — widening the vocabulary is a separate change
 # set with a golden diff, and needs the basis filter first). The registry is
-# used only to DESCRIBE the row the legacy matcher already picked.
+# used only to DESCRIBE the row the legacy matcher already picked — and
+# (W5) to read a statement's total revenue / NOI when two statements of one
+# period are compared for a conflict notice; it supplies no Year-1 value.
 from ..ontology.registry import Resolution, concept_for_path
+from ..ontology.registry import resolve as resolve_concept
 # FON-101 — the ``pip_document`` source id (see the SOURCE_* block below).
 from .renovation_budget import SOURCE_PIP_DOCUMENT
 
@@ -59,6 +62,7 @@ from .renovation_budget import SOURCE_PIP_DOCUMENT
 # badge (``api.documents._mark_primary_financial``). See the module
 # docstring for the order of preference and the live bug that forced it.
 from .financial_source_rank import (
+    CURRENT_PERIOD_SORTKEY,
     FULL_YEAR_PERIOD_TYPES as _SHARED_FULL_YEAR_PERIOD_TYPES,
     financial_source_sort_key,
     period_recency,
@@ -1667,11 +1671,16 @@ async def _load_engine_inputs(
     # extracted, prefer the actual occupancy / ADR over the Kimpton seed
     # so the Per-Key tab and downstream rooms-revenue projection reflect
     # the real property instead of the demo defaults.
+    # W5 — same-period statements that disagree; each becomes a
+    # ``needs_review`` notice on the assumptions grounded on the statement
+    # the model uses (attached once every override has had its say, below).
+    statement_conflicts: list[_StatementConflict] = []
     revenue_actuals, revenue_prov = await _load_t12_revenue_actuals(
         session,
         deal_id=deal_id,
         tenant_id=effective_tenant,
         with_provenance=True,
+        conflicts=statement_conflicts,
     )
 
     def _ground(assumption_key: str, canonical: str) -> None:
@@ -1724,6 +1733,7 @@ async def _load_engine_inputs(
     # extraction collapsed them.
     rooms_rev = revenue_actuals.get("rooms_revenue")
     fb_rev = revenue_actuals.get("fb_revenue")
+    other_ratio_capped_detail: str | None = None
     other_rev = revenue_actuals.get("other_revenue", 0.0) or 0.0
     resort_fees = revenue_actuals.get("resort_fees", 0.0) or 0.0
     misc_rev = revenue_actuals.get("misc_revenue", 0.0) or 0.0
@@ -1772,11 +1782,32 @@ async def _load_engine_inputs(
     ):
         # Cap the ratio at a sane upper bound so a partial extraction
         # (rooms revenue missing, all other_pool present) can't blow up.
-        base["other_revenue_pct_of_rooms"] = min(0.30, other_pool / rooms_rev)
+        # A clip is a symptom of a bad input, never an answer: it is recorded
+        # on the provenance (the statement's own ratio + the cap) and becomes
+        # a ``needs_review`` notice below — never silent (W5, deal b67bfdee
+        # was clipped from 31% with no trace).
+        other_ratio = other_pool / rooms_rev
+        base["other_revenue_pct_of_rooms"] = min(OTHER_REVENUE_PCT_CAP, other_ratio)
         _ground(
             "other_revenue_pct_of_rooms",
             "other_revenue" if "other_revenue" in revenue_prov else "misc_revenue",
         )
+        if other_ratio > OTHER_REVENUE_PCT_CAP:
+            capped_sf = source_fields.get("other_revenue_pct_of_rooms")
+            if capped_sf is not None:
+                source_fields["other_revenue_pct_of_rooms"] = dataclasses.replace(
+                    capped_sf,
+                    extra=capped_sf.extra
+                    + (("uncapped_ratio", other_ratio), ("cap", OTHER_REVENUE_PCT_CAP)),
+                )
+            other_ratio_capped_detail = (
+                f"Other revenue reads {other_ratio:.1%} of rooms revenue "
+                f"({_money(other_pool)} of other / misc revenue over "
+                f"{_money(rooms_rev)} of rooms revenue on the statement); the "
+                f"model caps the ratio at {OTHER_REVENUE_PCT_CAP:.0%}. "
+                "A ratio this high usually means a revenue line was misread — "
+                "check the statement or override the ratio."
+            )
 
     # When the deal has an extracted OM, prefer the broker's published
     # capital + debt numbers over the Kimpton seed so the capital stack
@@ -2765,6 +2796,20 @@ async def _load_engine_inputs(
     ]:
         source_fields.pop(key, None)
 
+    # ── W5 — loader notices on the numbers that ARE used ────────────────
+    # A same-period statement conflict, or a clipped other-revenue ratio,
+    # lands as ``needs_review`` on every assumption still grounded on the
+    # statement concerned (an analyst override already dropped its source
+    # field above, so an overridden key carries no stale notice).
+    reasons.update(
+        _loader_notices(
+            source_fields,
+            conflicts=statement_conflicts,
+            other_ratio_capped_detail=other_ratio_capped_detail,
+            already=reasons,
+        )
+    )
+
     # ── Phase 2.1 — explain every remaining seed ────────────────────────
     reasons.update(
         await _seed_reasons(
@@ -2831,6 +2876,40 @@ async def _load_engine_inputs(
 def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
     """One ``__reasons__`` entry."""
     return {"code": code, "detail": detail}
+
+
+#: The ceiling on ``other_revenue_pct_of_rooms`` derived from a statement. A
+#: statement that reads above it is clipped WITH a ``needs_review`` notice.
+OTHER_REVENUE_PCT_CAP = 0.30
+
+
+def _loader_notices(
+    source_fields: Mapping[str, SourceField],
+    *,
+    conflicts: list[_StatementConflict],
+    other_ratio_capped_detail: str | None,
+    already: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """``needs_review`` reasons for document-grounded assumptions whose
+    value is used but must be reviewed: every key grounded on a statement
+    with a same-period conflict, and a clipped other-revenue ratio. A key
+    that already carries a reason keeps it."""
+    details: dict[str, list[str]] = {}
+    for conflict in conflicts:
+        if conflict.document_id is None:
+            continue
+        for key in sorted(source_fields):
+            if source_fields[key].document_id == conflict.document_id:
+                details.setdefault(key, []).append(conflict.detail)
+    if other_ratio_capped_detail and "other_revenue_pct_of_rooms" in source_fields:
+        details.setdefault("other_revenue_pct_of_rooms", []).append(
+            other_ratio_capped_detail
+        )
+    return {
+        key: _reason(ReasonCode.NEEDS_REVIEW, " ".join(parts))
+        for key, parts in details.items()
+        if key not in already
+    }
 
 
 # ───────────── FON-89 — Year-1 displacement status (honest UI) ─────────────
@@ -4519,15 +4598,111 @@ def _is_sub_period_source(prov: Any) -> bool:
         return False
 
 
-class _ActualCandidate(NamedTuple):
-    """One extraction row that can supply a canonical Year-1 actual."""
+#: Path segments that place a line in a cost / expense section. The revenue
+#: loader never resolves a canonical by its TAIL through such a path: the FY2024
+#: Detailed P&L of deal b67bfdee lists
+#: ``minor_operated_departments.cost_of_services.rooms_revenue_usd`` ($552.77,
+#: a cost-of-services sub-line) before ``operating_revenue.rooms_revenue``
+#: ($9.50M), and the tail alias ``rooms_revenue_usd`` let the cost line claim
+#: rooms revenue (2026-11).
+_COST_SECTION_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "cost",
+        "costs",
+        "cost_of_services",
+        "cost_of_sales",
+        "cost_of_goods_sold",
+        "expense",
+        "expenses",
+        "departmental_expenses",
+        "operating_expenses",
+        "undistributed",
+        "undistributed_expenses",
+        "undistributed_operating_expenses",
+        "fixed_charges",
+        "fees_and_reserves",
+        "management_fees",
+        "payroll",
+    }
+)
 
-    value: float
-    is_full_year: bool
-    provenance: "SourceField | None"
-    #: ``(tier, recency)`` of the row's statement — the period identity the
-    #: corroboration median is scoped to.
-    period_key: tuple[int, int]
+#: Path segments that place a line in a revenue section — the expense
+#: loader's mirror of :data:`_COST_SECTION_SEGMENTS`.
+_REVENUE_SECTION_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "revenue",
+        "revenues",
+        "operating_revenue",
+        "operating_revenues",
+        "departmental_revenue",
+        "departmental_revenues",
+    }
+)
+
+
+def _is_cost_section(segment: str) -> bool:
+    return (
+        segment in _COST_SECTION_SEGMENTS
+        or segment.startswith("cost_of_")
+        or segment.endswith(("_expense", "_expenses", "_costs"))
+    )
+
+
+def _is_revenue_section(segment: str) -> bool:
+    return segment in _REVENUE_SECTION_SEGMENTS or segment.endswith(
+        ("_revenue", "_revenues")
+    )
+
+
+def _resolve_statement_lines(
+    fields: list[Any],
+    aliases: Mapping[str, str],
+    *,
+    opposite_section: Callable[[str], bool],
+    admit: Callable[[float], bool] = lambda _v: True,
+) -> dict[str, tuple[float, dict[str, Any]]]:
+    """``{canonical: (value, field)}`` for ONE statement's extraction fields.
+
+    Two passes over the fields, full-period lines ahead of sub-period slices
+    (:func:`_full_period_lines_first`):
+
+    1. **Exact** — a field whose full path is a catalog alias claims its
+       canonical, wherever it sits in the row.
+    2. **Tail** — only for a canonical no exact path claimed: a dotted path
+       whose LAST segment is an alias, unless the path runs through a section
+       ``opposite_section`` rejects (a cost / expense section for a revenue
+       canonical, a revenue section for an expense canonical).
+
+    The first field to claim a canonical in a pass keeps it. ``admit`` is the
+    loader's value guard (the expense loader drops non-positive lines, so a
+    later field may still claim that canonical).
+    """
+    ordered = [f for f in _full_period_lines_first(fields) if isinstance(f, dict)]
+    usable: list[tuple[str, float, dict[str, Any]]] = []
+    for f in ordered:
+        name = (f.get("field_name") or "").strip().lower()
+        value = f.get("value")
+        if not name or not isinstance(value, (int, float)):
+            continue
+        usable.append((name, float(value), f))
+
+    lines: dict[str, tuple[float, dict[str, Any]]] = {}
+    for name, v, f in usable:
+        canonical = aliases.get(name)
+        if canonical is None or canonical in lines or not admit(v):
+            continue
+        lines[canonical] = (v, f)
+    for name, v, f in usable:
+        if "." not in name:
+            continue  # a bare name was already tried as an exact alias
+        segments = name.split(".")
+        canonical = aliases.get(segments[-1])
+        if canonical is None or canonical in lines or not admit(v):
+            continue
+        if any(opposite_section(seg) for seg in segments[:-1]):
+            continue
+        lines[canonical] = (v, f)
+    return lines
 
 
 def _pnl_period_identity(
@@ -4554,53 +4729,203 @@ def _pnl_period_identity(
     return tier == 0, (tier, recency)
 
 
-def _pick_corroborated_actual(
-    cands: list[_ActualCandidate],
-) -> tuple[float, "SourceField | None"]:
-    """The Year-1 actual for one canonical line from its ranked candidates.
+# ─────────── one statement per period (same-period conflicts) ───────────
 
-    The top-ranked statement (the Data Room's primary source) supplies the
-    value. The corroboration median (real deal 7a9928e0 — a mis-read F&B
-    line frozen as Year-1) still applies, but ONLY across full-year
-    statements that describe the SAME period as the top-ranked one: two
-    uploads of the same T-12, or a summary and a detailed P&L of the same
-    year, corroborate each other. Statements of other years never blend
-    in — before 2026-10 a deal with a current T-12 plus 2019–2024 annual
-    P&Ls got the six-year median of other / misc / rooms revenue (COVID
-    years included) as its "Year-1 actual", 30% other-revenue on a 14%
-    hotel, while F&B came from the T-12. One statement, one basis.
+#: Two statements of the same period that differ by more than this on a
+#: headline line disagree: the analyst gets a ``needs_review`` notice.
+_SAME_PERIOD_CONFLICT_TOLERANCE = 0.05
+#: With three or more statements of one period, the top-ranked statement is
+#: set aside as a mis-read only when a headline line sits further than this
+#: from the median of the statements carrying it (deal 7a9928e0: F&B $96,528
+#: against $2.74M / $2.91M). A few percent apart is a different basis or
+#: version — a notice, never a switch.
+_SAME_PERIOD_OUTLIER_TOLERANCE = 0.25
+#: The lines two statements of a period are compared on, with their wording.
+_HEADLINE_LINES: tuple[tuple[str, str], ...] = (
+    ("rooms_revenue", "rooms revenue"),
+    ("fb_revenue", "F&B revenue"),
+    ("total_revenue", "total revenue"),
+    ("noi", "NOI"),
+)
+
+
+class _StatementConflict(NamedTuple):
+    """A same-period disagreement the analyst must review.
+
+    ``document_id`` is the statement the model USES for the period: the
+    notice lands on every assumption grounded on it.
     """
-    top = cands[0]
-    same_period = [c for c in cands if c.is_full_year and c.period_key == top.period_key]
-    if top.is_full_year and len(same_period) >= 2:
-        chosen = float(statistics.median([c.value for c in same_period]))
-        picked = next((c.provenance for c in same_period if c.value == chosen), None)
-        return chosen, picked
-    return top.value, top.provenance
+
+    document_id: str | None
+    detail: str
 
 
-async def _load_t12_revenue_actuals(
-    session: AsyncSession,
-    *,
-    deal_id: str,
-    tenant_id: str,
-    with_provenance: bool = False,
-) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
-    """Read Year-1 occupancy / ADR / RevPAR off the deal's most recent T-12.
+def _statement_headlines(fields: list[Any], doc_type: str) -> dict[str, float]:
+    """The statement's own full-period headline lines (rooms / F&B through
+    the revenue loader's resolution, total revenue / NOI through the concept
+    registry). A sub-period slice is not the statement's figure, so it is
+    never compared."""
+    out: dict[str, float] = {}
+    lines = _resolve_statement_lines(
+        fields, _T12_REVENUE_FIELD_ALIASES, opposite_section=_is_cost_section
+    )
+    for canonical in ("rooms_revenue", "fb_revenue"):
+        hit = lines.get(canonical)
+        if hit is not None and not _is_sub_period_path(hit[1].get("field_name") or ""):
+            out[canonical] = hit[0]
+    dt = (doc_type or "").strip().upper() or None
+    for concept in ("total_revenue", "noi"):
+        res = resolve_concept(fields, concept, doc_type=dt, want="annual")
+        if res.reason is None and isinstance(res.value, (int, float)):
+            out[concept] = float(res.value)
+    return out
 
-    Returns ``{}`` (no overrides — the key keeps its labelled default)
-    when no T-12 has been extracted. A read failure propagates.
 
-    Occupancy is normalized to a 0..1 fraction (extractors sometimes emit
-    it as a percent like ``70.1`` and sometimes as a ratio like ``0.701``).
+def _outlier_lines(
+    head: Mapping[str, float], peers: list[Mapping[str, float]]
+) -> list[tuple[str, float, float, int]]:
+    """``(line, value, median, n)`` for each headline line on which ``head``
+    sits further than :data:`_SAME_PERIOD_OUTLIER_TOLERANCE` from the median
+    of the ``n >= 3`` statements carrying it."""
+    out: list[tuple[str, float, float, int]] = []
+    for line, _label in _HEADLINE_LINES:
+        if line not in head:
+            continue
+        values = [p[line] for p in peers if line in p]
+        if len(values) < 3:
+            continue
+        mid = float(statistics.median(values))
+        if mid and abs(head[line] - mid) > _SAME_PERIOD_OUTLIER_TOLERANCE * abs(mid):
+            out.append((line, head[line], mid, len(values)))
+    return out
 
-    Phase 2.1 — ``with_provenance=True`` returns
-    ``(actuals, {canonical: SourceField})``: the exact extraction row that
-    supplied each canonical line. Value selection is UNCHANGED (same alias
-    map, same corroboration median), so the plain call is byte-identical.
-    A canonical whose value came out of the multi-document MEDIAN carries a
-    derived provenance record (no single row owns that number).
+
+def _statement_label(shim: Mapping[str, Any]) -> str:
+    name = shim.get("filename")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return f"document {shim.get('document_id') or '(unknown)'}"
+
+
+def _period_label(period_key: tuple[int, int]) -> str:
+    recency = period_key[1]
+    if recency == CURRENT_PERIOD_SORTKEY:
+        return "the current trailing-twelve period"
+    if 1900_01_01 <= recency <= 2100_12_31:
+        return (
+            f"the period ending {recency // 10_000:04d}-"
+            f"{recency // 100 % 100:02d}-{recency % 100:02d}"
+        )
+    return "the same period"
+
+
+def _money(value: float) -> str:
+    return f"-${abs(value):,.0f}" if value < 0 else f"${value:,.0f}"
+
+
+def _choose_period_statements(
+    ranked: list[tuple[list[Any], str, Any]],
+) -> tuple[set[int], list[_StatementConflict]]:
+    """Which ranked statement supplies each period, and what disagrees.
+
+    One statement, one basis: every Year-1 line of a period comes from ONE
+    statement — the top-ranked of that period (the Data Room's Primary
+    source). Another statement of the same period never supplies a line and
+    is never averaged in; it only corroborates. With three or more statements
+    of the period, the median may set the top-ranked one aside as a mis-read
+    (:func:`_outlier_lines`), and then the next-ranked statement that is not
+    itself an outlier supplies the WHOLE period, never one line.
+
+    Returns the ranked indices of the chosen statements and one
+    :class:`_StatementConflict` per period whose statements disagree by more
+    than :data:`_SAME_PERIOD_CONFLICT_TOLERANCE` on a headline line (or whose
+    top-ranked statement was set aside).
     """
+    groups: dict[tuple[int, int], list[int]] = {}
+    for i, (fields, doc_type, shim) in enumerate(ranked):
+        _full, key = _pnl_period_identity(fields, doc_type, shim)
+        groups.setdefault(key, []).append(i)
+
+    chosen: set[int] = set()
+    conflicts: list[_StatementConflict] = []
+    for key, members in groups.items():
+        if len(members) == 1:
+            chosen.add(members[0])
+            continue
+        heads = {i: _statement_headlines(ranked[i][0], ranked[i][1]) for i in members}
+        peers = [heads[i] for i in members]
+        pick = members[0]
+        sentences: list[str] = []
+        set_aside = _outlier_lines(heads[pick], peers) if len(members) >= 3 else []
+        if set_aside:
+            replacement = next(
+                (i for i in members[1:] if not _outlier_lines(heads[i], peers)), None
+            )
+            if replacement is not None:
+                pick = replacement
+                top = _statement_label(ranked[members[0]][2])
+                reads = "; ".join(
+                    f"{label} {_money(v)} against a median of {_money(mid)} "
+                    f"across {n} statements"
+                    for line, v, mid, n in set_aside
+                    for ln, label in _HEADLINE_LINES
+                    if ln == line
+                )
+                sentences.append(
+                    f"{top} ranks first for {_period_label(key)} but reads {reads} "
+                    f"(more than {_SAME_PERIOD_OUTLIER_TOLERANCE:.0%} off), so it is "
+                    "set aside as a mis-read."
+                )
+        chosen.add(pick)
+        used = _statement_label(ranked[pick][2])
+        others: list[str] = []
+        for i in members:
+            if i == pick:
+                continue
+            diffs: list[str] = []
+            for line, label in _HEADLINE_LINES:
+                a, b = heads[pick].get(line), heads[i].get(line)
+                if a is None or b is None:
+                    continue
+                scale = max(abs(a), abs(b))
+                if scale and abs(a - b) > _SAME_PERIOD_CONFLICT_TOLERANCE * scale:
+                    diffs.append(f"{label} {_money(a)} vs {_money(b)}")
+            if diffs:
+                other = _statement_label(ranked[i][2])
+                others.append(other)
+                sentences.append(f"{used} vs {other}: {'; '.join(diffs)}.")
+        if not sentences:
+            continue
+        intro = (
+            f"Statements for {_period_label(key)} disagree by more than "
+            f"{_SAME_PERIOD_CONFLICT_TOLERANCE:.0%}: "
+        )
+        tail = (
+            f" The model uses {used} for every Year-1 line of this period and "
+            "does not blend in "
+            + (", ".join(others) if others else "the other statements")
+            + "; override the affected assumptions if another statement is the "
+            "one to underwrite."
+        )
+        conflicts.append(
+            _StatementConflict(
+                document_id=(
+                    str(ranked[pick][2].get("document_id"))
+                    if ranked[pick][2].get("document_id")
+                    else None
+                ),
+                detail=intro + " ".join(sentences) + tail,
+            )
+        )
+    return chosen, conflicts
+
+
+async def _read_pnl_shims(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> list[dict[str, Any]]:
+    """The deal's P&L-family extraction rows as ranking shims (terse rows
+    expanded to long form), shared by both T-12 loaders so they rank and
+    choose statements on the same rows."""
     # The as-of columns feed the shared ranking key (period recency falls
     # through ``period_ending`` → ``report_as_of`` → …), so they are read
     # regardless of ``with_provenance`` — the winner must not depend on the
@@ -4614,7 +4939,7 @@ async def _load_t12_revenue_actuals(
             SELECT er.fields, d.doc_type, er.catalog_version,
                    er.id AS extraction_result_id, er.document_id,
                    {as_of_expr},
-                   d.fiscal_year, d.extracted_period_year
+                   d.fiscal_year, d.extracted_period_year, d.filename
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
@@ -4627,16 +4952,13 @@ async def _load_t12_revenue_actuals(
         {"deal": deal_id, "tenant": tenant_id},
     )
 
-    # Rank-then-merge so a true annual T-12 wins over a YTD-monthly upload
-    # even when the monthly was extracted later.
     # HOTFIX 2026-07-05: 4fa867b fed bare (fields, doc_type) tuples into
     # _rank_pnl_rows one row at a time — crashing on ._mapping AND
     # destroying the rank-across-rows semantics — and called
     # asyncio.run() inside this async function (RuntimeError on any
     # terse row). Restored: expand terse first, then rank all rows
-    # together via dict shims. Now routed through the shared sync
-    # ``read_extraction_fields`` accessor (expansion is pure in-memory,
-    # so awaiting per row was pointless) — same accessor every read path
+    # together via dict shims. Routed through the shared sync
+    # ``read_extraction_fields`` accessor — same accessor every read path
     # uses, so terse/long/mixed all resolve identically.
     from ..extraction.terse_schema import read_extraction_fields
 
@@ -4660,84 +4982,110 @@ async def _load_t12_revenue_actuals(
                 # ranking key (an unlabelled T-12 dates itself off these).
                 "fiscal_year": row[7] if len(row) > 7 else None,
                 "extracted_period_year": row[8] if len(row) > 8 else None,
+                # W5 — names the statement in a same-period conflict notice.
+                "filename": row[9] if len(row) > 9 else None,
             }
         )
+    return shims
 
-    # Corroboration-based grounding (2026-08 fix): instead of blindly
-    # freezing the first (top-ranked) doc's value for each canonical line,
-    # gather every doc's candidate value tagged with its period tier, then
-    # choose. When 2+ FULL-YEAR statements (annual / fiscal_year / ttm /
-    # t12 — see ``_FULL_YEAR_PERIOD_TYPES``) supply the same line, use the
-    # MEDIAN of those full-year values so a single mis-read statement can't
-    # skew Year-1 (real deal 7a9928e0: one T-12 extracted F&B as $96,528
-    # while two other full-year docs read $2.74M and $2.91M — first-wins had
-    # frozen the $96,528). When only one full-year doc (or only partial
-    # docs) supplies the line we keep the prior first-wins behavior, so
-    # single-source deals can't regress.
-    #
-    # ``_rank_pnl_rows`` returns rows best-first (full-year + most-recent
-    # ahead of partial periods), so ``cands[0]`` is exactly the legacy
-    # first-wins value. The per-row tier is recomputed via
-    # ``_extract_period_type`` — the cleanest read that leaves the shared
-    # ``_rank_pnl_rows`` signature (also used by the provenance loader)
-    # untouched.
-    candidates: dict[str, list[_ActualCandidate]] = {}
-    for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
-        is_full_year, period_key = _pnl_period_identity(
-            ranked_fields, ranked_doc_type, shim
+
+def _year_one_lines(
+    shims: list[dict[str, Any]],
+    aliases: Mapping[str, str],
+    *,
+    opposite_section: Callable[[str], bool],
+    admit: Callable[[float], bool] = lambda _v: True,
+    normalize: Callable[[str, float], float] = lambda _c, v: v,
+    with_provenance: bool,
+    conflicts: list[_StatementConflict] | None = None,
+) -> tuple[dict[str, float], dict[str, SourceField]]:
+    """Rank the statements, keep ONE per period
+    (:func:`_choose_period_statements`), then take each canonical from the
+    best-ranked kept statement that carries it.
+
+    ``_rank_pnl_shims`` orders rows best-first (full-year and most recent
+    ahead of partial periods). A line the period's statement lacks falls to
+    the next-ranked kept statement — another period — exactly as before; a
+    sibling of the same period never fills it (its basis is not the kept
+    statement's).
+    """
+    ranked = _rank_pnl_shims(shims)
+    kept, found = _choose_period_statements(ranked)
+    if conflicts is not None:
+        conflicts.extend(found)
+
+    actuals: dict[str, float] = {}
+    provenance: dict[str, SourceField] = {}
+    for i, (fields, doc_type, shim) in enumerate(ranked):
+        if i not in kept:
+            continue
+        lines = _resolve_statement_lines(
+            fields, aliases, opposite_section=opposite_section, admit=admit
         )
-        seen_in_row: set[str] = set()
-        for f in _full_period_lines_first(ranked_fields):
-            if not isinstance(f, dict):
+        for canonical, (value, field) in lines.items():
+            if canonical in actuals:
                 continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not name or not isinstance(value, (int, float)):
-                continue
-            canonical = _T12_REVENUE_FIELD_ALIASES.get(name)
-            if canonical is None:
-                tail = name.rsplit(".", 1)[-1] if "." in name else name
-                canonical = _T12_REVENUE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in seen_in_row:
-                continue
-            seen_in_row.add(canonical)
-            v = float(value)
-            if canonical == "occupancy":
-                # Extractors emit either a 0..1 ratio or a percent.
-                if v > 1.0:
-                    v = v / 100.0
-                v = max(0.0, min(0.99, v))
-            prov = (
-                _row_provenance(
+            v = normalize(canonical, value)
+            actuals[canonical] = v
+            if with_provenance:
+                provenance[canonical] = _row_provenance(
                     canonical=canonical,
-                    field=f,
+                    field=field,
                     value=v,
-                    doc_type=ranked_doc_type,
+                    doc_type=doc_type,
                     document_id=shim.get("document_id"),
                     extraction_result_id=shim.get("extraction_result_id"),
                     as_of=shim.get("report_as_of"),
                 )
-                if with_provenance
-                else None
-            )
-            candidates.setdefault(canonical, []).append(
-                _ActualCandidate(v, is_full_year, prov, period_key)
-            )
+    return actuals, provenance
 
-    actuals: dict[str, float] = {}
-    provenance: dict[str, SourceField] = {}
-    for canonical, cands in candidates.items():
-        chosen, picked = _pick_corroborated_actual(cands)
-        actuals[canonical] = chosen
-        if with_provenance:
-            provenance[canonical] = picked or _derived_provenance(
-                # An EVEN-count corroboration median is the average of two
-                # rows across two documents — no single row carries it.
-                concept=canonical,
-                value=chosen,
-                doc_type="T12",
-                basis="actual",
-            )
+
+def _normalize_revenue_line(canonical: str, value: float) -> float:
+    if canonical == "occupancy":
+        # Extractors emit either a 0..1 ratio or a percent.
+        if value > 1.0:
+            value = value / 100.0
+        return max(0.0, min(0.99, value))
+    return value
+
+
+async def _load_t12_revenue_actuals(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    with_provenance: bool = False,
+    conflicts: list[_StatementConflict] | None = None,
+) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
+    """Read Year-1 occupancy / ADR / RevPAR and revenue lines off the deal's
+    primary financial statement.
+
+    Returns ``{}`` (no overrides — the key keeps its labelled default)
+    when no T-12 has been extracted. A read failure propagates.
+
+    Occupancy is normalized to a 0..1 fraction (extractors sometimes emit
+    it as a percent like ``70.1`` and sometimes as a ratio like ``0.701``).
+
+    Lines resolve exact-alias first, tail second, never by tail from a cost /
+    expense section (:func:`_resolve_statement_lines`). Each period's lines
+    come from ONE statement (:func:`_choose_period_statements`); a value is
+    never a blend of two documents, so every canonical's provenance is the
+    row it came off. ``conflicts`` (optional) collects the same-period
+    disagreements the caller turns into analyst notices.
+
+    Phase 2.1 — ``with_provenance=True`` returns
+    ``(actuals, {canonical: SourceField})``; the plain call returns the same
+    values.
+    """
+    shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+    actuals, provenance = _year_one_lines(
+        shims,
+        _T12_REVENUE_FIELD_ALIASES,
+        opposite_section=_is_cost_section,
+        normalize=_normalize_revenue_line,
+        with_provenance=with_provenance,
+        conflicts=conflicts,
+    )
     return (actuals, provenance) if with_provenance else actuals
 
 
@@ -4748,140 +5096,34 @@ async def _load_t12_expense_actuals(
     tenant_id: str,
     with_provenance: bool = False,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
-    """Read Year-1 expense actuals off the deal's most recent T-12 extraction.
+    """Read Year-1 expense actuals off the deal's primary financial statement.
 
     Returns ``{}`` (no overrides — engine falls back to USALI ratios) when
     no T-12 has been extracted. A read failure propagates.
 
+    Same rules as :func:`_load_t12_revenue_actuals` — exact alias first, no
+    tail match through a revenue section, one statement per period (the
+    same statement the revenue loader keeps, so revenue and expenses share a
+    basis) — plus the zero-leak guard below.
+
     Phase 2.1 — ``with_provenance=True`` returns
-    ``(actuals, {canonical: SourceField})``. Selection is unchanged (same
-    alias map, same zero-leak guard, same corroboration median), so the
-    plain call is byte-identical.
+    ``(actuals, {canonical: SourceField})``; the plain call returns the same
+    values.
     """
-    # The as-of columns feed the shared ranking key (period recency falls
-    # through ``period_ending`` → ``report_as_of`` → …), so they are read
-    # regardless of ``with_provenance`` — the winner must not depend on the
-    # provenance flag. ``_report_as_of_expr`` is schema-probed (NULL
-    # stand-ins on a schema without the columns) and memoised per session.
-    as_of_expr = await _report_as_of_expr(session)
-    rows = await session.execute(
-        text(
-            # tenant-scope predicate required by tenant_middleware
-            f"""
-            SELECT er.fields, d.doc_type, er.catalog_version,
-                   er.id AS extraction_result_id, er.document_id,
-                   {as_of_expr},
-                   d.fiscal_year, d.extracted_period_year
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND er.tenant_id = :tenant
-               AND d.tenant_id = :tenant
-               AND d.doc_type IN ('T12','PNL','PNL_MONTHLY','PNL_YTD')
-             ORDER BY er.created_at DESC
-            """  # as_of_expr is a fixed column literal, never user input
-        ),
-        {"deal": deal_id, "tenant": tenant_id},
+    shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+    actuals, provenance = _year_one_lines(
+        shims,
+        _T12_EXPENSE_FIELD_ALIASES,
+        opposite_section=_is_revenue_section,
+        # Zero-leak guard (Eshan's NOI bug): every real hotel has admin &
+        # general, sales & marketing, utilities, property ops, mgmt fee, FF&E
+        # reserve, fixed charges. The extractor emits 0.0 when it can't find
+        # the line; honoring that zero wrote it into the projection P&L and
+        # NOI collapsed to ~100% of revenue. Non-positive lines never claim a
+        # canonical, so the USALI ratio fallback supplies the missing line.
+        admit=lambda v: v > 0.0,
+        with_provenance=with_provenance,
     )
-
-    # Rank-then-merge so an annual T-12's expense lines win over a
-    # partial-year YTD extract that's missing some buckets.
-    # HOTFIX 2026-07-05: same restore as _load_t12_revenue_actuals —
-    # see comment there (4fa867b tuple/_mapping + asyncio.run bugs).
-    # Now routed through the shared sync ``read_extraction_fields``
-    # accessor (see the revenue loader for rationale).
-    from ..extraction.terse_schema import read_extraction_fields
-
-    shims: list[dict[str, Any]] = []
-    for row in rows.fetchall():
-        raw_fields = row[0]
-        catalog_version = row[2] if len(row) > 2 else None
-        if isinstance(raw_fields, list):
-            raw_fields = read_extraction_fields(raw_fields, catalog_version)
-        shims.append(
-            {
-                "fields": raw_fields,
-                "doc_type": row[1],
-                # Phase 2.1 — row identity for ``__source_fields__``.
-                "extraction_result_id": row[3] if len(row) > 3 else None,
-                "document_id": row[4] if len(row) > 4 else None,
-                "report_as_of": row[5] if len(row) > 5 else None,
-                "report_as_of_precision": row[6] if len(row) > 6 else None,
-                # 2026-10 — see the revenue loader.
-                "fiscal_year": row[7] if len(row) > 7 else None,
-                "extracted_period_year": row[8] if len(row) > 8 else None,
-            }
-        )
-
-    # Corroboration-based grounding — mirrors ``_load_t12_revenue_actuals``:
-    # gather each doc's candidate value per canonical line (tagged with its
-    # period tier), then use the MEDIAN across full-year statements when 2+
-    # agree, else first-wins. Only diverging multi-full-year deals change;
-    # single-source deals are untouched. The zero-leak guard below still
-    # applies — non-positive values never enter the candidate pool, so the
-    # median is taken over real positive lines only and the USALI ratio
-    # fallback still supplies any dropped line.
-    candidates: dict[str, list[_ActualCandidate]] = {}
-    for ranked_fields, ranked_doc_type, shim in _rank_pnl_shims(shims):
-        is_full_year, period_key = _pnl_period_identity(
-            ranked_fields, ranked_doc_type, shim
-        )
-        seen_in_row: set[str] = set()
-        for f in _full_period_lines_first(ranked_fields):
-            if not isinstance(f, dict):
-                continue
-            name = (f.get("field_name") or "").strip().lower()
-            value = f.get("value")
-            if not name or not isinstance(value, (int, float)):
-                continue
-            canonical = _T12_EXPENSE_FIELD_ALIASES.get(name)
-            if canonical is None:
-                # Try the last segment of a dotted path as a fallback.
-                tail = name.rsplit(".", 1)[-1] if "." in name else name
-                canonical = _T12_EXPENSE_FIELD_ALIASES.get(tail)
-            if canonical is None or canonical in seen_in_row:
-                continue
-            v = float(value)
-            # Zero-leak guard (Eshan's NOI bug): every real hotel has
-            # admin & general, sales & marketing, utilities, property
-            # ops, mgmt fee, FF&E reserve, fixed charges. Extractor
-            # emits 0.0 when it can't find the line. If we honored that
-            # zero, the engine wrote it into the projection P&L and NOI
-            # collapsed to ~100% of revenue. Drop zeros and let the
-            # USALI ratio fallback supply the missing line. Negative
-            # values are nonsense for expenses.
-            if v <= 0.0:
-                continue
-            seen_in_row.add(canonical)
-            prov = (
-                _row_provenance(
-                    canonical=canonical,
-                    field=f,
-                    value=v,
-                    doc_type=ranked_doc_type,
-                    document_id=shim.get("document_id"),
-                    extraction_result_id=shim.get("extraction_result_id"),
-                    as_of=shim.get("report_as_of"),
-                )
-                if with_provenance
-                else None
-            )
-            candidates.setdefault(canonical, []).append(
-                _ActualCandidate(v, is_full_year, prov, period_key)
-            )
-
-    actuals: dict[str, float] = {}
-    provenance: dict[str, SourceField] = {}
-    for canonical, cands in candidates.items():
-        chosen, picked = _pick_corroborated_actual(cands)
-        actuals[canonical] = chosen
-        if with_provenance:
-            provenance[canonical] = picked or _derived_provenance(
-                concept=canonical,
-                value=chosen,
-                doc_type="T12",
-                basis="actual",
-            )
     return (actuals, provenance) if with_provenance else actuals
 
 

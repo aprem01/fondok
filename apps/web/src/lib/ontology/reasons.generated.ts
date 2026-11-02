@@ -77,7 +77,7 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
   "needs_review": {
     "label": "Needs review",
     "ui": "—",
-    "explanation": "A low-confidence read or a conflicting override is waiting on an analyst before the figure is used."
+    "explanation": "A low-confidence read, a conflicting override or two disagreeing source statements need an analyst's review."
   },
   "pin_active": {
     "label": "NOI pinned",
