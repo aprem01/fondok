@@ -183,7 +183,10 @@ actionable retry path.
 A Haiku 4.5 Router agent reads the filename plus the first ~2K characters and emits a doc_type: OM,
 T12, PNL, STR, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, RENT_ROLL, MARKET_STUDY, ROOM_MIX, or
 CONTRACT, DEBT. A filename heuristic provides the fallback when the Router is unsure; it files a
-debt / loan / mortgage / term-sheet filename as DEBT ahead of its T12 default. Files dropped in the
+term sheet, or a debt / loan / mortgage name that also says agreement, terms, note, commitment,
+template or upload, as DEBT ahead of its T12 default — never a name that also says statement,
+financials, budget, operating, forecast, appraisal, service, sizing or report. DEBT is a
+non-financial label for the structural override, so a real P&L that lands there is retyped a P&L. Files dropped in the
 “Drop everything here” zone carry no analyst tag, so the Router’s doc_type is the category; the Data
 Room marks them “Classified automatically — confirm” until the analyst confirms or reclassifies.
 Accepted formats: PDF, Excel (.xlsx / .xlsm / .xls), CSV, Word (.docx) and PowerPoint (.pptx) —

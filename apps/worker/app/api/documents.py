@@ -1697,9 +1697,18 @@ def _is_allowed_upload(filename: str, content_type: str | None) -> bool:
 _TINY_XLSX_BYTES = 30_000
 
 
-#: Filename tokens that name a debt / loan document (``_guess_doc_type``).
-_DEBT_FILENAME_TOKENS: frozenset[str] = frozenset(
-    {"debt", "loan", "loans", "mortgage", "termsheet", "refinance", "refinancing"}
+#: Filename tokens that name debt (``_guess_doc_type``) …
+_DEBT_FILENAME_TOKENS: frozenset[str] = frozenset({"debt", "loan", "loans", "mortgage"})
+#: … and the document forms that make such a file a debt DOCUMENT.
+_DEBT_DOCUMENT_FORM_TOKENS: frozenset[str] = frozenset(
+    {"template", "upload", "agreement", "agreements", "terms", "note", "commitment", "input", "inputs"}
+)
+#: Words that name a financial statement or report: never a debt document.
+_STATEMENT_FILENAME_TOKENS: frozenset[str] = frozenset(
+    {
+        "statement", "statements", "financials", "financial", "budget", "operating",
+        "forecast", "appraisal", "service", "sizing", "reporting", "report",
+    }
 )
 
 
@@ -1879,16 +1888,19 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
         return "MARKET_STUDY"
     if "p&l" in name or "pnl" in name or "p_l" in name:
         return "PNL"
-    # W5 (2026-11): a debt / loan document — term sheet, loan agreement, the
+    # W5 (2026-11): a debt / loan DOCUMENT — term sheet, loan agreement, the
     # Fondok debt upload template — is DEBT. Without this rule the Router's
     # off-enum fallback dropped "Kimpton_Fondok_Debt_Upload_Template.xlsx"
     # through to the T12 default, and the template outranked every real P&L
-    # on the deal as an undated "current" T-12. Checked after the statement
-    # rules so a "T12" / "P&L" filename keeps its statement type.
-    if (
-        tokens & _DEBT_FILENAME_TOKENS
-        or "term_sheet" in name.replace(" ", "_")
+    # on the deal as an undated "current" T-12. A loan word alone is not
+    # enough ("Operating Statement – Loan Package.xlsx" is a P&L): the name
+    # must also say what kind of debt document it is, and must not name a
+    # statement. DEBT is a non-financial Router label, so a real P&L that
+    # still lands here is rescued by the structural recognizer (Bug H).
+    if not (tokens & _STATEMENT_FILENAME_TOKENS) and (
+        "term_sheet" in name.replace(" ", "_")
         or "termsheet" in name
+        or (tokens & _DEBT_FILENAME_TOKENS and tokens & _DEBT_DOCUMENT_FORM_TOKENS)
     ):
         return "DEBT"
     if "contract" in name:
@@ -2018,6 +2030,8 @@ def _refine_pnl_doc_type(
 # the YoY / broker-question engines (which filter T12/PNL/PNL_MONTHLY/
 # PNL_YTD) actually see the row.
 _NON_FINANCIAL_ROUTER_LABELS = {
+    # W5 review I1: a P&L typed DEBT (filename hint / Router) is rescued.
+    "DEBT",
     "PROPERTY_INFO",
     "UNKNOWN",
     "CONTRACT",

@@ -121,3 +121,46 @@ def test_a_pnl_carrying_a_debt_block_stays_a_pnl():
         doc_id="d",
     )
     assert r.doc_type == "T12"
+
+
+# ── Review round 2 (I1): a loan word alone is not a debt document ─────────
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "Hotel Operating Statement - Loan Package.xlsx",
+        "Monthly Financials - Loan Reporting.xlsx",
+        "Operating Statement – Loan Package.xlsx",
+        "Loan Sizing - Operating Statement 2024.xlsx",
+        "Budget 2025 incl debt service.xlsx",
+        "Refinance Appraisal.pdf",
+        "debt_service_schedule_P&L.xlsx",
+    ],
+)
+def test_a_statement_filename_mentioning_a_loan_is_not_debt(filename):
+    assert _guess_doc_type(filename) != "DEBT"
+
+
+def test_debt_is_a_non_financial_router_label_so_a_real_pnl_is_rescued():
+    """A real P&L that reached DEBT (hint or Router) is retyped a P&L by the
+    structural recognizer, exactly as for every other non-financial label."""
+    import json
+    from pathlib import Path
+
+    from app.api.documents import _NON_FINANCIAL_ROUTER_LABELS
+
+    assert "DEBT" in _NON_FINANCIAL_ROUTER_LABELS
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "real_payloads" / "anglers_annual_pnl_real.json").read_text()
+    )
+    fields = payload["fields"] if isinstance(payload, dict) else payload
+    r = refine_doc_type_post_extraction(
+        classified_doc_type="DEBT",
+        route="extract-hint-fallback",
+        fields=fields,
+        user_provided_doc_type=None,
+        doc_id="d",
+    )
+    assert r.doc_type in {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    assert r.router_overridden_original == "DEBT"
