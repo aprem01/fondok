@@ -28,17 +28,30 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 logger = logging.getLogger(__name__)
 
 #: ``documents.status`` of a document whose extraction counts.
 _EXTRACTED = "EXTRACTED"
 
+#: ``deals.ai_confidence`` is ``NUMERIC(5,2)`` on Postgres: the rollup is
+#: rounded to the stored precision HERE, so ``/status``, the deal row and the
+#: exports carry the one same number.
+_STORED_DECIMALS = 2
+
+_Executor = AsyncSession | AsyncConnection
+
 
 def _overall(blob: Any) -> float | None:
     """``confidence_report.overall`` as a float, or ``None`` when absent."""
-    if isinstance(blob, str):
+    # A report may arrive as JSON text (SQLite), as a decoded object (a JSONB
+    # driver) or double-encoded — a JSON string whose content is the report
+    # (legacy writers). Unwrap up to two string layers; anything else is not
+    # a score.
+    for _ in range(2):
+        if not isinstance(blob, str):
+            break
         try:
             blob = json.loads(blob) if blob else None
         except json.JSONDecodeError:
@@ -53,10 +66,10 @@ def _overall(blob: Any) -> float | None:
 
 
 async def compute_deal_ai_confidence(
-    session: AsyncSession, *, deal_id: UUID | str, tenant_id: UUID | str
+    session: _Executor, *, deal_id: UUID | str, tenant_id: UUID | str
 ) -> float | None:
     """Mean extraction confidence over each extracted document's latest
-    extraction; ``None`` when there is none."""
+    extraction, rounded to the stored precision; ``None`` when there is none."""
     rows = await session.execute(
         text(
             # tenant-scope predicate required by tenant_middleware
@@ -87,14 +100,31 @@ async def compute_deal_ai_confidence(
             scores.append(score)
     if not scores:
         return None
-    return sum(scores) / len(scores)
+    return round(sum(scores) / len(scores), _STORED_DECIMALS)
+
+
+def _is_postgres(session: _Executor) -> bool:
+    bind = session.bind if isinstance(session, AsyncSession) else session
+    return bind is not None and bind.dialect.name == "postgresql"
 
 
 async def refresh_deal_ai_confidence(
-    session: AsyncSession, *, deal_id: UUID | str, tenant_id: UUID | str
+    session: _Executor, *, deal_id: UUID | str, tenant_id: UUID | str
 ) -> float | None:
     """Recompute the rollup and write it to ``deals.ai_confidence`` (NULL when
-    there is none). The caller commits."""
+    there is none). The caller commits.
+
+    On Postgres the deal row is locked first (``FOR UPDATE``), so two documents
+    finishing together serialise: the second refresh waits for the first to
+    commit and then reads every committed extraction — the last write is
+    never an older rollup."""
+    if _is_postgres(session):
+        await session.execute(
+            text(
+                "SELECT id FROM deals WHERE id = :deal AND tenant_id = :tenant FOR UPDATE"
+            ),
+            {"deal": str(deal_id), "tenant": str(tenant_id)},
+        )
     confidence = await compute_deal_ai_confidence(
         session, deal_id=deal_id, tenant_id=tenant_id
     )

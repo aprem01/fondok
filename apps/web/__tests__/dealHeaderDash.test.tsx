@@ -144,6 +144,12 @@ describe('Deal header — a wizard deal before extraction', () => {
     expect(screen.getByRole('tooltip').textContent).toMatch(/Avg extraction confidence—/);
   });
 
+  it('a deal with no risk never shows an invented "Medium"', () => {
+    loaded({ ...DEAL, risk: null });
+    const { container } = render(<ProjectDetailPage />);
+    expect(container.textContent).not.toMatch(/\bMedium\b/);
+  });
+
   it('the Collaborators popover never shows placeholder people', () => {
     loaded(DEAL);
     render(<ProjectDetailPage />);

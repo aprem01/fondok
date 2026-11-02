@@ -34,16 +34,12 @@ export const NO_EXIT_CAP_NOTE =
 
 /**
  * The exit cap rate the Returns engine ran on (``returns.exit_cap_rate``), or
- * the resolved assumption the run used (provenance value). Never a hard-coded
- * default: with neither, the row dashes.
+ * ``null`` until it has run. Nothing stands in for it — not the assumption a
+ * run would resolve, not a default — because every cell's tooltip says the
+ * value is capitalised at the rate the engine sold at.
  */
-export function resolveEngineExitCap(
-  engineCap: number | null | undefined,
-  resolvedAssumption: number | null | undefined,
-): number | null {
-  if (isPos(engineCap)) return engineCap;
-  if (isPos(resolvedAssumption)) return resolvedAssumption;
-  return null;
+export function resolveEngineExitCap(engineCap: number | null | undefined): number | null {
+  return isPos(engineCap) ? engineCap : null;
 }
 
 /** Each operating year's Cash NOI ÷ exit cap. */

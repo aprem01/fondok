@@ -249,11 +249,9 @@ interface ProjYear {
   // label must then say the basis is unconfirmed (lib/engines/noi.ts).
   noiBasisConfirmed: boolean;
   ffeReserve?: number;
-  // Net cash flow after FF&E reserve = NOI - FF&E.
+  /** Cash NOI — ``expense.years[i].noi``, after the FF&E reserve: the row
+   *  "Cash NOI" and the basis the Returns engine capitalises. */
   netCashFlow?: number;
-  /** ``expense.years[i].noi`` — the engine's Cash NOI (after the FF&E
-   *  reserve), the basis the Returns engine capitalises. */
-  cashNoi?: number;
 }
 
 // The revenue engine projects on a flat 365-day year
@@ -594,15 +592,11 @@ export default function ProjectionsSection({
   }, [overrides, terminalNoiPinned, dealId, refreshDeal, run, toast]);
 
   // Wave 5 (Sam #1) — the Implied Value row is valued on the Returns engine's
-  // basis: the exit cap rate the engine ran on (``returns.exit_cap_rate``), or
-  // the resolved assumption the run used. Never a hard-coded default — with
-  // neither, the row dashes and says why.
-  const exitCapSrc = useSource('exit_cap_rate');
+  // basis: the exit cap rate the engine ran on (``returns.exit_cap_rate``).
+  // Until the Returns engine has run the row dashes and says why — no
+  // resolved-assumption or hard-coded stand-in.
   const returnsHead = headlineReturns(getEngineField<Record<string, unknown>>(outputs, 'returns'));
-  const exitCapRate = resolveEngineExitCap(
-    returnsHead.exitCapRate,
-    typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : null,
-  );
+  const exitCapRate = resolveEngineExitCap(returnsHead.exitCapRate);
 
   // Resolve key count: real deal.keys; default 0 until known.
   const keys = deal?.keys && deal.keys > 0 ? deal.keys : 0;
@@ -967,8 +961,17 @@ function buildFromWorker(
     const noiInst = e?.noi_institutional ?? e?.noi;
     const noiBasisConfirmed = typeof e?.noi_institutional === 'number';
     const ffe = e?.ffe_reserve;
+    // Cash NOI is the engine's own after-reserve ``noi`` (the row traces to
+    // ``years[i].noi``). Only a run that carries no ``noi`` derives it from
+    // the before-reserve figure. Deriving it as ``(noi_institutional ?? noi)
+    // − ffe`` deducted the reserve TWICE on runs that predate
+    // ``noi_institutional`` (their ``noi`` is already after the reserve).
     const netCashFlow =
-      noiInst != null && ffe != null ? noiInst - ffe : undefined;
+      typeof e?.noi === 'number'
+        ? e.noi
+        : typeof e?.noi_institutional === 'number' && ffe != null
+          ? e.noi_institutional - ffe
+          : undefined;
     out.push({
       year: r.year,
       calendarYear:
@@ -1009,7 +1012,6 @@ function buildFromWorker(
       noiBasisConfirmed,
       ffeReserve: ffe,
       netCashFlow,
-      cashNoi: typeof e?.noi === 'number' ? e.noi : undefined,
     });
   }
   return out;
@@ -1228,7 +1230,7 @@ function ProjectionsTable({
   // Sam #9 — the incentive fee row exists only when the run modelled one.
   const hasIncentiveFee = years.some((y) => y.incentiveMgmtFee != null);
   const impliedCells = useMemo(
-    () => impliedValueByYear(years.map((y) => y.cashNoi), exitCapRate),
+    () => impliedValueByYear(years.map((y) => y.netCashFlow), exitCapRate),
     [years, exitCapRate],
   );
   // FON-59 #1 / FON-67 #2 — name the NOI basis honestly: a pre-upgrade run

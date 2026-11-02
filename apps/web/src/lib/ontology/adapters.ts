@@ -142,6 +142,10 @@ export const FIXED_DETAIL_ALIASES: Readonly<Record<'ffe_reserve' | 'rent' | 'oth
   nonop_income: pnlAliases('nonop_income'),
 };
 
+/** Every "total non-operating income & expenses" path a statement may state —
+ *  what non-operating income's sign is settled against. */
+export const NONOP_TOTAL_ALIASES = pnlAliases('fixed_charges');
+
 /**
  * WEB-ONLY aliases — paths the hand-written lists carried that the registry
  * does not (yet). They stay inline so nothing that resolved before stops

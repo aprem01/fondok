@@ -18,7 +18,7 @@ function roleLabel(role: string): string {
 }
 
 export default function DealCollaborators() {
-  const { members, loading, demo } = useOrgMembers();
+  const { members, loading, demo, personal, total } = useOrgMembers();
 
   if (loading) {
     return (
@@ -30,9 +30,11 @@ export default function DealCollaborators() {
   if (members.length === 0) {
     return (
       <div className="text-[11.5px] text-ink-500 leading-relaxed" data-testid="collaborators-empty">
-        {demo
-          ? 'No workspace roster — sign in to an organization to see who can open this deal.'
-          : 'This workspace has no members yet.'}
+        {personal
+          ? 'Personal workspace — only you can open this deal.'
+          : demo
+            ? 'No workspace roster — sign in to an organization to see who can open this deal.'
+            : 'This workspace has no members yet.'}
       </div>
     );
   }
@@ -49,6 +51,11 @@ export default function DealCollaborators() {
           </div>
         </div>
       ))}
+      {total != null && total > members.length && (
+        <div className="text-[11px] text-ink-500" data-testid="collaborators-more">
+          +{total - members.length} more — see Settings → Team Members
+        </div>
+      )}
     </div>
   );
 }

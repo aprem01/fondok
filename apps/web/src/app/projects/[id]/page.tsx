@@ -265,7 +265,8 @@ export default function ProjectDetailPage() {
     // Absent on the row → null → no badge. Never an invented "Draft" / "Teaser".
     status: (deal.status as ProjectStatus) || null,
     dealStage: (deal.deal_stage as DealStage) || null,
-    risk: ((deal.risk as Risk) || 'Medium'),
+    // The deal's own risk, or null (rendered "—") — never an invented "Medium".
+    risk: (deal.risk as Risk) || null,
     // Null until an extraction has scored the deal — the pill reads "AI
     // Confidence —"; a number (even 0) is the worker's own rollup.
     aiConfidence: displayConfidence(deal.ai_confidence),

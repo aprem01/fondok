@@ -189,9 +189,13 @@ confidence badge.
 `deals.ai_confidence` is the mean of `confidence_report.overall` over each EXTRACTED document's
 latest `extraction_results` row (`services.deal_confidence`), written after the verifier pass, after
 a field review/correction, after a failed re-extraction and after a document delete — NULL when no
-extracted document carries a score. `GET /deals/{id}/status` reads the same rollup. Migration
-`deals.ai_confidence_null_legacy_zero` / `deals.ai_confidence_backfill` nulled the pre-A11 0.00
-values (never computed) and backfilled from the extractions.
+extracted document carries a score; it is rounded to the stored two decimals and the deal row is
+locked while it is rewritten, so `GET /deals/{id}/status` (same helper) and the row agree. It is not
+a client field: `PATCH /deals/{id}` with `ai_confidence` is a 422. The one-time backfill
+(`migrations.backfill_deal_ai_confidence`, in Python so it applies this same rollup) nulled the
+pre-A11 0.00 values (never computed) and filled every scored deal; on Postgres it lifts forced
+row-level security for its own transaction, checks every UPDATE's row count (a mismatch raises and
+rolls back) and marks `deals.ai_confidence` with a column comment so it runs once.
 
 :::
 

@@ -264,7 +264,16 @@ export interface OrgMembersState {
   /** True in demo mode (no Clerk) — caller shows an honest empty state
    *  instead of a fabricated team roster. */
   demo: boolean;
+  /** True when the signed-in user has no active organization (a personal
+   *  workspace): the roster is just them, not "no members". */
+  personal?: boolean;
+  /** The organization's member count, when Clerk reports it — larger than
+   *  ``members.length`` when the roster runs past the page fetched. */
+  total?: number;
 }
+
+/** Members fetched per page — Clerk's default is 10. */
+const MEMBERS_PAGE_SIZE = 100;
 
 /**
  * Real organization roster from Clerk. In demo mode (no Clerk) returns
@@ -277,9 +286,14 @@ export function useOrgMembers(): OrgMembersState {
     return { members: [], loading: false, demo: true };
   }
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  const { memberships, isLoaded } = useOrganization({ memberships: true });
+  const { organization, memberships, isLoaded } = useOrganization({
+    memberships: { pageSize: MEMBERS_PAGE_SIZE },
+  });
   if (!mounted || !isLoaded) {
     return { members: [], loading: true, demo: false };
+  }
+  if (!organization) {
+    return { members: [], loading: false, demo: false, personal: true };
   }
   const rows = memberships?.data ?? [];
   const members: OrgMember[] = rows.map((m) => {
@@ -297,7 +311,8 @@ export function useOrgMembers(): OrgMembersState {
       pending: false,
     };
   });
-  return { members, loading: false, demo: false };
+  const total = typeof memberships?.count === 'number' ? memberships.count : undefined;
+  return { members, loading: false, demo: false, ...(total != null ? { total } : {}) };
 }
 
 // ────────────────────── imperative org id (for fetch) ──────────────────────

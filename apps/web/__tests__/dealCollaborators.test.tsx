@@ -59,4 +59,22 @@ describe('DealCollaborators', () => {
     render(<DealCollaborators />);
     expect(screen.getByTestId('collaborators-loading')).toBeInTheDocument();
   });
+
+  it('a personal workspace (no organization) says only the user can open the deal — not "no members"', () => {
+    hoisted.state = { members: [], loading: false, demo: false, personal: true };
+    render(<DealCollaborators />);
+    expect(screen.getByTestId('collaborators-empty')).toHaveTextContent(/personal workspace/i);
+    expect(screen.getByTestId('collaborators-empty')).not.toHaveTextContent(/no members/i);
+  });
+
+  it('a roster longer than the page fetched says how many more there are', () => {
+    hoisted.state = {
+      loading: false,
+      demo: false,
+      total: 130,
+      members: [{ id: 'm1', name: 'Prem K', email: 'p@x.co', initials: 'PK', role: 'org:admin', pending: false }],
+    };
+    render(<DealCollaborators />);
+    expect(screen.getByTestId('collaborators-more')).toHaveTextContent('+129 more');
+  });
 });

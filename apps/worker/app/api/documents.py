@@ -4670,14 +4670,27 @@ class HistoricalYearOut(BaseModel):
     revpar: float | None = None
     rooms_revenue: float | None = None
     fnb_revenue: float | None = None
+    #: Other Operated Departments + Miscellaneous Income (Wave 5), with the
+    #: two lines as stated.
     other_revenue: float | None = None
+    other_operated_revenue: float | None = None
+    misc_income: float | None = None
     total_revenue: float | None = None
     rooms_dept_expense: float | None = None
     fnb_dept_expense: float | None = None
     other_dept_expense: float | None = None
     undistributed: float | None = None
     gop: float | None = None
+    #: mgmt fee + FF&E reserve + property tax + insurance + rent + other
+    #: non-operating expense (Wave 5).
     fixed_expenses: float | None = None
+    ffe_reserve: float | None = None
+    rent: float | None = None
+    other_nonop_expense: float | None = None
+    #: Non-operating income signed by the statement's own convention; None
+    #: when ``nonop_income_basis`` is ``unresolved``.
+    nonop_income: float | None = None
+    nonop_income_basis: str | None = None
     noi: float | None = None
     source_document_ids: list[str] = Field(default_factory=list)
 

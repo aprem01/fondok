@@ -1459,40 +1459,6 @@ MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies",
         "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS data_policies JSONB NOT NULL DEFAULT '{}'",
     ),
-    # Wave 5 (Sam #5) — ``deals.ai_confidence``. Deal creation wrote 0.0
-    # until A11 (2026-10-30) and no code path ever wrote the column after
-    # that, so every legacy 0.00 is a never-computed value, not a score. Step
-    # 1 nulls them; step 2 backfills every NULL deal from its extractions —
-    # the mean of ``confidence_report.overall`` over each EXTRACTED
-    # document's latest extraction, exactly ``services.deal_confidence``.
-    # Re-running is idempotent: a deal whose real rollup is 0 is nulled and
-    # refilled with the same 0; a deal with no scored extraction stays NULL.
-    (
-        "deals.ai_confidence_null_legacy_zero",
-        "UPDATE deals SET ai_confidence = NULL WHERE ai_confidence = 0",
-    ),
-    (
-        "deals.ai_confidence_backfill",
-        """
-        UPDATE deals
-           SET ai_confidence = (
-               SELECT AVG((latest.cr ->> 'overall')::double precision)
-                 FROM (
-                     SELECT DISTINCT ON (er.document_id) er.confidence_report AS cr
-                       FROM extraction_results er
-                       JOIN documents d
-                         ON d.id = er.document_id
-                        AND d.tenant_id = er.tenant_id
-                      WHERE er.deal_id = deals.id
-                        AND er.tenant_id = deals.tenant_id
-                        AND d.status = 'EXTRACTED'
-                      ORDER BY er.document_id, er.created_at DESC
-                 ) latest
-                WHERE jsonb_typeof(latest.cr -> 'overall') = 'number'
-           )
-         WHERE ai_confidence IS NULL
-        """,
-    ),
 ]
 
 
@@ -2491,38 +2457,6 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies_sqlite",
         "ALTER TABLE tenants ADD COLUMN data_policies TEXT NOT NULL DEFAULT '{}'",
     ),
-    # Wave 5 (Sam #5) — SQLite twin of the ``deals.ai_confidence`` null +
-    # backfill (JSON as TEXT; latest extraction per document by MAX(created_at)).
-    (
-        "deals.ai_confidence_null_legacy_zero",
-        "UPDATE deals SET ai_confidence = NULL WHERE ai_confidence = 0",
-    ),
-    (
-        "deals.ai_confidence_backfill",
-        """
-        UPDATE deals
-           SET ai_confidence = (
-               SELECT AVG(json_extract(er.confidence_report, '$.overall'))
-                 FROM extraction_results er
-                 JOIN documents d
-                   ON d.id = er.document_id
-                  AND d.tenant_id = er.tenant_id
-                WHERE er.deal_id = deals.id
-                  AND er.tenant_id = deals.tenant_id
-                  AND d.status = 'EXTRACTED'
-                  AND er.created_at = (
-                      SELECT MAX(e2.created_at)
-                        FROM extraction_results e2
-                       WHERE e2.document_id = er.document_id
-                         AND e2.tenant_id = er.tenant_id
-                  )
-                  AND (CASE WHEN json_valid(er.confidence_report)
-                            THEN json_type(er.confidence_report, '$.overall')
-                       END) IN ('integer', 'real')
-           )
-         WHERE ai_confidence IS NULL
-        """,
-    ),
 ]
 
 
@@ -2582,5 +2516,139 @@ async def run_startup_migrations() -> None:
         except Exception as exc:
             logger.exception("migration failed: %s — %s", name, exc)
 
+    # Wave 5 (Sam #5) — a data migration, in Python so it applies the SAME
+    # rollup the app writes (services.deal_confidence). Runs after the DDL.
+    try:
+        await backfill_deal_ai_confidence(engine, is_sqlite=is_sqlite)
+    except Exception as exc:
+        logger.exception("migration failed: deals.ai_confidence_backfill — %s", exc)
 
-__all__ = ["MIGRATIONS", "SQLITE_MIGRATIONS", "run_startup_migrations"]
+
+# ─────────────────────── deals.ai_confidence backfill ───────────────────────
+#
+# Deal creation wrote ``ai_confidence = 0.0`` until A11 (2026-10-30) and no code
+# path wrote the column after that, so every stored 0.00 is a never-computed
+# value, not a score. This backfill (1) nulls those zeros, then (2) fills every
+# NULL deal that has a scored extraction with ``compute_deal_ai_confidence`` —
+# the one rollup the app persists — so a report stored as a JSON string is read
+# exactly as the app reads it.
+#
+# Postgres runs it ONCE: a comment on ``deals.ai_confidence`` marks it done.
+# Under forced row-level security (``migrations/rls/001_enable_rls.sql``) an
+# owner that is not a superuser would see ZERO rows and silently update none,
+# so FORCE is lifted on ``deals`` / ``documents`` / ``extraction_results`` for
+# this one transaction and restored before it commits (a role that may not do
+# that gets an error, never a silent no-op). Every UPDATE is checked by row
+# count; a mismatch raises, rolls the whole transaction back, leaves the marker
+# unset (so the next boot retries) and is logged as ``migration failed``.
+# SQLite (dev / tests) re-runs it on every boot; it is idempotent.
+
+AI_CONFIDENCE_BACKFILL_MARKER = "fondok:ai_confidence_rollup_v1"
+_FORCED_RLS_TABLES = ("deals", "documents", "extraction_results")
+
+
+class AiConfidenceBackfillError(RuntimeError):
+    """The backfill's row counts did not add up — never a silent no-op."""
+
+
+def _expect_rowcount(step: str, expected: int, affected: int) -> None:
+    if affected != expected:
+        raise AiConfidenceBackfillError(
+            f"deals.ai_confidence backfill: {step} updated {affected} row(s), "
+            f"expected {expected} — refusing to report it applied"
+        )
+
+
+async def backfill_deal_ai_confidence(engine, *, is_sqlite: bool) -> dict[str, int] | None:
+    """Null the legacy 0.00 values, then backfill from the extractions.
+
+    Returns ``{"nulled": n, "filled": m}``, or ``None`` when the Postgres
+    marker says it already ran. Raises :class:`AiConfidenceBackfillError` when
+    a step's row count does not match what it selected.
+    """
+    from .services.deal_confidence import compute_deal_ai_confidence
+
+    async with engine.begin() as conn:
+        forced: list[str] = []
+        if not is_sqlite:
+            marker = (
+                await conn.execute(
+                    text(
+                        "SELECT col_description('deals'::regclass, a.attnum) "
+                        "FROM pg_attribute a "
+                        "WHERE a.attrelid = 'deals'::regclass AND a.attname = 'ai_confidence'"
+                    )
+                )
+            ).scalar()
+            if marker == AI_CONFIDENCE_BACKFILL_MARKER:
+                return None
+            for table in _FORCED_RLS_TABLES:
+                is_forced = (
+                    await conn.execute(
+                        text(
+                            "SELECT relforcerowsecurity FROM pg_class "
+                            "WHERE oid = to_regclass(:t)"
+                        ),
+                        {"t": table},
+                    )
+                ).scalar()
+                if is_forced:
+                    await conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+                    forced.append(table)
+
+        zeros = int(
+            (await conn.execute(text("SELECT COUNT(*) FROM deals WHERE ai_confidence = 0"))).scalar()
+            or 0
+        )
+        nulled = (
+            await conn.execute(text("UPDATE deals SET ai_confidence = NULL WHERE ai_confidence = 0"))
+        ).rowcount
+        _expect_rowcount("null legacy 0.00", zeros, nulled)
+
+        pending = (
+            await conn.execute(
+                text("SELECT id, tenant_id FROM deals WHERE ai_confidence IS NULL")
+            )
+        ).fetchall()
+        filled = 0
+        for row in pending:
+            deal_id, tenant_id = str(row[0]), str(row[1])
+            confidence = await compute_deal_ai_confidence(
+                conn, deal_id=deal_id, tenant_id=tenant_id
+            )
+            if confidence is None:
+                continue
+            affected = (
+                await conn.execute(
+                    text(
+                        "UPDATE deals SET ai_confidence = :c "
+                        "WHERE id = :deal AND tenant_id = :tenant"
+                    ),
+                    {"c": confidence, "deal": deal_id, "tenant": tenant_id},
+                )
+            ).rowcount
+            _expect_rowcount(f"backfill of deal {deal_id}", 1, affected)
+            filled += 1
+
+        if not is_sqlite:
+            for table in forced:
+                await conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+            await conn.execute(
+                text(f"COMMENT ON COLUMN deals.ai_confidence IS '{AI_CONFIDENCE_BACKFILL_MARKER}'")
+            )
+    logger.info(
+        "migration applied: deals.ai_confidence_backfill (nulled %d legacy 0.00, filled %d)",
+        nulled,
+        filled,
+    )
+    return {"nulled": nulled, "filled": filled}
+
+
+__all__ = [
+    "AI_CONFIDENCE_BACKFILL_MARKER",
+    "MIGRATIONS",
+    "SQLITE_MIGRATIONS",
+    "AiConfidenceBackfillError",
+    "backfill_deal_ai_confidence",
+    "run_startup_migrations",
+]

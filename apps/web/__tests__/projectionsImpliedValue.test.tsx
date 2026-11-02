@@ -10,7 +10,7 @@ import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
 const HOLD_YEARS = 2;
-const fx2 = vi.hoisted(() => ({ returns: {} as Record<string, unknown> }));
+const fx2 = vi.hoisted(() => ({ returns: {} as Record<string, unknown>, legacy: false }));
 
 const expYear = (i: number) => ({
   year: i + 1,
@@ -20,7 +20,8 @@ const expYear = (i: number) => ({
   gop: 6_000_000,
   mgmt_fee: 360_000,
   fixed_charges: { property_taxes: 700_000, insurance: 300_000, rent: 0, other_fixed: 0, total: 1_000_000 },
-  noi_institutional: 4_640_000 + i * 100_000,
+  // A run before noi_institutional existed carried only the after-reserve noi.
+  ...(fx2.legacy ? {} : { noi_institutional: 4_640_000 + i * 100_000 }),
   ffe_reserve: 480_000,
   noi: 4_160_000 + i * 100_000,
 });
@@ -108,6 +109,7 @@ import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
 
 beforeEach(() => {
   cleanup();
+  fx2.legacy = false;
   fx2.returns = {
     hold_years: HOLD_YEARS, exit_cap_rate: 0.08, terminal_noi: 4_400_000,
     gross_sale_price: 55_000_000, exit_noi_period_label: 'Forward 12-month NOI (Year 3)',
@@ -152,5 +154,18 @@ describe('Projections — Implied Value row', () => {
     expect(cells.map((c) => c.textContent)).toEqual(['—', '—', '—']);
     expect(cells[0].getAttribute('title')).toMatch(/exit cap rate/i);
     expect(cells[2].getAttribute('title')).toMatch(/gross sale price/i);
+  });
+
+  it('the Cash NOI row is the engine\u2019s after-reserve NOI on an older run too — FF&E is not deducted twice', () => {
+    fx2.legacy = true;
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const row = document.querySelector<HTMLTableRowElement>('[data-testid="row-cash-noi"]')
+      ?? (document.querySelector('[data-testid="row-cash-noi"]')?.closest('tr') as HTMLTableRowElement);
+    const cells = Array.from(row.cells).slice(2).map((c) => c.textContent);
+    expect(cells[0]).toBe('$4,160,000');
+    expect(cells).not.toContain('$3,680,000');
+    // …and it agrees with the Implied Value row beneath it (Cash NOI ÷ 8%).
+    const iv = document.querySelector<HTMLTableRowElement>('[data-testid="row-implied-value"]')!;
+    expect(iv.cells[2].textContent).toBe('$52,000,000');
   });
 });

@@ -61,15 +61,14 @@ describe('exitSaleCell', () => {
 });
 
 describe('resolveEngineExitCap', () => {
-  it('prefers the cap the Returns engine ran on', () => {
-    expect(resolveEngineExitCap(0.075, 0.07)).toBe(0.075);
+  it('is the cap the Returns engine ran on', () => {
+    expect(resolveEngineExitCap(0.075)).toBe(0.075);
   });
-  it('falls back to the resolved assumption the run used', () => {
-    expect(resolveEngineExitCap(null, 0.07)).toBe(0.07);
-  });
-  it('never falls back to a hard-coded default', () => {
-    expect(resolveEngineExitCap(null, null)).toBeNull();
-    expect(resolveEngineExitCap(Number.NaN, undefined)).toBeNull();
+  it('is null until the Returns engine has run — no resolved-assumption or hard-coded stand-in', () => {
+    expect(resolveEngineExitCap(null)).toBeNull();
+    expect(resolveEngineExitCap(undefined)).toBeNull();
+    expect(resolveEngineExitCap(Number.NaN)).toBeNull();
+    expect(resolveEngineExitCap(0)).toBeNull();
   });
 });
 

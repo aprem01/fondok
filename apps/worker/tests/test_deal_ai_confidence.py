@@ -282,3 +282,72 @@ async def test_extraction_persists_ai_confidence_on_the_deal_and_delete_clears_i
         assert r.status_code in (200, 204), r.text
         assert (await client.get(f"/deals/{deal_id}")).json()["ai_confidence"] is None
         assert (await client.get(f"/deals/{deal_id}/status")).json()["ai_confidence"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_refuses_a_client_supplied_ai_confidence() -> None:
+    """The figure is the extraction rollup, never a client's number: a PATCH
+    carrying it is rejected (422) and the stored value does not move."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        deal_id = (await client.post("/deals", json={"name": "NoClientConf"})).json()["id"]
+        r = await client.patch(f"/deals/{deal_id}", json={"ai_confidence": 0.99})
+        assert r.status_code == 422, r.text
+        r = await client.patch(f"/deals/{deal_id}", json={"name": "Renamed", "ai_confidence": 0.5})
+        assert r.status_code == 422, r.text
+        body = (await client.get(f"/deals/{deal_id}")).json()
+        assert body["ai_confidence"] is None
+        assert body["name"] == "NoClientConf"
+
+
+@pytest.mark.asyncio
+async def test_a_double_encoded_report_is_read_like_any_other() -> None:
+    """A legacy row whose report is a JSON string holding the report counts —
+    the app and the backfill read it the same way (one Python reader)."""
+    from sqlalchemy import text
+
+    from app.database import get_session_factory
+    from app.services.deal_confidence import compute_deal_ai_confidence
+
+    async with get_session_factory()() as session:
+        deal = await _insert_deal(session)
+        doc = await _insert_doc(session, deal)
+        await session.execute(
+            text(
+                "INSERT INTO extraction_results "
+                "(id, document_id, deal_id, tenant_id, fields, confidence_report, created_at) "
+                "VALUES (:id, :doc, :d, :t, '[]', :cr, '2026-10-01T00:00:00')"
+            ),
+            {"id": str(uuid4()), "doc": doc, "d": deal, "t": TENANT,
+             "cr": json.dumps(json.dumps({"overall": 0.7}))},
+        )
+        await session.commit()
+        assert await compute_deal_ai_confidence(session, deal_id=deal, tenant_id=TENANT) == pytest.approx(0.7)
+
+
+@pytest.mark.asyncio
+async def test_backfill_reports_its_counts() -> None:
+    from app.database import get_engine, get_session_factory
+    from app.migrations import backfill_deal_ai_confidence
+
+    async with get_session_factory()() as session:
+        await _insert_deal(session, ai_confidence=0.0)
+        with_docs = await _insert_deal(session, ai_confidence=0.0)
+        doc = await _insert_doc(session, with_docs)
+        await _insert_extraction(session, with_docs, doc, 0.84, "2026-10-01T00:00:00")
+        await session.commit()
+    result = await backfill_deal_ai_confidence(get_engine(), is_sqlite=True)
+    assert result == {"nulled": 2, "filled": 1}
+
+
+def test_a_row_count_mismatch_fails_loudly() -> None:
+    """Under forced RLS an UPDATE can match nothing without an error; the
+    backfill checks every step's row count and refuses to report success."""
+    from app.migrations import AiConfidenceBackfillError, _expect_rowcount
+
+    _expect_rowcount("null legacy 0.00", 12, 12)
+    with pytest.raises(AiConfidenceBackfillError):
+        _expect_rowcount("null legacy 0.00", 12, 0)

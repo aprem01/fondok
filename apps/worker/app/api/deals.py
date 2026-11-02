@@ -270,7 +270,9 @@ class UpdateDealBody(BaseModel):
     status: str | None = None
     deal_stage: str | None = None
     risk: str | None = None
-    ai_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    # ``ai_confidence`` is deliberately NOT a field: it is the server-computed
+    # extraction rollup (services.deal_confidence), never a client's number —
+    # a PATCH carrying it is a 422 (extra="forbid").
     # FON-59 — Investment Profile is now editable inline on Overview.
     deal_type: str | None = Field(default=None, max_length=40)
     return_profile: str | None = None

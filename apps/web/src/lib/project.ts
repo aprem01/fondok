@@ -22,7 +22,8 @@ export interface Project {
   status: ProjectStatus | null;
   /** Null when the deal row carries none — no badge is shown, never an invented "Teaser". */
   dealStage: DealStage | null;
-  risk: Risk;
+  /** The deal row's risk, or null when it has none (renders "—", never a default). */
+  risk: Risk | null;
   /** Whole-percent confidence, or null when the worker has not scored the deal. */
   aiConfidence: number | null;
   assignee: string;

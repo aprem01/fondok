@@ -30,9 +30,27 @@
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
 import { histDerivedTotalRevenue, histValue } from '@/lib/reviewState';
 import { fmtCurrency } from '@/lib/format';
+import { halfUnitOfValue } from '@/lib/statementLines';
 
-/** Sub-dollar differences are rounding, not a footing failure. */
-export const FOOTING_TOLERANCE_USD = 1;
+/**
+ * Wave 5 (Sam #3) — a footing's tolerance is the precision its figures were
+ * read at: the sum, over every line summed and the stated figure, of half a
+ * unit of the line's last significant figure (``HistYear.half_units``, from
+ * ``lib/statementLines.halfUnitOf``). The extractor reads spreadsheet cells as
+ * printed — "1.29402e+07" is 12,940,200 ± 50 — so the real Kimpton statements
+ * miss by $1–$17 on revenue, GOP and NOI with no line missing; a flat $1
+ * called that a gap. A line the column does not carry still shows: its whole
+ * amount is far outside the precision.
+ */
+export function footingTolerance(h: HistYear, keys: readonly string[], values: readonly (number | null)[]): number {
+  let tol = 0;
+  keys.forEach((k, i) => {
+    const v = values[i];
+    const known = h.half_units?.[k];
+    tol += known ?? (v == null ? 0 : halfUnitOfValue(v));
+  });
+  return tol;
+}
 
 export interface Footing {
   id: 'total_rev' | 'gop' | 'noi';
@@ -44,23 +62,29 @@ export interface Footing {
   stated: number;
   /** lines − stated. */
   difference: number;
+  /** The precision of the figures compared (see ``footingTolerance``). */
+  tolerance: number;
   foots: boolean;
 }
 
+export type FootingFailure = 'no_stated_total' | 'lines_missing' | 'nonop_sign_unresolved';
+
 export type FootingResult =
   | { ok: true; footing: Footing }
-  | { ok: false; reason: 'no_stated_total' | 'lines_missing' };
+  | { ok: false; reason: FootingFailure };
 
 const nOrNull = (x: unknown): number | null =>
   typeof x === 'number' && Number.isFinite(x) ? x : null;
 
-function build(id: Footing['id'], statedLabel: string, lines: number, stated: number): FootingResult {
+function build(id: Footing['id'], statedLabel: string, lines: number, stated: number, tolerance: number): FootingResult {
   const difference = lines - stated;
   return {
     ok: true,
-    footing: { id, statedLabel, lines, stated, difference, foots: Math.abs(difference) < FOOTING_TOLERANCE_USD },
+    footing: { id, statedLabel, lines, stated, difference, tolerance, foots: Math.abs(difference) <= tolerance },
   };
 }
+
+const REVENUE_KEYS = ['rooms', 'fb', 'misc'] as const;
 
 /** Rooms + F&B + Misc vs the statement's own Total Revenue line. */
 export function footRevenue(h: HistYear): FootingResult {
@@ -68,7 +92,8 @@ export function footRevenue(h: HistYear): FootingResult {
   if (stated == null) return { ok: false, reason: 'no_stated_total' };
   const lines = histDerivedTotalRevenue(h);
   if (lines == null) return { ok: false, reason: 'lines_missing' };
-  return build('total_rev', 'total', lines, stated);
+  const tol = footingTolerance(h, [...REVENUE_KEYS, 'total_rev'], [nOrNull(h.rooms), nOrNull(h.fb), nOrNull(h.misc), stated]);
+  return build('total_rev', 'total', lines, stated, tol);
 }
 
 /** Total Revenue − departmental expenses − undistributed vs the stated GOP. */
@@ -81,25 +106,39 @@ export function footGop(h: HistYear): FootingResult {
   const parts = [h.rooms_dept_expense, h.fb_dept_expense, h.other_dept_expense, h.undistributed].map(nOrNull);
   if (totalRev == null || parts.some((p) => p == null)) return { ok: false, reason: 'lines_missing' };
   const lines = totalRev - (parts as number[]).reduce((a, b) => a + b, 0);
-  return build('gop', 'GOP', lines, stated);
+  const tol = footingTolerance(
+    h,
+    [...REVENUE_KEYS, 'rooms_dept', 'fb_dept', 'other_dept', 'undistributed', 'gop'],
+    [nOrNull(h.rooms), nOrNull(h.fb), nOrNull(h.misc), ...parts, stated],
+  );
+  return build('gop', 'GOP', lines, stated, tol);
 }
 
 /**
  * Wave 5 (Sam #3) — stated GOP − Total Fees & Fixed + non-operating income vs
  * the statement's stated NOI. Total Fees & Fixed is mgmt fee + FF&E reserve +
  * property tax + insurance + rent + other non-operating expense over the lines
- * the statement states (``fixed_expenses``), so a statement that states every
- * line below GOP foots; one that does not shows the gap — never a silent
- * mismatch between the NOI row and the rows above it.
+ * the statement states (``fixed_expenses``); non-operating income is signed by
+ * the statement's own convention (``nonop_income_basis``). A statement that
+ * states non-operating income whose sign its figures do not settle is not
+ * footed at all (``nonop_sign_unresolved``) — that is not a source gap.
  */
 export function footNoi(h: HistYear): FootingResult {
   const stated = nOrNull(h.noi);
   const gop = nOrNull(h.gop);
   if (stated == null || gop == null) return { ok: false, reason: 'no_stated_total' };
+  if (h.nonop_income_basis === 'unresolved') return { ok: false, reason: 'nonop_sign_unresolved' };
   const fixed = nOrNull(h.fixed_expenses);
   if (fixed == null) return { ok: false, reason: 'lines_missing' };
-  const lines = gop - fixed + (nOrNull(h.nonop_income) ?? 0);
-  return build('noi', 'NOI', lines, stated);
+  const nonop = nOrNull(h.nonop_income);
+  const lines = gop - fixed + (nonop ?? 0);
+  const tol = footingTolerance(
+    h,
+    ['gop', 'mgmt_fee', 'ffe', 'property_tax', 'insurance', 'rent', 'other_nonop', 'nonop_income', 'noi'],
+    [gop, nOrNull(h.mgmt_fee), nOrNull(h.ffe_reserve), nOrNull(h.property_tax), nOrNull(h.insurance),
+      nOrNull(h.rent), nOrNull(h.other_nonop_expense), nonop, stated],
+  );
+  return build('noi', 'NOI', lines, stated, tol);
 }
 
 /** The NOI footing cell: "✓ foots", or the gap named as a source gap. */
@@ -119,9 +158,11 @@ export function footingSentence(f: Footing): string {
   return `Lines sum to ${fmtCurrency(f.lines)} · stated ${f.statedLabel} ${fmtCurrency(f.stated)} · difference ${fmtSignedCurrency(f.difference)}`;
 }
 
-export const FOOTING_REASON_TEXT: Record<'no_stated_total' | 'lines_missing', string> = {
+export const FOOTING_REASON_TEXT: Record<FootingFailure, string> = {
   no_stated_total: 'This statement publishes no stated total for this line, so there is nothing to foot against.',
   lines_missing: 'Not every line this total is built from was extracted, so the sum cannot be formed.',
+  nonop_sign_unresolved:
+    'The statement states non-operating income, but its figures do not settle whether the line is printed as income or as a deduction, so NOI is not footed.',
 };
 
 // ───────────────────── what an edit changed in a column ─────────────────────
