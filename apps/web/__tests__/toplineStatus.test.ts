@@ -331,3 +331,34 @@ describe('yearRateBadge / reference rows — per-column basis on Occupancy / ADR
     expect(toplineReferenceRows(toplineStatus({ t12_reference: null, benchmark_level: 'none', benchmark_by_year: [] }), 3)).toEqual({ benchmark: null, t12: null });
   });
 });
+
+describe('final review minors', () => {
+  const lines = ['CoStar report on file (Miami.pdf) but extracted before class forecasts were read — re-extract it to read the Luxury & Upper Upscale series.'];
+
+  it('M-1: a stale CoStar extraction headlines the banner as re-extract, ranked above the 4.5% chip', () => {
+    const b = growthBanner(toplineStatus({ ...unavailableGrowth(), reextract_needed: lines }))!;
+    expect(b.state).toBe('reextract');
+    expect(b.title).toBe('CoStar report on file but extracted before class forecasts — re-extract it to read the forecast');
+    expect(b.detail).toBe(lines[0]);
+    expect(b.suggestion).toEqual(SUGGESTION_45);
+    expect(toplineBasisClauses(toplineStatus({ ...unavailableGrowth(), reextract_needed: lines }))[1].text).toBe(
+      'Growth: CoStar report on file but extracted before class forecasts — re-extract',
+    );
+  });
+
+  it('M-1: calendar_unknown and withheld still outrank re-extract (the worker’s order)', () => {
+    expect(growthBanner(toplineStatus({ ...unavailableGrowth(), reextract_needed: lines, calendar_unknown: true }))!.state).toBe('calendar_unknown');
+    expect(growthBanner(toplineStatus({ ...unavailableGrowth(), reextract_needed: lines, growth_state: 'withheld' }))!.state).toBe('withheld');
+  });
+
+  it('M-4: the close-date anchor line prints only when a market forecast was placed on it', () => {
+    expect(calendarAnchorNote(toplineStatus(unavailableGrowth()))).toBeNull();
+    expect(calendarAnchorNote(toplineStatus())).not.toBeNull();
+  });
+
+  it('M-8: a bare "T-12" period is not repeated in the reference label', () => {
+    const r = toplineReferenceRows(toplineStatus({ t12_reference: { occupancy: 0.8, adr: 240, revpar: 192, period_label: 'T-12', doc_name: null } }), 2);
+    expect(r.t12!.label).toBe('T-12 actual (reference)');
+    expect(r.t12!.title).toBe("The subject's own T-12 — shown for reference; it sets no projected year.");
+  });
+});

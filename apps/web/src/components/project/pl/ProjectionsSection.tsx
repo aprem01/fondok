@@ -879,6 +879,7 @@ export default function ProjectionsSection({
         <div className="px-5 pt-3 pb-1 space-y-2" data-testid="topline-header">
           <ToplineBasisLine status={toplineStatus} />
           <ToplineGrowthBanner
+            dealId={dealId}
             status={toplineStatus}
             closeDateIso={closeDateIso}
             closeDateEditable={!!deal}

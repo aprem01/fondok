@@ -178,9 +178,12 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
       tone: 'warn',
     },
   };
-  const g = s.calendar_unknown && (s.growth_state === 'unavailable' || s.growth_state === 'partially_sourced')
+  const gap = s.growth_state === 'unavailable' || s.growth_state === 'partially_sourced';
+  const g = s.calendar_unknown && gap
     ? { text: 'Growth: market forecast on file but not placed — set the acquisition close date', tone: 'warn' as ClauseTone }
-    : growthText[s.growth_state] ?? { text: `Growth: ${s.growth_state}`, tone: 'warn' as ClauseTone };
+    : gap && (s.reextract_needed ?? []).length > 0
+      ? { text: 'Growth: CoStar report on file but extracted before class forecasts — re-extract', tone: 'warn' as ClauseTone }
+      : growthText[s.growth_state] ?? { text: `Growth: ${s.growth_state}`, tone: 'warn' as ClauseTone };
   out.push({ id: 'growth', ...g, title: growthLabels(s) || undefined });
   const stabWho =
     s.stabilization_source === 'analyst_override'
@@ -194,7 +197,7 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
 }
 
 export interface GrowthBanner {
-  state: 'calendar_unknown' | 'unavailable' | 'withheld' | 'partially_sourced';
+  state: 'calendar_unknown' | 'reextract' | 'unavailable' | 'withheld' | 'partially_sourced';
   title: string;
   detail: string;
   /** R2-I1 — the fix is the close date: show its entry first, above the suggestion. */
@@ -216,6 +219,18 @@ export function growthBanner(s: ToplineStatus | null | undefined): GrowthBanner 
       detail:
         'A market forecast is on file, but the deal has no acquisition close date (and no underwriting as-of date), so its years cannot be placed — the model never guesses a calendar. Until then occupancy and ADR are held flat.',
       askCloseDate: true,
+      suggestion,
+    };
+  }
+  // Final review M-1 — the worker's order: a CoStar report on file but read
+  // before class forecasts existed is "re-extract", never "no market forecast".
+  const stale = (s.reextract_needed ?? []).filter((l) => typeof l === 'string' && l.trim());
+  if (stale.length && state !== 'withheld') {
+    return {
+      state: 'reextract',
+      title: 'CoStar report on file but extracted before class forecasts — re-extract it to read the forecast',
+      detail: stale.join(' '),
+      askCloseDate: false,
       suggestion,
     };
   }
@@ -271,6 +286,12 @@ export function calendarAnchorNote(
 ): { source: string; text: string; assumed: boolean; askCloseDate: boolean } | null {
   const a = s?.calendar_anchor;
   if (!a || !a.source || !a.date) return null;
+  // Final review M-4 — the line explains where a MARKET FORECAST was placed;
+  // with none placed (every year analyst / unavailable) there is nothing to say.
+  const placed = (s?.growth_by_year ?? []).some((r) =>
+    [r.occupancy, r.adr].some((g) => g && ['cbre_horizons', 'costar_submarket_forecast', 'carried_forward'].includes(String(g.source))),
+  );
+  if (!placed) return null;
   const where = ANCHOR_TEXT[a.source] ?? a.source.replace(/_/g, ' ');
   const year = a.first_model_year != null ? ` — Year 1 = ${a.first_model_year}` : '';
   return {
@@ -505,11 +526,11 @@ export function toplineReferenceRows(
   const t12: ReferenceRow | null =
     t && (t.occupancy != null || t.adr != null)
       ? {
-          label: `T-12 actual (reference)${t.period_label ? ` · ${t.period_label}` : ''}`,
+          label: `T-12 actual (reference)${t.period_label && !/^t-?12$/i.test(t.period_label.trim()) ? ` · ${t.period_label}` : ''}`,
           occupancy: Array.from({ length: years }, () => t.occupancy ?? null),
           adr: Array.from({ length: years }, () => t.adr ?? null),
           revpar: Array.from({ length: years }, () => t.revpar ?? null),
-          title: t.doc_name ? `The subject's own T-12 (${t.doc_name}) — shown for reference; it sets no projected year.` : undefined,
+          title: `The subject's own T-12${t.doc_name ? ` (${t.doc_name})` : ''} — shown for reference; it sets no projected year.`,
         }
       : null;
   return { benchmark, t12 };

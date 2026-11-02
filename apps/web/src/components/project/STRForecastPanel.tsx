@@ -47,12 +47,6 @@ const SCENARIO_LABELS: Record<STRForecastScenarioName, string> = {
 export interface STRForecastPanelProps {
   forecast: STRForecastResponse | null;
   dealId: string;
-  /** When True, the "Use base scenario to seed revenue engine" toggle
-   *  is rendered ON. The parent owns the toggled flag (typically
-   *  ``deal.field_overrides.revenue_seed_from_str_forecast``). */
-  seedRevenueFlag?: boolean;
-  /** Called when the analyst flips the seed toggle; parent persists. */
-  onSeedRevenueChange?: (next: boolean) => void;
   /** Called after a scenario override POST succeeds; lets the parent
    *  refresh the local forecast cache. */
   onScenariosUpdated?: (next: STRForecastResponse) => void;
@@ -61,8 +55,6 @@ export interface STRForecastPanelProps {
 export default function STRForecastPanel({
   forecast,
   dealId,
-  seedRevenueFlag = false,
-  onSeedRevenueChange,
   onScenariosUpdated,
 }: STRForecastPanelProps) {
   if (!forecast) {
@@ -92,8 +84,6 @@ export default function STRForecastPanel({
     <STRForecastPanelInner
       forecast={forecast}
       dealId={dealId}
-      seedRevenueFlag={seedRevenueFlag}
-      onSeedRevenueChange={onSeedRevenueChange}
       onScenariosUpdated={onScenariosUpdated}
     />
   );
@@ -103,16 +93,12 @@ export default function STRForecastPanel({
 interface STRForecastPanelInnerProps {
   forecast: STRForecastResponse;
   dealId: string;
-  seedRevenueFlag?: boolean;
-  onSeedRevenueChange?: (next: boolean) => void;
   onScenariosUpdated?: (next: STRForecastResponse) => void;
 }
 
 function STRForecastPanelInner({
   forecast,
   dealId,
-  seedRevenueFlag,
-  onSeedRevenueChange,
   onScenariosUpdated,
 }: STRForecastPanelInnerProps) {
   const historical = forecast.historical_months;
@@ -170,21 +156,10 @@ function STRForecastPanelInner({
         ))}
       </div>
 
-      {/* Seed-revenue toggle */}
-      {onSeedRevenueChange && (
-        <label className="flex items-center gap-2 mt-3 text-[12.5px] text-ink-700 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={!!seedRevenueFlag}
-            onChange={(e) => onSeedRevenueChange?.(e.target.checked)}
-            className="h-3.5 w-3.5"
-          />
-          <span>
-            Use <strong>base</strong> scenario to seed revenue engine
-            (Month-12 occupancy + ADR).
-          </span>
-        </label>
-      )}
+      {/* FON-116 / FON-117 — the "seed the revenue engine from the base
+          scenario" toggle is retired with the STR seed: the chart is
+          display-only, and the topline runs on the benchmark × penetration
+          × ramp. */}
     </Card>
   );
 }

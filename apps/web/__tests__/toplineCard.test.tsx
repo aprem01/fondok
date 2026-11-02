@@ -59,6 +59,22 @@ describe('ToplineGrowthBanner', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({ revpar_growth: 0.045 }, SUGGESTION_45.note_prefill));
   });
 
+  it('M-1: a stale CoStar extraction headlines the banner as re-extract with the Data Room action; the notice is not repeated', () => {
+    const lines = ['CoStar report on file (Miami.pdf) but extracted before class forecasts were read — re-extract it.'];
+    const st = toplineStatus({ ...unavailableGrowth(), reextract_needed: lines });
+    render(
+      <>
+        <ToplineGrowthBanner status={st} onSave={ok()} {...props} dealId="d1" />
+        <ToplineNotices status={st} dealId="d1" migrationNotice={null} onClearLegacy={vi.fn()} onRerun={vi.fn()} running={false} />
+      </>,
+    );
+    const banner = screen.getByTestId('topline-growth-unavailable');
+    expect(banner).toHaveAttribute('data-state', 'reextract');
+    expect(banner).not.toHaveTextContent('No market forecast');
+    expect(within(banner).getByTestId('topline-banner-reextract-action')).toHaveAttribute('href', '/projects/d1');
+    expect(screen.queryByTestId('topline-reextract')).toBeNull();
+  });
+
   it('never shows a 4.5% the worker did not send', () => {
     render(<ToplineGrowthBanner status={toplineStatus({ ...unavailableGrowth(), suggestions: [] })} onSave={ok()} {...props} />);
     expect(screen.getByTestId('topline-growth-unavailable')).not.toHaveTextContent('4.5');

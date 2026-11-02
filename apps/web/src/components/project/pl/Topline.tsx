@@ -140,9 +140,11 @@ export function ToplineBasisLine({ status }: { status: ToplineStatus | null }) {
 // ─────────────────────────── growth banner ───────────────────────────
 
 export function ToplineGrowthBanner({
-  status, closeDateIso, closeDateEditable, onSaveCloseDate, onSave, running,
+  status, closeDateIso, closeDateEditable, onSaveCloseDate, onSave, running, dealId,
 }: {
   status: ToplineStatus | null;
+  /** For the banner's re-extract link (Data Room). */
+  dealId?: string;
   closeDateIso: string | null;
   closeDateEditable: boolean;
   /** The ONE close-date save path (`CloseDateField` → `closeDatePatch`). */
@@ -163,6 +165,15 @@ export function ToplineGrowthBanner({
     >
       <div className="font-semibold text-warning-700">{banner.title}</div>
       <div className="text-ink-600">{banner.detail}</div>
+      {banner.state === 'reextract' && dealId && (
+        <Link
+          href={`/projects/${dealId}`}
+          className="text-brand-700 font-semibold underline decoration-dotted"
+          data-testid="topline-banner-reextract-action"
+        >
+          Re-extract in the {TAB_LABEL.dataRoom} →
+        </Link>
+      )}
       {banner.askCloseDate && (
         <div className="flex items-center gap-2" data-testid="topline-close-date-entry">
           <span className="text-ink-600">Acquisition close date:</span>
@@ -222,7 +233,9 @@ export function ToplineNotices({
   onRerun: () => void;
   running: boolean;
 }) {
-  const reextract = reextractNotice(status);
+  // Final review M-1 — when the growth banner already headlines the
+  // re-extract (with its Data Room link), the notice is not repeated.
+  const reextract = growthBanner(status)?.state === 'reextract' ? null : reextractNotice(status);
   const anchor = calendarAnchorNote(status);
   const legacy = status?.legacy_flags ?? [];
   const clearable = legacyKeysToClear(status);
