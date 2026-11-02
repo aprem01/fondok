@@ -3072,6 +3072,11 @@ def _model_run_required_message(target: str, gate: Any) -> str:
             "a completed model run with no failed engine. Fix the inputs and "
             "re-run the model."
         )
+    if gate.reason == "nothing_computed":
+        return (
+            "The latest model run computed nothing (no engine applied to this "
+            f"deal) — {target} needs a completed model run with no failed engine."
+        )
     if gate.reason == "in_flight":
         return (
             f"The model is still running — {target} needs a completed model run "

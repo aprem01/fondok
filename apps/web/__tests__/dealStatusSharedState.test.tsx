@@ -22,6 +22,7 @@ const engine = (name: string, outputs: Record<string, unknown>) => ({
 });
 const OUTPUTS = {
   deal_id: 'deal-uuid-1',
+  ic_status_gate: { ok: true, reason: null, failed_engines: [] },
   engines: {
     capital: engine('capital', { purchase_price: 34_000_000, price_per_key: 257_576, entry_cap_rate: 0.075 }),
     returns: engine('returns', { levered_irr: 0.26, unlevered_irr: 0.13, equity_multiple: 2.5, hold_years: 5 }),

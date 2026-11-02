@@ -17,14 +17,13 @@ import {
   type ProjectStatus,
 } from '@/lib/catalogs';
 
-/** The served run finished with no engine failed: every engine complete or
- *  not applicable, at least one complete. Mirrors the worker's gate for IC
- *  Ready / IC Approved / IC Not Approved; a hint only — the worker decides. */
+/** The worker's own IC-status gate (`ic_status_gate` on the engines
+ *  payload: the latest canonical run finished with no base engine failed).
+ *  One definition — the web never re-derives it from the engine rows, which
+ *  also carry composed views such as `cash_flow` the gate does not count.
+ *  Absent (an older worker) reads as closed; the worker decides either way. */
 export function hasCompletedModelRun(outputs: EngineOutputsResponse | null | undefined): boolean {
-  const rows = Object.values(outputs?.engines ?? {});
-  if (rows.length === 0) return false;
-  const statuses = rows.map((r) => r?.status);
-  return statuses.includes('complete') && statuses.every((s) => s === 'complete' || s === 'not_applicable');
+  return outputs?.ic_status_gate?.ok === true;
 }
 
 /** The one way the web writes a status: `POST /deals/{id}/status` carrying

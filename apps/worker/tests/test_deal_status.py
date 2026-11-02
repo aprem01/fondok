@@ -614,3 +614,226 @@ async def test_lifespan_refuses_to_start_on_a_fatal_migration(monkeypatch: pytes
     with pytest.raises(FatalMigrationError):
         async with main_mod.app.router.lifespan_context(main_mod.app):
             pass
+
+
+# ─────────────── round 3 (re-review R1): unavailable ≠ failed ───────────────
+
+
+def _wrapped(dbapi_exc: BaseException, *, invalidated: bool = False) -> BaseException:
+    """An exception shaped as SQLAlchemy raises it: a DBAPIError whose
+    ``orig`` / ``__cause__`` is the driver's exception."""
+    from sqlalchemy.exc import DBAPIError
+
+    err = DBAPIError.instance(
+        "SELECT 1", {}, dbapi_exc, Exception, connection_invalidated=invalidated
+    )
+    err.__cause__ = dbapi_exc
+    return err
+
+
+def test_database_unavailable_errors_are_told_apart_from_sql_errors() -> None:
+    import sqlite3
+
+    import asyncpg.exceptions as pg
+
+    from app.migrations import _database_unavailable
+
+    unavailable = [
+        ConnectionRefusedError(61, "Connect call failed ('127.0.0.1', 5432)"),
+        OSError("Network is unreachable"),
+        TimeoutError(),
+        _wrapped(pg.ConnectionDoesNotExistError("connection was closed in the middle of operation")),
+        _wrapped(pg.CannotConnectNowError("the database system is starting up")),
+        _wrapped(pg.AdminShutdownError("terminating connection due to administrator command")),
+        _wrapped(pg.TooManyConnectionsError("sorry, too many clients already")),
+        _wrapped(pg.InterfaceError("connection is closed")),
+        _wrapped(Exception("server closed the connection unexpectedly"), invalidated=True),
+    ]
+    for exc in unavailable:
+        assert _database_unavailable(exc), repr(exc)
+
+    sql_errors = [
+        _wrapped(pg.InsufficientPrivilegeError("must be owner of table deals")),
+        _wrapped(pg.CheckViolationError('check constraint "deals_status_chk" is violated by some row')),
+        _wrapped(pg.PostgresSyntaxError('syntax error at or near "DO"')),
+        _wrapped(sqlite3.OperationalError("no such table: no_such_table")),
+        ValueError("not a database error at all"),
+    ]
+    for exc in sql_errors:
+        assert not _database_unavailable(exc), repr(exc)
+
+
+class _UnreachableEngine:
+    """A migrations engine whose every connection attempt fails as asyncpg
+    does when Postgres is down."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+        self.attempts = 0
+
+    def begin(self):
+        engine = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                engine.attempts += 1
+                raise engine.exc
+
+            async def __aexit__(self, *a):
+                return False
+
+        return _Ctx()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ConnectionRefusedError(61, "Connect call failed ('127.0.0.1', 5432)"),
+        TimeoutError(),
+    ],
+    ids=["refused", "timeout"],
+)
+@pytest.mark.asyncio
+async def test_an_unreachable_database_does_not_stop_the_boot(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Postgres down across a restart: log, boot degraded, retry next boot —
+    never use up the platform's restart budget (re-review R1)."""
+    import app.migrations as migrations
+
+    engine = _UnreachableEngine(exc)
+    monkeypatch.setattr(migrations, "get_migrations_engine", lambda: engine)
+    await migrations.run_startup_migrations()  # no raise
+    assert engine.attempts == len(migrations.SQLITE_MIGRATIONS)  # every entry tried
+    assert any("database unavailable" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_sql_error_in_a_fatal_entry_still_stops_the_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncpg.exceptions as pg
+
+    import app.migrations as migrations
+
+    engine = _UnreachableEngine(_wrapped(pg.InsufficientPrivilegeError("must be owner of table deals")))
+    monkeypatch.setattr(migrations, "get_migrations_engine", lambda: engine)
+    with pytest.raises(migrations.FatalMigrationError, match="must be owner"):
+        await migrations.run_startup_migrations()
+
+
+def test_the_real_worker_boots_degraded_with_no_database() -> None:
+    """The real lifespan, in a fresh process, against a Postgres DSN nothing
+    listens on: the worker starts and /health reports the database down."""
+    import socket
+    import subprocess
+    import sys
+
+    with socket.socket() as s:  # a free port with no listener
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    dsn = f"postgresql://nobody:pw@127.0.0.1:{port}/none"
+    script = (
+        "import os\n"
+        "from fastapi.testclient import TestClient\n"
+        "from app.main import app\n"
+        "with TestClient(app) as c:\n"
+        "    r = c.get('/health')\n"
+        "    print('BOOTED', r.status_code, r.json().get('db'))\n"
+    )
+    env = {
+        **os.environ,
+        "DATABASE_URL": dsn,
+        "DATABASE_URL_MIGRATIONS": dsn,
+        "DIGEST_SCHEDULER_ENABLED": "False",
+        "EXTRACTION_WATCHDOG_ENABLED": "False",
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert "BOOTED 200 fail" in out.stdout, out.stdout[-2000:] + out.stderr[-2000:]
+
+
+# ─────────────── round 3 (R2 / R3): one gate, honest reasons ───────────────
+
+
+@pytest.mark.asyncio
+async def test_a_run_where_no_engine_applied_is_not_still_running() -> None:
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"], status="not_applicable")
+        r = await _set(client, deal["id"], "IC Ready")
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["reason"] == "nothing_computed"
+        assert "still running" not in detail["message"]
+        assert detail["message"] == (
+            "The latest model run computed nothing (no engine applied to this "
+            "deal) — IC Ready needs a completed model run with no failed engine."
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_run_in_flight_reads_still_running() -> None:
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"], per_engine={"returns": "running"})
+        r = await _set(client, deal["id"], "IC Ready")
+        assert r.json()["detail"]["reason"] == "in_flight"
+        assert "still running" in r.json()["detail"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("per_engine", "ok", "reason"),
+    [
+        ({}, True, None),
+        ({"partnership": "not_applicable"}, True, None),
+        ({"returns": "failed"}, False, "failed_engines"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_engines_payload_carries_the_worker_gate_for_the_web_hint(
+    per_engine: dict[str, str], ok: bool, reason: str | None
+) -> None:
+    """The web's IC-status hint reads the worker's own gate (R2) — one
+    definition, base engines only — never its own reading of the payload."""
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"], per_engine=per_engine)
+        r = await client.get(f"/deals/{deal['id']}/engines", headers=HDR_A)
+        assert r.status_code == 200, r.text
+        gate = r.json()["ic_status_gate"]
+        assert gate["ok"] is ok
+        assert gate["reason"] == reason
+
+
+@pytest.mark.asyncio
+async def test_a_failed_composed_view_does_not_close_the_gate() -> None:
+    """``cash_flow`` is a composed view, not a base engine: its failure is
+    shown on its tab but neither the worker gate nor the web hint closes."""
+    async with _client() as client:
+        deal = await _create(client)
+        await _seed_run(deal["id"])
+        await _sql(
+            "INSERT INTO engine_outputs (id, deal_id, tenant_id, run_id, engine_name, status, "
+            "inputs, outputs, started_at, completed_at) SELECT :id, deal_id, tenant_id, run_id, "
+            "'cash_flow', 'failed', '{}', '{}', started_at, completed_at FROM engine_outputs "
+            "WHERE deal_id = :d AND tenant_id = :t LIMIT 1",
+            {"id": str(uuid4()), "d": deal["id"], "t": TENANT_A},
+        )
+        r = await client.get(f"/deals/{deal['id']}/engines", headers=HDR_A)
+        assert r.json()["ic_status_gate"]["ok"] is True
+        assert (await _set(client, deal["id"], "IC Ready")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_deal_never_run_has_a_closed_gate_on_the_engines_payload() -> None:
+    async with _client() as client:
+        deal = await _create(client)
+        r = await client.get(f"/deals/{deal['id']}/engines", headers=HDR_A)
+        assert r.json()["ic_status_gate"] == {"ok": False, "reason": "no_run", "failed_engines": []}

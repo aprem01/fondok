@@ -1258,9 +1258,21 @@ export interface EngineFailure {
   message: string;
 }
 
+/** Wave 5 — the worker's gate for IC Ready / IC Approved / IC Not Approved:
+ *  the latest canonical run finished with no base engine failed. */
+export interface IcStatusGate {
+  ok: boolean;
+  /** `no_run` | `in_flight` | `failed_engines` | `nothing_computed`. */
+  reason: string | null;
+  failed_engines: string[];
+}
+
 export interface EngineOutputsResponse {
   deal_id: string;
   engines: Record<EngineName, EngineOutputResponse>;
+  /** Wave 5 — the IC-status run gate, computed by the worker (absent on an
+   *  older worker: the web then treats the gate as closed). */
+  ic_status_gate?: IcStatusGate | null;
   /** Null (or absent, on an older worker) whenever the run is current. */
   stale_run?: StaleRun | null;
   /** Engines that did not complete on this run; empty / absent when all did. */

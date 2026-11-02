@@ -29,7 +29,8 @@ class RunGate:
     """Whether the run gate is open, and why not."""
 
     ok: bool
-    #: ``no_run`` | ``in_flight`` | ``failed_engines`` | None when ok.
+    #: ``no_run`` | ``in_flight`` | ``failed_engines`` | ``nothing_computed``
+    #: (every base engine ``not_applicable``) | None when ok.
     reason: str | None = None
     #: Base engines of the latest run that failed (``failed_engines``).
     failed_engines: tuple[str, ...] = ()
@@ -65,8 +66,10 @@ async def model_run_gate(
     failed = tuple(e for e in CANONICAL_ENGINES if by_engine.get(e) == "failed")
     if failed:
         return RunGate(ok=False, reason="failed_engines", failed_engines=failed)
-    if any(s not in _FINISHED_OK for s in by_engine.values()) or _COMPLETE not in by_engine.values():
+    if any(s not in _FINISHED_OK for s in by_engine.values()):
         return RunGate(ok=False, reason="in_flight")
+    if _COMPLETE not in by_engine.values():
+        return RunGate(ok=False, reason="nothing_computed")
     return RunGate(ok=True)
 
 

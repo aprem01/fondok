@@ -2620,7 +2620,11 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
 
 #: Entries whose failure must stop the worker from booting rather than be
 #: logged and retried on every boot: a data migration that leaves rows the
-#: new code does not understand. ``app.main.lifespan`` re-raises
+#: new code does not understand. Only a failure the DATABASE reports
+#: (permission, constraint, syntax) is fatal; when the database cannot be
+#: reached (:func:`_database_unavailable`) the entry is logged and retried on
+#: the next boot like any other, so an outage spanning a restart never uses
+#: up the platform's restart budget. ``app.main.lifespan`` re-raises
 #: :class:`FatalMigrationError`, so a deploy whose migration cannot complete
 #: fails its health check and the previous release keeps serving.
 FATAL_MIGRATIONS: frozenset[str] = frozenset(
@@ -2636,6 +2640,51 @@ FATAL_MIGRATIONS: frozenset[str] = frozenset(
 
 class FatalMigrationError(RuntimeError):
     """A :data:`FATAL_MIGRATIONS` entry failed; the worker must not serve."""
+
+
+#: Postgres SQLSTATEs that mean "the server is not available right now",
+#: not "this SQL is wrong": connection exceptions (class 08), admin / crash
+#: shutdown and "cannot connect now" (57P01-57P03), too many connections.
+_UNAVAILABLE_SQLSTATES: frozenset[str] = frozenset({"57P01", "57P02", "57P03", "53300"})
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    seen: list[BaseException] = []
+    todo: list[BaseException | None] = [exc]
+    while todo:
+        e = todo.pop()
+        if e is None or any(e is s for s in seen):
+            continue
+        seen.append(e)
+        todo.extend([getattr(e, "orig", None), e.__cause__, e.__context__])
+    return seen
+
+
+def _database_unavailable(exc: BaseException) -> bool:
+    """True when a migration failed because the database could not be
+    reached or dropped the connection — a network error, a timeout, a server
+    starting up / shutting down, a full connection table — rather than
+    because the database answered and refused the SQL (permission,
+    constraint, syntax). Only the second kind is fatal: an outage spanning a
+    restart must not stop the boot (the worker comes up degraded and the
+    entry runs again on the next boot), while a migration the database
+    rejects must."""
+    import asyncpg.exceptions as pg_exc
+    from sqlalchemy.exc import DBAPIError
+
+    for e in _exception_chain(exc):
+        if isinstance(e, DBAPIError) and e.connection_invalidated:
+            return True
+        if isinstance(e, OSError):  # refused / reset / unreachable / timeouts
+            return True
+        if isinstance(e, (pg_exc.InterfaceError, pg_exc.PostgresConnectionError)):
+            return True
+        sqlstate = getattr(e, "sqlstate", None)
+        if isinstance(e, pg_exc.PostgresError) and isinstance(sqlstate, str) and (
+            sqlstate.startswith("08") or sqlstate in _UNAVAILABLE_SQLSTATES
+        ):
+            return True
+    return False
 
 
 async def run_startup_migrations() -> None:
@@ -2692,6 +2741,13 @@ async def run_startup_migrations() -> None:
                 await conn.execute(text(sql))
                 logger.info("migration applied: %s", name)
         except Exception as exc:
+            if _database_unavailable(exc):
+                # Not the SQL's fault: log, carry on, boot degraded; every
+                # entry (fatal ones included) runs again on the next boot.
+                logger.error(
+                    "migration not applied (database unavailable): %s — %s", name, exc
+                )
+                continue
             logger.exception("migration failed: %s — %s", name, exc)
             if name in FATAL_MIGRATIONS:
                 raise FatalMigrationError(

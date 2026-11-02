@@ -140,15 +140,18 @@ Deal status is one of seven stored values (fondok_schemas.DealStatus; a Postgres
 trigger pair): Draft and In Progress follow deals.lifecycle (create, activate and duplicate set
 them; a duplicate never copies the source status); In Progress, Ready for Review, IC Ready, IC
 Approved and IC Not Approved are set with POST /deals/{id}/status — 409 model_run_required (reason
-no_run / in_flight / failed_engines) for the three IC statuses until the deal's canonical run has
-finished with every base engine complete or not_applicable, 409 deal_archived unless an archived
+no_run / in_flight / failed_engines / nothing_computed) for the three IC statuses until the deal's
+canonical run has finished with every base engine complete or not_applicable and at least one
+complete (the same gate is served as ic_status_gate on GET /deals/{id}/engines, which the status
+menu reads; composed views such as cash_flow are not counted), 409 deal_archived unless an archived
 deal is restored to In Progress, 409 deal_is_draft, 409 status_changed when the caller's
 expected_status is no longer current (the web always sends it, so a stale page never overwrites a
 newer status), 422 status_not_settable for Draft / Archived — audited deal.status_changed with
 from, to and the actor; the row is read FOR UPDATE on Postgres. PATCH /deals/{id} refuses status.
 Archive stays DELETE /deals/{id}. The one-time migration deals.status_v2 (one Postgres transaction,
 skipped once deals_status_chk exists; lifts FORCE ROW LEVEL SECURITY on deals / audit_log for its
-own transaction and restores it; in FATAL_MIGRATIONS, so the worker will not boot if it fails)
+own transaction and restores it; in FATAL_MIGRATIONS, so the worker will not boot if the database
+rejects it — a database that cannot be reached is logged and the entry retried on the next boot)
 moved finished-wizard deals at Draft, In Review or any non-status value to In Progress, kept IC
 Ready and Archived (a wizard draft's too), audited each move deal.status_migrated, then added the
 CHECK. A row that omits status defaults to In Progress.

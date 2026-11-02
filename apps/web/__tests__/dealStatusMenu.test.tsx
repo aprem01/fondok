@@ -148,16 +148,19 @@ describe('deal status vocabulary (web)', () => {
     expect(settableStatuses('IC Approved')).toHaveLength(5);
   });
 
-  it('hasCompletedModelRun: a finished run with no failed engine — never an empty, in-flight or failed one', () => {
-    const env = (statuses: string[]) => ({
+  it("hasCompletedModelRun is the worker's own gate (one definition, base engines only)", () => {
+    const env = (engines: Record<string, string>, gate?: { ok: boolean; reason: string | null }) => ({
       deal_id: 'd',
-      engines: Object.fromEntries(statuses.map((s, i) => [`e${i}`, { status: s }])),
+      engines: Object.fromEntries(Object.entries(engines).map(([e, s]) => [e, { status: s }])),
+      ...(gate ? { ic_status_gate: { ...gate, failed_engines: [] } } : {}),
     }) as unknown as Parameters<typeof hasCompletedModelRun>[0];
     expect(hasCompletedModelRun(null)).toBe(false);
-    expect(hasCompletedModelRun(env([]))).toBe(false);
-    expect(hasCompletedModelRun(env(['complete', 'running']))).toBe(false);
-    expect(hasCompletedModelRun(env(['failed']))).toBe(false);
-    expect(hasCompletedModelRun(env(['complete', 'failed', 'not_applicable']))).toBe(false);
-    expect(hasCompletedModelRun(env(['complete', 'not_applicable']))).toBe(true);
+    // A failed composed view (cash_flow) does not close the worker's gate —
+    // the hint follows the worker, not its own reading of every engine.
+    expect(hasCompletedModelRun(env({ returns: 'complete', cash_flow: 'failed' }, { ok: true, reason: null }))).toBe(true);
+    expect(hasCompletedModelRun(env({ returns: 'failed' }, { ok: false, reason: 'failed_engines' }))).toBe(false);
+    expect(hasCompletedModelRun(env({ partnership: 'not_applicable' }, { ok: false, reason: 'nothing_computed' }))).toBe(false);
+    // A payload without the gate (an older worker) never opens the IC statuses.
+    expect(hasCompletedModelRun(env({ returns: 'complete' }))).toBe(false);
   });
 });
