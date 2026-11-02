@@ -21,7 +21,7 @@ Usage (from the repo root)::
     apps/worker/.venv/bin/python scripts/compare_golden_baseline.py --all
     apps/worker/.venv/bin/python scripts/compare_golden_baseline.py --full
     apps/worker/.venv/bin/python scripts/compare_golden_baseline.py \\
-        --baseline evals/baselines/kimpton-golden-2026-10-16.json
+        --baseline evals/baselines/kimpton-golden-2026-11-01-engfix.json
     apps/worker/.venv/bin/python scripts/compare_golden_baseline.py \\
         --write evals/baselines/kimpton-golden-<date>.json   # new baseline
 
@@ -66,7 +66,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "apps" / "worker"
-DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-10-16.json"
+DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-01-engfix.json"
 
 # The fixture module is pure data (no ``app`` import), so it is safe to import
 # before ``_bootstrap`` pins DATABASE_URL; ``_bootstrap`` re-adds the same

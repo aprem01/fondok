@@ -130,15 +130,21 @@ move Kimpton numbers, run it and list every changed value in the change
 description. Then cut a new dated baseline with `--write`, and keep the old
 file so the history stays readable.
 
-## 2026-11 re-baseline: pending
+## 2026-11-01 re-baseline: engine fixes (`kimpton-golden-2026-11-01-engfix.json`)
 
-Prem approved ONE Kimpton re-baseline for branch `w5/topline`. The engine
-fixes below move the golden on purpose; the baseline file is cut once, by the
-topline task on the same branch, covering every move listed here. Each moving
-commit carries the `golden: expected` trailer (`scripts/check_golden_gate.py`).
-Values are `scripts/compare_golden_baseline.py` against
-`evals/baselines/kimpton-golden-2026-10-16.json`, measured cumulatively after
-each fix (so a fix's numbers include the fixes above it).
+Prem approved the Kimpton re-baseline for the engine fixes and the topline
+change. The engine fixes ship first, so this baseline covers them alone; the
+topline change will cut its own dated baseline with its own entry below. Each
+moving commit carries the `golden: expected` trailer
+(`scripts/check_golden_gate.py`). Values are `scripts/compare_golden_baseline.py`
+against `evals/baselines/kimpton-golden-2026-10-16.json` (kept for history),
+measured cumulatively after each fix (so a fix's numbers include the fixes
+above it). Headline moves (levered IRR 30.5078% → 31.2852%, unlevered IRR
+19.6698% → 20.1489%, equity multiple 3.1731x → 3.2590x, exit value 73,335,054 →
+74,797,035, cash NOI Years 2–5 +26.3K / +51.5K / +75.4K / +97.9K) all come from
+fix 1a/1b; the management-fee, FF&E, interest-only and fee-in-lieu fixes move
+no Kimpton headline (the fixture has no T-12, no IO period and no management
+agreement) and only add leaves.
 
 ### Fix 1a: departmental expense = Year-1 cost ratio × own department revenue (Sam finding 2a)
 

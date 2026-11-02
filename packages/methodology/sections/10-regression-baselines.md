@@ -56,7 +56,8 @@ on a zero baseline, or a field one run does not carry, shows a dash and says why
 exports to Excel. Comparing never re-runs or edits the model.
 
 The repository also keeps a fixed reference: the golden reference fixture's full engine outputs as
-of 16 October 2026 (`evals/baselines/kimpton-golden-2026-10-16.json`).
+of 1 November 2026 (`evals/baselines/kimpton-golden-2026-11-01-engfix.json`). Earlier references stay
+in the same folder so the history of every deliberate change remains readable.
 `scripts/compare_golden_baseline.py` re-runs that fixture on the current code and prints the same
 field-level diff, so every change to a calculation can be checked against what it was expected to
 move.
