@@ -371,13 +371,16 @@ tier is set) → market (market-wide report figures, else CBRE Hotel Horizons Al
 grown from its own calendar year into each projected year: B(y) = level × Π(1 + growth) over the
 calendar years after the level's period up to year y's. A step with no growth figure holds B flat.
 
-<!-- source: apps/worker/app/services/topline_growth.py (resolve_growth_by_year), services/topline.py (read_topline_inputs) -->
+<!-- source: apps/worker/app/services/topline_growth.py (resolve_growth_by_year), services/topline.py (read_topline_inputs), services/market_study_reader.py (CLASS_SERIES_PIPELINE_VERSION, predates_class_series) -->
 Growth per year and metric, first hit: your per-year growth → your all-years growth (your RevPAR
 growth alone sets ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 for each year) →
 CBRE Hotel Horizons All Hotels change for that calendar year → CoStar submarket change for the
 hotel's class → carried forward past the last year of the series the previous year used
 (an assumption) → none (held flat, {{reason:no_market_forecast}}). A CoStar figure under a withhold
-data policy is {{reason:license_withheld}}. Document growth needs the acquisition close date to be
+data policy is {{reason:license_withheld}}. A CoStar report extracted before the class series were
+read (pipeline before v9, no class table) is never "not in the report": the class's years are
+{{reason:reextract_needed}} ("report on file but extracted before class forecasts were read —
+re-extract") and the overall series is not substituted. Document growth needs the acquisition close date to be
 placed on the calendar. Retired settings are read with {{reason:legacy_key_translated}}: the Index
 Analysis market growth reads as your all-years growth, the "Use STR rates" switch is ignored, and a
 Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year).

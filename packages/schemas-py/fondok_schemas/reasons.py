@@ -63,6 +63,7 @@ class ReasonCode(str, Enum):
     LICENSE_WITHHELD = "license_withheld"
     LEGACY_KEY_TRANSLATED = "legacy_key_translated"
     NO_REVENUE_BASIS = "no_revenue_basis"
+    REEXTRACT_NEEDED = "reextract_needed"
 
 
 class Refusal(BaseModel):
@@ -318,6 +319,13 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "ui": REFUSAL_GLYPH,
         "explanation": (
             "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate."
+        ),
+    },
+    ReasonCode.REEXTRACT_NEEDED: {
+        "label": "Re-extract needed",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series."
         ),
     },
 }

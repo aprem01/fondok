@@ -32,6 +32,7 @@ const EXPECTED_REASONS = [
   'under_construction', 'capital_deploying', 'no_sale_value',
   'no_market_forecast', 'no_benchmark', 'license_withheld', 'legacy_key_translated',
   'no_revenue_basis',
+  'reextract_needed',
 ];
 
 describe('ontology — generated concept registry', () => {

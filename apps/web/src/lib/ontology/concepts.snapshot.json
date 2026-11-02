@@ -8502,6 +8502,11 @@
       "label": "No Year-1 occupancy / ADR",
       "ui": "—",
       "explanation": "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate."
+    },
+    "reextract_needed": {
+      "label": "Re-extract needed",
+      "ui": "—",
+      "explanation": "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series."
     }
   }
 }

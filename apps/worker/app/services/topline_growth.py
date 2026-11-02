@@ -329,9 +329,12 @@ def resolve_growth_by_year(
     costar_report = f"CoStar {submarket} submarket"
     bucket_label = series.label
     bucket_note: str | None = None
+    #: Review I-3 — the report predates the class series and the deal's
+    #: bucket was never read: every CoStar-only year says "re-extract".
+    stale_extraction = costar_reading.predates_class_series and not series.years
     if class_bucket == "all" and series.years:
         bucket_note = "All classes — no positioning tier set on the deal"
-    elif series.fallback_reason and series.years:
+    elif series.fallback_reason and (series.years or stale_extraction):
         bucket_note = series.fallback_reason
     costar: dict[str, dict[int, _DocYear]] = {"occupancy": {}, "adr": {}}
     for cy in series.years:
@@ -343,7 +346,9 @@ def resolve_growth_by_year(
                     report_date=costar_reading.report_date,
                 )
     reextract: list[str] = []
-    if costar_reading.reason == "no_source" and costar_reading.detail:
+    if stale_extraction:
+        reextract.append(series.fallback_reason or costar_reading.detail or "")
+    elif costar_reading.reason == "no_source" and costar_reading.detail:
         reextract.append(costar_reading.detail)
 
     def _doc(metric: str, c: int) -> MetricGrowth | None:
@@ -384,6 +389,15 @@ def resolve_growth_by_year(
 
     def _unavailable(metric: str, c: int | None, detail: str | None = None) -> MetricGrowth:
         noun = METRIC_NOUN[metric]
+        if detail is None and stale_extraction and not market_gated:
+            return MetricGrowth(
+                value=None, source="unavailable",
+                label=f"{c}: " + (series.fallback_reason or costar_reading.detail or "") if c else (
+                    series.fallback_reason or costar_reading.detail or ""
+                ),
+                reason=ReasonCode.REEXTRACT_NEEDED,
+                calendar_year=c,
+            )
         if detail is None:
             if market_gated:
                 detail = (

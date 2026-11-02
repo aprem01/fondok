@@ -3006,6 +3006,10 @@ def _apply_topline(
     state = status["growth_state"]
     growth_reason = (
         ReasonCode.LICENSE_WITHHELD if state == "withheld"
+        # Review I-3 — a CoStar report extracted before the class series
+        # existed is "re-extract", never "no market forecast".
+        else ReasonCode.REEXTRACT_NEEDED
+        if state in ("unavailable", "partially_sourced") and status.get("reextract_needed")
         else ReasonCode.NO_MARKET_FORECAST if state in ("unavailable", "partially_sourced")
         else None
     )
@@ -3020,6 +3024,7 @@ def _apply_topline(
                 growth_reason,
                 "Growth is resolved per year (topline_status.growth_by_year); "
                 + ("a CoStar forecast is withheld by the workspace's data policy." if state == "withheld"
+                   else "; ".join(status["reextract_needed"]) if growth_reason is ReasonCode.REEXTRACT_NEEDED
                    else "no market forecast covers every projected year."),
             )
     if "revpar_growth" not in analyst_override_paths:

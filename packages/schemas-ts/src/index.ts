@@ -328,6 +328,7 @@ export const ReasonCode = z.enum([
   "license_withheld",
   "legacy_key_translated",
   "no_revenue_basis",
+  "reextract_needed",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -506,6 +507,12 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate.",
+  },
+  reextract_needed: {
+    label: "Re-extract needed",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series.",
   },
 };
 

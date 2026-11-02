@@ -48,6 +48,7 @@ EXPECTED_CODES = [
     "license_withheld",
     "legacy_key_translated",
     "no_revenue_basis",
+    "reextract_needed",
 ]
 
 
@@ -59,7 +60,7 @@ def test_exported_from_package_root() -> None:
 
 def test_enum_is_exactly_the_shared_codes_in_order() -> None:
     assert [c.value for c in ReasonCode] == EXPECTED_CODES
-    assert len(ReasonCode) == 26
+    assert len(ReasonCode) == 28
 
 
 def test_enum_is_a_str_so_it_serialises_as_its_value() -> None:
