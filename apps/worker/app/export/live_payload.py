@@ -446,6 +446,8 @@ def _build_returns(returns: dict[str, Any]) -> dict[str, Any]:
         _set(r, "selling_costs_usd", _num(row.get("selling_costs")))
         _set(r, "transfer_tax_usd", _num(row.get("transfer_tax")))
         _set(r, "loan_payoff_usd", _num(row.get("loan_payoff")))
+        # Lender exit fees this sale paid (already inside net sale proceeds).
+        _set(r, "loan_exit_fee_usd", _num(row.get("loan_exit_fee")))
         _set(r, "net_sale_proceeds_usd", _num(row.get("net_proceeds")))
         _set(r, "levered_irr", _num(row.get("levered_irr")))
         _set(r, "unlevered_irr", _num(row.get("unlevered_irr")))

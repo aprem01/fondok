@@ -9,7 +9,8 @@ at close to the total cash the equity gets back, across five legs:
       + Renovation    -(the "Renovation" use line, contingency included)
       + Operations    +Σ returns.noi_by_year           (NOI over the hold)
       + Financing     +loan proceeds - loan fee - Σ debt service
-                      + refinance cash-out - loan payoff at exit
+                      + refinance cash-out (or - refinance equity contribution)
+                      - loan payoff and lender exit fees at exit
       + Exit          +gross sale - selling costs - transfer tax
     = Equity returned  Σ returns.cash_flows[1:]
 
@@ -200,7 +201,8 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
 
     # ── Financing — loan in, fee, debt service, refi cash-out, payoff ───────
     fin_formula = (
-        "loan proceeds - loan fee - Σ debt service + refinance cash-out - loan payoff at exit"
+        "loan proceeds - loan fee - Σ debt service + refinance cash-out"
+        " (- refinance equity contribution) - loan payoff and lender exit fees at exit"
     )
     loan = _num(ret_in.get("loan_amount"))
     ds_raw = ret_in.get("debt_service_by_year")
@@ -214,6 +216,8 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
     # A sale set before the refinance never draws its cash-out (the returns
     # stream leaves it out), so neither does the bridge.
     refi_precedes_sale = True
+    exit_fee = 0.0
+    exit_fee_source = ""
     _sched = ret_out.get("exit_schedule")
     if isinstance(_sched, list):
         for _i, _row in enumerate(_sched):
@@ -224,8 +228,11 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
                     payoff_source = f"returns.exit_schedule[{_i}].loan_payoff"
                 if _row.get("refi_included") is False:
                     refi_precedes_sale = False
+                exit_fee = _num(_row.get("loan_exit_fee")) or 0.0
+                exit_fee_source = f"returns.exit_schedule[{_i}].loan_exit_fee"
                 break
     refi_cash = _num(ret_in.get("refi_cash_out")) or 0.0
+    refi_call = _num(ret_in.get("refi_equity_contribution")) or 0.0
     refi_year = _num(ret_in.get("refi_year"))
     if not ret_in or loan is None or hold is None or annual_ds is None or payoff is None:
         legs.append(
@@ -246,7 +253,7 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
             ds = [annual_ds] * hold
         refi_active = (
             refi_precedes_sale
-            and refi_cash > 0
+            and (refi_cash > 0 or refi_call > 0)
             and refi_year is not None
             and 1 <= int(refi_year) <= hold
         )
@@ -261,12 +268,20 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
                 "returns.inputs.debt_service_by_year (debt engine)",
             )
         )
-        if refi_active:
+        if refi_active and refi_cash > 0:
             comps.append(
                 _component(
                     f"Refinance cash-out (Year {int(refi_year)})",  # type: ignore[arg-type]
                     refi_cash,
                     "returns.inputs.refi_cash_out (debt engine)",
+                )
+            )
+        if refi_active and refi_call > 0:
+            comps.append(
+                _component(
+                    f"Refinance equity contribution (Year {int(refi_year)})",  # type: ignore[arg-type]
+                    -refi_call,
+                    "returns.inputs.refi_equity_contribution (debt engine)",
                 )
             )
         comps.append(
@@ -276,6 +291,10 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
                 payoff_source,
             )
         )
+        if exit_fee > 0:
+            comps.append(
+                _component("Lender exit fees at sale", -exit_fee, exit_fee_source)
+            )
         legs.append(
             _leg(
                 "financing",

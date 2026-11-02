@@ -318,15 +318,18 @@ class CashFlowStatementEngine(
             )
 
         # A sale set before the refinance never draws it: the returns engine
-        # leaves the cash-out out of the stream, so the statement does too.
+        # leaves the refinance cash flow out of the stream, so the statement
+        # does too. The refinance is a cash-out (+) or, when its proceeds fall
+        # short of the balance retired + costs, an equity contribution (−).
         selected_row = next(
             (r for r in (ret.exit_schedule or []) if r.is_selected), None
         )
         refi_precedes_sale = selected_row is None or bool(selected_row.refi_included)
+        refi_cash_out_v = float(debt.refi_cash_out or 0.0)
+        refi_call_v = float(getattr(debt, "refi_equity_contribution", 0.0) or 0.0)
         if (
             refi_precedes_sale
-            and debt.refi_cash_out
-            and debt.refi_cash_out > 0
+            and (refi_cash_out_v > 0 or refi_call_v > 0)
             and debt.refi_year
         ):
             ry = int(debt.refi_year)
@@ -342,10 +345,18 @@ class CashFlowStatementEngine(
                 # foot to the net, fall back to the single net line so the
                 # reconciliation guard is never at risk and older runs are
                 # byte-identical.
-                net_cash_out = float(debt.refi_cash_out)
+                # Signed: + cash-out, − the equity contribution.
+                net_cash_out = refi_cash_out_v - refi_call_v
+                is_call = refi_call_v > 0
+                net_label = (
+                    "Refinance Equity Contribution" if is_call
+                    else "Net Refinance Cash-Out"
+                )
                 proceeds_v = debt.refi_new_loan_proceeds
                 payoff_v = debt.refi_existing_balance_repaid
                 fees_v = debt.refi_financing_costs
+                # The retired senior's lender exit fee, paid at the refinance.
+                exit_fee_v = float(getattr(debt, "refi_exit_fee_usd", None) or 0.0)
                 components_present = (
                     proceeds_v is not None
                     and payoff_v is not None
@@ -353,7 +364,12 @@ class CashFlowStatementEngine(
                 )
                 foots = components_present and (
                     abs(
-                        (float(proceeds_v) - float(payoff_v) - float(fees_v))
+                        (
+                            float(proceeds_v)
+                            - float(payoff_v)
+                            - float(fees_v)
+                            - exit_fee_v
+                        )
                         - net_cash_out
                     )
                     <= _CENT
@@ -388,13 +404,32 @@ class CashFlowStatementEngine(
                             note="Financing → refinance financing costs.",
                         )
                     )
+                    if exit_fee_v > 0:
+                        exit_fee_row = _blank()
+                        exit_fee_row[ry] = -exit_fee_v
+                        lev_lines.append(
+                            CashFlowStatementLine(
+                                label="Exit Fee on Retired Loan",
+                                values=exit_fee_row,
+                                kind="linked",
+                                note=(
+                                    "Financing → lender exit fee of the senior "
+                                    "loan the refinance retires."
+                                ),
+                            )
+                        )
                     lev_lines.append(
                         CashFlowStatementLine(
-                            label="Net Refinance Cash-Out", values=net_row,
+                            label=net_label, values=net_row,
                             kind="calc",
                             note=(
                                 "Refinance proceeds − existing payoff − fees = "
-                                "net cash-out to equity."
+                                "equity the refinance needs (charged to equity)."
+                                if is_call
+                                else (
+                                    "Refinance proceeds − existing payoff − fees = "
+                                    "net cash-out to equity."
+                                )
                             ),
                         )
                     )
@@ -403,9 +438,14 @@ class CashFlowStatementEngine(
                     refi[ry] = net_cash_out
                     lev_lines.append(
                         CashFlowStatementLine(
-                            label="Net Refinance Cash-Out", values=refi,
+                            label=net_label, values=refi,
                             kind="linked",
-                            note="Financing → refinance proceeds returned to equity.",
+                            note=(
+                                "Financing → equity the refinance needs to retire "
+                                "the existing balance."
+                                if is_call
+                                else "Financing → refinance proceeds returned to equity."
+                            ),
                         )
                     )
 
@@ -435,6 +475,20 @@ class CashFlowStatementEngine(
                 note="Financing → loan balance repaid at disposition.",
             )
         )
+        # Lender exit fees the selected sale paid (tranches still outstanding)
+        # — the same figure Returns deducted. No fee → no line.
+        selected_exit_fee = float(
+            (selected_row.loan_exit_fee if selected_row is not None else None) or 0.0
+        )
+        if selected_exit_fee > 0:
+            exit_fee_line = _blank()
+            exit_fee_line[hold] = -selected_exit_fee
+            lev_lines.append(
+                CashFlowStatementLine(
+                    label="Lender Exit Fees", values=exit_fee_line, kind="linked",
+                    note="Financing → exit fees of the loans repaid at disposition.",
+                )
+            )
 
         composed_lev = self._sum_rows(lev_lines, n)
         lev_lines.append(
@@ -569,6 +623,9 @@ class CashFlowStatementEngine(
             "Existing Debt Payoff": "debt.refi_existing_balance_repaid",
             "Refinance Fees": "debt.refi_financing_costs",
             "Net Refinance Cash-Out": "debt.refi_cash_out",
+            "Refinance Equity Contribution": "debt.refi_equity_contribution",
+            "Exit Fee on Retired Loan": "debt.refi_exit_fee_usd",
+            "Lender Exit Fees": "returns.exit_schedule.loan_exit_fee",
             "Exit Debt Payoff": "debt.balance_at_exit",
             "Net Cash Flow to Equity": "returns.cash_flows",
             "LP Distributions": "partnership.lp_cash_flows",

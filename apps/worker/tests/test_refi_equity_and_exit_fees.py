@@ -467,3 +467,13 @@ async def test_kimpton_exit_fee_is_its_own_line_and_the_statement_reconciles() -
     fin = next(leg for leg in bridge["legs"] if leg["key"] == "financing")
     comp = next(c for c in fin["components"] if c["label"] == "Lender exit fees at sale")
     assert comp["value"] == pytest.approx(-fee, abs=0.01)
+
+
+def test_export_payload_carries_the_exit_fee_on_each_exit_row() -> None:
+    from app.export.live_payload import _build_returns
+
+    d = _debt(debt_stack_overrides=dict(SENIOR_EXIT_FEE_1PCT))
+    out = ReturnsEngine().run(_returns_input(d))
+    block = _build_returns(out.model_dump(mode="json"))
+    rows = block["exit_schedule"]
+    assert all(r["loan_exit_fee_usd"] == pytest.approx(400_000.0) for r in rows)
