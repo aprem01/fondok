@@ -270,6 +270,16 @@ class CashFlowStatementEngine(
                 note="Financing → senior loan funded at close.",
             )
         )
+        # Funded junior tranches (PACE) — each its own proceeds line at close.
+        for jt in getattr(debt, "junior_tranches", None) or []:
+            jp = _blank()
+            jp[0] = float(jt.loan_amount)
+            lev_lines.append(
+                CashFlowStatementLine(
+                    label=f"{jt.label} Proceeds", values=jp, kind="linked",
+                    note="Financing → junior tranche funded at close.",
+                )
+            )
         if payload.key_money > 0:
             km = _blank()
             km[0] = float(payload.key_money)
@@ -615,6 +625,7 @@ class CashFlowStatementEngine(
             "Deferred Capital Deployed": "returns.cash_flows_unlevered",
             "Unlevered Cash Flow": "returns.cash_flows_unlevered",
             "Debt Proceeds": "capital.debt_amount",
+            "PACE Loan Proceeds": "capital.junior_debt_amount",
             "Key Money": "partnership.key_money",
             "Interest Expense": "debt.schedule",
             "Principal Amortization": "debt.schedule",

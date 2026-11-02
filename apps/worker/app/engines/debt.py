@@ -240,6 +240,24 @@ def _build_covenant_statuses(
     ]
 
 
+class JuniorTrancheOut(BaseModel):
+    """One funded, priced junior tranche as the cash flows carry it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    label: str
+    loan_amount: Annotated[float, Field(ge=0)]
+    all_in_rate: Annotated[float, Field(ge=0)]
+    interest_only: bool
+    # Debt service per hold year (index 0 = Year 1), from the monthly schedule.
+    debt_service_by_year: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
+    origination_fee_usd: Annotated[float, Field(ge=0)] = 0.0
+    exit_fee_usd: Annotated[float, Field(ge=0)] = 0.0
+
+
 class DebtEngineOutputExt(DebtEngineOutput):
     """Debt output enriched with DSCR, debt-yield and a monthly schedule.
 
@@ -293,6 +311,21 @@ class DebtEngineOutputExt(DebtEngineOutput):
     refi_equity_contribution: Annotated[float, Field(ge=0)] = 0.0
     refi_year: Annotated[int, Field(ge=1)] | None = None
     balance_at_exit: Annotated[float, Field(ge=0)] | None = None
+    # Funded, PRICED junior tranches (the PACE loan once it has a principal and
+    # a rate). Each is a source of funds at close, carries its own debt
+    # service in every debt-service series (a refinance retires the senior
+    # only) and is repaid — balance plus exit fee — at every sale. A tranche
+    # whose terms are pending is not here: it stays out of the cash flows.
+    junior_tranches: list[JuniorTrancheOut] = Field(default_factory=list)
+    # Σ junior balances per month from close (index 0 = month 1). Empty
+    # without a priced junior tranche.
+    junior_balance_by_month: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
+    # The lender exit fees a sale with no refinance before it pays: the senior
+    # plus every priced junior tranche. (A refinance pays the senior's —
+    # ``refi_exit_fee_usd`` — itself.)
+    exit_fee_at_sale_usd: Annotated[float, Field(ge=0)] = 0.0
     # FON-72 — surface the senior tranche's financing fees so the Debt tab's
     # "Financing Fees" line reads from the engine, not a placeholder. The pct
     # fields echo the (analyst-editable) senior tranche fees; the USD figures
@@ -529,6 +562,55 @@ def _apply_tranche_overrides(
                 data["terms_pending"] = data.get("fixed_rate") is None
         out.append(LoanTranche(**data))
     return out
+
+
+def _priced_juniors(tranches: list[LoanTranche]) -> list[LoanTranche]:
+    """The junior tranches (index ≥ 1) the cash flows carry: funded (a
+    principal) AND priced (a resolvable rate). A tranche whose terms are
+    pending stays out — never free money."""
+    return [
+        t
+        for t in tranches[1:]
+        if t.loan_amount > 0 and t.effective_rate(_SOFR_DEFAULT) is not None
+    ]
+
+
+def funded_junior_tranches(overrides: dict[str, Any] | None) -> list[LoanTranche]:
+    """The priced junior tranches the analyst's Debt-tab overrides fund — the
+    SAME resolution the debt engine runs, for the capital engine's Sources
+    (which runs before the debt engine)."""
+    seed = [
+        LoanTranche(kind="senior", label="Senior Loan", loan_amount=0.0, fixed_rate=0.0),
+        LoanTranche(kind="pace", label="PACE Loan", loan_amount=0.0, terms_pending=True),
+    ]
+    return _priced_juniors(_apply_tranche_overrides(seed, overrides))
+
+
+def _junior_monthly_schedule(
+    t: LoanTranche, months: int
+) -> tuple[list[float], list[float]]:
+    """(payments, ending balances) per month for a priced junior tranche —
+    interest-only, or an IO stub then a level monthly payment over its
+    amortization. Runs across the hold (no junior maturity is modelled)."""
+    rate = (t.effective_rate(_SOFR_DEFAULT) or 0.0) / 12.0
+    io = t.interest_only or not t.amortization_years
+    amort_n = (t.amortization_years or 0) * 12
+    io_months = int(t.io_months or 0)
+    level = pmt(rate, amort_n, t.loan_amount) if (not io and amort_n) else 0.0
+    bal = t.loan_amount
+    pays: list[float] = []
+    bals: list[float] = []
+    for m in range(1, months + 1):
+        interest = bal * rate
+        if io or m <= io_months:
+            pay = interest
+        else:
+            principal = min(bal, max(0.0, level - interest))
+            pay = principal + interest
+            bal = max(0.0, bal - principal)
+        pays.append(pay)
+        bals.append(bal)
+    return pays, bals
 
 
 def _refi_params(overrides: dict[str, Any] | None) -> dict[str, float] | None:
@@ -839,11 +921,16 @@ def returns_debt_inputs(debt_out: Any, *, fallback_loan: float) -> dict[str, Any
             if refi_year is not None and refi_balance is not None
             else None
         ),
-        # Lender exit fees. ``loan_exit_fee`` is every outstanding tranche's
-        # fee, paid by a sale with no refinance before it; a refinance retires
+        # Lender exit fees. ``loan_exit_fee`` is the fee of every tranche the
+        # cash flows carry (senior + priced juniors), paid by a sale with no
+        # refinance before it; a refinance retires
         # the senior and pays ITS fee (``refi_retired_exit_fee``) at the
         # refinance, so a later sale owes the difference.
-        "loan_exit_fee": float(getattr(debt_out, "exit_fee_usd", 0.0) or 0.0),
+        "loan_exit_fee": float(getattr(debt_out, "exit_fee_at_sale_usd", 0.0) or 0.0),
+        # Outstanding junior balance per month: every sale repays it too.
+        "junior_balance_by_month": [
+            float(b) for b in (getattr(debt_out, "junior_balance_by_month", None) or [])
+        ],
         "refi_retired_exit_fee": (
             float(getattr(debt_out, "refi_exit_fee_usd", 0.0) or 0.0)
             if refi_year is not None
@@ -1075,6 +1162,61 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                         payload.noi_by_year[0],
                         debt_stack.total_annual_debt_service,
                     )
+        # Priced junior tranches (PACE once it has a rate): a monthly schedule
+        # across the hold, rolled up per year. Their stack Year-1 debt service
+        # is reconciled to that roll-up (as the senior's is above), so the
+        # headline DSCR and the Returns series read the same payments.
+        _junior_hz = (
+            payload.hold_years
+            if payload.hold_years is not None
+            else len(payload.noi_by_year)
+        ) or payload.term_years
+        junior_months = max(_junior_hz, 1) * 12
+        junior_out: list[JuniorTrancheOut] = []
+        junior_balance_by_month: list[float] = []
+        junior_ds_by_year: list[float] = []
+        for jt in _priced_juniors(resolved_tranches):
+            _pays, _bals = _junior_monthly_schedule(jt, junior_months)
+            _by_year = [
+                sum(_pays[y * 12 : (y + 1) * 12]) for y in range(junior_months // 12)
+            ]
+            junior_out.append(
+                JuniorTrancheOut(
+                    kind=jt.kind,
+                    label=jt.label or jt.kind,
+                    loan_amount=jt.loan_amount,
+                    all_in_rate=jt.effective_rate(_SOFR_DEFAULT) or 0.0,
+                    interest_only=bool(jt.interest_only or not jt.amortization_years),
+                    debt_service_by_year=_by_year,
+                    origination_fee_usd=jt.loan_amount * (jt.origination_fee_pct / 100.0),
+                    exit_fee_usd=jt.loan_amount * (jt.exit_fee_pct / 100.0),
+                )
+            )
+            junior_balance_by_month = (
+                [a + b for a, b in zip(junior_balance_by_month, _bals)]
+                if junior_balance_by_month
+                else list(_bals)
+            )
+            junior_ds_by_year = (
+                [a + b for a, b in zip(junior_ds_by_year, _by_year)]
+                if junior_ds_by_year
+                else list(_by_year)
+            )
+            for tr in debt_stack.tranches:
+                if (
+                    tr.kind == jt.kind
+                    and tr.label == (jt.label or jt.kind)
+                    and tr.annual_debt_service is not None
+                    and _by_year
+                ):
+                    _delta = _by_year[0] - tr.annual_debt_service
+                    tr.annual_debt_service = _by_year[0]
+                    debt_stack.total_annual_debt_service += _delta
+            if payload.noi_by_year and debt_stack.total_annual_debt_service > 0:
+                debt_stack.year_one_dscr = _coverage_ratio(
+                    payload.noi_by_year[0], debt_stack.total_annual_debt_service
+                )
+
         # FON-63 — the stack's own Year-1 DSCR is N/A on a non-positive NOI too.
         if payload.noi_by_year and payload.noi_by_year[0] <= 0:
             debt_stack.year_one_dscr = None
@@ -1191,6 +1333,20 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_year_out,
                     refi_detail,
                 ) = computed
+        # Junior tranches keep their own debt service before AND after a
+        # refinance (the refinance retires the senior only). Without a
+        # refinance the phased series is published once a junior exists, so
+        # Returns reads the same payments the Debt tab shows.
+        if junior_ds_by_year and horizon > 0:
+            if not debt_service_by_year:
+                debt_service_by_year = [
+                    schedule[i].debt_service if i < len(schedule) else senior_annual_ds
+                    for i in range(horizon)
+                ]
+            debt_service_by_year = [
+                ds + (junior_ds_by_year[i] if i < len(junior_ds_by_year) else 0.0)
+                for i, ds in enumerate(debt_service_by_year)
+            ]
 
         # A sale BEFORE the refinance repays the senior at the sale month.
         # The refinance month is the same one the returns engine switches the
@@ -1215,6 +1371,13 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             if sale_month < _refi_m:
                 sale_before_refi = True
                 balance_at_exit_out = senior_balance_at_sale
+
+        # Every sale also repays the outstanding junior balance (a refinance
+        # retires the senior only), so Balance at Exit is the full payoff.
+        if junior_balance_by_month and balance_at_exit_out is not None and sale_month is not None:
+            balance_at_exit_out += junior_balance_by_month[
+                min(sale_month, len(junior_balance_by_month)) - 1
+            ]
 
         # The loan matures before the sale and no refinance replaces it: the
         # model does NOT invent a refinance or extension — it carries the
@@ -1485,6 +1648,11 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             maturity_warning=maturity_warning,
             refi_warning=refi_warning,
             refi_equity_note=refi_equity_note,
+            junior_tranches=junior_out,
+            junior_balance_by_month=junior_balance_by_month,
+            exit_fee_at_sale_usd=(
+                senior_exit_fee + sum(j.exit_fee_usd for j in junior_out)
+            ),
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,

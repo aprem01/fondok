@@ -659,6 +659,12 @@ class ReturnsEngineInputExt(BaseModel):
     # ``refi_retired_exit_fee`` itself, so the sale owes the difference.
     loan_exit_fee: Annotated[float, Field(ge=0)] = 0.0
     refi_retired_exit_fee: Annotated[float, Field(ge=0)] = 0.0
+    # Σ outstanding junior-tranche balance per month from close (index 0 =
+    # month 1). Every sale repays it on top of the senior / refi balance — a
+    # refinance retires the senior only. Empty → no junior debt.
+    junior_balance_by_month: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
     # Compute the per-year table. Grid callers (sensitivity, pricing, max-price,
     # price solver, asking-vs-bid) set False: they read one metric per run.
     exit_schedule: bool = True
@@ -826,7 +832,8 @@ def _payoff_at(
     constant); before it the senior's monthly ending balance at that month;
     past loan maturity the last balance stands (the loan is not refinanced or
     extended by the model; the debt engine's ``maturity_warning`` discloses
-    it). With no monthly schedule the scalar ``loan_balance_at_exit`` is the
+    it). Any junior tranche's outstanding balance at that month is repaid on
+    top — before and after a refinance, which retires the senior only. With no monthly schedule the scalar ``loan_balance_at_exit`` is the
     payoff at every exit — the legacy single-balance behaviour.
     """
     scalar = (
@@ -834,14 +841,24 @@ def _payoff_at(
         if payload.loan_balance_at_exit is not None
         else payload.loan_amount
     )
+    senior: tuple[float, str] | None = None
     if refi_included:
         if payload.refi_balance is not None:
-            return payload.refi_balance, "refi_balance"
-        return scalar, "loan_balance_at_exit"
-    if payload.loan_balance_by_month:
+            senior = (payload.refi_balance, "refi_balance")
+    elif payload.loan_balance_by_month:
         idx = min(exit_month, len(payload.loan_balance_by_month)) - 1
-        return payload.loan_balance_by_month[idx], f"loan_balance_by_month[{idx}]"
-    return scalar, "loan_balance_at_exit"
+        senior = (payload.loan_balance_by_month[idx], f"loan_balance_by_month[{idx}]")
+    if senior is None:
+        # The scalar is the debt engine's whole Balance at Exit (juniors
+        # included) — the legacy single-balance path adds nothing to it.
+        return scalar, "loan_balance_at_exit"
+    if payload.junior_balance_by_month:
+        jdx = min(exit_month, len(payload.junior_balance_by_month)) - 1
+        return (
+            senior[0] + payload.junior_balance_by_month[jdx],
+            f"{senior[1]} + junior_balance_by_month[{jdx}]",
+        )
+    return senior
 
 
 def _exit_row(case: _ExitCase, *, is_peak: bool) -> ExitYearReturn:

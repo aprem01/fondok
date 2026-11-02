@@ -62,6 +62,20 @@ _RENOVATION_SPLIT_FIELDS: frozenset[str] = frozenset(
 )
 
 
+class JuniorDebtFunding(BaseModel):
+    """A funded, priced junior tranche (the Debt tab's PACE loan once it has a
+    principal and a rate): a source of funds at close, its origination fee a
+    use. Resolved by ``engines.debt.funded_junior_tranches`` — the same rule
+    the debt engine runs — so Sources & Uses and the cash flows agree."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: Annotated[str, Field(min_length=1)]
+    amount: Annotated[float, Field(gt=0)]
+    # 0..10 percent (1.0 = 1.00%), the tranche's own convention.
+    origination_fee_pct: Annotated[float, Field(ge=0.0, le=10.0)] = 0.0
+
+
 class CapitalEngineInput(InvestmentEngineInput):
     """Investment input plus financing assumptions used to size sources."""
 
@@ -82,6 +96,9 @@ class CapitalEngineInput(InvestmentEngineInput):
     # FON-67 — an insurance / operating reserve funded at close, a property use
     # alongside working capital (0 unless the analyst provides it).
     insurance_reserve: Annotated[float, Field(ge=0)] = 0.0
+    # Funded, priced junior tranches — sources of funds alongside the senior.
+    # Empty (the default) keeps every existing deal byte-identical.
+    junior_debt: list[JuniorDebtFunding] = Field(default_factory=list)
 
     # Renovation cost split (FON-71). The renovation budget is one line in
     # the sources & uses, but the Investment tab breaks it into hard costs,
@@ -127,7 +144,10 @@ class CapitalEngineOutput(InvestmentEngineOutput):
 
     model_config = ConfigDict(extra="forbid")
 
+    # The SENIOR loan (the debt engine sizes its schedule from this).
     debt_amount: Annotated[float, Field(ge=0)]
+    # Σ funded, priced junior tranches — also a source at close.
+    junior_debt_amount: Annotated[float, Field(ge=0)] = 0.0
     equity_amount: Annotated[float, Field(ge=0)]
     ltc: Annotated[float, Field(ge=0.0, le=1.5)]
     # None when there is no renovation budget (so the UI shows '—' rather
@@ -244,8 +264,19 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
 
         # Total capitalization = property uses + financing fee (unchanged
         # meaning of ``total_capital``); equity funds the gap plus the fee.
+        # Junior tranches fund at close; their origination fees are uses.
+        junior_amount = sum(j.amount for j in payload.junior_debt)
+        junior_fees = [
+            (f"{j.label} Origination Fee", j.amount * (j.origination_fee_pct / 100.0))
+            for j in payload.junior_debt
+        ]
+        junior_fee_total = sum(a for _, a in junior_fees)
         total_uses = property_uses + senior_loan_fee
+        if junior_fee_total > 0:
+            total_uses += junior_fee_total
         equity = total_uses - debt
+        if junior_amount > 0:
+            equity -= junior_amount
 
         uses_lines = list(property_lines)
         if senior_loan_fee > 0:
@@ -255,6 +286,9 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                     amount=senior_loan_fee,
                 )
             )
+        for _lbl, _amt in junior_fees:
+            if _amt > 0:
+                uses_lines.append(SourceUseLine(label=_lbl, amount=_amt))
 
         # Break the renovation budget into hard / soft / professional fees.
         # Only when there's an actual budget — otherwise leave it None so the
@@ -314,6 +348,14 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 amount=equity,
                 pct=equity / total_uses if total_uses else None,
             ),
+            *[
+                SourceUseLine(
+                    label=j.label,
+                    amount=j.amount,
+                    pct=j.amount / total_uses if total_uses else None,
+                )
+                for j in payload.junior_debt
+            ],
             SourceUseLine(
                 label="Total Sources", amount=total_uses, pct=1.0, is_total=True
             ),
@@ -373,14 +415,32 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                         "fee — edit it there."
                     ),
                 )
+            elif line.label in dict(junior_fees):
+                prov[key] = ValueTrace(
+                    value=line.amount,
+                    formula="junior_loan_fee = junior_principal × origination_fee_pct ÷ 100",
+                    note=(
+                        "Junior tranche origination fee entered on the Financing "
+                        "tab — funded at close."
+                    ),
+                )
             elif line.label == "Total Uses":
                 prov[key] = ValueTrace(
                     value=line.amount,
-                    formula="total_uses = property_uses + senior_loan_fee",
+                    formula=(
+                        "total_uses = property_uses + senior_loan_fee + junior_loan_fees"
+                        if junior_fee_total > 0
+                        else "total_uses = property_uses + senior_loan_fee"
+                    ),
                     inputs=[
                         ValueInput(name="property_uses", value=property_uses, traces_to="property_uses_usd"),
                         ValueInput(name="senior_loan_fee", value=senior_loan_fee, traces_to="senior_loan_fee_usd"),
-                    ],
+                    ]
+                    + (
+                        [ValueInput(name="junior_loan_fees", value=junior_fee_total)]
+                        if junior_fee_total > 0
+                        else []
+                    ),
                 )
             elif line.label == "Renovation" and reno_contingency > 0:
                 prov[key] = ValueTrace(
@@ -443,21 +503,42 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 ],
             )
         )
+        _jsrc = [
+            (f"sources[{2 + i}].amount", j) for i, j in enumerate(payload.junior_debt)
+        ]
         prov["sources[1].amount"] = ValueTrace(
             value=equity,
-            formula="equity = total_uses − senior_debt",
+            formula=(
+                "equity = total_uses − senior_debt − junior_debt"
+                if _jsrc
+                else "equity = total_uses − senior_debt"
+            ),
             inputs=[
                 ValueInput(name="total_uses", value=total_uses, traces_to="uses[{}].amount".format(len(uses_lines) - 1)),
                 ValueInput(name="senior_debt", value=debt, traces_to="sources[0].amount"),
-            ],
+            ]
+            + [ValueInput(name=j.label, value=j.amount, traces_to=k) for k, j in _jsrc],
         )
-        prov["sources[2].amount"] = ValueTrace(
+        for _k, _j in _jsrc:
+            prov[_k] = ValueTrace(
+                value=_j.amount,
+                note=(
+                    "Junior tranche principal entered on the Financing tab — "
+                    "funded at close."
+                ),
+            )
+        prov[f"sources[{2 + len(_jsrc)}].amount"] = ValueTrace(
             value=total_uses,
-            formula="total_sources = senior_debt + equity",
+            formula=(
+                "total_sources = senior_debt + equity + junior_debt"
+                if _jsrc
+                else "total_sources = senior_debt + equity"
+            ),
             inputs=[
                 ValueInput(name="senior_debt", value=debt, traces_to="sources[0].amount"),
                 ValueInput(name="equity", value=equity, traces_to="sources[1].amount"),
-            ],
+            ]
+            + [ValueInput(name=j.label, value=j.amount, traces_to=k) for k, j in _jsrc],
         )
 
         # Headline scalar figures the Investment tab surfaces above the table.
@@ -509,11 +590,26 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         )
         prov["equity_amount"] = ValueTrace(
             value=equity,
-            formula="equity_amount = total_uses − debt_amount",
+            formula=(
+                "equity_amount = total_uses − debt_amount − junior_debt_amount"
+                if junior_amount > 0
+                else "equity_amount = total_uses − debt_amount"
+            ),
             inputs=[
                 ValueInput(name="total_uses", value=total_uses, traces_to="total_capital"),
                 ValueInput(name="debt_amount", value=debt, traces_to="debt_amount"),
-            ],
+            ]
+            + (
+                [
+                    ValueInput(
+                        name="junior_debt_amount",
+                        value=junior_amount,
+                        traces_to="junior_debt_amount",
+                    )
+                ]
+                if junior_amount > 0
+                else []
+            ),
         )
         prov["ltc"] = ValueTrace(
             value=debt / total_uses if total_uses else 0.0,
@@ -526,11 +622,20 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
         )
         prov["total_capital"] = ValueTrace(
             value=total_uses,
-            formula="total_capital = property_uses + senior_loan_fee",
+            formula=(
+                "total_capital = property_uses + senior_loan_fee + junior_loan_fees"
+                if junior_fee_total > 0
+                else "total_capital = property_uses + senior_loan_fee"
+            ),
             inputs=[
                 ValueInput(name="property_uses", value=property_uses, traces_to="property_uses_usd"),
                 ValueInput(name="senior_loan_fee", value=senior_loan_fee, traces_to="senior_loan_fee_usd"),
-            ],
+            ]
+            + (
+                [ValueInput(name="junior_loan_fees", value=junior_fee_total)]
+                if junior_fee_total > 0
+                else []
+            ),
         )
         prov["property_uses_usd"] = ValueTrace(
             value=property_uses,
@@ -631,6 +736,7 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
             sources=sources_lines,
             uses=uses_lines,
             debt_amount=debt,
+            junior_debt_amount=junior_amount,
             equity_amount=equity,
             ltc=debt / total_uses if total_uses else 0.0,
             renovation_breakdown=reno_breakdown,

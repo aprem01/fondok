@@ -41,6 +41,14 @@ from typing import Any
 # Sources & Uses labels the bridge assigns to legs other than Acquisition.
 RENOVATION_LABEL = "Renovation"
 LOAN_FEE_LABEL = "Senior Loan Origination Fee"
+# Every loan's origination fee ("Senior Loan Origination Fee", "PACE Loan
+# Origination Fee") is a Financing cost, not an Acquisition one.
+LOAN_FEE_SUFFIX = "Origination Fee"
+
+
+def _is_loan_fee(label: str) -> bool:
+    return label == LOAN_FEE_LABEL or label.endswith(LOAN_FEE_SUFFIX)
+
 TOTAL_USES_LABEL = "Total Uses"
 
 # Tolerance for the foot check (USD).
@@ -137,7 +145,9 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
         legs.append(_unavailable("acquisition", "Acquisition", acq_formula, reason))
         legs.append(_unavailable("renovation", "Renovation / PIP", reno_formula, reason))
     else:
-        acq_lines = [(lbl, a) for lbl, a in use_lines if lbl not in (RENOVATION_LABEL, LOAN_FEE_LABEL)]
+        acq_lines = [
+            (lbl, a) for lbl, a in use_lines if lbl != RENOVATION_LABEL and not _is_loan_fee(lbl)
+        ]
         legs.append(
             _leg(
                 "acquisition",
@@ -258,9 +268,18 @@ def build_investment_bridge(rows: dict[str, Any]) -> dict[str, Any]:
             and 1 <= int(refi_year) <= hold
         )
         fee = sum(a for lbl, a in use_lines if lbl == LOAN_FEE_LABEL)
-        comps = [_component("Loan proceeds", loan, "returns.inputs.loan_amount (= capital.debt_amount)")]
+        comps = [
+            _component(
+                "Loan proceeds",
+                loan,
+                "returns.inputs.loan_amount (= capital.debt_amount + capital.junior_debt_amount)",
+            )
+        ]
         if fee:
             comps.append(_component("Loan origination fee", -fee, f"capital.uses[{LOAN_FEE_LABEL}]"))
+        for lbl, a in use_lines:
+            if lbl != LOAN_FEE_LABEL and _is_loan_fee(lbl) and a:
+                comps.append(_component(lbl, -a, f"capital.uses[{lbl}]"))
         comps.append(
             _component(
                 "Debt service over the hold",

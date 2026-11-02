@@ -272,14 +272,19 @@ class SensitivityEngine(BaseEngine[SensitivityInput, SensitivityOutput]):
                         update={"loan_amount": loan, "interest_rate": rate}
                     )
                 )
-                equity = max(1.0, total_capital - loan)
+                # Funded junior tranches (PACE) are sources alongside the
+                # flexed senior: equity is what neither covers.
+                junior = sum(
+                    t.loan_amount for t in (getattr(debt_out, "junior_tranches", None) or [])
+                )
+                equity = max(1.0, total_capital - loan - junior)
                 # The cell's OWN debt — balances, phased debt service, refi
                 # cash-out and refi year — through the same mapping the runner
                 # uses, so the cell at the deal's own loan IS the headline.
                 trial = base_input.model_copy(
                     update={
                         **returns_debt_inputs(debt_out, fallback_loan=loan),
-                        "loan_amount": loan,
+                        "loan_amount": loan + junior,
                         "equity": equity,
                         "assumptions": base_input.assumptions.model_copy(
                             update={"interest_rate": rate}
