@@ -492,3 +492,99 @@ def test_export_payload_carries_the_exit_fee_on_each_exit_row() -> None:
     block = _build_returns(out.model_dump(mode="json"))
     rows = block["exit_schedule"]
     assert all(r["loan_exit_fee_usd"] == pytest.approx(400_000.0) for r in rows)
+
+
+# ─────────────── exports: the refinance and the exit fees are stated ───────────────
+
+
+def _refi_block(ovr: dict) -> dict:
+    from app.export.live_payload import _build_refi
+
+    return _build_refi(_debt(debt_stack_overrides=dict(ovr)).model_dump(mode="json"))
+
+
+def test_export_refi_block_states_a_cash_in_refinance() -> None:
+    blk = _refi_block({**CASH_IN, "refi_fee_pct": 0.01})
+    assert blk["refi_year"] == 3
+    assert blk["refi_proceeds_usd"] == pytest.approx(30_000_000.0)
+    assert round(blk["existing_balance_repaid_usd"]) == BALANCE_Y3
+    assert blk["refi_costs_usd"] == pytest.approx(300_000.0)
+    assert blk["equity_contribution_usd"] == pytest.approx(
+        blk["existing_balance_repaid_usd"] + 300_000.0 - 30_000_000.0
+    )
+    assert "cash_out_to_equity_usd" not in blk  # not applicable, never a $0
+
+
+def test_export_refi_block_states_a_cash_out_refinance_and_none_without_one() -> None:
+    blk = _refi_block({**CASH_OUT, **SENIOR_EXIT_FEE_1PCT})
+    assert blk["cash_out_to_equity_usd"] > 0
+    assert "equity_contribution_usd" not in blk
+    assert blk["refi_costs_usd"] == pytest.approx(400_000.0)  # the retired loan's exit fee
+    from app.export.live_payload import _build_refi
+
+    assert _build_refi(_debt().model_dump(mode="json")) == {}
+
+
+def _model_with(refi: dict | None, exit_fee: float | None = None) -> dict:
+    from tests.fixtures.kimpton_export_payload import kimpton_model
+
+    model = kimpton_model()
+    if refi is None:
+        model.pop("refi_engine", None)
+    else:
+        model["refi_engine"] = refi
+    if exit_fee is not None:
+        ret = dict(model["returns_engine"])
+        ret["exit_schedule"] = [
+            {**r, "loan_exit_fee_usd": exit_fee} for r in ret.get("exit_schedule") or []
+        ]
+        model["returns_engine"] = ret
+    return model
+
+
+def _flat(path: Path, sheet: str) -> list[list[object]]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True)
+    try:
+        return [[c.value for c in row] for row in wb[sheet].iter_rows()]
+    finally:
+        wb.close()
+
+
+def test_excel_refinance_section_shows_the_equity_contribution(tmp_path: Path) -> None:
+    from app.export import build_excel
+
+    blk = _refi_block(CASH_IN)
+    out = build_excel("x", _model_with(blk), tmp_path / "r.xlsx")
+    rows = {str(r[0]): r for r in _flat(out, "Assumptions") if r and r[0] is not None}
+    assert rows["Equity Contribution"][1] == pytest.approx(blk["equity_contribution_usd"])
+    assert rows["Balance Retired"][1] == pytest.approx(blk["existing_balance_repaid_usd"])
+    assert rows["Refinance Costs"][1] == 0
+    assert str(rows["Cash Out"][1]).startswith("not available")
+    assert "no refinance modelled" not in str(rows.get("Refinance", ["", ""])[1])
+
+
+def test_excel_and_memo_exit_tables_show_the_exit_fee(tmp_path: Path) -> None:
+    from app.export import build_excel
+    from app.export.memo_pdf import _render_html_body
+    from tests.fixtures.kimpton_export_payload import kimpton_memo
+
+    model = _model_with(None, exit_fee=123_456.0)
+    out = build_excel("x", model, tmp_path / "e.xlsx")
+    flat = [v for r in _flat(out, "Returns") for v in r]
+    assert "Exit fees" in flat and 123_456.0 in flat
+    html_out = _render_html_body(kimpton_memo(), model)
+    assert "Exit fees" in html_out and "$123,456" in html_out
+
+
+def test_memo_states_the_refinance_or_that_none_is_modelled() -> None:
+    from app.export.memo_pdf import _render_html_body
+    from tests.fixtures.kimpton_export_payload import kimpton_memo
+
+    blk = _refi_block(CASH_IN)
+    html_out = _render_html_body(kimpton_memo(), _model_with(blk))
+    assert "Refinance Equity Contribution" in html_out
+    assert f"${round(blk['equity_contribution_usd']):,}" in html_out
+    html_none = _render_html_body(kimpton_memo(), _model_with(None))
+    assert "No refinance modelled" in html_none

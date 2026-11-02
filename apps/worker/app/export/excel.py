@@ -571,10 +571,31 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Refi Year", refi, "refi_year", INT_FMT, "", "refi_year", "debt engine"),
                 item("Refi LTV", refi, "refi_ltv", PCT_FMT, "", "refi_ltv", "debt engine"),
                 item("Refi Rate", refi, "refi_rate_pct", PCT_FMT, "", "refi_rate", "debt engine"),
-                item("Refi Term (yrs)", refi, "refi_term_years", INT_FMT, "", "refi_term_years", "debt engine"),
-                item("Refi Amort (yrs)", refi, "refi_amortization_years", INT_FMT, "", "refi_amortization_years", "debt engine"),
+                (
+                    "Refi Term (yrs)", refi.get("refi_term_years"), INT_FMT, "", "refi_term_years",
+                    "the refinance is modelled interest-only to the sale; no term is modelled",
+                ),
+                (
+                    "Refi Amort (yrs)", refi.get("refi_amortization_years"), INT_FMT, "",
+                    "refi_amortization_years",
+                    "the refinance is modelled interest-only; no amortization is modelled",
+                ),
                 item("Refi Proceeds", refi, "refi_proceeds_usd", USD_FMT, "", "refi_proceeds", "debt engine"),
-                item("Cash Out", refi, "cash_out_to_equity_usd", USD_FMT, "", "refi_cash_out", "debt engine"),
+                item("Balance Retired", refi, "existing_balance_repaid_usd", USD_FMT, "Senior balance repaid at the refinance", "refi_existing_balance_repaid", "debt engine"),
+                item("Refinance Costs", refi, "refi_costs_usd", USD_FMT, "Loan fee + retired loan's exit fee", "refi_financing_costs", "debt engine"),
+                (
+                    "Cash Out", refi.get("cash_out_to_equity_usd"), USD_FMT, "", "refi_cash_out",
+                    "not applicable — the refinance needs equity (see Equity Contribution)"
+                    if refi.get("equity_contribution_usd") is not None
+                    else "no cash out on the deal's debt engine output",
+                ),
+                (
+                    "Equity Contribution", refi.get("equity_contribution_usd"), USD_FMT,
+                    "Charged to equity at the refinance", "refi_equity_contribution",
+                    "not applicable — the refinance returns cash (see Cash Out)"
+                    if refi.get("cash_out_to_equity_usd") is not None
+                    else "no equity contribution on the deal's debt engine output",
+                ),
             ],
         ),
         (
@@ -922,10 +943,11 @@ def _build_returns(wb: Workbook, model: dict[str, Any]) -> None:
                 (2, "terminal_noi_usd", USD_FMT),
                 (3, "gross_sale_price_usd", USD_FMT),
                 (4, "loan_payoff_usd", USD_FMT),
-                (5, "net_sale_proceeds_usd", USD_FMT),
-                (6, "unlevered_irr", PCT_FMT),
-                (7, "levered_irr", PCT_FMT),
-                (8, "equity_multiple", MULT_FMT),
+                (5, "loan_exit_fee_usd", USD_FMT),
+                (6, "net_sale_proceeds_usd", USD_FMT),
+                (7, "unlevered_irr", PCT_FMT),
+                (8, "levered_irr", PCT_FMT),
+                (9, "equity_multiple", MULT_FMT),
             ):
                 _write_value(
                     ws, row, col, _as_float(r.get(key)), fmt,

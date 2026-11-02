@@ -387,6 +387,34 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
     return out
 
 
+def _build_refi(debt: dict[str, Any]) -> dict[str, Any]:
+    """``refi_engine`` block — the refinance the debt engine ran, or ``{}``
+    when none is modelled (the exports then say so). Only one of
+    ``cash_out_to_equity_usd`` / ``equity_contribution_usd`` is present: the
+    other is not applicable, never a $0."""
+    if _int(debt.get("refi_year")) is None:
+        return {}
+    out: dict[str, Any] = {}
+    _set(out, "refi_year", _int(debt.get("refi_year")))
+    _set(out, "refi_ltv", _num(debt.get("refi_ltv")))
+    _set(out, "refi_rate_pct", _num(debt.get("refi_new_interest_rate")))
+    _set(out, "refi_proceeds_usd", _num(debt.get("refi_new_loan_proceeds")))
+    _set(out, "existing_balance_repaid_usd", _num(debt.get("refi_existing_balance_repaid")))
+    fee = _num(debt.get("refi_financing_costs"))
+    exit_fee = _num(debt.get("refi_exit_fee_usd"))
+    if fee is not None:
+        _set(out, "refi_costs_usd", fee + (exit_fee or 0.0))
+    call = _num(debt.get("refi_equity_contribution")) or 0.0
+    if call > 0:
+        out["equity_contribution_usd"] = call
+    else:
+        _set(out, "cash_out_to_equity_usd", _num(debt.get("refi_cash_out")))
+    note = debt.get("refi_equity_note")
+    if isinstance(note, str) and note.strip():
+        out["equity_note"] = note.strip()
+    return out
+
+
 def _benchmark_default_note(stack: dict[str, Any]) -> str | None:
     """``"Benchmark SOFR 4.30% is Fondok's flat SOFR assumption, ..."`` when a
     priced floating tranche ran on the engine's default index; else ``None``.
@@ -1731,6 +1759,9 @@ async def _assemble_live_payload(
     debt_block = _build_debt(debt, capital)
     if debt_block:
         model["debt_engine"] = debt_block
+    refi_block = _build_refi(debt)
+    if refi_block:
+        model["refi_engine"] = refi_block
     returns_block = _build_returns(returns)
     if returns_block:
         model["returns_engine"] = returns_block

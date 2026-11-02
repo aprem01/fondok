@@ -44,7 +44,7 @@ _ENGINE_ROWS = [
         "status": "computed", "reason": None, "reason_detail": None,
         "exit_noi_basis": "forward_12m", "exit_noi_period_label": "Forward 12-month NOI (Year 3, projected)",
         "terminal_noi": 4_344_427.35, "gross_sale_price": 62_063_247.83, "selling_costs": 1_241_264.96,
-        "transfer_tax": 0.0, "loan_payoff": 23_142_967.79, "refi_included": False,
+        "transfer_tax": 0.0, "loan_payoff": 23_142_967.79, "loan_exit_fee": 0.0, "refi_included": False,
         "net_proceeds": 37_679_015.08, "levered_irr": 0.5153, "unlevered_irr": 0.2806,
         "equity_multiple": 2.185,
     },
@@ -53,7 +53,7 @@ _ENGINE_ROWS = [
         "status": "computed", "reason": None, "reason_detail": None,
         "exit_noi_basis": "forward_12m", "exit_noi_period_label": "Forward 12-month NOI (Year 6)",
         "terminal_noi": 5_133_453.81, "gross_sale_price": 73_335_054.46, "selling_costs": 1_466_701.09,
-        "transfer_tax": 0.0, "loan_payoff": 22_223_267.50, "refi_included": False,
+        "transfer_tax": 0.0, "loan_payoff": 22_223_267.50, "loan_exit_fee": 0.0, "refi_included": False,
         "net_proceeds": 49_645_085.87, "levered_irr": 0.3051, "unlevered_irr": 0.1967,
         "equity_multiple": 3.173,
     },
@@ -218,15 +218,20 @@ def test_excel_returns_sheet_carries_the_block_with_typed_refusals(tmp_path: Pat
     by_label = {str(r[0]): r for r in rows if r and r[0] is not None}
     dashed = by_label["Year 1"]
     assert str(dashed[1]).startswith(f"{NOT_AVAILABLE_PREFIX}: capital still deploying")
-    assert all(v is None for v in dashed[2:8])  # no 0 anywhere on the dashed row
+    assert all(v is None for v in dashed[2:9])  # no 0 anywhere on the dashed row
     peak = by_label["Year 2 · peak"]
-    assert peak[1] == 4_344_427.35 and peak[4] == 37_679_015.08
-    assert peak[6] == 0.5153 and peak[7] == 2.185
-    assert peak[8] == "Forward 12-month NOI (Year 3, projected)"
+    assert peak[1] == 4_344_427.35 and peak[5] == 37_679_015.08
+    assert peak[4] == 0  # the engine's own exit fee for this sale (none on the loan)
+    assert peak[7] == 0.5153 and peak[8] == 2.185
+    assert peak[9] == "Forward 12-month NOI (Year 3, projected)"
     selected = by_label["Year 5 · selected"]
-    assert selected[6] == 0.3051 and selected[3] == 22_223_267.50
-    # Nothing on the sheet reads a dashed figure as a zero.
-    assert 0 not in [v for r in rows for v in r[1:8] if isinstance(v, (int, float))]
+    assert selected[7] == 0.3051 and selected[3] == 22_223_267.50
+    # Nothing on the sheet reads a dashed figure as a zero (the exit-fee
+    # column is the engine's computed fee, so it is excluded).
+    assert 0 not in [
+        v for r in rows for i, v in enumerate(r[1:9], start=1)
+        if i != 4 and isinstance(v, (int, float))
+    ]
 
 
 def test_excel_returns_sheet_states_why_when_the_run_predates_the_schedule(tmp_path: Path) -> None:
