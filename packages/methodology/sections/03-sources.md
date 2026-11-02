@@ -97,7 +97,7 @@ default: every projected year is this level grown at the market growth × the ho
 
 ::: badge {source=str_forecast name="STR Trend Forecast"}
 The forward-forecast scenario's month-twelve point — a projection of the subject. Retired as a model
-input on 2 November 2026 (the STR forecast chart on the Market tab stays); the badge remains on runs
+input on 2 November 2026 (the STR forecast chart on Market Comps stays); the badge remains on runs
 saved before then.
 
 :::
@@ -690,7 +690,7 @@ as a legacy seed (`treated_as_legacy_seed`): the benchmark × penetration × ram
 ::: badge {source=str_forecast name="STR Trend Forecast"}
 The BASE STR forward-forecast scenario's Month-12 point — a projection of the subject. Retired as a
 model input on 2 November 2026 (`_load_str_forecast_for_seed` removed); the 24-month STR forecast
-engine stays for the Market tab chart, and the label remains on runs saved before then.
+engine stays for the Market Comps chart, and the label remains on runs saved before then.
 
 :::
 

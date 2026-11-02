@@ -142,6 +142,18 @@ const TONE = {
 type SourceStyle = { tone: string; Icon: typeof Database; tooltip?: string };
 
 const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
+  // FON-116 / FON-117 (topline v2) — badge text and tooltip come from the
+  // registry; the topline web task may hand-author copy later.
+  topline_benchmark: { tone: TONE.brand, Icon: BarChart3 },
+  costar_comp_set: { tone: TONE.grounded, Icon: Map },
+  costar_submarket: { tone: TONE.grounded, Icon: Map },
+  costar_market: { tone: TONE.grounded, Icon: Map },
+  market_benchmark: { tone: TONE.grounded, Icon: Map },
+  costar_submarket_forecast: { tone: TONE.brand, Icon: Map },
+  growth_carried_forward: { tone: TONE.neutral, Icon: Sparkles },
+  market_forecast_unavailable: { tone: TONE.warn, Icon: Sparkles },
+  costar_withheld_by_policy: { tone: TONE.warn, Icon: Sparkles },
+  penetration_default: { tone: TONE.neutral, Icon: Sparkles },
   // Wave 3 (A9 / B8) — badge text and tooltip come from the registry.
   // The renovation budget's 75/15/10 hard / soft / fee split, a platform default.
   platform_default_renovation_split: { tone: TONE.neutral, Icon: Sparkles },

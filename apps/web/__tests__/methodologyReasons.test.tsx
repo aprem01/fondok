@@ -46,9 +46,9 @@ describe('Methodology — Section 7 "What a dash means"', () => {
     }
   });
 
-  it('keeps the vocabulary at 22 codes with one glyph today', () => {
-    expect(REASON_CODES).toHaveLength(22);
-    expect(Object.keys(REASONS)).toHaveLength(22);
+  it('keeps the vocabulary at 26 codes with one glyph today', () => {
+    expect(REASON_CODES).toHaveLength(26);
+    expect(Object.keys(REASONS)).toHaveLength(26);
     expect(new Set(Object.keys(REASONS))).toEqual(new Set(REASON_CODES));
     for (const code of REASON_CODES) expect(REASONS[code].ui).toBe(REFUSAL_GLYPH);
   });

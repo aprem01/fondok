@@ -696,3 +696,35 @@ def test_no_benchmark_and_no_growth_keeps_both_signals_on_the_record() -> None:
     # On the legacy path (no benchmark concept) the status is flat_no_growth.
     legacy = _by_year(_run(adr_growth_by_year=[None, None]))
     assert legacy[2].adr_status == "flat_no_growth" and legacy[2].adr_growth_source == "unavailable"
+
+
+# ─────────────────────────── explicit Year-1 values (loader v2) ───────────────────────────
+
+
+def test_explicit_year_one_metric_is_not_penetrated_and_says_so() -> None:
+    """Topline v2: an analyst-typed Year-1 ADR is that metric's Year 1 —
+    the loader leaves it out of the benchmark and names it in
+    ``explicit_year1``; the engine stamps ``explicit_value`` (not
+    ``benchmark_unavailable``) and grows it at the year's growth."""
+    bench = [b.model_copy(update={"adr": None}) for b in _bench(5)]
+    out = _run(
+        topline=_topline(benchmark_by_year=bench, explicit_year1=["adr"]),
+        occupancy_growth_by_year=[None, 0.01, 0.01, 0.01, 0.01],
+        adr_growth_by_year=[None, 0.03, 0.03, 0.03, 0.03],
+    )
+    recs = _by_year(out)
+    assert out.years[0].adr == pytest.approx(250.0, abs=TOL)
+    assert out.years[1].adr == pytest.approx(250.0 * 1.03, abs=TOL)
+    assert {recs[y].adr_status for y in recs} == {"explicit_value"}
+    assert recs[1].occupancy_status == "driven"
+    assert "explicit value" in (recs[1].reason or "")
+
+
+def test_a_year_nothing_penetrates_claims_no_ramp() -> None:
+    out = _run(
+        topline=_topline(benchmark_level="none", benchmark_by_year=[]),
+        occupancy_growth_by_year=[None] * 5,
+        adr_growth_by_year=[None] * 5,
+    )
+    for rec in out.topline_by_year:
+        assert rec.ramp_pct is None and rec.ramp_state is None
