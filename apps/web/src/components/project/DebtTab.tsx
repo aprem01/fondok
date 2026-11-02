@@ -509,6 +509,8 @@ export default function DebtTab() {
   const wRefiPayoff = getEngineField<number>(outputs, 'debt', 'refi_existing_balance_repaid');
   const wRefiRate = getEngineField<number>(outputs, 'debt', 'refi_new_interest_rate');
   const wRefiCosts = getEngineField<number>(outputs, 'debt', 'refi_financing_costs');
+  // The retired senior's exit fee, paid at the refinance (a refinance cost).
+  const wRefiExitFee = getEngineField<number>(outputs, 'debt', 'refi_exit_fee_usd');
   // FON-63 (Sam, 2026-09-14) — the RESOLVED refinance sizing assumptions. The
   // Refinance section renders these beside the editors that change them, so the
   // seed the model silently fell back to is on screen instead of in the engine.
@@ -729,7 +731,7 @@ export default function DebtTab() {
   const paceStatusNote = !paceFunded
     ? 'Not funded — enter an amount to add a PACE tranche to the capital stack'
     : pacePending
-      ? 'Terms pending — counts in Total Debt, LTV, LTC and debt yield; excluded from debt service and DSCR until a rate is entered'
+      ? 'Terms pending — counts in Total Debt, LTV, LTC and debt yield; stays out of Sources & Uses, debt service, DSCR and the sale payoff until a rate is entered'
       : has(paceDebtService)
         ? `Priced — ${fmtCurrency(paceDebtService)} / yr of debt service is in DSCR, Cash Flow and Returns`
         : 'Priced — its debt service is in DSCR, Cash Flow and Returns';
@@ -1531,8 +1533,10 @@ export default function DebtTab() {
               >
                 {paceTerms.map((r) => <DebtRow key={r.id} row={r} />)}
                 <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
-                  Fixed-rate tranche. A funded PACE loan counts in Total Debt, LTV, LTC and debt yield at once;
-                  its debt service enters DSCR, Cash Flow and Returns once a rate is entered.
+                  Fixed-rate tranche. A funded PACE loan counts in Total Debt, LTV, LTC and debt yield at once.
+                  Once a rate is entered it is also a source of funds at close (equity falls), its debt service
+                  enters DSCR, Cash Flow and Returns (before and after a refinance, which retires the senior only),
+                  and every sale repays its balance plus its exit fee.
                 </div>
               </SectionCard>
             </div>
@@ -1555,6 +1559,7 @@ export default function DebtTab() {
               refiPayoff={wRefiPayoff}
               refiRate={wRefiRate}
               refiCosts={wRefiCosts}
+              refiExitFee={wRefiExitFee}
               refiFeePct={wRefiFeePct}
               refiDebtYieldMin={wRefiDyMin}
               refiDscrMin={wRefiDscrMin}
@@ -2073,7 +2078,7 @@ const REFI_KEYS = {
 
 function RefinanceView({
   active, liveMode, refiYear, refiYearOverride, refiCashOut, refiEquityContribution, balanceAtExit, leveredIrr,
-  refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts,
+  refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts, refiExitFee,
   refiFeePct, refiDebtYieldMin, refiDscrMin, refiSizingBasis, refiRateBasis,
   overrides, onSaveOverride, toast,
 }: {
@@ -2091,6 +2096,7 @@ function RefinanceView({
   refiPayoff?: number;
   refiRate?: number;
   refiCosts?: number;
+  refiExitFee?: number;
   refiFeePct?: number;
   refiDebtYieldMin?: number;
   refiDscrMin?: number;
@@ -2271,6 +2277,10 @@ function RefinanceView({
       'The senior balance at the end of the refinance year.'),
     derived('refiCost', 'Financing Costs', has(refiCosts), money(refiCosts),
       'The loan fee above applied to the new proceeds.'),
+    ...(has(refiExitFee) && refiExitFee > 0
+      ? [derived('refiExitFee', 'Exit Fee on Retired Loan', true, money(refiExitFee),
+          'The retired senior loan\u2019s exit fee, paid at the refinance.')]
+      : []),
     derived('refiTiming', 'Refinance Timing', has(vYear), timingValue,
       'Month-precision timing is not editable in this release — the cash-out is placed at the end of the refinance year unless a month was set during reconciliation.'),
   ];

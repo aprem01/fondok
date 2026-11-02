@@ -51,9 +51,12 @@ the tab names the negative years in one warning.
   interest-only period, and maturity. A floating rate prices off the index assumption plus spread,
   clamped to an optional floor and cap; until an index is entered the build-up shows Fondok's flat
   index assumption and says it is not market data.
-- **PACE loan.** Funding an amount adds it to total debt, LTV, LTC and debt yield immediately. Until a
-  rate is entered the tranche is *terms pending*: it stays out of debt service and DSCR rather than
-  running on an invented rate.
+- **PACE loan.** Funding an amount adds it to total debt, LTV, LTC and debt yield immediately. Once a
+  rate is entered it is a real loan everywhere: a source of funds at close (equity falls by its
+  principal), its debt service in every year — a refinance retires the senior only — and every sale
+  repays its balance plus its exit fee. Until a rate is entered the tranche is *terms pending*: it
+  stays out of Sources & Uses, debt service, DSCR and the sale payoff rather than running on an
+  invented rate.
 - **Covenants.** Maximum LTV and LTC and minimum DSCR and debt yield are thresholds you enter. There
   is no default package — a covenant without a threshold shows its live reading, an input, and no pass
   or fail verdict.
@@ -119,7 +122,8 @@ amortisation 30 years, term 5 years, no interest-only period, origination fee 1.
 A floating rate prices at index + spread, clamped to the optional floor and cap; until an index is
 entered the build-up shows a flat 4.30% index assumption and says it is not market data. A PACE
 tranche with an amount but no rate is "terms pending": it counts in total debt, LTV, LTC and debt
-yield and stays out of debt service and DSCR. A year whose NOI is negative shows DSCR as not
+yield and stays out of Sources & Uses, debt service, DSCR and the sale payoff; with a rate it funds
+the deal at close and is repaid at the sale. A year whose NOI is negative shows DSCR as not
 applicable and reports the uncovered debt service as that year's shortfall.
 
 :::
@@ -246,8 +250,16 @@ capitalised from it.
   needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows
   Fondok's flat SOFR assumption and says so — it is not market data.
 - **PACE loan (tranche 2).** Funding an amount adds it to Total Debt, LTV, LTC and debt yield
-  immediately. Until a rate is entered the tranche is *terms pending*: it stays out of debt service
-  and DSCR rather than running on an invented rate, and the tab says so next to the input.
+  immediately. Once a rate is entered the tranche is in every cash flow: its principal is a **source
+  of funds at close** (Sources & Uses shows it; equity = total uses − senior − PACE) and its
+  origination fee a use; its own monthly schedule (interest-only, or an IO stub then amortization)
+  sets its debt service in DSCR, Cash Flow and Returns in every year — a refinance retires the
+  **senior only**, so the PACE debt service continues after it — and every sale, the headline and
+  each exit-year row, repays its outstanding balance plus its exit fee (Balance at Exit includes it;
+  Cash Flow shows a **PACE Loan Proceeds** line at close). No PACE maturity is modelled within the
+  hold. Until a rate is entered the tranche is *terms pending*: it stays out of Sources & Uses, debt
+  service, DSCR and the sale payoff rather than running on an invented rate (or as free money), and
+  the tab says so next to the input.
 - **Covenants.** Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no
   default package — a covenant without an entered threshold shows its live Current reading, an “Enter
   threshold” input, and no pass / fail verdict. Entered thresholds are tested against the modeled
@@ -272,8 +284,9 @@ capitalised from it.
   refinance month (the refinance year-end, or the refinance month when one is set). It is a negative
   equity cash flow in the levered IRR, the Cash Flow statement (**Refinance Equity Contribution**),
   the Investment Bridge, every exit-year row after the refinance, the financing sensitivity grid and
-  the partnership waterfall, where it is a capital call by the GP / LP ownership split (net of that
-  month's operating cash). The **equity multiple** counts it as additional equity invested:
+  the partnership waterfall, where the full amount is its own capital call by the GP / LP ownership
+  split (monthly or annual waterfall alike) and that period's operating cash is distributed on its
+  own — so the GP and LP contributions equal the amount charged. The **equity multiple** counts it as additional equity invested:
   distributions ÷ (equity + the refinance contribution). The Debt tab states the amount, the
   balance it retires and when it is charged. A sale set before the refinance draws neither a
   cash-out nor a contribution. A refinance set in or after the sale year never happens, so it is not
@@ -285,11 +298,14 @@ capitalised from it.
   Loan Origination Fee**, and Overview → Capitalization's **Financing Costs** reads that same number.
   Change it on Financing and Sources & Uses, Total Uses, required equity and LTC all move; set it to
   0% and the line disappears. One assumption, one number, three labels retired.
-- **Exit fee.** A tranche's exit fee (percent of its principal) is paid when the loan is repaid: a
-  sale deducts the exit fee of every tranche still outstanding from the net sale proceeds — the
-  headline and every exit-year row alike, shown as **Lender Exit Fees** on the Cash Flow statement
-  and in the Investment Bridge — while a loan a refinance retires pays its fee at the refinance, as
-  a refinance cost. Prepayment penalties, yield maintenance and defeasance are **not modelled**: the
+- **Exit fee.** A tranche's exit fee is a percent of its **original principal** (the loan amount, as
+  the Debt tab shows it — not the balance repaid). It is paid when the loan is repaid: a sale deducts
+  the exit fee of every tranche still outstanding (the senior, or after a refinance only the junior
+  tranches) from the net sale proceeds — the headline and every exit-year row alike, shown as
+  **Lender Exit Fees** on the Cash Flow statement, in the Investment Bridge and in the Excel / IC
+  memo exit tables — while the senior loan a refinance retires pays its fee at the refinance, as a
+  refinance cost. The Excel Assumptions sheet and the IC memo state the refinance itself: year, new
+  loan, balance retired, costs and the cash-out or the equity contribution. Prepayment penalties, yield maintenance and defeasance are **not modelled**: the
   payoff at sale is the loan balance plus any exit fee, without them.
 - **Missing inputs are inputs.** Wherever a required assumption is absent, the Financing tab renders
   the input to provide (“Enter rate”, “Enter spread”, “Enter threshold”) with the consequence stated,

@@ -1421,7 +1421,9 @@ function ReturnBridgeCard({
             {mm(operatingNet)} operating{' '}
             {refi > 0 ? `+ ${mm(refi)} refinance ` : refi < 0 ? `\u2212 ${mm(-refi)} refinance equity ` : ''}+{' '}
             {mm(netExit)} exit ={' '}
-            {mm(totalToEquity)} returned on {mm(equity)} invested.
+            {refi < 0
+              ? `${mm(totalToEquity)} returned on ${mm(equity)} equity at close, net of the ${mm(-refi)} refinance equity contribution.`
+              : `${mm(totalToEquity)} returned on ${mm(equity)} invested.`}
           </>
         ) : (
           <span title={NET_EXIT_MISSING}>

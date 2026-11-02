@@ -332,7 +332,7 @@ describe('Return Bridge — a refinance that needs equity is a negative leg', ()
     render(<ReturnsTab />);
     expect(screen.getByText('Refinance equity contribution')).toBeInTheDocument();
     expect(
-      screen.getByText(/\$9\.90M operating − \$2\.00M refinance equity \+ \$21\.00M exit = \$28\.90M returned/),
+      screen.getByText(/\$9\.90M operating − \$2\.00M refinance equity \+ \$21\.00M exit = \$28\.90M returned on \$19\.00M equity at close, net of the \$2\.00M refinance equity contribution/),
     ).toBeInTheDocument();
   });
 });

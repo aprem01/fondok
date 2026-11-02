@@ -829,7 +829,7 @@ describe('DebtTab — PACE tranche (index 1): missing inputs are inputs', () => 
     render(<DebtTab />);
     // Debt Overview: Total Debt includes PACE; the row says why DSCR excludes it.
     expect(screen.getByText('$28,000,000')).toBeInTheDocument();
-    expect(screen.getAllByText(/Terms pending — counts in Total Debt, LTV, LTC and debt yield; excluded from debt service and DSCR until a rate is entered/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Terms pending — counts in Total Debt, LTV, LTC and debt yield; stays out of Sources & Uses, debt service, DSCR and the sale payoff until a rate is entered/i).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
     expect(screen.getByText('PACE Loan · Tranche 2')).toBeInTheDocument();
@@ -1230,5 +1230,13 @@ describe('DebtTab — refinance disclosures', () => {
     expect(screen.getByText('Equity Contribution')).toBeInTheDocument();
     expect(screen.getByText('$8,566,897')).toBeInTheDocument();
     expect(screen.queryByText('Cash-Out to Equity')).toBeNull();
+  });
+
+  it('lists the retired loan\'s exit fee so the sized refinance foots', () => {
+    currentOutputs = makeOutputs({ refi_exit_fee_usd: 400_000 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Refinance'));
+    expect(screen.getByText('Exit Fee on Retired Loan')).toBeInTheDocument();
+    expect(screen.getByText('$400,000')).toBeInTheDocument();
   });
 });
