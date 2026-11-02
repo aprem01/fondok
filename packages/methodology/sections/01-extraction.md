@@ -218,8 +218,13 @@ other full-period statements for the same line, so a single-outlet GL line can n
 department total unreviewed. A statement total that holds text instead of a figure (a “$10M”
 saved by the old Data Room editor, which started from the display string) is replaced from the
 Summary the same way, with the text kept as the original value. The review endpoint refuses a
-non-numeric correction of a numeric field (`_edited_figure`: a number or a plain written figure such
-as “9,496,407.22”; letters and percent signs are not a figure).
+non-numeric correction of a numeric field — numeric by its value, its unit or its registry concept,
+whatever it holds now (`extraction/edited_figures`: a number or a plain written figure such as
+“9,496,407.22”; letters and percent signs are not a figure, a percentage is entered as its ratio).
+A one-time data repair (`migrations.repair_display_string_edits`) turned the display strings already
+stored back into a number only where the field record kept the exact value they displayed; every
+other one was cleared to empty, marked Needs review and audited — a figure is never guessed from
+“$10M”.
 
 A monthly financial package that also carries a dated T12 sheet — twelve consecutive month-end
 columns and a TOTAL, the month columns adding up to the TOTAL — is read as the trailing twelve

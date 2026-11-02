@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import text
 
@@ -2776,6 +2778,23 @@ async def run_startup_migrations() -> None:
                 f"will not start: {exc}"
             ) from exc
 
+    # W5 review I3 — display strings an old editor saved as field values.
+    try:
+        await repair_display_string_edits(engine, is_sqlite=is_sqlite)
+    except Exception as exc:
+        if _database_unavailable(exc):
+            logger.error(
+                "migration not applied (database unavailable): "
+                "extraction_results.display_string_repair — %s",
+                exc,
+            )
+        else:
+            logger.exception("migration failed: extraction_results.display_string_repair — %s", exc)
+            raise FatalMigrationError(
+                "migration extraction_results.display_string_repair failed and the worker "
+                f"will not start: {exc}"
+            ) from exc
+
 
 # ─────────────────────── deals.ai_confidence backfill ───────────────────────
 #
@@ -2897,13 +2916,206 @@ async def backfill_deal_ai_confidence(engine, *, is_sqlite: bool) -> dict[str, i
     return {"nulled": nulled, "filled": filled}
 
 
+
+# ─────────────── display strings saved as field values (W5 review I3) ───────────────
+#
+# The Data Room's inline review editor pre-filled its input with the DISPLAY
+# value and the worker stored whatever came back, so prod holds eight
+# ``reviewed="edited"`` USD fields whose value is the text "$10M" / "$1.24M"
+# (four copies of the Angler's 2024 workbook). No reader can use them and the
+# figure they rounded cannot be recovered from the text. This repair
+# (``extraction.edited_figures.repair_display_string_field``):
+#   * restores a number ONLY when the same field record holds the exact
+#     numeric value the string was displayed from (a pre-edit value key);
+#   * otherwise sets the value to NULL, confidence 0, drops ``reviewed`` and
+#     writes a "Needs review" note — a number is never guessed from "$10M";
+#   * writes one ``extraction_field.display_string_repaired`` audit row per
+#     field (before → after), in the same transaction.
+#
+# Same posture as the ai_confidence backfill: Postgres runs it ONCE (a comment
+# on ``extraction_results.fields`` marks it done), lifts FORCE row-level
+# security on ``extraction_results`` / ``audit_log`` for its own transaction
+# and restores it, checks every UPDATE by row count, and raises (rolling the
+# whole repair back, marker unset) on any mismatch. SQLite re-runs it on every
+# boot; it is idempotent because a repaired field is no longer an edited text.
+
+DISPLAY_STRING_REPAIR_MARKER = "fondok:display_string_edit_repair_v1"
+_DISPLAY_REPAIR_RLS_TABLES = ("extraction_results", "audit_log")
+_DISPLAY_REPAIR_ACTION = "extraction_field.display_string_repaired"
+
+
+class DisplayStringRepairError(RuntimeError):
+    """The repair's row counts did not add up — never a silent no-op."""
+
+
+async def repair_display_string_edits(engine, *, is_sqlite: bool) -> dict[str, int] | None:
+    """Repair stored display strings on numeric fields (see the block above).
+
+    Returns ``{"rows": r, "restored": a, "cleared": b}``, or ``None`` when the
+    Postgres marker says it already ran.
+    """
+    import json as _json
+    from uuid import uuid4
+
+    from .extraction.edited_figures import (
+        REPAIR_RULE,
+        is_display_string_edit,
+        repair_display_string_field,
+    )
+
+    jsonb = (lambda k: f":{k}") if is_sqlite else (lambda k: f"CAST(:{k} AS JSONB)")
+    restored = cleared = rows_changed = 0
+    async with engine.begin() as conn:
+        forced: list[str] = []
+        if not is_sqlite:
+            marker = (
+                await conn.execute(
+                    text(
+                        "SELECT col_description('extraction_results'::regclass, a.attnum) "
+                        "FROM pg_attribute a WHERE a.attrelid = 'extraction_results'::regclass "
+                        "AND a.attname = 'fields'"
+                    )
+                )
+            ).scalar()
+            if marker == DISPLAY_STRING_REPAIR_MARKER:
+                return None
+            for table in _DISPLAY_REPAIR_RLS_TABLES:
+                is_forced = (
+                    await conn.execute(
+                        text("SELECT relforcerowsecurity FROM pg_class WHERE oid = to_regclass(:t)"),
+                        {"t": table},
+                    )
+                ).scalar()
+                if is_forced:
+                    await conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+                    forced.append(table)
+
+        like = "fields LIKE '%edited%'" if is_sqlite else "fields::text LIKE '%edited%'"
+        candidates = (
+            await conn.execute(
+                text(
+                    "SELECT id, tenant_id, deal_id, document_id, fields, confidence_report "
+                    f"FROM extraction_results WHERE {like}"
+                )
+            )
+        ).fetchall()
+        for row in candidates:
+            er_id, tenant_id, deal_id, doc_id = (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
+            fields = row[4]
+            if isinstance(fields, str):
+                try:
+                    fields = _json.loads(fields)
+                except ValueError:
+                    continue
+            if not isinstance(fields, list):
+                continue
+            changes: list[tuple[str, str, Any, Any]] = []
+            out: list[Any] = []
+            for f in fields:
+                if isinstance(f, dict) and is_display_string_edit(f):
+                    fixed, outcome, new_value = repair_display_string_field(f)
+                    changes.append((str(f.get("field_name")), outcome, f.get("value"), new_value))
+                    out.append(fixed)
+                else:
+                    out.append(f)
+            if not changes:
+                continue
+            cr = row[5]
+            if isinstance(cr, str):
+                try:
+                    cr = _json.loads(cr)
+                except ValueError:
+                    cr = {}
+            cr = dict(cr or {})
+            by_field = dict(cr.get("by_field") or {})
+            for f in out:
+                if isinstance(f, dict) and f.get("field_name"):
+                    conf = f.get("confidence")
+                    if isinstance(conf, int | float) and not isinstance(conf, bool):
+                        by_field[f["field_name"]] = float(conf)
+            cr["by_field"] = by_field
+            cr["low_confidence_fields"] = [n for n, c in by_field.items() if c < 0.85]
+            if by_field:
+                cr["overall"] = sum(by_field.values()) / len(by_field)
+            affected = (
+                await conn.execute(
+                    text(
+                        f"UPDATE extraction_results SET fields = {jsonb('f')}, "
+                        f"confidence_report = {jsonb('cr')} WHERE id = :id AND tenant_id = :t"
+                    ),
+                    {"f": _json.dumps(out), "cr": _json.dumps(cr), "id": er_id, "t": tenant_id},
+                )
+            ).rowcount
+            if affected != 1:
+                raise DisplayStringRepairError(
+                    f"display-string repair: extraction {er_id} updated {affected} row(s), expected 1"
+                )
+            rows_changed += 1
+            for name, outcome, before, after in changes:
+                if outcome == "restored":
+                    restored += 1
+                else:
+                    cleared += 1
+                payload = {
+                    "input": None,
+                    "output": {"rule": REPAIR_RULE, "outcome": outcome, "document_id": doc_id,
+                               "extraction_result_id": er_id, "field_name": name},
+                    "metadata": None,
+                }
+                inserted = (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO audit_log (id, tenant_id, deal_id, actor_id, action, "
+                            "resource_type, resource_id, payload, created_at, before, after, "
+                            "diff_summary, severity) VALUES (:id, :t, :deal, 'system:migration', "
+                            f":action, 'extraction_field', :rid, {jsonb('payload')}, :ts, "
+                            f"{jsonb('before')}, {jsonb('after')}, :diff, 'warning')"
+                        ),
+                        {
+                            "id": str(uuid4()),
+                            "t": tenant_id,
+                            "deal": deal_id,
+                            "action": _DISPLAY_REPAIR_ACTION,
+                            "rid": f"{er_id}:{name}",
+                            "payload": _json.dumps(payload),
+                            "ts": datetime.now(UTC),
+                            "before": _json.dumps({"value": before}),
+                            "after": _json.dumps({"value": after}),
+                            "diff": f"{name}: {before!r} → {after!r} ({outcome})",
+                        },
+                    )
+                ).rowcount
+                if inserted != 1:
+                    raise DisplayStringRepairError(
+                        f"display-string repair: audit row for {er_id}:{name} not written"
+                    )
+
+        if not is_sqlite:
+            for table in forced:
+                await conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+            await conn.execute(
+                text(f"COMMENT ON COLUMN extraction_results.fields IS '{DISPLAY_STRING_REPAIR_MARKER}'")
+            )
+    logger.info(
+        "migration applied: extraction_results.display_string_repair "
+        "(%d row(s): %d restored, %d cleared for review)",
+        rows_changed,
+        restored,
+        cleared,
+    )
+    return {"rows": rows_changed, "restored": restored, "cleared": cleared}
+
+
 __all__ = [
     "AI_CONFIDENCE_BACKFILL_MARKER",
+    "DISPLAY_STRING_REPAIR_MARKER",
     "FATAL_MIGRATIONS",
     "MIGRATIONS",
     "SQLITE_MIGRATIONS",
     "AiConfidenceBackfillError",
+    "DisplayStringRepairError",
     "FatalMigrationError",
     "backfill_deal_ai_confidence",
+    "repair_display_string_edits",
     "run_startup_migrations",
 ]

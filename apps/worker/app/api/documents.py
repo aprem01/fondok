@@ -7245,29 +7245,27 @@ FIELD_EDIT_NOTE_REQUIRED = (
 
 FIELD_EDIT_NOT_A_FIGURE = (
     "This line is a figure: enter the full number as the statement states it "
-    "(for example 9,496,407.22), not an abbreviation such as $10M."
+    "(for example 9,496,407.22), not an abbreviation such as $10M. A percentage "
+    "is entered as its ratio (0.832 for 83.2%)."
 )
+
+def _is_numeric_field(field: dict[str, Any]) -> bool:
+    """W5 review I3 — see :func:`app.extraction.edited_figures.is_numeric_field`:
+    the FIELD decides, not the value it holds now."""
+    from ..extraction.edited_figures import is_numeric_field
+
+    return is_numeric_field(field)
 
 
 def _edited_figure(value: Any) -> float | None:
-    """W5 (2026-11) — the corrected value of a numeric field, as a number.
+    """W5 (2026-11) — the corrected value of a numeric field, as a number
+    (:func:`app.extraction.edited_figures.edited_figure`): a number or a plain
+    written figure passes; "$10M", "83.2%" or a boolean is not a figure. Prod
+    deal 7a9928e0 stored ``rooms_revenue = "$10M"``, no reader could use it,
+    and the loader fell back to a prior-year line."""
+    from ..extraction.edited_figures import edited_figure
 
-    A number passes; so does a plain written figure (``"9,496,407.22"``,
-    ``"$1,234"``, ``"(1,234)"``). Anything with letters or a percent sign —
-    the Data Room's display strings ``"$10M"`` / ``"$1.24M"`` that its editor
-    used to send back — is not a figure: prod deal 7a9928e0 stored
-    ``rooms_revenue = "$10M"``, no reader could use it, and the loader fell
-    back to a prior-year line.
-    """
-    from ..extraction.numeric import coerce_cell_number
-
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    if not isinstance(value, str) or re.search(r"[A-Za-z%]", value):
-        return None
-    return coerce_cell_number(value)
+    return edited_figure(value)
 
 
 @router.patch(
@@ -7369,7 +7367,7 @@ async def review_extraction_field(
                 detail=FIELD_EDIT_NOTE_REQUIRED,
             )
         new_value = body.value
-        if isinstance(before_value, int | float) and not isinstance(before_value, bool):
+        if _is_numeric_field(fields[idx]):
             figure = _edited_figure(body.value)
             if figure is None:
                 raise HTTPException(
