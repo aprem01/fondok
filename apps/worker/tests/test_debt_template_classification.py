@@ -164,3 +164,62 @@ def test_debt_is_a_non_financial_router_label_so_a_real_pnl_is_rescued():
     )
     assert r.doc_type in {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
     assert r.router_overridden_original == "DEBT"
+
+
+# ── Review round 2 (I2): debt terms never become the primary statement ────
+
+
+def _pnl_fields(rooms: float) -> list[dict]:
+    return [
+        {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+        {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": rooms, "unit": "USD"},
+        {"field_name": "p_and_l_usali.undistributed.administrative_general", "value": 1_264_087.54, "unit": "USD"},
+    ]
+
+
+def test_shared_predicate_is_the_one_the_refine_uses():
+    from app.extraction.debt_terms import is_debt_terms_extraction
+
+    assert is_debt_terms_extraction(DEBT_TEMPLATE_FIELDS)
+    assert not is_debt_terms_extraction(_pnl_fields(9_496_407.22) + DEBT_TEMPLATE_FIELDS)
+    assert not is_debt_terms_extraction([])
+
+
+def test_loader_ranking_never_puts_debt_terms_first_even_under_an_analyst_t12_tag():
+    """The template an analyst tagged T12 keeps its tag (banner), and as an
+    undated T-12 it used to rank as the CURRENT period, ahead of every real
+    P&L. The loader's ranking drops it."""
+    from app.services import engine_runner as er
+
+    rows = [
+        {"fields": DEBT_TEMPLATE_FIELDS, "doc_type": "T12", "document_id": "debt"},
+        {"fields": _pnl_fields(9_496_407.22), "doc_type": "PNL", "document_id": "pnl",
+         "fiscal_year": 2024},
+    ]
+    ranked = er._rank_pnl_shims(rows)
+    assert [r[2]["document_id"] for r in ranked] == ["pnl"]
+    # The two-tuple wrapper the loaders' tests pin follows the same rule.
+    assert [dt for _f, dt in er._rank_pnl_rows(rows)] == ["PNL"]
+
+
+def test_data_room_badge_never_marks_a_debt_proposal_primary():
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.api.documents import DOC_STATUS_EXTRACTED, DocumentRecord, _mark_primary_financial
+
+    common = dict(deal_id=uuid4(), tenant_id=uuid4(), uploaded_at=datetime.now(UTC), status=DOC_STATUS_EXTRACTED)
+    debt = DocumentRecord(
+        id=uuid4(), filename="Kimpton_Fondok_Debt_Upload_Template.xlsx", doc_type="T12",
+        user_provided_doc_type="T12", misclassified=True, ai_proposed_doc_type="DEBT",
+        structural_pnl_score=0.0, **common,
+    )
+    pnl = DocumentRecord(
+        id=uuid4(), filename="Angler_s 2024 Full Year Detailed P&L.xlsm", doc_type="PNL",
+        fiscal_year=2024, structural_pnl_score=1.0, **common,
+    )
+    records = [debt, pnl]
+    _mark_primary_financial(records)
+    assert pnl.primary_financial_source is True
+    assert debt.primary_financial_source is False

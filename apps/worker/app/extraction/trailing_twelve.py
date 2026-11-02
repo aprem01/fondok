@@ -61,6 +61,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from itertools import pairwise
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,7 @@ def _sheet_header(grid: Sequence[Sequence[Any]]) -> tuple[int, tuple[int, ...], 
             continue
         last = dated[-12:]
         idx = [_month_index(d) for _c, d in last]
-        if not all(b - a == 1 for a, b in zip(idx, idx[1:], strict=False)):
+        if not all(b - a == 1 for a, b in pairwise(idx)):
             continue
         after = [ci for ci in range(last[-1][0] + 1, len(row)) if _norm(row[ci]) == "total"]
         if not after:
@@ -396,7 +397,7 @@ def label_trailing_twelve(
         f"dated monthly columns ({start_iso[:7]} to {end_iso[:7]}) add up to its TOTAL."
     )
     if label is not None:
-        i, old = label
+        _i, old = label
         out = [f for f in out if f is not old and f.get("field_name") != old.get("field_name")]
         provenance = {**provenance, "field_name": old.get("field_name"), "old_value": old.get("value")}
     labelled: list[dict[str, Any]] = [

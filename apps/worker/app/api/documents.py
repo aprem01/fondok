@@ -1246,6 +1246,10 @@ def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
         for r in records
         if (r.doc_type or "").upper() in _FINANCIAL_DOC_TYPES
         and r.status == DOC_STATUS_EXTRACTED
+        # W5 review I2: a debt document an analyst tagged as a P&L keeps the
+        # tag (banner) but is never the primary statement — the loader's
+        # ranking drops it on the same evidence (``extraction.debt_terms``).
+        and not (r.misclassified and (r.ai_proposed_doc_type or "").upper() == "DEBT")
     ]
     if not eligible:
         return
@@ -1893,7 +1897,7 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
     # off-enum fallback dropped "Kimpton_Fondok_Debt_Upload_Template.xlsx"
     # through to the T12 default, and the template outranked every real P&L
     # on the deal as an undated "current" T-12. A loan word alone is not
-    # enough ("Operating Statement – Loan Package.xlsx" is a P&L): the name
+    # enough ("Operating Statement - Loan Package.xlsx" is a P&L): the name
     # must also say what kind of debt document it is, and must not name a
     # statement. DEBT is a non-financial Router label, so a real P&L that
     # still lands here is rescued by the structural recognizer (Bug H).
@@ -2100,38 +2104,12 @@ class RefinedClassification:
     router_overridden_original: str | None
 
 
-#: Root namespaces of debt-term fields (the OM ``in_place_debt`` block and the
-#: debt-document shapes the extractor emits for term sheets / templates).
-_DEBT_FIELD_ROOTS: frozenset[str] = frozenset(
-    {"in_place_debt", "debt", "debt_terms", "loan", "loans", "financing", "senior_loan"}
-)
-#: Fewest debt-term fields that make an extraction a debt document.
-_MIN_DEBT_TERM_FIELDS = 3
-
-
 def _is_debt_terms_extraction(fields: list[dict[str, Any]]) -> bool:
-    """True when the extraction carries debt terms and no P&L statement line.
+    """See :func:`app.extraction.debt_terms.is_debt_terms_extraction` — the one
+    predicate the T-12 loader's ranking shares."""
+    from ..extraction.debt_terms import is_debt_terms_extraction
 
-    A P&L line is any ``p_and_l_usali.*`` field with a numeric value; a debt
-    term is any field under :data:`_DEBT_FIELD_ROOTS`. A statement that also
-    quotes its loan keeps its P&L type — only an extraction with zero P&L
-    lines and at least :data:`_MIN_DEBT_TERM_FIELDS` debt terms qualifies.
-    """
-    if not isinstance(fields, list):
-        return False
-    debt = 0
-    for f in fields:
-        if not isinstance(f, dict):
-            continue
-        name = str(f.get("field_name") or "").strip().lower()
-        root = name.split(".", 1)[0]
-        if root == "p_and_l_usali":
-            v = f.get("value")
-            if isinstance(v, int | float) and not isinstance(v, bool):
-                return False
-        elif root in _DEBT_FIELD_ROOTS:
-            debt += 1
-    return debt >= _MIN_DEBT_TERM_FIELDS
+    return is_debt_terms_extraction(fields)
 
 
 def refine_doc_type_post_extraction(
