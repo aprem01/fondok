@@ -1491,3 +1491,74 @@ async def test_no_price_anywhere_is_refused_and_never_inferred_from_a_cap_rate()
     base = await _base_for(om_cap_only)
     assert "purchase_price" not in base
     assert base["__reasons__"]["purchase_price"]["code"] == "missing_identity_inputs"
+
+
+# ═══════ Sam finding 2c — the T-12 department revenue behind each cost ratio ═══════
+
+
+@pytest.mark.asyncio
+async def test_t12_department_revenue_reaches_the_expense_engine() -> None:
+    """The T-12 rows that ground the revenue anchors are also the denominators
+    of the departmental cost ratios: rooms revenue, F&B revenue, and the other
+    pool (other + misc, resort fees on their own line left out)."""
+    from app.services.engine_runner import _build_input_for
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Dept Ratio Deal", keys=214, purchase=42_000_000)
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.823},
+            {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 241.0},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 18_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.fb_revenue", "value": 5_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 1_200_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 100_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.resort_fees", "value": 800_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 4_235_000.0},
+        ],
+    )
+    base = await _base_for(deal_id)
+    assert base["t12_dept_revenue"] == {
+        "rooms_revenue": pytest.approx(18_000_000.0),
+        "fb_revenue": pytest.approx(5_500_000.0),
+        "other_revenue": pytest.approx(1_300_000.0),
+    }
+    assert base["t12_expense_actuals"].get("fb_dept_expense") == pytest.approx(4_235_000.0)
+
+    from app.engines.revenue import RevenueEngine
+    from app.engines.fb_revenue import FBRevenueEngine
+
+    deal_uuid = deal_id
+    acc: dict = {}
+    acc["revenue"] = RevenueEngine().run(_build_input_for("revenue", deal_uuid, base, acc))
+    acc["fb"] = FBRevenueEngine().run(_build_input_for("fb", deal_uuid, base, acc))
+    exp_in = _build_input_for("expense", deal_uuid, base, acc)
+    assert exp_in.t12_dept_revenue == base["t12_dept_revenue"]
+
+
+@pytest.mark.asyncio
+async def test_no_t12_revenue_means_no_department_revenue() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="No Docs Dept", keys=132, purchase=36_400_000)
+    base = await _base_for(deal_id)
+    assert base["t12_dept_revenue"] == {}
+
+
+@pytest.mark.asyncio
+async def test_monthly_rooms_line_is_never_a_department_revenue() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Monthly Rooms Dept", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.83},
+            {"field_name": "adr_usd", "value": 232.77},
+            {"field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue", "value": 954_187.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_266_603.0},
+        ],
+    )
+    base = await _base_for(deal_id)
+    assert "rooms_revenue" not in base["t12_dept_revenue"]
+    # The other pool is only a department revenue when it grounded the ratio.
+    assert "other_revenue" not in base["t12_dept_revenue"]

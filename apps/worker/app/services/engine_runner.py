@@ -1739,6 +1739,7 @@ async def _load_engine_inputs(
     else:
         other_pool = other_rev + misc_rev
 
+    t12_dept_revenue: dict[str, float] = {}
     starting_occupancy = base.get("starting_occupancy", 0.0)
     keys = base.get("keys", 0)
     occupied_room_nights = (
@@ -1777,6 +1778,26 @@ async def _load_engine_inputs(
             "other_revenue_pct_of_rooms",
             "other_revenue" if "other_revenue" in revenue_prov else "misc_revenue",
         )
+        t12_dept_revenue["other_revenue"] = float(other_pool)
+
+    # Sam finding 2c (2026-11) — the T-12 revenue of each operated department,
+    # the denominator of that department's T-12 cost ratio in the expense
+    # engine (T-12 departmental expense ÷ T-12 department revenue). Only the
+    # same full-period rows that ground the revenue anchors qualify: a
+    # monthly slice is never an annual denominator.
+    if (
+        rooms_rev
+        and rooms_rev > 0
+        and not _is_sub_period_source(revenue_prov.get("rooms_revenue"))
+    ):
+        t12_dept_revenue["rooms_revenue"] = float(rooms_rev)
+    if (
+        fb_rev
+        and fb_rev > 0
+        and not _is_sub_period_source(revenue_prov.get("fb_revenue"))
+    ):
+        t12_dept_revenue["fb_revenue"] = float(fb_rev)
+    base["t12_dept_revenue"] = t12_dept_revenue
 
     # When the deal has an extracted OM, prefer the broker's published
     # capital + debt numbers over the Kimpton seed so the capital stack
@@ -7138,6 +7159,10 @@ def _build_input_for(
             # actuals over USALI benchmark ratios for Year 1. Loaded by
             # ``_load_engine_inputs`` below; absent on demo deals.
             t12_actuals=base.get("t12_expense_actuals", {}) or {},
+            # Sam finding 2c — the T-12 revenue per department, so each T-12
+            # departmental expense becomes a cost ratio priced against the
+            # projected (displaced, where displaced) department revenue.
+            t12_dept_revenue=base.get("t12_dept_revenue", {}) or {},
             # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine
             # publishes it (it is the one engine holding revenue AND NOI on the
             # same year index); these are the inputs it cannot derive itself.
