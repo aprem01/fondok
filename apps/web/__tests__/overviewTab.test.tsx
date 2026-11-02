@@ -396,19 +396,84 @@ describe('OverviewTab — milestone timeline (GET /engines/timeline)', () => {
 });
 
 describe('OverviewTab — "Where this came from" popover', () => {
-  it('opens the anchored provenance popover with the calculation formula on a calc row', () => {
+  it('opens the anchored provenance popover on the Purchase Price input row', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
     // The Entry Valuation "Purchase Price" row shows the full-dollar value.
     // It also appears in the Transaction Sources & Uses table — which (R-056)
     // now renders BEFORE Entry Valuation — so scope to the section itself.
+    // The value itself is now the inline editor (W5 "price"); the row label
+    // opens the popover.
     const entry = screen.getByTestId('overview-section-entry-valuation');
-    fireEvent.click(within(entry).getByText('$34,000,000'));
+    expect(within(entry).getByTestId('overview-purchase-price')).toHaveTextContent('$34,000,000');
+    fireEvent.click(within(entry).getByText('Purchase Price'));
 
     // The shared WhereThisCameFrom popover (role=dialog, aria-labelled by field).
     expect(screen.getByRole('dialog', { name: /Where Purchase Price came from/i })).toBeInTheDocument();
-    // Its calculation section renders the human formula.
-    expect(screen.getByText('Entry NOI ÷ Entry Cap Rate')).toBeInTheDocument();
+    // W5 "price" — the Purchase Price is an INPUT: no formula, never
+    // "Entry NOI ÷ Entry Cap Rate" (the two labels used to point at each other).
+    expect(screen.queryByText('Entry NOI ÷ Entry Cap Rate')).not.toBeInTheDocument();
+  });
+
+  it('Entry Cap Rate is calculated from the Purchase Price input — one way, never circular', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    fireEvent.click(within(entry).getByText('Entry Cap Rate'));
+    expect(screen.getByRole('dialog', { name: /Where Entry Cap Rate came from/i })).toBeInTheDocument();
+    expect(screen.getByText('Entry NOI ÷ Purchase Price')).toBeInTheDocument();
+    // Its Purchase Price input is named as an input, not "Calculated".
+    expect(screen.getByText('Input · Overview / CAPEX ↗')).toBeInTheDocument();
+  });
+});
+
+describe('OverviewTab — W5 "price": the Purchase Price is editable here', () => {
+  function withoutCapital(): EngineOutputsResponse {
+    const engines = { ...(OUTPUTS as unknown as { engines: Record<string, unknown> }).engines };
+    engines.capital = {
+      deal_id: 'deal-uuid-1', engine: 'capital', status: 'failed', summary: '', outputs: null, inputs: null,
+      error: 'The deal has no purchase price.',
+      failure: { engine: 'capital', reason: 'missing_identity_inputs', message: 'The deal has no purchase price.', missing: ['purchase_price'] },
+      runtime_ms: null, started_at: null, completed_at: null, run_id: 'run-2',
+    };
+    return { ...OUTPUTS, engines } as unknown as EngineOutputsResponse;
+  }
+
+  it('saving writes the analyst override {value, note} and runs the model', async () => {
+    outputsRef.value = withoutCapital();
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    fireEvent.click(within(entry).getByTestId('overview-purchase-price'));
+    fireEvent.change(screen.getByLabelText('Purchase price'), { target: { value: '36400000' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), { target: { value: 'Our bid' } });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
+    expect(body.field_overrides.purchase_price).toEqual({ value: 36_400_000, note: 'Our bid' });
+    await waitFor(() => expect(engineRunSpy).toHaveBeenCalled());
+    // Editing the value never opened the provenance popover.
+    expect(screen.queryByRole('dialog', { name: /Where Purchase Price came from/i })).not.toBeInTheDocument();
+  });
+
+  it('with no price the Entry Cap Rate is a dash carrying the missing-price reason', () => {
+    outputsRef.value = withoutCapital();
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    const row = within(entry).getByText('Entry Cap Rate').closest('div') as HTMLElement;
+    const dash = row.querySelector('[data-refused]') as HTMLElement;
+    expect(dash).toBeTruthy();
+    expect(dash.getAttribute('data-refused')).toBe('missing_identity_inputs');
+    expect(dash).toHaveTextContent('—');
+    expect(within(entry).getByTestId('overview-purchase-price')).toHaveTextContent('—');
+  });
+
+  it('an analyst price shows with its Override badge', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { purchase_price: { value: 36_400_000, note: 'Our bid' } } };
+    outputsRef.value = withoutCapital();
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    expect(within(entry).getByTestId('overview-purchase-price')).toHaveTextContent('$36,400,000');
+    expect(within(entry).getByTestId('overview-purchase-price-source')).toHaveTextContent('Override');
   });
 });
 

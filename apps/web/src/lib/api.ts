@@ -1221,6 +1221,9 @@ export interface EngineOutputResponse {
   outputs: Record<string, unknown> | null;
   inputs: Record<string, unknown> | null;
   error: string | null;
+  /** The typed reason a `failed` row has no outputs (worker `EngineFailure`);
+   *  null on complete rows and on failed rows written before the column. */
+  failure?: EngineFailure | null;
   /** Set only on a `not_applicable` row; absent on older workers. */
   not_applicable?: EngineNotApplicable | null;
   runtime_ms: number | null;
@@ -1255,6 +1258,11 @@ export interface EngineFailure {
   engine: EngineName | string;
   reason: string;
   message: string;
+  /** On `missing_identity_inputs`: the deal inputs the engine needs and the
+   *  deal does not carry (`keys` / `purchase_price`). */
+  missing?: string[];
+  /** On `load_error` / `engine_error`: the exception class name. */
+  exception_type?: string | null;
 }
 
 export interface EngineOutputsResponse {

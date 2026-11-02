@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { useParams } from 'next/navigation';
@@ -42,6 +43,9 @@ import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, holdDefaultBadge } from '@/lib/engi
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import RenovationBudgetSources from './RenovationBudgetSources';
+import PurchasePriceField from './PurchasePriceField';
+import { useDocuments } from '@/lib/hooks/useDocuments';
+import { missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -75,6 +79,7 @@ import {
   type ExitNoiBasis,
   type ExitNoiBasisChoice,
   type CompCapRateRange,
+  type EngineOutputResponse,
 } from '@/lib/api';
 
 // Expense engine year shape — mirrors apps/worker/app/engines/expense.py.
@@ -599,24 +604,15 @@ export default function InvestmentTab() {
               setRunToken(Date.now());
             }}
           />
-          <Card className="p-16 text-center">
-            <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
-              <Briefcase size={20} className="text-ink-400" />
-            </div>
-            <h3 className="text-[15px] font-semibold text-ink-900">Investment Engine unavailable</h3>
-            <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
-              Upload an <span className="font-medium">Offering Memorandum</span> (the broker&apos;s pitch deck) into
-              the Data Room and we&apos;ll populate the investment summary automatically.
-            </p>
-            <Button
-              variant="primary"
-              size="sm"
-              className="mt-4"
-              onClick={() => toast('Nothing is queued yet — add the missing document in the Data Room and the model runs automatically once extraction finishes', { type: 'info' })}
-            >
-              Run Investment Engine
-            </Button>
-          </Card>
+          <CapitalUnavailable
+            dealId={dealId}
+            capitalRow={outputs?.engines?.capital}
+            overrides={invOverrides}
+            dealKeys={deal?.keys ?? null}
+            editable={liveMode}
+            onSaved={() => { void refreshDeal?.(); }}
+            onRun={() => { void invRun.run(); }}
+          />
           <EngineRunHistory dealId={dealId} />
         </div>
         <EngineRightRail />
@@ -841,12 +837,11 @@ export default function InvestmentTab() {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
                 state: overridden('purchase_price') ? 'assumption' : (tracedState('capital', 'purchase_price') ?? 'calculated'),
                 overridden: overridden('purchase_price'),
+                // W5 "price" — the shared editor (Overview uses the same one):
+                // writes the analyst override and runs the model.
                 value: (
-                  <AssumptionField value={purchase} editable={liveMode} format={fmtCurrency}
-                    toDraft={(v) => String(Math.round(v))}
-                    parse={(s) => { const n = parseFloat(s.replace(/[,$\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; }}
-                    unit="usd" onSave={(v, note) => onSaveAssumption('purchase_price', v, note)}
-                    noteKey="purchase_price" testId="purchase-price" width="w-36"
+                  <PurchasePriceField dealId={dealId} overrides={invOverrides} enginePrice={purchase}
+                    editable={liveMode} onSaved={() => { void refreshDeal?.(); }}
                     color={valueColor('input', true, overridden('purchase_price'))} bold />
                 ),
               },
@@ -1945,11 +1940,13 @@ function CloseDateField({
  * wrong. Read-only when there is no worker connection (mock data flow).
  */
 function KeysOverride({
-  dealId, currentKeys, onSaved,
+  dealId, currentKeys, onSaved, rerunsOnSave = false,
 }: {
   dealId: string;
   currentKeys: number | null | undefined;
   onSaved: () => void;
+  /** The caller runs the model after the save (the identity-inputs card). */
+  rerunsOnSave?: boolean;
 }) {
   const { toast } = useToast();
   const editable = isWorkerConnected() && !/^\d+$/.test(dealId) && dealId.length > 0;
@@ -1966,7 +1963,9 @@ function KeysOverride({
     onSave: async (parsed) => {
       try {
         await api.deals.update(dealId, { keys: parsed });
-        toast(`Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
+        toast(rerunsOnSave
+          ? `Room count saved: ${parsed} keys — re-running the model…`
+          : `Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
         onSaved();
       } catch (err) {
 
@@ -2000,5 +1999,152 @@ function KeysOverride({
       />
       <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
     </span>
+  );
+}
+
+/**
+ * W5 "price" — what CAPEX shows when the capital engine has no output.
+ *
+ *  - Refused for a missing identity input (`missing_identity_inputs`): the
+ *    Deal Summary inputs themselves — Purchase Price (the shared editor,
+ *    pre-filled from the OM's stated asking price when there is one) and Keys
+ *    when it is missing too. Before this the only price editor sat inside the
+ *    summary that cannot render without a price: a deadlock.
+ *  - No OM document on the deal: the "Upload an OM" card.
+ *  - Otherwise (not run yet, or another failure): the failure's own sentence.
+ *
+ * Every Run button here starts the real model run.
+ */
+function CapitalUnavailable({
+  dealId, capitalRow, overrides, dealKeys, editable, onSaved, onRun,
+}: {
+  dealId: string;
+  capitalRow: EngineOutputResponse | undefined;
+  overrides: Record<string, unknown>;
+  dealKeys: number | null;
+  editable: boolean;
+  onSaved: () => void;
+  onRun: () => void;
+}) {
+  const missing = missingIdentityInputs(capitalRow);
+  // Mounted only in this state, so a deal whose model ran never lists its
+  // documents from here.
+  const { documents, settled } = useDocuments(dealId);
+  const hasOm = documents.some((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
+  const runButton = (label: string) => (
+    <Button variant="primary" size="sm" className="mt-4" onClick={onRun}>
+      {label}
+    </Button>
+  );
+
+  if (missing) {
+    return (
+      <IdentityInputsCard
+        dealId={dealId}
+        missing={missing}
+        message={capitalRow?.failure?.message ?? null}
+        overrides={overrides}
+        dealKeys={dealKeys}
+        hasOm={hasOm}
+        omKnown={settled}
+        editable={editable}
+        onSaved={onSaved}
+        onRun={onRun}
+      />
+    );
+  }
+
+  if (settled && !hasOm) {
+    return (
+      <Card className="p-16 text-center">
+        <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+          <Briefcase size={20} className="text-ink-400" />
+        </div>
+        <h3 className="text-[15px] font-semibold text-ink-900">Investment Engine unavailable</h3>
+        <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">
+          Upload an <span className="font-medium">Offering Memorandum</span> (the broker&apos;s pitch deck) into
+          the Data Room and we&apos;ll populate the investment summary automatically.
+        </p>
+        {runButton('Run Investment Engine')}
+      </Card>
+    );
+  }
+
+  const why = capitalRow?.status === 'failed'
+    ? (capitalRow.failure?.message ?? capitalRow.error ?? 'The capital engine failed on the last run.')
+    : 'The model has not been run on this deal yet.';
+  return (
+    <Card className="p-16 text-center" data-testid="capital-not-run-card">
+      <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
+        <Briefcase size={20} className="text-ink-400" />
+      </div>
+      <h3 className="text-[15px] font-semibold text-ink-900">No investment summary yet</h3>
+      <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">{why}</p>
+      {runButton('Run Investment Engine')}
+    </Card>
+  );
+}
+
+function IdentityInputsCard({
+  dealId, missing, message, overrides, dealKeys, hasOm, omKnown, editable, onSaved, onRun,
+}: {
+  dealId: string;
+  missing: string[];
+  message: string | null;
+  overrides: Record<string, unknown>;
+  dealKeys: number | null;
+  hasOm: boolean;
+  omKnown: boolean;
+  editable: boolean;
+  onSaved: () => void;
+  onRun: () => void;
+}) {
+  const priceSource = useSource('purchase_price');
+  const price = resolvePurchasePrice({ overrides, enginePrice: undefined, resolved: priceSource });
+  const keysMissing = missing.includes('keys') || !(dealKeys != null && dealKeys > 0);
+  const priceCaption = price.source === 'om_broker'
+    ? `The OM states this asking price${price.page != null ? ` (p. ${price.page})` : ''}. Run the model to use it, or enter your own.`
+    : price.source === 'deal_row'
+      ? 'The deal record carries this price. Run the model to use it, or enter your own.'
+      : price.source === 'analyst_override'
+        ? 'Your saved price. The model re-runs on save.'
+        : !omKnown
+          ? null
+          : hasOm
+            ? "The OM doesn't state a purchase price."
+            : 'No Offering Memorandum is in the Data Room — enter the price, or upload an OM that states one.';
+  // A run can only succeed once both identity inputs resolve.
+  const runnable = price.value !== undefined && !keysMissing;
+  const rowLabel: CSSProperties = { fontSize: 12.5, color: palette.textSecondary };
+  return (
+    <SectionCard title="Deal inputs needed" style={{ marginBottom: 14 }}>
+      <div data-testid="identity-inputs-card">
+        <p style={{ fontSize: 12.5, color: palette.textMuted, margin: '0 0 12px', lineHeight: 1.5 }}>
+          The model needs the deal&apos;s {missing.length > 1 ? 'key count and purchase price' : missing[0] === 'keys' ? 'key count' : 'purchase price'} before
+          it can build the investment summary — it never substitutes a placeholder.
+          {message ? <span style={{ display: 'block', marginTop: 4 }}>{message}</span> : null}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
+          <span style={rowLabel}>Purchase Price</span>
+          <PurchasePriceField dealId={dealId} overrides={overrides} enginePrice={undefined}
+            editable={editable} onSaved={onSaved} emptyLabel="Enter purchase price" bold />
+        </div>
+        {priceCaption && (
+          <div style={{ fontSize: 11.5, color: palette.textMuted, padding: '4px 0 8px' }}>{priceCaption}</div>
+        )}
+        {keysMissing && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
+            <span style={rowLabel}>Keys</span>
+            <KeysOverride dealId={dealId} currentKeys={dealKeys} rerunsOnSave
+              onSaved={() => { onSaved(); onRun(); }} />
+          </div>
+        )}
+        {runnable && (
+          <Button variant="primary" size="sm" className="mt-4" onClick={onRun}>
+            Run model
+          </Button>
+        )}
+      </div>
+    </SectionCard>
   );
 }

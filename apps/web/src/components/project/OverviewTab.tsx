@@ -96,6 +96,14 @@ import type { ReasonCode } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, headlineReturns, holdDefaultBadge } from '@/lib/engines/returns';
 import { sourceLabel } from '@/lib/provenance';
+import PurchasePriceField from './PurchasePriceField';
+import {
+  ENTRY_CAP_FORMULA,
+  PURCHASE_PRICE_INPUT_FROM,
+  PURCHASE_PRICE_KEY,
+  entryCapRate,
+  resolvePurchasePrice,
+} from '@/lib/purchasePrice';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
 import {
   KpiTile,
@@ -240,6 +248,11 @@ interface RowDef {
    * name precisely (Floors: the catalog has no such field).
    */
   reasonDetail?: string;
+  /**
+   * W5 "price" — an inline editor rendered in place of `value` (the Purchase
+   * Price row). `value` stays the plain-text form the popover prints.
+   */
+  valueNode?: ReactNode;
 }
 
 /** R-050 — the field_overrides key holding the analyst's Target Stabilized Yield on Cost. */
@@ -356,6 +369,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // document · analyst override), off the deal's provenance map; the
   // Renovation KPI tile names it after the per-key figure.
   const renoSource = useSource('renovation_budget');
+  const priceSource = useSource(PURCHASE_PRICE_KEY);
   const holdDealTypeBadge = holdDefaultBadge(useSource('hold_years')?.source);
   const traceGet = useCallback(
     (engine: 'capital' | 'returns' | 'debt' | 'expense', path: string) => {
@@ -701,7 +715,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // Derived (all engine-sourced or engine-arithmetic — never fabricated).
   const purchase = wPurchase ?? findUse(/purchase/i);
   const pricePerKey = wPricePerKey ?? (has(purchase) && has(keys) ? purchase / keys : undefined);
-  const entryCap = wEntryCap ?? (has(y1Noi) && has(purchase) && purchase > 0 ? y1Noi / purchase : undefined);
+  // W5 "price" — the price on screen (the analyst's saved entry first, then
+  // the engine's, then what the loader resolves: deal record / OM asking
+  // price) and the Entry Cap Rate calculated FROM it.
+  const priceInput = resolvePurchasePrice({ overrides, enginePrice: purchase, resolved: priceSource });
+  const entryCapCalc = entryCapRate(y1Noi, priceInput.value);
+  const entryCap = wEntryCap ?? entryCapCalc.value;
   const closing = findUse(/closing/i);
   const totalCapital = wTotalCapital;
   const totalPerKey = has(totalCapital) && has(keys) ? totalCapital / keys : undefined;
@@ -898,9 +917,27 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
     const entryRows = (): RowDef[] => [
       lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
-      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), { trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: 'Entry NOI ÷ Purchase Price', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
-      cal('purchase', 'Purchase Price', money(purchase), { bold: true, trace: { engine: 'capital', path: 'purchase_price' }, formula: 'Entry NOI ÷ Entry Cap Rate', inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Entry Cap Rate', from: 'Calculated', kind: 'calc' }] }),
-      cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: 'Calculated', kind: 'calc' }, { name: 'Keys', from: 'OM · Hotel Program', kind: 'doc' }] }),
+      // W5 "price" — one-way dependency: the Purchase Price is an INPUT
+      // (editable here and on CAPEX, one shared editor + save path) and the
+      // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
+      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), {
+        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: ENTRY_CAP_FORMULA,
+        inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
+        ...(has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
+      }),
+      mk({
+        id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
+        value: money(priceInput.value),
+        overridden: priceInput.source === 'analyst_override',
+        where: priceInput.source ? sourceLabel(priceInput.source) : 'Not entered yet — an analyst input',
+        sub: 'An input, not a calculation: your entry (with its note) wins over the deal record, which wins over the OM\'s stated asking price. Entry Cap Rate and Price / Key are calculated from it. Never inferred from a broker cap rate.',
+        valueNode: (
+          <PurchasePriceField dealId={dealId} overrides={overrides} enginePrice={purchase}
+            editable={liveMode} onSaved={() => { void refreshDeal?.(); }}
+            testId="overview-purchase-price" bold />
+        ),
+      }),
+      cal('pricePerKey', 'Price / Key', money(pricePerKey), { trace: { engine: 'capital', path: 'price_per_key' }, formula: 'Purchase Price ÷ Keys', inputs: [{ name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }, { name: 'Keys', from: 'OM · Hotel Program', kind: 'doc' }] }),
       lnk('acqDate', 'Acquisition Date', fmtISODate(timeline?.close_date), '→ Timeline (drives the schedule)', ''),
       awa('closingPct', 'Closing Costs %'),
       cal('closing', 'Closing Costs', money(closing), { trace: { engine: 'capital', path: 'closing_costs' }, formula: 'Purchase Price × Closing Costs %' }),
@@ -1189,7 +1226,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge]);
+  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {
@@ -1912,7 +1949,7 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {showDot && <ProvenanceDot state={row.state} size={8} review={row.state === 'needs_review'} />}
         <span style={{ color, fontWeight: row.bold ? 700 : 400, textDecoration: underline, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-          {refusable ? <Refused reason={reason} detail={row.reasonDetail} /> : row.value}
+          {row.valueNode ?? (refusable ? <Refused reason={reason} detail={row.reasonDetail} /> : row.value)}
         </span>
       </span>
     </div>
