@@ -5,8 +5,9 @@
  *  Projects list: a DRAFT badge instead of the status badge; no $/Key, IRR
  *  or AI Confidence cell (not even a dash — rule 1: a figure is sourced or
  *  absent, and a draft has no model to source from); the card opens the
- *  wizard; "Drafts" in the status filter; the subtitle counts drafts beside
- *  active; drafts sort first within newest-first; the kebab offers Resume /
+ *  wizard; the status filter is exactly the seven statuses ("Draft" narrows
+ *  to drafts — Wave 5 removed the separate "Drafts" entry); the subtitle
+ *  counts drafts and archived beside active; drafts sort first within newest-first; the kebab offers Resume /
  *  Discard draft and not Archive / Delete Forever; a 30-day "untouched" note.
  *
  *  Deal page: a draft redirects to the wizard and renders no tabs.
@@ -115,7 +116,7 @@ function deal(over: Partial<WorkerDeal>): WorkerDeal {
     keys: 120,
     service: null,
     brand: null,
-    status: 'In Review',
+    status: 'In Progress',
     deal_stage: 'LOI',
     risk: null,
     ai_confidence: 0.72,
@@ -150,7 +151,7 @@ describe('Projects list — a draft card', () => {
     const { container } = render(<ProjectsPage />);
     const card = screen.getByTestId('draft-card');
     expect(within(card).getByTestId('deal-draft-badge')).toHaveTextContent('Draft');
-    expect(within(card).queryByText('In Review')).toBeNull();
+    expect(within(card).queryByText('In Progress')).toBeNull();
     expect(within(card).queryByText('$/Key')).toBeNull();
     expect(within(card).queryByText('Levered IRR')).toBeNull();
     expect(within(card).queryByText('AI Confidence')).toBeNull();
@@ -179,15 +180,27 @@ describe('Projects list — a draft card', () => {
     hoisted.deals = [ACTIVE];
     render(<ProjectsPage />);
     expect(screen.queryByTestId('deal-draft-badge')).toBeNull();
-    expect(screen.getByText('In Review')).toBeInTheDocument();
+    expect(screen.getByText('In Progress')).toBeInTheDocument();
     expect(screen.getByText('$/Key')).toBeInTheDocument();
     expect(screen.getByText('AI Confidence')).toBeInTheDocument();
   });
 
-  it('counts drafts beside active in the subtitle', () => {
-    hoisted.deals = [ACTIVE, DRAFT, deal({ id: 'arch', name: 'Old', status: 'Archived' })];
+  it('counts drafts and archived beside active in the subtitle — the parts add up to the total', () => {
+    hoisted.deals = [
+      ACTIVE,
+      deal({ id: 'icd', name: 'Decided', status: 'IC Approved' }),
+      DRAFT,
+      deal({ id: 'arch', name: 'Old', status: 'Archived' }),
+    ];
     const { container } = render(<ProjectsPage />);
-    expect(container.textContent).toContain('3 total projects · 1 active · 1 draft');
+    expect(container.textContent).toContain('4 total projects · 2 active · 1 draft · 1 archived');
+  });
+
+  it('leaves archived out of the subtitle when there is none', () => {
+    hoisted.deals = [ACTIVE, DRAFT];
+    const { container } = render(<ProjectsPage />);
+    expect(container.textContent).toContain('2 total projects · 1 active · 1 draft');
+    expect(container.textContent).not.toContain('archived');
   });
 
   it('sorts drafts first within newest-first', () => {
@@ -215,21 +228,40 @@ describe('Projects list — a draft card', () => {
   });
 });
 
-describe('Projects list — the Drafts filter', () => {
-  it('offers Drafts beside All and narrows to drafts; a status filter excludes drafts', () => {
+describe('Projects list — the status filter', () => {
+  it('is exactly All plus the seven statuses — one Draft entry, no "Drafts", no "In Review"', () => {
     hoisted.deals = [ACTIVE, DRAFT];
     render(<ProjectsPage />);
     fireEvent.click(screen.getByRole('button', { name: /^All/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Drafts' }));
-    expect(screen.getByTestId('draft-card')).toBeInTheDocument();
-    expect(screen.queryByText('Harbor Active')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^Drafts/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'In Review' }));
-    expect(screen.queryByTestId('draft-card')).toBeNull();
-    expect(screen.getByText('Harbor Active')).toBeInTheDocument();
+    const menu = screen.getByTestId('status-filter-menu');
+    expect(within(menu).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'All', 'Draft', 'In Progress', 'Ready for Review', 'IC Ready', 'IC Approved', 'IC Not Approved', 'Archived',
+    ]);
   });
 
-  it('`?filter=Drafts` opens the list already narrowed', async () => {
+  it('Draft narrows to drafts; another status excludes drafts', () => {
+    hoisted.deals = [ACTIVE, DRAFT, deal({ id: 'rfr', name: 'Harbor Review', status: 'Ready for Review' })];
+    render(<ProjectsPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^All/ }));
+    fireEvent.click(within(screen.getByTestId('status-filter-menu')).getByRole('button', { name: 'Draft' }));
+    expect(screen.getByTestId('draft-card')).toBeInTheDocument();
+    expect(screen.queryByText('Harbor Active')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Draft/ }));
+    fireEvent.click(within(screen.getByTestId('status-filter-menu')).getByRole('button', { name: 'Ready for Review' }));
+    expect(screen.queryByTestId('draft-card')).toBeNull();
+    expect(screen.queryByText('Harbor Active')).toBeNull();
+    expect(screen.getByText('Harbor Review')).toBeInTheDocument();
+  });
+
+  it('`?filter=Draft` opens the list already narrowed', async () => {
+    window.history.replaceState({}, '', '/projects?filter=Draft');
+    hoisted.deals = [ACTIVE, DRAFT];
+    render(<ProjectsPage />);
+    await waitFor(() => expect(screen.queryByText('Harbor Active')).toBeNull());
+    expect(screen.getByTestId('draft-card')).toBeInTheDocument();
+  });
+
+  it('the old `?filter=Drafts` link still opens the Draft filter', async () => {
     window.history.replaceState({}, '', '/projects?filter=Drafts');
     hoisted.deals = [ACTIVE, DRAFT];
     render(<ProjectsPage />);

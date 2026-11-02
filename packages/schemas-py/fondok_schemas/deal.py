@@ -13,10 +13,61 @@ from .common import Risk
 
 
 class DealStatus(str, Enum):
+    """Where a deal stands — the seven-status lifecycle (Wave 5).
+
+    ``Draft`` and ``In Progress`` are AUTOMATIC: they follow
+    ``deals.lifecycle`` (a wizard draft is ``Draft``; Finish makes it
+    ``In Progress``). ``Ready for Review``, ``IC Ready``, ``IC Approved`` and
+    ``IC Not Approved`` are set by the team. ``Archived`` has its own route
+    and an archived deal is restored to ``In Progress``.
+    """
+
     DRAFT = "Draft"
-    IN_REVIEW = "In Review"
+    IN_PROGRESS = "In Progress"
+    READY_FOR_REVIEW = "Ready for Review"
     IC_READY = "IC Ready"
+    IC_APPROVED = "IC Approved"
+    IC_NOT_APPROVED = "IC Not Approved"
     ARCHIVED = "Archived"
+
+
+#: Every stored status, in lifecycle order (the Postgres CHECK and the web
+#: filter list both read this order).
+DEAL_STATUSES: tuple[str, ...] = tuple(s.value for s in DealStatus)
+
+#: Statuses a member of the tenant may set with ``POST /deals/{id}/status``.
+#: ``In Progress`` is here so a deal can be moved back (and restored from
+#: Archived); ``Draft`` follows the wizard and ``Archived`` has its own route.
+MANUAL_DEAL_STATUSES: frozenset[str] = frozenset(
+    {
+        DealStatus.IN_PROGRESS.value,
+        DealStatus.READY_FOR_REVIEW.value,
+        DealStatus.IC_READY.value,
+        DealStatus.IC_APPROVED.value,
+        DealStatus.IC_NOT_APPROVED.value,
+    }
+)
+
+#: Manual statuses that need a completed model run first — the committee
+#: reviews and decides on a modelled deal, never on an unrun one.
+RUN_GATED_DEAL_STATUSES: frozenset[str] = frozenset(
+    {
+        DealStatus.IC_READY.value,
+        DealStatus.IC_APPROVED.value,
+        DealStatus.IC_NOT_APPROVED.value,
+    }
+)
+
+
+def status_for_lifecycle(lifecycle: str | None) -> str:
+    """The automatic status a deal's lifecycle implies: a wizard draft is
+    ``Draft``; anything else (``active``, or a schema without the column)
+    is ``In Progress``."""
+    return (
+        DealStatus.DRAFT.value
+        if lifecycle == "draft"
+        else DealStatus.IN_PROGRESS.value
+    )
 
 
 class DealStage(str, Enum):

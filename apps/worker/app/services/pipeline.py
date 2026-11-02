@@ -230,7 +230,7 @@ def _row_from_deal(
         "deal_id": str(deal_row["id"]),
         "name": deal_row["name"],
         "state": deal_row.get("state") or "ONBOARDING",
-        "status": deal_row.get("status") or "Draft",
+        "status": deal_row["status"],
         "city": deal_row.get("city"),
         "brand": deal_row.get("brand"),
         "deal_stage": deal_row.get("deal_stage"),

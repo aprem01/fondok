@@ -33,7 +33,15 @@ from ..config import get_settings
 from ..costs import build_cost_report
 from ..database import get_session, json_column_bind
 from ..memo_edits import list_edits, record_edit
-from fondok_schemas import LineageRecord, ValueTrace
+from fondok_schemas import (
+    DEAL_STATUSES,
+    MANUAL_DEAL_STATUSES,
+    RUN_GATED_DEAL_STATUSES,
+    DealStatus,
+    LineageRecord,
+    ValueTrace,
+    status_for_lifecycle,
+)
 from fondok_schemas.reasons import ReasonCode
 
 try:
@@ -267,7 +275,19 @@ class UpdateDealBody(BaseModel):
         from ..services.property_type import validate_property_type_input
 
         return validate_property_type_input(v)
-    status: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _status_has_its_own_endpoint(cls, data: Any) -> Any:
+        # Wave 5 — the status is validated, gated and audited by
+        # ``POST /deals/{id}/status``; a free-text PATCH could store any
+        # string (and did: ``Draft`` on an active deal).
+        if isinstance(data, dict) and "status" in data:
+            raise ValueError(
+                "status is not set with PATCH — use POST /deals/{id}/status"
+            )
+        return data
+
     deal_stage: str | None = None
     risk: str | None = None
     ai_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -342,7 +362,9 @@ class DealRecord(BaseModel):
     service: str | None = None
     # FON-46 — deal classification (acquisition / development / redevelopment).
     deal_type: str | None = None
-    status: str = "Draft"
+    # Wave 5 — one of the seven ``fondok_schemas.DealStatus`` values (the
+    # column is NOT NULL and CHECKed), never defaulted here.
+    status: str
     deal_stage: str | None = None
     risk: str | None = None
     ai_confidence: float | None = None
@@ -678,7 +700,7 @@ class PipelineDealRow(BaseModel):
     deal_id: UUID
     name: str
     state: str  # ONBOARDING / VALIDATING / READY
-    status: str  # Draft / Active / Archived (legacy status column)
+    status: str  # one of the seven DealStatus values (drafts are excluded)
     city: str | None = None
     brand: str | None = None
     deal_stage: str | None = None
@@ -1028,7 +1050,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         keys=row.get("keys"),
         service=row.get("service"),
         deal_type=row.get("deal_type"),
-        status=row.get("status") or "Draft",
+        status=row["status"],
         deal_stage=row.get("deal_stage"),
         risk=row.get("risk"),
         ai_confidence=_coerce_float(row.get("ai_confidence")),
@@ -1658,16 +1680,17 @@ async def create_deal(
 
     FON-79 — ``lifecycle='draft'`` creates the wizard's server-side draft
     (``status='Draft'``, audit ``deal.draft_created``); the default
-    ``active`` is today's direct create, now ``status='In Review'`` so the
-    word "Draft" means one thing from go-live (A.6.1). The audit actor is
-    the real caller (A.6.4: the Projects card shows who started a draft).
+    ``active`` is today's direct create, ``status='In Progress'`` (Wave 5:
+    the status follows the lifecycle, so "Draft" means one thing). The
+    audit actor is the real caller (A.6.4: the Projects card shows who
+    started a draft).
     """
     tenant_id = auth.tenant_id
     tenant_id_str = str(tenant_id)
     deal_id = uuid4()
     now = _now()
     is_draft = body.lifecycle == "draft"
-    status_value = "Draft" if is_draft else "In Review"
+    status_value = status_for_lifecycle(body.lifecycle)
     is_sqlite = session.bind is not None and session.bind.dialect.name == "sqlite"
 
     params = {
@@ -2671,7 +2694,7 @@ async def activate_deal(
     ``deal_name_required`` when the name is blank (the one piece of
     identifying information a deal must have). Sets ``lifecycle='active'``,
     clears ``draft_wizard``, stamps ``activated_at`` and ``status='In
-    Review'`` (A.6.1), audits ``deal.activated`` with the step the wizard
+    Progress'`` (Wave 5 — automatic, from the lifecycle), audits ``deal.activated`` with the step the wizard
     reached and the document count, and invalidates the pipeline cache —
     the deal now counts.
     """
@@ -2725,12 +2748,17 @@ async def activate_deal(
                SET lifecycle = 'active',
                    draft_wizard = NULL,
                    activated_at = :now,
-                   status = 'In Review',
+                   status = :status,
                    updated_at = :now
              WHERE id = :id AND tenant_id = :tenant
             """
         ),
-        {"id": str(deal_id), "tenant": tenant_id_str, "now": now},
+        {
+            "id": str(deal_id),
+            "tenant": tenant_id_str,
+            "now": now,
+            "status": status_for_lifecycle("active"),
+        },
     )
     await _write_audit(
         session,
@@ -2962,11 +2990,16 @@ async def archive_deal(
         text(
             """
             UPDATE deals
-               SET status = 'Archived', updated_at = :ts
+               SET status = :status, updated_at = :ts
              WHERE id = :id AND tenant_id = :tenant
             """
         ),
-        {"id": str(deal_id), "tenant": tenant_id_str, "ts": now},
+        {
+            "id": str(deal_id),
+            "tenant": tenant_id_str,
+            "ts": now,
+            "status": DealStatus.ARCHIVED.value,
+        },
     )
 
     await _write_audit(
@@ -2993,6 +3026,167 @@ async def archive_deal(
     ).first()
     assert refreshed is not None
     logger.info("deals.archive: deal=%s tenant=%s", deal_id, tenant_id_str)
+    return _row_to_record(dict(refreshed._mapping))
+
+
+# ─────────────────────────── Wave 5 — set the status ───────────────────────────
+
+
+class SetDealStatusBody(BaseModel):
+    """POST body for ``/deals/{id}/status`` — one of the seven statuses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def _one_of_the_seven(cls, v: str) -> str:
+        if v not in DEAL_STATUSES:
+            raise ValueError(
+                "status must be one of: " + ", ".join(DEAL_STATUSES)
+            )
+        return v
+
+
+#: Refusal codes a client dispatches on.
+STATUS_NOT_SETTABLE_CODE = "status_not_settable"
+DEAL_ARCHIVED_CODE = "deal_archived"
+MODEL_RUN_REQUIRED_CODE = "model_run_required"
+
+
+@router.post("/{deal_id}/status", response_model=DealRecord)
+async def set_deal_status(
+    deal_id: UUID,
+    body: SetDealStatusBody,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
+) -> DealRecord:
+    """Wave 5 — set a deal's status. The one route that writes a manual one.
+
+    Any member of the tenant may set ``In Progress``, ``Ready for Review``,
+    ``IC Ready``, ``IC Approved`` or ``IC Not Approved``. Refusals:
+
+    * 422 ``status_not_settable`` — ``Draft`` follows the New Deal wizard
+      and ``Archived`` has its own route (``DELETE /deals/{id}``);
+      a value outside the seven is a plain 422;
+    * 404 — the deal is not the caller's tenant's;
+    * 409 ``deal_is_draft`` — the wizard is not finished;
+    * 409 ``deal_archived`` — an archived deal is only restored, to
+      ``In Progress``;
+    * 409 ``model_run_required`` — IC Ready / IC Approved / IC Not Approved
+      need a completed model run (:mod:`app.services.deal_status`).
+
+    Setting the current status again is a no-op (no write, no audit row).
+    A change is audited ``deal.status_changed`` with ``from`` / ``to`` and the
+    actor, and invalidates the pipeline cache.
+    """
+    tenant_id_str = str(auth.tenant_id)
+    deal_id_str = str(deal_id)
+    target = body.status
+    if target not in MANUAL_DEAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": STATUS_NOT_SETTABLE_CODE,
+                "message": (
+                    f"{target} is not set by hand: Draft follows the New Deal "
+                    "wizard, and a deal is archived with Archive."
+                ),
+            },
+        )
+
+    existing = (
+        await session.execute(
+            text(
+                f"SELECT {await _deal_columns(session)} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": deal_id_str, "tenant": tenant_id_str},
+        )
+    ).first()
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"deal {deal_id} not found",
+        )
+    row = dict(existing._mapping)
+    if str(row.get("lifecycle") or "active") == "draft":
+        raise _deal_is_draft_error()
+    current = row.get("status")
+    if current == DealStatus.ARCHIVED.value and target != DealStatus.IN_PROGRESS.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": DEAL_ARCHIVED_CODE,
+                "message": (
+                    "This deal is archived. Restore it to In Progress before "
+                    "changing its status."
+                ),
+            },
+        )
+    if current == target:
+        return _row_to_record(row)
+    if target in RUN_GATED_DEAL_STATUSES:
+        from ..services.deal_status import has_completed_model_run
+
+        if not await has_completed_model_run(
+            session, deal_id=deal_id_str, tenant_id=tenant_id_str
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": MODEL_RUN_REQUIRED_CODE,
+                    "message": (
+                        f"Run the model first — {target} needs a completed "
+                        "model run."
+                    ),
+                },
+            )
+
+    now = _now()
+    await session.execute(
+        text(
+            """
+            UPDATE deals
+               SET status = :status, updated_at = :ts
+             WHERE id = :id AND tenant_id = :tenant
+            """
+        ),
+        {"id": deal_id_str, "tenant": tenant_id_str, "status": target, "ts": now},
+    )
+    await log_audit(
+        session,
+        tenant_id=tenant_id_str,
+        deal_id=deal_id_str,
+        actor_id=auth.user_id or "system",
+        actor_email=auth.email,
+        action="deal.status_changed",
+        resource_type="deal",
+        resource_id=deal_id_str,
+        output_payload={"from": current, "to": target},
+        metadata={"auth_source": auth.source},
+        before={"status": current},
+        after={"status": target},
+    )
+    await session.commit()
+    from ..services.pipeline import invalidate as _pipeline_invalidate
+    _pipeline_invalidate(auth.tenant_id)
+
+    refreshed = (
+        await session.execute(
+            text(
+                f"SELECT {await _deal_columns(session)} FROM deals "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"id": deal_id_str, "tenant": tenant_id_str},
+        )
+    ).first()
+    assert refreshed is not None  # we just updated it
+    logger.info(
+        "deals.set_status: deal=%s tenant=%s %s → %s",
+        deal_id, tenant_id_str, current, target,
+    )
     return _row_to_record(dict(refreshed._mapping))
 
 
@@ -3090,7 +3284,7 @@ async def get_deal_status(
         if scores:
             confidence = sum(scores) / len(scores)
 
-    deal_status = deal_row._mapping["status"] or "Draft"
+    deal_status = deal_row._mapping["status"]
     return DealStatusResponse(
         id=deal_id,
         status=deal_status,

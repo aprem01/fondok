@@ -45,7 +45,18 @@ export type ConfidenceReport = z.infer<typeof ConfidenceReport>;
 
 // ─────────────────────────── Deal ───────────────────────────
 
-export const DealStatus = z.enum(["Draft", "In Review", "IC Ready", "Archived"]);
+// Wave 5 — the seven-status lifecycle (mirrors fondok_schemas.DealStatus).
+// Draft / In Progress follow the wizard; the next four are set by the team;
+// Archived has its own route.
+export const DealStatus = z.enum([
+  "Draft",
+  "In Progress",
+  "Ready for Review",
+  "IC Ready",
+  "IC Approved",
+  "IC Not Approved",
+  "Archived",
+]);
 export type DealStatus = z.infer<typeof DealStatus>;
 
 export const DealStage = z.enum(["Teaser", "Under NDA", "LOI", "PSA"]);

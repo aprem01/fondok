@@ -15,7 +15,7 @@ import { cn } from '@/lib/format';
 import { lastRunTookMs } from '@/lib/progress';
 
 // Browsers don't expose .env to client without the NEXT_PUBLIC_ prefix.
-// Same gating ExportTab uses — when unset we surface a toast instead of
+// Same gating the IC Memo export cards use — when unset we surface a toast instead of
 // hitting a non-existent worker.
 const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL ?? '';
 

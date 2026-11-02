@@ -87,7 +87,7 @@ async def _insert_deal(
     state: str = "VALIDATING",
     target_irr: float | None = None,
     updated_at: datetime | None = None,
-    status: str = "Active",
+    status: str = "In Progress",
     deal_stage: str = "Active",
 ) -> str:
     from sqlalchemy import text

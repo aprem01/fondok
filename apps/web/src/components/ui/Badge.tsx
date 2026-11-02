@@ -47,7 +47,9 @@ export function Badge({
 }
 
 const statusToneMap: Record<string, Tone> = {
-  'Draft': 'blue', 'In Review': 'amber', 'IC Ready': 'gold', 'Archived': 'gray',
+  // Wave 5 — the seven deal statuses.
+  'Draft': 'slate', 'In Progress': 'blue', 'Ready for Review': 'amber', 'IC Ready': 'gold',
+  'IC Approved': 'green', 'IC Not Approved': 'red', 'Archived': 'gray',
   'Low': 'green', 'Medium': 'amber', 'High': 'red',
   'Low Risk': 'green', 'Medium Risk': 'amber', 'High Risk': 'red',
   'Extracted': 'green', 'Processing': 'blue', 'Pending': 'gray',

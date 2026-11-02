@@ -9,7 +9,23 @@
 // were removed 2026-10-30 with the worker-less fallback itself: without a
 // worker URL the app shows "Worker not configured", never a fixture.
 
-export type ProjectStatus = 'Draft' | 'In Review' | 'IC Ready' | 'Archived';
+/** Wave 5 — the seven deal statuses, in lifecycle order (mirrors the
+ *  worker's ``fondok_schemas.DealStatus`` and its CHECK constraint). */
+export const DEAL_STATUSES = [
+  'Draft', 'In Progress', 'Ready for Review', 'IC Ready', 'IC Approved', 'IC Not Approved', 'Archived',
+] as const;
+export type ProjectStatus = (typeof DEAL_STATUSES)[number];
+/** Set by the team with ``POST /deals/{id}/status``. Draft follows the New
+ *  Deal wizard and Archived has its own action. */
+export type ManualDealStatus = Exclude<ProjectStatus, 'Draft' | 'Archived'>;
+export const MANUAL_DEAL_STATUSES: readonly ManualDealStatus[] = [
+  'In Progress', 'Ready for Review', 'IC Ready', 'IC Approved', 'IC Not Approved',
+];
+/** Need a completed model run (the worker refuses with ``model_run_required``). */
+export const RUN_GATED_DEAL_STATUSES: readonly ProjectStatus[] = ['IC Ready', 'IC Approved', 'IC Not Approved'];
+export function isProjectStatus(v: unknown): v is ProjectStatus {
+  return typeof v === 'string' && (DEAL_STATUSES as readonly string[]).includes(v);
+}
 export type DealStage = 'Teaser' | 'Under NDA' | 'LOI' | 'PSA';
 export type Risk = 'Low' | 'Medium' | 'High';
 
@@ -54,9 +70,7 @@ export const sourcingChannels = [
   { id: 'direct', label: 'Direct' },
 ];
 
-export const projectStatuses: (ProjectStatus | 'All Status')[] = [
-  'All Status', 'Draft', 'In Review', 'IC Ready', 'Archived',
-];
+export const projectStatuses: (ProjectStatus | 'All Status')[] = ['All Status', ...DEAL_STATUSES];
 
 // Brand catalog. Originally backfilled from evals/golden-set/brand-catalog.json
 // (191 brands across 12 families). R-020 / R-021 / R-022 (2026-10-08) re-audited

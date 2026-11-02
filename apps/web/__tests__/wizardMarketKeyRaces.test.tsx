@@ -61,7 +61,7 @@ const w = vi.hoisted(() => {
       if (state.activateFails) {
         throw Object.assign(new Error(`POST /deals/${id}/activate → 503`), { name: 'WorkerError', status: 503, body: '' });
       }
-      return { id, name: 'Server Draft', lifecycle: 'active', status: 'In Review' };
+      return { id, name: 'Server Draft', lifecycle: 'active', status: 'In Progress' };
     }),
     pipeline: vi.fn(async () => ({ deals: [], summary: { deal_count: 0, draft_count: 0 } })),
     list: vi.fn(async () => []),

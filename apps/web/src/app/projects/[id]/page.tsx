@@ -12,7 +12,9 @@ import { StatusBadge } from '@/components/ui/Badge';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
-import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
+import { isProjectStatus, type DealStage, type Risk } from '@/lib/catalogs';
+import { hasCompletedModelRun } from '@/lib/dealStatus';
+import DealStatusMenu from '@/components/project/DealStatusMenu';
 import { displayConfidence, type Project } from '@/lib/project';
 import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { cn, fmtDate } from '@/lib/format';
@@ -96,7 +98,7 @@ const ActivityFeed = dynamic(() => import('@/components/project/ActivityFeed'), 
 // use — EXCEPT Export (FON-54b, 2026-09-09): the legacy ExportTab surface is
 // no longer routed at all, so it can't disagree with the IC Memo export cards
 // (it also used an unauthenticated window.location.href). The ExportTab file
-// is kept, just unmounted.
+// was removed in Wave 5 with its PATCH-based "Mark as IC Ready" card.
 const tabs = PROJECT_TABS;
 
 export default function ProjectDetailPage() {
@@ -133,25 +135,12 @@ export default function ProjectDetailPage() {
     if (isDraft) router.replace(`/projects/new?draft=${encodeURIComponent(rawId)}`);
   }, [isDraft, rawId, router]);
 
-  // Header kebab actions — Mark IC Ready / Archive Project. Exports live ONLY
+  // Header kebab actions — Duplicate / Archive Project. Exports live ONLY
   // on the IC Memo tab's 'Export & share' card (authed api.exports.download;
   // Excel live, PDF/PPTX Coming Soon per FON-54). The old kebab Excel/PDF items
   // used an unauthenticated window.location.href and disagreed with that card.
-  // FON-54 #9 — persist IC-Ready status (was a stub toast) so the header pill
-  // + pipeline reflect it.
-  const onMarkICReady = async () => {
-    if (!workerConnected || isMockId) {
-      toast('Worker not configured — nothing to update.', { type: 'info' });
-      return;
-    }
-    try {
-      await workerApi.deals.update(rawId, { status: 'IC Ready' });
-      toast('Marked as IC Ready', { type: 'success' });
-      void refreshDeal?.();
-    } catch (err) {
-      toast(`Couldn't mark IC Ready — ${userMessage(err)}`, { type: 'error' });
-    }
-  };
+  // Wave 5 — the status (IC Ready included) is set from the header status
+  // menu, `DealStatusMenu`, not from here.
   const onArchive = async () => {
     if (workerConnected && !isMockId) {
       try {
@@ -234,7 +223,6 @@ export default function ProjectDetailPage() {
   };
 
   const headerMenu = [
-    { label: 'Mark as IC Ready', onSelect: onMarkICReady },
     { label: duplicating ? 'Duplicating…' : 'Duplicate deal', onSelect: onDuplicate },
     { label: 'Archive Project', onSelect: onArchive, danger: true },
     // Wave 5 RBAC — hard-delete gated to org:admin. Non-admins get the
@@ -261,8 +249,8 @@ export default function ProjectDetailPage() {
     // `formatKeys(deal?.keys)`, a dash until then, never a fabricated 0.
     keys: deal.keys,
     service: deal.service ?? '—',
-    // Absent on the row → null → no badge. Never an invented "Draft" / "Teaser".
-    status: (deal.status as ProjectStatus) || null,
+    // Absent or outside the seven → null → no badge. Never an invented "Draft".
+    status: isProjectStatus(deal.status) ? deal.status : null,
     dealStage: (deal.deal_stage as DealStage) || null,
     risk: ((deal.risk as Risk) || 'Medium'),
     // Null until the worker has scored the deal — the pill reads "Awaiting
@@ -604,9 +592,16 @@ export default function ProjectDetailPage() {
               <h1 className="font-display text-[28px] font-semibold tracking-[-0.018em] text-ink-900 leading-[1.15]">
                 {project.name}
               </h1>
-              <span title="Where this deal stands. Draft = early stage, no IC review yet. In Review = team is reviewing. IC Ready = ready for the investment committee.">
-                {project.status && <StatusBadge value={project.status} />}
-              </span>
+              {liveMode ? (
+                <DealStatusMenu
+                  dealId={rawId}
+                  status={project.status}
+                  hasCompletedRun={hasCompletedModelRun(pageEngineOutputs)}
+                  onChanged={() => void refreshDeal()}
+                />
+              ) : (
+                project.status && <StatusBadge value={project.status} />
+              )}
             </div>
           </div>
 
@@ -708,7 +703,7 @@ export default function ProjectDetailPage() {
             </div>
             <Button
               size="sm"
-              variant={project.status === 'IC Ready' ? 'premium' : 'secondary'}
+              variant={project.status === 'IC Ready' || project.status === 'IC Approved' ? 'premium' : 'secondary'}
               aria-label="Share deal"
               onClick={onShare}
             >

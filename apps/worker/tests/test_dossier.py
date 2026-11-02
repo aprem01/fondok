@@ -71,7 +71,7 @@ async def _seed_full_deal(deal_id: UUID) -> tuple[UUID, UUID]:
                     purchase_price, created_at, updated_at
                 ) VALUES (
                     :id, :tenant, :name, :city, :keys, :brand, :service,
-                    'LOI', 'Core+', 'Underwriting', 0.85,
+                    'LOI', 'Core+', 'In Progress', 0.85,
                     :pp, :ts, :ts
                 )
                 """

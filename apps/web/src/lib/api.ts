@@ -10,6 +10,7 @@ import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
 import { wizardDocSubtype, type DocSubtype } from './docSubtype';
 import type { DraftWizardPayload } from './wizardDraft';
+import type { ManualDealStatus } from './catalogs';
 import type { MethodologyLevel, MethodologyLevelResponse } from './methodology/types';
 
 const BASE = (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
@@ -162,7 +163,7 @@ export interface PipelineDealRow {
   deal_id: string;
   name: string;
   state: string; // ONBOARDING / VALIDATING / READY
-  status: string; // Draft / Active / …
+  status: string; // one of the seven deal statuses (drafts are excluded)
   city: string | null;
   brand: string | null;
   deal_stage: string | null;
@@ -2468,7 +2469,7 @@ export const api = {
     getDraft: (id: string, signal?: AbortSignal) =>
       request<WorkerDeal>('GET', `/deals/${id}?include=draft_wizard`, undefined, { signal }),
     /** FON-79 — Finish: a draft becomes an underwriting (``lifecycle='active'``,
-     *  ``status='In Review'``). 409 ``deal_not_draft`` if already active; 422
+     *  ``status='In Progress'``). 409 ``deal_not_draft`` if already active; 422
      *  ``deal_name_required`` on a blank name. */
     activate: (id: string) =>
       request<WorkerDeal>('POST', `/deals/${id}/activate`),
@@ -2480,6 +2481,14 @@ export const api = {
       request<void>('DELETE', `/deals/${id}/draft`),
     status: (id: string, signal?: AbortSignal) =>
       request<WorkerDealStatus>('GET', `/deals/${id}/status`, undefined, { signal }),
+    /** Wave 5 — set a manual status (In Progress, Ready for Review, IC Ready,
+     *  IC Approved, IC Not Approved). The only way a status is written: PATCH
+     *  refuses it. 409 ``model_run_required`` for the three IC statuses before
+     *  a completed run; 409 ``deal_archived`` unless restoring an archived
+     *  deal to In Progress; 409 ``deal_is_draft``; 422
+     *  ``status_not_settable`` for Draft / Archived. Audited with from → to. */
+    setStatus: (id: string, status: ManualDealStatus) =>
+      request<WorkerDeal>('POST', `/deals/${id}/status`, { status }),
     /** Per-category coverage score for the workspace CompletenessCard
      *  + wizard right-rail (Wave 1 #1). Returns the 11 canonical
      *  categories with covered/doc_count/required_for_ic. The percent
@@ -2570,7 +2579,7 @@ export const api = {
       id: string,
       patch: Partial<Pick<WorkerDeal,
         'name' | 'city' | 'keys' | 'service' | 'brand' | 'proposed_brand' | 'operating_model'
-        | 'deal_type' | 'return_profile' | 'positioning' | 'status'
+        | 'deal_type' | 'return_profile' | 'positioning'
         | 'target_irr' | 'target_moic' | 'reopening_date'
         | 'str_market_id' | 'market' | 'submarket' | 'submarket_id' | 'deal_stage'>>
       & Partial<Pick<NewDealBody, 'sourcing_channel' | 'purchase_price'>> & {
@@ -2602,9 +2611,9 @@ export const api = {
         { transaction_id: transactionId },
       ),
     /** Soft-archive a deal (DELETE /deals/{id}). Flips status to
-     *  ``Archived`` — recoverable via direct SQL. The Pipeline view
-     *  + Projects list both hide archived deals; the deal page still
-     *  loads if you have its UUID. */
+     *  ``Archived``; ``setStatus(id, 'In Progress')`` restores it. The
+     *  Pipeline view hides archived deals; the Projects list files them
+     *  under the Archived filter. */
     archive: (id: string) =>
       request<WorkerDeal>('DELETE', `/deals/${id}`),
     /** HARD-delete a deal (DELETE /deals/{id}/hard). Cascades:

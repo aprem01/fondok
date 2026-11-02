@@ -133,6 +133,14 @@ ENDPOINT_CASES: list[EndpointCase] = [
     ),
     EndpointCase("DELETE", "/deals", "/{deal_id}"),
     EndpointCase("GET", "/deals", "/{deal_id}/status"),
+    # Wave 5 — the one route that sets a manual status (no run needed for
+    # Ready for Review, so the owner gets 200).
+    EndpointCase(
+        "POST",
+        "/deals",
+        "/{deal_id}/status",
+        body={"status": "Ready for Review"},
+    ),
     EndpointCase("GET", "/deals", "/{deal_id}/assumption_sources"),
     # FON-101 — renovation-budget candidates (OM vs PIP / CapEx documents).
     EndpointCase("GET", "/deals", "/{deal_id}/renovation-budget-candidates"),

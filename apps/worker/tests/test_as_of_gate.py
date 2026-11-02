@@ -88,7 +88,7 @@ async def _insert_deal(deal_id: UUID, *, overrides: dict | None = None) -> None:
                     id, tenant_id, name, status, ai_confidence, keys,
                     purchase_price, field_overrides, created_at, updated_at
                 ) VALUES (
-                    :id, :tenant, 'As-of deal', 'Underwriting', 0.0, 132,
+                    :id, :tenant, 'As-of deal', 'In Progress', 0.0, 132,
                     36400000, :fo, :ts, :ts
                 )
                 """

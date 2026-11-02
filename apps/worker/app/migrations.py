@@ -23,6 +23,8 @@ import re
 
 from sqlalchemy import text
 
+from fondok_schemas import DEAL_STATUSES, DealStatus
+
 from .config import get_settings
 from .database import get_migrations_engine
 
@@ -48,6 +50,122 @@ async def _sqlite_column_exists(conn, table: str, column: str) -> bool:
         if row[1] == column:
             return True
     return False
+
+
+# ─────────────── Wave 5 — the seven-status deal lifecycle ───────────────
+#
+# One-time, idempotent status backfill (re-run on every boot: a row it has
+# moved no longer matches, so the second run touches nothing). A finished
+# wizard (``lifecycle <> 'draft'``) at ``Draft`` / ``In Review`` — or at any
+# value outside the seven, which only a free-text PATCH could have stored —
+# becomes ``In Progress``; IC Ready / Archived and every other one
+# of the seven keep their status. A lifecycle draft is ``Draft`` whatever a
+# PATCH set (Draft holds iff the wizard is unfinished). Each moved deal gets
+# one ``deal.status_migrated`` audit row (before → after), written in the
+# same transaction BEFORE the UPDATE so the predicate still selects it. Then
+# the column is limited to the seven values: a CHECK on Postgres, a trigger
+# pair on SQLite (which cannot ADD a CHECK to an existing table).
+_STATUS_LIST_SQL = ", ".join(f"'{s}'" for s in DEAL_STATUSES)
+_STATUS_TARGET_SQL = (
+    f"CASE WHEN lifecycle = 'draft' THEN '{DealStatus.DRAFT.value}' "
+    f"ELSE '{DealStatus.IN_PROGRESS.value}' END"
+)
+_STATUS_NEEDS_BACKFILL_SQL = (
+    f"((lifecycle = 'draft' AND status <> '{DealStatus.DRAFT.value}')"
+    f" OR (lifecycle <> 'draft' AND (status = '{DealStatus.DRAFT.value}'"
+    f" OR status NOT IN ({_STATUS_LIST_SQL}))))"
+)
+_STATUS_BACKFILL_ACTOR = "system:migration"
+_STATUS_BACKFILL_ACTION = "deal.status_migrated"
+
+_PG_STATUS_BACKFILL = f"""
+DO $$
+BEGIN
+    INSERT INTO audit_log (
+        id, tenant_id, deal_id, actor_id, action, resource_type, resource_id,
+        payload, created_at, before, after, diff_summary, severity
+    )
+    SELECT md5(random()::text || clock_timestamp()::text || id::text)::uuid,
+           tenant_id, id, '{_STATUS_BACKFILL_ACTOR}', '{_STATUS_BACKFILL_ACTION}',
+           'deal', id::text,
+           jsonb_build_object(
+               'input', NULL,
+               'output', jsonb_build_object(
+                   'from', status, 'to', {_STATUS_TARGET_SQL},
+                   'reason', 'status_v2_backfill'),
+               'metadata', NULL),
+           NOW(),
+           jsonb_build_object('status', status),
+           jsonb_build_object('status', {_STATUS_TARGET_SQL}),
+           'status: ' || status || ' → ' || {_STATUS_TARGET_SQL},
+           'info'
+      FROM deals
+     WHERE {_STATUS_NEEDS_BACKFILL_SQL};
+    UPDATE deals
+       SET status = {_STATUS_TARGET_SQL}
+     WHERE {_STATUS_NEEDS_BACKFILL_SQL};
+END
+$$
+"""
+
+_PG_STATUS_CHECK = f"""
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'deals_status_chk'
+    ) THEN
+        ALTER TABLE deals ADD CONSTRAINT deals_status_chk
+            CHECK (status IN ({_STATUS_LIST_SQL}));
+    END IF;
+END
+$$
+"""
+
+_SQLITE_STATUS_BACKFILL_AUDIT = f"""
+INSERT INTO audit_log (
+    id, tenant_id, deal_id, actor_id, action, resource_type, resource_id,
+    payload, created_at, before, after, diff_summary, severity
+)
+SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-'
+             || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-'
+             || hex(randomblob(6))),
+       tenant_id, id, '{_STATUS_BACKFILL_ACTOR}', '{_STATUS_BACKFILL_ACTION}',
+       'deal', id,
+       json_object(
+           'input', NULL,
+           'output', json_object(
+               'from', status, 'to', {_STATUS_TARGET_SQL},
+               'reason', 'status_v2_backfill'),
+           'metadata', NULL),
+       CURRENT_TIMESTAMP,
+       json_object('status', status),
+       json_object('status', {_STATUS_TARGET_SQL}),
+       'status: ' || status || ' → ' || {_STATUS_TARGET_SQL},
+       'info'
+  FROM deals
+ WHERE {_STATUS_NEEDS_BACKFILL_SQL}
+"""
+
+_SQLITE_STATUS_BACKFILL = f"""
+UPDATE deals
+   SET status = {_STATUS_TARGET_SQL}
+ WHERE {_STATUS_NEEDS_BACKFILL_SQL}
+"""
+
+
+def _sqlite_status_trigger(event: str) -> str:
+    """BEFORE INSERT / UPDATE OF status — the SQLite stand-in for the CHECK."""
+    name = "insert" if event == "INSERT" else "update"
+    on = "INSERT ON deals" if event == "INSERT" else "UPDATE OF status ON deals"
+    return f"""
+CREATE TRIGGER IF NOT EXISTS deals_status_chk_{name}
+BEFORE {on}
+FOR EACH ROW
+WHEN NEW.status NOT IN ({_STATUS_LIST_SQL})
+BEGIN
+    SELECT RAISE(ABORT, 'deals_status_chk - status must be one of the seven deal statuses');
+END
+"""
 
 
 # Postgres-flavored DDL. SQLite (dev) skips these — see
@@ -1459,6 +1577,10 @@ MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies",
         "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS data_policies JSONB NOT NULL DEFAULT '{}'",
     ),
+    # Wave 5 — the seven-status lifecycle: backfill, then the CHECK (order
+    # matters: the CHECK validates every existing row).
+    ("deals.status_v2_backfill", _PG_STATUS_BACKFILL),
+    ("deals.add_status_chk", _PG_STATUS_CHECK),
 ]
 
 
@@ -2457,6 +2579,13 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies_sqlite",
         "ALTER TABLE tenants ADD COLUMN data_policies TEXT NOT NULL DEFAULT '{}'",
     ),
+    # Wave 5 — SQLite twin of the status backfill (one statement per entry:
+    # the audit rows first, while the predicate still selects the deals)
+    # and of the CHECK (a trigger pair).
+    ("deals.status_v2_backfill_audit", _SQLITE_STATUS_BACKFILL_AUDIT),
+    ("deals.status_v2_backfill", _SQLITE_STATUS_BACKFILL),
+    ("deals.add_status_chk_insert", _sqlite_status_trigger("INSERT")),
+    ("deals.add_status_chk_update", _sqlite_status_trigger("UPDATE")),
 ]
 
 
