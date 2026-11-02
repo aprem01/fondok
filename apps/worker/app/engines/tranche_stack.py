@@ -229,7 +229,8 @@ def compute_debt_stack(
             total_debt += t.loan_amount
         if rate is None:
             warnings.append(
-                f"{label}: terms not specified — excluded from debt service."
+                f"{label}: floating terms not specified — the stack's debt service "
+                "uses the rate on file until they are entered."
                 if t.kind == "senior"
                 else f"{label}: terms not specified — excluded from debt service and "
                 "not in leverage until a rate is entered."

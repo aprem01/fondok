@@ -202,3 +202,33 @@ def test_excel_splits_the_senior_and_all_debt_blocks(tmp_path: Path) -> None:
     assert by["Total Debt"][1] == 28_683_922
     assert by["LTC"][1] == 0.66
     assert str(by["Pending Junior Principal"][1]).startswith("not available")
+
+
+# ─────────────── round 3: fee dollars + the senior's pending warning ───────────────
+
+PENDING_FEES = {"tranches": {"1": {"principal_usd": PACE_AMT, "exit_fee_pct": 1.0, "upfront_fee_pct": 2.0}}}
+PRICED_FEES = {"tranches": {"1": {**PENDING_FEES["tranches"]["1"], "rate_pct": 0.08, "amortization_months": 0}}}
+SENIOR_FEES = {"tranches": {"0": {"exit_fee_pct": 0.5, "upfront_fee_pct": 1.0}}}
+
+
+def test_fee_dollars_are_senior_beside_the_senior_pct_and_totals_follow_the_rule() -> None:
+    sen = 23_700_000.0
+    pend = _debt({"tranches": {**SENIOR_FEES["tranches"], **PENDING_FEES["tranches"]}})
+    assert pend.origination_fee_usd == pytest.approx(sen * 0.01)
+    assert pend.exit_fee_usd == pytest.approx(sen * 0.005)
+    # The unpriced PACE is in neither total (one rule).
+    assert pend.total_origination_fee_usd == pytest.approx(sen * 0.01)
+    assert pend.total_exit_fee_usd == pytest.approx(sen * 0.005)
+    pr = _debt({"tranches": {**SENIOR_FEES["tranches"], **PRICED_FEES["tranches"]}})
+    assert pr.origination_fee_usd == pytest.approx(sen * 0.01)
+    assert pr.total_origination_fee_usd == pytest.approx(sen * 0.01 + PACE_AMT * 0.02)
+    assert pr.total_exit_fee_usd == pytest.approx(sen * 0.005 + PACE_AMT * 0.01)
+    assert pr.total_exit_fee_usd == pytest.approx(pr.exit_fee_at_sale_usd)
+
+
+def test_a_senior_with_pending_floating_terms_is_said_to_run_on_the_rate_on_file() -> None:
+    out = _debt({"tranches": {0: {"rate_type": "floating"}}})
+    w = " ".join(out.debt_stack.warnings)
+    assert "terms not specified" in w
+    assert "rate on file" in w
+    assert "excluded from debt service" not in w

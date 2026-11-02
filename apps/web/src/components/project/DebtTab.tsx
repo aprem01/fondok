@@ -473,6 +473,10 @@ export default function DebtTab() {
   const wOrigFeeUsd = getEngineField<number>(outputs, 'debt', 'origination_fee_usd');
   const wExitFeePct = getEngineField<number>(outputs, 'debt', 'exit_fee_pct');
   const wExitFeeUsd = getEngineField<number>(outputs, 'debt', 'exit_fee_usd');
+  // Fee dollars over every tranche the cash flows carry (senior + priced
+  // PACE — never an unpriced one); the rows above are the senior's.
+  const wTotalExitFeeUsd = getEngineField<number>(outputs, 'debt', 'total_exit_fee_usd');
+  const wTotalOrigFeeUsd = getEngineField<number>(outputs, 'debt', 'total_origination_fee_usd');
   const wCovenants = getEngineField<DebtCovenantStatus[]>(outputs, 'debt', 'covenants') ?? [];
   const wAnnual = getEngineField<DebtYearLite[]>(outputs, 'debt', 'schedule') ?? [];
   // FON-63 — negative NOI. `present` is false on runs that predate the fields,
@@ -962,14 +966,17 @@ export default function DebtTab() {
       note: seniorIsFullIo
         ? 'Set an amortization above to model an interest-only stub instead'
         : 'Interest-only stub before principal amortization begins' },
-    { id: 'orig', label: 'Origination Fee', kind: 'input',
+    { id: 'orig', label: 'Senior Origination Fee', kind: 'input',
       state: 'assumption', value: origFeeNode, overridden: feeOverridden,
       // The worker tags this key SOURCE_SEED until overridden (engine_runner
       // SENIOR_ORIGINATION_FEE_KEY) — the note below already says so.
       source: srcOrigFee?.source || (feeOverridden ? undefined : 'seed'),
-      note: feeOverridden
-        ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number'
-        : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.' },
+      note: (feeOverridden
+        ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number.'
+        : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.')
+        + (has(wTotalOrigFeeUsd) && has(wOrigFeeUsd) && wTotalOrigFeeUsd > wOrigFeeUsd
+          ? ` All carried tranches: ${fmtCurrency(wTotalOrigFeeUsd)}.`
+          : '') },
   ];
 
   // ─── PACE loan terms (index 1) — fixed-rate tranche ──────────────────
@@ -1037,9 +1044,12 @@ export default function DebtTab() {
   const cgOverridden = overridden('debt.completion_guarantee');
   const fullTerms: RowDef[] = [
     ...loanTerms,
-    { id: 'exit', label: 'Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
+    { id: 'exit', label: 'Senior Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
       value: has(wExitFeePct) ? `${feePct(wExitFeePct)}${has(wExitFeeUsd) ? ` · ${fmtCurrency(wExitFeeUsd)}` : ''}` : '—',
-      note: 'Paid when the loan is repaid — deducted from the sale proceeds for every tranche outstanding at the sale, or paid at the refinance for the loan it retires' },
+      note: 'Paid when the loan is repaid — deducted from the sale proceeds for every tranche outstanding at the sale, or paid at the refinance for the loan it retires'
+        + (has(wTotalExitFeeUsd) && has(wExitFeeUsd) && wTotalExitFeeUsd > wExitFeeUsd
+          ? `. All carried tranches: ${fmtCurrency(wTotalExitFeeUsd)}`
+          : '') },
     // Completion Guarantee — analyst-entered qualitative status (feeds the
     // Completion Guarantee covenant row in the Covenants card).
     { id: 'completionGuarantee', label: 'Completion Guarantee', kind: 'input',

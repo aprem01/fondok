@@ -682,6 +682,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wLtc = cap('ltc');
   // Any priced junior tranche (PACE) funded at close, its own row.
   const wJuniorDebt = cap('junior_debt_amount');
+  // LTV on all debt — the debt stack's (the Debt tab's) figure.
+  const wLtvAll = dbt('debt_stack', 'ltv');
   // The Acquisition Loan row is the SENIOR (capital's source line); the debt
   // engine's loan_amount is the whole stack, so it is only a fallback.
   const wLoanAmount = wDebtAmount ?? dbt('loan_amount');
@@ -931,7 +933,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ...(juniorDebt > 0
         ? [lnk('juniorLoan', 'PACE / Junior Loan', money(juniorDebt), '→ Financing (PACE loan)', 'debt')]
         : []),
-      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
+      lnk('ltv', 'Senior LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
+      cal('ltvAll', 'LTV (all debt)', pctv(wLtvAll, 1), { formula: juniorDebt > 0 ? '(Senior Loan + PACE Loan) ÷ Purchase Price' : 'Loan ÷ Purchase Price', inputs: [{ name: 'Total Debt', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
       cal('ltc', 'LTC (all debt)', pctv(ltc, 1), { formula: juniorDebt > 0 ? '(Senior Loan + PACE Loan) ÷ Total Uses' : 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
       lnk('bench', 'Benchmark', '—', '→ Financing (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),

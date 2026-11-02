@@ -264,7 +264,10 @@ capitalised from it.
   **Pending PACE Principal** line, outside Total Debt, LTV, LTC and debt yield, and it stays out of
   Sources & Uses, debt service, DSCR and the sale payoff rather than running on an invented rate (or
   as free money); the tab says so next to the input. **LTC** is total debt ÷ total uses on the
-  Financing tab, Overview (labelled "LTC (all debt)") and the exports; the capital engine also
+  Financing tab, Overview (labelled "LTC (all debt)") and the exports; Overview shows both **Senior
+  LTV** and **LTV (all debt)** (the Financing tab's LTV). The Financing tab's origination and exit fee
+  rows are the **senior's** (beside its percentage), with the total over every carried tranche noted
+  when a priced PACE adds to it — an unpriced PACE's fees are in neither; the capital engine also
   publishes the senior-only LTC, and run-compare lists senior and junior debt as separate sources.
   The exports keep one basis per block: **Senior Debt** (senior amount, LTV, LTC and terms) and
   **All Debt** (total debt, LTV, LTC, any pending principal, debt service and coverage).

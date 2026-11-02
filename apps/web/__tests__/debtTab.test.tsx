@@ -281,7 +281,7 @@ describe('DebtTab — fees (new BE fields)', () => {
     // proceeds, or paid at the refinance that retires the loan.
     render(<DebtTab />);
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
-    expect(screen.getByText('Exit Fee')).toBeInTheDocument();
+    expect(screen.getByText('Senior Exit Fee')).toBeInTheDocument();
     expect(screen.getByText('0.50% · $115,000')).toBeInTheDocument();
     // Exit fees are now deducted when the loan is repaid (sale or refinance).
     expect(
@@ -1234,6 +1234,13 @@ describe('DebtTab — refinance disclosures', () => {
     expect(screen.getByText('Equity Contribution')).toBeInTheDocument();
     expect(screen.getByText('$8,566,897')).toBeInTheDocument();
     expect(screen.queryByText('Cash-Out to Equity')).toBeNull();
+  });
+
+  it('fee rows are the senior\'s; a priced PACE adds an all-tranche total on the same rule', () => {
+    currentOutputs = makeOutputs({ total_exit_fee_usd: 165_000, total_origination_fee_usd: 454_900 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Loan Terms & Covenants'));
+    expect(screen.getByText(/All carried tranches: \$165,000/)).toBeInTheDocument();
   });
 
   it('lists the retired loan\'s exit fee so the sized refinance foots', () => {

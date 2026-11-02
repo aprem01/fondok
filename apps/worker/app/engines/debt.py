@@ -328,13 +328,17 @@ class DebtEngineOutputExt(DebtEngineOutput):
     exit_fee_at_sale_usd: Annotated[float, Field(ge=0)] = 0.0
     # FON-72 — surface the senior tranche's financing fees so the Debt tab's
     # "Financing Fees" line reads from the engine, not a placeholder. The pct
-    # fields echo the (analyst-editable) senior tranche fees; the USD figures
-    # aggregate every priced tranche using the codebase's percent convention
-    # (fee_pct is a 0..10 percent, e.g. 1.0 = 1.00%). All 0.0 by default.
+    # fields echo the (analyst-editable) senior tranche fees and the ``*_usd``
+    # dollars are the SENIOR's, on the same basis as the pct beside them
+    # (fee_pct is a 0..10 percent, e.g. 1.0 = 1.00%). The ``total_*`` dollars
+    # cover every tranche the cash flows carry (the senior + priced juniors —
+    # never an unpriced one). All 0.0 by default.
     origination_fee_pct: Annotated[float, Field(ge=0)] | None = None
     exit_fee_pct: Annotated[float, Field(ge=0)] | None = None
     origination_fee_usd: Annotated[float, Field(ge=0)] | None = None
     exit_fee_usd: Annotated[float, Field(ge=0)] | None = None
+    total_origination_fee_usd: Annotated[float, Field(ge=0)] | None = None
+    total_exit_fee_usd: Annotated[float, Field(ge=0)] | None = None
     # FON-72 — covenant package with each test's live Current value + Headroom
     # vs its threshold (LTV / LTC / DSCR / debt-yield), so the Debt tab stops
     # hardcoding the covenant table. Empty only for pre-covenant legacy runs.
@@ -1472,12 +1476,18 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # same as build_stack_schedule). All 0.0 on a default stack.
         origination_fee_pct = senior.origination_fee_pct
         exit_fee_pct = senior.exit_fee_pct
+        _senior_only = [t for t in active_tranches if t.kind == "senior"]
         origination_fee_usd = sum(
-            t.loan_amount * (t.origination_fee_pct / 100.0) for t in active_tranches
+            t.loan_amount * (t.origination_fee_pct / 100.0) for t in _senior_only
         )
         exit_fee_usd = sum(
-            t.loan_amount * (t.exit_fee_pct / 100.0) for t in active_tranches
+            t.loan_amount * (t.exit_fee_pct / 100.0) for t in _senior_only
         )
+        # Stack totals over the tranches the cash flows carry (one rule).
+        total_origination_fee_usd = origination_fee_usd + sum(
+            j.origination_fee_usd for j in junior_out
+        )
+        total_exit_fee_usd = exit_fee_usd + sum(j.exit_fee_usd for j in junior_out)
 
         # FON-72 — covenant readings: current value + headroom vs each threshold.
         # Current LTV/LTC come from the stack (need purchase price / total cost);
@@ -1657,6 +1667,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,
             exit_fee_usd=exit_fee_usd,
+            total_origination_fee_usd=total_origination_fee_usd,
+            total_exit_fee_usd=total_exit_fee_usd,
             covenants=covenants,
             provenance=apply_states(prov),
         )
