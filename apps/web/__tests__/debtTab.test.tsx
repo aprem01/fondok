@@ -815,21 +815,25 @@ describe('DebtTab — PACE tranche (index 1): missing inputs are inputs', () => 
 
   it('a funded PACE with no rate shows Enter rate with the pending consequence and no debt service', async () => {
     currentOutputs = makeOutputs({
-      loan_amount: 28_000_000,
+      loan_amount: 23_000_000,
       debt_stack: {
         tranches: [
           SENIOR_TRANCHE,
           { ...SENIOR_TRANCHE, kind: 'pace', label: 'PACE Loan', loan_amount: 5_000_000, all_in_rate: null,
             annual_debt_service: null, interest_only: true, terms_pending: true, amortization_years: null },
         ],
-        total_debt: 28_000_000, priced_debt: 23_000_000, total_annual_debt_service: 1_667_500,
-        warnings: ['PACE Loan: terms not specified — excluded from debt service.'],
+        total_debt: 23_000_000, priced_debt: 23_000_000, pending_debt: 5_000_000,
+        total_annual_debt_service: 1_667_500,
+        warnings: ['PACE Loan: terms not specified — excluded from debt service and not in leverage until a rate is entered.'],
       },
     });
     render(<DebtTab />);
-    // Debt Overview: Total Debt includes PACE; the row says why DSCR excludes it.
-    expect(screen.getByText('$28,000,000')).toBeInTheDocument();
-    expect(screen.getAllByText(/Terms pending — counts in Total Debt, LTV, LTC and debt yield; stays out of Sources & Uses, debt service, DSCR and the sale payoff until a rate is entered/i).length).toBeGreaterThan(0);
+    // Debt Overview: one leverage rule — Total Debt is the senior only; the
+    // unpriced PACE principal is its own labelled line.
+    expect(screen.getAllByText('$23,000,000').length).toBeGreaterThan(0);
+    expect(screen.getByText('Pending PACE Principal')).toBeInTheDocument();
+    expect(screen.getByText(/not in Total Debt, LTV, LTC or debt yield until a rate is entered/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Terms pending — not in Total Debt, LTV, LTC, debt yield, Sources & Uses, debt service or the sale payoff until a rate is entered/i).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
     expect(screen.getByText('PACE Loan · Tranche 2')).toBeInTheDocument();

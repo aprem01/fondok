@@ -170,6 +170,8 @@ interface DebtStackTrancheLite {
 interface DebtStackLite {
   tranches?: DebtStackTrancheLite[];
   total_debt?: number;
+  // Funded junior principal whose terms are pending — outside total_debt.
+  pending_debt?: number;
   priced_debt?: number;
   total_annual_debt_service?: number;
   warnings?: string[];
@@ -731,7 +733,7 @@ export default function DebtTab() {
   const paceStatusNote = !paceFunded
     ? 'Not funded — enter an amount to add a PACE tranche to the capital stack'
     : pacePending
-      ? 'Terms pending — counts in Total Debt, LTV, LTC and debt yield; stays out of Sources & Uses, debt service, DSCR and the sale payoff until a rate is entered'
+      ? 'Terms pending — not in Total Debt, LTV, LTC, debt yield, Sources & Uses, debt service or the sale payoff until a rate is entered'
       : has(paceDebtService)
         ? `Priced — ${fmtCurrency(paceDebtService)} / yr of debt service is in DSCR, Cash Flow and Returns`
         : 'Priced — its debt service is in DSCR, Cash Flow and Returns';
@@ -790,14 +792,23 @@ export default function DebtTab() {
     { id: 'totalDebt', label: 'Total Debt', kind: 'calc', bold: true,
       state: tracedState('debt', 'loan_amount') ?? 'calculated',
       value: money(totalDebt ?? loanN),
-      note: paceFunded && pacePending ? 'Senior + PACE (PACE terms pending)' : undefined },
+      note: paceFunded && !pacePending ? 'Senior + PACE' : undefined },
+    // One leverage rule: an unpriced PACE principal is not debt the model
+    // carries, so it sits on its own line, outside Total Debt / LTV / LTC.
+    ...(paceFunded && pacePending
+      ? [{ id: 'pendingDebt', label: 'Pending PACE Principal', kind: 'calc' as const,
+          state: 'awaiting_data' as const,
+          value: money(wStack?.pending_debt ?? paceAmount),
+          note: 'Not in Total Debt, LTV, LTC or debt yield until a rate is entered' }]
+      : []),
     { id: 'ltv', label: 'LTV', kind: 'input',
       state: ltvOverridden ? 'assumption' : (tracedState('debt', 'ltv') ?? 'calculated'),
       value: ltvNode, overridden: ltvOverridden,
       source: srcLtv?.source, sourceField: srcLtv?.field,
       note: 'Total debt ÷ property value — editing resizes the senior loan' },
     { id: 'ltc', label: 'LTC', kind: 'calc',
-      state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1) },
+      state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1),
+      note: 'Total debt ÷ total cost / basis' },
     { id: 'equity', label: 'Equity Requirement', kind: 'calc', bold: true, state: 'linked',
       value: money(wEquity), link: { label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' } },
   ];
@@ -1533,8 +1544,8 @@ export default function DebtTab() {
               >
                 {paceTerms.map((r) => <DebtRow key={r.id} row={r} />)}
                 <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
-                  Fixed-rate tranche. A funded PACE loan counts in Total Debt, LTV, LTC and debt yield at once.
-                  Once a rate is entered it is also a source of funds at close (equity falls), its debt service
+                  Fixed-rate tranche. Once a rate is entered a funded PACE loan counts in Total Debt, LTV, LTC and
+                  debt yield, is a source of funds at close (equity falls), its debt service
                   enters DSCR, Cash Flow and Returns (before and after a refinance, which retires the senior only),
                   and every sale repays its balance plus its exit fee.
                 </div>

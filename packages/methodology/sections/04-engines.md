@@ -51,12 +51,13 @@ the tab names the negative years in one warning.
   interest-only period, and maturity. A floating rate prices off the index assumption plus spread,
   clamped to an optional floor and cap; until an index is entered the build-up shows Fondok's flat
   index assumption and says it is not market data.
-- **PACE loan.** Funding an amount adds it to total debt, LTV, LTC and debt yield immediately. Once a
-  rate is entered it is a real loan everywhere: a source of funds at close (equity falls by its
+- **PACE loan.** One rule: a loan counts in total debt, LTV, LTC and debt yield exactly when the cash
+  flows carry it. Once a rate is entered the PACE loan is a real loan everywhere: a source of funds at close (equity falls by its
   principal), its debt service in every year — a refinance retires the senior only — and every sale
-  repays its balance plus its exit fee. Until a rate is entered the tranche is *terms pending*: it
-  stays out of Sources & Uses, debt service, DSCR and the sale payoff rather than running on an
-  invented rate.
+  repays its balance plus its exit fee; it is in total debt, LTV, LTC and debt yield. Until a rate is
+  entered the tranche is *terms pending*: its principal shows on its own line, outside total debt,
+  LTV, LTC and debt yield, and it stays out of Sources & Uses, debt service and the sale payoff
+  rather than running on an invented rate.
 - **Covenants.** Maximum LTV and LTC and minimum DSCR and debt yield are thresholds you enter. There
   is no default package — a covenant without a threshold shows its live reading, an input, and no pass
   or fail verdict.
@@ -121,9 +122,10 @@ Senior loan platform defaults, each badged Seed until entered: LTV 65%, interest
 amortisation 30 years, term 5 years, no interest-only period, origination fee 1.50% of the loan.
 A floating rate prices at index + spread, clamped to the optional floor and cap; until an index is
 entered the build-up shows a flat 4.30% index assumption and says it is not market data. A PACE
-tranche with an amount but no rate is "terms pending": it counts in total debt, LTV, LTC and debt
-yield and stays out of Sources & Uses, debt service, DSCR and the sale payoff; with a rate it funds
-the deal at close and is repaid at the sale. A year whose NOI is negative shows DSCR as not
+tranche with an amount but no rate is "terms pending": its principal is shown on its own line and
+stays out of total debt, LTV, LTC, debt yield, Sources & Uses, debt service and the sale payoff; with
+a rate it counts in all of them, funds the deal at close and is repaid at the sale. LTC is total debt
+÷ total uses everywhere (Financing, Overview, exports); capital also publishes the senior-only LTC. A year whose NOI is negative shows DSCR as not
 applicable and reports the uncovered debt service as that year's shortfall.
 
 :::
@@ -249,17 +251,23 @@ capitalised from it.
   plus spread, clamped to an optional floor / cap. Switching basis asks for the term the new basis
   needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows
   Fondok's flat SOFR assumption and says so — it is not market data.
-- **PACE loan (tranche 2).** Funding an amount adds it to Total Debt, LTV, LTC and debt yield
-  immediately. Once a rate is entered the tranche is in every cash flow: its principal is a **source
+- **PACE loan (tranche 2).** One leverage rule: a tranche counts in Total Debt, LTV, LTC and debt
+  yield exactly when the cash flows carry it — the senior always, the PACE loan once it is funded
+  **and** priced. Once a rate is entered the tranche is in every cash flow: its principal is a **source
   of funds at close** (Sources & Uses shows it; equity = total uses − senior − PACE) and its
   origination fee a use; its own monthly schedule (interest-only, or an IO stub then amortization)
   sets its debt service in DSCR, Cash Flow and Returns in every year — a refinance retires the
   **senior only**, so the PACE debt service continues after it — and every sale, the headline and
   each exit-year row, repays its outstanding balance plus its exit fee (Balance at Exit includes it;
   Cash Flow shows a **PACE Loan Proceeds** line at close). No PACE maturity is modelled within the
-  hold. Until a rate is entered the tranche is *terms pending*: it stays out of Sources & Uses, debt
-  service, DSCR and the sale payoff rather than running on an invented rate (or as free money), and
-  the tab says so next to the input.
+  hold. Until a rate is entered the tranche is *terms pending*: its principal is shown on its own
+  **Pending PACE Principal** line, outside Total Debt, LTV, LTC and debt yield, and it stays out of
+  Sources & Uses, debt service, DSCR and the sale payoff rather than running on an invented rate (or
+  as free money); the tab says so next to the input. **LTC** is total debt ÷ total uses on the
+  Financing tab, Overview (labelled "LTC (all debt)") and the exports; the capital engine also
+  publishes the senior-only LTC, and run-compare lists senior and junior debt as separate sources.
+  The exports keep one basis per block: **Senior Debt** (senior amount, LTV, LTC and terms) and
+  **All Debt** (total debt, LTV, LTC, any pending principal, debt service and coverage).
 - **Covenants.** Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no
   default package — a covenant without an entered threshold shows its live Current reading, an “Enter
   threshold” input, and no pass / fail verdict. Entered thresholds are tested against the modeled
