@@ -1129,3 +1129,6 @@ async def test_a_loader_notice_on_a_grounded_assumption_reaches_unresolved_with_
     hits = [r for r in record.unresolved if r.detail == detail]
     assert len(hits) == 1
     assert hits[0].code is ReasonCode.NEEDS_REVIEW
+    # Scoped to the assumption step only — never the field / line nodes that
+    # share its ontology concept.
+    assert hits[0].concept == "assumption:starting_occupancy"

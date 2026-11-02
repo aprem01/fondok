@@ -1434,9 +1434,17 @@ class _WalkContext:
         # conflict, a clipped ratio). Its sentence names the documents, so it
         # is reported as written. A seed's reason is reported by the seed
         # path below with its own sentence, never twice.
-        detail = raw_reason.get("detail") if isinstance(raw_reason, dict) else None
-        if reason is not None and key in self.source_fields and isinstance(detail, str) and detail:
-            self.b.refuse(reason, detail=detail, concept=concept or _assumption_node(key))
+        # Scoped to the assumption step itself (never the ontology concept,
+        # which the field / line nodes share). An earlier reason the notice
+        # joined travels under ``also`` and is reported too.
+        if key in self.source_fields and isinstance(raw_reason, dict):
+            for entry in [raw_reason, *(raw_reason.get("also") or [])]:
+                if not isinstance(entry, dict):
+                    continue
+                code = _coerce_reason(entry.get("code"))
+                detail = entry.get("detail")
+                if code is not None and isinstance(detail, str) and detail:
+                    self.b.refuse(code, detail=detail, concept=_assumption_node(key))
         self.b.node(
             LineageNode(
                 id=assumption_id,

@@ -3510,6 +3510,13 @@ async def _compute_assumption_sources(
         )
     except Exception:
         source_documents = {}
+    # W5 — one ranking for value and link: where the runner names the exact
+    # row behind a value, the link icon opens THAT row's document (the
+    # statement the model used), never the legacy period-type winner.
+    for key, sf in source_fields.items():
+        doc = sf.get("document_id")
+        if doc and key in sources_filtered:
+            source_documents[key] = str(doc)
 
     return AssumptionSourcesResponse(
         id=deal_id,
