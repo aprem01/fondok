@@ -206,3 +206,22 @@ No golden move: the fixture has no T-12, so its Year 1 already ran at 3% ×
 revenue. Live deals with an extracted T-12 management fee move: Year-1 fee
 becomes `mgmt_fee_pct` × (displaced) Year-1 revenue, so Year-1 NOI and DSCR
 move (Angler orig: 619,834 = 4.84% of revenue → 3%; copy 467,917 = 3.87% → 3%).
+
+### Fix 3: the per-year debt-service series is always published (refi review P-2)
+
+Why: without a refinance or a junior tranche `debt.debt_service_by_year` was
+`[]`, so Returns charged the Year-1 payment every year while the sale repaid
+the amortized balance: an interest-only-then-amortizing senior got principal
+paydown without its amortizing payments (+104 bp levered IRR in the review
+probe). The series is now always the senior's schedule (then the refinance
+loan, plus juniors), and Returns, Cash Flow, DSCR, sensitivity and partnership
+read it.
+
+Kimpton's senior is level-payment, so no headline field moves. Leaves:
+`debt.debt_service_by_year[0..4]` are added (`[]` → five values of
+1,850,945.99423781xx, the schedule's per-year sums, which differ from the
+Year-1 scalar in the last binary digit in Years 3–4), and
+`sensitivity.matrices[7].cells[23].value` moves in the 16th significant digit
+(3.4856628639456746 → 3.485662863945674). An IO-stub deal's Returns, Cash Flow
+(the phantom "Refinance / Junior Debt Service" line for the IO-vs-amortizing
+gap disappears) and partnership figures move to the schedule's payments.

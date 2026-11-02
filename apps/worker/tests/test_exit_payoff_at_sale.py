@@ -218,8 +218,9 @@ def test_balance_at_exit_is_the_hold_horizon_balance(term: int, expected: int, w
     if warns:
         assert out.maturity_warning == (
             "The loan matures in Year 3, before the Year 5 sale; the model carries "
-            "the $38,566,897 maturity balance to the sale and keeps the same debt "
-            "service. Model a refinance or set the loan term to cover the hold."
+            "the $38,566,897 maturity balance to the sale and keeps its last "
+            "scheduled payment. Model a refinance or set the loan term to cover "
+            "the hold."
         )
     else:
         assert out.maturity_warning is None
@@ -249,8 +250,9 @@ def test_maturity_warning_compares_maturity_to_the_sale() -> None:
     out = _debt(3, hold_years=5)
     assert out.maturity_warning == (
         "The loan matures in Year 3, before the Year 5 sale; the model carries "
-        "the $38,566,897 maturity balance to the sale and keeps the same debt "
-        "service. Model a refinance or set the loan term to cover the hold."
+        "the $38,566,897 maturity balance to the sale and keeps its last "
+        "scheduled payment. Model a refinance or set the loan term to cover "
+        "the hold."
     )
     assert _debt(5, hold_years=5).maturity_warning is None
 
@@ -551,8 +553,9 @@ def test_maturity_warning_names_the_sale_when_it_precedes_the_refi() -> None:
     bal = out.schedule[-1].ending_balance
     assert out.maturity_warning == (
         f"The loan matures in Year 2, before the month 30 sale; the model carries "
-        f"the ${round(bal):,} maturity balance to the sale and keeps the same debt "
-        "service. Model a refinance or set the loan term to cover the hold."
+        f"the ${round(bal):,} maturity balance to the sale and keeps its last "
+        "scheduled payment. Model a refinance or set the loan term to cover "
+        "the hold."
     )
 
 

@@ -291,10 +291,13 @@ class DebtEngineOutputExt(DebtEngineOutput):
     # extracted senior loan; a user adds PACE / mezz + floating terms in the
     # Debt tab. Optional so legacy consumers ignore it.
     debt_stack: DebtStackResult | None = None
-    # FON-67 — two-phase senior→refinance financing. Populated only when the
-    # analyst sets a refi year; empty/zero keeps single-phase deals unchanged.
-    # ``debt_service_by_year`` is the phased DS (senior then refi) the Returns
-    # engine consumes; ``refi_cash_out`` is the net proceeds returned to equity
+    # FON-67 — two-phase senior→refinance financing. ``debt_service_by_year``
+    # is the debt service per hold year the Returns engine, the Cash Flow
+    # statement and the sensitivity grid consume: always published (refi
+    # review P-2, 2026-11) — the senior's own schedule (an IO stub, then
+    # amortizing payments), switched to the refinance loan from the refi year
+    # when one is set, plus every priced junior tranche. Empty only when the
+    # loan has no schedule (no debt) or there is no hold; ``refi_cash_out`` is the net proceeds returned to equity
     # at ``refi_year``; ``balance_at_exit`` is the loan balance at the sale —
     # the post-refi balance once the refinance precedes the sale, else the
     # senior's ending balance at the sale month (``exit_month``, else the end
@@ -835,9 +838,9 @@ def _maturity_warning(
     return (
         f"The loan matures in Year {maturity_year}, before the "
         f"{_sale_label(sale_month)}; the model carries the "
-        f"{_usd(maturity_balance)} maturity balance to the sale and keeps the "
-        "same debt service. Model a refinance or set the loan term to cover the "
-        "hold."
+        f"{_usd(maturity_balance)} maturity balance to the sale and keeps its "
+        "last scheduled payment. Model a refinance or set the loan term to cover "
+        "the hold."
     )
 
 
@@ -1339,11 +1342,22 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             if senior.loan_amount > 0
             else 0.0
         )
-        if refi is not None and horizon > 0:
-            senior_ds_by_year = [
-                schedule[i].debt_service if i < len(schedule) else senior_annual_ds
+        # Refi review P-2 (2026-11) — the senior's debt service per hold year,
+        # straight off its schedule: an interest-only stub then amortizing
+        # payments is charged as such. A loan that matures before the sale is
+        # carried at its LAST scheduled payment (no refinance or extension is
+        # invented; ``maturity_warning`` says so).
+        senior_ds_by_year: list[float] = (
+            [
+                schedule[i].debt_service
+                if i < len(schedule)
+                else schedule[-1].debt_service
                 for i in range(horizon)
             ]
+            if schedule and horizon > 0
+            else []
+        )
+        if refi is not None and horizon > 0:
             computed = _compute_refi(
                 refi,
                 schedule,
@@ -1360,16 +1374,15 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     refi_year_out,
                     refi_detail,
                 ) = computed
+        # Refi review P-2 — the per-year series is ALWAYS published (not only
+        # with a refinance or a junior), so Returns, the Cash Flow statement,
+        # the sensitivity grid and the partnership waterfall charge the same
+        # payments the schedule (and the payoff at sale) is built from.
+        if not debt_service_by_year:
+            debt_service_by_year = list(senior_ds_by_year)
         # Junior tranches keep their own debt service before AND after a
-        # refinance (the refinance retires the senior only). Without a
-        # refinance the phased series is published once a junior exists, so
-        # Returns reads the same payments the Debt tab shows.
-        if junior_ds_by_year and horizon > 0:
-            if not debt_service_by_year:
-                debt_service_by_year = [
-                    schedule[i].debt_service if i < len(schedule) else senior_annual_ds
-                    for i in range(horizon)
-                ]
+        # refinance (the refinance retires the senior only).
+        if junior_ds_by_year and debt_service_by_year:
             debt_service_by_year = [
                 ds + (junior_ds_by_year[i] if i < len(junior_ds_by_year) else 0.0)
                 for i, ds in enumerate(debt_service_by_year)
@@ -1408,7 +1421,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
 
         # The loan matures before the sale and no refinance replaces it: the
         # model does NOT invent a refinance or extension — it carries the
-        # maturity balance to the sale and keeps the same debt service — but
+        # maturity balance to the sale and keeps its last scheduled payment — but
         # it says so, once, on the Debt tab. A refinance that lands AFTER
         # maturity replaces the matured loan only from its year: that gap is
         # disclosed the same way.

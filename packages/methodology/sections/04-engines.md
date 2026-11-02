@@ -50,7 +50,10 @@ the tab names the negative years in one warning.
 - **Senior loan.** Amount or LTV (either resizes the same loan), rate basis, amortisation, an
   interest-only period, and maturity. A floating rate prices off the index assumption plus spread,
   clamped to an optional floor and cap; until an index is entered the build-up shows Fondok's flat
-  index assumption and says it is not market data.
+  index assumption and says it is not market data. Each year is charged the payments its schedule
+  makes: interest only during an interest-only period, then the amortizing payment. DSCR, Cash Flow,
+  Returns, the sensitivity grids and the partnership split all use those same yearly payments, and the
+  balance repaid at the sale comes from the same schedule.
 - **PACE loan.** One rule: a loan counts in total debt, LTV, LTC and debt yield exactly when the cash
   flows carry it. Once a rate is entered the PACE loan is a real loan everywhere: a source of funds at close (equity falls by its
   principal), its debt service in every year — a refinance retires the senior only — and every sale
@@ -254,7 +257,15 @@ capitalised from it.
   Fondok's flat SOFR assumption and says so — it is not market data. If floating is picked without a
   spread, the floating terms are pending: the all-in rate shows "Awaiting spread", and the senior is
   serviced at the rate on file meanwhile — the schedule, the headline DSCR and the capital stack carry
-  the same debt service, and the tab says so.
+  the same debt service, and the tab says so. The debt engine always publishes the debt service per
+  hold year (`debt.debt_service_by_year`) from the senior's monthly schedule — an interest-only stub,
+  then the amortizing payment — switched to the refinance loan from the refi year when one is set,
+  plus every priced junior tranche. Returns, the Cash Flow statement, DSCR, the sensitivity grids
+  (`returns_debt_inputs`) and, through Returns' levered flows, the partnership waterfall all read that
+  one series, and the payoff at sale is the same schedule's balance. (Before 2026-11 the series was
+  published only with a refinance or a junior tranche, so Returns charged an IO-stub senior its
+  interest-only payment for the whole hold while repaying its amortized balance: +104 bp of levered
+  IRR in the review probe.)
 - **PACE loan (tranche 2).** One leverage rule: a tranche counts in Total Debt, LTV, LTC and debt
   yield exactly when the cash flows carry it — the senior always, the PACE loan once it is funded
   **and** priced. Once a rate is entered the tranche is in every cash flow: its principal is a **source
@@ -288,7 +299,7 @@ capitalised from it.
   the Debt tab is exactly that payoff, and the Cash Flow statement's **Exit Debt Payoff** is the
   payoff the Returns engine deducted. When the loan **matures before the sale** and no refinance
   replaces it, the model does not invent a refinance or an extension: it carries the maturity
-  balance to the sale and keeps the same debt service, and the Debt tab says so in one warning — the
+  balance to the sale and keeps its last scheduled payment, and the Debt tab says so in one warning — the
   maturity year, the sale, the balance carried — asking you to model a refinance or set a term that
   covers the hold. A refinance that lands **after maturity** retires that carried maturity balance
   (never zero), and the Debt tab warns that the loan matures before the refinance.

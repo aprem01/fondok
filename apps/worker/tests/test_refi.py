@@ -48,7 +48,8 @@ def _assumptions() -> ModelAssumptions:
 
 def test_no_refi_is_single_phase() -> None:
     out = DebtEngine().run(_debt_input())
-    assert out.debt_service_by_year == []
+    # The senior's own schedule, always published (refi review P-2).
+    assert out.debt_service_by_year == [y.debt_service for y in out.schedule[:5]]
     assert out.refi_cash_out == 0.0
     assert out.refi_year is None
     # balance_at_exit falls back to the senior schedule's ending balance.
@@ -80,7 +81,7 @@ def test_refi_year_out_of_range_is_ignored() -> None:
         _debt_input(debt_stack_overrides={"refi_test_year": 5})  # horizon == 5
     )
     assert out.refi_year is None
-    assert out.debt_service_by_year == []
+    assert out.debt_service_by_year == [y.debt_service for y in out.schedule[:5]]
 
 
 def test_compute_refi_sizes_off_min_of_dy_and_dscr() -> None:

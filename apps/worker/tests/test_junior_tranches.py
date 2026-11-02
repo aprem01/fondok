@@ -124,7 +124,8 @@ def test_pending_pace_stays_out_of_the_cash_flows() -> None:
     d = _debt(PACE_PENDING)
     assert d.junior_tranches == []
     assert d.junior_balance_by_month == []
-    assert d.debt_service_by_year == []
+    # Only the senior's own schedule is charged (no PACE payments).
+    assert d.debt_service_by_year == [y.debt_service for y in d.schedule[:5]]
     f = returns_debt_inputs(d, fallback_loan=LOAN)
     assert f["loan_exit_fee"] == 0.0  # its exit fee is not charged either
     assert funded_junior_tranches(PACE_PENDING) == []

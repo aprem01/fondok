@@ -303,8 +303,9 @@ def test_no_refi_deal_is_byte_for_byte_the_single_phase_model() -> None:
     assert out.refi_sizing_basis is None
     assert out.refi_rate_basis is None
 
-    # The single-phase model, untouched.
-    assert out.debt_service_by_year == []
+    # The single-phase model: the senior's own schedule (refi review P-2 —
+    # the per-year series is always published).
+    assert out.debt_service_by_year == [y.debt_service for y in out.schedule[:5]]
     assert out.refi_cash_out == 0.0
     assert out.refi_year is None
     assert out.refi_value_at_refinance is None
