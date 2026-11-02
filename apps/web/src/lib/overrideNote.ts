@@ -46,7 +46,7 @@ export const NOTE_PLACEHOLDER = 'Why this number? (required)';
  * Keys that reach the deal's `field_overrides` but are NOT a number an engine
  * runs on. Each entry states the evidence; nothing lands here for convenience.
  */
-const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
+const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set<string>([
   // The worker's own `_OVERRIDE_NON_ENGINE_KEYS` — the Grounded Worksheet's
   // per-deal row layout (relabel / split / reorder / memo). Presentation only;
   // the worksheet's numbers come from the engines regardless of row order.
@@ -88,6 +88,13 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The exempt `field_overrides` keys, published for the both-directions mirror
+ * test (R2-I2, `__tests__/overrideNote.test.ts` reads the worker's
+ * `_OVERRIDE_NON_ENGINE_KEYS` ∪ `_NOTE_EXEMPT_KEYS` and asserts equality).
+ */
+export const NOTE_EXEMPT_OVERRIDE_KEYS: readonly string[] = [...NOTE_EXEMPT_KEYS];
+
+/**
  * Deal COLUMNS. They never enter `field_overrides` at all, so the API gate
  * never sees them — but editors ask `requiresNote` by key without caring where
  * the key is persisted, and the answer for a column is always no.
@@ -115,6 +122,9 @@ const NOTE_EXEMPT_PATTERNS: readonly RegExp[] = [
   // A removed promote tier's tombstone — again the waterfall's shape.
   /^partnership\.waterfall\.\d+\.removed$/,
 ];
+
+/** The pattern exemptions' sources, for the same mirror test. */
+export const NOTE_EXEMPT_PATTERN_SOURCES: readonly string[] = NOTE_EXEMPT_PATTERNS.map((re) => re.source);
 
 /**
  * Does overriding `key` require an analyst justification?

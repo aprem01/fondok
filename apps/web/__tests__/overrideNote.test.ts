@@ -27,6 +27,8 @@ import {
   noteOf,
   overrideNoteFor,
   NOTE_REQUIRED_MESSAGE,
+  NOTE_EXEMPT_OVERRIDE_KEYS,
+  NOTE_EXEMPT_PATTERN_SOURCES,
 } from '@/lib/overrideNote';
 
 const WORKER = path.resolve(__dirname, '../../worker');
@@ -79,6 +81,29 @@ describe('the mirror of the worker — read from the Python, not restated', () =
       expect(new RegExp(pattern).test(probe)).toBe(true);
       expect(requiresNote(probe)).toBe(false);
     }
+  });
+});
+
+describe('R2-I2 — the browser and the API agree in BOTH directions', () => {
+  // The two `it`s above only check worker-exempt ⊆ browser-exempt. A key the
+  // browser exempts but the worker does not is the worse divergence: the
+  // browser saves with no note and the API answers 422 (the topline review's
+  // I-6 blocker was exactly that). So the sets must be EQUAL.
+  it('the browser’s exempt field-override keys equal the worker’s, key for key', () => {
+    const worker = new Set([
+      ...frozensetLiteral(readWorker('app/services/engine_runner.py'), '_OVERRIDE_NON_ENGINE_KEYS'),
+      ...frozensetLiteral(readWorker('app/api/deals.py'), '_NOTE_EXEMPT_KEYS'),
+    ]);
+    const browser = new Set(NOTE_EXEMPT_OVERRIDE_KEYS);
+    expect([...browser].filter((k) => !worker.has(k)), 'exempt in the browser, note-required by the API').toEqual([]);
+    expect([...worker].filter((k) => !browser.has(k)), 'exempt in the API, note-required by the browser').toEqual([]);
+  });
+
+  it('the pattern exemptions are the same patterns', () => {
+    const deals = readWorker('app/api/deals.py');
+    const block = deals.slice(deals.indexOf('_NOTE_EXEMPT_PATTERNS'), deals.indexOf('def _override_note'));
+    const worker = [...block.matchAll(/re\.compile\(r"([^"]+)"\)/g)].map((m) => m[1]).sort();
+    expect([...NOTE_EXEMPT_PATTERN_SOURCES].sort()).toEqual(worker);
   });
 });
 
