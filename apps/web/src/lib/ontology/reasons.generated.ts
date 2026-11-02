@@ -11,7 +11,7 @@ export interface ReasonMeta {
   explanation: string;
 }
 
-export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value";
+export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value" | "no_market_forecast" | "no_benchmark" | "license_withheld" | "legacy_key_translated";
 
 export const REASON_CODES: readonly ReasonCode[] = [
   "no_document",
@@ -35,7 +35,11 @@ export const REASON_CODES: readonly ReasonCode[] = [
   "engine_error",
   "under_construction",
   "capital_deploying",
-  "no_sale_value"
+  "no_sale_value",
+  "no_market_forecast",
+  "no_benchmark",
+  "license_withheld",
+  "legacy_key_translated"
 ];
 
 export const REASONS: Record<ReasonCode, ReasonMeta> = {
@@ -148,6 +152,26 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
     "label": "No sale value",
     "ui": "—",
     "explanation": "The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist."
+  },
+  "no_market_forecast": {
+    "label": "No market forecast",
+    "ui": "—",
+    "explanation": "No market forecast covers this year for this metric, so the model holds it flat (growth 0 is the absence of growth, not a rate) — set growth manually."
+  },
+  "no_benchmark": {
+    "label": "No benchmark",
+    "ui": "—",
+    "explanation": "No competitive-set, submarket or market occupancy / ADR is on the deal, so the subject is projected from its own starting figures."
+  },
+  "license_withheld": {
+    "label": "Withheld by data policy",
+    "ui": "—",
+    "explanation": "A CoStar-derived figure is on file but this workspace's data policy withholds it from the model — set the figure manually."
+  },
+  "legacy_key_translated": {
+    "label": "Legacy setting translated",
+    "ui": "—",
+    "explanation": "A setting written by a retired control is read under the current method (or ignored), and the status says how."
   }
 };
 

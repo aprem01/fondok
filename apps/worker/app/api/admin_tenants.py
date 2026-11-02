@@ -160,6 +160,7 @@ class DataPoliciesPatchBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     costar_derived_defaults: DataPolicyChoice | None = None
+    costar_licensed_defaults: DataPolicyChoice | None = None
 
 
 async def _require_internal_admin(auth: AuthContext) -> Tenant:

@@ -60,14 +60,15 @@ SERVING_STATUS = "active"
 # ─────────────────────────── data policies ───────────────────────────
 #
 # FON-116 / FON-96 — per-tenant DATA policies (``tenants.data_policies``,
-# JSONB on Postgres, JSON text on SQLite). The first policy is the CoStar
-# licensing gate: a market default DERIVED from a CoStar report (a submarket
-# forecast, a class benchmark) may be offered to a workspace only while its
-# policy says ``allow``. Under ``withhold`` the topline resolvers (the next
-# PR) yield ``withheld_by_policy`` / reason ``license_withheld`` and the UI
-# asks for the growth by hand — the analyst's own uploaded figures are never
-# touched, only the platform-derived default is. This is a policy row, not a
-# code fork: ``is_internal`` never decides it, flipping a tenant is data.
+# JSONB on Postgres, JSON text on SQLite). The CoStar licensing gates: a
+# market default DERIVED from CoStar data (a submarket forecast, a class or
+# comp-set benchmark) may be applied to a workspace only while its policy says
+# ``allow`` — one key for the client's own uploaded reports, one for data
+# Fondok licenses (see ``TenantDataPolicies``). Under ``withhold`` the topline
+# resolvers (``services.topline_growth`` / ``services.topline_benchmark``)
+# yield ``withheld_by_policy`` / reason ``license_withheld`` and the UI asks
+# for the figure by hand. This is a policy row, not a code fork:
+# ``is_internal`` never decides it, flipping a tenant is data.
 #
 # ``extra="forbid"`` on purpose: a mistyped key is a 422 at the admin API,
 # never a silently-ignored key that leaves the tenant on ``allow``.
@@ -76,16 +77,41 @@ DataPolicyChoice = Literal["allow", "withhold"]
 
 
 class TenantDataPolicies(BaseModel):
+    """FON-116 (Sam, 2026-11-01) — two CoStar policies, never cross-tenant:
+
+    * ``costar_derived_defaults`` — **own upload**: a default derived from a
+      CoStar report the client uploaded to its OWN deal (submarket forecast
+      growth, a class / comp-set benchmark). The client licenses its own
+      report, so the default is ``allow``. (The key keeps its original name:
+      stored rows and the Settings card already write it.)
+    * ``costar_licensed_defaults`` — **Fondok-licensed** CoStar data Fondok
+      loads itself. ``withhold`` by default until the licence is confirmed to
+      cover the workspace; an operator flips it per tenant (data, not code —
+      ``is_internal`` never decides it). No such dataset feeds a default
+      today; the topline resolvers tag every candidate with its origin and
+      honour this key the day one does. The market-taxonomy serving gate
+      (``MARKET_TAXONOMY_SERVE_EXTERNAL`` + ``reference_datasets``) is a
+      separate, default-closed switch and is unchanged.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     costar_derived_defaults: DataPolicyChoice = "allow"
+    costar_licensed_defaults: DataPolicyChoice = "withhold"
 
     @property
     def withholds_costar(self) -> bool:
+        """The client's OWN uploaded CoStar reports are withheld from defaults."""
         return self.costar_derived_defaults == "withhold"
 
     @property
+    def withholds_licensed_costar(self) -> bool:
+        return self.costar_licensed_defaults == "withhold"
+
+    @property
     def withholds_anything(self) -> bool:
+        """A policy stricter than the default (the licensed key withholds by
+        default, so only an own-upload withhold counts here)."""
         return self.withholds_costar
 
     def as_dict(self) -> dict[str, Any]:
@@ -486,6 +512,9 @@ async def data_policies_posture() -> dict[str, Any]:
     return {
         "tenants_total": len(rows),
         "tenants_with_withhold": sum(1 for t in rows if t.data_policies.withholds_anything),
+        "tenants_with_licensed_costar_allowed": sum(
+            1 for t in rows if not t.data_policies.withholds_licensed_costar
+        ),
         "invalid_rows": sum(1 for t in rows if t.data_policies_error is not None),
         "keys": list(DATA_POLICY_KEYS),
     }

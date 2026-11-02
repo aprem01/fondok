@@ -1198,6 +1198,13 @@ def _class_level(attr: str, row: FieldRow) -> float | int | None:
     return v
 
 
+def change_fraction(row: FieldRow) -> float | None:
+    """A ``*_change_pct`` cell as a FRACTION (``-0.012`` for -1.2%) under the
+    growth readers' unit guard — shared with the topline growth resolver,
+    which reads CBRE Horizons change rows the same way."""
+    return _class_change(row)
+
+
 def _class_change(row: FieldRow) -> float | None:
     """A ``*_change_pct`` cell as a FRACTION — the unit guard of the growth
     readers applies (an absolute delta in a change column is not a rate)."""
@@ -1377,6 +1384,7 @@ __all__ = [
     "ClassForecastReading",
     "ClassSeries",
     "ClassYear",
+    "change_fraction",
     "GrowthReading",
     "PipelineFilter",
     "PipelineHotel",

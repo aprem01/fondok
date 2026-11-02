@@ -280,6 +280,13 @@ def _plan_topline(
             ("adr", "ari_target", "ari_target_source"),
         ):
             b_value = getattr(bench, metric) if bench is not None else None
+            if metric in topline.explicit_year1:
+                setattr(rec, f"{metric}_status", "explicit_value")
+                notes.append(
+                    f"Year-1 {metric_label[metric]} is your explicit value; out-years grow it at "
+                    "the year's growth — penetration and ramp are not applied to it."
+                )
+                continue
             if b_value is None:
                 setattr(rec, f"{metric}_status", "benchmark_unavailable")
                 if topline.benchmark_level != "none":
@@ -1412,7 +1419,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         # signals then survive on the record.
                         if getattr(rec_out, f"{metric}_growth_source") is None:
                             setattr(rec_out, f"{metric}_growth_source", "unavailable")
-                        if getattr(rec_out, f"{metric}_status") != "benchmark_unavailable":
+                        if getattr(rec_out, f"{metric}_status") not in (
+                            "benchmark_unavailable",
+                            "explicit_value",
+                        ):
                             setattr(rec_out, f"{metric}_status", "flat_no_growth")
             topline_records[y] = rec_out
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace

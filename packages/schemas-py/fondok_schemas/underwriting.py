@@ -379,7 +379,15 @@ class InvestmentEngineOutput(BaseModel):
 #: that metric, so the metric was HELD (growth 0 is the absence of growth, not
 #: a number); never a seeded rate.
 IndexDriverStatus = Literal[
-    "driven", "no_target", "benchmark_unavailable", "scalar_year1_only", "flat_no_growth"
+    "driven",
+    "no_target",
+    "benchmark_unavailable",
+    "scalar_year1_only",  # legacy (methodology v1) records only — never emitted since v2
+    "flat_no_growth",
+    # Topline v2 — the analyst entered this metric's Year-1 value explicitly
+    # (``starting_occupancy`` / ``starting_adr``): penetration and ramp are not
+    # applied to it; out-years grow it at the resolved growth.
+    "explicit_value",
 ]
 IndexTargetSource = Literal["by_year", "scalar"]
 
@@ -453,11 +461,14 @@ class GrowthYear(BaseModel):
 class BenchmarkYear(BaseModel):
     """The benchmark level (comp set / submarket / market) for one model year.
 
-    Year 1 is the level's reported figure (basis ``actual``); later years are
-    Year 1 grown by the resolved growth (``forecast`` when the growth year is a
-    document forecast, ``assumption`` when carried forward). A metric whose
-    growth is unavailable for the year is ``None`` — the engine then holds the
-    subject's figure for that metric rather than inventing a benchmark.
+    The level describes its own period (an STR TTM to May 2025 describes
+    2025); every model year — Year 1 included — is that level grown through
+    the calendar years in between by the resolved growth, as the reference
+    Index Analysis tab does (``actual`` when no step applies, ``forecast`` when
+    every step is a document forecast, ``assumption`` otherwise). A step with
+    no growth figure holds the level flat for that step and says so in
+    ``label``. A metric is ``None`` only when the level lacks it or the
+    analyst set that metric's Year-1 value explicitly.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -537,6 +548,11 @@ class ToplineDrivers(BaseModel):
     ramp_by_year: list[RampFraction | None] | None = None
     penetration_occ_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     penetration_adr_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
+    #: Metrics whose Year-1 value the analyst entered explicitly
+    #: (``starting_occupancy`` / ``starting_adr``): the loader leaves them out
+    #: of ``benchmark_by_year``, the engine runs them on that value × growth
+    #: and stamps ``explicit_value`` (not ``benchmark_unavailable``).
+    explicit_year1: list[Literal["occupancy", "adr"]] = Field(default_factory=list)
     t12_reference: ToplineReference | None = None
 
     @model_validator(mode="after")

@@ -323,6 +323,10 @@ export const ReasonCode = z.enum([
   "under_construction",      // sale inside the stated construction window
   "capital_deploying",       // equity draws / deferred capital land after the sale
   "no_sale_value",           // exit NOI at that sale date is not positive
+  "no_market_forecast",
+  "no_benchmark",
+  "license_withheld",
+  "legacy_key_translated",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -471,6 +475,30 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist.",
+  },
+  no_market_forecast: {
+    label: "No market forecast",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "No market forecast covers this year for this metric, so the model holds it flat (growth 0 is the absence of growth, not a rate) — set growth manually.",
+  },
+  no_benchmark: {
+    label: "No benchmark",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "No competitive-set, submarket or market occupancy / ADR is on the deal, so the subject is projected from its own starting figures.",
+  },
+  license_withheld: {
+    label: "Withheld by data policy",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A CoStar-derived figure is on file but this workspace's data policy withholds it from the model — set the figure manually.",
+  },
+  legacy_key_translated: {
+    label: "Legacy setting translated",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A setting written by a retired control is read under the current method (or ignored), and the status says how.",
   },
 };
 

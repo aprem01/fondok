@@ -3235,6 +3235,68 @@ sources:
     kind: override
     doc_types: []
     explanation: Set by the analyst's Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while "Use STR rates in the model" is on.
+  topline_benchmark:
+    label: Benchmark × penetration
+    badge: Benchmark
+    kind: calculated
+    doc_types: []
+    explanation: The year's rate is the benchmark (competitive set, else submarket, else market) × the penetration index ÷ 100, with the pre-stabilization ramp — the projection basis since topline methodology v2.
+  costar_comp_set:
+    label: CoStar comp set
+    badge: CoStar Comp Set
+    kind: grounded
+    doc_types: [MARKET_STUDY]
+    explanation: A CoStar Property Analytics competitive set uploaded to the deal — the benchmark the subject is penetrated against when no STR comp set is on file.
+  costar_submarket:
+    label: CoStar submarket
+    badge: CoStar Submarket
+    kind: grounded
+    doc_types: [MARKET_STUDY]
+    explanation: The latest actual year of the deal's CoStar submarket report for the hotel's class (else the whole submarket, labelled) — the benchmark when no competitive set is on file.
+  costar_market:
+    label: CoStar market
+    badge: CoStar Market
+    kind: grounded
+    doc_types: [MARKET_STUDY]
+    explanation: Market-wide occupancy / ADR from the deal's CoStar market report — the benchmark when neither a competitive set nor a submarket series is on file.
+  market_benchmark:
+    label: Market benchmark
+    badge: Market
+    kind: grounded
+    doc_types: [STR, STR_TREND, MARKET_STUDY, PNL_BENCHMARK]
+    explanation: Market-wide occupancy / ADR from an uploaded market report — the benchmark when neither a competitive set nor a submarket series is on file.
+  costar_submarket_forecast:
+    label: CoStar submarket forecast
+    badge: CoStar forecast
+    kind: grounded
+    doc_types: [MARKET_STUDY]
+    explanation: The year's occupancy / ADR change from the deal's CoStar submarket report, for the hotel's class (named on the badge, with the report and page) — a market forecast, not the subject's own.
+  growth_carried_forward:
+    label: Carried forward
+    badge: Carried forward
+    kind: assumption
+    doc_types: []
+    explanation: The year is past the last year of the market forecast, so the last forecast year's growth is reused — an assumption, labelled with the report and year it carries.
+  market_forecast_unavailable:
+    label: No market forecast
+    badge: No forecast
+    kind: refusal
+    doc_types: []
+    explanation: No market forecast and no analyst figure covers the year, so the model holds the rate flat (growth 0 is the absence of growth, not a rate) — set growth manually.
+    reason: no_market_forecast
+  costar_withheld_by_policy:
+    label: Withheld by data policy
+    badge: Withheld
+    kind: refusal
+    doc_types: [MARKET_STUDY]
+    explanation: A CoStar forecast or benchmark is on file but this workspace's data policy withholds CoStar-derived defaults — set the figure manually.
+    reason: license_withheld
+  penetration_default:
+    label: Penetration default
+    badge: Default 100
+    kind: assumption
+    doc_types: []
+    explanation: Parity with the benchmark (index 100) at stabilization, with an 85% / 95% ramp in Years 1–2 for a Year-3 stabilization — a labelled suggestion; the current STR index is shown beside it.
   pip_document:
     label: PIP / CapEx document
     badge: PIP doc
@@ -3342,3 +3404,19 @@ reasons:
     label: No sale value
     ui: —
     explanation: The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist.
+  no_market_forecast:
+    label: No market forecast
+    ui: —
+    explanation: "No market forecast covers this year for this metric, so the model holds it flat (growth 0 is the absence of growth, not a rate) — set growth manually."
+  no_benchmark:
+    label: No benchmark
+    ui: —
+    explanation: "No competitive-set, submarket or market occupancy / ADR is on the deal, so the subject is projected from its own starting figures."
+  license_withheld:
+    label: Withheld by data policy
+    ui: —
+    explanation: "A CoStar-derived figure is on file but this workspace's data policy withholds it from the model — set the figure manually."
+  legacy_key_translated:
+    label: Legacy setting translated
+    ui: —
+    explanation: "A setting written by a retired control is read under the current method (or ignored), and the status says how."

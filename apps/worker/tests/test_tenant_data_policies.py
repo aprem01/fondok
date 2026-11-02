@@ -200,7 +200,7 @@ async def test_load_policy_default_for_unregistered_row_value_when_set_cache_cle
     )
     assert updated is not None and updated.data_policies.costar_derived_defaults == "withhold"
     assert (await load_tenant_data_policy(stored.id)).costar_derived_defaults == "withhold"
-    assert updated.as_dict()["data_policies"] == {"costar_derived_defaults": "withhold"}
+    assert updated.as_dict()["data_policies"] == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
 
     # No row → nothing to update (the API maps this to 404).
     assert (await set_tenant_data_policies(uuid4(), TenantDataPolicies())) is None
@@ -250,7 +250,7 @@ async def test_get_and_patch_data_policies_gates_and_audit(_rsa_key) -> None:
         assert r.status_code == 200, r.text
         assert r.json() == {
             "tenant_id": str(customer.id),
-            "data_policies": {"costar_derived_defaults": "allow"},
+            "data_policies": {"costar_derived_defaults": "allow", "costar_licensed_defaults": "withhold"},
         }
 
         # A typo is a 422, never a silent allow.
@@ -270,15 +270,15 @@ async def test_get_and_patch_data_policies_gates_and_audit(_rsa_key) -> None:
         # Flip it.
         r = await c.patch(path, json={"costar_derived_defaults": "withhold"}, headers=_admin(_rsa_key, INTERNAL_ORG))
         assert r.status_code == 200, r.text
-        assert r.json()["data_policies"] == {"costar_derived_defaults": "withhold"}
+        assert r.json()["data_policies"] == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
         r = await c.get(path, headers=_admin(_rsa_key, INTERNAL_ORG))
-        assert r.json()["data_policies"] == {"costar_derived_defaults": "withhold"}
+        assert r.json()["data_policies"] == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
 
         # The list carries it too (the Settings card reads the list).
         r = await c.get("/admin/tenants", headers=_admin(_rsa_key, INTERNAL_ORG))
         by_org = {t["clerk_org_id"]: t for t in r.json()["tenants"]}
-        assert by_org[CUSTOMER_ORG]["data_policies"] == {"costar_derived_defaults": "withhold"}
-        assert by_org[INTERNAL_ORG]["data_policies"] == {"costar_derived_defaults": "allow"}
+        assert by_org[CUSTOMER_ORG]["data_policies"] == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
+        assert by_org[INTERNAL_ORG]["data_policies"] == {"costar_derived_defaults": "allow", "costar_licensed_defaults": "withhold"}
 
         # A no-op PATCH (same value) changes nothing and writes no audit row.
         r = await c.patch(path, json={"costar_derived_defaults": "withhold"}, headers=_admin(_rsa_key, INTERNAL_ORG))
@@ -301,8 +301,8 @@ async def test_get_and_patch_data_policies_gates_and_audit(_rsa_key) -> None:
     assert row["actor_id"] == "user_admin"
     assert row["resource_type"] == "tenant"
     assert row["resource_id"] == str(customer.id)
-    assert json.loads(row["before"]) == {"costar_derived_defaults": "allow"}
-    assert json.loads(row["after"]) == {"costar_derived_defaults": "withhold"}
+    assert json.loads(row["before"]) == {"costar_derived_defaults": "allow", "costar_licensed_defaults": "withhold"}
+    assert json.loads(row["after"]) == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
     assert row["severity"] == "warning"
 
 
@@ -319,8 +319,9 @@ async def test_admin_health_carries_data_policies_posture(_rsa_key) -> None:
         assert r.json()["data_policies"] == {
             "tenants_total": 2,
             "tenants_with_withhold": 0,
+            "tenants_with_licensed_costar_allowed": 0,
             "invalid_rows": 0,
-            "keys": ["costar_derived_defaults"],
+            "keys": ["costar_derived_defaults", "costar_licensed_defaults"],
         }
         await set_tenant_data_policies(customer.id, TenantDataPolicies(costar_derived_defaults="withhold"))
         r = await c.get("/admin/health", headers=_admin(_rsa_key, INTERNAL_ORG))
@@ -346,7 +347,7 @@ async def test_admin_health_reports_a_registry_outage_as_error_not_zero(_rsa_key
     monkeypatch.setattr(tenants_mod, "get_engine", lambda: _Broken())
     assert await tenants_mod.data_policies_posture() == {
         "error": "ConnectionRefusedError",
-        "keys": ["costar_derived_defaults"],
+        "keys": ["costar_derived_defaults", "costar_licensed_defaults"],
     }
     monkeypatch.setattr(tenants_mod, "get_engine", real_engine)
 
@@ -415,7 +416,7 @@ async def test_invalid_stored_policy_reads_as_withhold_and_is_counted(raw: str, 
 
     row = await get_tenant(customer.id, use_cache=False)
     assert row is not None and row.data_policies_error
-    assert row.as_dict()["data_policies"] == {"costar_derived_defaults": "withhold"}
+    assert row.as_dict()["data_policies"] == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
     assert row.as_dict()["data_policies_error"] == row.data_policies_error
 
     posture = await data_policies_posture()
@@ -435,7 +436,7 @@ def test_absent_or_empty_row_is_the_default_not_invalid() -> None:
 
     for raw in (None, "", {}, "{}"):
         assert _parse_data_policies(raw, tenant_id="t") == (TenantDataPolicies(), None)
-    assert TenantDataPolicies.withheld().as_dict() == {"costar_derived_defaults": "withhold"}
+    assert TenantDataPolicies.withheld().as_dict() == {"costar_derived_defaults": "withhold", "costar_licensed_defaults": "withhold"}
 
 
 # ─────────────────────────── atomic PATCH ───────────────────────────
@@ -464,7 +465,7 @@ async def test_patch_rolls_the_flip_back_when_the_audit_write_fails(_rsa_key, mo
         assert r.json()["detail"] == "data_policy_audit_unavailable"
         # Nothing landed: not the policy, not the audit row, not the cache.
         r = await c.get(path, headers=_admin(_rsa_key, INTERNAL_ORG))
-        assert r.json()["data_policies"] == {"costar_derived_defaults": "allow"}
+        assert r.json()["data_policies"] == {"costar_derived_defaults": "allow", "costar_licensed_defaults": "withhold"}
     assert (await load_tenant_data_policy(customer.id)).costar_derived_defaults == "allow"
     async with get_engine().connect() as conn:
         n = (
@@ -581,3 +582,21 @@ async def test_explicit_assumptions_seam_carries_the_default_policy_without_a_re
             s, str(uuid4()), tenant_id=str(uuid4()), assumptions=kimpton_seed()
         )
     assert base["__data_policy__"] == TenantDataPolicies()
+
+
+def test_costar_policy_is_split_own_upload_allow_licensed_withhold() -> None:
+    """Sam, 2026-11-01 — a client's OWN uploaded CoStar report may set its
+    defaults (allow by default); Fondok-licensed CoStar data is withheld until
+    the licence is confirmed (withhold by default). A row stored before the
+    split (only the own-upload key) reads the licensed key at its default."""
+    from app.tenants import TenantDataPolicies, _parse_data_policies
+    from app.services.topline_growth import costar_withheld
+
+    p = TenantDataPolicies()
+    assert not p.withholds_costar and p.withholds_licensed_costar
+    assert not costar_withheld(p) and costar_withheld(p, origin="licensed")
+    assert not p.withholds_anything  # the licensed default is not "stricter than default"
+    legacy, err = _parse_data_policies('{"costar_derived_defaults": "withhold"}', tenant_id="t")
+    assert err is None and legacy.withholds_costar and legacy.withholds_licensed_costar
+    opened = TenantDataPolicies(costar_licensed_defaults="allow")
+    assert not costar_withheld(opened, origin="licensed")
