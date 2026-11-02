@@ -90,7 +90,7 @@ async def _insert_deal(
     deal_stage: str | None = "Active",
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
-    status: str = "Active",
+    status: str = "In Progress",
 ) -> str:
     """Insert a deal row directly so a test can pin every column the
     pipeline aggregator reads — avoids depending on the create-deal
@@ -276,7 +276,7 @@ async def _seed_deal_with_engines(
     state: str = "VALIDATING",
     target_irr: float | None = None,
     deal_stage: str = "Active",
-    status: str = "Active",
+    status: str = "In Progress",
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     tenant: str = _DEFAULT_TENANT,

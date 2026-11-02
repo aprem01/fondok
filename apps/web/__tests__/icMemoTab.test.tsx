@@ -87,13 +87,14 @@ vi.mock('@/lib/hooks/useEngineOutputs', async () => {
 // Per-test fixtures — hoisted so the mock factories can read the live value.
 const fx = vi.hoisted(() => ({
   fieldOverrides: {} as Record<string, unknown>,
+  status: 'In Progress' as string,
   flags: [] as unknown[],
   refreshDealSpy: vi.fn(),
 }));
 
 vi.mock('@/lib/hooks/useDeal', () => ({
   useDeal: () => ({
-    deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, brand: 'Kimpton', field_overrides: fx.fieldOverrides },
+    deal: { id: 'deal-uuid-1', name: 'Kimpton Angler', city: 'Miami Beach, FL', keys: 132, brand: 'Kimpton', status: fx.status, field_overrides: fx.fieldOverrides },
     status: null, loading: false, error: null, workerConfigured: true, refresh: fx.refreshDealSpy,
   }),
 }));
@@ -138,6 +139,7 @@ const NOI_FLAG = {
 
 // api surface — spy the field_overrides PATCH; serve empty scenarios.
 const updateSpy = vi.fn(async () => ({ id: 'deal-uuid-1' }));
+const setStatusSpy = vi.fn(async (..._a: unknown[]) => ({ id: 'deal-uuid-1' }));
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
@@ -145,7 +147,11 @@ vi.mock('@/lib/api', async () => {
     isWorkerConnected: () => true,
     api: {
       ...actual.api,
-      deals: { ...actual.api.deals, update: (...a: unknown[]) => updateSpy(...(a as [])) },
+      deals: {
+        ...actual.api.deals,
+        update: (...a: unknown[]) => updateSpy(...(a as [])),
+        setStatus: (...a: unknown[]) => setStatusSpy(...a),
+      },
       scenarios: { ...actual.api.scenarios, list: vi.fn(async () => []), compare: vi.fn(async () => ({ deal_id: 'deal-uuid-1', base_scenario_id: null, scenarios: [] })) },
     },
   };
@@ -166,8 +172,10 @@ function lastOverrides(): Record<string, unknown> {
 beforeEach(() => {
   cleanup();
   updateSpy.mockClear();
+  setStatusSpy.mockClear();
   fx.refreshDealSpy.mockClear();
   fx.fieldOverrides = {};
+  fx.status = 'In Progress';
   fx.flags = [ROOMS_FLAG];
 });
 
@@ -468,8 +476,8 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
     expect(screen.getByTestId('memo-export-note')).toBeInTheDocument();
   });
 
-  it('can mark IC Ready with an acknowledged critical without any preview step', () => {
-    render(<ICMemoTab project={PROJECT} />);
+  it('can mark IC Ready with an acknowledged critical without any preview step — persisted as the deal status', async () => {
+    const { rerender } = render(<ICMemoTab project={PROJECT} />);
     const markReady = screen.getByRole('button', { name: 'Mark as IC Ready' });
     expect(markReady).toBeDisabled();
 
@@ -477,7 +485,34 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
     expect(markReady).not.toBeDisabled();
 
     fireEvent.click(markReady);
-    expect(screen.getByText('✓ IC Ready · 1 acknowledged critical item')).toBeInTheDocument();
+    // Wave 5 — written through POST /deals/{id}/status, never a PATCH and
+    // never local-only state (the shared-state test covers the re-read).
+    // It carries the status the card was showing, so a stale card is refused.
+    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'IC Ready', 'In Progress'));
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // The re-read deal carries the persisted status.
+    fx.status = 'IC Ready';
+    rerender(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('✓ IC Ready · 1 critical item unresolved')).toBeInTheDocument();
+  });
+
+  it('opens IC Ready from the persisted deal status, and Undo moves it back to In Progress', async () => {
+    fx.status = 'IC Ready';
+    fx.flags = [];
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('✓ This deal is IC Ready')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo IC Ready' }));
+    await waitFor(() => expect(setStatusSpy).toHaveBeenCalledWith('deal-uuid-1', 'In Progress', 'IC Ready'));
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a committee decision without a toggle', () => {
+    fx.status = 'IC Not Approved';
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Committee decision: IC Not Approved')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mark as IC Ready' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo IC Ready' })).toBeNull();
   });
 
   it('keeps Configure IC memo — the format toggle and all six section toggles', () => {

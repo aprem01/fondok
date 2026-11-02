@@ -198,12 +198,12 @@ async def test_create_draft_is_a_draft_row_with_the_wizard_echoed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_direct_active_create_is_in_review_and_unchanged_otherwise() -> None:
+async def test_direct_active_create_is_in_progress_and_unchanged_otherwise() -> None:
     """The word "Draft" means one thing from go-live: a lifecycle draft."""
     async with _client() as client:
         created = await _create(client, name="Real Hotel", city="Austin, TX", keys=120)
         assert created["lifecycle"] == "active"
-        assert created["status"] == "In Review"
+        assert created["status"] == "In Progress"
         assert created["draft_wizard"] is None
         assert created["activated_at"] is None
     assert await _audit_rows(created["id"], "deal.created")
@@ -315,7 +315,7 @@ async def test_activate_turns_the_draft_into_an_underwriting_once() -> None:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["lifecycle"] == "active"
-        assert body["status"] == "In Review"
+        assert body["status"] == "In Progress"
         assert body["draft_wizard"] is None
         assert body["activated_at"] is not None
 

@@ -25,11 +25,12 @@ import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetS
 import { IntroCard } from '@/components/help/IntroCard';
 import { MetricLabel } from '@/components/help/MetricLabel';
 
-/** FON-79 — the status filter's entry for lifecycle drafts (a draft has no
- *  workflow status worth filtering on). */
-const DRAFTS_FILTER = 'Drafts';
-/** The status filter, with Drafts beside All. */
-const FILTER_OPTIONS: string[] = ['All Status', DRAFTS_FILTER, ...projectStatuses.filter((s) => s !== 'All Status')];
+/** Wave 5 — the status filter: All plus exactly the seven statuses. "Draft"
+ *  is a lifecycle draft (the status follows the wizard), so there is one
+ *  entry for it, not a "Drafts" beside a "Draft". */
+const FILTER_OPTIONS: string[] = projectStatuses;
+/** Deep links written before Wave 5 (`?filter=Drafts`) open the Draft filter. */
+const FILTER_ALIASES: Readonly<Record<string, string>> = { Drafts: 'Draft' };
 
 /** Where a draft opens: back into the wizard, never the deal page. */
 const resumeHref = (id: string) => `/projects/new?draft=${encodeURIComponent(id)}`;
@@ -171,11 +172,12 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
 export default function ProjectsPage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState<string>('All Status');
-  // `/projects?filter=Drafts` (the wizard's "You have N drafts" chip) opens
+  // `/projects?filter=Draft` (the wizard's "You have N drafts" chip) opens
   // the list already narrowed. Read on mount so the server render and the
   // first client render agree.
   useEffect(() => {
-    const wanted = new URLSearchParams(window.location.search).get('filter');
+    const raw = new URLSearchParams(window.location.search).get('filter');
+    const wanted = raw ? (FILTER_ALIASES[raw] ?? raw) : null;
     if (wanted && FILTER_OPTIONS.includes(wanted)) setFilter(wanted);
   }, []);
   const [search, setSearch] = useState('');
@@ -210,15 +212,18 @@ export default function ProjectsPage() {
     const rows = deals.map((d) => fromWorkerDeal(d, pipelineRows[d.id]));
     return [...rows.filter((p) => p.isDraft), ...rows.filter((p) => !p.isDraft)];
   }, [deals, pipelineRows]);
+  // The subtitle's parts add up to the total: drafts (the wizard is not
+  // finished), archived, and active — every other status.
   const draftCount = display.filter((p) => p.isDraft).length;
-  const activeCount = display.filter((p) => !p.isDraft && p.status !== 'Archived').length;
+  const archivedCount = display.filter((p) => !p.isDraft && p.status === 'Archived').length;
+  const activeCount = display.length - draftCount - archivedCount;
 
-  // A status filter applies to underwritings; a draft shows under All and
-  // under Drafts only — its workflow status is not a thing yet.
+  // Draft is the lifecycle (a wizard not finished); every other status
+  // filters underwritings by their stored status.
   const matchesFilter = (p: DisplayDeal) =>
     filter === 'All Status'
       ? true
-      : filter === DRAFTS_FILTER
+      : filter === 'Draft'
         ? p.isDraft
         : !p.isDraft && p.status === filter;
   const filtered = display.filter((p) =>
@@ -230,7 +235,7 @@ export default function ProjectsPage() {
     <div className="px-8 py-8 max-w-[1440px]">
       <PageHeader
         title="Projects"
-        subtitle={`${display.length} total projects · ${activeCount} active · ${draftCount} ${draftCount === 1 ? 'draft' : 'drafts'}`}
+        subtitle={`${display.length} total projects · ${activeCount} active · ${draftCount} ${draftCount === 1 ? 'draft' : 'drafts'}${archivedCount > 0 ? ` · ${archivedCount} archived` : ''}`}
         action={
           <Link href="/projects/new">
             <Button variant="primary"><Plus size={14} /> New Project</Button>
@@ -269,7 +274,7 @@ export default function ProjectsPage() {
             {filter === 'All Status' ? 'All' : filter} <ChevronDown size={13} className="text-ink-400" />
           </button>
           {filterOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
+            <div data-testid="status-filter-menu" className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-10 min-w-[160px]">
               {FILTER_OPTIONS.map(s => (
                 <button key={s} onClick={() => { setFilter(s); setFilterOpen(false); }}
                   className="w-full px-3 py-2 text-[12.5px] hover:bg-ink-300/10 text-left">

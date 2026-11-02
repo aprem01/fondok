@@ -707,7 +707,7 @@ async def test_load_deal_payload_hydrates_real_spread_engines_variance() -> None
                     created_at, updated_at
                 ) VALUES (
                     :id, :tenant, :name, :city, :keys, :brand, :service,
-                    :stage, :return_profile, 'Underwriting', 0.0, :ts, :ts
+                    :stage, :return_profile, 'In Progress', 0.0, :ts, :ts
                 )
                 """
             ),

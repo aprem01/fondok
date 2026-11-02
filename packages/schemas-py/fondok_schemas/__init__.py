@@ -40,6 +40,9 @@ from .debt_stack import (
     TrancheSchedule,
 )
 from .deal import (
+    DEAL_STATUSES,
+    MANUAL_DEAL_STATUSES,
+    RUN_GATED_DEAL_STATUSES,
     Deal,
     DealStage,
     DealStatus,
@@ -47,6 +50,7 @@ from .deal import (
     PositioningTier,
     ReturnProfile,
     Service,
+    status_for_lifecycle,
 )
 from .document import (
     Document,
@@ -211,6 +215,10 @@ __all__ = [
     "Deal",
     "DealStage",
     "DealStatus",
+    "DEAL_STATUSES",
+    "MANUAL_DEAL_STATUSES",
+    "RUN_GATED_DEAL_STATUSES",
+    "status_for_lifecycle",
     "DealSummary",
     "PositioningTier",
     "ReturnProfile",

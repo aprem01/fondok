@@ -14,7 +14,9 @@ table                       action  why
 ==========================  ======  =========================================
 deals                       COPY    every column; new id, name
                                     ``"<name> (copy YYYY-MM-DD)"``, fresh
-                                    created_at / updated_at.
+                                    created_at / updated_at; ``status`` from
+                                    the copy's lifecycle (``In Progress``),
+                                    never the source's IC Ready / decision.
                                     ``field_overrides`` (values AND notes) and
                                     ``positioning_source_detail`` (the OM→STR
                                     provenance) are copied verbatim apart
@@ -86,6 +88,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fondok_schemas import status_for_lifecycle
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -328,6 +331,10 @@ async def duplicate_deal(
         # above) but nobody pressed Finish on it: no activated_at, no wizard.
         "activated_at": None,
         "draft_wizard": None,
+        # Wave 5 — the copy's status follows its lifecycle; a review or a
+        # committee decision (IC Ready, IC Approved, …) belongs to the
+        # source deal and is never copied.
+        "status": status_for_lifecycle(source_row.get("lifecycle")),
     }
     await _insert_row(
         session,

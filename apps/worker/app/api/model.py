@@ -148,6 +148,20 @@ class StaleRun(BaseModel):
     missing_blocks: dict[str, list[str]]
 
 
+class IcStatusGate(BaseModel):
+    """Wave 5 — the worker's gate for IC Ready / IC Approved / IC Not Approved
+    (``services.deal_status.model_run_gate``: the latest canonical run
+    finished with no base engine failed). Served beside the outputs so the
+    web's status hint uses this one definition, never its own reading."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    #: ``no_run`` | ``in_flight`` | ``failed_engines`` | ``nothing_computed``.
+    reason: str | None = None
+    failed_engines: list[str] = []
+
+
 class EngineOutputsResponse(BaseModel):
     """Map of engine name → latest output for a deal.
 
@@ -166,6 +180,9 @@ class EngineOutputsResponse(BaseModel):
     # overwhelmingly common case: a healthy deal's payload gains nothing but
     # an explicit ``"stale_run": null``, and every existing field is untouched.
     stale_run: StaleRun | None = None
+    # Wave 5 — the IC-status run gate for this deal (None only from callers
+    # that build the response without a deal context).
+    ic_status_gate: IcStatusGate | None = None
 
 
 class EngineRunStatusResponse(BaseModel):
@@ -496,11 +513,17 @@ async def list_engine_outputs(
     # output field deploys, and nothing rewrites that row. Read-only — no
     # engine output is computed, altered or persisted by this call.
     missing = stale_engines(rows)
+    from ..services.deal_status import model_run_gate
+
+    gate = await model_run_gate(session, deal_id=deal_id, tenant_id=str(tenant_id))
     return EngineOutputsResponse(
         deal_id=deal_id,
         engines=engines,
         failures=[EngineFailure(**f) for f in failures_of(rows)],
         stale_run=StaleRun(missing_blocks=missing) if missing else None,
+        ic_status_gate=IcStatusGate(
+            ok=gate.ok, reason=gate.reason, failed_engines=list(gate.failed_engines)
+        ),
     )
 
 

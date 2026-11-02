@@ -16,6 +16,18 @@ its setup in the New Deal wizard not yet finished — has no model outputs: its 
 extracted as they are added, but nothing is projected, exported or written into a memo until Finish
 turns it into a live deal. The property's name is one of the things read from the Offering
 Memorandum; the wizard does not ask for it.
+
+A deal's status says where it stands. **Draft** — its setup in the New Deal wizard is not yet
+finished. **In Progress** — set automatically when Finish is pressed; the deal is being
+underwritten. The next four are set by your team from the status menu in the deal header: **Ready
+for Review** (the analyst is done and asks for review), **IC Ready** (cleared for the investment
+committee), **IC Approved** and **IC Not Approved** (the committee's decision). IC Ready, IC
+Approved and IC Not Approved need the latest model run to have finished with no failed engine — a
+committee never sees a deal whose returns or debt the model withheld. **Archived** takes a deal out of the
+active pipeline without deleting it, and an archived deal can be restored to In Progress. A copy of
+a deal starts In Progress, never with the original's review or committee status. Fondok never
+changes a status your team set; every change is recorded in the deal's activity with who made it
+and when.
 :::
 
 ::: stages
@@ -128,6 +140,26 @@ it. The original is not changed.
 Every uploaded document moves through six stages — parse, classify, extract, reconcile, verify,
 reclassify. The pipeline is format-agnostic by design: a single OM may be a text PDF, scanned image,
 multi-tab Excel, or PowerPoint deck.
+
+Deal status is one of seven stored values (fondok_schemas.DealStatus; a Postgres CHECK, a SQLite
+trigger pair): Draft and In Progress follow deals.lifecycle (create, activate and duplicate set
+them; a duplicate never copies the source status); In Progress, Ready for Review, IC Ready, IC
+Approved and IC Not Approved are set with POST /deals/{id}/status — 409 model_run_required (reason
+no_run / in_flight / failed_engines / nothing_computed) for the three IC statuses until the deal's
+canonical run has finished with every base engine complete or not_applicable and at least one
+complete (the same gate is served as ic_status_gate on GET /deals/{id}/engines, which the status
+menu reads; composed views such as cash_flow are not counted), 409 deal_archived unless an archived
+deal is restored to In Progress, 409 deal_is_draft, 409 status_changed when the caller's
+expected_status is no longer current (the web always sends it, so a stale page never overwrites a
+newer status), 422 status_not_settable for Draft / Archived — audited deal.status_changed with
+from, to and the actor; the row is read FOR UPDATE on Postgres. PATCH /deals/{id} refuses status.
+Archive stays DELETE /deals/{id}. The one-time migration deals.status_v2 (one Postgres transaction,
+skipped once deals_status_chk exists; lifts FORCE ROW LEVEL SECURITY on deals / audit_log for its
+own transaction and restores it; in FATAL_MIGRATIONS, so the worker will not boot if the database
+rejects it — a database that cannot be reached is logged and the entry retried on the next boot)
+moved finished-wizard deals at Draft, In Review or any non-status value to In Progress, kept IC
+Ready and Archived (a wizard draft's too), audited each move deal.status_migrated, then added the
+CHECK. A row that omits status defaults to In Progress.
 :::
 
 ::: stages

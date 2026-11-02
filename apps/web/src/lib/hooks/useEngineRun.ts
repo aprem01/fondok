@@ -29,7 +29,7 @@ import {
  *
  * When the worker isn't configured (NEXT_PUBLIC_WORKER_URL unset) the hook
  * surfaces an info toast and stays in `idle` so the legacy mock-data UI
- * keeps working — same defensive pattern ExportTab uses.
+ * keeps working — the same defensive pattern the export cards use.
  */
 export interface UseEngineRunOptions {
   runMode?: 'single' | 'all';

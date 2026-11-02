@@ -327,6 +327,16 @@ stays for `run_startup_migrations()` (through `DATABASE_URL_MIGRATIONS`)
 and the worker's `DATABASE_URL` points at `fondok_app` for serving
 traffic. Both are wired; the table above says which does what.
 
+**Data-fix migrations under FORCE RLS.** A migration that UPDATEs rows
+across tenants (for example `deals.status_v2`, the deal-status backfill)
+sees zero rows when the migrations role is the owner but not a superuser
+and FORCE is on: no tenant GUC is published at startup. Such a migration
+must either run as a role that bypasses RLS, or lift FORCE on its tables
+for its own transaction (`ALTER TABLE … NO FORCE ROW LEVEL SECURITY` …
+`FORCE ROW LEVEL SECURITY`, as `deals.status_v2` does), and it belongs in
+`FATAL_MIGRATIONS` (`app/migrations.py`) so a failure stops the boot
+instead of leaving rows the code does not understand.
+
 ### Background jobs
 
 Per-deal background work (document parse / extraction, the Run Model

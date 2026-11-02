@@ -21,6 +21,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/Badge';
+import { onboardingStateLabel } from '@/lib/dealStatus';
 import SavedViewSelector from '@/components/pipeline/SavedViewSelector';
 import {
   api, isWorkerConnected, PipelineDealRow, PipelineFilterBody,
@@ -565,7 +566,7 @@ function DealRow({ d }: { d: PipelineDealRow }) {
         </Link>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge value={prettyState(d.state)} />
+        <StatusBadge value={onboardingStateLabel(d.state)} />
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-ink-900">
         {dashIfNull(d.price_per_key, (v) =>
@@ -609,11 +610,4 @@ function DealRow({ d }: { d: PipelineDealRow }) {
       </td>
     </tr>
   );
-}
-
-function prettyState(s: string): string {
-  if (s === 'ONBOARDING') return 'Draft';
-  if (s === 'VALIDATING') return 'Active';
-  if (s === 'READY') return 'Ready';
-  return s;
 }

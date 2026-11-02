@@ -23,6 +23,8 @@ import re
 
 from sqlalchemy import text
 
+from fondok_schemas import DEAL_STATUSES, DealStatus
+
 from .config import get_settings
 from .database import get_migrations_engine
 
@@ -50,6 +52,147 @@ async def _sqlite_column_exists(conn, table: str, column: str) -> bool:
     return False
 
 
+# ─────────────── Wave 5 — the seven-status deal lifecycle ───────────────
+#
+# The status backfill. A finished wizard (``lifecycle <> 'draft'``) at
+# ``Draft`` / ``In Review`` — or at any value outside the seven, which only a
+# free-text PATCH could have stored — becomes ``In Progress``. ``IC Ready``
+# and ``Archived`` keep their status (for a wizard draft too), as does every
+# other one of the seven; a wizard draft at any other value goes back to
+# ``Draft``. Each moved deal gets one ``deal.status_migrated`` audit row
+# (before → after), written BEFORE the UPDATE so the predicate still selects
+# it. Then the column is limited to the seven values: a CHECK on Postgres, a
+# trigger pair on SQLite (which cannot ADD a CHECK to an existing table).
+#
+# Postgres runs it ONCE: the whole thing — backfill, audit rows, CHECK — is one
+# DO block (one transaction) that returns at once when ``deals_status_chk``
+# already exists. Under forced row-level security
+# (``migrations/rls/001_enable_rls.sql``) an owner that is not a superuser
+# would see ZERO rows and silently move none; so the block lifts FORCE on
+# ``deals`` / ``audit_log`` for its own transaction and restores it before
+# committing (the owner may; a role that may not gets an error, never a
+# silent no-op). If the CHECK cannot be added the block raises, the whole
+# transaction rolls back and — this entry being in ``FATAL_MIGRATIONS`` — the
+# worker refuses to boot instead of logging the failure on every boot.
+# SQLite (dev / tests) re-runs its idempotent twin on every boot.
+_STATUS_LIST_SQL = ", ".join(f"'{s}'" for s in DEAL_STATUSES)
+_STATUS_KEPT_BY_A_DRAFT_SQL = ", ".join(
+    f"'{s.value}'" for s in (DealStatus.DRAFT, DealStatus.IC_READY, DealStatus.ARCHIVED)
+)
+_STATUS_TARGET_SQL = (
+    f"CASE WHEN lifecycle = 'draft' THEN '{DealStatus.DRAFT.value}' "
+    f"ELSE '{DealStatus.IN_PROGRESS.value}' END"
+)
+_STATUS_NEEDS_BACKFILL_SQL = (
+    f"((lifecycle = 'draft' AND status NOT IN ({_STATUS_KEPT_BY_A_DRAFT_SQL}))"
+    f" OR (lifecycle <> 'draft' AND (status = '{DealStatus.DRAFT.value}'"
+    f" OR status NOT IN ({_STATUS_LIST_SQL}))))"
+)
+_STATUS_BACKFILL_ACTOR = "system:migration"
+_STATUS_BACKFILL_ACTION = "deal.status_migrated"
+
+_PG_STATUS_V2 = f"""
+DO $$
+DECLARE
+    deals_forced boolean;
+    audit_forced boolean;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'deals_status_chk') THEN
+        RETURN;
+    END IF;
+    SELECT relforcerowsecurity INTO deals_forced FROM pg_class WHERE oid = 'deals'::regclass;
+    SELECT relforcerowsecurity INTO audit_forced FROM pg_class WHERE oid = 'audit_log'::regclass;
+    IF deals_forced THEN
+        ALTER TABLE deals NO FORCE ROW LEVEL SECURITY;
+    END IF;
+    IF audit_forced THEN
+        ALTER TABLE audit_log NO FORCE ROW LEVEL SECURITY;
+    END IF;
+
+    INSERT INTO audit_log (
+        id, tenant_id, deal_id, actor_id, action, resource_type, resource_id,
+        payload, created_at, before, after, diff_summary, severity
+    )
+    SELECT md5(random()::text || clock_timestamp()::text || id::text)::uuid,
+           tenant_id, id, '{_STATUS_BACKFILL_ACTOR}', '{_STATUS_BACKFILL_ACTION}',
+           'deal', id::text,
+           jsonb_build_object(
+               'input', NULL,
+               'output', jsonb_build_object(
+                   'from', status, 'to', {_STATUS_TARGET_SQL},
+                   'reason', 'status_v2_backfill'),
+               'metadata', NULL),
+           NOW(),
+           jsonb_build_object('status', status),
+           jsonb_build_object('status', {_STATUS_TARGET_SQL}),
+           'status: ' || status || ' → ' || {_STATUS_TARGET_SQL},
+           'info'
+      FROM deals
+     WHERE {_STATUS_NEEDS_BACKFILL_SQL};
+    UPDATE deals
+       SET status = {_STATUS_TARGET_SQL}
+     WHERE {_STATUS_NEEDS_BACKFILL_SQL};
+
+    ALTER TABLE deals ADD CONSTRAINT deals_status_chk
+        CHECK (status IN ({_STATUS_LIST_SQL}));
+
+    IF deals_forced THEN
+        ALTER TABLE deals FORCE ROW LEVEL SECURITY;
+    END IF;
+    IF audit_forced THEN
+        ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
+    END IF;
+END
+$$
+"""
+
+_SQLITE_STATUS_BACKFILL_AUDIT = f"""
+INSERT INTO audit_log (
+    id, tenant_id, deal_id, actor_id, action, resource_type, resource_id,
+    payload, created_at, before, after, diff_summary, severity
+)
+SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-'
+             || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-'
+             || hex(randomblob(6))),
+       tenant_id, id, '{_STATUS_BACKFILL_ACTOR}', '{_STATUS_BACKFILL_ACTION}',
+       'deal', id,
+       json_object(
+           'input', NULL,
+           'output', json_object(
+               'from', status, 'to', {_STATUS_TARGET_SQL},
+               'reason', 'status_v2_backfill'),
+           'metadata', NULL),
+       CURRENT_TIMESTAMP,
+       json_object('status', status),
+       json_object('status', {_STATUS_TARGET_SQL}),
+       'status: ' || status || ' → ' || {_STATUS_TARGET_SQL},
+       'info'
+  FROM deals
+ WHERE {_STATUS_NEEDS_BACKFILL_SQL}
+"""
+
+_SQLITE_STATUS_BACKFILL = f"""
+UPDATE deals
+   SET status = {_STATUS_TARGET_SQL}
+ WHERE {_STATUS_NEEDS_BACKFILL_SQL}
+"""
+
+
+def _sqlite_status_trigger(event: str) -> str:
+    """BEFORE INSERT / UPDATE OF status — the SQLite stand-in for the CHECK."""
+    name = "insert" if event == "INSERT" else "update"
+    on = "INSERT ON deals" if event == "INSERT" else "UPDATE OF status ON deals"
+    return f"""
+CREATE TRIGGER IF NOT EXISTS deals_status_chk_{name}
+BEFORE {on}
+FOR EACH ROW
+WHEN NEW.status NOT IN ({_STATUS_LIST_SQL})
+BEGIN
+    SELECT RAISE(ABORT, 'deals_status_chk - status must be one of the seven deal statuses');
+END
+"""
+
+
 # Postgres-flavored DDL. SQLite (dev) skips these — see
 # ``run_startup_migrations`` for the dialect guard.
 MIGRATIONS: list[tuple[str, str]] = [
@@ -63,7 +206,7 @@ MIGRATIONS: list[tuple[str, str]] = [
             city            TEXT,
             keys            INTEGER,
             service         TEXT,
-            status          TEXT NOT NULL DEFAULT 'Draft',
+            status          TEXT NOT NULL DEFAULT 'In Progress',
             deal_stage      TEXT,
             risk            TEXT,
             ai_confidence   NUMERIC(5,2),
@@ -1459,6 +1602,14 @@ MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies",
         "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS data_policies JSONB NOT NULL DEFAULT '{}'",
     ),
+    # Wave 5 — the seven-status lifecycle. A row that omits ``status`` is an
+    # active deal (``lifecycle`` defaults to ``active``), so it defaults to
+    # ``In Progress``; then the one-time backfill + CHECK (FATAL_MIGRATIONS).
+    (
+        "deals.status_default_in_progress",
+        "ALTER TABLE deals ALTER COLUMN status SET DEFAULT 'In Progress'",
+    ),
+    ("deals.status_v2", _PG_STATUS_V2),
 ]
 
 
@@ -1475,7 +1626,7 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
             city            TEXT,
             keys            INTEGER,
             service         TEXT,
-            status          TEXT NOT NULL DEFAULT 'Draft',
+            status          TEXT NOT NULL DEFAULT 'In Progress',
             deal_stage      TEXT,
             risk            TEXT,
             ai_confidence   REAL,
@@ -2457,7 +2608,83 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies_sqlite",
         "ALTER TABLE tenants ADD COLUMN data_policies TEXT NOT NULL DEFAULT '{}'",
     ),
+    # Wave 5 — SQLite twin of the status backfill (one statement per entry:
+    # the audit rows first, while the predicate still selects the deals)
+    # and of the CHECK (a trigger pair).
+    ("deals.status_v2_backfill_audit", _SQLITE_STATUS_BACKFILL_AUDIT),
+    ("deals.status_v2_backfill", _SQLITE_STATUS_BACKFILL),
+    ("deals.add_status_chk_insert", _sqlite_status_trigger("INSERT")),
+    ("deals.add_status_chk_update", _sqlite_status_trigger("UPDATE")),
 ]
+
+
+#: Entries whose failure must stop the worker from booting rather than be
+#: logged and retried on every boot: a data migration that leaves rows the
+#: new code does not understand. Only a failure the DATABASE reports
+#: (permission, constraint, syntax) is fatal; when the database cannot be
+#: reached (:func:`_database_unavailable`) the entry is logged and retried on
+#: the next boot like any other, so an outage spanning a restart never uses
+#: up the platform's restart budget. ``app.main.lifespan`` re-raises
+#: :class:`FatalMigrationError`, so a deploy whose migration cannot complete
+#: fails its health check and the previous release keeps serving.
+FATAL_MIGRATIONS: frozenset[str] = frozenset(
+    {
+        "deals.status_v2",
+        "deals.status_v2_backfill_audit",
+        "deals.status_v2_backfill",
+        "deals.add_status_chk_insert",
+        "deals.add_status_chk_update",
+    }
+)
+
+
+class FatalMigrationError(RuntimeError):
+    """A :data:`FATAL_MIGRATIONS` entry failed; the worker must not serve."""
+
+
+#: Postgres SQLSTATEs that mean "the server is not available right now",
+#: not "this SQL is wrong": connection exceptions (class 08), admin / crash
+#: shutdown and "cannot connect now" (57P01-57P03), too many connections.
+_UNAVAILABLE_SQLSTATES: frozenset[str] = frozenset({"57P01", "57P02", "57P03", "53300"})
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    seen: list[BaseException] = []
+    todo: list[BaseException | None] = [exc]
+    while todo:
+        e = todo.pop()
+        if e is None or any(e is s for s in seen):
+            continue
+        seen.append(e)
+        todo.extend([getattr(e, "orig", None), e.__cause__, e.__context__])
+    return seen
+
+
+def _database_unavailable(exc: BaseException) -> bool:
+    """True when a migration failed because the database could not be
+    reached or dropped the connection — a network error, a timeout, a server
+    starting up / shutting down, a full connection table — rather than
+    because the database answered and refused the SQL (permission,
+    constraint, syntax). Only the second kind is fatal: an outage spanning a
+    restart must not stop the boot (the worker comes up degraded and the
+    entry runs again on the next boot), while a migration the database
+    rejects must."""
+    import asyncpg.exceptions as pg_exc
+    from sqlalchemy.exc import DBAPIError
+
+    for e in _exception_chain(exc):
+        if isinstance(e, DBAPIError) and e.connection_invalidated:
+            return True
+        if isinstance(e, OSError):  # refused / reset / unreachable / timeouts
+            return True
+        if isinstance(e, (pg_exc.InterfaceError, pg_exc.PostgresConnectionError)):
+            return True
+        sqlstate = getattr(e, "sqlstate", None)
+        if isinstance(e, pg_exc.PostgresError) and isinstance(sqlstate, str) and (
+            sqlstate.startswith("08") or sqlstate in _UNAVAILABLE_SQLSTATES
+        ):
+            return True
+    return False
 
 
 async def run_startup_migrations() -> None:
@@ -2514,14 +2741,40 @@ async def run_startup_migrations() -> None:
                 await conn.execute(text(sql))
                 logger.info("migration applied: %s", name)
         except Exception as exc:
+            if _database_unavailable(exc):
+                # Not the SQL's fault: log, carry on, boot degraded; every
+                # entry (fatal ones included) runs again on the next boot.
+                logger.error(
+                    "migration not applied (database unavailable): %s — %s", name, exc
+                )
+                continue
             logger.exception("migration failed: %s — %s", name, exc)
+            if name in FATAL_MIGRATIONS:
+                raise FatalMigrationError(
+                    f"migration {name} failed and the worker will not start: {exc}"
+                ) from exc
 
     # Wave 5 (Sam #5) — a data migration, in Python so it applies the SAME
     # rollup the app writes (services.deal_confidence). Runs after the DDL.
     try:
         await backfill_deal_ai_confidence(engine, is_sqlite=is_sqlite)
     except Exception as exc:
-        logger.exception("migration failed: deals.ai_confidence_backfill — %s", exc)
+        if _database_unavailable(exc):
+            # Same rule as the DDL loop: unreachable is not the data's fault;
+            # boot degraded and the one-time backfill runs on the next boot.
+            logger.error(
+                "migration not applied (database unavailable): "
+                "deals.ai_confidence_backfill — %s",
+                exc,
+            )
+        else:
+            # The database answered and refused: like a FATAL_MIGRATIONS entry,
+            # the worker must not serve half-migrated confidence values.
+            logger.exception("migration failed: deals.ai_confidence_backfill — %s", exc)
+            raise FatalMigrationError(
+                "migration deals.ai_confidence_backfill failed and the worker "
+                f"will not start: {exc}"
+            ) from exc
 
 
 # ─────────────────────── deals.ai_confidence backfill ───────────────────────
@@ -2646,9 +2899,11 @@ async def backfill_deal_ai_confidence(engine, *, is_sqlite: bool) -> dict[str, i
 
 __all__ = [
     "AI_CONFIDENCE_BACKFILL_MARKER",
+    "FATAL_MIGRATIONS",
     "MIGRATIONS",
     "SQLITE_MIGRATIONS",
     "AiConfidenceBackfillError",
+    "FatalMigrationError",
     "backfill_deal_ai_confidence",
     "run_startup_migrations",
 ]

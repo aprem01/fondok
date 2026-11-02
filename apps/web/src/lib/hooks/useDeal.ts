@@ -7,6 +7,7 @@ import {
   WorkerDeal,
   WorkerDealStatus,
 } from '@/lib/api';
+import { onDealChanged } from '@/lib/dealEvents';
 const POLL_MS = 3000;
 // E-003 (FON-59) — while a deal is still extracting, re-read the deal row
 // (not just /status) this often, so keys / brand / city the worker fills in
@@ -113,6 +114,15 @@ export function useDeal(id: string | number | null | undefined): DealState {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Wave 5 — a write anywhere on the page (the status menu, the IC Memo
+  // card) re-reads this deal here too: one source of truth per deal.
+  useEffect(() => {
+    if (!idStr) return;
+    return onDealChanged((changed) => {
+      if (changed === idStr) refresh();
+    });
+  }, [idStr, refresh]);
 
   // Poll status while deal is processing/extracting.
   //

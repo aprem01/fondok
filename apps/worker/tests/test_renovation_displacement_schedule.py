@@ -261,7 +261,7 @@ async def _insert_deal(deal_id: UUID, *, field_overrides: dict | None = None) ->
             text(
                 "INSERT INTO deals (id, tenant_id, name, status, ai_confidence, keys, "
                 "purchase_price, field_overrides, created_at, updated_at) VALUES "
-                "(:id, :tenant, 'Schedule deal', 'Underwriting', 0.0, 132, 36400000, :fo, :ts, :ts)"
+                "(:id, :tenant, 'Schedule deal', 'In Progress', 0.0, 132, 36400000, :fo, :ts, :ts)"
             ),
             {"id": str(deal_id), "tenant": _TENANT, "fo": json.dumps(field_overrides or {}),
              "ts": datetime.now(UTC)},

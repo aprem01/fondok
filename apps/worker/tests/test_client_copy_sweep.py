@@ -64,7 +64,7 @@ async def _seed_deal(*, tenant: str = _TENANT, **cols) -> str:
             text(
                 "INSERT INTO deals (id, tenant_id, name, status, ai_confidence, keys, "
                 "purchase_price, field_overrides, created_at, updated_at) VALUES "
-                "(:id, :tenant, :name, 'Underwriting', 0.0, :keys, :purchase_price, "
+                "(:id, :tenant, :name, 'In Progress', 0.0, :keys, :purchase_price, "
                 ":fo, :ts, :ts)"
             ),
             row,

@@ -25,8 +25,11 @@
  * `memo_highlights`, `memo_risks`, `memo_recommendation_override`,
  * `memo_recommendation_confirmed` and `memo_diligence`. The worker layers them
  * back through `app/memo_overrides.py` (memo body, live Excel export) — one
- * source of truth. Memo format, section toggles, preview + IC-ready state are
- * session-local workspace state (as in the canonical prototype).
+ * source of truth. Memo format and section toggles are session-local
+ * workspace state (as in the canonical prototype). The IC-ready card reads
+ * and writes the DEAL STATUS (Wave 5): it is IC Ready when `deal.status` is,
+ * and "Mark as IC Ready" / "Undo IC Ready" go through `api.deals.setStatus`
+ * (POST /deals/{id}/status) — the same call as the header status menu.
  *
  * FON-54a (Sam's finding — duplicate machine-named variance flags with
  * implausibly large "NOI impact"):
@@ -91,7 +94,9 @@ import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
-import { api, isWorkerConnected } from '@/lib/api';
+import { api, isWorkerConnected, userMessage } from '@/lib/api';
+import { setDealStatus } from '@/lib/dealStatus';
+import { isProjectStatus } from '@/lib/catalogs';
 import type { ValueState } from '@/lib/api';
 import type { Project } from '@/lib/project';
 import { ProvenanceDot, palette } from '@/components/design';
@@ -784,7 +789,12 @@ export default function ICMemoTab({ project }: { project: Project }) {
   const [format, setFormat] = useState<MemoFormat>('Standard');
   const [sections, setSections] = useState<Sections>({ deal: true, thesis: true, hr: true, uw: true, scen: true, dil: true });
   const [ack, setAck] = useState(false);
-  const [icReady, setIcReady] = useState(false);
+  // Wave 5 — IC readiness IS the deal status (persisted, audited), never
+  // local state: the card reflects `deal.status` and writes it back.
+  const dealStatus = deal?.status ?? null;
+  const icReady = dealStatus === 'IC Ready';
+  const icDecided = dealStatus === 'IC Approved' || dealStatus === 'IC Not Approved';
+  const [statusBusy, setStatusBusy] = useState(false);
   const [scenariosAvailable, setScenariosAvailable] = useState(false);
 
   const thesisRef = useRef<HTMLParagraphElement | null>(null);
@@ -1229,6 +1239,26 @@ export default function ICMemoTab({ project }: { project: Project }) {
   }, [metrics, scenariosAvailable, openCritical, ack, verdictConfirmed]);
   const blockers = checklist.filter((c) => !c.ok).length;
   const canMark = blockers === 0 || (openCritical > 0 && ack);
+  // Mark → IC Ready; Undo → back to In Progress. Never offered at an IC
+  // outcome (the button is not rendered). The write carries the status this
+  // card shows, so a stale card is refused (409 status_changed) rather than
+  // overwrite a newer status; either way every view of the deal re-reads it.
+  // The worker gates IC Ready on a completed run with no failed engine and
+  // refuses with its own sentence, shown verbatim.
+  const toggleIcReady = async () => {
+    if (statusBusy || icDecided || !liveMode) return;
+    if (!icReady && !canMark) return;
+    const next = icReady ? 'In Progress' : 'IC Ready';
+    setStatusBusy(true);
+    try {
+      await setDealStatus(dealId, next, isProjectStatus(dealStatus) ? dealStatus : null);
+      toast(icReady ? 'IC Ready undone — status set to In Progress' : 'Marked as IC Ready', { type: 'success' });
+    } catch (err) {
+      toast(`Couldn't change the status — ${userMessage(err)}`, { type: 'error' });
+    } finally {
+      setStatusBusy(false);
+    }
+  };
 
   // ── deal snapshot (per-figure provenance dots) ─────────────────────────
   interface Snap {
@@ -1824,16 +1854,20 @@ export default function ICMemoTab({ project }: { project: Project }) {
           <div style={{ ...card(), border: `1px solid ${icReady ? (openCritical > 0 ? 'oklch(85% 0.07 75)' : 'oklch(80% 0.08 155)') : '#eae9e4'}` }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #f2f1ec', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13.5, fontWeight: 700, color: palette.ink }}>
-                {icReady
-                  ? openCritical > 0
-                    ? `✓ IC Ready · ${openCritical} acknowledged critical item${openCritical === 1 ? '' : 's'}`
-                    : '✓ This deal is IC Ready'
-                  : 'Ready for Investment Committee?'}
+                {icDecided
+                  ? `Committee decision: ${dealStatus}`
+                  : icReady
+                    ? openCritical > 0
+                      ? `✓ IC Ready · ${openCritical} critical item${openCritical === 1 ? '' : 's'} unresolved`
+                      : '✓ This deal is IC Ready'
+                    : 'Ready for Investment Committee?'}
               </span>
               <span style={{ fontSize: 11, color: palette.textMuted }}>
-                {icReady
-                  ? `Marked IC Ready · Base Case${openCritical > 0 ? ' · unresolved items acknowledged, not resolved' : ''}`
-                  : `${blockers} item${blockers === 1 ? '' : 's'} outstanding`}
+                {icDecided
+                  ? 'Recorded on the deal status · change it from the status menu in the deal header'
+                  : icReady
+                    ? `Marked IC Ready · Base Case${openCritical > 0 ? ' · unresolved items acknowledged, not resolved' : ''}`
+                    : `${blockers} item${blockers === 1 ? '' : 's'} outstanding`}
               </span>
             </div>
             <div style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr auto', gap: 24, alignItems: 'center' }}>
@@ -1846,7 +1880,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 ))}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9, alignItems: 'flex-end' }}>
-                {!icReady && openCritical > 0 && (
+                {!icReady && !icDecided && openCritical > 0 && (
                   <div
                     role="checkbox"
                     aria-checked={ack}
@@ -1860,20 +1894,23 @@ export default function ICMemoTab({ project }: { project: Project }) {
                     Acknowledge the unresolved critical items and proceed to committee
                   </div>
                 )}
+                {!icDecided && (
                 <button
                   type="button"
-                  disabled={!icReady && !canMark}
-                  onClick={() => { if (icReady || canMark) setIcReady((r) => !r); }}
+                  disabled={statusBusy || (!icReady && !canMark)}
+                  title={icReady ? 'Sets the deal status back to In Progress' : 'Sets the deal status to IC Ready'}
+                  onClick={() => void toggleIcReady()}
                   style={{
                     fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, padding: '9px 18px', borderRadius: 6, border: 'none',
                     background: icReady ? '#fff' : canMark ? NAVY : '#e6e5e0',
                     color: icReady ? palette.ink : canMark ? '#fff' : '#a8a7a2',
-                    cursor: icReady || canMark ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
+                    cursor: statusBusy ? 'wait' : icReady || canMark ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
                     boxShadow: icReady ? 'inset 0 0 0 1px #d8d7d2' : undefined,
                   }}
                 >
                   {icReady ? 'Undo IC Ready' : 'Mark as IC Ready'}
                 </button>
+                )}
               </div>
             </div>
           </div>

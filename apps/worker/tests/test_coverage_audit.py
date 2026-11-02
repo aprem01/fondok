@@ -71,7 +71,7 @@ async def _seed_deal(deal_id: UUID, *, tenant_id: str = _TENANT_A) -> None:
                 INSERT INTO deals (
                     id, tenant_id, name, status, created_at, updated_at
                 ) VALUES (
-                    :id, :tenant, :name, 'Onboarding', :ts, :ts
+                    :id, :tenant, :name, 'In Progress', :ts, :ts
                 )
                 """
             ),

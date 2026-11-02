@@ -15,18 +15,23 @@ export function meetingTargetSub(dealCount: number, withTarget: number, met: num
   return noTarget > 0 ? `${head} · ${noTarget} ha${noTarget === 1 ? 's' : 've'} no target set` : head;
 }
 
+/** Wave 5 — the statuses the team sets, counted by name (lifecycle order). */
+const TEAM_SET_STATUSES = ['Ready for Review', 'IC Ready', 'IC Approved', 'IC Not Approved'] as const;
+
 /**
  * Pipeline health from what each deal has actually done — documents, a model
- * run, an IC-Ready status — rather than the worker's onboarding state, which
- * labelled every fully-modelled deal "Onboarding".
+ * run — and the review / committee status the team set, rather than the
+ * worker's onboarding state, which labelled every fully-modelled deal
+ * "Onboarding". Statuses are matched exactly (the worker stores only the
+ * seven values).
  */
 export function pipelineHealth(deals: PipelineDealRow[]): Array<{ label: string; n: number }> {
   let noDocs = 0;
   let notModelled = 0;
   let modelled = 0;
-  let icReady = 0;
+  const byStatus = new Map<string, number>(TEAM_SET_STATUSES.map((s) => [s, 0]));
   for (const d of deals) {
-    if ((d.status ?? '').toLowerCase() === 'ic ready') { icReady += 1; continue; }
+    if (byStatus.has(d.status)) { byStatus.set(d.status, (byStatus.get(d.status) ?? 0) + 1); continue; }
     if ((d.document_count ?? 0) === 0) { noDocs += 1; continue; }
     if (d.levered_irr == null && !d.last_engine_run_at) { notModelled += 1; continue; }
     modelled += 1;
@@ -35,6 +40,6 @@ export function pipelineHealth(deals: PipelineDealRow[]): Array<{ label: string;
     { label: 'Modelled', n: modelled },
     { label: 'Documents in, not yet modelled', n: notModelled },
     { label: 'No documents yet', n: noDocs },
-    { label: 'IC Ready', n: icReady },
+    ...TEAM_SET_STATUSES.map((s) => ({ label: s as string, n: byStatus.get(s) ?? 0 })),
   ].filter((r) => r.n > 0);
 }

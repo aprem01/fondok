@@ -765,7 +765,7 @@ export default function NewProjectPage() {
           <div className="text-[12.5px] text-ink-700">
             You have {tenantDraftCount} unfinished {tenantDraftCount === 1 ? 'draft' : 'drafts'}
             <span className="text-ink-500"> · </span>
-            <Link href="/projects?filter=Drafts" className="font-medium text-brand-700 hover:text-brand-500">
+            <Link href="/projects?filter=Draft" className="font-medium text-brand-700 hover:text-brand-500">
               See them on Projects
             </Link>
           </div>

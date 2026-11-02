@@ -62,7 +62,7 @@ const worker = vi.hoisted(() => {
       if (!row) throw Object.assign(new Error(`GET /deals/${id} → 404`), { name: 'WorkerError', status: 404, body: '' });
       return row;
     }),
-    activate: vi.fn(async (id: string) => ({ id, name: 'Server Draft', lifecycle: 'active', status: 'In Review' })),
+    activate: vi.fn(async (id: string) => ({ id, name: 'Server Draft', lifecycle: 'active', status: 'In Progress' })),
     discardDraft: vi.fn(async () => undefined),
     pipeline: vi.fn(async () => ({ deals: [], summary: state.drafts ? { deal_count: 0, draft_count: 0 } : { deal_count: 0 } })),
     upload: vi.fn(async (_dealId: string, _files: unknown[]): Promise<unknown[]> => []),
@@ -528,7 +528,7 @@ describe('FON-79 — resume', () => {
     ] as never);
     render(<NewProjectPage />);
     await waitFor(() => expect(screen.getByTestId('tenant-drafts-chip')).toHaveTextContent('You have 2 unfinished drafts'));
-    expect(screen.getByRole('link', { name: 'See them on Projects' })).toHaveAttribute('href', '/projects?filter=Drafts');
+    expect(screen.getByRole('link', { name: 'See them on Projects' })).toHaveAttribute('href', '/projects?filter=Draft');
   });
 });
 

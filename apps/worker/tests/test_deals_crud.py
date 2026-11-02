@@ -111,9 +111,9 @@ async def test_create_deal_persists() -> None:
         deal_id = created["id"]
         UUID(deal_id)
         assert created["name"] == "Persisted Hotel"
-        # FON-79 — a direct create is an underwriting under review; "Draft"
-        # is reserved for lifecycle drafts (tests/test_deals_drafts.py).
-        assert created["status"] == "In Review"
+        # Wave 5 — a direct create is an underwriting In Progress; "Draft"
+        # is reserved for lifecycle drafts (tests/test_deal_status.py).
+        assert created["status"] == "In Progress"
         assert created["lifecycle"] == "active"
         assert created["ai_confidence"] is None  # A11 — NULL until extraction scores it
 

@@ -76,7 +76,7 @@ async def _insert_deal(
                     id, tenant_id, name, status, ai_confidence, keys,
                     purchase_price, field_overrides, created_at, updated_at
                 ) VALUES (
-                    :id, :tenant, 'FON-109 Hotel', 'Underwriting', 0.0, 132,
+                    :id, :tenant, 'FON-109 Hotel', 'In Progress', 0.0, 132,
                     36400000, :fo, :ts, :ts
                 )
                 """
