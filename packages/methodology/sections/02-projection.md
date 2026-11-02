@@ -46,6 +46,11 @@ precedence for each input is below.
 
 :::
 
+**F&B revenue grows with prices, not only with occupancy.** F&B revenue is F&B dollars per occupied
+room × occupied rooms. The Year-1 dollars per occupied room come from the T-12 (F&B revenue ÷
+occupied rooms) or the default, and inflate each year at the deal's ADR growth, so F&B keeps pace
+with room rates. A renovation lowers occupied rooms, never the F&B price.
+
 :::
 
 ::: card
@@ -338,6 +343,13 @@ Growth defaults when no document and no override sets them: occupancy growth 0.8
 growth 4.0%, RevPAR growth 4.5%, expense growth 3.5%, F&B revenue $88.00 per occupied room, other
 revenue 6.5% of rooms revenue. Each is badged Seed until replaced.
 
+<!-- source: apps/worker/app/engines/revenue.py (fb_price_index) -->
+F&B revenue (year y) = occupied rooms (y) × F&B $ per occupied room × Π(1 + ADR growth into each
+year 2..y). The ADR growth is the scalar ADR growth, or the per-year ADR growth list where one is
+set (a year with no figure holds flat). Year 1 is the stated $ per occupied room; displacement
+moves occupied rooms only. Other revenue is a share of rooms revenue, so it already moves with
+ADR.
+
 :::
 
 ::: card
@@ -542,6 +554,13 @@ chain by metric:
    Surfaced as a Seed badge.
 
 :::
+
+**F&B price inflation.** `fb_revenue = occupied_rooms × fb_revenue_per_occupied_room ×
+fb_price_index`, where `fb_price_index` compounds the deal's ADR growth path from Year 1 (the scalar
+`adr_growth`, or `adr_growth_by_year` with `None` held flat) and is 1 in Year 1. The trace on
+`revenue.years[].fb_revenue` carries the index. Before 2026-11 the F&B $ per occupied room was held
+flat for the hold, so F&B revenue grew only with occupancy (about 0.8% a year on the Kimpton
+fixture against 4% ADR growth). Renovation displacement moves occupied rooms, never the index.
 
 :::
 

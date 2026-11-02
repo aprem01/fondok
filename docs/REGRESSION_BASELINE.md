@@ -168,3 +168,34 @@ statement rows built from them. Non-numeric leaves: `expense.line_methods`
 for the three departmental lines now read `pct_revenue` at the ratio (were
 `growth` at 3.5%), and `expense.provenance` gains a trace per departmental
 line for Years 2–5.
+
+### Fix 1b: F&B $ per occupied room inflates at the ADR growth (Sam finding 2b)
+
+Why: F&B revenue = occupied rooms × a $88.00-per-occupied-room figure held
+flat for the hold, so F&B revenue grew only with occupancy (+0.8%/yr) against
+4% ADR growth. The $ per occupied room now compounds at the deal's ADR growth
+path from Year 1 (`fb_price_index`). Year 1 does not move. Through 1a, the
+departmental F&B expense follows the higher F&B revenue at its 75% ratio.
+Cumulative values (1a + 1b) against the 2026-10-16 baseline:
+
+| Headline field | Before | After |
+| --- | --- | --- |
+| Total revenue Y2 / Y3 / Y4 / Y5 | 19,037,293.68 / 19,825,869.43 / 20,651,498.71 / 21,515,963.55 | 19,167,557.84 / 20,093,734.24 / 21,064,663.48 / 22,082,508.02 |
+| Dept. F&B Y2 / Y3 / Y4 / Y5 | 2,507,875.96 / 2,595,651.62 / 2,686,499.42 / 2,780,526.90 | 2,540,151.23 / 2,662,891.34 / 2,791,562.25 / 2,926,450.54 |
+| Management fee Y2 / Y5 | 571,118.81 / 645,478.91 | 575,026.74 / 662,475.24 |
+| FF&E reserve Y2 / Y5 | 761,491.75 / 860,638.54 | 766,702.31 / 883,300.32 |
+| Cash NOI Y2 / Y3 / Y4 / Y5 | 4,087,648.12 / 4,344,427.35 / 4,618,985.49 / 4,912,395.99 | 4,113,917.94 / 4,395,884.85 / 4,694,387.79 / 5,010,327.67 |
+| NOI before reserve Y5 | 5,773,034.53 | 5,893,627.99 |
+| Stabilized revenue / Cash NOI | 19,825,869.43 / 4,344,427.35 | 20,093,734.24 / 4,395,884.85 |
+| Levered / unlevered IRR | 30.5078% / 19.6698% | 31.2852% / 20.1489% |
+| Equity multiple | 3.1731x | 3.2590x |
+| Exit value / exit NOI | 73,335,054.46 / 5,133,453.81 | 74,797,034.51 / 5,235,792.42 |
+| Net sale proceeds | 49,645,085.87 | 51,077,826.32 |
+| LP / GP IRR | 27.6159% / 41.4424% | 28.3142% / 42.4455% |
+| GP promote | 3,504,227.86 | 3,675,179.31 |
+
+Cash NOI Y2–Y5 moves +26.3K / +51.5K / +75.4K / +97.9K, matching the triage
+estimate (+26K / +51K / +75K / +98K). Also moves: revenue `years[1..4]`
+F&B and total revenue, every departmental and fee line Y2–Y5, GOP, both NOI
+bases, DSCR Y2–Y5 / stabilized / average, stabilized margin, and the
+partnership and cash-flow figures built on them.

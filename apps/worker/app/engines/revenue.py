@@ -1245,7 +1245,13 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
 
             revpar = rooms_revenue / rooms_available if rooms_available else 0.0
 
-            fb_revenue = occupied * payload.fb_revenue_per_occupied_room
+            # Sam finding 2b (2026-11) — the F&B $ per occupied room is a
+            # price, so it inflates at the deal's ADR growth (the scalar, or
+            # the per-year list; a year with no growth figure holds flat),
+            # compounded from Year 1. Displacement moves occupied rooms only.
+            fb_price_index = _compound(1.0, [g for _, g in _steps(adr_growth, 1, y)])
+            fb_por_y = payload.fb_revenue_per_occupied_room * fb_price_index
+            fb_revenue = occupied * fb_por_y
             other_revenue = rooms_revenue * payload.other_revenue_pct_of_rooms
             total_revenue = rooms_revenue + fb_revenue + resort_fees + other_revenue
 
@@ -1469,7 +1475,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             # never emitted, and the walk dead-ended on every year.
             prov[f"years[{idx}].fb_revenue"] = ValueTrace(
                 value=fb_revenue,
-                formula="fb_revenue = occupied_rooms × fb_revenue_per_occupied_room",
+                formula=(
+                    "fb_revenue = occupied_rooms × fb_revenue_per_occupied_room "
+                    "× fb_price_index (Π (1 + adr_growth) since Year 1)"
+                ),
                 inputs=[
                     ValueInput(
                         name="occupied_rooms",
@@ -1481,7 +1490,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         value=payload.fb_revenue_per_occupied_room,
                         assumption_key="fb_revenue_per_occupied_room",
                     ),
+                    ValueInput(
+                        name="fb_price_index",
+                        value=fb_price_index,
+                        assumption_key="adr_growth",
+                    ),
                 ],
+                note=(
+                    "The F&B $ per occupied room is the Year-1 figure inflated at "
+                    "the deal's ADR growth"
+                    + (
+                        f" ({y - 1} year(s), index {fb_price_index:.6g})."
+                        if y > 1
+                        else " (Year 1: the stated figure)."
+                    )
+                ),
             )
             prov[f"years[{idx}].other_revenue"] = ValueTrace(
                 value=other_revenue,

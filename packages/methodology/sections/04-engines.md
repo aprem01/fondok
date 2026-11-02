@@ -15,8 +15,8 @@ reads one consistent snapshot.
 ::: deflist
 - **Revenue** Rooms × occupancy × ADR, plus F&B, other operated departments, resort fees and
   miscellaneous income.
-- **F&B** A per-occupied-room F&B model with a food and beverage split; resort fees are a separate
-  line.
+- **F&B** A per-occupied-room F&B model with a food and beverage split, the dollars per occupied room
+  inflating at the deal's ADR growth; resort fees are a separate line.
 - **Expense** USALI departmental and undistributed lines, management fee, FF&E reserve and fixed
   charges, to gross operating profit, NOI and net cash flow.
 - **Capital** Purchase price, closing costs, renovation budget and working capital, plus the senior
@@ -208,8 +208,8 @@ web app reads them via /deals/\{id\}/engine_outputs.
 ::: card
 ::: deflist
 - **Revenue** Rooms × occupancy × ADR projection + F&B + Other Operated + Resort Fees + Misc.
-- **F&B** Per-occupied-room F&B model with food/beverage split; resort fees handled as a separate
-  line.
+- **F&B** Per-occupied-room F&B model with food/beverage split, $ per occupied room inflated at the
+  ADR growth path (`fb_price_index`); resort fees handled as a separate line.
 - **Expense** USALI 11th departmental + undistributed + management fee + FF&E reserve + fixed charges
   → GOP, NOI (institutional), Net Cash Flow.
 - **Capital** Purchase price + closing costs + renovation budget + working capital → property uses;
