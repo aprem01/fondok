@@ -86,14 +86,11 @@ value keeps the line's own Year-1 ratio, so no benchmark figure is introduced. A
 touched runs exactly as before. Every method change needs a justification note, and the Excel export
 lists each line's method and value on its Assumptions sheet.
 
-**Departmental expense rides its own department's revenue.** Unless you pick another method, Rooms,
-F&B and Other Operated expense are each a cost ratio to that department's revenue, fixed in Year 1
-and applied in every year, Year 1 included. The ratio is the T-12 departmental expense divided by
-the T-12 revenue of the same department when the statement gives both. Otherwise it is your ratio
-override or applied benchmark, else the platform ratio for the hotel type. When the T-12 gives the
-expense but not the department's revenue, Year 1 is the T-12 dollars and later years keep their
-ratio to Year-1 revenue. A year whose revenue a renovation displaces carries displaced departmental
-expense too. Undistributed lines and fixed charges grow at the expense growth.
+**Departmental expense rides its own department's revenue.** By default Rooms, F&B and Other
+Operated expense are each a cost ratio to that department's revenue, fixed in Year 1 and applied
+every year: the T-12 expense ÷ the T-12 department revenue, else your override, applied benchmark or
+the hotel-type ratio. A renovation-displaced year's departmental expense is displaced with its
+revenue. Undistributed lines and fixed charges grow at the expense growth.
 
 **Operating model.** The new-deal wizard records whether the hotel is owner-operated, third-party
 managed or brand-managed. It is shown on the Overview and beside the management fee. It moves no
@@ -345,11 +342,8 @@ growth 4.0%, RevPAR growth 4.5%, expense growth 3.5%, F&B revenue $88.00 per occ
 revenue 6.5% of rooms revenue. Each is badged Seed until replaced.
 
 <!-- source: apps/worker/app/engines/revenue.py (fb_price_index) -->
-F&B revenue (year y) = occupied rooms (y) × F&B $ per occupied room × Π(1 + ADR growth into each
-year 2..y). The ADR growth is the scalar ADR growth, or the per-year ADR growth list where one is
-set (a year with no figure holds flat). Year 1 is the stated $ per occupied room; displacement
-moves occupied rooms only. Other revenue is a share of rooms revenue, so it already moves with
-ADR.
+F&B revenue = occupied rooms × F&B $ per occupied room × Π(1 + ADR growth) since Year 1 (scalar or
+per-year list; a missing year holds flat).
 
 :::
 
@@ -372,16 +366,11 @@ revenue: departmental lines against their own department's revenue, undistribute
 total revenue; a method with no value keeps the line's own Year-1 ratio. Per occupied room and per
 available room need the key count; without it the line keeps its default and says why.
 
-<!-- source: apps/worker/app/engines/expense.py (dept_ratio, _resolve_dept_ratio, t12_dept_revenue), apps/worker/app/services/engine_runner.py (t12_dept_revenue) -->
-The default for a departmental line is % of its own department's revenue, every year. Ratio = T-12
-departmental expense ÷ T-12 revenue of that department when both are stated (the T-12 rooms
-revenue; the T-12 F&B revenue; the T-12 other operated plus miscellaneous revenue, less resort
-fees stated on their own line). Without a T-12 expense the ratio is the override / applied
-benchmark / hotel-type ratio below. A T-12 expense with no T-12 revenue for the department makes
-Year 1 the T-12 dollars and the ratio those dollars ÷ projected Year-1 department revenue. Each
-year's departmental expense = ratio × that year's projected (displaced, where a renovation
-displaces it) department revenue. Undistributed lines and fixed charges grow at the expense
-growth (undistributed at the other-expense inflation when set).
+<!-- source: apps/worker/app/engines/expense.py (_resolve_dept_ratio), apps/worker/app/services/engine_runner.py (t12_dept_revenue) -->
+Departmental default: ratio × that year's (displaced) department revenue, every year. Ratio = T-12
+expense ÷ T-12 department revenue (other = other + misc, less separately stated resort fees), else
+the ratio below; a T-12 expense with no T-12 department revenue keeps its Year-1 dollars and their
+ratio to projected Year-1 revenue.
 
 <!-- source: apps/worker/app/services/engine_runner.py (ratio precedence: analyst_override > t12_actual > portfolio_pnl > seed), apps/worker/app/engines/expense.py (hotel-type ratio table) -->
 A line the statement does not carry runs on a ratio resolved in this order: analyst override, the
@@ -408,9 +397,8 @@ hotel-type default 5.50% of total revenue (select)”).
 #### Management fee, incentive fee and the waterfall
 
 <!-- source: apps/worker/app/engines/expense.py (mgmt_fee_pct, ffe_reserve_pct, incentive_mgmt_fee_pct_of_gop), evals/golden-set/usali-rules.csv (MGMT_FEE_RANGE, INCENTIVE_MGMT_FEE_RANGE) -->
-Base management fee: a share of each year's total revenue, Year 1 included; platform default 3.0%
-of total revenue. The T-12 management-fee dollars never set Year 1; an analyst's Year-1 fee override
-(different from the resolved figure, with its note) does.
+Base management fee: a share of each year's total revenue, Year 1 included (never the T-12 dollars;
+an analyst's Year-1 fee override does win); platform default 3.0% of total revenue.
 FF&E reserve: platform default 4.0% of total revenue. Both accept 0–10%. The USALI check warns
 when the base fee is outside 2–6% of total revenue; it is a warning, not a correction, and applies
 to every operating model. Incentive fee: optional, 0–50% of gross operating profit after the base

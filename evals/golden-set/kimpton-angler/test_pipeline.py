@@ -181,6 +181,8 @@ def _run_engines(om: dict, t12: dict, str_report: dict) -> dict:
     # Expense — overrides chosen so total opex matches golden $9,320k Y1
     # (61.8% of total revenue), reflecting the post-PIP efficient stabilization
     # baked into the proforma table.
+    from app.engines.expense import ProjectionMethod
+
     exp_in = ExpenseEngineInput(
         deal_id=DEAL_UUID,
         revenue=fb_out,
@@ -189,6 +191,15 @@ def _run_engines(om: dict, t12: dict, str_report: dict) -> dict:
         ffe_reserve_pct=0.04,
         expense_growth=0.0362,  # opex CAGR (golden Y1->Y5: 9320 -> 10745)
         grow_opex_independently=True,
+        # The reference proforma grows ALL opex as one block at its 3.62% CAGR.
+        # Since 2026-11 the engine's departmental default is the Year-1 cost
+        # ratio × department revenue (Sam finding 2), so the case states the
+        # reference model's convention explicitly: the departmental lines run
+        # the ``growth`` method at the case's expense growth.
+        projection_methods={
+            line: ProjectionMethod(method="growth")
+            for line in ("rooms_dept_expense", "fb_dept_expense", "other_dept_expense")
+        },
         overrides={
             "rooms_dept_pct": 0.25,
             "fb_dept_pct": 0.70,
