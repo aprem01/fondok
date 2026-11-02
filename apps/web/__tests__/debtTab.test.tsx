@@ -277,19 +277,19 @@ describe('DebtTab — fees (new BE fields)', () => {
   });
 
   it('states honestly where the exit fee IS and is not consumed', () => {
-    // FON-63 — the debt engine DOES add the exit fee to the final month's
-    // payment on the tranche schedule; what ignores it is Sources & Uses /
-    // Cash Flow / Returns. The old copy claimed the opposite.
+    // The exit fee is paid when the loan is repaid: deducted from the sale
+    // proceeds, or paid at the refinance that retires the loan.
     render(<DebtTab />);
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
     expect(screen.getByText('Exit Fee')).toBeInTheDocument();
     expect(screen.getByText('0.50% · $115,000')).toBeInTheDocument();
+    // Exit fees are now deducted when the loan is repaid (sale or refinance).
     expect(
-      screen.getByText(/final month.s payment on the tranche schedule/i),
+      screen.getByText(/deducted from the sale proceeds/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/not carried into Sources & Uses, Cash Flow or Returns/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/not carried into Sources & Uses, Cash Flow or Returns/i),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/not modeled in the schedule/i),
     ).not.toBeInTheDocument();
@@ -1195,14 +1195,15 @@ describe('DebtTab — loan matures before the sale', () => {
   });
 });
 
-describe('DebtTab — refinance shortfall not modelled', () => {
-  const SENTENCE =
-    'The Year 3 refinance raises $30,000,000 against a $38,566,897 balance; the $8,566,897 shortfall (plus fees) that equity would fund is not modelled.';
+describe('DebtTab — refinance disclosures', () => {
+  const AT_SALE = 'The Year 5 refinance is at or after the Year 5 sale and is not modelled.';
+  const NOTE =
+    'The Year 3 refinance needs $8,566,897 of equity to retire the $38,566,897 balance (new loan $30,000,000, refinance costs $0); charged to equity in Year 3.';
 
   it('renders the engine refi_warning verbatim with the maturity warning', () => {
-    currentOutputs = makeOutputs({ refi_warning: SENTENCE, maturity_warning: 'Matures early.' });
+    currentOutputs = makeOutputs({ refi_warning: AT_SALE, maturity_warning: 'Matures early.' });
     render(<DebtTab />);
-    expect(screen.getByTestId('refi-warning-strip')).toHaveTextContent(SENTENCE);
+    expect(screen.getByTestId('refi-warning-strip')).toHaveTextContent(AT_SALE);
     expect(screen.getByTestId('maturity-warning-strip')).toHaveTextContent('Matures early.');
   });
 
@@ -1210,5 +1211,24 @@ describe('DebtTab — refinance shortfall not modelled', () => {
     currentOutputs = makeOutputs({ refi_warning: null });
     render(<DebtTab />);
     expect(screen.queryByTestId('refi-warning-strip')).toBeNull();
+    expect(screen.queryByTestId('refi-equity-note')).toBeNull();
+  });
+
+  it('states a charged cash-in refinance as a fact, not a warning', () => {
+    currentOutputs = makeOutputs({ refi_warning: null, refi_equity_note: NOTE });
+    render(<DebtTab />);
+    const note = screen.getByTestId('refi-equity-note');
+    expect(note).toHaveTextContent(NOTE);
+    expect(note).toHaveAttribute('role', 'note');
+    expect(screen.queryByTestId('refi-warning-strip')).toBeNull();
+  });
+
+  it('shows the equity contribution, not a cash-out, on the Refinance impact card', () => {
+    currentOutputs = makeOutputs({ refi_cash_out: 0, refi_equity_contribution: 8_566_897 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Refinance'));
+    expect(screen.getByText('Equity Contribution')).toBeInTheDocument();
+    expect(screen.getByText('$8,566,897')).toBeInTheDocument();
+    expect(screen.queryByText('Cash-Out to Equity')).toBeNull();
   });
 });

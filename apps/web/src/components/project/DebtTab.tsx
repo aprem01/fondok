@@ -491,9 +491,13 @@ export default function DebtTab() {
   // The loan matures before the sale and no refinance replaces it — the
   // engine's one sentence, rendered verbatim (absent on older runs).
   const wMaturityWarning = getEngineField<string | null>(outputs, 'debt', 'maturity_warning');
-  // The refinance raises less than the balance it retires; the paydown is
-  // not modelled — the engine's one sentence, rendered verbatim.
+  // A refinance the model does not run (set in or after the sale year) —
+  // the engine's one sentence, rendered verbatim.
   const wRefiWarning = getEngineField<string | null>(outputs, 'debt', 'refi_warning');
+  // A refinance that needs equity IS charged — stated as a fact (not a
+  // warning): the engine's one sentence, rendered verbatim.
+  const wRefiEquityNote = getEngineField<string | null>(outputs, 'debt', 'refi_equity_note');
+  const wRefiEquityContribution = getEngineField<number>(outputs, 'debt', 'refi_equity_contribution');
   const debtWarnings: { testId: string; text: string }[] = [
     { testId: 'maturity-warning-strip', text: wMaturityWarning },
     { testId: 'refi-warning-strip', text: wRefiWarning },
@@ -1022,7 +1026,7 @@ export default function DebtTab() {
     ...loanTerms,
     { id: 'exit', label: 'Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
       value: has(wExitFeePct) ? `${feePct(wExitFeePct)}${has(wExitFeeUsd) ? ` · ${fmtCurrency(wExitFeeUsd)}` : ''}` : '—',
-      note: 'Added to the final month\u2019s payment on the tranche schedule — not carried into Sources & Uses, Cash Flow or Returns in this release' },
+      note: 'Paid when the loan is repaid — deducted from the sale proceeds for every tranche outstanding at the sale, or paid at the refinance for the loan it retires' },
     // Completion Guarantee — analyst-entered qualitative status (feeds the
     // Completion Guarantee covenant row in the Covenants card).
     { id: 'completionGuarantee', label: 'Completion Guarantee', kind: 'input',
@@ -1232,8 +1236,8 @@ export default function DebtTab() {
         {/* FON-63 — negative-NOI warning (a warning, not the failure banner). */}
         <NoiWarningStrip outputs={outputs} />
 
-        {/* Loan matures before the sale / refinance shortfall not modelled —
-            the engine's sentences, same warning strip style as the NOI one. */}
+        {/* Loan matures before the sale / refinance not modelled — the
+            engine's sentences, same warning strip style as the NOI one. */}
         {debtWarnings.map((w) => (
           <div
             key={w.testId}
@@ -1245,6 +1249,19 @@ export default function DebtTab() {
             <span>{w.text}</span>
           </div>
         ))}
+
+        {/* A refinance that needs equity is charged to equity — a fact the
+            model runs on, so neutral styling, not a warning. */}
+        {typeof wRefiEquityNote === 'string' && wRefiEquityNote.trim() && (
+          <div
+            role="note"
+            data-testid="refi-equity-note"
+            className="mb-3 rounded-md border px-3 py-2 text-[12px]"
+            style={{ borderColor: palette.border, color: palette.ink, background: '#fff' }}
+          >
+            {wRefiEquityNote.trim()}
+          </div>
+        )}
 
         {/* Manual-inputs banner (canonical) — honest about the current release:
             loan terms are entered manually, not extracted from financing docs. */}
@@ -1529,6 +1546,7 @@ export default function DebtTab() {
               refiYear={wRefiYear}
               refiYearOverride={refiYearOverride}
               refiCashOut={wRefiCashOut}
+              refiEquityContribution={wRefiEquityContribution}
               balanceAtExit={wBalanceAtExit}
               leveredIrr={wLeveredIrr}
               refiValue={wRefiValue}
@@ -2054,7 +2072,7 @@ const REFI_KEYS = {
 } as const;
 
 function RefinanceView({
-  active, liveMode, refiYear, refiYearOverride, refiCashOut, balanceAtExit, leveredIrr,
+  active, liveMode, refiYear, refiYearOverride, refiCashOut, refiEquityContribution, balanceAtExit, leveredIrr,
   refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts,
   refiFeePct, refiDebtYieldMin, refiDscrMin, refiSizingBasis, refiRateBasis,
   overrides, onSaveOverride, toast,
@@ -2064,6 +2082,7 @@ function RefinanceView({
   refiYear?: number;
   refiYearOverride: number;
   refiCashOut?: number;
+  refiEquityContribution?: number;
   balanceAtExit?: number;
   leveredIrr?: number;
   refiValue?: number;
@@ -2257,7 +2276,11 @@ function RefinanceView({
   ];
 
   const impact = [
-    { label: 'Cash-Out to Equity', value: money(refiCashOut), color: prov.green, sub: 'Net proceeds returned to equity', avail: has(refiCashOut) },
+    // A refinance short of the balance + costs calls equity instead of
+    // returning it — one card, whichever sign the engine computed.
+    has(refiEquityContribution) && refiEquityContribution > 0
+      ? { label: 'Equity Contribution', value: money(refiEquityContribution), color: prov.black, sub: 'Charged to equity at the refinance', avail: true }
+      : { label: 'Cash-Out to Equity', value: money(refiCashOut), color: prov.green, sub: 'Net proceeds returned to equity', avail: has(refiCashOut) },
     { label: 'Balance at Exit', value: money(balanceAtExit), color: prov.black, sub: 'Loan balance carried to sale', avail: has(balanceAtExit) },
     { label: 'Equity Returned', value: '—', color: prov.muted, sub: 'Awaiting the equity basis', avail: false },
     { label: 'Levered IRR', value: pctv(leveredIrr, 1), color: has(leveredIrr) ? prov.green : prov.muted, sub: 'Returns output', avail: has(leveredIrr) },

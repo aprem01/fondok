@@ -3945,9 +3945,16 @@ export interface DebtNoiShortfallExtras {
   /** The loan matures before the sale (term < hold) and no refinance
    *  replaces it; the engine's one sentence, rendered verbatim on Debt. */
   maturity_warning?: string | null;
-  /** The refinance raises less than the senior balance it retires (+ fee);
-   *  the paydown equity would fund is not modelled. Rendered verbatim. */
+  /** A refinance the model does not run (set in or after the sale year);
+   *  rendered verbatim as a warning. */
   refi_warning?: string | null;
+  /** A refinance short of the balance retired + costs: the shortfall is
+   *  charged to equity at the refinance; the engine's factual sentence. */
+  refi_equity_note?: string | null;
+  /** The equity that refinance needs (0 for a cash-out refinance). */
+  refi_equity_contribution?: number;
+  /** The retired senior's exit fee, paid at the refinance. */
+  refi_exit_fee_usd?: number | null;
 }
 
 /** FON-44 — which NOI the reversion capitalizes. `sale_year` (FON-118) is
@@ -3980,6 +3987,8 @@ export interface ReturnsExitScheduleRow {
   selling_costs: number | null;
   transfer_tax: number | null;
   loan_payoff: number | null;
+  /** Lender exit fees this sale paid (inside net_proceeds). Absent on older runs. */
+  loan_exit_fee?: number | null;
   refi_included: boolean;
   net_proceeds: number | null;
   levered_irr: number | null;

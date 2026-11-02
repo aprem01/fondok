@@ -59,10 +59,20 @@ const irrCell = (field: 'levered_irr' | 'unlevered_irr') => (row: ReturnsExitSch
   return { text: fmtPct(v, 2) };
 };
 
+// The payoff's caption: after a refinance, and any lender exit fee the sale
+// paid on top of the balance (already inside net proceeds).
+const payoffSub = (row: ReturnsExitScheduleRow): string | undefined => {
+  const parts: string[] = [];
+  if (row.refi_included) parts.push('after refinance');
+  const fee = row.loan_exit_fee;
+  if (typeof fee === 'number' && Number.isFinite(fee) && fee > 0) parts.push(`+ ${mm(fee)} exit fee`);
+  return parts.length ? parts.join(' · ') : undefined;
+};
+
 const moneyCell = (field: 'gross_sale_price' | 'loan_payoff' | 'net_proceeds') => (row: ReturnsExitScheduleRow) => {
   const v = row[field];
   return typeof v === 'number' && Number.isFinite(v)
-    ? { text: mm(v), sub: field === 'loan_payoff' && row.refi_included ? 'after refinance' : undefined }
+    ? { text: mm(v), sub: field === 'loan_payoff' ? payoffSub(row) : undefined }
     : { text: '—', title: `returns.exit_schedule[].${field} is not on this row` };
 };
 
