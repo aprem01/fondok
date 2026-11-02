@@ -308,65 +308,6 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
 
 
 @pytest.mark.asyncio
-async def test_revenue_actuals_median_corroborates_across_full_year_docs() -> None:
-    """Corroboration fix (real deal 7a9928e0): when 2+ FULL-YEAR statements
-    supply the same revenue line but one is mis-extracted, the grounded
-    value must be the MEDIAN of the full-year values — not the first-ranked
-    (blindly frozen) outlier.
-
-    Scenario: an annual T-12 read F&B as $96,528 while a second annual and a
-    TTM read the correct ~$2.7-2.9M. First-wins had frozen the $96,528.
-    """
-    from app.database import get_session_factory
-    from app.services.engine_runner import _load_t12_revenue_actuals
-
-    deal_id = uuid4()
-    await _insert_deal(deal_id, name="Corroboration Deal", keys=300, purchase=90_000_000)
-
-    # Doc A — annual, F&B mis-extracted as $96,528 (the outlier).
-    await _insert_t12_extraction(
-        deal_id,
-        fields=[
-            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
-            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
-            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.0},
-        ],
-    )
-    # Doc B — annual, correct F&B $2,737,410.
-    await _insert_t12_extraction(
-        deal_id,
-        fields=[
-            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
-            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
-            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_737_410.0},
-        ],
-    )
-    # Doc C — TTM, correct F&B $2,914,380.
-    await _insert_t12_extraction(
-        deal_id,
-        fields=[
-            {"field_name": "p_and_l_usali.period_type", "value": "ttm"},
-            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
-            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_914_380.0},
-        ],
-    )
-
-    factory = get_session_factory()
-    async with factory() as session:
-        actuals = await _load_t12_revenue_actuals(
-            session, deal_id=str(deal_id), tenant_id=_TENANT
-        )
-
-    # Median of [96_528, 2_737_410, 2_914_380] == 2_737_410 — the mis-read
-    # outlier can no longer freeze Year-1 F&B.
-    assert actuals["fb_revenue"] == pytest.approx(2_737_410.0)
-    assert actuals["fb_revenue"] != pytest.approx(96_528.0)
-    assert 2_700_000.0 <= actuals["fb_revenue"] <= 2_950_000.0
-    # Rooms corroborates identically across all three → unchanged at $9.5M.
-    assert actuals["rooms_revenue"] == pytest.approx(9_500_000.0)
-
-
-@pytest.mark.asyncio
 async def test_revenue_actuals_single_full_year_doc_unchanged() -> None:
     """Single-source guard: with only ONE full-year doc supplying F&B, the
     loader keeps prior first-wins behavior (no median) — so single-source
@@ -399,11 +340,13 @@ async def test_revenue_actuals_single_full_year_doc_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expense_actuals_median_corroboration_respects_zero_guard() -> None:
-    """Expense corroboration mirrors revenue AND respects the ≤0 drop guard:
-    a zero-valued line never enters the candidate pool, so the median is
-    taken over real positive full-year values only. A single-source line
-    still passes through first-wins.
+async def test_expense_zero_guard_and_same_period_fill() -> None:
+    """The zero-leak guard still applies (a 0.0 line never becomes an
+    actual). A line the period's primary statement does not carry (here the
+    dropped zero) is filled from ANOTHER statement of the SAME period — the
+    next-ranked one, as it reads, never a median of them (before W5 the three
+    statements' insurance lines were medianed per line, a blend no document
+    carries).
     """
     from app.database import get_session_factory
     from app.services.engine_runner import _load_t12_expense_actuals
@@ -412,6 +355,7 @@ async def test_expense_actuals_median_corroboration_respects_zero_guard() -> Non
     await _insert_deal(deal_id, name="Expense Corroboration Deal", keys=250, purchase=60_000_000)
 
     # Doc A — annual, insurance MISSING (extractor emitted 0.0) + utilities.
+    # The most complete statement, so it ranks first for the period.
     await _insert_t12_extraction(
         deal_id,
         fields=[
@@ -428,7 +372,7 @@ async def test_expense_actuals_median_corroboration_respects_zero_guard() -> Non
             {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_160_000.0},
         ],
     )
-    # Doc C — TTM, insurance $1,200,000.
+    # Doc C — TTM, insurance $1,200,000 (newest upload, so it ranks second).
     await _insert_t12_extraction(
         deal_id,
         fields=[
@@ -443,10 +387,10 @@ async def test_expense_actuals_median_corroboration_respects_zero_guard() -> Non
             session, deal_id=str(deal_id), tenant_id=_TENANT
         )
 
-    # The 0.0 was dropped; median of the two real full-year values used.
-    assert actuals["insurance"] == pytest.approx(1_180_000.0)
-    assert actuals["insurance"] != pytest.approx(0.0)
-    # Utilities appears on a single doc — first-wins, unchanged.
+    # The 0.0 is never Year-1 insurance; the next same-period statement's
+    # own line is, unblended.
+    assert actuals["insurance"] == pytest.approx(1_200_000.0)
+    # Utilities comes off the period's primary statement.
     assert actuals["utilities"] == pytest.approx(290_000.0)
 
 
@@ -708,8 +652,13 @@ async def test_load_engine_inputs_exposes_source_fields_and_reasons() -> None:
     assert reasons["adr_growth"]["code"] is ReasonCode.NO_DOCUMENT
     # The T-12 IS on the deal — the F&B anchor just did not resolve.
     assert reasons["fb_revenue_per_occupied_room"]["code"] is ReasonCode.NO_SOURCE
-    # A key the T-12 grounded has no reason at all.
-    assert "starting_occupancy" not in reasons
+    # A key the T-12 grounded carries no SEED reason. It does carry a review
+    # note: this real T-12's only rooms-revenue line is a monthly slice, so
+    # its revenue lines cannot foot to its stated total (W5 round 3).
+    occ = reasons["starting_occupancy"]
+    assert occ["code"] is ReasonCode.NEEDS_REVIEW
+    assert "no full-period rooms revenue line" in occ["detail"]
+    assert occ["detail"].count("does not foot") == 1
 
 
 # ═══════════════════ Phase 2.1 — the run-lineage hook ══════════════════
@@ -1802,3 +1751,901 @@ async def test_analyst_fee_override_beats_the_hma() -> None:
     base = await _base_for(deal_id)
     assert base["mgmt_fee_pct"] == pytest.approx(0.04)
     assert base["__sources__"]["mgmt_fee_pct"] == "analyst_override"
+
+# ═══════ W5 loader — exact alias first, one statement per period, notices ═══════
+#
+# Real deal b67bfdee (read-only probe, 2026-11): the FY2024 Detailed P&L lists
+# ``minor_operated_departments.cost_of_services.rooms_revenue_usd`` ($552.77, a
+# cost-of-services sub-line) BEFORE ``operating_revenue.rooms_revenue``
+# ($9,496,407.22). The tail alias ``rooms_revenue_usd`` let the cost line claim
+# rooms revenue; the corroboration median then averaged it with the FY2024
+# Summary CSV ($8.9M) to $4.45M, other revenue read 31% of rooms and the 30%
+# cap clipped it silently, and F&B per occupied room came out at the mean of
+# the two statements ($50.35, matching neither).
+
+_DETAILED_PNL = "Copy of Angler_s 2024 Full Year Detailed P&L.xlsm"
+_SUMMARY_CSV = "Angler_FY2024_Summary_PL.csv"
+
+
+def _detailed_pnl_fields() -> list[dict[str, object]]:
+    return [
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.832567, "source_page": 3},
+        {"field_name": "ttm_performance.subject.adr_usd", "value": 236.094, "source_page": 3},
+        {
+            "field_name": "p_and_l_usali.minor_operated_departments.cost_of_services.rooms_revenue_usd",
+            "value": 552.774,
+            "source_page": 5,
+        },
+        {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_739_040.71, "source_page": 5},
+        {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 17_806.42, "source_page": 5},
+        {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_228_475.94, "source_page": 5},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_496_407.22, "source_page": 5},
+        {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 13_481_730.29, "source_page": 5},
+        {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 2_100_000.0, "source_page": 6},
+        {"field_name": "p_and_l_usali.undistributed.utilities", "value": 288_000.0, "source_page": 6},
+        {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_160_000.0, "source_page": 6},
+    ]
+
+
+def _summary_csv_fields() -> list[dict[str, object]]:
+    return [
+        {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+        {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 8_900_000.0},
+        {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 1_300_000.0},
+        {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 320_000.0},
+        {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 900_000.0},
+    ]
+
+
+async def _insert_angler_fy2024_pair(deal_id: UUID) -> tuple[UUID, UUID]:
+    """The two FY2024 statements of deal b67bfdee; ``(detailed_doc, summary_doc)``."""
+    base = datetime(2026, 9, 20, 5, 0, tzinfo=UTC)
+    detailed, _ = await _insert_financial_extraction(
+        deal_id,
+        doc_type="PNL",
+        filename=_DETAILED_PNL,
+        fiscal_year=2024,
+        ts=base,
+        fields=_detailed_pnl_fields(),
+    )
+    summary, _ = await _insert_financial_extraction(
+        deal_id,
+        doc_type="PNL",
+        filename=_SUMMARY_CSV,
+        ts=base + timedelta(minutes=1),  # newer upload — completeness still ranks it second
+        fields=_summary_csv_fields(),
+    )
+    return detailed, summary
+
+
+@pytest.mark.asyncio
+async def test_exact_alias_beats_a_cost_section_tail_match() -> None:
+    """An exact full-path alias wins over a tail match anywhere in the row, so
+    the Detailed P&L's rooms revenue is its operating-revenue line."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler Detailed Only", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id,
+        doc_type="PNL",
+        filename=_DETAILED_PNL,
+        fiscal_year=2024,
+        ts=datetime(2026, 9, 20, tzinfo=UTC),
+        fields=_detailed_pnl_fields(),
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        rev, prov = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+    assert rev["rooms_revenue"] == pytest.approx(9_496_407.22)
+    assert prov["rooms_revenue"].resolution.field_name == (
+        "p_and_l_usali.operating_revenue.rooms_revenue"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_tail_match_never_comes_from_the_opposite_section() -> None:
+    """With no exact alias, the tail fallback still applies — but never to a
+    revenue key from a cost / expense section, nor to an expense key from a
+    revenue section."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Opposite Sections", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            # Cost-section lines whose tails are revenue aliases.
+            {"field_name": "p_and_l_usali.minor_operated_departments.cost_of_services.rooms_revenue_usd", "value": 552.774},
+            {"field_name": "p_and_l_usali.departmental_expenses.fb_revenue", "value": 4_100.0},
+            # A revenue-section line whose tail is an expense alias.
+            {"field_name": "p_and_l_usali.operating_revenue.utilities", "value": 12_000.0},
+            # A tail match outside any opposite section still resolves.
+            {"field_name": "summary.other_revenue_usd", "value": 18_986.9},
+            {"field_name": "summary.insurance", "value": 1_429_573.0},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert "rooms_revenue" not in rev
+    assert "fb_revenue" not in rev
+    assert rev["other_revenue"] == pytest.approx(18_986.9)
+    assert "utilities" not in exp
+    assert exp["insurance"] == pytest.approx(1_429_573.0)
+
+
+@pytest.mark.asyncio
+async def test_exact_expense_alias_beats_an_earlier_tail_match() -> None:
+    """The expense loader resolves exact full paths first too."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_expense_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Expense Exact First", keys=132, purchase=36_400_000)
+    await _insert_t12_extraction(
+        deal_id,
+        fields=[
+            {"field_name": "p_and_l_usali.schedules.workers_comp.insurance", "value": 41_000.0},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_573.0},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert exp["insurance"] == pytest.approx(1_429_573.0)
+
+
+@pytest.mark.asyncio
+async def test_two_same_period_statements_never_blend() -> None:
+    """Deal b67bfdee: the Detailed P&L (primary) supplies every Year-1 line;
+    the Summary CSV of the same year is never averaged in, on revenue or
+    expenses, and the provenance names the Detailed P&L's own rows."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        _load_t12_expense_actuals,
+        _load_t12_revenue_actuals,
+    )
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler FY2024", keys=132, purchase=36_400_000)
+    detailed, _summary = await _insert_angler_fy2024_pair(deal_id)
+    factory = get_session_factory()
+    async with factory() as session:
+        rev, rev_prov = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+        exp, exp_prov = await _load_t12_expense_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+    assert rev["rooms_revenue"] == pytest.approx(9_496_407.22)
+    assert rev["fb_revenue"] == pytest.approx(2_739_040.71)
+    assert rev["other_revenue"] == pytest.approx(17_806.42)
+    assert rev["misc_revenue"] == pytest.approx(1_228_475.94)
+    assert exp["insurance"] == pytest.approx(1_160_000.0)
+    for canonical in ("rooms_revenue", "fb_revenue", "other_revenue", "misc_revenue"):
+        assert rev_prov[canonical].document_id == str(detailed), canonical
+        assert rev_prov[canonical].resolution.field_name is not None, canonical
+    assert exp_prov["insurance"].document_id == str(detailed)
+
+
+@pytest.mark.asyncio
+async def test_same_period_conflict_is_a_needs_review_notice_naming_both_documents() -> None:
+    """The Year-1 anchors come off the Detailed P&L (F&B $68.28 per occupied
+    room, other revenue 13.1% of rooms, no clipping) and every key grounded on
+    it carries a NEEDS_REVIEW notice naming both statements, both values and
+    which one the model used."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler FY2024", keys=132, purchase=36_400_000)
+    detailed, _summary = await _insert_angler_fy2024_pair(deal_id)
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+
+    orn = 0.832567 * 132 * 365
+    assert base["fb_revenue_per_occupied_room"] == pytest.approx(2_739_040.71 / orn)
+    assert base["fb_revenue_per_occupied_room"] == pytest.approx(68.28, abs=0.01)
+    assert base["other_revenue_pct_of_rooms"] == pytest.approx(
+        (17_806.42 + 1_228_475.94) / 9_496_407.22
+    )
+    assert base["other_revenue_pct_of_rooms"] == pytest.approx(0.1312, abs=0.0005)
+
+    reasons = base["__reasons__"]
+    src = base["__source_fields__"]
+    for key in ("fb_revenue_per_occupied_room", "other_revenue_pct_of_rooms", "starting_occupancy"):
+        assert src[key]["document_id"] == str(detailed), key
+        assert reasons[key]["code"] is ReasonCode.NEEDS_REVIEW, key
+        detail = reasons[key]["detail"]
+        assert _SUMMARY_CSV in detail and _DETAILED_PNL in detail, detail
+        assert "$9,496,407" in detail and "$8,900,000" in detail, detail
+        assert "$2,739,041" in detail and "$1,300,000" in detail, detail
+        assert f"uses {_DETAILED_PNL}" in detail, detail
+        assert "cap" not in detail.lower(), detail
+    # The other ratio was not clipped, so its provenance carries no cap facts.
+    assert "uncapped_ratio" not in src["other_revenue_pct_of_rooms"]
+
+
+@pytest.mark.asyncio
+async def test_agreeing_same_period_statements_raise_no_notice() -> None:
+    """Two statements of the same period that agree within 5% on every
+    headline line are corroboration, not a conflict — no notice."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Agreeing Pair", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_DETAILED_PNL, fiscal_year=2024, ts=base_ts,
+        fields=_detailed_pnl_fields(),
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_SUMMARY_CSV, ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_400_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_700_000.0},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+    reasons = base["__reasons__"]
+    for key in ("fb_revenue_per_occupied_room", "other_revenue_pct_of_rooms", "starting_occupancy"):
+        assert key not in reasons, reasons.get(key)
+
+
+@pytest.mark.asyncio
+async def test_three_statements_reject_an_outlier_primary_as_a_whole_statement() -> None:
+    """Real deal 7a9928e0: with three same-period statements the median may
+    reject the top-ranked one as an outlier — and then the WHOLE statement
+    switches (every line from the next statement), never one line."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs, _load_t12_revenue_actuals
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Corroboration Deal", keys=300, purchase=90_000_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+
+    def _t12(rooms: float, fb: float, occ: float) -> list[dict[str, object]]:
+        return [
+            {"field_name": "p_and_l_usali.period_type", "value": "ttm"},
+            {"field_name": "occupancy_pct", "value": occ},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": rooms},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": fb},
+        ]
+
+    # Upload order is the last tiebreaker (newest first): the mis-read
+    # statement is the newest, so it ranks first.
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12_c.xlsx", ts=base_ts, fields=_t12(9_600_000.0, 2_914_380.0, 0.82)
+    )
+    second, _ = await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12_b.xlsx", ts=base_ts + timedelta(minutes=1),
+        fields=_t12(9_400_000.0, 2_737_410.0, 0.81),
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12_a_misread.xlsx", ts=base_ts + timedelta(minutes=2),
+        fields=_t12(9_500_000.0, 96_528.0, 0.80),
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        rev, prov = await _load_t12_revenue_actuals(
+            session, deal_id=str(deal_id), tenant_id=_TENANT, with_provenance=True
+        )
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+
+    # Every line from the next-ranked statement — rooms and occupancy too,
+    # although the mis-read statement's rooms line agreed.
+    assert rev["fb_revenue"] == pytest.approx(2_737_410.0)
+    assert rev["rooms_revenue"] == pytest.approx(9_400_000.0)
+    assert rev["occupancy"] == pytest.approx(0.81)
+    assert {p.document_id for p in prov.values()} == {str(second)}
+    notice = base["__reasons__"]["fb_revenue_per_occupied_room"]
+    assert notice["code"] is ReasonCode.NEEDS_REVIEW
+    assert "T12_a_misread.xlsx" in notice["detail"] and "$96,528" in notice["detail"]
+    assert "uses T12_b.xlsx" in notice["detail"]
+
+
+@pytest.mark.asyncio
+async def test_three_statements_keep_a_primary_that_is_not_an_outlier() -> None:
+    """The median never overrides a primary statement that is merely a few
+    percent off its peers: the primary stays, and the disagreement is a
+    notice."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs, _load_t12_revenue_actuals
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Close Peers", keys=300, purchase=90_000_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    fb = {"T12_c.xlsx": 2_737_410.0, "T12_b.xlsx": 96_528.0, "T12_a.xlsx": 2_914_380.0}
+    for i, (name, value) in enumerate(fb.items()):
+        await _insert_financial_extraction(
+            deal_id, doc_type="T12", filename=name, ts=base_ts + timedelta(minutes=i),
+            fields=[
+                {"field_name": "p_and_l_usali.period_type", "value": "ttm"},
+                {"field_name": "occupancy_pct", "value": 0.80},
+                {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+                {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": value},
+            ],
+        )
+    factory = get_session_factory()
+    async with factory() as session:
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+    # T12_a (newest) ranks first and is 6.5% off the median — not an outlier.
+    assert rev["fb_revenue"] == pytest.approx(2_914_380.0)
+    notice = base["__reasons__"]["fb_revenue_per_occupied_room"]
+    assert notice["code"] is ReasonCode.NEEDS_REVIEW
+    assert "uses T12_a.xlsx" in notice["detail"]
+
+
+@pytest.mark.asyncio
+async def test_other_revenue_cap_is_never_silent() -> None:
+    """When the other-revenue ratio is clipped at 30% the clip is recorded on
+    the provenance (uncapped ratio + cap) and as a NEEDS_REVIEW notice."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Capped Other", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="Resort_T12.xlsx", ts=datetime(2026, 9, 20, tzinfo=UTC),
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "adr_usd", "value": 300.0},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 5_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 2_000_000.0},
+        ],
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+    assert base["other_revenue_pct_of_rooms"] == pytest.approx(0.30)
+    sf = base["__source_fields__"]["other_revenue_pct_of_rooms"]
+    assert sf["uncapped_ratio"] == pytest.approx(0.40)
+    assert sf["cap"] == pytest.approx(0.30)
+    notice = base["__reasons__"]["other_revenue_pct_of_rooms"]
+    assert notice["code"] is ReasonCode.NEEDS_REVIEW
+    assert "40.0%" in notice["detail"] and "30%" in notice["detail"]
+    assert "$2,000,000" in notice["detail"] and "$5,000,000" in notice["detail"]
+
+
+# ═══════ W5 round 2 — same-period fill, footing choice, exact periods, link ═══════
+
+
+async def _base_and_sources(deal_id: UUID) -> tuple[dict, object]:
+    from app.api.deals import get_assumption_sources
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_engine_inputs
+
+    factory = get_session_factory()
+    async with factory() as session:
+        base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
+        response = await get_assumption_sources(deal_id, session, UUID(_TENANT))
+    return base, response
+
+
+@pytest.mark.asyncio
+async def test_a_missing_line_fills_from_the_same_period_first_with_a_notice() -> None:
+    """The primary FY2024 statement lacks insurance and F&B departmental
+    expense. Insurance is read from the other FY2024 statement (same period)
+    BEFORE the FY2023 statement; F&B dept expense, which only FY2023 carries,
+    comes from FY2023. Each filled line names its source and period."""
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Gap Fill", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    detailed, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2024 Detailed.xlsx", fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "adr_usd", "value": 250.0},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_636_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_000_000.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 300_000.0},
+            {"field_name": "p_and_l_usali.undistributed.sales_marketing", "value": 700_000.0},
+        ],
+    )
+    summary, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2024 Summary.csv", fiscal_year=2024,
+        ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_100_000.0},
+        ],
+    )
+    older, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2023 P&L.xlsx", fiscal_year=2023,
+        ts=base_ts + timedelta(minutes=2),
+        fields=[
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 900_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 1_500_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    exp = base["t12_expense_actuals"]
+    src = base["__source_fields__"]
+    reasons = base["__reasons__"]
+
+    assert exp["insurance"] == pytest.approx(1_100_000.0)
+    assert src["insurance"]["document_id"] == str(summary)
+    ins = reasons["insurance"]
+    assert ins["code"] is ReasonCode.NEEDS_REVIEW
+    assert "FY2024 Summary.csv" in ins["detail"] and "FY2024 Detailed.xlsx" in ins["detail"]
+    assert "same period" in ins["detail"] and "FY2024" in ins["detail"]
+
+    assert exp["fb_dept_expense"] == pytest.approx(1_500_000.0)
+    assert src["fb_dept_expense"]["document_id"] == str(older)
+    fb = reasons["fb_dept_expense"]
+    assert fb["code"] is ReasonCode.NEEDS_REVIEW
+    assert "FY2023 P&L.xlsx" in fb["detail"] and "different period" in fb["detail"]
+    assert "FY2023" in fb["detail"]
+
+    # Lines the primary carries carry no fill notice.
+    assert "utilities" not in reasons
+    assert src["utilities"]["document_id"] == str(detailed)
+
+
+_T12_MISREAD = "Angler_s 2024 Full Year Detailed P&L.xlsm"
+_DEC_2024 = "The Angler_s - December 2024 Financials.xlsx"
+
+
+async def _insert_7a9928e0_pair(deal_id: UUID) -> tuple[UUID, UUID]:
+    """Deal 7a9928e0 today: the T-12 ranks first but its F&B is the $96,528
+    misread and its only rooms line is the prior-year one, so its revenue
+    lines cannot foot to its stated total; the December 2024 Financials of
+    the same year foot."""
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    t12, _ = await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename=_T12_MISREAD, fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.8326},
+            {"field_name": "adr_usd", "value": 236.09},
+            {"field_name": "p_and_l_usali.prior_year.rooms_revenue", "value": 9_807_990.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.1},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 10_839_200.0},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_573.0},
+        ],
+    )
+    dec, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_DEC_2024, fiscal_year=2024,
+        ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_496_410.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_737_410.0},
+            {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 18_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_328_280.0},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 13_580_100.0},
+        ],
+    )
+    return t12, dec
+
+
+@pytest.mark.asyncio
+async def test_a_primary_that_does_not_foot_yields_the_whole_period_to_one_that_does() -> None:
+    """I2 (decided): between statements of the same period, the one whose
+    revenue lines foot to its own stated total wins when the top-ranked does
+    not — the WHOLE statement switches. F&B per occupied room lands on the
+    footing statement (~$68), not the misread's $2.41, and the notice names
+    both documents and why."""
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="7a9928e0", keys=132, purchase=36_400_000)
+    t12, dec = await _insert_7a9928e0_pair(deal_id)
+    base, _resp = await _base_and_sources(deal_id)
+    src = base["__source_fields__"]
+
+    orn = 0.8326 * 132 * 365
+    assert base["fb_revenue_per_occupied_room"] == pytest.approx(2_737_410.0 / orn)
+    assert 67.0 < base["fb_revenue_per_occupied_room"] < 69.0
+    assert src["fb_revenue_per_occupied_room"]["document_id"] == str(dec)
+    assert base["other_revenue_pct_of_rooms"] == pytest.approx((18_000.0 + 1_328_280.0) / 9_496_410.0)
+    # Occupancy / ADR / insurance are not on the December statement: they
+    # are filled from the T-12 of the same period, with a notice.
+    assert src["starting_occupancy"]["document_id"] == str(t12)
+    notice = base["__reasons__"]["fb_revenue_per_occupied_room"]
+    assert notice["code"] is ReasonCode.NEEDS_REVIEW
+    detail = notice["detail"]
+    assert _T12_MISREAD in detail and _DEC_2024 in detail
+    assert "$96,528" in detail and "$2,737,410" in detail
+    assert "foot" in detail
+    assert f"uses {_DEC_2024}" in detail
+    occ = base["__reasons__"]["starting_occupancy"]
+    assert "same period" in occ["detail"] and _T12_MISREAD in occ["detail"]
+    # The conflict note says exactly which lines did not come off the
+    # statement used, and from where.
+    carried = detail.split(f"{_T12_MISREAD}:")[1]
+    assert "supplies" in carried
+    for line in ("Occupancy", "ADR", "Insurance"):
+        assert line in carried, line
+
+
+@pytest.mark.asyncio
+async def test_when_no_statement_foots_the_top_ranked_is_kept() -> None:
+    """Footing only decides when it discriminates: neither statement states a
+    total, so the top-ranked statement is kept and the conflict is a notice."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="No Totals", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="A.xlsx", fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.0},
+        ],
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="B.xlsx", fiscal_year=2024, ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_737_410.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    assert base["fb_revenue_per_occupied_room"] == pytest.approx(96_528.0 / (0.80 * 132 * 365))
+    detail = base["__reasons__"]["fb_revenue_per_occupied_room"]["detail"]
+    assert "uses A.xlsx" in detail and "B.xlsx" in detail
+
+
+@pytest.mark.asyncio
+async def test_partial_period_statements_never_share_an_invented_period() -> None:
+    """2e1db521: March and June 2025 monthly financials carry no period end
+    (the year-end would be inferred). They are NOT one period: no conflict
+    notice, no invented "period ending" date; each only fills, as a
+    different period, a line the full-year primary lacks."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="2e1db521", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2024 Detailed.xlsx", fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 300_000.0},
+        ],
+    )
+    for i, (name, fb, ins) in enumerate(
+        [("March 2025 Financials.xlsx", 3_216_620.0, 1_000_000.0), ("Jun 2025 Financials.xlsx", 3_514_040.0, 1_200_000.0)]
+    ):
+        await _insert_financial_extraction(
+            deal_id, doc_type="PNL_MONTHLY", filename=name, fiscal_year=2025,
+            ts=base_ts + timedelta(minutes=1 + i),
+            fields=[
+                {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_100.0 + i},
+                {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": fb},
+                {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": ins},
+            ],
+        )
+    base, _resp = await _base_and_sources(deal_id)
+    for key, r in base["__reasons__"].items():
+        detail = (r.get("detail") or "") if isinstance(r, dict) else ""
+        assert "disagree" not in detail, (key, detail)
+        assert "2025-12-31" not in detail, (key, detail)
+    # The monthly statements are never annualised for a fill: insurance is
+    # the documented default, and the note says why.
+    assert "insurance" not in base["t12_expense_actuals"]
+    ins = base["__reasons__"]["insurance"]["detail"]
+    assert "never annualised" in ins and "FY2024 Detailed.xlsx" in ins
+
+
+@pytest.mark.asyncio
+async def test_the_ledger_document_link_follows_the_statement_the_model_uses() -> None:
+    """I4: ``source_documents`` (the ledger's link icon) names the same
+    statement as ``source_fields`` — on b67bfdee the Detailed P&L, not the
+    Summary CSV the legacy period-type ranking picked."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler FY2024", keys=132, purchase=36_400_000)
+    detailed, _summary = await _insert_angler_fy2024_pair(deal_id)
+    _base, resp = await _base_and_sources(deal_id)
+    for key in ("starting_occupancy", "starting_adr"):
+        assert resp.source_fields[key]["document_id"] == str(detailed)
+        assert resp.source_documents[key] == str(detailed), key
+
+
+def test_a_loader_notice_keeps_an_existing_reason() -> None:
+    """M2: a key that already carries a reason (an as-of caveat) keeps it
+    alongside the review notice — nothing is silently dropped."""
+    from fondok_schemas.reasons import ReasonCode
+
+    from app.services.engine_runner import (
+        SourceField,
+        _loader_notices,
+        _reason,
+        _StatementConflict,
+    )
+    from app.ontology.registry import Resolution
+
+    sf = SourceField(
+        resolution=Resolution(
+            concept="occupancy", value=0.8, field_name="occupancy_pct", source_page=1,
+            unit=None, confidence=None, reviewed=None, doc_type="PNL", scope="annual",
+            basis="actual", reason=None, candidates=(),
+        ),
+        document_id="doc-a",
+    )
+    earlier = _reason(ReasonCode.AS_OF_UNKNOWN, "No reporting date.")
+    out = _loader_notices(
+        {"starting_occupancy": sf},
+        conflicts=[_StatementConflict(document_id="doc-a", detail="A vs B disagree.")],
+        fills=[],
+        other_ratio_capped_detail=None,
+        already={"starting_occupancy": earlier},
+    )
+    entry = out["starting_occupancy"]
+    assert entry["code"] is ReasonCode.NEEDS_REVIEW
+    assert "A vs B disagree." in entry["detail"]
+    assert entry["also"] == [earlier]
+
+
+# ═══════ W5 round 3 — single-statement footing, fill order, unverifiable ═══════
+
+
+def _ttm_monthly_block(line: str, value: float) -> list[dict[str, object]]:
+    """Twelve monthly columns of one line — the shape of the sibling-template
+    "March 2025 Financials" T-12 whose full-period lines are trailing totals."""
+    months = ["apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "jan", "feb", "mar"]
+    return [
+        {"field_name": f"p_and_l_usali.monthly.{m}_2024.{line}", "value": round(value / 12, 2)}
+        for m in months
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_single_primary_that_cannot_foot_carries_a_review_note() -> None:
+    """R2-I1 (2e1db521): one FY2024 statement, F&B $96,528 and no full-period
+    rooms line (only prior-year rooms). No sibling to compare with — the
+    footing check still runs on it, and the revenue-derived assumptions it
+    grounds say why they need review. No threshold is invented."""
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="2e1db521", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_DETAILED_PNL, fiscal_year=2024,
+        ts=datetime(2026, 9, 20, tzinfo=UTC),
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {"field_name": "occupancy_pct", "value": 0.832567},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": "$10M"},
+            {"field_name": "p_and_l_usali.prior_year.rooms_revenue", "value": 9_807_990.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 96_528.1},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 10_839_200.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    note = base["__reasons__"]["fb_revenue_per_occupied_room"]
+    assert note["code"] is ReasonCode.NEEDS_REVIEW
+    assert _DETAILED_PNL in note["detail"]
+    assert "no full-period rooms revenue line" in note["detail"]
+    assert "$10,839,200" in note["detail"]
+    assert note["detail"].count(_DETAILED_PNL) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_primary_whose_lines_miss_its_total_carries_a_review_note() -> None:
+    """The computed miss is named with both figures."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Miss", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12.xlsx", ts=datetime(2026, 9, 20, tzinfo=UTC),
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 1_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 13_000_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    detail = base["__reasons__"]["fb_revenue_per_occupied_room"]["detail"]
+    assert "$10,000,000" in detail and "$13,000,000" in detail
+
+
+@pytest.mark.asyncio
+async def test_a_footing_primary_and_an_unverifiable_one_carry_no_footing_note() -> None:
+    """A statement that foots, or that states no total (unverifiable — the
+    absence of a check, not a failure), carries no footing note."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Foots", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12.xlsx", ts=datetime(2026, 9, 20, tzinfo=UTC),
+        fields=[
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 1_000_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    assert "fb_revenue_per_occupied_room" not in base["__reasons__"]
+
+
+@pytest.mark.asyncio
+async def test_an_unverifiable_primary_never_loses_to_a_footing_sibling() -> None:
+    """Concern 3: a complete statement whose total line was not extracted is
+    unverifiable, not failing — it keeps the period over a summary that
+    foots."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Unverifiable", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    detailed, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="Detailed.xlsx", fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_700_000.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 300_000.0},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_400_000.0},
+        ],
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="Summary.csv", fiscal_year=2024, ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 8_900_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 1_300_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 10_200_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    assert base["__source_fields__"]["fb_revenue_per_occupied_room"]["document_id"] == str(detailed)
+
+
+@pytest.mark.asyncio
+async def test_fill_takes_the_most_recent_twelve_month_line_within_two_years() -> None:
+    """Fill-order rule: a line the primary lacks comes from the same period
+    first, then from the MOST RECENT statement whose line covers twelve
+    months — a trailing-twelve counts, however the document is typed — never
+    from a monthly / YTD slice, and never from a statement more than two years
+    older than the Year-1 basis (then the default, with a notice).
+
+    The three prod deals (2e1db521, 76d10a64, 3b4e50d9 shape) took FY2019
+    insurance; the March 2025 trailing-twelve now supplies it."""
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Fill Order", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2024 Detailed.xlsx", fiscal_year=2024, ts=base_ts,
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+            {"field_name": "occupancy_pct", "value": 0.80},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_500_000.0},
+            {"field_name": "p_and_l_usali.undistributed.sales_marketing", "value": 700_000.0},
+        ],
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2019 P&L.xlsx", fiscal_year=2019, ts=base_ts + timedelta(minutes=1),
+        fields=[
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 662_426.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 160_000.0},
+        ],
+    )
+    ttm, _ = await _insert_financial_extraction(
+        deal_id, doc_type="PNL_MONTHLY", filename="March 2025 Financials.xlsx", fiscal_year=2025,
+        ts=base_ts + timedelta(minutes=2),
+        fields=[
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_570.0},
+            *_ttm_monthly_block("insurance", 1_429_570.0),
+        ],
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL_MONTHLY", filename="April 2025 month.xlsx", fiscal_year=2025,
+        ts=base_ts + timedelta(minutes=3),
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "monthly"},
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 119_000.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 24_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    exp = base["t12_expense_actuals"]
+    reasons = base["__reasons__"]
+
+    assert exp["insurance"] == pytest.approx(1_429_570.0)
+    assert base["__source_fields__"]["insurance"]["document_id"] == str(ttm)
+    assert "March 2025 Financials.xlsx" in reasons["insurance"]["detail"]
+
+    # Utilities: only FY2019 (more than two years older) and a monthly slice
+    # carry it — neither fills; the default is used, and the analyst is told.
+    assert "utilities" not in exp
+    note = reasons["utilities"]
+    assert note["code"] is ReasonCode.NEEDS_REVIEW
+    assert "FY2019 P&L.xlsx" in note["detail"] and "two years" in note["detail"]
+    assert "April 2025 month.xlsx" not in note["detail"] or "monthly" in note["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_year_only_statement_groups_with_a_calendar_one_only_when_the_year_end_is_known() -> None:
+    """R2-M2: FY2024 known only by its year is the same period as a statement
+    ending 2024-12-31 only when the deal's dated annual statements show a
+    December year-end. Here another annual ends 2023-06-30, so it is not
+    known — no same-period conflict is claimed."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Non-calendar", keys=132, purchase=36_400_000)
+    base_ts = datetime(2026, 9, 20, tzinfo=UTC)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_DETAILED_PNL, fiscal_year=2024, ts=base_ts,
+        fields=_detailed_pnl_fields(),
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename=_SUMMARY_CSV, ts=base_ts + timedelta(minutes=1),
+        fields=_summary_csv_fields(),
+    )
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2023 June.xlsx", ts=base_ts + timedelta(minutes=2),
+        fields=[
+            {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2023-06-30"},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 8_000_000.0},
+        ],
+    )
+    base, _resp = await _base_and_sources(deal_id)
+    for key, r in base["__reasons__"].items():
+        detail = (r.get("detail") or "") if isinstance(r, dict) else ""
+        assert "disagree" not in detail, (key, detail)
+
+
+@pytest.mark.asyncio
+async def test_no_document_is_named_twice_in_one_notice() -> None:
+    """R2-M3 on 7a9928e0: the conflict note names each statement once."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="7a9928e0", keys=132, purchase=36_400_000)
+    await _insert_7a9928e0_pair(deal_id)
+    base, _resp = await _base_and_sources(deal_id)
+    for key, r in base["__reasons__"].items():
+        detail = (r.get("detail") or "") if isinstance(r, dict) else ""
+        for name in (_T12_MISREAD, _DEC_2024):
+            assert detail.count(name) <= 1, (key, detail)
+
+
+@pytest.mark.asyncio
+async def test_the_ledger_keeps_an_earlier_reason_code_visible() -> None:
+    """The wire carries ``needs_review`` AND the code it joined."""
+    from app.api.deals import get_assumption_sources
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from fondok_schemas.reasons import ReasonCode
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler FY2024", keys=132, purchase=36_400_000)
+    await _insert_angler_fy2024_pair(deal_id)
+    real = engine_runner._load_engine_inputs
+
+    async def _with_earlier(*args, **kwargs):
+        base = await real(*args, **kwargs)
+        entry = base["__reasons__"]["starting_occupancy"]
+        entry["also"] = [{"code": ReasonCode.AS_OF_UNKNOWN, "detail": "No date."}]
+        return base
+
+    engine_runner._load_engine_inputs = _with_earlier
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            resp = await get_assumption_sources(deal_id, session, UUID(_TENANT))
+    finally:
+        engine_runner._load_engine_inputs = real
+    assert resp.reasons["starting_occupancy"] == "needs_review"
+    assert resp.reasons_also["starting_occupancy"] == ["as_of_unknown"]

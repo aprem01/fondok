@@ -154,6 +154,20 @@ describe('ProvenanceLedger — with the new blocks', () => {
     expect(within(rowFor('Exit Cap Rate')).getByText('Exit cap · FY2024')).toBeInTheDocument();
   });
 
+  it('keeps an earlier reason visible beside Needs review', async () => {
+    fx.served = {
+      ...BASE,
+      reasons: { exit_cap_rate: 'needs_review' },
+      reasons_also: { exit_cap_rate: ['as_of_unknown'] },
+    } as unknown as AssumptionSourcesResponse;
+    render(<ProvenanceLedger dealId="deal-uuid-1" />);
+    expect(await screen.findByText('Provenance ledger')).toBeInTheDocument();
+
+    const row = rowFor('Exit Cap Rate');
+    expect(within(row).getByText('Needs review')).toBeInTheDocument();
+    expect(within(row).getByText(/As-of date unknown/)).toBeInTheDocument();
+  });
+
   it('shows a column as soon as EITHER block carries a value', async () => {
     fx.served = { ...BASE, reasons: { exit_cap_rate: 'no_document' } } as unknown as AssumptionSourcesResponse;
     render(<ProvenanceLedger dealId="deal-uuid-1" />);

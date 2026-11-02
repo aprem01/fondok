@@ -40,7 +40,7 @@ const ORIGINS: { state: ValueState; means: string }[] = [
   {
     state: 'needs_review',
     means:
-      'A halo on the origin dot: extracted but low confidence, or an override that conflicts with its source. Click to verify.',
+      'A halo on the origin dot: extracted but low confidence, an override that conflicts with its source, or two source statements that disagree. Click to verify.',
   },
 ];
 

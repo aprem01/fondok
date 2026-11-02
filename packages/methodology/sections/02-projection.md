@@ -128,7 +128,12 @@ P&L, say), the Historical P&L shows one column, built from the primary statement
 other as supplemental on that column. The primary is the one that drives the model: the statement
 the Data Room marks “Primary source” — a full-year statement ahead of a partial one, then the fuller
 extraction, then the newer upload. Re-tag a statement's year in the Data Room to change which is
-primary.
+primary. The other statement is never averaged into Year 1. When the primary lacks a full-year rooms
+revenue line or its revenue lines do not add up to its own stated total, and the other statement's
+do, the other statement drives the year; a statement that does not add up carries a review note
+even when it is the only one;
+when the two disagree by more than 5% on rooms, F&B, total revenue or NOI, or a line comes from the
+other statement, the Year-1 figures carry a review note naming both documents and values.
 
 {testid=correction-note-methodology} **Correcting an extracted value.** A statement figure can be corrected where it is read — from a
 flagged cell on the Historical P&L, from the Data Room review list, or by re-importing the exported
@@ -344,6 +349,13 @@ revenue 6.5% of rooms revenue. Each is badged Seed until replaced.
 <!-- source: apps/worker/app/engines/revenue.py (fb_price_index) -->
 F&B revenue = occupied rooms × F&B $ per occupied room × Π(1 + ADR growth) since Year 1 (scalar or
 per-year list; a missing year holds flat).
+
+<!-- source: apps/worker/app/services/engine_runner.py (_load_engine_inputs: fb_revenue_per_occupied_room, other_revenue_pct_of_rooms, OTHER_REVENUE_PCT_CAP 0.30, uncapped_ratio / cap on the source field, _loader_notices) -->
+When the primary statement carries the lines, the two revenue-mix anchors come from it: F&B revenue
+÷ (Year-1 occupancy × keys × 365) per occupied room, and (other operated + miscellaneous revenue) ÷
+rooms revenue. The ratio is capped at 30%; a statement that reads higher is clipped with a
+{{reason:needs_review}} note giving its own ratio, and the source row records the uncapped ratio
+and the cap — a clip is never silent.
 
 :::
 

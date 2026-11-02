@@ -45,6 +45,8 @@ interface Row {
   fieldPage: string | null;
   /** Phase 2.4 — why this key is a dash, when the worker says so. */
   reason: ReasonCode | null;
+  /** W5 — earlier reason codes the worker kept alongside ``reason``. */
+  alsoReasons: ReasonCode[];
 }
 
 /** "Rooms revenue · p.4 · YTD through Mar 31, 2025" from whichever halves the
@@ -111,6 +113,7 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
           docId: data.source_documents?.[key],
           fieldPage: fieldPageLabel(data.source_fields?.[key]),
           reason: isReasonCode(data.reasons?.[key]) ? (data.reasons?.[key] as ReasonCode) : null,
+          alsoReasons: (data.reasons_also?.[key] ?? []).filter(isReasonCode) as ReasonCode[],
         };
       })
       .sort((a, b) => a.label.localeCompare(b.label));
@@ -281,9 +284,17 @@ export function ProvenanceLedger({ dealId }: { dealId: string }) {
                 {showReason && (
                   <td className="px-5 py-2 text-ink-600">
                     {r.reason ? (
-                      <span title={REASONS[r.reason].explanation}>
-                        {REASONS[r.reason].label}
-                      </span>
+                      <>
+                        <span title={REASONS[r.reason].explanation}>
+                          {REASONS[r.reason].label}
+                        </span>
+                        {r.alsoReasons.map((code) => (
+                          <span key={code} title={REASONS[code].explanation}>
+                            {' · '}
+                            {REASONS[code].label}
+                          </span>
+                        ))}
+                      </>
                     ) : (
                       <span className="text-ink-400">{REFUSAL_GLYPH}</span>
                     )}

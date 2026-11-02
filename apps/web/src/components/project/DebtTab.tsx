@@ -1727,7 +1727,7 @@ const LEGEND_ORIGINS: { state: ValueState; means: string }[] = [
   { state: 'assumption', means: 'an input — a Fondok seed, the deal record or your override; the chip says which' },
   { state: 'calculated', means: 'derived by the Debt engine from the inputs above' },
   { state: 'awaiting_data', means: 'not entered yet — shown as —, never zero' },
-  { state: 'needs_review', means: 'extracted at low confidence, or an override that conflicts with its source' },
+  { state: 'needs_review', means: 'extracted at low confidence, an override that conflicts with its source, or two source statements that disagree' },
 ];
 
 const LEGEND_CHIPS: { spec: SourceChipSpec; means: string }[] = [

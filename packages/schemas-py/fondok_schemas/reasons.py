@@ -155,8 +155,8 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "label": "Needs review",
         "ui": REFUSAL_GLYPH,
         "explanation": (
-            "A low-confidence read or a conflicting override is waiting on an "
-            "analyst before the figure is used."
+            "A low-confidence read, a conflicting override or two disagreeing "
+            "source statements need an analyst's review."
         ),
     },
     ReasonCode.PIN_ACTIVE: {

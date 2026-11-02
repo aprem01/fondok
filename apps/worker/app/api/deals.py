@@ -517,6 +517,10 @@ class AssumptionSourcesResponse(BaseModel):
     # loader supplies it: why a key has no grounded value. Also
     # feature-detected, also ``{}`` until then.
     reasons: dict[str, str] = Field(default_factory=dict)
+    # W5 — a reason a ``needs_review`` notice joined (an as-of caveat on the
+    # same key): the earlier code(s), so the ledger shows both, never only
+    # the newer one. ``{}`` when no key carries more than one reason.
+    reasons_also: dict[str, list[str]] = Field(default_factory=dict)
     # FON-89 — what Year-1 displacement the model runs with and why (explicit
     # assumptions only, never the renovation budget — Sam 2026-10-15), computed by
     # the loader AFTER every override is applied (``__displacement_status__``):
@@ -3481,6 +3485,13 @@ async def _compute_assumption_sources(
         if isinstance(raw_reasons, dict)
         else {}
     )
+    reasons_also: dict[str, list[str]] = {}
+    if isinstance(raw_reasons, dict):
+        for k, v in raw_reasons.items():
+            if isinstance(v, dict) and isinstance(v.get("also"), list):
+                codes = [c for e in v["also"] if (c := _reason_code(e)) is not None]
+                if codes:
+                    reasons_also[k] = codes
     # Strip the t12_*_actuals dicts and other non-scalar fields from
     # `values` — they're internal plumbing, not assumptions the UI
     # would badge directly.
@@ -3510,6 +3521,13 @@ async def _compute_assumption_sources(
         )
     except Exception:
         source_documents = {}
+    # W5 — one ranking for value and link: where the runner names the exact
+    # row behind a value, the link icon opens THAT row's document (the
+    # statement the model used), never the legacy period-type winner.
+    for key, sf in source_fields.items():
+        doc = sf.get("document_id")
+        if doc and key in sources_filtered:
+            source_documents[key] = str(doc)
 
     return AssumptionSourcesResponse(
         id=deal_id,
@@ -3518,6 +3536,7 @@ async def _compute_assumption_sources(
         source_documents=source_documents,
         source_fields=source_fields,
         reasons=assumption_reasons,
+        reasons_also=reasons_also,
         displacement_status=displacement_status,
     )
 
