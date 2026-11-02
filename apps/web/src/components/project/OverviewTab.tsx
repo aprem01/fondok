@@ -938,7 +938,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         sub: 'An input, not a calculation: your entry (with its note) wins over the deal record, which wins over the OM\'s stated asking price. Entry Cap Rate and Price / Key are calculated from it. Never inferred from a broker cap rate.',
         valueNode: (
           <PurchasePriceField dealId={dealId} overrides={overrides} enginePrice={purchase}
-            editable={liveMode} onSaved={() => { void refreshDeal?.(); }}
+            editable={liveMode} onSaved={() => { void refreshDeal?.(); }} runner={fullRun}
             testId="overview-purchase-price" bold />
         ),
       }),
@@ -1231,7 +1231,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource]);
+  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource, fullRun]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {

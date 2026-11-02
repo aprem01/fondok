@@ -43,7 +43,7 @@ import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, holdDefaultBadge } from '@/lib/engi
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import RenovationBudgetSources from './RenovationBudgetSources';
-import PurchasePriceField from './PurchasePriceField';
+import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
@@ -295,6 +295,9 @@ export default function InvestmentTab() {
     [dealFieldOverrides],
   );
   const invRun = useEngineRun(liveMode ? dealId : '', 'returns', { runMode: 'all' });
+  // In flight from the kickoff until the poll reaches a terminal state —
+  // `run()` itself resolves right after the kickoff.
+  const runInFlight = invRun.status === 'running' || invRun.activeRunId != null;
   const invRerunRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A save schedules a run-all 1.2s later. Cancel it on unmount: a tab the
   // analyst has already left must not kick a model run out of a timer nobody
@@ -612,6 +615,8 @@ export default function InvestmentTab() {
             editable={liveMode}
             onSaved={() => { void refreshDeal?.(); }}
             onRun={() => invRun.run()}
+            runner={invRun}
+            runInFlight={runInFlight}
           />
           <EngineRunHistory dealId={dealId} />
         </div>
@@ -629,6 +634,17 @@ export default function InvestmentTab() {
   const entryCap = (has(entryNoi) && has(purchase) && purchase > 0)
     ? entryNoi / purchase
     : wEntryCap;
+  // W5 "price" — Entry Cap and Price / Key are the LAST RUN's figures. Between
+  // a price save and the run that uses it they would silently disagree with
+  // the Purchase Price row (which shows the saved price at once), so they say
+  // so: "re-running…" while the run is in flight, "pending run" when the
+  // saved price is not the one the last run used (e.g. its kickoff failed).
+  const savedPrice = numericOverride(invOverrides, 'purchase_price');
+  const priceRunMarker: string | undefined = runInFlight
+    ? 're-running…'
+    : savedPrice != null && has(purchase) && Math.abs(savedPrice - purchase) > 1
+      ? 'pending run — the last run used a different price'
+      : undefined;
   const closing = findUse(/closing/i);
   const closingPct = (has(closing) && has(purchase) && purchase > 0) ? closing / purchase : undefined;
 
@@ -831,7 +847,7 @@ export default function InvestmentTab() {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: pctv(entryCap, 2),
-                note: compCapRangeHint(compCapRange),
+                note: [priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
@@ -841,11 +857,11 @@ export default function InvestmentTab() {
                 // writes the analyst override and runs the model.
                 value: (
                   <PurchasePriceField dealId={dealId} overrides={invOverrides} enginePrice={purchase}
-                    editable={liveMode} onSaved={() => { void refreshDeal?.(); }}
+                    editable={liveMode} onSaved={() => { void refreshDeal?.(); }} runner={invRun}
                     color={valueColor('input', true, overridden('purchase_price'))} bold />
                 ),
               },
-              { id: 'ppk', label: 'Purchase Price / Key', kind: 'calc', state: 'calculated', value: money(pricePerKey) },
+              { id: 'ppk', label: 'Purchase Price / Key', kind: 'calc', state: 'calculated', value: money(pricePerKey), note: priceRunMarker },
               {
                 id: 'closingPct', label: 'Closing Costs %', kind: 'input',
                 state: overridden('closing_costs_pct') ? 'assumption' : 'assumption',
@@ -1334,7 +1350,7 @@ function SectionRow({ row }: { row: RowDef }) {
         )}
       </div>
       {row.note && (
-        <div style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
+        <div data-testid={`row-note-${row.id}`} style={{ fontSize: 10.5, color: palette.textMuted, padding: '0 0 6px 15px', lineHeight: 1.45 }}>
           {row.note}
         </div>
       )}
@@ -2045,8 +2061,17 @@ function useOmState(dealId: string): { state: OmState; retry: () => void } {
 }
 
 /** A Run button that cannot start a second run while its first is in flight. */
-function RunButton({ label, onRun }: { label: string; onRun: () => Promise<void> | void }) {
-  const [running, setRunning] = useState(false);
+function RunButton({ label, onRun, inFlight }: {
+  label: string;
+  onRun: () => Promise<void> | void;
+  /** The tab's run is in progress (kickoff through the last poll). `onRun`
+   *  resolves at the kickoff, so the local flag alone would re-enable the
+   *  button while the run is still going and let a second click start a
+   *  second full run. */
+  inFlight: boolean;
+}) {
+  const [kicking, setKicking] = useState(false);
+  const running = kicking || inFlight;
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
   return (
@@ -2057,8 +2082,8 @@ function RunButton({ label, onRun }: { label: string; onRun: () => Promise<void>
       disabled={running}
       onClick={async () => {
         if (running) return;
-        setRunning(true);
-        try { await onRun(); } finally { if (mounted.current) setRunning(false); }
+        setKicking(true);
+        try { await onRun(); } finally { if (mounted.current) setKicking(false); }
       }}
     >
       {running ? 'Running…' : label}
@@ -2092,7 +2117,7 @@ function DataRoomError({ onRetry }: { onRetry: () => void }) {
  * that cannot run (a sample / offline deal).
  */
 function CapitalUnavailable({
-  dealId, capitalRow, overrides, dealKeys, editable, onSaved, onRun,
+  dealId, capitalRow, overrides, dealKeys, editable, onSaved, onRun, runner, runInFlight,
 }: {
   dealId: string;
   capitalRow: EngineOutputResponse | undefined;
@@ -2101,6 +2126,10 @@ function CapitalUnavailable({
   editable: boolean;
   onSaved: () => void;
   onRun: () => Promise<void> | void;
+  /** The tab's run-all hook — the price editor runs through it too, so every
+   *  Run button here sees a save-triggered run as in flight. */
+  runner: PurchasePriceRunner;
+  runInFlight: boolean;
 }) {
   const missing = missingIdentityInputs(capitalRow);
   // Mounted only in this state, so a deal whose model ran never lists its
@@ -2119,6 +2148,8 @@ function CapitalUnavailable({
         editable={editable}
         onSaved={onSaved}
         onRun={onRun}
+        runner={runner}
+        runInFlight={runInFlight}
       />
     );
   }
@@ -2134,7 +2165,7 @@ function CapitalUnavailable({
           Upload an <span className="font-medium">Offering Memorandum</span> (the broker&apos;s pitch deck) into
           the Data Room and we&apos;ll populate the investment summary automatically.
         </p>
-        {editable && <RunButton label="Run Investment Engine" onRun={onRun} />}
+        {editable && <RunButton label="Run Investment Engine" onRun={onRun} inFlight={runInFlight} />}
       </Card>
     );
   }
@@ -2152,13 +2183,13 @@ function CapitalUnavailable({
       {om.state === 'error' && (
         <p className="text-[12px] text-ink-500 mt-2 max-w-md mx-auto"><DataRoomError onRetry={om.retry} /></p>
       )}
-      {editable && <RunButton label="Run Investment Engine" onRun={onRun} />}
+      {editable && <RunButton label="Run Investment Engine" onRun={onRun} inFlight={runInFlight} />}
     </Card>
   );
 }
 
 function IdentityInputsCard({
-  dealId, missing, message, overrides, dealKeys, om, editable, onSaved, onRun,
+  dealId, missing, message, overrides, dealKeys, om, editable, onSaved, onRun, runner, runInFlight,
 }: {
   dealId: string;
   missing: string[];
@@ -2169,6 +2200,8 @@ function IdentityInputsCard({
   editable: boolean;
   onSaved: () => void;
   onRun: () => Promise<void> | void;
+  runner: PurchasePriceRunner;
+  runInFlight: boolean;
 }) {
   const priceSource = useSource('purchase_price');
   const price = resolvePurchasePrice({ overrides, enginePrice: undefined, resolved: priceSource });
@@ -2204,7 +2237,7 @@ function IdentityInputsCard({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
           <span style={rowLabel}>Purchase Price</span>
           <PurchasePriceField dealId={dealId} overrides={overrides} enginePrice={undefined}
-            editable={editable} onSaved={onSaved} runAfterSave={!keysMissing}
+            editable={editable} onSaved={onSaved} runAfterSave={!keysMissing} runner={runner}
             emptyLabel="Enter purchase price" bold />
         </div>
         {priceCaption && (
@@ -2217,7 +2250,7 @@ function IdentityInputsCard({
               onSaved={() => { onSaved(); if (price.value !== undefined) void onRun(); }} />
           </div>
         )}
-        {runnable && editable && <RunButton label="Run model" onRun={onRun} />}
+        {runnable && editable && <RunButton label="Run model" onRun={onRun} inFlight={runInFlight} />}
       </div>
     </SectionCard>
   );

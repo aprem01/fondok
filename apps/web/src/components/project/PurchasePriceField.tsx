@@ -35,6 +35,11 @@ import {
   resolvePurchasePrice,
 } from '@/lib/purchasePrice';
 
+/** The run-all a save starts (a tab's `useEngineRun(..., {runMode:'all'})`). */
+export interface PurchasePriceRunner {
+  run: () => Promise<void>;
+}
+
 export interface PurchasePriceFieldProps {
   dealId: string;
   /** The deal's saved `field_overrides` (read for the current override and
@@ -46,6 +51,10 @@ export interface PurchasePriceFieldProps {
   editable: boolean;
   /** After the PATCH lands (before the run finishes) — refresh the deal row. */
   onSaved?: () => void;
+  /** The tab's run-all hook, so the tab sees the save-triggered run as in
+   *  flight (its Run buttons and "re-running…" markers). Without one the
+   *  field runs through its own hook. */
+  runner?: PurchasePriceRunner;
   /** Run the model after the save (default true). False while another
    *  identity input is still missing — that run could only be refused. */
   runAfterSave?: boolean;
@@ -65,6 +74,7 @@ export default function PurchasePriceField({
   editable,
   onSaved,
   runAfterSave = true,
+  runner,
   emptyLabel,
   showBadge = true,
   testId = 'purchase-price',
@@ -74,7 +84,8 @@ export default function PurchasePriceField({
   const { toast } = useToast();
   const resolved = useSource(PURCHASE_PRICE_KEY);
   const input = resolvePurchasePrice({ overrides, enginePrice, resolved });
-  const run = useEngineRun(editable ? dealId : '', 'returns', { runMode: 'all' });
+  const ownRun = useEngineRun(editable && !runner ? dealId : '', 'returns', { runMode: 'all' });
+  const run = runner ?? ownRun;
 
   const save = useCallback(
     async (value: number, note: string) => {

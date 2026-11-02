@@ -742,10 +742,13 @@ input, pre-filled from the OM asking-price row (`asking_price.headline_price_usd
 `asking_price.purchase_price` or `headline_price_usd`) when one was extracted, or stating that the
 OM does not give one — or that it is still being read while an OM extracts, or that the Data Room
 could not be loaded (with a retry); the sources re-read after each run and when an OM finishes
-extracting, so the pre-fill needs no reload. Run buttons there start the real run once. The entry is
-written as `field_overrides.purchase_price` `{value, note}` and triggers a run. Precedence: analyst
-override > deal row > OM asking price; the loader never derives a price from a broker cap rate or a
-price per key. The Property Name is not a deal-row field — see
+extracting, so the pre-fill needs no reload. Run buttons there start the real run and stay disabled
+("Running…") until it reaches a terminal state, not just its kickoff; while a price save's run is in
+flight the Deal Summary's Entry Cap Rate and Price / Key read "re-running…", and "pending run" if
+the saved price is not the one the last run used. The entry is written as
+`field_overrides.purchase_price` `{value, note}` and triggers a run. Precedence: analyst override >
+deal row > OM asking price; the loader never derives a price from a broker cap rate or a price per
+key. The Property Name is not a deal-row field — see
 below.
 
 :::
