@@ -97,6 +97,9 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, headlineReturns, holdDefaultBadge } from '@/lib/engines/returns';
 import { sourceLabel } from '@/lib/provenance';
 import PurchasePriceField from './PurchasePriceField';
+import { RevenueBasisEntry } from './pl/Topline';
+import { revenueBasisRefusal } from '@/lib/topline';
+import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
 import {
   ENTRY_CAP_FORMULA,
   PURCHASE_PRICE_INPUT_FROM,
@@ -115,10 +118,11 @@ import {
   popoverKind,
   fontStack,
   NO_OP_EDIT_MESSAGE,
+  InlineEditControls,
   type WhereThisCameFromProps,
 } from '@/components/design';
 import { isNoOpEdit } from '@/lib/fieldValue';
-import { overrideEnvelope, overrideNoteFor } from '@/lib/overrideNote';
+import { applyOverridePatch, overrideEnvelope, overrideNoteFor, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import { DEAL_TYPE_OPTIONS, normalizeDealType, isDevelopmentLike, dealTypeLabel, type DealTypeId } from '@/lib/dealTypes';
 import { operatingModelLabel } from '@/lib/operatingModel';
 import { positioningSourceChip } from '@/lib/positioningSource';
@@ -460,6 +464,27 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       }
     },
     [dealId, liveMode, toast, refreshDeal, scheduleRun],
+  );
+
+  // ─── Review I-5 — no Year-1 occupancy / ADR basis ───
+  // The worker refuses the revenue chain (no T-12, no STR or market benchmark,
+  // no analyst rate); Overview prints its sentence and takes the rates — the
+  // purchase-price pattern: one editor (`RevenueBasisEntry`, shared with the
+  // Future P&L), saved as noted analyst overrides, then the run.
+  const toplineStatus = useToplineStatus();
+  const basisRefusal = revenueBasisRefusal(toplineStatus, outputs?.failures ?? null);
+  const saveRevenueBasis = useCallback(
+    async (patch: Record<string, unknown>, note: string): Promise<boolean> => {
+      let next: Record<string, unknown>;
+      try {
+        next = applyOverridePatch(overrides, patch, note);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return false;
+      }
+      return persist({ field_overrides: next }, 'Year-1 occupancy and ADR saved — re-running the model…');
+    },
+    [overrides, persist, toast],
   );
 
   // ─── FON-68 — return targets (benchmark + pricing hurdles; no re-run) ───
@@ -1530,6 +1555,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         </span>
       </div>
 
+      {/* Review I-5 — the revenue chain is refused for want of a Year-1 basis. */}
+      {basisRefusal && (
+        <RevenueBasisEntry
+          message={basisRefusal.message}
+          missing={basisRefusal.missing}
+          onSave={saveRevenueBasis}
+          running={false}
+          editable={liveMode && !!deal}
+        />
+      )}
+
       {/* Review bar (only when Fondok flagged values for review) */}
       {reviewCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: palette.textSecondary }}>
@@ -1683,15 +1719,17 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             {/* FON-98 — the reopening / re-flag date (deals.reopening_date).
                 Rani + Eshan: the stabilization default is Year 3 of operations;
                 for a material repositioning / re-flag it counts from the
-                reopening date, else from the acquisition close. A deal column
-                (no justification note); saving re-runs the model so the
-                published stabilization block re-anchors. */}
+                reopening date, else from the acquisition close. A deal column;
+                since topline v2 it also ends the penetration ramp, so a CHANGED
+                date carries the analyst's note (`reopening_date_note`, review
+                I-6). Saving re-runs the model so the stabilization block and
+                the ramp re-anchor. A clear needs no note. */}
             <ReopeningDateField
               value={deal?.reopening_date ?? null}
               anchorLabel={stabilizationAnchorLabel(stab)}
               fallbackNote={stabilizationAnchorFallbackNote(stab)}
-              onSave={(v) => persist(
-                { reopening_date: v },
+              onSave={(v, note) => persist(
+                v ? { reopening_date: v, reopening_date_note: note ?? '' } : { reopening_date: v },
                 v ? 'Reopening date saved — re-running the model (stabilization re-anchors)…' : 'Reopening date cleared — re-running the model (Year 3 after close)…',
               )}
             />
@@ -2010,7 +2048,9 @@ function ProfileSelect({
 // FON-98 — Reopening / re-flag date (deals.reopening_date). An analyst input
 // (blue assumption dot). Blank = no reopening → the stabilization default
 // counts Year 3 from the acquisition close; a date → Year 3 from the first
-// full operating year after it. Blur / Enter saves; the × clears (writes null).
+// full operating year after it. Blur / Enter on a CHANGED date opens the
+// justification row (review I-6 — the date ends the topline ramp); Save sends
+// the date with its note. The × clears (writes null, no note).
 // ─────────────────────────────────────────────────────────────────────────
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function ReopeningDateField({
@@ -2021,33 +2061,49 @@ function ReopeningDateField({
   anchorLabel: string | null;
   /** Why a saved reopening date could not anchor the default, when it could not. */
   fallbackNote: string | null;
-  /** Resolves `false` when the save was refused, so the field can retry it. */
-  onSave: (v: string | null) => void | Promise<boolean | void>;
+  /** Resolves `false` when the save was refused, so the field can retry it.
+   *  `note` is the analyst's justification (always given for a date). */
+  onSave: (v: string | null, note?: string) => void | Promise<boolean | void>;
 }) {
+  const { toast } = useToast();
   const shown = value && ISO_DATE.test(value) ? value : '';
   const [draft, setDraft] = useState(shown);
+  // Review I-6 — a changed date waits here until the analyst says why.
+  const [pendingDate, setPendingDate] = useState<string | null>(null);
+  const [note, setNote] = useState('');
   // One edit = one save. Enter blurs the input (the TargetField pattern) so
   // the single resulting blur commits; ``pending`` remembers what was sent
   // until the saved value comes back through ``value``, so a blur that lands
   // while the PATCH is in flight cannot send the same edit twice.
   const pending = useRef<string | null>(null);
-  useEffect(() => { setDraft(shown); pending.current = null; }, [shown]);
-  const commit = () => {
-    const t = draft.trim();
-    const next: string | null = t === '' ? null : t;
-    if (next == null && !shown) return;
-    if (next != null && !ISO_DATE.test(next)) { setDraft(shown); return; }
-    if (next === (shown || null)) return;
+  useEffect(() => { setDraft(shown); pending.current = null; setPendingDate(null); setNote(''); }, [shown]);
+  const send = (next: string | null, why?: string) => {
     if (pending.current === (next ?? '')) return;
     pending.current = next ?? '';
     // A REFUSED save (worker 4xx/5xx, demo deal) never changes `value`, so the
     // effect above never clears the guard — the analyst's next blur with the
     // same date was silently dropped and only a different date could be sent.
     // Release the guard on a refusal; a landed save clears it through `value`.
-    void Promise.resolve(onSave(next)).then((ok) => {
+    void Promise.resolve(onSave(next, why)).then((ok) => {
       if (ok === false && pending.current === (next ?? '')) pending.current = null;
     });
   };
+  const commit = () => {
+    const t = draft.trim();
+    const next: string | null = t === '' ? null : t;
+    if (next == null && !shown) return;
+    if (next != null && !ISO_DATE.test(next)) { setDraft(shown); return; }
+    if (next === (shown || null)) { setPendingDate(null); return; }
+    if (next == null) { send(null); return; }
+    setPendingDate(next);
+  };
+  const saveWithNote = () => {
+    if (pendingDate == null) return;
+    const why = note.trim();
+    if (!why) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+    send(pendingDate, why);
+  };
+  const cancelPending = () => { setPendingDate(null); setNote(''); setDraft(shown); };
   const hint = fallbackNote
     ?? (shown
       ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
@@ -2068,7 +2124,7 @@ function ReopeningDateField({
           onKeyDown={(e) => {
             // Enter leaves the field; the blur that follows is the ONE commit.
             if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-            if (e.key === 'Escape') setDraft(shown);
+            if (e.key === 'Escape') cancelPending();
           }}
           style={{
             flex: 1, minWidth: 0, fontSize: 11.5, fontFamily: 'inherit', fontWeight: 600, color: prov.blue,
@@ -2081,13 +2137,24 @@ function ReopeningDateField({
             type="button"
             aria-label="Clear reopening / re-flag date"
             title="Clear — the default returns to Year 3 after acquisition close"
-            onClick={() => onSave(null)}
+            onClick={() => send(null)}
             style={{ border: 'none', background: 'none', cursor: 'pointer', color: palette.textMuted, fontSize: 13, lineHeight: 1, padding: '0 2px', fontFamily: 'inherit' }}
           >
             ×
           </button>
         )}
       </div>
+      {pendingDate != null && (
+        <InlineEditControls
+          onSave={saveWithNote}
+          onCancel={cancelPending}
+          note={note}
+          onNote={setNote}
+          noteTestId="reopening-date-note"
+          noteLabel="Reopening date — override justification"
+          saveTestId="reopening-date-save"
+        />
+      )}
       <div style={{ fontSize: 10, color: palette.textFaint, lineHeight: 1.3 }}>{hint}</div>
     </div>
   );

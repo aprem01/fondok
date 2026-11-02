@@ -19,7 +19,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import Link from 'next/link';
-import { MapPinned, Loader2 } from 'lucide-react';
+import { MapPinned } from 'lucide-react';
 import {
   api,
   isWorkerConnected,
@@ -36,17 +36,11 @@ import {
   type MarketPipelineHotel,
 } from '@/lib/api';
 import { useDeal } from '@/lib/hooks/useDeal';
-import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
-import { useSource, useProvenanceState } from '@/lib/hooks/useDealProvenance';
-import { Refused, asReasonCode, useRefusal } from '@/components/help/Refused';
+import { useSource } from '@/lib/hooks/useDealProvenance';
+import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
+import { Refused, asReasonCode } from '@/components/help/Refused';
 import { useToast } from '@/components/ui/Toast';
-import {
-  STR_MARKET_OVERRIDE_NOTE,
-  isStrMarketOverride,
-  isStrBasisSource,
-  sourceLabel,
-} from '@/lib/provenance';
 import {
   palette,
   prov,
@@ -119,23 +113,6 @@ const SUB_TABS = [
 type SubTab = (typeof SUB_TABS)[number]['id'];
 const SUB_TAB_IDS = SUB_TABS.map((t) => t.id) as readonly SubTab[];
 
-/**
- * FON-61 (D4) — what the "STR rates" card says, read from the WORKER's source
- * tags (never inferred from the ``revenue_seed_from_str_forecast`` flag alone),
- * exactly like Financials → Projections' Year-1 basis chip:
- *   off         — flag not set → "Model input · Use STR rates in the model".
- *   active      — flag set AND starting_occupancy / starting_adr carry one of
- *                 the STR basis tags (``isStrBasisSource``: the subject's TTM
- *                 actual, the comp-set rates, or the forward forecast) →
- *                 "STR / Market basis active".
- *   unavailable — flag set but the worker tagged ``str_forecast_unavailable``
- *                 (no STR Trend extraction / coverage too low) → the model is
- *                 on the T-12 base and the card says so.
- *   pending     — flag set but the worker returned NO tag for these keys (the
- *                 provenance fetch failed, or the deployed worker predates the
- *                 tags) → "Pending re-run" — never shown as "active".
- */
-type StrBasis = 'off' | 'active' | 'unavailable' | 'pending';
 
 // ─── canonical colors (from design tokens) ──────────────────────────────────
 const GREEN = prov.green; // document-sourced market metric
@@ -816,14 +793,9 @@ function SubjectVsCompSet({
   compSet,
   activeCount,
   compKeyCount,
-  strBasis,
-  strBasisSource,
-  strBasisSettled,
   baseYearOccPct,
   baseYearAdr,
-  strRunning,
-  onToggleStr,
-  onRerun,
+  toplineLabel,
   dealId,
   subjectState,
 }: {
@@ -834,24 +806,15 @@ function SubjectVsCompSet({
   /** Hotels counted in the comp set — the same set the keys are summed over. */
   activeCount: number | null;
   compKeyCount: number | null;
-  /** Tag-honest card state — see ``StrBasis``. */
-  strBasis: StrBasis;
-  /** FON-61 (61.2) — WHICH STR basis the worker tagged the Year-1 rates with
-   *  (``str_subject_ttm`` / ``str_comp_set`` / ``str_forecast``), so the card
-   *  can name the basis instead of a rate. Empty when the model has none. */
-  strBasisSource: string | null;
-  /** False while the provenance map is still loading (pending card reads
-   *  "checking" instead of "pending re-run"). */
-  strBasisSettled: boolean;
   /** FON-61 (61.1) — the Base Year Financials → Projections ACTUALLY shows
    *  (revenue engine ``years[0]``, falling back to the resolved assumption).
    *  Null until the model has run: the card then claims no Base Year rather
    *  than printing the comp set's number in its place. */
   baseYearOccPct: number | null;
   baseYearAdr: number | null;
-  strRunning: boolean;
-  onToggleStr: () => void;
-  onRerun: () => void;
+  /** FON-116 — the benchmark the topline resolved (`topline_status.benchmark_label`),
+   *  or null on an older worker / before the payload lands. */
+  toplineLabel: string | null;
   dealId: string;
   subjectState: ValueState;
 }) {
@@ -890,8 +853,6 @@ function SubjectVsCompSet({
 
   const strOcc = derivedComp?.occ != null ? pct1(derivedComp.occ) : '—';
   const strAdr = derivedComp?.adr != null ? money0(derivedComp.adr) : '—';
-  const t12Occ = subjOcc != null ? pct1(subjOcc) : '—';
-  const t12Adr = subjAdr != null ? money0(subjAdr) : '—';
 
   // ── FON-61 (61.1) — two different things, said separately ───────────────
   //
@@ -923,12 +884,6 @@ function SubjectVsCompSet({
   ) : (
     <>The Base Year in P&L → Future P&L is not available until the model has run.</>
   );
-  // Which basis the model is on, named — ``str_comp_set`` is the one case where
-  // the comp-set rates ARE the Year-1 input (the analyst applied them here as
-  // explicit overrides), so the card must not claim otherwise.
-  const basisIsCompSet = strBasisSource === 'str_comp_set';
-  const basisName = strBasisSource ? sourceLabel(strBasisSource) : null;
-
   // FON-61 (E-009) — the caption counts the SAME hotels the keys are summed
   // over (active roster), never the report's rollup.
   const contextNote = `Trailing 12 months · STR${
@@ -946,19 +901,6 @@ function SubjectVsCompSet({
     cursor: 'pointer',
     fontFamily: 'inherit',
   };
-  const navyBtn: CSSProperties = {
-    background: palette.inkNavy,
-    color: '#fff',
-    border: 'none',
-    borderRadius: 5,
-    padding: '6px 12px',
-    fontSize: 11.5,
-    fontWeight: 600,
-    cursor: strRunning ? 'default' : 'pointer',
-    fontFamily: 'inherit',
-    opacity: strRunning ? 0.6 : 1,
-  };
-
   return (
     <SectionCard title="Subject vs. Comp Set" note={contextNote}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
@@ -1011,154 +953,39 @@ function SubjectVsCompSet({
             hotels marked and excluded (FON-61 E-009). */}
         <CompSetRoster hotels={compSet?.hotels ?? null} perf={strTrend.compset ?? []} note={compSet?.note ?? null} />
 
-        {/* STR-rate model input toggle — the card state is the WORKER's
-            source tag (see ``StrBasis``), never the flag alone. */}
-        {strBasis === 'active' ? (
-          <div
-            data-testid="str-card-active"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              flexWrap: 'wrap',
-              background: 'oklch(96.5% 0.03 155)',
-              border: '1px solid oklch(85% 0.05 155)',
-              borderRadius: 8,
-              padding: '10px 14px',
-            }}
-          >
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(40% 0.12 155)', textTransform: 'uppercase' }}>
-              STR / Market basis active
-            </span>
-            <span style={{ fontSize: 12.5, color: palette.ink }}>
-              {benchmarkClause}{' '}
-              {basisIsCompSet
-                ? 'The analyst applied these comp-set rates as the Year-1 input.'
-                : `The model does not substitute these — it projects the subject off its own STR basis${
-                    basisName ? ` (${basisName})` : ''
-                  }.`}{' '}
-              {baseYearClause}
-            </span>
-            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
-              {strRunning && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
-                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
-                </span>
-              )}
-              <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
-                <span style={secBtn}>View {PL_SUB_LABEL.projections} →</span>
-              </Link>
-              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
-                Revert to T-12 actuals
-              </button>
-            </span>
-          </div>
-        ) : strBasis === 'unavailable' ? (
-          <div
-            data-testid="str-card-unavailable"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              flexWrap: 'wrap',
-              background: 'oklch(97% 0.03 80)',
-              border: '1px solid oklch(85% 0.08 80)',
-              borderRadius: 8,
-              padding: '10px 14px',
-            }}
-          >
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: 'oklch(42% 0.12 60)', textTransform: 'uppercase' }}>
-              STR rates unavailable — using T-12 base
-            </span>
-            <span style={{ fontSize: 12.5, color: palette.ink }}>
-              STR rates were requested but could not populate (no STR Trend extraction or coverage too low),
-              so the model is on the T-12 base, not the STR rates. {baseYearClause}
-            </span>
-            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
-              {strRunning && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
-                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
-                </span>
-              )}
-              <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
-                <span style={secBtn}>View {PL_SUB_LABEL.projections} →</span>
-              </Link>
-              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
-                Clear STR request
-              </button>
-            </span>
-          </div>
-        ) : strBasis === 'pending' ? (
-          <div
-            data-testid="str-card-pending"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              flexWrap: 'wrap',
-              background: palette.surfaceTint,
-              border: `1px solid ${palette.border}`,
-              borderRadius: 8,
-              padding: '10px 14px',
-            }}
-          >
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
-              {strBasisSettled ? 'Pending re-run' : 'Checking model basis…'}
-            </span>
-            <span style={{ fontSize: 12.5, color: palette.ink }}>
-              {benchmarkClause} An STR basis was requested, but the model has not confirmed which basis
-              Year-1 is on
-              {strBasisSettled ? ' — the saved run predates the source tags. Re-run the model to apply and confirm them.' : '.'}
-              {' '}{baseYearClause}
-            </span>
-            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
-              {strRunning && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
-                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
-                </span>
-              )}
-              <button onClick={onToggleStr} disabled={strRunning} style={secBtn}>
-                Revert to T-12 actuals
-              </button>
-              {strBasisSettled && (
-                <button onClick={onRerun} disabled={strRunning} style={navyBtn}>
-                  Re-run model
-                </button>
-              )}
-            </span>
-          </div>
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              flexWrap: 'wrap',
-              background: palette.surfaceTint,
-              border: `1px solid ${palette.border}`,
-              borderRadius: 8,
-              padding: '10px 14px',
-            }}
-          >
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
-              Model input
-            </span>
-            <span style={{ fontSize: 12.5, color: palette.ink }}>
-              {baseYearClause} {benchmarkClause} Applying it would set Year-1 Occupancy &amp; ADR to those
-              comp-set figures. The subject&apos;s own STR trailing twelve months read {t12Occ} · {t12Adr}.
-            </span>
-            <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
-              {strRunning && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#2f4a8c' }}>
-                  <Loader2 size={12} className="animate-spin" /> Re-modeling…
-                </span>
-              )}
-              <button onClick={onToggleStr} disabled={strRunning} style={navyBtn}>
-                Use STR rates in the model
-              </button>
-            </span>
-          </div>
-        )}
+        {/* FON-116 / FON-117 — the retired "Use STR rates in the model"
+            switch is gone: the comp set IS the model's benchmark by default
+            (benchmark × penetration × ramp, plan §4.2). The card states that,
+            the benchmark the topline resolved, and the Base Year the model
+            shows, and links to the Topline assumptions where the level,
+            penetration and ramp are set. */}
+        <div
+          data-testid="str-card-benchmark"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            flexWrap: 'wrap',
+            background: palette.surfaceTint,
+            border: `1px solid ${palette.border}`,
+            borderRadius: 8,
+            padding: '10px 14px',
+          }}
+        >
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.05em', color: palette.eyebrow, textTransform: 'uppercase' }}>
+            Model benchmark
+          </span>
+          <span style={{ fontSize: 12.5, color: palette.ink }}>
+            The comp set is the model&apos;s benchmark by default.{' '}
+            {toplineLabel ? <>In use: <b>{toplineLabel}</b>. </> : null}
+            {benchmarkClause} {baseYearClause}
+          </span>
+          <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
+            <Link href={`/projects/${dealId}?tab=pl&sub=projections`} style={{ textDecoration: 'none' }}>
+              <span style={secBtn}>Topline assumptions in {PL_SUB_LABEL.projections} →</span>
+            </Link>
+          </span>
+        </div>
       </div>
     </SectionCard>
   );
@@ -1903,43 +1730,12 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const compKeyCount = compSetBlock?.active_keys ?? rosterKeySum;
   const activeHotelCount = compSetBlock?.active_count ?? rosterCount;
 
-  // STR-rate model seed — same field_overrides mechanism as the FON-27 overrides.
-  const { run, status: runStatus } = useEngineRun(dealId, 'returns', { runMode: 'all' });
-  const strRunning = runStatus === 'running' || runStatus === 'queued';
   const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
-  const rawSeed = overrides['revenue_seed_from_str_forecast'];
-  const strSeeded =
-    rawSeed === true ||
-    (typeof rawSeed === 'object' && rawSeed !== null && (rawSeed as { value?: unknown }).value === true);
-  // Tag-honest card state — the same worker source tags Financials →
-  // Projections reads for its Year-1 basis chip. The flag only says the seed
-  // was REQUESTED; only an STR basis tag on the rate keys says it is
-  // what the model is actually using.
+  // FON-116 — the benchmark the topline resolved, named on the Subject vs.
+  // Comp Set card (the retired "Use STR rates" switch is gone).
+  const toplineStatus = useToplineStatus();
   const occSrc = useSource('starting_occupancy');
   const adrSrc = useSource('starting_adr');
-  const seedSrc = useSource('revenue_seed_from_str_forecast');
-  const { settled: strBasisSettled } = useProvenanceState();
-  // Phase 4.4 — the worker's machine-readable refusal is read FIRST: a
-  // ``str_unavailable`` code on the seed key says "unavailable" outright. The
-  // ``str_forecast_unavailable`` source-tag sniff stays as the fallback, and
-  // the worker sets both together today, so this card is identical before and
-  // after the code ships. An ACTIVE tag still wins over either — a populated
-  // model is never re-labelled as a refusal.
-  const strSeedRefusal = useRefusal('revenue_seed_from_str_forecast');
-  // FON-61 (61.2) — ONE helper for "is this an STR basis", shared with
-  // Financials → Projections. The worker's single ``str_forecast`` id was split
-  // into the subject's TTM actual, the comp-set rates and the forward forecast;
-  // a hand-rolled equality here would have silently dropped two of the three.
-  const strBasisSource =
-    [occSrc?.source, adrSrc?.source].find((src) => isStrBasisSource(src)) ?? null;
-  const strBasis: StrBasis = !strSeeded
-    ? 'off'
-    : strBasisSource
-      ? 'active'
-      : strSeedRefusal === 'str_unavailable'
-        || [seedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable')
-        ? 'unavailable'
-        : 'pending';
   // FON-61 (61.1) — the Base Year the model ACTUALLY uses. First choice is the
   // revenue engine's ``years[0]``, which is the very row Financials →
   // Projections renders as "Base Year (Year 1)"; the resolved assumption is the
@@ -1955,47 +1751,6 @@ export default function MarketTab({ projectId }: { projectId: number | string })
     finiteOr(revenueYears?.[0]?.occupancy) ?? finiteOr(occSrc?.value);
   const baseYearOccPct = baseYearOccRaw == null ? null : occPct(baseYearOccRaw);
   const baseYearAdr = finiteOr(revenueYears?.[0]?.adr) ?? finiteOr(adrSrc?.value);
-  // FON-61 (D4) — Market → Financials propagation is EXPLICIT. "Use STR rates"
-  // writes ``starting_occupancy`` / ``starting_adr`` field_overrides carrying
-  // exactly the comp-set values the card displays (occupancy at the card's
-  // 0.1-pt precision as a fraction; ADR at the card's whole-dollar precision),
-  // each with the exact ``STR_MARKET_OVERRIDE_NOTE`` so the worker badges
-  // them ``str_comp_set`` rather than a generic analyst override. When the
-  // comp set can't supply both values the card shows "—" and only the flag
-  // is written — the worker then seeds from the subject TTM / forecast, or
-  // tags the flag ``str_forecast_unavailable`` (never a silent "active").
-  // "Revert" deletes the flag AND both keys — but only keys that carry the
-  // STR note, so an analyst's later explicit override on either key survives.
-  const toggleStrSeed = async () => {
-    const next = { ...overrides };
-    if (strSeeded) {
-      delete next['revenue_seed_from_str_forecast'];
-      for (const key of ['starting_occupancy', 'starting_adr'] as const) {
-        if (isStrMarketOverride(next[key])) delete next[key];
-      }
-    } else {
-      next['revenue_seed_from_str_forecast'] = { value: true, note: `STR market rates enabled from the ${TAB_LABEL.market} tab` };
-      if (derivedComp?.occ != null && derivedComp?.adr != null) {
-        next['starting_occupancy'] = {
-          value: Math.round(derivedComp.occ * 10) / 10 / 100,
-          note: STR_MARKET_OVERRIDE_NOTE,
-        };
-        next['starting_adr'] = { value: Math.round(derivedComp.adr), note: STR_MARKET_OVERRIDE_NOTE };
-      }
-    }
-    try {
-      await api.deals.update(dealId, { field_overrides: next });
-      refreshDeal();
-      await run();
-      toast(
-        strSeeded ? 'Reverted Year-1 to the T-12 actuals' : 'Year-1 occupancy & ADR now driven by STR market rates — re-modeled',
-        { type: 'success' },
-      );
-    } catch {
-      toast('Could not update the model', { type: 'error' });
-    }
-  };
-
   // ── FON-60 (60.1) — the comp selection lives on the DEAL ────────────────
   //
   // Same ``field_overrides`` channel as the STR seed, and deliberately NOT the
@@ -2084,14 +1839,11 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               compSet={compSetBlock}
               activeCount={activeHotelCount}
               compKeyCount={compKeyCount}
-              strBasis={strBasis}
-              strBasisSource={strBasisSource}
-              strBasisSettled={strBasisSettled}
               baseYearOccPct={baseYearOccPct}
               baseYearAdr={baseYearAdr}
-              strRunning={strRunning}
-              onToggleStr={toggleStrSeed}
-              onRerun={() => void run()}
+              toplineLabel={
+                toplineStatus && toplineStatus.benchmark_level !== 'none' ? toplineStatus.benchmark_label : null
+              }
               dealId={dealId}
               subjectState={stateOf('revenue', 'year1_occupancy', 'document_sourced')}
             />

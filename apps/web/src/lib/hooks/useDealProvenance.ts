@@ -21,6 +21,7 @@ import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse, AssumptionSourceField } from '@/lib/api';
 import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 import { DisplacementStatusContext } from '@/lib/hooks/useDisplacementStatus';
+import { ToplineStatusContext } from '@/lib/hooks/useToplineStatus';
 import { subscribeEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 
 export interface ResolvedSource {
@@ -142,7 +143,8 @@ export function ProvenanceProvider({
     createElement(
       DisplacementStatusContext.Provider,
       { value: data?.displacement_status ?? null },
-      children,
+      // FON-116 / FON-117 — the topline status rides on the same payload.
+      createElement(ToplineStatusContext.Provider, { value: data?.topline_status ?? null }, children),
     ),
   );
 }

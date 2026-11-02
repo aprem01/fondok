@@ -29,12 +29,18 @@
  * All pure logic lives in ``indexAnalysisModel.ts``.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/format';
-import { api, isWorkerConnected, type IndexMethodologyResponse } from '@/lib/api';
+import { api, isWorkerConnected, type IndexCompSetYear, type IndexMethodologyResponse, type ToplineStatus } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
+import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
+import { applyOverridePatch, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
+import type { ToplineYearRecord } from '@/lib/topline';
+import { PenetrationByYearGrid, ToplineBasisLine, ToplineCard, ToplineNotices, type ToplineSave } from './Topline';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { toIndexPoints } from '@/lib/indexTarget';
 import { useDeal } from '@/lib/hooks/useDeal';
@@ -43,7 +49,6 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import {
   BasisChip,
   buildReconciliation,
-  IndexMethodologyPanel,
   ProjectionsReconciliation,
   type IaColumnOrigin,
   type ReconciliationSource,
@@ -82,7 +87,7 @@ import {
 export type { ForecastBoundary } from './indexAnalysisModel';
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are that TTM level grown at the market occupancy / ADR growth assumption (the document default or your override on Index methodology) — an assumption, not an STR figure — and stay blank with the reason when no growth value exists. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (CBRE Horizons for that calendar year, with document and page) or Assumption (the Year-1 level grown at the market growth assumption), so reported history is never read as a projected benchmark.';
+  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are the benchmark the model runs on (the topline): that level grown by the market growth for each year — the CBRE or CoStar forecast, your override, or carried forward — each column labelled with its basis, and blank with the reason when the model’s benchmark is another level. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (a market forecast for that calendar year, with document and page) or Assumption (a growth carried forward), so reported history is never read as a projected benchmark.';
 
 /**
  * FON-41 E-027 — where an Index Analysis SUBJECT column's numbers come from.
@@ -373,6 +378,11 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   const [loading, setLoading] = useState(false);
 
   const liveMode = isWorkerConnected() && !!dealId && !/^\d+$/.test(dealId);
+  // FON-116 / FON-117 — the topline the model runs on: the provenance
+  // payload's block, else the index-methodology response's copy.
+  const contextTopline = useToplineStatus();
+  const topline: ToplineStatus | null = contextTopline ?? methodology?.topline_status ?? null;
+  const toplineByYear = getEngineField<ToplineYearRecord[]>(outputs, 'revenue', 'topline_by_year') ?? [];
 
   useEffect(() => {
     if (!liveMode) return;
@@ -427,9 +437,22 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     () => buildSubjectSeries(cols, outputs, historicalBaseline, str),
     [cols, outputs, historicalBaseline, str],
   );
+  // The comp-set forecast is the topline's benchmark by year when the model's
+  // benchmark IS the competitive set; on another level the comp-set forecast
+  // is blank (that level shows in the penetration rows). An older worker
+  // keeps its own grown series.
   const comp = useMemo(
-    () => buildCompSeries(cols, str, methodology?.comp_set_by_year ?? null),
-    [cols, str, methodology],
+    () =>
+      buildCompSeries(
+        cols,
+        str,
+        topline
+          ? topline.benchmark_level === 'comp_set'
+            ? toplineCompYears(topline)
+            : []
+          : methodology?.comp_set_by_year ?? null,
+      ),
+    [cols, str, methodology, topline],
   );
   const market = useMemo(() => buildMarketSeries(cols, marketData), [cols, marketData]);
 
@@ -450,6 +473,18 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   // worker's by-year grid (by-year beats scalar; index = ordinal − 1). These
   // drive the index rows' forecast cells and the per-year opportunity.
   const targetsByYear = useMemo(() => {
+    // Topline v2 — the penetration the engine APPLIED each year (benchmark ×
+    // penetration × ramp): per-year override where set, else the stabilized
+    // penetration (default 100). Always what the Subject rows run on.
+    if (topline && toplineByYear.length) {
+      const mpi = toplineByYear.map((r, i): YearTarget | null =>
+        r?.mpi_target != null ? { value: r.mpi_target, source: topline.penetration_occ_by_year?.[i] != null ? 'by_year' : 'scalar' } : null,
+      );
+      const ari = toplineByYear.map((r, i): YearTarget | null =>
+        r?.ari_target != null ? { value: r.ari_target, source: topline.penetration_adr_by_year?.[i] != null ? 'by_year' : 'scalar' } : null,
+      );
+      return { mpi, ari };
+    }
     const rows = methodology?.by_year ?? [];
     if (!rows.length) return null;
     const size = Math.max(...rows.map((r) => r.year));
@@ -464,7 +499,8 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
       ari[r.year - 1] = of(r.ari_target);
     }
     return { mpi, ari };
-  }, [methodology]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [methodology, topline, toplineByYear.length, outputs]);
   const hasTargets =
     !!targetsByYear &&
     (targetsByYear.mpi.some((v) => v != null) || targetsByYear.ari.some((v) => v != null));
@@ -473,16 +509,19 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   // otherwise the Subject rows do not reflect the targets, so printing them
   // would show a penetration the model never runs. Then the published index
   // is held flat and a one-line note says the targets are set but not applied.
-  const byYearApplies = !!methodology?.by_year_applies;
+  // Topline v2 — the targets always drive the model (no toggle any more).
+  const byYearApplies = topline != null || !!methodology?.by_year_applies;
   const appliedTargetsByYear = byYearApplies ? targetsByYear : null;
-  const scalarTargets = { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') };
+  const scalarTargets = topline
+    ? { mpi: topline.penetration_occ, ari: topline.penetration_adr }
+    : { mpi: targetOf('index_mpi_target'), ari: targetOf('index_ari_target') };
   const anyTargetSet = hasTargets || scalarTargets.mpi != null || scalarTargets.ari != null;
   const targetsNotApplied = anyTargetSet && !byYearApplies;
   // Revenue Opportunity at Target is gated EXACTLY like the index rows: a
   // target the model does not run on prices no opportunity.
   const appliedScalarTargets = byYearApplies ? scalarTargets : null;
   const targetGateReason = targetsNotApplied
-    ? `Targets set but not applied — ${methodology?.by_year_disabled_reason ?? 'turn on “Use STR rates in the model” in Market Overview.'}`
+    ? `Targets set but not applied — ${methodology?.by_year_disabled_reason ?? 'the model does not run on them.'}`
     : null;
 
   // Sam #3 — the penetration rows follow the SELECTED benchmark (Index
@@ -490,6 +529,36 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   // method indexes the subject against that benchmark: its TTM level in the
   // anchor column and the worker's by-year benchmark in the forecast columns.
   const benchmark = useMemo((): PenetrationBenchmark | null => {
+    // Topline v2 — the benchmark is the level the resolver chose. The comp set
+    // keeps the STR-published indices; another level indexes the subject
+    // against that level's series by year.
+    if (topline) {
+      if (topline.benchmark_level === 'comp_set' || topline.benchmark_level === 'none') return null;
+      const series = emptySeries(cols.columns.length);
+      const details: (string | null)[] = cols.columns.map(() => null);
+      cols.columns.forEach((c, i) => {
+        if (c.kind !== 'forecast' || c.ordinal == null) return;
+        const b = topline.benchmark_by_year?.[c.ordinal - 1];
+        if (!b) return;
+        const o = occFraction(b.occupancy ?? null);
+        const a = posOrNull(b.adr ?? null);
+        series.occupancy[i] = o;
+        series.adr[i] = a;
+        series.revpar[i] = o != null && a != null ? o * a : null;
+        details[i] = b.label;
+      });
+      return {
+        method: topline.benchmark_level,
+        label: topline.benchmark_label,
+        series,
+        details,
+        current: {
+          mpi: topline.current_mpi?.value ?? null,
+          ari: topline.current_ari?.value ?? null,
+          trace: topline.current_mpi?.label ?? topline.current_ari?.label ?? null,
+        },
+      };
+    }
     if (!methodology) return null;
     const m = methodology.methods.find((x) => x.method === methodology.selected);
     if (!m || m.method === 'str_comp_set') return null;
@@ -533,7 +602,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
             : null,
       },
     };
-  }, [methodology, cols]);
+  }, [methodology, cols, topline]);
   const penetrationRows = useMemo(
     () =>
       computePenetration({
@@ -691,7 +760,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
 
       <ProjectionsReconciliation rec={reconciliation} />
 
-      <IndexMethodologyPanel dealId={dealId} />
+      <ToplineIndexPanel dealId={dealId} topline={topline} toplineByYear={toplineByYear} />
 
       <Card className="p-0 overflow-hidden">
         <IndexTable
@@ -749,10 +818,100 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
             className="px-4 py-2 text-[11px] text-ink-500 italic border-t border-border"
             data-testid="index-penetration-targets-not-applied"
           >
-            Targets set but not applied — turn on &lsquo;Use STR rates in the model&rsquo;
+            {targetGateReason}
           </div>
         )}
       </Card>
     </div>
+  );
+}
+
+/** FON-116 — the topline's benchmark by year as the comp-set forecast rows. */
+function toplineCompYears(t: ToplineStatus): IndexCompSetYear[] {
+  return (t.benchmark_by_year ?? []).map((b) => {
+    const fig = (value: number | null | undefined) => ({
+      value: value ?? null,
+      source: 'computed' as const,
+      inputs: [],
+      detail: b.label,
+      basis: b.basis ?? null,
+      basis_label: b.label,
+    });
+    return { year: b.year, calendar_year: b.calendar_year ?? null, occupancy: fig(b.occupancy), adr: fig(b.adr) };
+  });
+}
+
+/**
+ * FON-116 / FON-117 — the topline the model runs on, edited from Index
+ * Analysis: the basis line, the benchmark level / penetration / ramp (the same
+ * `ToplineCard` as the Future P&L) and benchmark × penetration × ramp by year.
+ * One save path (patch + the analyst's note → the deal PATCH → re-run).
+ */
+function ToplineIndexPanel({
+  dealId, topline, toplineByYear,
+}: {
+  dealId: string;
+  topline: ToplineStatus | null;
+  toplineByYear: ToplineYearRecord[];
+}) {
+  const { toast } = useToast();
+  const { deal, refresh: refreshDeal } = useDeal(dealId);
+  const { run, status } = useEngineRun(dealId, 'returns', { runMode: 'all' });
+  const running = status === 'running' || status === 'queued';
+  const overrides = useMemo(() => (deal?.field_overrides ?? {}) as Record<string, unknown>, [deal]);
+  const onSave = useCallback<ToplineSave>(
+    async (patch, note) => {
+      if (!deal) {
+        toast('Still loading this deal — try again in a moment', { type: 'error' });
+        return false;
+      }
+      let next: Record<string, unknown>;
+      try {
+        next = applyOverridePatch(overrides, patch, note);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return false;
+      }
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        refreshDeal();
+        await run();
+        toast('Saved — re-modeled', { type: 'success' });
+        return true;
+      } catch {
+        toast('Could not save', { type: 'error' });
+        return false;
+      }
+    },
+    [deal, overrides, dealId, refreshDeal, run, toast],
+  );
+  if (!topline) return null;
+  return (
+    <Card className="p-4 space-y-3" data-testid="index-topline-panel">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Topline — what the model runs on</div>
+        <div className="text-[11.5px] text-ink-500 mt-0.5">
+          The benchmark the subject is indexed against, the penetration it reaches at stabilization and the ramp
+          to it — the same inputs as the Topline card on the Future P&amp;L.
+        </div>
+      </div>
+      <ToplineBasisLine status={topline} />
+      <ToplineNotices
+        status={topline}
+        dealId={dealId}
+        migrationNotice={null}
+        onClearLegacy={(keys) => void onSave(Object.fromEntries(keys.map((k) => [k, null])), '')}
+        onRerun={() => void run()}
+        running={running}
+      />
+      <ToplineCard status={topline} overrides={overrides} onSave={onSave} running={running} />
+      <PenetrationByYearGrid
+        status={topline}
+        toplineByYear={toplineByYear}
+        overrides={overrides}
+        onSave={onSave}
+        running={running}
+      />
+    </Card>
   );
 }

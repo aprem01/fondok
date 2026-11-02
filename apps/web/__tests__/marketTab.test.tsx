@@ -179,7 +179,6 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }
 
 import MarketTab from '@/components/project/MarketTab';
 import { api } from '@/lib/api';
-import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
 import { resetRouter } from './helpers/mockRouter';
 
 beforeEach(() => {
@@ -194,175 +193,8 @@ beforeEach(() => {
   vi.mocked(api.deals.update).mockClear();
 });
 
-const STR_FLAG = { value: true, note: 'STR market rates enabled from the Market Comps tab' };
 
-// FON-61 (D4) — Market → Financials propagation is EXPLICIT: "Use STR rates"
-// writes starting_occupancy / starting_adr = the comp-set values the card
-// shows, each carrying the exact note the worker keys the ``str_forecast``
-// tag on. "Revert" removes the flag + both STR-noted keys (an analyst's own
-// override on either key survives).
-describe('MarketTab — "Use STR rates in the model" writes explicit Year-1 overrides', () => {
-  // From MARKET: occ = 71.4 / 1.032 = 69.186… → card shows 69.2% → 0.692;
-  // ADR = 278 / 0.942 = 295.1… → card shows $295 → 295.
-  it('writes starting_occupancy / starting_adr = the displayed comp-set values with the exact STR note', async () => {
-    render(<MarketTab projectId="deal-uuid-1" />);
-    // The market payload loads async — wait for the card. The values the card
-    // displays are the values that get written.
-    expect((await screen.findAllByText('69.2%')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('$295').length).toBeGreaterThan(0);
 
-    fireEvent.click(await screen.findByText('Use STR rates in the model'));
-    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
-
-    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, { value: unknown; note: string }> }];
-    const ov = body.field_overrides;
-    expect(ov.revenue_seed_from_str_forecast).toEqual({ value: true, note: 'STR market rates enabled from the Market Comps tab' });
-    expect(STR_MARKET_OVERRIDE_NOTE).toBe('STR comp-set market rates (Market tab)');
-    expect(ov.starting_occupancy.note).toBe('STR comp-set market rates (Market tab)');
-    expect(ov.starting_occupancy.value).toBeCloseTo(0.692, 9);
-    expect(ov.starting_adr).toEqual({ value: 295, note: 'STR comp-set market rates (Market tab)' });
-  });
-
-  it('"Revert" deletes the flag and the STR-noted keys, keeping an analyst override on the same key', async () => {
-    mockOverrides = {
-      revenue_seed_from_str_forecast: STR_FLAG,
-      starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
-      // The analyst later pinned ADR themselves — that intent must survive.
-      starting_adr: { value: 310, note: 'Broker guidance' },
-      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
-    };
-    // The worker tags the STR-noted key ``str_forecast`` and the analyst's own
-    // ADR override ``analyst_override`` — occupancy on STR = basis is active.
-    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'analyst_override' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByText('STR / Market basis active')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText('Revert to T-12 actuals'));
-    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
-
-    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides).toEqual({
-      starting_adr: { value: 310, note: 'Broker guidance' },
-      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
-    });
-  });
-});
-
-// The "STR rates" card is TAG-HONEST: its state is the worker's source tag on
-// starting_occupancy / starting_adr (the same tags Financials → Projections
-// reads), never the ``revenue_seed_from_str_forecast`` flag alone.
-describe('MarketTab — the STR rates card reads the worker source tags, not the flag', () => {
-  it('flag on + str_forecast tag → the active basis card', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR / Market basis active');
-    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
-  });
-
-  it('flag on + str_forecast_unavailable tag → honest "STR rates unavailable — using T-12 base"; Clear STR request drops the flag', async () => {
-    mockOverrides = {
-      revenue_seed_from_str_forecast: STR_FLAG,
-      mgmt_fee_pct: { value: 0.03, note: 'Analyst' },
-    };
-    mockSources = {
-      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
-      starting_occupancy: 't12_actual',
-      starting_adr: 't12_actual',
-    };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    const card = await screen.findByTestId('str-card-unavailable');
-    expect(card).toHaveTextContent('STR rates unavailable — using T-12 base');
-    expect(card).toHaveTextContent('the model is on the T-12 base');
-    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
-
-    // Same write as Revert: the flag goes, unrelated overrides survive.
-    fireEvent.click(screen.getByText('Clear STR request'));
-    await waitFor(() => expect(api.deals.update).toHaveBeenCalledTimes(1));
-    const [, body] = vi.mocked(api.deals.update).mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides).toEqual({ mgmt_fee_pct: { value: 0.03, note: 'Analyst' } });
-  });
-
-  it('flag on + NO tag from the worker → "Pending re-run", never "active"; Re-run model triggers the run', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {}; // provenance loaded, but the worker returned no tag for these keys
-    render(<MarketTab projectId="deal-uuid-1" />);
-    const card = await screen.findByTestId('str-card-pending');
-    expect(card).toHaveTextContent('Pending re-run');
-    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByText('Re-run model'));
-    await waitFor(() => expect(engineRunSpy).toHaveBeenCalledTimes(1));
-    expect(api.deals.update).not.toHaveBeenCalled(); // re-run writes nothing
-  });
-
-  it('flag on while the provenance map is still loading → "Checking model basis…" (no re-run offered yet)', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {};
-    mockProvSettled = false;
-    render(<MarketTab projectId="deal-uuid-1" />);
-    const card = await screen.findByTestId('str-card-pending');
-    expect(card).toHaveTextContent('Checking model basis…');
-    expect(screen.queryByText('Re-run model')).not.toBeInTheDocument();
-    expect(screen.queryByText('STR / Market basis active')).not.toBeInTheDocument();
-  });
-
-  // Phase 4.4 — the card now reads the worker's REFUSAL CODE first and only
-  // then sniffs the source tag. Both paths must land on the same card, so the
-  // strip is identical before and after the worker starts emitting codes.
-  it('flag on + worker reason `str_unavailable` (no source tag at all) → the same unavailable card', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {}; // the worker tagged nothing — the CODE is the whole signal
-    mockReasons = { revenue_seed_from_str_forecast: 'str_unavailable' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    const card = await screen.findByTestId('str-card-unavailable');
-    expect(card).toHaveTextContent('STR rates unavailable — using T-12 base');
-    expect(card).toHaveTextContent('the model is on the T-12 base');
-    // Same copy, same actions — the code changed nothing a tester can see.
-    expect(screen.getByText('Clear STR request')).toBeInTheDocument();
-    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('str-card-active')).not.toBeInTheDocument();
-  });
-
-  it('flag on + the code ABSENT → falls back to the str_forecast_unavailable tag, same card', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { revenue_seed_from_str_forecast: 'str_forecast_unavailable' };
-    mockReasons = {}; // every worker build today
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-unavailable')).toHaveTextContent(
-      'STR rates unavailable — using T-12 base',
-    );
-    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
-  });
-
-  it('a populated model still wins: an active str_forecast tag is never re-labelled by a stale code', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
-    mockReasons = { revenue_seed_from_str_forecast: 'str_unavailable' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-active')).toHaveTextContent('STR / Market basis active');
-    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
-  });
-
-  it('an unrelated reason code on the seed key does NOT flip the card to unavailable', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {};
-    mockReasons = { revenue_seed_from_str_forecast: 'as_of_unknown' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByTestId('str-card-pending')).toHaveTextContent('Pending re-run');
-    expect(screen.queryByTestId('str-card-unavailable')).not.toBeInTheDocument();
-  });
-
-  it('flag off → the "Model input" card with "Use STR rates in the model", whatever the tags say', async () => {
-    mockOverrides = {};
-    mockSources = { starting_occupancy: 't12_actual', starting_adr: 't12_actual' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-    expect(await screen.findByText('Use STR rates in the model')).toBeInTheDocument();
-    expect(screen.queryByTestId('str-card-active')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('str-card-pending')).not.toBeInTheDocument();
-  });
-});
 
 describe('MarketTab — Transaction Comps SELLER column (new backend field)', () => {
   it('renders the SELLER column with the disclosed seller from mocked data', async () => {
@@ -443,34 +275,6 @@ describe('MarketTab — Market Overview awaiting-data em dashes', () => {
   });
 });
 
-// FON-61 §3 — "View Projections →" from Market used to open Financials →
-// Historicals because it carried only `?tab=pl`. Both STR cards now name the
-// sub-tab (`?tab=pl&sub=projections`).
-describe('MarketTab — "View Future P&L →" deep-links to P&L → Future P&L', () => {
-  it('the active STR card links to ?tab=pl&sub=projections', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { starting_occupancy: 'str_forecast', starting_adr: 'str_forecast' };
-    render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-active');
-    const link = within(card).getByRole('link', { name: 'View Future P&L →' });
-    expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
-  });
-
-  it('the STR-unavailable card links to ?tab=pl&sub=projections', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {
-      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
-      starting_occupancy: 't12_actual',
-      starting_adr: 't12_actual',
-    };
-    render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-unavailable');
-    const link = within(card).getByRole('link', { name: 'View Future P&L →' });
-    expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
-  });
-});
 
 // FON-60 §4 (Sam 09-11) — "remove property-name/source deep-linking from
 // Transaction Comps for now. Property names should display as normal text."
@@ -586,6 +390,8 @@ describe('MarketTab — `?tab=market&sub=<slug>` routing', () => {
 
 /** Revenue-engine years — ``years[0]`` is the row Financials → Projections
  *  renders as "Base Year (Year 1)". Occupancy is a 0..1 fraction. */
+const STR_FLAG = { value: true, note: 'STR market rates enabled from the Market Comps tab' };
+
 const REVENUE_OUTPUTS = {
   deal_id: 'deal-uuid-1',
   engines: {
@@ -600,98 +406,51 @@ const REVENUE_OUTPUTS = {
   },
 };
 
-describe('MarketTab — the active card names the basis and the Base Year separately', () => {
-  it('states the comp-set benchmark and the Base Year as two different facts', async () => {
+
+// FON-116 / FON-117 — the "Use STR rates in the model" switch is retired: the
+// comp set IS the model's benchmark by default (benchmark × penetration ×
+// ramp). The card says so, names the benchmark the topline resolved, keeps the
+// comp-set benchmark and the Base Year as two separate facts (FON-61 §1), and
+// links to the Topline assumptions. It writes nothing.
+describe('MarketTab — the comp set is the model benchmark (no STR toggle)', () => {
+  it('states the default, the comp-set benchmark and the Base Year; no switch, no Revert', async () => {
     mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    // The worker seeded from the subject's own TTM — an actual, not a forecast.
-    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
+    mockSources = { starting_occupancy: 'topline_benchmark', starting_adr: 'topline_benchmark' };
     mockOutputs = REVENUE_OUTPUTS;
     render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-active');
-    // The eyebrow names a basis, not a rate.
-    expect(card).toHaveTextContent('STR / Market basis active');
-    // Clause 1 — the comp-set benchmark, labelled as a benchmark.
+    const card = await screen.findByTestId('str-card-benchmark');
+    expect(card).toHaveTextContent("The comp set is the model's benchmark by default.");
     expect(card).toHaveTextContent('Comp-set benchmark:');
-    expect(card).toHaveTextContent('69.2%'); // 71.4 ÷ 1.032
-    expect(card).toHaveTextContent('$295'); // 278 ÷ 0.942
-    // Clause 2 — the Base Year the model actually uses, from the engine.
+    expect(card).toHaveTextContent('69.2%');
     expect(card).toHaveTextContent('P&L → Future P&L Base Year:');
     expect(card).toHaveTextContent('71.6%');
-    expect(card).toHaveTextContent('$288');
-    // …and it names which STR basis the model is on.
-    expect(card).toHaveTextContent('STR · Subject TTM actual');
+    expect(screen.queryByText('Use STR rates in the model')).toBeNull();
+    expect(screen.queryByText('Revert to T-12 actuals')).toBeNull();
+    expect(screen.queryByTestId('str-card-active')).toBeNull();
+    expect(screen.queryByTestId('str-card-pending')).toBeNull();
+    expect(screen.queryByTestId('str-card-unavailable')).toBeNull();
   });
 
-  it('never asserts the comp-set number IS the Year-1 assumption', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
-    mockOutputs = REVENUE_OUTPUTS;
+  it('links to the Topline assumptions on P&L → Future P&L', async () => {
     render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-active');
-    expect(card).not.toHaveTextContent('The model is using these STR market rates for Year-1');
-    expect(card).toHaveTextContent('The model does not substitute these');
+    const card = await screen.findByTestId('str-card-benchmark');
+    const link = within(card).getByRole('link');
+    expect(link).toHaveAttribute('href', '/projects/deal-uuid-1?tab=pl&sub=projections');
+    expect(link).toHaveTextContent('Topline assumptions in Future P&L →');
   });
 
-  it('says so plainly when the comp-set rates ARE the applied Year-1 input', async () => {
-    // The analyst clicked "Use STR rates": the comp-set values were written as
-    // explicit overrides, and the worker badges them ``str_comp_set``.
-    mockOverrides = {
-      revenue_seed_from_str_forecast: STR_FLAG,
-      starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
-      starting_adr: { value: 295, note: STR_MARKET_OVERRIDE_NOTE },
-    };
-    mockSources = { starting_occupancy: 'str_comp_set', starting_adr: 'str_comp_set' };
+  it('claims no Base Year before the model has run', async () => {
+    mockOutputs = null;
     render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-active');
-    expect(card).toHaveTextContent('The analyst applied these comp-set rates as the Year-1 input.');
-    expect(card).not.toHaveTextContent('The model does not substitute these');
-  });
-
-  it('claims no Base Year at all before the model has run', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = { starting_occupancy: 'str_subject_ttm', starting_adr: 'str_subject_ttm' };
-    mockOutputs = null; // no engine outputs, and the provenance map carries no value
-    render(<MarketTab projectId="deal-uuid-1" />);
-
-    const card = await screen.findByTestId('str-card-active');
-    expect(card).toHaveTextContent(
+    expect(await screen.findByTestId('str-card-benchmark')).toHaveTextContent(
       'The Base Year in P&L → Future P&L is not available until the model has run.',
     );
-    // The comp-set figures are still shown — as a benchmark, which they are.
-    expect(card).toHaveTextContent('Comp-set benchmark:');
   });
 
-  it('the pending and model-input cards carry the same two-clause split', async () => {
-    mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-    mockSources = {};
-    mockOutputs = REVENUE_OUTPUTS;
-    const { unmount } = render(<MarketTab projectId="deal-uuid-1" />);
-    const pending = await screen.findByTestId('str-card-pending');
-    expect(pending).toHaveTextContent('Comp-set benchmark:');
-    expect(pending).toHaveTextContent('P&L → Future P&L Base Year:');
-    expect(pending).toHaveTextContent('71.6%');
-    unmount();
-
-    mockOverrides = {};
+  it('writes nothing on render', async () => {
     render(<MarketTab projectId="deal-uuid-1" />);
-    const off = await screen.findByText('Use STR rates in the model');
-    const card = off.closest('div')?.parentElement as HTMLElement;
-    expect(card).toHaveTextContent('Comp-set benchmark:');
-    expect(card).toHaveTextContent('P&L → Future P&L Base Year:');
-    expect(card).toHaveTextContent('71.6%');
-  });
-
-  it('an STR basis is still "active" under any of the three STR source ids', async () => {
-    for (const source of ['str_forecast', 'str_subject_ttm', 'str_comp_set']) {
-      cleanup();
-      mockOverrides = { revenue_seed_from_str_forecast: STR_FLAG };
-      mockSources = { starting_occupancy: source, starting_adr: source };
-      render(<MarketTab projectId="deal-uuid-1" />);
-      expect(await screen.findByTestId('str-card-active')).toBeInTheDocument();
-    }
+    await screen.findByTestId('str-card-benchmark');
+    expect(api.deals.update).not.toHaveBeenCalled();
   });
 });
 

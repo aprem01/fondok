@@ -1629,31 +1629,44 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     );
   });
 
-  it('saving the date PATCHes deals.reopening_date as a plain column (no justification note)', async () => {
+  it('saving a changed date asks why, then PATCHes deals.reopening_date with reopening_date_note (review I-6)', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     const input = screen.getByLabelText('Reopening / re-flag date');
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.blur(input);
+    // The date moves the default stabilization year, which ends the topline
+    // ramp — nothing is written until the analyst says why.
+    expect(updateSpy).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Reopening date — override justification'), {
+      target: { value: 'PIP closes the hotel Q1 2027' },
+    });
+    fireEvent.click(within(screen.getByTestId('reopening-date-field')).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: '2027-03-15' });
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      reopening_date: '2027-03-15',
+      reopening_date_note: 'PIP closes the hotel Q1 2027',
+    });
+    // A second Save / stray blur while the PATCH is in flight (the deal has not
+    // refreshed yet, so the prop still reads blank) must not send it again.
+    fireEvent.click(within(screen.getByTestId('reopening-date-field')).getByRole('button', { name: 'Save' }));
+    fireEvent.blur(screen.getByLabelText('Reopening / re-flag date'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updateSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('Enter saves ONCE: it leaves the field and the blur that follows is the single PATCH (no second save + toast)', async () => {
+  it('Save without a justification writes nothing; Cancel restores the saved date', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     const input = screen.getByLabelText('Reopening / re-flag date') as HTMLInputElement;
     input.focus();
-    expect(document.activeElement).toBe(input);
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    // Enter blurred the input (jsdom dispatches the blur → React onBlur → commit).
-    expect(document.activeElement).not.toBe(input);
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: '2027-03-15' });
-    // A stray blur while the PATCH is in flight (the deal has not refreshed
-    // yet, so the prop still reads blank) must not send the same edit again.
-    fireEvent.blur(input);
+    const field = screen.getByTestId('reopening-date-field');
+    fireEvent.click(within(field).getByRole('button', { name: 'Save' }));
     await new Promise((r) => setTimeout(r, 0));
-    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).not.toHaveBeenCalled();
+    fireEvent.click(within(field).getByRole('button', { name: 'Cancel' }));
+    expect((screen.getByLabelText('Reopening / re-flag date') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByLabelText('Reopening date — override justification')).not.toBeInTheDocument();
   });
 
   it('× clears the date (writes null) so the default returns to Year 3 after close', async () => {
@@ -1670,6 +1683,33 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.blur(input);
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── Review I-5 — no Year-1 revenue basis ─────────────────────────────────
+describe('OverviewTab — no Year-1 occupancy / ADR basis (review I-5)', () => {
+  const message =
+    'The deal has no Year-1 occupancy basis — no T-12, no STR or market benchmark and no analyst value sets it. Upload a T-12 or STR report, or enter Year-1 occupancy and ADR on the Future P&L, and run the model again — the model never substitutes a placeholder rate.';
+  it('prints the worker’s message and saves the missing rate as a noted override, then re-runs', async () => {
+    outputsRef.value = {
+      ...OUTPUTS,
+      failures: [{ engine: 'revenue', reason: 'no_revenue_basis', message, missing: ['starting_occupancy'] }],
+    } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.getByTestId('revenue-basis-message')).toHaveTextContent('Upload a T-12 or STR report, or enter Year-1 occupancy and ADR');
+    expect(screen.queryByLabelText('Year-1 ADR ($)')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Year-1 occupancy (%)'), { target: { value: '68' } });
+    fireEvent.change(screen.getByLabelText('Year-1 occupancy and ADR — override justification'), { target: { value: 'Operator budget' } });
+    fireEvent.click(screen.getByTestId('revenue-basis-save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      field_overrides: { starting_occupancy: { value: 0.68, note: 'Operator budget' } },
+    });
+  });
+
+  it('no refusal → no entry', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByTestId('revenue-basis-refusal')).toBeNull();
   });
 });
 

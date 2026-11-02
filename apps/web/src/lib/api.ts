@@ -430,7 +430,7 @@ export interface ToplineLegacyFlag {
 }
 
 export interface ToplineCalendarAnchor {
-  /** `acquisition_close` | `underwriting_as_of` | `comp_report_as_of` | `run_date`; null = no calendar. */
+  /** `acquisition_close` | `underwriting_as_of`; null = no calendar (never the run date — R2-I1). */
   source: string | null;
   date: string | null;
   assumed: boolean;
@@ -455,6 +455,9 @@ export interface ToplineStatus {
   bucket_label?: string | null;
   bucket_note?: string | null;
   calendar_known: boolean;
+  /** R2-I1 — a market forecast is on file but no close date / as-of date
+   *  places it; every year's growth carries reason `calendar_unknown`. */
+  calendar_unknown?: boolean;
   growth_state: ToplineGrowthState | string;
   growth_by_year: ToplineGrowthRow[];
   stabilization_year: number;

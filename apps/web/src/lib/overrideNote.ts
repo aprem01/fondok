@@ -58,13 +58,6 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // note. Added 2026-09-12 when the mirror test caught it missing here after
   // the Market slice extended the worker's list.
   'market.selected_comps',
-  // Selects which projection year the stabilized figures are read from — and,
-  // since topline v2, ends the default penetration ramp. DEPLOY-TRAIN BLOCKER
-  // (topline review I-6): the WORKER already requires a note for it (dropped
-  // from `_NOTE_EXEMPT_KEYS`; PATCH answers 422 `override_note_required`). The
-  // Topline card PR adds the note field and drops this entry — until then a
-  // save from the Stabilization Year control is refused by the API.
-  'stabilization_year',
   // The Property Name. Text, not a number; the worker reads it back as
   // `property_name` and keeps the extracted value for Restore.
   'property_overview.name',
@@ -85,19 +78,13 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // it, and the Overview only compares the derived stabilized yield on cost
   // against it. Nothing sourced is being overridden, so nothing to justify.
   'target_stabilized_yoc',
-  // FON-61 / E-028 — the Index Analysis METHOD choice (STR comp set / market
-  // benchmark / CoStar comp set) and which chain-scale segment the market
-  // benchmark reads. Choices, not numbers: the analyst types nothing, and they
-  // move no figure unless a penetration target — which DOES need a note — is
-  // also set while "Use STR rates in the model" is on.
-  'index_methodology',
+  // FON-61 / E-028 — which chain-scale segment the retired Index Analysis
+  // market method read. Since topline v2 it moves no figure (the worker keeps
+  // it in `_NOTE_EXEMPT_KEYS`). The method key itself (`index_methodology`),
+  // the topline benchmark level, `stabilization_year` and the reopening date
+  // all move Year 1 or the ramp now, so they need a note (review I-6) and are
+  // deliberately absent from this list.
   'index_market_segment',
-  // FON-116 / FON-117 — the topline benchmark LEVEL choice (auto / comp set /
-  // submarket / market). DEPLOY-TRAIN BLOCKER (topline review I-6): it moves
-  // Year 1, so the worker requires a note for it, and for the retired
-  // `index_methodology` above (read as a forced level). The Topline card PR
-  // collects the note and drops both entries here.
-  'topline_benchmark_level',
 ]);
 
 /**
@@ -117,13 +104,6 @@ const DEAL_COLUMN_KEYS: ReadonlySet<string> = new Set([
   'target_moic',
   'name',
   'keys',
-  // FON-98 — the reopening / re-flag date. A deal column (never in
-  // `field_overrides`); it re-anchors the default stabilization year (and,
-  // since topline v2, where the default penetration ramp ends). DEPLOY-TRAIN
-  // BLOCKER (topline review I-6): the worker requires `reopening_date_note`
-  // beside a CHANGED date on a non-draft deal (422 `override_note_required`,
-  // keys ["reopening_date"]); the Overview control must send it.
-  'reopening_date',
 ]);
 
 /** Pattern-shaped exemptions (indexed or namespaced keys). */

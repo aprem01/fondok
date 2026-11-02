@@ -18,6 +18,8 @@ import {
   growthPercentList,
   parseGrowthPercentList,
   parseRampPercentList,
+  yearRateBadge,
+  toplineReferenceRows,
 } from '@/lib/topline';
 import { toplineStatus, unavailableGrowth, SUGGESTION_45 } from './fixtures/toplineStatus';
 
@@ -129,6 +131,34 @@ describe('growthBanner — "No market forecast — set growth manually"', () => 
   });
 });
 
+describe('calendar_unknown — a forecast on file that no calendar places (R2-I1)', () => {
+  const calUnknown = () =>
+    toplineStatus({
+      ...unavailableGrowth(),
+      calendar_known: false,
+      calendar_unknown: true,
+      calendar_anchor: { source: null, date: null, assumed: false, first_model_year: null, label: 'x' },
+    });
+  it('the banner asks for the close date first, the suggestion stays second', () => {
+    const b = growthBanner(calUnknown());
+    expect(b).toMatchObject({
+      state: 'calendar_unknown',
+      title: 'Set the acquisition close date to place the market forecast',
+      askCloseDate: true,
+    });
+    expect(b!.suggestion).toEqual(SUGGESTION_45);
+  });
+  it('the basis line says the forecast is unplaced, not missing', () => {
+    expect(toplineBasisClauses(calUnknown())[1]).toMatchObject({
+      tone: 'warn',
+      text: 'Growth: market forecast on file but not placed — set the acquisition close date',
+    });
+  });
+  it('an ordinary unavailable state never asks for a date', () => {
+    expect(growthBanner(toplineStatus(unavailableGrowth()))!.askCloseDate).toBe(false);
+  });
+});
+
 describe('reextractNotice — v8 CoStar extractions', () => {
   it('says re-extract, with the worker’s lines', () => {
     const lines = ['CoStar report on file (Miami.pdf) but extracted before class forecasts were read — re-extract it to read the Luxury & Upper Upscale series.'];
@@ -149,14 +179,9 @@ describe('calendarAnchorNote — which anchor placed the forecast', () => {
       askCloseDate: false,
     });
   });
-  it('the as-of date: assumed, no ask', () => {
+  it('the as-of date: assumed, so it asks for the close date', () => {
     const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, first_model_year: 2025, label: 'x' } }));
-    expect(n).toMatchObject({ assumed: true, askCloseDate: false, text: 'Forecast placed from the underwriting as-of date (2025-06-30) — Year 1 = 2025 (assumed: no close date)' });
-  });
-  it('the run date: asks for a close date', () => {
-    const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'run_date', date: '2026-11-02', assumed: true, first_model_year: 2026, label: 'x' } }));
-    expect(n!.askCloseDate).toBe(true);
-    expect(n!.text).toBe('Forecast placed from the run date (2026-11-02) — Year 1 = 2026 (assumed: no close date)');
+    expect(n).toMatchObject({ assumed: true, askCloseDate: true, text: 'Forecast placed from the underwriting as-of date (2025-06-30) — Year 1 = 2025 (assumed: no close date)' });
   });
   it('no anchor → nothing', () => {
     expect(calendarAnchorNote(toplineStatus({ calendar_anchor: { source: null, date: null, assumed: false, first_model_year: null, label: 'x' } }))).toBeNull();
@@ -235,5 +260,30 @@ describe('per-year list editors — percent text ⇄ the worker’s lists', () =
   });
   it('a stored list renders as percent text', () => {
     expect(growthPercentList([0.02, null, -0.015], 4)).toEqual(['2', '', '-1.5', '']);
+  });
+});
+
+describe('yearRateBadge / reference rows — per-column basis on Occupancy / ADR / RevPAR', () => {
+  const rec = { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.64175, adr: 258.876, benchmark_occupancy_source: 'STR comp set TTM May 2025' };
+  it('the chip is the benchmark year’s basis; the title spells benchmark × penetration × ramp', () => {
+    const b = yearRateBadge(toplineStatus(), [rec], 0, 'occupancy');
+    expect(b).toEqual({
+      basis: 'forecast',
+      title: 'Benchmark 75.5% (STR comp set TTM May 2025 · 2026: -2.0% (CoStar forecast)) × MPI 100 ÷ 100 × ramp 85% = 64.2%',
+    });
+    expect(yearRateBadge(toplineStatus(), [rec], 0, 'adr')!.title).toContain('× ARI 100 ÷ 100 × ramp 85% = $258.88');
+  });
+  it('no chip for an explicit Year-1 value, no benchmark, or a missing year', () => {
+    expect(yearRateBadge(toplineStatus({ explicit_metrics: ['occupancy'] }), [rec], 0, 'occupancy')).toBeNull();
+    expect(yearRateBadge(toplineStatus({ benchmark_level: 'none', benchmark_by_year: [] }), [rec], 0, 'occupancy')).toBeNull();
+    expect(yearRateBadge(toplineStatus(), [rec], 7, 'occupancy')).toBeNull();
+  });
+  it('the reference rows: benchmark per year (labelled with its level) and the T-12 repeated with its period', () => {
+    const r = toplineReferenceRows(toplineStatus(), 3);
+    expect(r.benchmark!.label).toBe('Benchmark (competitive set)');
+    expect(r.benchmark!.occupancy).toEqual([0.755, 0.751, 0.751]);
+    expect(r.t12!.label).toBe('T-12 actual (reference) · T-12 Mar 2025');
+    expect(r.t12!.adr).toEqual([236.09, 236.09, 236.09]);
+    expect(toplineReferenceRows(toplineStatus({ t12_reference: null, benchmark_level: 'none', benchmark_by_year: [] }), 3)).toEqual({ benchmark: null, t12: null });
   });
 });

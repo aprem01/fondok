@@ -108,6 +108,7 @@ async function renderSettled(): Promise<void> {
   });
 }
 import { buildReconciliation, type ReconciliationInput } from '@/components/project/pl/IndexMethodology';
+import { toplineStatus } from './fixtures/toplineStatus';
 
 /** Revenue-engine years: a Base Year (TTM) + eight forecast years at a steady
  *  +4% ADR / flat occupancy, so every forecast-over-forecast growth cell is a
@@ -761,75 +762,6 @@ const BY_YEAR_OFF_REASON =
   'Targets by year do not feed the Future P&L yet: turn on "Use STR rates in the model" in Market Overview. Until then every year stays on its current basis.';
 
 describe('Index Analysis — penetration targets by year (FON-95 part 2)', () => {
-  it('renders one row per model year with the benchmark + source, the derived RGI and the status; disabled with the reason when the toggle is off', async () => {
-    mockIndexMethodology = methodology({
-      by_year: byYearRows({ mpiYear2: 115, ariScalar: 105 }),
-      hold_years: 3, calendar_known: true,
-      by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
-    });
-    await renderSettled();
-    const grid = await screen.findByTestId('index-by-year-grid');
-    expect(within(grid).getByTestId('index-by-year-row-1')).toHaveTextContent('Base year (Year 1) · 2025');
-    expect(within(grid).getByTestId('index-by-year-row-3')).toHaveTextContent('Year 3 · 2027');
-    expect(within(grid).queryByTestId('index-by-year-row-4')).toBeNull();
-    // Benchmark with its source (document + page, or the growth step).
-    expect(within(grid).getByTestId('index-by-year-bench-occ-src-1')).toHaveTextContent('STR Trend May 2025.xlsx, p.4');
-    expect(within(grid).getByTestId('index-by-year-bench-occ-src-3')).toHaveTextContent(/grown 2 year/);
-    const row2 = within(grid).getByTestId('index-by-year-row-2');
-    expect(row2).toHaveTextContent('69.7%'); // 0.694 × 1.005
-    expect(row2).toHaveTextContent('115.0');
-    expect(within(grid).getByTestId('index-by-year-rgi-2')).toHaveTextContent('120.8'); // 115 × 105 ÷ 100 — derived
-    expect(within(grid).getByTestId('index-by-year-rgi-1')).toHaveTextContent('—'); // only one target → no RGI
-    expect(within(grid).getByTestId('index-by-year-status-2')).toHaveTextContent('occ indexed · ADR indexed');
-    expect(within(grid).getByTestId('index-by-year-status-1')).toHaveTextContent('occ model growth · ADR indexed');
-    expect(grid).toHaveTextContent('RGI is derived — MPI × ARI ÷ 100 — not an input.');
-    // Toggle off → editing is disabled, and the reason is on screen.
-    expect(within(grid).getByTestId('index-by-year-edit')).toBeDisabled();
-    expect(within(grid).getByTestId('index-by-year-disabled')).toHaveTextContent(/turn on "Use STR rates in the model"/);
-  });
-
-  it('editing a year needs a note and writes the by-year lists (a blank list clears its key)', async () => {
-    mockIndexMethodology = methodology({
-      toggle_on: true,
-      by_year: byYearRows(), hold_years: 3, calendar_known: true, by_year_applies: true, by_year_disabled_reason: null,
-    });
-    mockOverrides = { exit_cap_rate: { value: 0.07, note: 'Broker' } };
-    await renderSettled();
-    const grid = await screen.findByTestId('index-by-year-grid');
-    expect(within(grid).queryByTestId('index-by-year-disabled')).toBeNull();
-    fireEvent.click(within(grid).getByTestId('index-by-year-edit'));
-    fireEvent.change(within(grid).getByLabelText('Year 2 MPI target'), { target: { value: '115' } });
-    fireEvent.click(within(grid).getByTestId('index-by-year-save'));
-    expect(updateDeal).not.toHaveBeenCalled(); // no note yet
-    expect(within(grid).getByTestId('index-by-year-error')).toHaveTextContent(/Add a short note/);
-    fireEvent.change(within(grid).getByLabelText('Targets by year note'), { target: { value: 'Post-PIP share gain' } });
-    fireEvent.click(within(grid).getByTestId('index-by-year-save'));
-    await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
-    const body = updateDeal.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
-    expect(body.field_overrides.index_mpi_target_by_year).toEqual({ value: [null, 115, null], note: 'Post-PIP share gain' });
-    expect('index_ari_target_by_year' in body.field_overrides).toBe(false); // nothing set → cleared, not invented
-    expect(body.field_overrides.exit_cap_rate).toEqual({ value: 0.07, note: 'Broker' });
-  });
-
-  it('an invalid target is refused with the units, and a ratio reads as index points', async () => {
-    mockIndexMethodology = methodology({
-      toggle_on: true,
-      by_year: byYearRows(), hold_years: 3, by_year_applies: true, by_year_disabled_reason: null,
-    });
-    await renderSettled();
-    const grid = await screen.findByTestId('index-by-year-grid');
-    fireEvent.click(within(grid).getByTestId('index-by-year-edit'));
-    fireEvent.change(within(grid).getByLabelText('Year 1 ARI target'), { target: { value: '-5' } });
-    fireEvent.change(within(grid).getByLabelText('Targets by year note'), { target: { value: 'n' } });
-    fireEvent.click(within(grid).getByTestId('index-by-year-save'));
-    expect(updateDeal).not.toHaveBeenCalled();
-    expect(within(grid).getByTestId('index-by-year-error')).toHaveTextContent(/index points 25–250 \(100 = parity/);
-    fireEvent.change(within(grid).getByLabelText('Year 1 ARI target'), { target: { value: '1.05' } });
-    fireEvent.click(within(grid).getByTestId('index-by-year-save'));
-    await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
-    const body = updateDeal.mock.calls[0][1] as { field_overrides: Record<string, { value: unknown }> };
-    expect(body.field_overrides.index_ari_target_by_year.value).toEqual([105, null, null]);
-  });
 
   it('the penetration table shows the per-year target in the forecast columns and derives RGI, holding the STR index where no target exists', async () => {
     mockIndexMethodology = methodology({
@@ -873,7 +805,7 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
     const rgi = at('index-penetration-rgi');
     expect(rgi[FIRST_FORECAST + 1]).toHaveTextContent('97.2');
     expect(screen.getByTestId('index-penetration-targets-not-applied')).toHaveTextContent(
-      'Targets set but not applied — turn on ‘Use STR rates in the model’',
+      `Targets set but not applied — ${BY_YEAR_OFF_REASON}`,
     );
     expect(screen.getByText(/indices held at STR TTM; shares and variances/)).toBeTruthy();
     expect(screen.queryByText(/indices at the analyst’s MPI \/ ARI targets per year/)).toBeNull();
@@ -890,75 +822,6 @@ describe('Index Analysis — penetration targets by year (FON-95 part 2)', () =>
   });
 });
 
-describe('Index Analysis — methodology selector (FON-41 E-028)', () => {
-  it('shows the three methods; the disabled one says why', async () => {
-    mockIndexMethodology = methodology();
-    await renderSettled();
-    const costar = await screen.findByTestId('index-method-costar_comp_set');
-    expect(costar).toBeDisabled();
-    expect(costar.getAttribute('title')).toMatch(/No CoStar Property Analytics comp-set extraction/);
-    expect(screen.getByTestId('index-method-reason-costar_comp_set')).toHaveTextContent(
-      /CoStar Property Analytics comp set unavailable: No CoStar Property Analytics comp-set extraction/,
-    );
-    expect(screen.getByTestId('index-method-str_comp_set')).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByTestId('index-method-market_benchmark')).not.toBeDisabled();
-  });
-
-  it('saves the selected method as the index_methodology override (no note — a method choice)', async () => {
-    mockIndexMethodology = methodology();
-    mockOverrides = { exit_cap_rate: { value: 0.07, note: 'Broker' } };
-    await renderSettled();
-    fireEvent.click(await screen.findByTestId('index-method-market_benchmark'));
-    await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
-    const [dealId, body] = updateDeal.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
-    expect(dealId).toBe(DEAL);
-    expect(body.field_overrides.index_methodology).toBe('market_benchmark');
-    // The rest of the blob survives the PATCH.
-    expect(body.field_overrides.exit_cap_rate).toEqual({ value: 0.07, note: 'Broker' });
-  });
-
-  it('shows each assumption with its document + page, a reason, or "Your override"', async () => {
-    mockIndexMethodology = methodology();
-    await renderSettled();
-    const adrGrowthSrc = await screen.findByTestId('index-assumption-source-index_market_adr_growth');
-    expect(adrGrowthSrc).toHaveTextContent('Submarket Report.pdf, p.6');
-    // The extraction field path is audit detail: hover only, never printed.
-    expect(adrGrowthSrc.textContent).not.toContain('pnl_benchmark.market.adr_change_2026_forecast');
-    expect(adrGrowthSrc.getAttribute('title')).toContain('pnl_benchmark.market.adr_change_2026_forecast');
-    expect(screen.getByTestId('index-assumption-source-index_mpi_target')).toHaveTextContent(
-      'STR Trend May 2025.xlsx, p.4',
-    );
-    expect(screen.getByTestId('index-assumption-source-index_ari_target')).toHaveTextContent(
-      'Your override — Post-PIP repositioning',
-    );
-    expect(screen.getByTestId('index-assumption-source-index_market_occupancy_growth')).toHaveTextContent(
-      /enter your own/,
-    );
-    // Toggle off → the panel says the assumptions do not feed Projections yet.
-    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/do not feed the Future P&L yet/);
-  });
-
-  it('an assumption edit needs a note and is written with it', async () => {
-    mockIndexMethodology = methodology({ toggle_on: true });
-    await renderSettled();
-    const row = await screen.findByTestId('index-assumption-index_market_adr_growth');
-    fireEvent.click(within(row).getByText('Edit'));
-    fireEvent.change(within(row).getByLabelText('Market ADR growth value'), { target: { value: '3.5' } });
-    fireEvent.click(within(row).getByText('Save'));
-    expect(updateDeal).not.toHaveBeenCalled(); // no note yet
-    fireEvent.change(within(row).getByLabelText('Market ADR growth note'), {
-      target: { value: 'CBRE Q3 outlook' },
-    });
-    fireEvent.click(within(row).getByText('Save'));
-    await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
-    const body = updateDeal.mock.calls[0][1] as {
-      field_overrides: Record<string, { value: number; note: string }>;
-    };
-    expect(body.field_overrides.index_market_adr_growth.value).toBeCloseTo(0.035);
-    expect(body.field_overrides.index_market_adr_growth.note).toBe('CBRE Q3 outlook');
-    expect(screen.getByTestId('index-feeds-note')).toHaveTextContent(/feed the Future P&L now/);
-  });
-});
 
 // ─────────────── Sam #3 — index targets, comp-set forecast, selected benchmark ───────────────
 
@@ -980,50 +843,6 @@ describe('Index Analysis — Sam #3', () => {
     expect(within(row).getByText('Revenue Opportunity at Target').getAttribute('title')).toMatch(
       /Targets set but not applied — Targets by year do not feed the Future P&L yet/,
     );
-  });
-
-  it('a target stored as a ratio (1.032 / 1.05) reads as index points in the panel and prices the opportunity like 103.2 / 105', async () => {
-    mockIndexMethodology = methodology({
-      toggle_on: true,
-      by_year_applies: true,
-      assumptions: {
-        ...methodology().assumptions,
-        index_mpi_target: figure(1.032, 'override', [], 'ratio'),
-        index_ari_target: figure(1.05, 'override', [], 'ratio'),
-      },
-    });
-    await renderSettled();
-    const panelRow = await screen.findByTestId('index-assumption-index_mpi_target');
-    expect(panelRow).toHaveTextContent('103.2');
-    expect(screen.getByTestId('index-assumption-index_ari_target')).toHaveTextContent('105.0');
-    const target = Array.from(screen.getByTestId('index-penetration-oppty-target').querySelectorAll('td')).slice(1)[5];
-    // Same as the 103.2 / 105 points case — not 100× off.
-    expect(target).toHaveTextContent(/^\$3,3\d\d,\d{3}$/);
-    expect(within(target).getByText(/^\$/).getAttribute('title')).toMatch(/MPI target 103\.2/);
-  });
-
-  it('a legacy out-of-range stored target shows no value, the reason, and never reaches the penetration rows', async () => {
-    const rows = byYearRows().map((r) => ({
-      ...r,
-      mpi_target: { value: null, source: null, note: null, problem: LEGACY_REASON },
-      reason: `Occupancy: ${LEGACY_REASON}`,
-    }));
-    mockIndexMethodology = methodology({
-      toggle_on: true,
-      by_year_applies: true,
-      by_year: rows,
-      hold_years: 3,
-      assumptions: { ...methodology().assumptions, index_mpi_target: figure(null, null, [], LEGACY_REASON) },
-    });
-    mockOverrides = { index_mpi_target: { value: 5, note: 'old' } };
-    await renderSettled();
-    const row = await screen.findByTestId('index-assumption-index_mpi_target');
-    expect(within(row).getAllByText('—').length).toBeGreaterThan(0);
-    expect(screen.getByTestId('index-assumption-source-index_mpi_target')).toHaveTextContent(/5 is outside 25–250.*re-enter it/);
-    expect(screen.getByTestId('index-by-year-problems')).toHaveTextContent(/re-enter it/);
-    expect(screen.getAllByTestId('index-by-year-target-problem').length).toBe(3);
-    const mpi = Array.from(screen.getByTestId('index-penetration-mpi').querySelectorAll('td')).slice(1);
-    expect(mpi[FIRST_FORECAST]).toHaveTextContent('103.2'); // the published index, not "5"
   });
 
   it('fills the comp-set forecast from the worker’s grown series, labelled as an assumption, and the by-year rows follow', async () => {
@@ -1115,51 +934,6 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
     });
   }
 
-  it('the by-year grid prints a worded chip + the source / period label under each benchmark value', async () => {
-    mockIndexMethodology = methodology({
-      by_year: labelledRows(), hold_years: 3, calendar_known: true,
-      by_year_applies: false, by_year_disabled_reason: BY_YEAR_OFF_REASON,
-      subject_period_end: '2025-05', cbre_report_date: 'September 2025',
-    });
-    await renderSettled();
-    const grid = await screen.findByTestId('index-by-year-grid');
-    const y1 = within(grid).getByTestId('index-by-year-bench-occ-basis-1');
-    expect(y1).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
-    expect(within(y1).getByTestId('basis-chip-actual')).toHaveTextContent('Actual');
-    const y2 = within(grid).getByTestId('index-by-year-bench-occ-basis-2');
-    expect(y2).toHaveTextContent(`Forecast · CBRE Horizons 2026 · ${CBRE_DOC} p.4`);
-    expect(within(y2).getByTestId('basis-chip-forecast')).toHaveTextContent('Forecast');
-    expect(within(grid).getByTestId('index-by-year-bench-adr-basis-3')).toHaveTextContent('CBRE Horizons 2027');
-    // One line names the two bands, the CBRE report date and that Year 2+ is projected.
-    const note = within(grid).getByTestId('index-by-year-basis-note');
-    expect(note).toHaveTextContent(`Year 1 benchmark: Actual · STR TTM May 2025 · ${STR_DOC} — reported historical data.`);
-    expect(note).toHaveTextContent('Year 2 onward: CBRE Horizons forecast (report dated September 2025) — a projected benchmark, not history.');
-  });
-
-  it('the comp-set series past Year 1 is labelled an assumption; a "—" value carries no chip', async () => {
-    const rows = byYearRows().map((r) => ({
-      ...r,
-      benchmark_occupancy:
-        r.year === 3
-          ? { value: null, source: null, inputs: [], detail: 'No market occupancy growth assumption', period_label: null }
-          : {
-              ...r.benchmark_occupancy,
-              basis: r.year === 1 ? 'actual' : 'assumption',
-              basis_label: r.year === 1 ? `Actual · STR TTM May 2025 · ${STR_DOC}` : 'Assumption · grown at market growth',
-            },
-    }));
-    mockIndexMethodology = methodology({ by_year: rows, hold_years: 3, calendar_known: true, by_year_applies: true });
-    await renderSettled();
-    const grid = await screen.findByTestId('index-by-year-grid');
-    const y2 = within(grid).getByTestId('index-by-year-bench-occ-basis-2');
-    expect(y2).toHaveTextContent('Assumption · grown at market growth');
-    expect(within(y2).getByTestId('basis-chip-assumption')).toHaveTextContent('Assumption');
-    expect(within(grid).queryByTestId('index-by-year-bench-occ-basis-3')).toBeNull();
-    expect(within(grid).getByTestId('index-by-year-basis-note')).toHaveTextContent(
-      'Year 2 onward: the Year-1 level grown at the market growth assumption — an assumption, not a published forecast.',
-    );
-  });
-
   it('the tables carry the chip in the Source row and the full label in a Basis row', async () => {
     mockMarket = {
       ...MARKET_NO_CBRE,
@@ -1182,5 +956,89 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
     const subject = tableOf('Subject Property');
     expect(rowCells('Basis', subject)[FIRST_FORECAST - 1]).toHaveTextContent('Actual · P&L FY 2024');
     expect(within(rowCells('Source', subject)[FIRST_FORECAST]).queryByTestId(/basis-chip-/)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-116 / FON-117 — Index Analysis reads the resolver (topline_status): the
+// comp-set forecast is the benchmark the model runs on, the penetration rows
+// show the penetration the engine applied (no toggle, no "not applied"), and
+// the panel edits the same keys as the Future P&L's Topline card.
+// ─────────────────────────────────────────────────────────────────────────
+describe('Index Analysis — on the topline resolver', () => {
+  const toplineByYear = [
+    { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.64175, adr: 258.876 },
+    { year: 2, mpi_target: 100, ari_target: 98, ramp_pct: 0.95, occupancy: 0.71345, adr: 294.5 },
+    { year: 3, mpi_target: 100, ari_target: 100, ramp_pct: null, occupancy: 0.751, adr: 316.2 },
+  ];
+  const withTopline = (extra: Record<string, unknown> = {}) => {
+    const o = outputs(3) as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    o.engines.revenue.outputs.topline_by_year = toplineByYear;
+    mockOutputs = o as unknown as EngineOutputsResponse;
+    mockIndexMethodology = methodology({ topline_status: toplineStatus(), by_year_applies: false, ...extra });
+  };
+
+  it('the topline panel shows the basis line, the Topline card and benchmark × penetration × ramp by year', async () => {
+    withTopline();
+    await renderSettled();
+    const panel = await screen.findByTestId('index-topline-panel');
+    expect(within(panel).getByTestId('topline-basis-line')).toHaveTextContent('Benchmark: STR comp set TTM May 2025');
+    expect(within(panel).getByTestId('topline-card')).toBeInTheDocument();
+    expect(within(panel).getByTestId('topline-penetration-row-2')).toHaveTextContent('98');
+    // The retired selector and market-growth rows are gone.
+    expect(screen.queryByTestId('index-methodology-panel')).toBeNull();
+    expect(screen.queryByText('Market occupancy growth')).toBeNull();
+  });
+
+  it('the comp-set forecast columns are the topline benchmark by year, each with its basis', async () => {
+    withTopline();
+    await renderSettled();
+    const comp = tableOf('STR Competitive Set');
+    const occ = rowCells('Occupancy', comp);
+    expect(occ[FIRST_FORECAST]).toHaveTextContent('75.5%');
+    expect(occ[FIRST_FORECAST + 2]).toHaveTextContent('75.1%');
+  });
+
+  it('the penetration rows show the penetration the engine applied — never "targets set but not applied"', async () => {
+    withTopline({ by_year_disabled_reason: 'retired grid' });
+    await renderSettled();
+    await screen.findByText('Penetration Index');
+    const at = (id: string) => Array.from(screen.getByTestId(id).querySelectorAll('td')).slice(1);
+    expect(at('index-penetration-ari')[FIRST_FORECAST + 1]).toHaveTextContent('98.0');
+    expect(screen.queryByTestId('index-penetration-targets-not-applied')).toBeNull();
+  });
+
+  it('a per-year penetration edit writes index_ari_target_by_year with the note (one save path)', async () => {
+    withTopline();
+    mockOverrides = { exit_cap_rate: { value: 0.07, note: 'Broker' } };
+    await renderSettled();
+    const panel = await screen.findByTestId('index-topline-panel');
+    fireEvent.click(within(panel).getByTestId('topline-penetration-grid-edit'));
+    fireEvent.change(within(panel).getByLabelText('ARI Year 3'), { target: { value: '99' } });
+    fireEvent.change(within(panel).getByLabelText('Penetration by year — override justification'), { target: { value: 'Sam path' } });
+    await act(async () => {
+      fireEvent.click(within(panel).getByTestId('topline-penetration-grid-save'));
+    });
+    await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
+    const body = updateDeal.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
+    expect(body.field_overrides.index_ari_target_by_year).toEqual({ value: [null, null, 99], note: 'Sam path' });
+    expect('index_mpi_target_by_year' in body.field_overrides).toBe(false);
+    expect(body.field_overrides.exit_cap_rate).toEqual({ value: 0.07, note: 'Broker' });
+  });
+
+  it('on a submarket benchmark the penetration rows index against that level, by year', async () => {
+    withTopline({
+      topline_status: toplineStatus({
+        benchmark_level: 'submarket',
+        benchmark_label: 'CoStar submarket 2025 · Luxury & Upper Upscale',
+        benchmark_fallback_reason: 'Competitive set: no STR report on this deal',
+      }),
+    });
+    await renderSettled();
+    await screen.findByText('Penetration Index');
+    expect(screen.getByText(/indices against CoStar submarket 2025 · Luxury & Upper Upscale \(the selected benchmark\)/)).toBeTruthy();
+    // The comp-set forecast stays blank — the model's benchmark is another level.
+    const occ = rowCells('Occupancy', tableOf('STR Competitive Set'));
+    expect(occ[FIRST_FORECAST + 1]).toHaveTextContent('—');
   });
 });

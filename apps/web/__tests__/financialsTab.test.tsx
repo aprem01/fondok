@@ -296,52 +296,31 @@ describe('Financials · Projections — Exit cap is Investment-owned (read-only)
   });
 });
 
-// FON-61 (D4) — the Year-1 basis chip reads the WORKER's source tags. It is
-// never inferred from the flag alone, so the STR seed can't be shown as
-// "active" when it did not populate.
-describe('Financials · Projections — Year-1 basis chip is driven by worker source tags', () => {
-  it('shows "Active basis: Market / STR · Revert" on str_forecast; Revert drops the flag + STR-noted keys only', async () => {
+// FON-116 / FON-117 — the retired "Use STR rates" basis chip and its Revert
+// are gone (plan §1.8 "dead after this change"): there is one topline method,
+// and the basis line (topline status) says what it ran on. Legacy STR tags and
+// the flag no longer produce a chip or a Revert button.
+describe('Financials · Projections — the retired STR basis chip is gone', () => {
+  it('legacy STR tags and the retired flag render no chip and no Revert', () => {
     mockSources = {
       starting_occupancy: 'str_forecast',
-      starting_adr: 'str_forecast',
-      revenue_seed_from_str_forecast: 'str_forecast',
+      starting_adr: 'str_comp_set',
+      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
     };
     mockFieldOverrides = {
       revenue_seed_from_str_forecast: { value: true, note: 'STR market rates enabled from the Market Comps tab' },
       starting_occupancy: { value: 0.692, note: STR_MARKET_OVERRIDE_NOTE },
-      starting_adr: { value: 295, note: STR_MARKET_OVERRIDE_NOTE },
-      mgmt_fee_pct: { value: 0.03, note: 'Analyst' }, // unrelated — must survive
     };
     render(<ProjectionsSection dealId="deal-uuid-1" />);
-
-    expect(screen.getByTestId('str-basis-chip')).toHaveTextContent('Active basis: Market / STR');
-    expect(screen.queryByTestId('str-basis-unavailable')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Revert' }));
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
-    const [, body] = updateSpy.mock.calls[0] as [string, { field_overrides: Record<string, unknown> }];
-    expect(body.field_overrides).toEqual({ mgmt_fee_pct: { value: 0.03, note: 'Analyst' } });
-    expect(engineRunSpy).toHaveBeenCalled(); // re-modeled
-  });
-
-  it('shows the honest "STR rates unavailable — using T-12 base" state on str_forecast_unavailable', () => {
-    mockSources = {
-      revenue_seed_from_str_forecast: 'str_forecast_unavailable',
-      starting_occupancy: 't12_actual',
-      starting_adr: 't12_actual',
-    };
-    render(<ProjectionsSection dealId="deal-uuid-1" />);
-
-    expect(screen.getByTestId('str-basis-unavailable')).toHaveTextContent('STR rates unavailable — using T-12 base');
-    expect(screen.queryByTestId('str-basis-chip')).not.toBeInTheDocument();
-  });
-
-  it('renders no basis chip for analyst / seed sources', () => {
-    mockSources = { starting_occupancy: 'analyst_override', starting_adr: 'seed' };
-    render(<ProjectionsSection dealId="deal-uuid-1" />);
-
     expect(screen.queryByTestId('str-basis-chip')).not.toBeInTheDocument();
     expect(screen.queryByTestId('str-basis-unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revert' })).not.toBeInTheDocument();
+  });
+
+  it('RevPAR growth shows no seeded 4.5% when nothing sets it — the field is blank', () => {
+    render(<ProjectionsSection dealId="deal-uuid-1" />);
+    const input = screen.getByTestId('assumption-panel-input-revpar_growth') as HTMLInputElement;
+    expect(input.value).toBe('');
   });
 });
 
@@ -507,7 +486,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
     OUTPUTS_OVERRIDE = undefined;
   });
 
-  it('a change PATCHes field_overrides.stabilization_year and re-runs the whole model', async () => {
+  it('a change PATCHes field_overrides.stabilization_year WITH the analyst note and re-runs the whole model', async () => {
     OUTPUTS_OVERRIDE = withBlock();
     render(<ProjectionsSection dealId="deal-uuid-1" />);
 
@@ -515,33 +494,37 @@ describe('Financials · Projections — the Stabilization Year', () => {
     const input = screen.getByLabelText('Stabilization Year') as HTMLInputElement;
     expect(input.value).toBe('2');
     fireEvent.change(input, { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Stabilization Year — override justification'), {
+      target: { value: 'Brand conversion completes in Year 2' },
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     });
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     const body = updateSpy.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
-    // FON-74 — the Stabilization Year is DISPLAY-ONLY (it selects which
-    // projection year the stabilized figures are read from and moves no
-    // return), so it needs no justification — and the software-authored note it
-    // used to carry is gone. A blank note, never an invented one.
-    expect(body.field_overrides.stabilization_year).toEqual({ value: 3 });
-    expect(JSON.stringify(body)).not.toContain('note');
+    // Topline v2 (review I-6) — the stabilized year ends the penetration ramp,
+    // so it moves Year 1–(S−1); the worker refuses it without a note.
+    expect(body.field_overrides.stabilization_year).toEqual({
+      value: 3,
+      note: 'Brand conversion completes in Year 2',
+    });
     expect(engineRunSpy).toHaveBeenCalled();
     OUTPUTS_OVERRIDE = undefined;
   });
 
-  it('FON-74 — and it never asks the analyst to justify it', async () => {
+  it('review I-6 — Save without a justification writes nothing', async () => {
     OUTPUTS_OVERRIDE = withBlock();
     render(<ProjectionsSection dealId="deal-uuid-1" />);
 
     fireEvent.click(screen.getByTestId('stabilization-year-value'));
     fireEvent.change(screen.getByLabelText('Stabilization Year'), { target: { value: '3' } });
-    expect(screen.queryByLabelText('Override justification')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Stabilization Year — override justification')).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     });
-    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(engineRunSpy).not.toHaveBeenCalled();
     OUTPUTS_OVERRIDE = undefined;
   });
 

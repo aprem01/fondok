@@ -44,6 +44,7 @@ import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
 import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
+import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
 import { missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
@@ -444,12 +445,15 @@ export default function InvestmentTab() {
       // output until a run. Saving a new close date and watching the Base year
       // sit unchanged is exactly what Sam reported (2026-09-15, "base year /
       // acquisition date ... not propagating").
-      const patch = { acquisition_close_date: iso };
-      if (!note.trim() && patchRequiresNote(patch)) {
-        toast(NOTE_REQUIRED_MESSAGE, { type: 'error' });
+      // The ONE close-date save path (shared with the Future P&L's
+      // calendar_unknown state): `closeDatePatch` + the deal PATCH.
+      let next: Record<string, unknown>;
+      try {
+        next = closeDatePatch(invOverrides, iso, note);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : NOTE_REQUIRED_MESSAGE, { type: 'error' });
         return;
       }
-      const next = applyOverridePatch(invOverrides, patch, note);
       try {
         await api.deals.update(dealId, { field_overrides: next });
         toast('Acquisition date saved — re-running the model…', { type: 'success' });
@@ -1894,61 +1898,6 @@ function fmtLongDate(iso: string | null | undefined): string {
   if (!m) return '—';
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
-}
-
-/** The acquisition close date — an editable date cell that drives the Timeline. */
-function CloseDateField({
-  iso, editable, onSave, noteKey,
-}: {
-  iso: string | null;
-  editable: boolean;
-  onSave: (iso: string, note: string) => void | Promise<void>;
-  /** FON-74 — the `field_overrides` key this editor writes. */
-  noteKey?: string;
-}) {
-  const current = iso ? iso.slice(0, 10) : null;
-  const ed = useInlineEdit<string>({
-    current,
-    unit: 'date',
-    parse: (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null),
-    onSave,
-    toDraft: (v) => v,
-    invalidMessage: 'Pick a valid date.',
-    requireNote: !!noteKey && requiresNote(noteKey),
-  });
-  const display = fmtISODate(iso);
-
-  if (!editable) {
-    return <span style={{ color: prov.blue, fontVariantNumeric: 'tabular-nums' }}>{display}</span>;
-  }
-  if (!ed.editing) {
-    return (
-      <span
-        style={{ color: prov.blue, fontWeight: 500, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline dotted', cursor: 'pointer' }}
-        onClick={() => ed.start()}
-        title={`Click to change — ${TAB_LABEL.investment} owns this assumption`}>
-        {iso ? display : <span style={{ color: palette.textFaint, fontWeight: 400 }}>Set date</span>}
-      </span>
-    );
-  }
-  return (
-    <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <input
-        type="date" value={ed.draft} autoFocus disabled={ed.saving}
-        onChange={(e) => ed.setDraft(e.target.value)}
-        onKeyDown={ed.onKeyDown}
-        style={{ ...inlineEditInputStyle, textAlign: 'left' }}
-      />
-      <InlineEditControls
-        onSave={() => void ed.submit()}
-        onCancel={ed.cancel}
-        saving={ed.saving}
-        note={ed.requireNote ? ed.note : undefined}
-        onNote={ed.requireNote ? ed.setNote : undefined}
-        noteTestId={ed.requireNote ? 'acq-date-note' : undefined}
-      />
-    </span>
-  );
 }
 
 /**

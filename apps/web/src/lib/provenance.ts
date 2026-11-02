@@ -64,51 +64,14 @@ const GROUNDED_SOURCES = new Set<string>(SOURCE_IDS.filter((id) => kindOf(id) ==
 const OVERRIDE_SOURCES = new Set<string>(SOURCE_IDS.filter((id) => kindOf(id) === 'override'));
 
 /**
- * FON-61 (D4) — the EXACT note the Market tab writes on the explicit
- * ``starting_occupancy`` / ``starting_adr`` field_overrides when "Use STR
- * rates in the model" is clicked. The worker recognizes this note and tags
- * those keys ``str_forecast`` (STR data) rather than a generic analyst
- * override. Mirrors ``STR_MARKET_OVERRIDE_NOTE`` in
+ * The note the RETIRED "Use STR rates in the model" button wrote on the
+ * ``starting_occupancy`` / ``starting_adr`` field_overrides. Nothing writes it
+ * since topline v2 (FON-116 / FON-117); the worker still recognizes it on old
+ * deals and reports those keys as a legacy seed (``topline_status.legacy_flags``,
+ * "Clear legacy keys"). Mirrors ``STR_MARKET_OVERRIDE_NOTE`` in
  * apps/worker/app/services/engine_runner.py — keep the string identical.
  */
 export const STR_MARKET_OVERRIDE_NOTE = 'STR comp-set market rates (Market tab)';
-
-/** True when a ``field_overrides`` entry is the Market tab's STR comp-set
- *  seed (a structured ``{value, note}`` record carrying the exact note). */
-export function isStrMarketOverride(entry: unknown): boolean {
-  return (
-    typeof entry === 'object' &&
-    entry !== null &&
-    (entry as { note?: unknown }).note === STR_MARKET_OVERRIDE_NOTE
-  );
-}
-
-/**
- * FON-61 (61.2) — every source id that means "the Year-1 rates are on an STR
- * basis". Mirrors ``STR_BASIS_SOURCES`` in
- * apps/worker/app/services/engine_runner.py.
- *
- * There is ONE helper because there were two hand-rolled ``=== 'str_forecast'``
- * equality checks (the Market tab's card state and Financials → Projections'
- * basis chip), and a pair of them is how a single id came to stand for three
- * different provenances in the first place. Any future STR basis id is added
- * here once.
- */
-const STR_BASIS_SOURCES = new Set<string>([
-  'str_forecast',      // the BASE forward forecast's Month-12 point
-  'str_subject_ttm',   // the subject property's own trailing twelve months
-  'str_comp_set',      // the Market tab's comp-set blended rates
-  // FON-61 / E-028 — the STR-basis rates after the analyst's Index Analysis
-  // penetration target was applied to the selected benchmark. The worker only
-  // stamps it while the STR seed has landed, so the basis is still STR/market.
-  'index_assumption',
-]);
-
-/** True when a resolved source says the Year-1 rates sit on an STR basis.
- *  Tolerates `undefined` so callers can pass `src?.source` directly. */
-export function isStrBasisSource(source: string | null | undefined): boolean {
-  return !!source && STR_BASIS_SOURCES.has(source);
-}
 
 export function sourceKind(source: string): SourceKind {
   if (OVERRIDE_SOURCES.has(source)) return 'override';

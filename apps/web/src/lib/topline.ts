@@ -40,6 +40,31 @@ export const BENCHMARK_LEVEL_OPTIONS: { value: 'auto' | 'comp_set' | 'submarket'
   { value: 'market', label: 'Market' },
 ];
 
+/** One model year's topline record (`revenue.topline_by_year[i]`, schemas-ts `IndexDriverYear`). */
+export interface ToplineYearRecord {
+  year: number;
+  calendar_year?: number | null;
+  method?: string | null;
+  benchmark_level?: string | null;
+  benchmark_occupancy?: number | null;
+  benchmark_adr?: number | null;
+  benchmark_occupancy_source?: string | null;
+  benchmark_adr_source?: string | null;
+  mpi_target?: number | null;
+  ari_target?: number | null;
+  ramp_pct?: number | null;
+  ramp_state?: string | null;
+  occupancy?: number | null;
+  adr?: number | null;
+  occupancy_status?: string | null;
+  adr_status?: string | null;
+  growth_label?: string | null;
+  t12_occupancy?: number | null;
+  t12_adr?: number | null;
+  capped_95?: boolean;
+  reason?: string | null;
+}
+
 export type ClauseTone = 'ok' | 'warn';
 
 export interface ToplineClause {
@@ -150,7 +175,9 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
       tone: 'warn',
     },
   };
-  const g = growthText[s.growth_state] ?? { text: `Growth: ${s.growth_state}`, tone: 'warn' as ClauseTone };
+  const g = s.calendar_unknown && (s.growth_state === 'unavailable' || s.growth_state === 'partially_sourced')
+    ? { text: 'Growth: market forecast on file but not placed — set the acquisition close date', tone: 'warn' as ClauseTone }
+    : growthText[s.growth_state] ?? { text: `Growth: ${s.growth_state}`, tone: 'warn' as ClauseTone };
   out.push({ id: 'growth', ...g, title: growthLabels(s) || undefined });
   const stabWho =
     s.stabilization_source === 'analyst_override'
@@ -164,9 +191,11 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
 }
 
 export interface GrowthBanner {
-  state: 'unavailable' | 'withheld' | 'partially_sourced';
+  state: 'calendar_unknown' | 'unavailable' | 'withheld' | 'partially_sourced';
   title: string;
   detail: string;
+  /** R2-I1 — the fix is the close date: show its entry first, above the suggestion. */
+  askCloseDate: boolean;
   /** The worker's labelled suggestion (the only place 4.5% may appear), or null. */
   suggestion: ToplineSuggestion | null;
 }
@@ -177,6 +206,16 @@ export function growthBanner(s: ToplineStatus | null | undefined): GrowthBanner 
   const state = s.growth_state;
   if (state !== 'unavailable' && state !== 'withheld' && state !== 'partially_sourced') return null;
   const suggestion = (s.suggestions ?? []).find((x) => x.key === 'revpar_growth') ?? null;
+  if (s.calendar_unknown && state !== 'withheld') {
+    return {
+      state: 'calendar_unknown',
+      title: 'Set the acquisition close date to place the market forecast',
+      detail:
+        'A market forecast is on file, but the deal has no acquisition close date (and no underwriting as-of date), so its years cannot be placed — the model never guesses a calendar. Until then occupancy and ADR are held flat.',
+      askCloseDate: true,
+      suggestion,
+    };
+  }
   if (state === 'partially_sourced') {
     const gaps: string[] = [];
     for (const r of appliedRows(s)) {
@@ -190,6 +229,7 @@ export function growthBanner(s: ToplineStatus | null | undefined): GrowthBanner 
       state,
       title: 'The market forecast does not cover every year — set the rest manually',
       detail: `No figure for: ${gaps.join('; ')}. Those years are held flat.`,
+      askCloseDate: false,
       suggestion,
     };
   }
@@ -201,6 +241,7 @@ export function growthBanner(s: ToplineStatus | null | undefined): GrowthBanner 
         : 'No market forecast — set growth manually',
     detail:
       'Occupancy and ADR are held flat after Year 1 — growth 0 is the absence of a forecast, not a forecast. Enter growth by year below, or apply the labelled platform suggestion.',
+    askCloseDate: false,
     suggestion,
   };
 }
@@ -215,11 +256,13 @@ export function reextractNotice(s: ToplineStatus | null | undefined): { title: s
 const ANCHOR_TEXT: Record<string, string> = {
   acquisition_close: 'the acquisition close',
   underwriting_as_of: 'the underwriting as-of date',
-  comp_report_as_of: 'the comp report’s as-of date',
-  run_date: 'the run date',
 };
 
-/** Review I-4 — which anchor placed the forecast; ask for a close date when it is the run date. */
+/**
+ * Review I-4 — which anchor placed the forecast. Since R2-I1 only the close
+ * date or the underwriting as-of date can; an assumed (as-of) anchor asks for
+ * the close date. With neither, `growthBanner` carries the ask.
+ */
 export function calendarAnchorNote(
   s: ToplineStatus | null | undefined,
 ): { source: string; text: string; assumed: boolean; askCloseDate: boolean } | null {
@@ -231,7 +274,7 @@ export function calendarAnchorNote(
     source: a.source,
     text: `Forecast placed from ${where} (${a.date})${year}${a.assumed ? ' (assumed: no close date)' : ''}`,
     assumed: a.assumed,
-    askCloseDate: a.source === 'run_date',
+    askCloseDate: a.assumed,
   };
 }
 
@@ -330,4 +373,88 @@ export function overrideList(overrides: Record<string, unknown>, key: string): (
     : raw;
   if (!Array.isArray(v)) return null;
   return v.map((x) => (typeof x === 'number' && Number.isFinite(x) ? x : null));
+}
+
+// ── per-column basis and the reference rows (plan §2.4 / §4.2) ─────────
+
+const LEVEL_TEXT: Record<string, string> = {
+  comp_set: 'competitive set',
+  submarket: 'submarket',
+  market: 'market',
+};
+
+/**
+ * The basis chip on one projected Occupancy / ADR column: the benchmark
+ * year's own basis (actual / forecast / assumption), titled with the
+ * engine's chain — benchmark × penetration ÷ 100 × ramp = the year's rate.
+ * Null where the topline did not set the figure (an explicit analyst Year-1
+ * value, no benchmark, or no record for the year).
+ */
+export function yearRateBadge(
+  s: ToplineStatus | null | undefined,
+  records: ToplineYearRecord[] | null | undefined,
+  index: number,
+  metric: 'occupancy' | 'adr',
+): { basis: 'actual' | 'forecast' | 'assumption'; title: string } | null {
+  if (!s || s.benchmark_level === 'none' || s.explicit_metrics?.includes(metric)) return null;
+  const b = s.benchmark_by_year?.[index];
+  const r = records?.[index];
+  if (!b || !b.basis || !r) return null;
+  const level = metric === 'occupancy' ? b.occupancy : b.adr;
+  const pen = metric === 'occupancy' ? r.mpi_target : r.ari_target;
+  const out = metric === 'occupancy' ? r.occupancy : r.adr;
+  if (level == null || pen == null || out == null) return null;
+  const fmt = (v: number) => (metric === 'occupancy' ? `${(v * 100).toFixed(1)}%` : `$${v.toFixed(2)}`);
+  const src = (metric === 'occupancy' ? r.benchmark_occupancy_source : r.benchmark_adr_source) ?? null;
+  const label = b.label || src || '';
+  const ramp = r.ramp_pct != null ? ` × ramp ${fmtPctWhole(r.ramp_pct)}%` : '';
+  const idx = metric === 'occupancy' ? 'MPI' : 'ARI';
+  const cap = metric === 'occupancy' && r.capped_95 ? ' (capped at 95%)' : '';
+  return {
+    basis: b.basis,
+    title: `Benchmark ${fmt(level)}${label ? ` (${label})` : ''} × ${idx} ${Math.round(pen * 10) / 10} ÷ 100${ramp} = ${fmt(out)}${cap}`,
+  };
+}
+
+export interface ReferenceRow {
+  label: string;
+  occupancy: (number | null)[];
+  adr: (number | null)[];
+  revpar: (number | null)[];
+  title?: string;
+}
+
+/**
+ * The two reference rows under Occupancy / Average Rate / RevPAR: the
+ * benchmark per year ("Benchmark (<level>)") and the subject's T-12 repeated
+ * with its period ("T-12 actual (reference)"). Neither moves a number.
+ */
+export function toplineReferenceRows(
+  s: ToplineStatus | null | undefined,
+  years: number,
+): { benchmark: ReferenceRow | null; t12: ReferenceRow | null } {
+  if (!s) return { benchmark: null, t12: null };
+  const by = s.benchmark_by_year ?? [];
+  const benchmark: ReferenceRow | null =
+    s.benchmark_level !== 'none' && by.length
+      ? {
+          label: `Benchmark (${LEVEL_TEXT[s.benchmark_level] ?? s.benchmark_level})`,
+          occupancy: Array.from({ length: years }, (_, i) => by[i]?.occupancy ?? null),
+          adr: Array.from({ length: years }, (_, i) => by[i]?.adr ?? null),
+          revpar: Array.from({ length: years }, (_, i) => by[i]?.revpar ?? null),
+          title: s.benchmark_label,
+        }
+      : null;
+  const t = s.t12_reference;
+  const t12: ReferenceRow | null =
+    t && (t.occupancy != null || t.adr != null)
+      ? {
+          label: `T-12 actual (reference)${t.period_label ? ` · ${t.period_label}` : ''}`,
+          occupancy: Array.from({ length: years }, () => t.occupancy ?? null),
+          adr: Array.from({ length: years }, () => t.adr ?? null),
+          revpar: Array.from({ length: years }, () => t.revpar ?? null),
+          title: t.doc_name ? `The subject's own T-12 (${t.doc_name}) — shown for reference; it sets no projected year.` : undefined,
+        }
+      : null;
+  return { benchmark, t12 };
 }
