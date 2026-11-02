@@ -7,7 +7,6 @@ anchors:
   - benchmark-suggestions-methodology
   - correction-note-methodology
   - exit-noi-basis-methodology
-  - implied-value-methodology
   - methodology-capex-lanes
   - methodology-displacement-explicit-only
   - methodology-displacement-schedule
@@ -128,15 +127,6 @@ trail, the same as a model override: a corrected statement value is model input.
 the inputs behind it — starting value, growth, index or penetration where present — down to the
 source rows. When no trace was recorded for a cell the drawer says so; Fondok never prints a formula
 it did not record.
-
-{testid=implied-value-methodology} **Implied Value.** The Future P&L's last row values the hotel the
-way the sale is priced. Each operating year shows that year's Cash NOI — after property taxes,
-insurance and the FF&E reserve — divided by the exit cap rate the returns model ran on: what the
-hotel would be worth on that year's earnings. The Exit Year column shows the returns model's own
-gross sale price (forward 12-month Cash NOI ÷ exit cap), the figure every IRR and the equity multiple
-are computed from. The row never capitalises EBITDA, which sits above taxes, insurance and the
-reserve. Until the returns model has run the row is a dash with the reason; no default cap rate
-stands in.
 
 {testid=benchmark-column-methodology} **Benchmark column.** When the deal carries a P&L benchmark report (CBRE or HotStats), the Base-year
 column gains a Benchmark sub-column showing the comparable set's ratio for thirteen lines on the

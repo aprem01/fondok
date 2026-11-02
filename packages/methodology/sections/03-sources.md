@@ -4,6 +4,7 @@ title: "Where market assumptions come from"
 decisions: [FON-61, FON-74, FON-96, FON-109]
 anchors:
   - brand-positioning-methodology
+  - implied-value-methodology
   - market-submarket-methodology
   - market-data-policy-methodology
   - market-tab-methodology
@@ -313,6 +314,11 @@ primary statement. Earlier years still feed the Historical P&L and the variance 
   statement's stated total when it publishes one, and the sum of the extracted lines — labelled
   calculated — only when it does not. The Revenue footing row under the grid always compares the two
   and shows the difference; no total is invented when neither exists.
+- {testid=implied-value-methodology} **Implied Value is priced like the sale.** The Future P&L's
+  Implied Value row is each year's Cash NOI — after property taxes, insurance and the FF&E reserve —
+  ÷ the exit cap rate the returns model ran on; the Exit Year column shows the model's own gross sale
+  price, the figure IRR is computed from. It never capitalises EBITDA, and until the returns model has
+  run it is a dash with the reason — no default cap rate stands in.
 - **Other Revenue is both lines.** The Historical P&L's Other Revenue row is Other Operated
   Departments plus Miscellaneous Income, each as the statement states it — the same pool the Future
   P&L projects. A statement that states neither shows a dash.
