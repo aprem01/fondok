@@ -60,6 +60,10 @@ the tab names the negative years in one warning.
 - **Senior origination fee.** A platform default of 1.50% of the senior loan {{badge:seed}} until you
   change it. Financing is its only owner: Sources & Uses, total uses, required equity and LTC all move
   with it, and at zero the line disappears.
+- **Refinance and exit fees.** A refinance that raises less than the balance it retires plus its
+  costs is charged to equity at the refinance — a negative cash flow in IRR, counted as additional
+  equity in the multiple. A loan's exit fee is deducted when it is repaid, at the sale or the
+  refinance. Prepayment penalties, yield maintenance and defeasance are not modelled.
 - **Missing inputs are inputs.** Wherever a required assumption is absent, the tab renders the input
   to provide — “Enter rate”, “Enter spread”, “Enter threshold” — with the consequence stated, instead
   of an unexplained dash.
@@ -261,11 +265,19 @@ capitalised from it.
   maturity year, the sale, the balance carried — asking you to model a refinance or set a term that
   covers the hold. A refinance that lands **after maturity** retires that carried maturity balance
   (never zero), and the Debt tab warns that the loan matures before the refinance.
-- **Refinance shortfall.** When the refinance raises less than the senior balance it retires (plus
-  its fee), the cash-out is zero and the paydown equity would fund is **not charged** in this
-  release. The Debt tab says so in one warning — the refinance year, the proceeds, the balance and
-  the shortfall — rather than modeling an equity contribution nobody has decided on. A refinance set
-  in or after the sale year never happens, so it is not modelled, and the Debt tab says so.
+- **Refinance that needs equity.** The refinance's net cash flow to equity is its proceeds less the
+  senior balance it retires and the refinance costs (the new loan's fee plus the retired loan's exit
+  fee). When that is positive it is the cash-out; when it is negative — the new loan raises less
+  than the balance plus costs — the difference is **charged to equity** as a contribution at the
+  refinance month (the refinance year-end, or the refinance month when one is set). It is a negative
+  equity cash flow in the levered IRR, the Cash Flow statement (**Refinance Equity Contribution**),
+  the Investment Bridge, every exit-year row after the refinance, the financing sensitivity grid and
+  the partnership waterfall, where it is a capital call by the GP / LP ownership split (net of that
+  month's operating cash). The **equity multiple** counts it as additional equity invested:
+  distributions ÷ (equity + the refinance contribution). The Debt tab states the amount, the
+  balance it retires and when it is charged. A sale set before the refinance draws neither a
+  cash-out nor a contribution. A refinance set in or after the sale year never happens, so it is not
+  modelled, and the Debt tab says so.
 - **Senior origination fee.** The senior loan's origination fee is a **Fondok seed of 1.50% of the
   senior loan** — a platform default, not a figure read from a term sheet or an OM, and it carries the
   Seed badge {{badge:seed}} until you change it. It is editable on Financing, and Financing is its
@@ -273,9 +285,12 @@ capitalised from it.
   Loan Origination Fee**, and Overview → Capitalization's **Financing Costs** reads that same number.
   Change it on Financing and Sources & Uses, Total Uses, required equity and LTC all move; set it to
   0% and the line disappears. One assumption, one number, three labels retired.
-- **Exit fee.** The exit fee is added to the final month's payment on the tranche schedule. It is
-  *not* carried into Sources & Uses, Cash Flow or Returns in this release, and the row says so — the
-  same treatment as the PACE “terms pending” row.
+- **Exit fee.** A tranche's exit fee (percent of its principal) is paid when the loan is repaid: a
+  sale deducts the exit fee of every tranche still outstanding from the net sale proceeds — the
+  headline and every exit-year row alike, shown as **Lender Exit Fees** on the Cash Flow statement
+  and in the Investment Bridge — while a loan a refinance retires pays its fee at the refinance, as
+  a refinance cost. Prepayment penalties, yield maintenance and defeasance are **not modelled**: the
+  payoff at sale is the loan balance plus any exit fee, without them.
 - **Missing inputs are inputs.** Wherever a required assumption is absent, the Financing tab renders
   the input to provide (“Enter rate”, “Enter spread”, “Enter threshold”) with the consequence stated,
   instead of an unexplained dash.
