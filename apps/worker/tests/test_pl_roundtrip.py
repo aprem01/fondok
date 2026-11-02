@@ -877,3 +877,99 @@ async def test_historical_apply_skips_a_change_without_a_justification() -> None
         )).first()
     fields = {f["field_name"]: f for f in json.loads(row[0])}
     assert "reviewed" not in fields["rooms_revenue"]
+
+
+# ─────────────────── FON-116 / FON-117 — the topline round-trip (plan PR 6) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_projection_export_carries_the_topline_rows() -> None:
+    """Growth by year (occupancy, ADR) for every model year, the ramp for
+    Years 1..S−1 at the ramp the worker APPLIED, the stabilized penetration and
+    the benchmark level — each with its key, unit and note rule."""
+    from app.api.pl_roundtrip import export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "hold_years": 4,
+        "adr_growth_by_year": {"value": [None, 0.03], "note": "Broker view"},
+    })
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wa = _sheet(resp.body, "Assumptions")
+    rows = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    for y in (1, 2, 3, 4):
+        assert f"occupancy_growth_by_year.{y}" in rows
+        assert f"adr_growth_by_year.{y}" in rows
+    assert "adr_growth_by_year.5" not in rows
+    r = rows["adr_growth_by_year.2"]
+    assert wa.cell(row=r, column=3).value == 0.03
+    assert wa.cell(row=r, column=5).value == "analyst_override"
+    assert wa.cell(row=r, column=7).value == "Yes"
+    assert wa.cell(row=r, column=8).value == "Broker view"
+    assert "fraction" in wa.cell(row=r, column=4).value
+    # Default stabilization (Year 3) → ramp rows for Years 1–2 at the APPLIED ramp.
+    assert [k for k in rows if k.startswith("penetration_ramp_by_year.")] == [
+        "penetration_ramp_by_year.1", "penetration_ramp_by_year.2",
+    ]
+    assert wa.cell(row=rows["penetration_ramp_by_year.1"], column=3).value == pytest.approx(0.85)
+    assert wa.cell(row=rows["penetration_ramp_by_year.2"], column=3).value == pytest.approx(0.95)
+    assert wa.cell(row=rows["penetration_ramp_by_year.1"], column=5).value == "default"
+    for key in ("index_mpi_target", "index_ari_target", "topline_benchmark_level"):
+        assert key in rows
+        assert wa.cell(row=rows[key], column=7).value == "Yes"
+    # M-6 — the RevPAR row no longer teaches a 4.5% figure.
+    assert "0.045" not in str(wa.cell(row=rows["revpar_growth"], column=4).value)
+
+
+@pytest.mark.asyncio
+async def test_projection_apply_folds_growth_and_ramp_rows_into_their_lists() -> None:
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={"hold_years": 4})
+    body = ProjApplyBody(changes=[
+        {"key": "occupancy_growth_by_year.2", "new_value": 0.01, "note": "Demand recovery"},
+        {"key": "adr_growth_by_year.3", "new_value": 0.8, "note": "typo"},          # out of range
+        {"key": "penetration_ramp_by_year.1", "new_value": 0.9, "note": "Soft open"},
+        {"key": "penetration_ramp_by_year.2", "new_value": 0, "note": "zero"},      # out of range
+        {"key": "topline_benchmark_level", "new_value": "market", "note": "Comp set too thin"},
+        {"key": "index_mpi_target", "new_value": 105, "note": ""},                  # note required
+    ])
+    async with get_session_factory()() as s:
+        res = await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert sorted(a["key"] for a in res["applied"]) == [
+        "occupancy_growth_by_year.2", "penetration_ramp_by_year.1", "topline_benchmark_level",
+    ]
+    skipped = {x["key"]: x["reason"] for x in res["skipped"]}
+    assert skipped == {
+        "adr_growth_by_year.3": "out_of_range",
+        "penetration_ramp_by_year.2": "out_of_range",
+        "index_mpi_target": "note_required",
+    }
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    fo = json.loads(row[0])
+    assert fo["occupancy_growth_by_year"] == {"value": [None, 0.01], "note": "Y2: Demand recovery"}
+    # A ramp edit starts from the ramp the model ran on: untouched Year 2 keeps 95%.
+    assert fo["penetration_ramp_by_year"] == {"value": [0.9, 0.95], "note": "Y1: Soft open"}
+    assert fo["topline_benchmark_level"] == {"value": "market", "note": "Comp set too thin"}
+    assert "adr_growth_by_year" not in fo
+    assert not any("." in k and k.split(".")[-1].isdigit() for k in fo)
+
+
+def test_projection_import_previews_the_topline_rows() -> None:
+    """The preview reads the new keys (growth fraction, ramp, level choice) and
+    enforces the note rule like every other row."""
+    from app.export.pl_workbooks import assumption_spec
+
+    g = assumption_spec("adr_growth_by_year.3")
+    assert g is not None and "fraction" in g.unit
+    r = assumption_spec("penetration_ramp_by_year.2")
+    assert r is not None
+    lvl = assumption_spec("topline_benchmark_level")
+    assert lvl is not None and set(lvl.choices) == {"auto", "comp_set", "submarket", "market"}
+    assert assumption_spec("adr_growth_by_year.21") is None

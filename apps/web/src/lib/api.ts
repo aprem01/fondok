@@ -1501,6 +1501,9 @@ export interface RunCompareSide {
   started_at: string | null;
   completed_at: string | null;
   engines: Record<string, string>;
+  /** Plan §6 — the topline method the run's revenue engine used (1 = before
+   *  topline v2); null with no revenue output; absent on an older worker. */
+  topline_methodology_version?: number | null;
 }
 
 export interface RunCompareResponse {
@@ -1511,6 +1514,8 @@ export interface RunCompareResponse {
   fields_compared: number;
   fields_changed: number;
   tolerance: { rel: number; abs: number };
+  /** Plan §6 — the two runs used different topline methods. */
+  topline_methodology_changed?: boolean;
   fields: RunCompareField[];
 }
 

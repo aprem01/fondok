@@ -288,6 +288,11 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
         assert cmp["base"]["run_id"] == base_run
         assert cmp["head"]["run_id"] == head_run
         assert cmp["fields_changed"] == len(cmp["fields"]) > 0
+        # Plan §6 / PR 7 — each side names the topline method its run used,
+        # so a comparison across methods is labelled, never silent.
+        assert cmp["base"]["topline_methodology_version"] == 2
+        assert cmp["head"]["topline_methodology_version"] == 2
+        assert cmp["topline_methodology_changed"] is False
         assert all(f["status"] != "unchanged" for f in cmp["fields"])
         rows = {f["key"]: f for f in cmp["fields"]}
         occ = rows["revenue.years[0].occupancy"]
@@ -751,3 +756,16 @@ def test_run_status_folds_over_canonical_rows_only() -> None:
     # No canonical rows at all (a lone view re-run): fold over what exists.
     assert _run_status([("cash_flow", "failed", done)], canon) == "failed"
     assert _run_status([("cash_flow", "complete", done)], canon) == "complete"
+
+
+def test_topline_methodology_version_reads_the_revenue_run() -> None:
+    """A run that predates topline v2 (no version on the revenue output) is
+    method 1; a run with no revenue output names none."""
+    from app.services.run_compare import topline_methodology_version
+
+    assert topline_methodology_version({"revenue": {"status": "complete", "outputs": {"years": []}}}) == 1
+    assert topline_methodology_version(
+        {"revenue": {"status": "complete", "outputs": {"topline_methodology_version": 2}}}
+    ) == 2
+    assert topline_methodology_version({"revenue": {"status": "failed", "outputs": None}}) is None
+    assert topline_methodology_version({}) is None

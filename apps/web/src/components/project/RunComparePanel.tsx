@@ -254,6 +254,16 @@ export default function RunComparePanel({ dealId }: Props) {
               ? 'Comparing…'
               : `${result.fields_changed} of ${result.fields_compared} headline fields changed · baseline ${fmtRunTime(result.base.completed_at ?? result.base.started_at ?? "")} → head ${fmtRunTime(result.head.completed_at ?? result.head.started_at ?? "")}`}
           </div>
+          {result.topline_methodology_changed && (
+            <p
+              className="mb-2 rounded border border-warning-500/40 bg-warning-50 px-2 py-1 text-[11.5px] text-warning-700"
+              data-testid="run-compare-method-change"
+            >
+              Topline methodology v{result.base.topline_methodology_version} → v{result.head.topline_methodology_version}
+              {' '}— the occupancy / ADR method changed between these runs (benchmark × penetration × ramp, growth by
+              year), so topline fields moved by the method change as well as by any input.
+            </p>
+          )}
           {result.fields.length === 0 ? (
             <p className="text-[12px] text-ink-700" data-testid="run-compare-empty">
               No headline field differs between these two runs.

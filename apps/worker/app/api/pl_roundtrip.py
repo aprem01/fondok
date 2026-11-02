@@ -48,6 +48,9 @@ from ..export.pl_workbooks import (
     assumption_spec,
     by_year_target_assumptions,
     split_by_year_target_key,
+    split_topline_list_key,
+    topline_list_assumptions,
+    topline_list_problem,
     SCHEDULE_KEY,
     schedule_assumptions,
     split_schedule_period_key,
@@ -484,6 +487,60 @@ async def _assumption_state(
     # Sam, 2026-10-15 — the renovation displacement schedule, one row per
     # period per field, plus one blank period. The value is the saved
     # period's own field; blank = not set.
+    # FON-116 / FON-117 — the topline. Penetration and the benchmark level
+    # show what the model ran on (default 100 / auto, badged so); growth by
+    # year shows the analyst's entry (blank = the resolved market figure the
+    # Source column names); the ramp shows the ramp the worker APPLIED, one
+    # row per year before the stabilization year.
+    status = base.get("__topline_status__") or {}
+    for key, metric, src_key in (
+        ("index_mpi_target", "penetration_occ", "penetration_occ_source"),
+        ("index_ari_target", "penetration_adr", "penetration_adr_source"),
+    ):
+        if key in overrides:
+            continue
+        v = to_number(status.get(metric))
+        values[key] = v
+        srcs[key] = str(status.get(src_key) or "") if v is not None else ""
+    lvl = overrides.get("topline_benchmark_level")
+    lvl = lvl.get("value") if isinstance(lvl, dict) else lvl
+    values["topline_benchmark_level"] = lvl if isinstance(lvl, str) and lvl else "auto"  # type: ignore[assignment]
+    srcs["topline_benchmark_level"] = (
+        "analyst_override" if "topline_benchmark_level" in overrides
+        else f"auto — in use: {status.get('benchmark_label') or 'no benchmark'}"
+    )
+    try:
+        stab = int(status.get("stabilization_year") or 0)
+    except (TypeError, ValueError):
+        stab = 0
+    topline_specs = topline_list_assumptions(hold, max(0, stab - 1))
+    growth_rows = {int(r.get("year")): r for r in status.get("growth_by_year") or [] if isinstance(r, dict)}
+    applied_ramp = list(status.get("ramp_by_year") or [])
+    from ..services.topline import coerce_ramp_list
+    from ..services.topline_growth import coerce_growth_list
+
+    for spec in topline_specs:
+        list_key, year = split_topline_list_key(spec.key)  # type: ignore[misc]
+        ov = overrides.get(list_key)
+        raw = ov.get("value") if isinstance(ov, dict) else ov
+        if list_key == "penetration_ramp_by_year":
+            if raw is not None:
+                lst, _p = coerce_ramp_list(raw)
+                values[spec.key] = lst[year - 1] if year - 1 < len(lst) else None
+                srcs[spec.key] = "analyst_override"
+            else:
+                v = applied_ramp[year - 1] if year - 1 < len(applied_ramp) else None
+                values[spec.key] = to_number(v)
+                srcs[spec.key] = str(status.get("ramp_source") or "") if v is not None else ""
+            continue
+        lst, _p = coerce_growth_list(raw) if raw is not None else ([], [])
+        v = lst[year - 1] if year - 1 < len(lst) else None
+        values[spec.key] = v
+        if v is not None:
+            srcs[spec.key] = "analyst_override"
+        else:
+            g = (growth_rows.get(year) or {}).get("occupancy" if list_key.startswith("occupancy") else "adr")
+            srcs[spec.key] = str(g.get("label") or "") if isinstance(g, dict) else ""
     saved_periods = _schedule_periods(overrides)
     schedule_specs = schedule_assumptions(len(saved_periods))
     for spec in schedule_specs:
@@ -492,7 +549,7 @@ async def _assumption_state(
         v = to_number(entry.get(field)) if isinstance(entry, dict) else None
         values[spec.key] = v
         srcs[spec.key] = "analyst_override" if v is not None else ""
-    return values, srcs, overrides, ASSUMPTIONS + by_year_specs + schedule_specs
+    return values, srcs, overrides, ASSUMPTIONS + by_year_specs + topline_specs + schedule_specs
 
 
 def _schedule_periods(overrides: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -611,7 +668,7 @@ async def export_projections(
             if isinstance(own, str) and own.strip():
                 return own.strip()
             return _override_note(overrides.get(SCHEDULE_KEY)) if period is not None else None
-        by = split_by_year_target_key(key)
+        by = split_by_year_target_key(key) or split_topline_list_key(key)
         return _override_note(overrides.get(by[0] if by is not None else key))
 
     rows = [
@@ -743,6 +800,10 @@ async def apply_projections_import(
     schedule_changes: dict[int, dict[str, float | int]] = {}
     schedule_notes: dict[int, str] = {}
     schedule_rows: dict[int, list[dict[str, Any]]] = {}
+    # FON-116 / FON-117 — topline per-year rows (growth, ramp) fold into
+    # their JSON list override the same way, each year keeping its note.
+    topline_changes: dict[str, dict[int, float]] = {}
+    topline_notes: dict[str, dict[int, str]] = {}
     batch_keys = {ch.key for ch in body.changes}
     for ch in body.changes:
         spec = assumption_spec(ch.key)
@@ -766,7 +827,9 @@ async def apply_projections_import(
                 skipped.append({"key": ch.key, "reason": "note_required"})
                 continue
             merged[ch.key] = {"value": choice, "note": note} if note else choice
-            method_changed_lines.add(split_projection_method_key(ch.key)[0])
+            pm_choice = split_projection_method_key(ch.key)
+            if pm_choice is not None:
+                method_changed_lines.add(pm_choice[0])
             applied.append({"key": ch.key, "old_value": now_c, "new_value": choice, "note": note})
             continue
         if isinstance(ch.new_value, str):
@@ -791,6 +854,18 @@ async def apply_projections_import(
         note = ch.note.strip()
         if not note and _needs_note(ch.key):
             skipped.append({"key": ch.key, "reason": "note_required"})
+            continue
+        tl = split_topline_list_key(ch.key)
+        if tl is not None:
+            list_key, year = tl
+            why = topline_list_problem(list_key, float(value))
+            if why is not None:
+                skipped.append({"key": ch.key, "reason": "out_of_range", "detail": why})
+                continue
+            topline_changes.setdefault(list_key, {})[year] = float(value)
+            if note:
+                topline_notes.setdefault(list_key, {})[year] = note
+            applied.append({"key": ch.key, "old_value": now_val, "new_value": value, "note": note})
             continue
         by = split_by_year_target_key(ch.key)
         if by is not None:
@@ -864,6 +939,38 @@ async def apply_projections_import(
                 new_list[year - 1] = v
             note = merge_by_year_notes(
                 override_note(overrides, list_key), by_year_notes.get(list_key, {})
+            )
+            merged[list_key] = {"value": new_list, "note": note} if note else new_list
+
+    # FON-116 / FON-117 — fold the topline rows into their lists. A growth
+    # list keeps every untouched year's entry (blank = the market figure); a
+    # ramp list with no override yet starts from the ramp the model APPLIED,
+    # so the untouched years keep what they ran on (a blank there would mean
+    # 100%, a number the analyst never chose).
+    if topline_changes:
+        from ..services.index_methodology import override_note
+        from ..services.topline import coerce_ramp_list
+        from ..services.topline_growth import coerce_growth_list
+
+        for list_key, per_year in topline_changes.items():
+            existing = overrides.get(list_key)
+            raw = existing.get("value") if isinstance(existing, dict) else existing
+            if list_key == "penetration_ramp_by_year":
+                if raw is not None:
+                    current, _p = coerce_ramp_list(raw)
+                else:
+                    n = 0
+                    while f"{list_key}.{n + 1}" in cur:
+                        n += 1
+                    current = [to_number(cur.get(f"{list_key}.{y}")) for y in range(1, n + 1)]
+            else:
+                current = coerce_growth_list(raw)[0] if raw is not None else []
+            size = max(len(current), max(per_year))
+            new_list: list[float | None] = list(current) + [None] * (size - len(current))
+            for year, v in per_year.items():
+                new_list[year - 1] = v
+            note = merge_by_year_notes(
+                override_note(overrides, list_key), topline_notes.get(list_key, {})
             )
             merged[list_key] = {"value": new_list, "note": note} if note else new_list
 

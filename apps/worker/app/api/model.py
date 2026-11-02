@@ -763,6 +763,10 @@ class RunCompareSide(BaseModel):
     engines: dict[str, str] = Field(
         default_factory=dict, description="engine → status in this run"
     )
+    topline_methodology_version: int | None = Field(
+        default=None,
+        description="the topline method the run's revenue engine used (1 = before topline v2)",
+    )
 
 
 class RunCompareField(BaseModel):
@@ -793,6 +797,9 @@ class RunCompareResponse(BaseModel):
     fields_compared: int
     fields_changed: int
     tolerance: dict[str, float]
+    #: Plan §6 — the two runs used different topline methods: every moved
+    #: topline field is (at least partly) the method change.
+    topline_methodology_changed: bool = False
     fields: list[RunCompareField]
 
 
@@ -880,6 +887,7 @@ async def _compare(
         extract_headline_fields,
         load_run_engines,
         outputs_only,
+        topline_methodology_version,
     )
 
     deal_uuid, canonical, runs = await _deal_runs(
@@ -944,12 +952,16 @@ async def _compare(
             "started_at": meta.get("started_at"),
             "completed_at": meta.get("completed_at"),
             "engines": {name: row["status"] for name, row in engines.items()},
+            "topline_methodology_version": topline_methodology_version(engines),
         }
 
+    base_side, head_side = _side(base_id, base_rows), _side(head_id, head_rows)
+    bv, hv = base_side["topline_methodology_version"], head_side["topline_methodology_version"]
     return {
         "deal_id": deal_id,
-        "base": _side(base_id, base_rows),
-        "head": _side(head_id, head_rows),
+        "base": base_side,
+        "head": head_side,
+        "topline_methodology_changed": bv is not None and hv is not None and bv != hv,
         "include_unchanged": include_unchanged,
         "fields_compared": compared,
         "fields_changed": changed,

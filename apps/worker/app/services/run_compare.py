@@ -735,6 +735,18 @@ async def load_run_engines(
     return out
 
 
+def topline_methodology_version(engines: Mapping[str, Mapping[str, Any]]) -> int | None:
+    """The topline method a run's revenue engine used (plan §6): its
+    ``topline_methodology_version``; 1 for a revenue output that predates the
+    field (topline v1); None when the run has no revenue output."""
+    row = engines.get("revenue") or {}
+    out = row.get("outputs")
+    if not isinstance(out, Mapping):
+        return None
+    v = out.get("topline_methodology_version")
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 1
+
+
 def outputs_only(engines: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     return {name: (row.get("outputs") or None) for name, row in engines.items()}
 
@@ -772,6 +784,10 @@ def build_compare_workbook(result: Mapping[str, Any]) -> bytes:
         ("Head run", head.get("run_id")),
         ("Head started", head.get("started_at")),
         ("Head completed", head.get("completed_at")),
+        ("Topline method (baseline → head)", (
+            f"v{base.get('topline_methodology_version')} → v{head.get('topline_methodology_version')}"
+            + (" — the method changed; topline fields moved by it" if result.get("topline_methodology_changed") else "")
+        ) if base.get("topline_methodology_version") and head.get("topline_methodology_version") else None),
         ("Fields compared", result.get("fields_compared")),
         ("Fields changed", result.get("fields_changed")),
         ("Unchanged rows included", "yes" if result.get("include_unchanged") else "no"),
