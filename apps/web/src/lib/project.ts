@@ -6,7 +6,7 @@
  * Standing rule (no invented data): every numeric field is `number | null`,
  * and `null` means the worker has not produced the value. A null never
  * renders as 0 — the header prints a dash (`formatKeys`, the confidence pill
- * reads "Awaiting docs"). Nothing here is ever built from a fixture.
+ * reads "AI Confidence —"). Nothing here is ever built from a fixture.
  */
 import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
 

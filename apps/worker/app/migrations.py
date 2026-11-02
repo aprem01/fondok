@@ -1459,6 +1459,40 @@ MIGRATIONS: list[tuple[str, str]] = [
         "tenants.add_data_policies",
         "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS data_policies JSONB NOT NULL DEFAULT '{}'",
     ),
+    # Wave 5 (Sam #5) — ``deals.ai_confidence``. Deal creation wrote 0.0
+    # until A11 (2026-10-30) and no code path ever wrote the column after
+    # that, so every legacy 0.00 is a never-computed value, not a score. Step
+    # 1 nulls them; step 2 backfills every NULL deal from its extractions —
+    # the mean of ``confidence_report.overall`` over each EXTRACTED
+    # document's latest extraction, exactly ``services.deal_confidence``.
+    # Re-running is idempotent: a deal whose real rollup is 0 is nulled and
+    # refilled with the same 0; a deal with no scored extraction stays NULL.
+    (
+        "deals.ai_confidence_null_legacy_zero",
+        "UPDATE deals SET ai_confidence = NULL WHERE ai_confidence = 0",
+    ),
+    (
+        "deals.ai_confidence_backfill",
+        """
+        UPDATE deals
+           SET ai_confidence = (
+               SELECT AVG((latest.cr ->> 'overall')::double precision)
+                 FROM (
+                     SELECT DISTINCT ON (er.document_id) er.confidence_report AS cr
+                       FROM extraction_results er
+                       JOIN documents d
+                         ON d.id = er.document_id
+                        AND d.tenant_id = er.tenant_id
+                      WHERE er.deal_id = deals.id
+                        AND er.tenant_id = deals.tenant_id
+                        AND d.status = 'EXTRACTED'
+                      ORDER BY er.document_id, er.created_at DESC
+                 ) latest
+                WHERE jsonb_typeof(latest.cr -> 'overall') = 'number'
+           )
+         WHERE ai_confidence IS NULL
+        """,
+    ),
 ]
 
 
@@ -2456,6 +2490,38 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
     (
         "tenants.add_data_policies_sqlite",
         "ALTER TABLE tenants ADD COLUMN data_policies TEXT NOT NULL DEFAULT '{}'",
+    ),
+    # Wave 5 (Sam #5) — SQLite twin of the ``deals.ai_confidence`` null +
+    # backfill (JSON as TEXT; latest extraction per document by MAX(created_at)).
+    (
+        "deals.ai_confidence_null_legacy_zero",
+        "UPDATE deals SET ai_confidence = NULL WHERE ai_confidence = 0",
+    ),
+    (
+        "deals.ai_confidence_backfill",
+        """
+        UPDATE deals
+           SET ai_confidence = (
+               SELECT AVG(json_extract(er.confidence_report, '$.overall'))
+                 FROM extraction_results er
+                 JOIN documents d
+                   ON d.id = er.document_id
+                  AND d.tenant_id = er.tenant_id
+                WHERE er.deal_id = deals.id
+                  AND er.tenant_id = deals.tenant_id
+                  AND d.status = 'EXTRACTED'
+                  AND er.created_at = (
+                      SELECT MAX(e2.created_at)
+                        FROM extraction_results e2
+                       WHERE e2.document_id = er.document_id
+                         AND e2.tenant_id = er.tenant_id
+                  )
+                  AND (CASE WHEN json_valid(er.confidence_report)
+                            THEN json_type(er.confidence_report, '$.overall')
+                       END) IN ('integer', 'real')
+           )
+         WHERE ai_confidence IS NULL
+        """,
     ),
 ]
 
