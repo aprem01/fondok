@@ -1662,12 +1662,15 @@ async def _load_engine_inputs(
     # W5 — Year-1 lines read from a statement other than the primary one
     # (same period first, then another period); each becomes a notice below.
     line_fills: list[_LineFill] = []
+    line_skips: list[_LineSkip] = []
+    footing_notes: list[_FootingNote] = []
     expense_actuals, expense_prov = await _load_t12_expense_actuals(
         session,
         deal_id=deal_id,
         tenant_id=effective_tenant,
         with_provenance=True,
         fills=line_fills,
+        skips=line_skips,
     )
     base["t12_expense_actuals"] = expense_actuals
     # Expense canonicals ARE the assumption keys the override panel edits
@@ -1689,6 +1692,8 @@ async def _load_engine_inputs(
         with_provenance=True,
         conflicts=statement_conflicts,
         fills=line_fills,
+        skips=line_skips,
+        footing_notes=footing_notes,
     )
 
     def _ground(assumption_key: str, canonical: str) -> None:
@@ -2814,8 +2819,11 @@ async def _load_engine_inputs(
             source_fields,
             conflicts=statement_conflicts,
             fills=line_fills,
+            skips=line_skips,
+            footing_notes=footing_notes,
             other_ratio_capped_detail=other_ratio_capped_detail,
             already=reasons,
+            sources=sources,
         )
     )
 
@@ -2918,55 +2926,154 @@ def _loader_notices(
     fills: list[_LineFill],
     other_ratio_capped_detail: str | None,
     already: Mapping[str, Any],
+    skips: list[_LineSkip] = (),  # type: ignore[assignment]
+    footing_notes: list[_FootingNote] = (),  # type: ignore[assignment]
+    sources: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """``needs_review`` reasons for document-grounded assumptions whose
-    value is used but must be reviewed:
+    """``needs_review`` reasons for Year-1 assumptions the analyst must review:
 
-    * every key grounded on a statement with a same-period conflict;
+    * every key grounded on a statement with a same-period conflict — the
+      note names each statement once, why the one used was chosen, and which
+      lines came from which other statement;
     * every key whose line was read from a statement other than the primary
-      one (same period or another period) — named with source and period;
+      one (same period or another period), with source and period;
+    * every key whose line the primary lacks and no eligible statement
+      carried (a monthly slice, or a statement over two years older), so the
+      documented default is used;
+    * every revenue-derived key grounded on a statement whose revenue lines
+      fail their own footing;
     * a clipped other-revenue ratio.
 
     A key that already carries a reason keeps it: the earlier entry travels
     under ``also`` (never silently dropped).
     """
+    sources = sources or {}
+    # Per key: statement label -> how the note already names it ("the
+    # primary statement" / "the statement used" / "the source statement"),
+    # so a later part refers back instead of naming it twice.
+    named: dict[str, dict[str, str]] = {}
     details: dict[str, list[str]] = {}
 
-    def _add(key: str, text: str) -> None:
+    def _add(key: str, text: str, labels: Mapping[str, str]) -> None:
         parts = details.setdefault(key, [])
         if text not in parts:
             parts.append(text)
+            seen = named.setdefault(key, {})
+            for label, role in labels.items():
+                seen.setdefault(label, role)
 
+    def _keys_for(canonical: str) -> tuple[str, ...]:
+        return _REVENUE_LINE_KEYS.get(canonical, (canonical,))
+
+    conflict_docs: set[str] = set()
     for conflict in conflicts:
         if conflict.document_id is None:
             continue
-        # Say exactly which lines did NOT come from the statement used.
-        by_source: dict[str, list[str]] = {}
+        conflict_docs.add(conflict.document_id)
+        # Lines read from another statement, appended to that statement's
+        # entry (same period) or as one closing clause (other periods).
+        per_doc: dict[str | None, list[str]] = {}
+        elsewhere: dict[str, list[str]] = {}
+        sibling_docs = {doc for doc, _label, _clause in conflict.others}
         for fill in fills:
-            if fill.primary_document_id == conflict.document_id:
-                words = _LINE_WORDS.get(fill.canonical, fill.canonical)
-                if words not in by_source.setdefault(fill.source, []):
-                    by_source[fill.source].append(words)
-        text_ = conflict.detail
-        if by_source:
-            text_ += " Lines it does not carry are read from: " + "; ".join(
-                f"{', '.join(lines)} from {source}" for source, lines in by_source.items()
+            if fill.primary_document_id != conflict.document_id:
+                continue
+            words = _LINE_WORDS.get(fill.canonical, fill.canonical)
+            if fill.document_id in sibling_docs:
+                bucket = per_doc.setdefault(fill.document_id, [])
+            else:
+                bucket = elsewhere.setdefault(f"{fill.source_label} ({fill.where})", [])
+            if words not in bucket:
+                bucket.append(words)
+        extra = {doc: "supplies " + ", ".join(lines) for doc, lines in per_doc.items()}
+        text_ = _compose_conflict(conflict, extra) if conflict.used_label else conflict.detail
+        if elsewhere:
+            text_ += " Lines no statement of this period carries are read from: " + "; ".join(
+                f"{', '.join(lines)} from {src}" for src, lines in elsewhere.items()
             ) + "."
+        labels = {conflict.used_label: "the statement used"} | {
+            label: "the other statement" for _d, label, _c in conflict.others
+        }
         for key in sorted(source_fields):
             if source_fields[key].document_id == conflict.document_id:
-                _add(key, text_)
+                _add(key, text_, labels)
+
+    # Fills not already described by a conflict note on the same key.
+    fill_groups: dict[str, dict[str, list[str]]] = {}
+    fill_primary: dict[str, str] = {}
     for fill in fills:
-        for key in _REVENUE_LINE_KEYS.get(fill.canonical, (fill.canonical,)):
+        if fill.primary_document_id in conflict_docs:
+            covered = True
+        else:
+            covered = False
+        for key in _keys_for(fill.canonical):
             sf = source_fields.get(key)
             if sf is None:
                 continue
-            if key in _DERIVED_LINE_KEYS or (
-                sf.document_id == fill.document_id
-                and sf.resolution.field_name == fill.field_name
+            if not (
+                key in _DERIVED_LINE_KEYS
+                or (sf.document_id == fill.document_id and sf.resolution.field_name == fill.field_name)
             ):
-                _add(key, fill.detail)
+                continue
+            if covered and key in details:
+                continue
+            src = f"{fill.source_label} ({fill.where})"
+            lines = fill_groups.setdefault(key, {}).setdefault(src, [])
+            words = _LINE_WORDS.get(fill.canonical, fill.canonical)
+            if words not in lines:
+                lines.append(words)
+            fill_primary[key] = fill.primary_label
+    for key, by_src in fill_groups.items():
+        primary = fill_primary[key]
+        prim_name = primary.rsplit(" (", 1)[0]
+        lead = (
+            f"Not on {named[key][prim_name]}"
+            if prim_name in named.get(key, {})
+            else f"Not on {primary}, the primary statement"
+        )
+        body = "; ".join(f"{', '.join(lines)}, read from {src}" for src, lines in by_src.items())
+        _add(
+            key,
+            f"{lead}: {body}.",
+            {prim_name: "the primary statement"}
+            | {s_.rsplit(" (", 1)[0]: "the statement it is read from" for s_ in by_src},
+        )
+
+    for skip in skips:
+        for key in _keys_for(skip.canonical):
+            if sources.get(key) == SOURCE_ANALYST_OVERRIDE:
+                continue
+            if key in source_fields and key not in _DERIVED_LINE_KEYS:
+                continue
+            role = named.get(key, {}).get(skip.primary_name)
+            text_ = (
+                f"{_LINE_WORDS.get(skip.canonical, skip.canonical)} is not on {role}; "
+                f"{skip.why}, so the platform default is used."
+                if role and skip.why
+                else skip.detail
+            )
+            _add(key, text_, {skip.primary_name: "the primary statement"} if skip.primary_name else {})
+
+    for note in footing_notes:
+        noted: set[str] = set()
+        for canonical in sorted(note.canonicals):
+            for key in _keys_for(canonical):
+                sf = source_fields.get(key)
+                if sf is None or key in noted:
+                    continue
+                noted.add(key)
+                if key not in _DERIVED_LINE_KEYS and sf.document_id != note.document_id:
+                    continue
+                role = named.get(key, {}).get(note.label)
+                subject = role[0].upper() + role[1:] if role else note.label
+                _add(
+                    key,
+                    f"{subject} does not foot: {note.why}; review its revenue lines.",
+                    {note.label: "the statement"},
+                )
+
     if other_ratio_capped_detail and "other_revenue_pct_of_rooms" in source_fields:
-        _add("other_revenue_pct_of_rooms", other_ratio_capped_detail)
+        _add("other_revenue_pct_of_rooms", other_ratio_capped_detail, {})
     out: dict[str, dict[str, Any]] = {}
     for key, parts in details.items():
         entry = _reason(ReasonCode.NEEDS_REVIEW, " ".join(parts))
@@ -4805,6 +4912,9 @@ _SAME_PERIOD_CONFLICT_TOLERANCE = 0.05
 #: (deal 7a9928e0: F&B $96,528 against $2.74M / $2.91M). A few percent apart is
 #: a different basis or version — a notice, never a switch.
 _SAME_PERIOD_OUTLIER_TOLERANCE = 0.25
+#: A line the primary statement lacks is never filled from a statement whose
+#: period ends more than this many years before the Year-1 basis period.
+_FILL_MAX_AGE_YEARS = 2  # the notes say "two years" — keep them in step
 #: The lines two statements of a period are compared on, with their wording.
 _HEADLINE_LINES: tuple[tuple[str, str], ...] = (
     ("rooms_revenue", "rooms revenue"),
@@ -4819,6 +4929,9 @@ _FOOTING_REVENUE_LINES: tuple[str, ...] = (
     "other_revenue",
     "misc_revenue",
     "resort_fees",
+)
+_MONTH_TOKENS: frozenset[str] = frozenset(
+    {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
 )
 #: Analyst-facing wording of each Year-1 line a loader resolves.
 _LINE_WORDS: dict[str, str] = {
@@ -4846,14 +4959,19 @@ _LINE_WORDS: dict[str, str] = {
 
 
 class _StatementConflict(NamedTuple):
-    """A same-period disagreement the analyst must review.
-
-    ``document_id`` is the statement the model USES for the period: the
-    notice lands on every assumption grounded on it.
-    """
+    """Two or more statements of one period: which one the model uses, why,
+    and how each other statement differs. ``document_id`` is the statement
+    USED — the notice lands on every assumption grounded on it. ``detail`` is
+    the note without the line-fill summary (``_loader_notices`` adds that)."""
 
     document_id: str | None
     detail: str
+    period_words: str = ""
+    used_label: str = ""
+    used_why: str = ""
+    disagree: bool = False
+    #: ``(document_id, label, clause)`` per other statement of the period.
+    others: tuple[tuple[str | None, str, str], ...] = ()
 
 
 class _LineFill(NamedTuple):
@@ -4865,8 +4983,31 @@ class _LineFill(NamedTuple):
     detail: str
     #: The primary statement the line is missing from.
     primary_document_id: str | None = None
-    #: "<source file> (<same / a different period, period words>)".
-    source: str = ""
+    primary_label: str = ""
+    source_label: str = ""
+    #: "the same period, FY2024" / "a different period, FY2023".
+    where: str = ""
+
+
+class _LineSkip(NamedTuple):
+    """A line the primary lacks that only an ineligible statement carries
+    (a monthly / YTD slice, or a statement more than two years older than
+    the Year-1 basis): the documented default is used instead."""
+
+    canonical: str
+    detail: str
+    primary_name: str = ""
+    #: "<source> (<period>) carries it but is …" clauses.
+    why: str = ""
+
+
+class _FootingNote(NamedTuple):
+    """A statement supplying Year-1 revenue lines whose lines do not foot."""
+
+    document_id: str | None
+    canonicals: frozenset[str]
+    label: str
+    why: str
 
 
 class _Statement(NamedTuple):
@@ -4881,25 +5022,76 @@ class _Statement(NamedTuple):
     period: tuple[Any, ...] | None
     #: How the period is named to the analyst (never an invented date).
     period_words: str
+    is_full: bool
+    #: The shared ranking's period recency (``YYYYMMDD``; year columns
+    #: count as their Dec 31) — used to ORDER fills, never printed.
+    recency: int
+    #: Its full-period lines cover twelve months (a full year, or a
+    #: trailing-twelve however the document is typed).
+    twelve: bool
 
 
 def _iso_sortkey(key: int) -> str:
     return f"{key // 10_000:04d}-{key // 100 % 100:02d}-{key % 100:02d}"
 
 
+def _monthly_block(fields: list[Any]) -> set[str]:
+    """The distinct month columns of a statement's ``monthly`` block
+    (``apr_2024`` / ``jan``)."""
+    out: set[str] = set()
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        parts = str(f.get("field_name") or "").lower().split(".")
+        if "monthly" in parts:
+            i = parts.index("monthly")
+            if i + 1 < len(parts) - 1 and parts[i + 1][:3] in _MONTH_TOKENS:
+                out.add(parts[i + 1])
+    return out
+
+
+def _covers_twelve_months(fields: list[Any], is_full: bool) -> bool:
+    """A full-year statement, or an unlabelled partial-typed statement whose
+    monthly block spans twelve months (the sibling-template T-12 typed as
+    monthly financials: its full-period lines are the trailing twelve). A
+    statement labelled monthly / YTD / quarterly never qualifies — its lines
+    are never annualised."""
+    if is_full:
+        return True
+    if _extract_period_type(fields):
+        return False
+    return len(_monthly_block(fields)) >= 12
+
+
+def _is_calendar_block(fields: list[Any]) -> bool:
+    """Its monthly block names January through December with no year (or a
+    single year): the statement's year is a calendar year."""
+    block = _monthly_block(fields)
+    if {seg[:3] for seg in block} != set(_MONTH_TOKENS):
+        return False
+    years = {seg[4:] for seg in block if len(seg) > 4}
+    return len(years) <= 1
+
+
 def _statement_period(
-    fields: list[Any], doc_type: str, shim: Mapping[str, Any]
+    fields: list[Any],
+    doc_type: str,
+    shim: Mapping[str, Any],
+    *,
+    december_year_end: bool,
 ) -> tuple[tuple[Any, ...] | None, str]:
     """``(period identity, words)`` for one statement.
 
     Two statements share a period only when both its end and its length
     agree: a full-year statement is identified by its stated period end
-    (``period_ending`` → ``report_as_of``) or, failing that, its fiscal year;
-    an undated T-12 is the current trailing twelve months. A partial period
-    (monthly / quarterly / YTD) is identified only by a STATED period end and
-    its period type — a year-end inferred from a year column would invent a
-    date, so such a statement stands alone. A partial period never shares an
-    identity with a full year.
+    (``period_ending`` → ``report_as_of``) or, failing that, its fiscal year
+    — which is the calendar year ending Dec 31 only when that is known (the
+    deal's dated annual statements all end Dec 31, or its own monthly block
+    runs January–December); otherwise it groups only with statements of the
+    same fiscal year known the same way. An undated T-12 is the current
+    trailing twelve months. A partial period is identified only by a STATED
+    end and its period type; with none it stands alone. A partial period
+    never shares an identity with a full year.
     """
     is_full, (tier, recency) = _pnl_period_identity(fields, doc_type, shim)
     stated = date_sortkey(_extract_period_ending(fields)) or date_sortkey(
@@ -4912,7 +5104,10 @@ def _statement_period(
             shim.get("fiscal_year")
         )
         if year:
-            return ("full", year), f"FY{year // 10_000}"
+            words = f"FY{year // 10_000}"
+            if december_year_end or _is_calendar_block(fields):
+                return ("full", year), words
+            return ("fiscal_year", year), words
         if recency == CURRENT_PERIOD_SORTKEY:
             return ("full", recency), "the current trailing twelve months"
         return None, "an undated full-year statement"
@@ -4981,8 +5176,10 @@ def _statement_headlines(fields: list[Any], doc_type: str) -> dict[str, float]:
 
 
 class _Footing(NamedTuple):
-    #: ``True`` foots, ``False`` does not, ``None`` cannot be footed.
-    foots: bool | None
+    #: ``foots`` · ``fails`` (no full-period rooms line, or the lines miss the
+    #: stated total) · ``unverifiable`` (no stated total to foot against —
+    #: the absence of a check, never a failure).
+    status: str
     lines: float | None
     stated: float | None
     why: str
@@ -4998,10 +5195,14 @@ def _revenue_footing(fields: list[Any], doc_type: str) -> _Footing:
     """
     stated = _stated_total(fields, doc_type, "total_revenue")
     lines = _full_period_revenue_lines(fields)
-    if stated is None:
-        return _Footing(None, None, None, "states no total revenue")
     if "rooms_revenue" not in lines:
-        return _Footing(None, None, stated[0], "carries no full-period rooms revenue line")
+        tail = f" (its stated total revenue is {_money(stated[0])})" if stated else ""
+        return _Footing(
+            "fails", None, stated[0] if stated else None,
+            f"it carries no full-period rooms revenue line{tail}",
+        )
+    if stated is None:
+        return _Footing("unverifiable", None, None, "it states no total revenue")
     parts = [lines[k] for k in _FOOTING_REVENUE_LINES if k in lines]
     total = sum(v for v, _f in parts)
     tolerance = sum(
@@ -5009,12 +5210,13 @@ def _revenue_footing(fields: list[Any], doc_type: str) -> _Footing:
         for v, f in parts
     ) + half_unit(stated[0], stated[1])
     if abs(total - stated[0]) <= tolerance:
-        return _Footing(True, total, stated[0], "foots")
+        return _Footing("foots", total, stated[0], "its revenue lines foot")
     return _Footing(
-        False,
+        "fails",
         total,
         stated[0],
-        f"revenue lines sum to {_money(total)} against a stated total of {_money(stated[0])}",
+        f"its revenue lines sum to {_money(total)} against its stated total "
+        f"revenue of {_money(stated[0])}",
     )
 
 
@@ -5041,36 +5243,78 @@ def _headline_words(line: str) -> str:
     return next(label for ln, label in _HEADLINE_LINES if ln == line)
 
 
+def _compose_conflict(c: _StatementConflict, extra: Mapping[str | None, str] | None = None) -> str:
+    """The conflict note, naming every statement exactly once. ``extra``
+    appends a clause to an other statement's entry (the lines read from it)."""
+    intro = (
+        f"Statements for {c.period_words} disagree by more than "
+        f"{_SAME_PERIOD_CONFLICT_TOLERANCE:.0%}."
+        if c.disagree
+        else f"Statements for {c.period_words}."
+    )
+    parts = [intro, f"The model uses {c.used_label} because {c.used_why}."]
+    for doc, label, clause in c.others:
+        bits = [b for b in (clause, (extra or {}).get(doc)) if b]
+        parts.append(f"{label}: {'; '.join(bits) if bits else 'not blended in'}.")
+    parts.append(
+        "Two statements are never blended; override the affected assumptions if "
+        "another statement is the one to underwrite."
+    )
+    return " ".join(parts)
+
+
 def _choose_period_statements(
     ranked: list[tuple[list[Any], str, Any]],
-) -> tuple[list[_Statement], list[_StatementConflict]]:
-    """The order statements supply Year-1 lines in, and what disagrees.
+) -> tuple[list[_Statement], list[_Statement], list[_StatementConflict]]:
+    """``(primary period, other statements, conflicts)``.
 
     Statements are grouped by EXACT period (:func:`_statement_period`). Each
     period's lines come from ONE statement, chosen in this order:
 
-    1. **Footing** — when the top-ranked statement's revenue lines do not
-       foot to its own stated total revenue and another statement of the
-       period does foot, the footing statement takes the WHOLE period.
+    1. **Footing** — when the top-ranked statement FAILS footing (no
+       full-period rooms line, or its lines miss its stated total) and another
+       statement of the period foots, the footing statement takes the WHOLE
+       period. A statement with no stated total is unverifiable and never
+       loses on that ground.
     2. **Outlier** — otherwise, with three or more statements of the period,
        the median may set the top-ranked aside as a mis-read
        (:func:`_outlier_lines`); the next statement that is not itself an
        outlier takes the whole period.
     3. Otherwise the top-ranked statement (the Data Room's Primary source).
 
-    Returned order: periods by their best-ranked statement; within a period
-    the chosen statement first, then its siblings in rank order. A line the
-    chosen statement lacks is therefore read from the same period first and
-    only then from another period. Siblings are never averaged in.
+    The first list is the Year-1 basis period: its chosen statement (the
+    primary), then its siblings in rank order. The second is every other
+    statement, in rank order. Siblings are never averaged in.
 
     Also returns one :class:`_StatementConflict` per period whose statements
     disagree by more than :data:`_SAME_PERIOD_CONFLICT_TOLERANCE` on a
     headline line, or whose top-ranked statement was set aside.
     """
-    statements = []
+    stated_full_ends: list[int] = []
+    identities = []
+    for fields, doc_type, shim in ranked:
+        is_full, (_tier, recency) = _pnl_period_identity(fields, doc_type, shim)
+        identities.append((is_full, recency))
+        if is_full:
+            stated = date_sortkey(_extract_period_ending(fields)) or date_sortkey(
+                shim.get("report_as_of")
+            )
+            if stated:
+                stated_full_ends.append(stated)
+    # The deal's year-end is known to be Dec 31 when every dated annual
+    # statement on it ends Dec 31.
+    december = bool(stated_full_ends) and all(e % 10_000 == 1231 for e in stated_full_ends)
+
+    statements: list[_Statement] = []
     for i, (fields, doc_type, shim) in enumerate(ranked):
-        period, words = _statement_period(fields, doc_type, shim)
-        statements.append(_Statement(i, fields, doc_type, shim, period, words))
+        period, words = _statement_period(fields, doc_type, shim, december_year_end=december)
+        is_full, recency = identities[i]
+        twelve = _covers_twelve_months(fields, is_full)
+        if not is_full and twelve and period is None:
+            words = "an undated trailing twelve months"
+        statements.append(
+            _Statement(i, fields, doc_type, shim, period, words, is_full, recency, twelve)
+        )
 
     groups: list[list[_Statement]] = []
     by_period: dict[tuple[Any, ...], list[_Statement]] = {}
@@ -5084,26 +5328,25 @@ def _choose_period_statements(
             groups.append(members)
         members.append(st)
 
-    order: list[_Statement] = []
+    ordered_groups: list[list[_Statement]] = []
     conflicts: list[_StatementConflict] = []
     for members in groups:
-        pick = members[0]
-        sentences: list[str] = []
+        top = members[0]
+        pick = top
         why = "it ranks first for the period (the Data Room's Primary source)"
+        top_clause = ""
         if len(members) >= 2:
-            top = members[0]
             footing = {st.rank: _revenue_footing(st.fields, st.doc_type) for st in members}
-            footers = [st for st in members if footing[st.rank].foots is True]
+            footers = [st for st in members if footing[st.rank].status == "foots"]
             heads = {st.rank: _statement_headlines(st.fields, st.doc_type) for st in members}
             peers = [heads[st.rank] for st in members]
-            if footers and footing[top.rank].foots is not True:
+            if footers and footing[top.rank].status == "fails":
                 pick = footers[0]
                 why = (
-                    f"its revenue lines foot to its stated total revenue of "
-                    f"{_money(footing[pick.rank].stated or 0.0)}, while "
-                    f"{_statement_label(top.shim)}, which ranks first, "
-                    f"{footing[top.rank].why}"
+                    "its revenue lines foot to its stated total revenue of "
+                    f"{_money(footing[pick.rank].stated or 0.0)}"
                 )
+                top_clause = f"ranks first, but {footing[top.rank].why}"
             elif len(members) >= 3:
                 set_aside = _outlier_lines(heads[top.rank], peers)
                 replacement = next(
@@ -5112,18 +5355,14 @@ def _choose_period_statements(
                 )
                 if set_aside and replacement is not None:
                     pick = replacement
-                    reads = "; ".join(
+                    why = "the statement that ranks first is set aside as a mis-read"
+                    top_clause = "ranks first, but reads " + "; ".join(
                         f"{_headline_words(line)} {_money(v)} against a median of "
                         f"{_money(mid)} across {n} statements"
                         for line, v, mid, n in set_aside
-                    )
-                    why = (
-                        f"{_statement_label(top.shim)}, which ranks first, reads "
-                        f"{reads} (more than {_SAME_PERIOD_OUTLIER_TOLERANCE:.0%} "
-                        "off), so it is set aside as a mis-read"
-                    )
-            used = _statement_label(pick.shim)
-            others: list[str] = []
+                    ) + f" (more than {_SAME_PERIOD_OUTLIER_TOLERANCE:.0%} off)"
+            others: list[tuple[str | None, str, str]] = []
+            disagree = False
             for st in members:
                 if st is pick:
                     continue
@@ -5134,36 +5373,32 @@ def _choose_period_statements(
                         continue
                     scale = max(abs(a), abs(b))
                     if scale and abs(a - b) > _SAME_PERIOD_CONFLICT_TOLERANCE * scale:
-                        diffs.append(f"{label} {_money(a)} vs {_money(b)}")
-                if diffs or pick is not top:
-                    other = _statement_label(st.shim)
-                    others.append(other)
-                    if diffs:
-                        sentences.append(f"{used} vs {other}: {'; '.join(diffs)}.")
-            if sentences or pick is not top:
-                intro = (
-                    f"Statements for {pick.period_words} disagree by more than "
-                    f"{_SAME_PERIOD_CONFLICT_TOLERANCE:.0%}: "
-                    if sentences
-                    else f"Statements for {pick.period_words}: "
+                        diffs.append(f"{label} {_money(b)} (used: {_money(a)})")
+                disagree = disagree or bool(diffs)
+                clause = "; ".join(
+                    x for x in ((top_clause if st is top else ""), ", ".join(diffs)) if x
                 )
-                tail = (
-                    f" The model uses {used} for {pick.period_words} because {why}, "
-                    "and does not blend in "
-                    + ", ".join(others)
-                    + "; override the affected assumptions if another statement is "
-                    "the one to underwrite."
-                )
+                doc = st.shim.get("document_id")
+                others.append((str(doc) if doc else None, _statement_label(st.shim), clause))
+            if disagree or pick is not top:
                 doc = pick.shim.get("document_id")
-                conflicts.append(
-                    _StatementConflict(
-                        document_id=str(doc) if doc else None,
-                        detail=(intro + " ".join(sentences) + tail).strip(),
-                    )
+                conflict = _StatementConflict(
+                    document_id=str(doc) if doc else None,
+                    detail="",
+                    period_words=pick.period_words,
+                    used_label=_statement_label(pick.shim),
+                    used_why=why,
+                    disagree=disagree,
+                    others=tuple(others),
                 )
-        order.append(pick)
-        order.extend(st for st in members if st is not pick)
-    return order, conflicts
+                conflicts.append(conflict._replace(detail=_compose_conflict(conflict)))
+        ordered_groups.append([pick, *(st for st in members if st is not pick)])
+    if not ordered_groups:
+        return [], [], conflicts
+    rest = sorted(
+        (st for g in ordered_groups[1:] for st in g), key=lambda st: st.rank
+    )
+    return ordered_groups[0], rest, conflicts
 
 
 async def _read_pnl_shims(
@@ -5245,33 +5480,74 @@ def _year_one_lines(
     with_provenance: bool,
     conflicts: list[_StatementConflict] | None = None,
     fills: list[_LineFill] | None = None,
+    skips: list[_LineSkip] | None = None,
+    footing_notes: list[_FootingNote] | None = None,
 ) -> tuple[dict[str, float], dict[str, SourceField]]:
-    """Each canonical from the first statement, in
-    :func:`_choose_period_statements` order, that carries it.
+    """Each canonical from the first statement, in fill order, that carries it.
 
-    The primary statement (the chosen statement of the best-ranked period)
-    supplies every line it carries. A line it lacks is read from another
-    statement of the SAME period first, then from another period; each such
-    line is reported in ``fills`` with its source and period, so the caller
-    can tell the analyst. Nothing is ever averaged.
+    Fill order (W5, decided): the primary statement (the chosen statement of
+    the Year-1 basis period, :func:`_choose_period_statements`) supplies
+    every line it carries; a line it lacks comes from another statement of
+    the SAME period first; then from the MOST RECENT statement whose line
+    covers twelve months (a full year or a trailing-twelve, however typed);
+    a monthly / YTD slice is never annualised for a fill, and a statement
+    whose period ends more than :data:`_FILL_MAX_AGE_YEARS` years before the
+    Year-1 basis period never fills — the documented default is used. Every
+    fill (``fills``) and every refused fill (``skips``) is reported so the
+    caller can tell the analyst. Nothing is ever averaged.
+
+    ``footing_notes`` (revenue loader): every statement that supplies Year-1
+    revenue lines and FAILS its own footing (:func:`_revenue_footing`).
     """
     ranked = _rank_pnl_shims(shims)
-    order, found = _choose_period_statements(ranked)
+    basis_group, rest, found = _choose_period_statements(ranked)
     if conflicts is not None:
         conflicts.extend(found)
+    if not basis_group:
+        return {}, {}
+    primary = basis_group[0]
 
+    # The Year-1 basis period's end; an undated primary borrows the latest
+    # dated period on the deal so the age limit still applies.
+    dated = [
+        st.recency for st in rest if st.recency and st.recency != CURRENT_PERIOD_SORTKEY
+    ]
+    basis_end = (
+        primary.recency
+        if primary.recency and primary.recency != CURRENT_PERIOD_SORTKEY
+        else max(dated, default=0)
+    )
+    cutoff = basis_end - _FILL_MAX_AGE_YEARS * 10_000 if basis_end else None
+    eligible: list[_Statement] = []
+    refused: list[tuple[_Statement, str]] = []
+    for st in rest:
+        if not st.twelve:
+            refused.append((st, "a monthly or year-to-date figure, which is never annualised"))
+        elif cutoff is not None and st.recency != CURRENT_PERIOD_SORTKEY and st.recency < cutoff:
+            refused.append(
+                (st, "more than two years older than the Year-1 basis")
+            )
+        else:
+            eligible.append(st)
+    eligible.sort(key=lambda st: (-st.recency, st.rank))
+
+    primary_label = _statement_label(primary.shim)
+    primary_doc = primary.shim.get("document_id")
     actuals: dict[str, float] = {}
     provenance: dict[str, SourceField] = {}
-    primary = order[0] if order else None
-    for st in order:
+    supplied: dict[int, set[str]] = {}
+    for st in [*basis_group, *eligible]:
         lines = _resolve_statement_lines(
             st.fields, aliases, opposite_section=opposite_section, admit=admit
         )
         for canonical, (value, field) in lines.items():
             if canonical in actuals:
                 continue
+            if st is not primary and _is_sub_period_path(field.get("field_name") or ""):
+                continue  # a slice of another statement never fills
             v = normalize(canonical, value)
             actuals[canonical] = v
+            supplied.setdefault(st.rank, set()).add(canonical)
             if with_provenance:
                 provenance[canonical] = _row_provenance(
                     canonical=canonical,
@@ -5282,7 +5558,7 @@ def _year_one_lines(
                     extraction_result_id=st.shim.get("extraction_result_id"),
                     as_of=st.shim.get("report_as_of"),
                 )
-            if fills is not None and primary is not None and st is not primary:
+            if fills is not None and st is not primary:
                 same = st.period is not None and st.period == primary.period
                 where = (
                     f"the same period, {st.period_words}"
@@ -5290,23 +5566,67 @@ def _year_one_lines(
                     else f"a different period, {st.period_words}"
                 )
                 doc = st.shim.get("document_id")
-                primary_doc = primary.shim.get("document_id")
                 fills.append(
                     _LineFill(
                         canonical=canonical,
                         document_id=str(doc) if doc else None,
                         field_name=(field.get("field_name") or None),
-                        primary_document_id=str(primary_doc) if primary_doc else None,
-                        source=f"{_statement_label(st.shim)} ({where})",
                         detail=(
                             f"{_LINE_WORDS.get(canonical, canonical)} is not on "
-                            f"{_statement_label(primary.shim)} ({primary.period_words}), "
-                            f"the primary statement; it is read from "
-                            f"{_statement_label(st.shim)} ({where})."
+                            f"{primary_label} ({primary.period_words}), the primary "
+                            f"statement; it is read from {_statement_label(st.shim)} "
+                            f"({where})."
                         ),
+                        primary_document_id=str(primary_doc) if primary_doc else None,
+                        primary_label=f"{primary_label} ({primary.period_words})",
+                        source_label=_statement_label(st.shim),
+                        where=where,
+                    )
+                )
+
+    if skips is not None:
+        missing: dict[str, list[str]] = {}
+        for st, reason in refused:
+            lines = _resolve_statement_lines(
+                st.fields, aliases, opposite_section=opposite_section, admit=admit
+            )
+            for canonical in lines:
+                if canonical not in actuals:
+                    missing.setdefault(canonical, []).append(
+                        f"{_statement_label(st.shim)} ({st.period_words}) carries it but is {reason}"
+                    )
+        for canonical, why in missing.items():
+            skips.append(
+                _LineSkip(
+                    canonical=canonical,
+                    detail=(
+                        f"{_LINE_WORDS.get(canonical, canonical)} is not on "
+                        f"{primary_label} ({primary.period_words}), the primary "
+                        f"statement; {'; '.join(why)}, so the platform default is used."
+                    ),
+                    primary_name=primary_label,
+                    why="; ".join(why),
+                )
+            )
+
+    if footing_notes is not None:
+        for st in [*basis_group, *eligible]:
+            revenue = supplied.get(st.rank, set()) & set(_FOOTING_REVENUE_LINES)
+            if not revenue:
+                continue
+            footing = _revenue_footing(st.fields, st.doc_type)
+            if footing.status == "fails":
+                doc = st.shim.get("document_id")
+                footing_notes.append(
+                    _FootingNote(
+                        document_id=str(doc) if doc else None,
+                        canonicals=frozenset(supplied[st.rank]),
+                        label=_statement_label(st.shim),
+                        why=footing.why,
                     )
                 )
     return actuals, provenance
+
 
 
 def _normalize_revenue_line(canonical: str, value: float) -> float:
@@ -5326,6 +5646,8 @@ async def _load_t12_revenue_actuals(
     with_provenance: bool = False,
     conflicts: list[_StatementConflict] | None = None,
     fills: list[_LineFill] | None = None,
+    skips: list[_LineSkip] | None = None,
+    footing_notes: list[_FootingNote] | None = None,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read Year-1 occupancy / ADR / RevPAR and revenue lines off the deal's
     primary financial statement.
@@ -5356,6 +5678,8 @@ async def _load_t12_revenue_actuals(
         with_provenance=with_provenance,
         conflicts=conflicts,
         fills=fills,
+        skips=skips,
+        footing_notes=footing_notes,
     )
     return (actuals, provenance) if with_provenance else actuals
 
@@ -5367,6 +5691,7 @@ async def _load_t12_expense_actuals(
     tenant_id: str,
     with_provenance: bool = False,
     fills: list[_LineFill] | None = None,
+    skips: list[_LineSkip] | None = None,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, SourceField]]:
     """Read Year-1 expense actuals off the deal's primary financial statement.
 
@@ -5396,6 +5721,7 @@ async def _load_t12_expense_actuals(
         admit=lambda v: v > 0.0,
         with_provenance=with_provenance,
         fills=fills,
+        skips=skips,
     )
     return (actuals, provenance) if with_provenance else actuals
 

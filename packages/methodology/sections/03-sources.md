@@ -301,12 +301,16 @@ variance checks.
 Statements count as the same period only when they cover the same span ending on the same date; a
 monthly or year-to-date statement never competes with a full year. Between statements of one
 period, the one whose revenue lines add up to its own stated total revenue is preferred: if the
-top-ranked one does not add up and another does, the other supplies the whole year. A line the
-chosen statement does not carry is read from another statement of the same period first, and only
-then from another period. When statements of one period disagree by more than 5% on rooms revenue,
-F&B revenue, total revenue or NOI, or a line comes from a statement other than the chosen one, the
-figure is marked **Needs review** with a note naming the documents, the values, which statement
-the model uses and why. The document link on each figure opens the statement the model used.
+top-ranked one lacks a full-year rooms revenue line or does not add up, and another adds up, the
+other supplies the whole year. A statement that states no total cannot be checked, and is not
+passed over for that. A line the chosen statement does not carry is read from another statement of
+the same period first, then from the most recent statement covering twelve months; a monthly or
+year-to-date figure is never scaled up, and a statement more than two years older than Year 1 is
+not used — the platform default is, with a note. The figure is marked **Needs review** with a note
+naming the documents and values when statements of one period disagree by more than 5% on rooms
+revenue, F&B revenue, total revenue or NOI, when a line comes from another statement, or when the
+statement's own revenue lines do not add up to its total. The document link on each figure opens
+the statement the model used.
 
 :::
 
@@ -464,9 +468,15 @@ One statement supplies Year-1 occupancy, ADR, revenue lines and expense lines: t
 Room badges Primary source. The ranking is full-year statements before partial ones, the most
 recent period first, a T-12 ahead of a calendar-year P&L of the same year, then the more complete
 extraction. Two statements are never averaged. A line the chosen statement does not carry is read
-from the next statement of the same period, then from other periods in ranking order, then the
-labelled default; every line not read from the chosen statement is marked
-{{reason:needs_review}} with its source document and period.
+from the next statement of the same period, then from the most recent statement whose line covers
+twelve months (a full year, or a trailing twelve however the document is typed: an unlabelled
+statement whose monthly block spans twelve months), never from a monthly or year-to-date slice and
+never from a statement whose period ends more than two years before the Year-1 basis period; then
+the labelled default. Every line not read from the chosen statement, and every line left on the
+default for those reasons, is marked {{reason:needs_review}} with its source document and period.
+Every statement that supplies Year-1 revenue lines is footed on its own; one with no full-year
+rooms line, or whose lines miss its stated total, marks the revenue-derived assumptions it grounds
+{{reason:needs_review}} with the gap.
 
 <!-- source: apps/worker/app/services/engine_runner.py (_resolve_statement_lines, _COST_SECTION_SEGMENTS / _REVENUE_SECTION_SEGMENTS; _choose_period_statements, _HEADLINE_LINES, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25; _loader_notices) -->
 A line resolves by its exact field path first; only when no exact path exists does a field whose
@@ -474,10 +484,13 @@ last segment names the line count, and never one under a cost or expense section
 (or a revenue section for an expense line). A period is a full year identified by its stated period
 end (else its fiscal year; an undated T-12 is the current trailing twelve months), or a partial
 period identified by a stated end and its period type; a partial statement with no stated end stands
-alone, and no date is ever inferred into a note. Within a period the chosen statement is: the
-best-ranked one whose rooms + F&B + other + miscellaneous + resort-fee revenue foots to its stated
-total revenue (to the half-units the figures were read at, as on the Historical P&L) when the
-top-ranked one does not foot; else, with three or more statements, the next one when the top-ranked
+alone, and no date is ever inferred into a note. A fiscal year known only by its year is the
+calendar year ending Dec 31 only when the deal's dated annual statements all end Dec 31 or its
+monthly block runs January to December. Within a period the chosen statement is: the best-ranked
+one whose rooms + F&B + other + miscellaneous + resort-fee revenue foots to its stated total
+revenue (to the half-units the figures were read at, as on the Historical P&L) when the top-ranked
+one fails — no full-year rooms line, or lines that miss the total; a statement with no stated total
+is unverifiable and is never passed over for that; else, with three or more statements, the next one when the top-ranked
 is more than 25% off the median on a headline line; else the top-ranked. Statements are compared on
 rooms revenue, F&B revenue, total revenue and NOI; a difference above 5% of the larger value marks
 every assumption grounded on the chosen statement {{reason:needs_review}}, naming both documents,
@@ -969,12 +982,14 @@ trailing-twelve, and when it carries no date at all it is taken as the current p
 analyst uploads a T-12 as the latest statement. Older annual P&Ls never blend into Year-1, and
 neither does a second statement of the same period (two uploads of one T-12, or a summary and a
 detailed P&L of one year): `_choose_period_statements` groups by exact period
-(`_statement_period`: full year by stated end, else fiscal year, else current T-12; partial only by
+(`_statement_period`: full year by stated end, else fiscal year — calendar only when the deal's
+dated annuals all end Dec 31 or the monthly block is Jan–Dec — else current T-12; partial only by
 stated end + period type) and picks one statement per period — the footing one
-(`_revenue_footing`, `statement_lines.half_unit` tolerance) when the top-ranked does not foot, else
-the 3+-statement median outlier switch, else the top-ranked. `_year_one_lines` reads each line from
-the chosen statement, then same-period siblings, then other periods, and reports every non-primary
-line as a `_LineFill`. Conflicts and fills become `needs_review` entries in `__reasons__`
+(`_revenue_footing`: `fails` / `foots` / `unverifiable`, `statement_lines.half_unit` tolerance)
+when the top-ranked fails, else the 3+-statement median outlier switch, else the top-ranked.
+`_year_one_lines` reads each line from the chosen statement, then same-period siblings, then the
+most recent twelve-month statement (`_covers_twelve_months`) within `_FILL_MAX_AGE_YEARS` (2) of
+the basis period, reporting `_LineFill` / `_LineSkip` / `_FootingNote`. These and conflicts become `needs_review` entries in `__reasons__`
 (`_loader_notices`; an earlier reason is kept under `also`), and the detail reaches the lineage
 drawer's Unresolved list on the assumption step. `assumption_sources.source_documents` follows
 `source_fields` wherever the runner named a row. The earlier years still feed the Historical P&L

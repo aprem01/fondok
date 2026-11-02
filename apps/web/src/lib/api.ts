@@ -346,6 +346,9 @@ export interface AssumptionSourcesResponse {
    *  ``REASONS`` in ``lib/ontology/reasons.generated``. OPTIONAL, same
    *  degrade rule as ``source_fields``. */
   reasons?: Record<string, ReasonCode>;
+  /** W5 — the earlier reason code(s) a ``needs_review`` notice joined on the
+   *  same key (an as-of caveat, say), so both stay visible. OPTIONAL. */
+  reasons_also?: Record<string, ReasonCode[]>;
   /** FON-89 — what the worker's Year-1 displacement gate decided and why,
    *  computed AFTER every override is applied. OPTIONAL / null on a worker
    *  whose loader does not emit it; the UI then prints nothing. */
