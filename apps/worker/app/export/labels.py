@@ -200,6 +200,7 @@ SOURCE_DISPLAY: dict[str, str] = {
     "om_comps_unavailable": "OM comps unavailable",
     "derived_from_revpar_growth": "Derived",
     "partnership_doc": "Partnership document",
+    "management_agreement": "Management agreement",
     "index_assumption": "Index assumption",
     "extraction": "Extracted",
     "engine_output": "Model",
