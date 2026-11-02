@@ -280,3 +280,23 @@ async def test_the_quality_pass_hook_labels_before_persisting():
     )
     assert _value(out, "period_type") == "trailing_twelve"
     assert _value(out, "period_ending") == "2025-03-31"
+
+
+def test_a_t12_sheet_with_a_forecast_month_is_not_proof_even_without_a_title():
+    """Review M1: the row under the dated header says Actual for every month.
+    A sheet carrying a Forecast month is not a trailing twelve of actuals —
+    rejected on the sheet itself, not only by a mismatching title."""
+    doc_type, fields = _fixture("march_2025_financials_sibling.json")
+    pages = copy.deepcopy(_pages("march"))
+    t12 = next(p for p in pages["pages"] if p["metadata"]["sheet_name"] == "T12")
+    grid = t12["tables"][0]
+    for row in grid[:4]:
+        for j, c in enumerate(row):
+            if "PERIOD ENDING" in str(c).upper():
+                row[j] = ""
+    hdr = next(i for i, r in enumerate(grid) if sum("00:00:00" in str(c) for c in r) >= 12)
+    actual_cols = [j for j, c in enumerate(grid[hdr + 1]) if str(c).strip() == "Actual"]
+    grid[hdr + 1][actual_cols[-1]] = "Forecast"
+    r = label_trailing_twelve(fields, {}, doc_type=doc_type, extraction_data=pages)
+    assert not r.applied
+    assert r.skipped_reason == "no_trailing_twelve_sheet"

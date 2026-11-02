@@ -94,6 +94,10 @@ _MONTH_NAMES = {
         )
     )
 }
+#: Column labels under a dated header that mark a month as not an actual.
+_NON_ACTUAL_COLUMN_LABELS: frozenset[str] = frozenset(
+    {"forecast", "budget", "projected", "projection", "plan", "reforecast", "estimate"}
+)
 #: KPI rows of the sheet → the loader's revenue canonical they ground.
 _KPI_LABELS: dict[str, str] = {
     "occupancy": "occupancy",
@@ -187,6 +191,16 @@ def _sheet_header(grid: Sequence[Sequence[Any]]) -> tuple[int, tuple[int, ...], 
         after = [ci for ci in range(last[-1][0] + 1, len(row)) if _norm(row[ci]) == "total"]
         if not after:
             continue
+        # The row under the dates says what each column is (Actual / Forecast
+        # / Budget). Any non-actual month means this is not a trailing twelve
+        # of actuals (review M1).
+        if ri + 1 < len(grid):
+            under = grid[ri + 1]
+            if any(
+                c < len(under) and _norm(under[c]) in _NON_ACTUAL_COLUMN_LABELS
+                for c, _d in last
+            ):
+                continue
         return ri, tuple(c for c, _d in last), after[0], tuple(d for _c, d in last)
     return None
 
