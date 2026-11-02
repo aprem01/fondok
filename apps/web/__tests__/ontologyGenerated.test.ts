@@ -31,6 +31,7 @@ const EXPECTED_REASONS = [
   // Returns by exit year (Wave 1): why a sale at a given year-end has no value.
   'under_construction', 'capital_deploying', 'no_sale_value',
   'no_market_forecast', 'no_benchmark', 'license_withheld', 'legacy_key_translated',
+  'no_revenue_basis',
 ];
 
 describe('ontology — generated concept registry', () => {

@@ -33,6 +33,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-reopening-date.db"
 if _TMP_DB.exists():
@@ -331,7 +332,7 @@ async def _deal(
             "id": deal_id,
             "tenant": tenant_id,
             "name": "Re-flag Hotel",
-            "ov": json.dumps(overrides),
+            "ov": json.dumps(with_year1_rates(overrides)),
             "reopening": reopening_date,
             "now": datetime.now(UTC),
         },
@@ -454,10 +455,11 @@ async def test_the_runner_still_reads_the_deal_row_on_a_schema_without_the_colum
                     INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price,
                                        field_overrides, created_at, updated_at)
                     VALUES (:id, :tenant, 'Old schema', 'Draft', 150, 41000000,
-                            '{}', :now, :now)
+                            :fo, :now, :now)
                     """
                 ),
-                {"id": deal_id, "tenant": tenant_id, "now": datetime.now(UTC)},
+                {"id": deal_id, "tenant": tenant_id, "fo": json.dumps(with_year1_rates()),
+                 "now": datetime.now(UTC)},
             )
             await session.commit()
             results = await run_all_engines(

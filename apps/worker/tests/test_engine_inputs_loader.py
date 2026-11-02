@@ -27,6 +27,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+
+from tests.fixtures.kimpton_seed import with_year1_rates
 from sqlalchemy import text
 
 from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
@@ -290,10 +292,13 @@ async def test_load_engine_inputs_no_extraction_uses_full_kimpton_seed() -> None
         base = await _load_engine_inputs(session, str(deal_id), tenant_id=_TENANT)
 
     seed = _default_assumptions()
-    # Every Kimpton-seeded value should be present unchanged.
+    # Review I-5 — no Year-1 occupancy / ADR is invented: with no T-12, no
+    # benchmark and no analyst value the basis is absent and says why.
+    for key in ("starting_occupancy", "starting_adr"):
+        assert key not in base
+        assert base["__reasons__"][key]["code"] == "no_revenue_basis"
+    # Every labelled default should be present unchanged.
     for key in (
-        "starting_occupancy",
-        "starting_adr",
         "fb_revenue_per_occupied_room",
         "other_revenue_pct_of_rooms",
         "mgmt_fee_pct",
@@ -2680,7 +2685,8 @@ async def _insert_named_leases(deal_id: UUID, filename: str, fields: list[dict[s
 @pytest.mark.asyncio
 async def test_hma_fee_in_lieu_is_a_sourced_line_and_flat_without_escalation() -> None:
     deal_id = uuid4()
-    await _insert_deal(deal_id, name="Angler HMA", keys=132, purchase=36_400_000)
+    await _insert_deal(deal_id, name="Angler HMA", keys=132, purchase=36_400_000,
+                       field_overrides=with_year1_rates())
     await _insert_named_leases(deal_id, "Angler_s HMA Summary.docx", _ANGLER_HMA)
     base = await _base_for(deal_id)
     assert base["mgmt_fee_in_lieu_usd"] == pytest.approx(76_000.0)

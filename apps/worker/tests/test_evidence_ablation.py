@@ -67,8 +67,6 @@ _OM_PAYLOAD = _FIXTURES / "usali_v4" / "live_extraction_anglers_om.json"
 # Values the labelled defaults carry for the two anchors the T-12 grounds,
 # and for the exit cap the OM's comp set grounds. Asserted literally so a
 # default change surfaces here instead of silently weakening the test.
-_SEED_OCCUPANCY = 0.762
-_SEED_ADR = 385.0
 _SEED_EXIT_CAP = 0.07
 
 # What the real Anglers T-12 payload grounds (the numbers that must vanish).
@@ -376,17 +374,14 @@ async def test_removing_the_pnl_family_drops_every_t12_actual_source() -> None:
         "a t12_actual source label survived the deletion of every P&L-family "
         f"document: {sorted(k for k, v in sources.items() if v == 't12_actual')}"
     )
-    # The seed is the contract — not a dash.
-    assert sources["starting_occupancy"] == "seed"
-    assert sources["starting_adr"] == "seed"
-    assert after["starting_occupancy"] == pytest.approx(_SEED_OCCUPANCY)
-    assert after["starting_adr"] == pytest.approx(_SEED_ADR)
-    # …and the reason says WHY it is a seed.
+    # Review I-5 — the Year-1 rates have no seed: with the P&L family gone
+    # (and no STR / analyst value) they are ABSENT and the reason says why;
+    # the revenue chain refuses rather than running on an invented rate.
     reasons = after.get("__reasons__") or {}
     for key in ("starting_occupancy", "starting_adr"):
-        assert _reason_code(reasons.get(key)) == "no_document", (
-            f"{key} fell back to the seed with reason "
-            f"{_reason_code(reasons.get(key))!r}, not no_document"
+        assert key not in after and key not in sources
+        assert _reason_code(reasons.get(key)) == "no_revenue_basis", (
+            f"{key} reason {_reason_code(reasons.get(key))!r}, not no_revenue_basis"
         )
     # Nothing still names a deleted extraction row.
     dead = {ids["t12"], ids["pnl"]}
@@ -406,7 +401,7 @@ async def test_removing_the_pnl_family_drops_every_t12_actual_source() -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert "t12_actual" not in set(body["sources"].values())
-    assert body["reasons"]["starting_occupancy"] == "no_document"
+    assert body["reasons"]["starting_occupancy"] == "no_revenue_basis"
     for key, doc in (body.get("source_documents") or {}).items():
         assert doc not in dead, f"{key} still deep-links to deleted document {doc}"
 
@@ -714,8 +709,12 @@ async def test_rebuilt_lineage_names_no_deleted_document_after_a_rerun() -> None
         and any(d in n.id for d in dead)
     ]
     assert offenders == [], f"lineage still cites deleted documents: {offenders}"
-    # Every remaining assumption is a seed, so the record must say so.
-    assert after.unresolved, "an all-seed run reported nothing unresolved"
+    # Review I-5 — with every document gone the revenue chain has no Year-1
+    # basis and refused (no lineage built on an invented rate).
+    async with factory() as session:
+        rev = await _engine_row(session, deal_id=deal_id, run_id=run_after, engine="revenue")
+    assert rev["failure"]["reason"] == "no_revenue_basis"
+    assert rev["outputs"] == {}
 
 
 @pytest.mark.asyncio
@@ -862,9 +861,9 @@ async def test_raw_document_delete_leaves_orphans_that_still_never_leak() -> Non
                 is None
             )
         after = await _inputs(session, deal_id=deal_id, tenant_id=tenant_id)
-    assert after["starting_occupancy"] == pytest.approx(_SEED_OCCUPANCY)
-    assert after["starting_adr"] == pytest.approx(_SEED_ADR)
-    assert after["__sources__"]["starting_occupancy"] == "seed"
+    # Review I-5 — no seeded Year-1 rate stands in for the deleted T-12.
+    assert "starting_occupancy" not in after and "starting_adr" not in after
+    assert after["__reasons__"]["starting_occupancy"]["code"] == "no_revenue_basis"
     assert "t12_actual" not in set(after["__sources__"].values())
 
 
@@ -918,12 +917,11 @@ async def test_the_rerun_carries_no_value_and_no_id_from_the_deleted_documents()
         ).fetchall()
         lineage = await build_lineage(session, deal_id, tenant_id, run_id=run_after)
 
-    # The deleted document's values are gone from the new run…
-    assert rev_after["inputs"]["starting_occupancy"] == pytest.approx(_SEED_OCCUPANCY)
-    assert rev_after["inputs"]["starting_adr"] == pytest.approx(_SEED_ADR)
-    assert _prov_input(
-        rev_after["outputs"].get("provenance") or {}, "years[0].rooms_revenue", "adr"
-    ) == pytest.approx(_SEED_ADR)
+    # The deleted document's values are gone from the new run: with no
+    # Year-1 basis left the revenue engine refuses (review I-5) — it never
+    # runs on a seeded rate in their place.
+    assert rev_after["failure"]["reason"] == "no_revenue_basis"
+    assert rev_after["outputs"] == {}
 
     # …and no persisted row anywhere in the run names a deleted document.
     dead = set(ids.values())

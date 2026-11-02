@@ -387,10 +387,16 @@ Returns grows the exit-year NOI at your RevPAR growth when you set one, else at 
 year's resolved RevPAR growth, (1 + occupancy growth) × (1 + ADR growth) − 1, and at 0% (badged No
 forecast) when that year has no figure.
 
+<!-- source: apps/worker/app/services/engine_runner.py (REVENUE_BASIS_KEYS, _apply_revenue_basis, _revenue_basis_failure) -->
+There is no default Year-1 occupancy or ADR. Year 1 comes from your value, else the benchmark ×
+penetration × ramp, else the T-12. With none of them the revenue model and every model built on it
+refuse with {{reason:no_revenue_basis}}: "Upload a T-12 or STR report, or enter Year-1 occupancy and
+ADR." The capital stack still runs.
+
 <!-- source: apps/worker/app/services/engine_runner.py (_default_assumptions) -->
-Defaults that remain labelled suggestions: starting occupancy 76.2% and ADR $385.00 (used only when
-there is no benchmark and no T-12), expense growth 3.5%, F&B revenue $88.00 per occupied room, other
-revenue 6.5% of rooms revenue. Each is badged Seed until replaced. There is no growth default.
+Defaults that remain labelled suggestions: expense growth 3.5%, F&B revenue $88.00 per occupied
+room, other revenue 6.5% of rooms revenue. Each is badged Seed until replaced. There is no growth
+default.
 
 <!-- source: apps/worker/app/engines/revenue.py (fb_price_index) -->
 F&B revenue = occupied rooms × F&B $ per occupied room × Π(1 + ADR growth) since Year 1, where the

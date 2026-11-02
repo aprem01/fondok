@@ -47,6 +47,7 @@ EXPECTED_CODES = [
     "no_benchmark",
     "license_withheld",
     "legacy_key_translated",
+    "no_revenue_basis",
 ]
 
 

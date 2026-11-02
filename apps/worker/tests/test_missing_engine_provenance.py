@@ -49,6 +49,7 @@ from app.engines.partnership import (  # noqa: E402
 )
 from app.engines.returns import ReturnsEngineInputExt  # noqa: E402
 from app.engines.sensitivity import SensitivityEngine, SensitivityInput  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 TOL = 0.5  # dollars — large-magnitude values
 
@@ -331,7 +332,7 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
         # B5 — the deal carries partnership terms, so the waterfall runs.
         {
             "id": deal_id, "tenant": tenant_id, "name": "Prov Test",
-            "fo": json.dumps(kimpton_partnership_field_overrides()),
+            "fo": json.dumps(with_year1_rates(kimpton_partnership_field_overrides())),
         },
     )
 

@@ -16,6 +16,8 @@ IRR) must not swap into the memo's Base numbers.
 
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 from pathlib import Path
@@ -23,6 +25,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import KIMPTON_YEAR1_RATES, with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
@@ -55,14 +58,19 @@ async def _reset_db() -> None:
     yield
 
 
-async def _seed_deal(session, *, deal_id: str, tenant_id: str, overrides_json: str = "{}") -> None:
+async def _seed_deal(
+    session, *, deal_id: str, tenant_id: str, overrides_json: str = "{}", year1_rates: bool = True
+) -> None:
     """Insert a minimal deals row so tenant-ownership checks pass."""
     await session.execute(
         text(
             "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
             "VALUES (:id, :tenant, :name, 132, 36400000, :fo)"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Angler Test", "fo": overrides_json},
+        {"id": deal_id, "tenant": tenant_id, "name": "Angler Test",
+         "fo": json.dumps(
+             with_year1_rates(json.loads(overrides_json)) if year1_rates else json.loads(overrides_json)
+         )},
     )
 
 
@@ -187,13 +195,16 @@ async def test_provenance_endpoint_reads_canonical_run() -> None:
 
     factory = get_session_factory()
     async with factory() as session:
-        await _seed_deal(session, deal_id=str(deal_uuid), tenant_id=str(tenant_id))
+        # The Year-1 rates ride on the run requests (not the deal's persisted
+        # overrides, which would beat the downside's occupancy).
+        await _seed_deal(session, deal_id=str(deal_uuid), tenant_id=str(tenant_id), year1_rates=False)
         await run_all_engines(
-            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id), run_id=base_run
+            session, deal_id=str(deal_uuid), tenant_id=str(tenant_id), run_id=base_run,
+            overrides=dict(KIMPTON_YEAR1_RATES),
         )
         await run_all_engines(
             session, deal_id=str(deal_uuid), tenant_id=str(tenant_id),
-            run_id=scen_run, overrides=_DOWNSIDE,
+            run_id=scen_run, overrides={**KIMPTON_YEAR1_RATES, **_DOWNSIDE},
         )
         await _record_scenario(
             session, deal_uuid=str(_coerce_uuid(str(deal_uuid))),

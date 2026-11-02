@@ -62,6 +62,7 @@ class ReasonCode(str, Enum):
     NO_BENCHMARK = "no_benchmark"
     LICENSE_WITHHELD = "license_withheld"
     LEGACY_KEY_TRANSLATED = "legacy_key_translated"
+    NO_REVENUE_BASIS = "no_revenue_basis"
 
 
 class Refusal(BaseModel):
@@ -310,6 +311,13 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "ui": REFUSAL_GLYPH,
         "explanation": (
             "A setting written by a retired control is read under the current method (or ignored), and the status says how."
+        ),
+    },
+    ReasonCode.NO_REVENUE_BASIS: {
+        "label": "No Year-1 occupancy / ADR",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate."
         ),
     },
 }

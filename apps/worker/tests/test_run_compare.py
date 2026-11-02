@@ -26,6 +26,8 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import KIMPTON_YEAR1_RATES  # Review I-5: test deals state their Year-1 rates
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-run-compare.db"
 if _TMP_DB.exists():
@@ -54,9 +56,9 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
     await session.execute(
         text(
             "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
-            "VALUES (:id, :tenant, :name, 132, 36400000, '{}')"
+            "VALUES (:id, :tenant, :name, 132, 36400000, :fo)"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Compare Test"},
+        {"id": deal_id, "tenant": tenant_id, "name": "Compare Test", "fo": "{}"},
     )
     await session.commit()
 
@@ -246,12 +248,15 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
     base_run, head_run = str(uuid4()), str(uuid4())
     async with get_session_factory()() as session:
         await _seed_deal(session, deal_id=deal_id, tenant_id=tenant)
+        # The test deal's Year-1 rates ride on the run requests (review I-5:
+        # no seeded rate; a persisted override would beat the head's 0.70).
         base = await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant, run_id=base_run
+            session, deal_id=deal_id, tenant_id=tenant, run_id=base_run,
+            overrides=dict(KIMPTON_YEAR1_RATES),
         )
         head = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant, run_id=head_run,
-            overrides={"starting_occupancy": 0.70},
+            overrides={**KIMPTON_YEAR1_RATES, "starting_occupancy": 0.70},
         )
 
     async with _client() as c:

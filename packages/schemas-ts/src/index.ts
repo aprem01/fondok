@@ -327,6 +327,7 @@ export const ReasonCode = z.enum([
   "no_benchmark",
   "license_withheld",
   "legacy_key_translated",
+  "no_revenue_basis",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -499,6 +500,12 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     ui: REFUSAL_GLYPH,
     explanation:
       "A setting written by a retired control is read under the current method (or ignored), and the status says how.",
+  },
+  no_revenue_basis: {
+    label: "No Year-1 occupancy / ADR",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate.",
   },
 };
 

@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
@@ -804,7 +805,7 @@ async def _deal_with_overrides(session, overrides: dict) -> tuple[str, str]:
         ),
         {
             "id": deal_id, "tenant": tenant_id, "name": "Wave 2b Hotel",
-            "ov": json.dumps(overrides), "now": datetime.now(UTC),
+            "ov": json.dumps(with_year1_rates(overrides)), "now": datetime.now(UTC),
         },
     )
     await session.commit()
@@ -1285,7 +1286,7 @@ async def _deal_with_type(session, deal_type: str | None, overrides: dict | None
         ),
         {
             "id": deal_id, "tenant": tenant_id, "name": "Typed Hotel",
-            "deal_type": deal_type, "ov": json.dumps(overrides or {}),
+            "deal_type": deal_type, "ov": json.dumps(with_year1_rates(overrides)),
             "now": datetime.now(UTC),
         },
     )

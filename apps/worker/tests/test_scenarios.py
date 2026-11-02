@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
@@ -81,7 +82,11 @@ async def _create_deal_via_api(client, *, name: str = "Scenario Hotel", **kw) ->
     body.update(kw)
     r = await client.post("/deals", json=body)
     assert r.status_code == 201, r.text
-    return r.json()["id"]
+    deal_id = r.json()["id"]
+    # Review I-5 — the test deal states its Year-1 rates (no seeded rate).
+    r = await client.patch(f"/deals/{deal_id}", json={"field_overrides": with_year1_rates()})
+    assert r.status_code == 200, r.text
+    return deal_id
 
 
 # ─────────────────────────── tests ───────────────────────────
@@ -124,14 +129,15 @@ async def test_base_scenario_unique_per_deal() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
                 "name": "Unique Base",
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -395,13 +401,14 @@ async def test_run_scenario_without_overrides_matches_base() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Base Match', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Base Match', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -592,13 +599,14 @@ async def test_pip_displacement_override_routes_correctly() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -672,13 +680,14 @@ async def test_segment_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -732,13 +741,14 @@ async def test_capex_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )

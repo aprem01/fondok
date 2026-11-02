@@ -11,7 +11,7 @@ export interface ReasonMeta {
   explanation: string;
 }
 
-export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value" | "no_market_forecast" | "no_benchmark" | "license_withheld" | "legacy_key_translated";
+export type ReasonCode = "no_document" | "no_source" | "unit_unknown" | "period_mismatch" | "basis_mismatch" | "basis_excluded" | "awaiting_analyst" | "needs_review" | "pin_active" | "str_unavailable" | "not_knowable_as_of" | "as_of_unknown" | "stale_run" | "engine_skipped" | "inconclusive" | "not_applicable" | "missing_identity_inputs" | "load_error" | "engine_error" | "under_construction" | "capital_deploying" | "no_sale_value" | "no_market_forecast" | "no_benchmark" | "license_withheld" | "legacy_key_translated" | "no_revenue_basis";
 
 export const REASON_CODES: readonly ReasonCode[] = [
   "no_document",
@@ -39,7 +39,8 @@ export const REASON_CODES: readonly ReasonCode[] = [
   "no_market_forecast",
   "no_benchmark",
   "license_withheld",
-  "legacy_key_translated"
+  "legacy_key_translated",
+  "no_revenue_basis"
 ];
 
 export const REASONS: Record<ReasonCode, ReasonMeta> = {
@@ -172,6 +173,11 @@ export const REASONS: Record<ReasonCode, ReasonMeta> = {
     "label": "Legacy setting translated",
     "ui": "—",
     "explanation": "A setting written by a retired control is read under the current method (or ignored), and the status says how."
+  },
+  "no_revenue_basis": {
+    "label": "No Year-1 occupancy / ADR",
+    "ui": "—",
+    "explanation": "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate."
   }
 };
 

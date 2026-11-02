@@ -32,6 +32,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 from fondok_schemas.financial import ModelAssumptions  # noqa: E402
 
 from app.engines.returns import ReturnsEngine, ReturnsEngineInputExt  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # A ramping deal: stabilizes in Year 3, flat-ish growth after.
 NOI = [1_000_000.0, 2_000_000.0, 3_000_000.0, 3_090_000.0, 3_182_700.0]
@@ -205,7 +206,7 @@ async def _run(overrides: dict) -> dict:
             ),
             {
                 "id": deal_id, "tenant": tenant_id, "name": "Exit Basis Hotel",
-                "ov": json.dumps(overrides), "now": datetime.now(UTC),
+                "ov": json.dumps(with_year1_rates(overrides)), "now": datetime.now(UTC),
             },
         )
         await session.commit()

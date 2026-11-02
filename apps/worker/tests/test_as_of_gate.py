@@ -36,6 +36,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Force a per-test SQLite DB BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-as-of-gate.db"
@@ -208,7 +209,10 @@ async def test_str_report_after_the_as_of_is_refused_not_used() -> None:
     status = base["__topline_status__"]
     assert status["benchmark_level"] == "none"
     assert "underwriting as-of" in status["benchmark_fallback_reason"]
-    assert base["__sources__"]["starting_adr"] != "topline_benchmark"
+    # Nothing else sets the Year-1 ADR (no T-12, no analyst value): the
+    # refused report leaves no basis — never a seeded rate (review I-5).
+    assert "starting_adr" not in base["__sources__"]
+    assert base["__reasons__"]["starting_adr"]["code"] == "no_revenue_basis"
 
 
 @pytest.mark.asyncio
@@ -688,7 +692,7 @@ async def test_lookback_anchor_is_persisted_on_the_run_inputs() -> None:
     from app.services.engine_runner import get_run_scoped_outputs, run_all_engines
 
     deal_id = uuid4()
-    await _insert_deal(deal_id)
+    await _insert_deal(deal_id, overrides=with_year1_rates())
     await _insert_doc(
         deal_id, doc_type="OM", fields=_comp_fields(3),
         report_as_of="2024-01-15", precision="day",

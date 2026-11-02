@@ -24,6 +24,8 @@ Analysis driver path:
 
 from __future__ import annotations
 
+import json
+
 import math
 import os
 import tempfile
@@ -46,6 +48,7 @@ from fondok_schemas.underwriting import (  # noqa: E402
 )
 
 from app.engines.revenue import DAYS_PER_YEAR, RevenueEngine  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 TOL = 1e-9
 RATE_PATHS = ("occupancy", "adr", "revpar", "occupied_rooms")
@@ -366,10 +369,11 @@ async def test_persisted_run_lineage_carries_the_rate_nodes_the_drawer_asks_for(
     async with factory() as session:
         await session.execute(
             text(
-                "INSERT INTO deals (id, tenant_id, name, keys, purchase_price) "
-                "VALUES (:id, :t, :n, :k, :p)"
+                "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
+                "VALUES (:id, :t, :n, :k, :p, :fo)"
             ),
-            {"id": deal_id, "t": tenant_id, "n": "FON-87 rate traces", "k": 132, "p": 36_400_000},
+            {"id": deal_id, "t": tenant_id, "n": "FON-87 rate traces", "k": 132, "p": 36_400_000,
+             "fo": json.dumps(with_year1_rates())},
         )
         await session.commit()
         await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)

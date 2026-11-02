@@ -29,6 +29,7 @@ from fondok_schemas.financial import ModelAssumptions  # noqa: E402
 from app.engines.asking_bid import NO_TARGET_COPY, solve_asking_and_bid  # noqa: E402
 from app.engines.price_solver import IRR_TOLERANCE_PCT, solve_max_price  # noqa: E402
 from app.engines.returns import ReturnsEngine, ReturnsEngineInputExt  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 
 def _base_input() -> ReturnsEngineInputExt:
@@ -150,7 +151,13 @@ async def _create(client, tenant: str, **extra) -> str:
         headers={"X-Tenant-Id": tenant},
     )
     assert r.status_code == 201, r.text
-    return r.json()["id"]
+    deal_id = r.json()["id"]
+    # Review I-5 — the test deal states its Year-1 rates (no seeded rate).
+    r = await client.patch(
+        f"/deals/{deal_id}", json={"field_overrides": with_year1_rates()}, headers={"X-Tenant-Id": tenant}
+    )
+    assert r.status_code == 200, r.text
+    return deal_id
 
 
 async def test_endpoint_solves_bid_from_deal_target() -> None:

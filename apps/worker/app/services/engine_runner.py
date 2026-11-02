@@ -543,6 +543,39 @@ def missing_identity_inputs(base: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
+#: Review I-5 — the Year-1 occupancy / ADR basis of the revenue engine. Like
+#: the identity inputs they have NO default: they come from the analyst, the
+#: topline (benchmark × penetration × ramp) or the T-12, or the revenue engine
+#: and every engine consuming its output refuse (``no_revenue_basis``).
+REVENUE_BASIS_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
+
+#: The sentence every ``no_revenue_basis`` surface prints.
+REVENUE_BASIS_GUIDANCE = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
+
+
+def revenue_basis_needed(engine_name: str) -> bool:
+    """Does ``engine_name`` need the Year-1 occupancy / ADR basis — the revenue
+    engine itself, or any engine whose input chain runs through it?"""
+    if engine_name == "revenue":
+        return True
+    return any(revenue_basis_needed(dep) for dep in ENGINE_DEPS.get(engine_name, ()))
+
+
+def missing_revenue_basis(base: Mapping[str, Any]) -> tuple[str, ...]:
+    """The basis keys ``base`` does not carry, sorted (the failure's ``missing``)."""
+    return tuple(sorted(key for key in REVENUE_BASIS_KEYS if base.get(key) in (None, "")))
+
+
+def _missing_revenue_basis_message(missing: Sequence[str]) -> str:
+    names = {"starting_occupancy": "Year-1 occupancy", "starting_adr": "Year-1 ADR"}
+    what = " or ".join(names.get(k, k) for k in sorted(missing, reverse=True))
+    return (
+        f"The deal has no {what} basis — no T-12, no STR or market benchmark and no "
+        f"analyst value sets it. {REVENUE_BASIS_GUIDANCE} on the Future P&L, and run "
+        "the model again — the model never substitutes a placeholder rate."
+    )
+
+
 class EngineFailure(BaseModel):
     """Why an engine row landed ``status='failed'`` — typed, persisted.
 
@@ -581,6 +614,21 @@ class EngineFailure(BaseModel):
 #: counts toward ``engine_failures_last_hour``, and a run whose only
 #: non-complete engine is ``not_applicable`` is complete.
 STATUS_NOT_APPLICABLE = "not_applicable"
+
+
+def _revenue_basis_failure(engine_name: str, base: Mapping[str, Any]) -> EngineFailure | None:
+    """The typed ``no_revenue_basis`` failure for ``engine_name``, or None."""
+    if not revenue_basis_needed(engine_name):
+        return None
+    missing = missing_revenue_basis(base)
+    if not missing:
+        return None
+    return EngineFailure(
+        engine=engine_name,
+        reason=ReasonCode.NO_REVENUE_BASIS,
+        message=_missing_revenue_basis_message(missing),
+        missing=list(missing),
+    )
 
 
 class EngineNotApplicable(BaseModel):
@@ -622,9 +670,24 @@ class MissingIdentityInputsError(LookupError):
     deal lacks an identity input; the persisting runners record an
     :class:`EngineFailure` row instead of raising."""
 
+    #: The typed reason the app-level handler answers with (422).
+    reason: ReasonCode = ReasonCode.MISSING_IDENTITY_INPUTS
+
     def __init__(self, missing: tuple[str, ...]) -> None:
         self.missing = list(missing)
         super().__init__(_missing_identity_message(missing))
+
+
+class MissingRevenueBasisError(MissingIdentityInputsError):
+    """Review I-5 — the revenue chain has no Year-1 occupancy / ADR basis.
+    A subclass so every in-memory path that already answers the identity
+    refusal (422) answers this one too, with its own reason and message."""
+
+    reason = ReasonCode.NO_REVENUE_BASIS
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        self.missing = list(missing)
+        LookupError.__init__(self, _missing_revenue_basis_message(missing))
 
 
 #: Where the analyst enters each identity input, in the words the refusal
@@ -665,8 +728,12 @@ def _default_assumptions() -> dict[str, Any]:
     an analyst who carries them enters the amounts explicitly).
     """
     return {
-        "starting_occupancy": 0.762,
-        "starting_adr": 385.0,
+        # Review I-5 (W5 topline fix) — NO Year-1 occupancy / ADR seed. The
+        # 76.2% / $385 that used to sit here were the Kimpton demo's rates: a
+        # deal with no T-12, no STR / market benchmark and no analyst value ran
+        # as a Kimpton-priced hotel. ``REVENUE_BASIS_KEYS`` have no default;
+        # without a basis the revenue engine (and everything on it) refuses
+        # with ``no_revenue_basis``.
         # FON-116 / FON-117 (topline v2) — NO growth seed. The 0.8% / 4.0% /
         # 4.5% occupancy / ADR / RevPAR growth that used to sit here was applied
         # to every deal as if it were the market's; growth now comes from the
@@ -1560,6 +1627,7 @@ async def _load_engine_inputs(
             str_noted_keys=frozenset(),
             t12=None,
         )
+        _apply_revenue_basis(base, sources, {}, seam_reasons)
         _resolve_senior_origination_fee(base, sources)
         base["__sources__"] = sources
         base["__source_fields__"] = {}
@@ -2222,9 +2290,18 @@ async def _load_engine_inputs(
             if parsed:
                 seg_name, field = parsed
                 pre_load_seg_overrides.setdefault(seg_name, {})[field] = float(value)
-        # Property-overall ADR (post any T-12 / CBRE / OM override that
-        # already landed on ``base["starting_adr"]``).
-        overall_adr = float(base.get("starting_adr") or 0.0)
+        # Property-overall ADR: the analyst's Year-1 ADR when set, else the
+        # T-12 actual that already landed on ``base["starting_adr"]``. Review
+        # I-5 — there is no seeded ADR any more, so a deal with neither seeds
+        # no segments (the revenue engine refuses without a basis anyway).
+        _analyst_adr = pre_load_seg_overrides_raw.get("starting_adr")
+        if isinstance(_analyst_adr, dict):
+            _analyst_adr = _analyst_adr.get("value")
+        overall_adr = (
+            float(_analyst_adr)
+            if isinstance(_analyst_adr, (int, float)) and not isinstance(_analyst_adr, bool) and _analyst_adr > 0
+            else float(base.get("starting_adr") or 0.0)
+        )
         if overall_adr > 0:
             seeded_segments, seg_sources = _build_segments_from_str(
                 payload=str_seg_payload,
@@ -2751,6 +2828,7 @@ async def _load_engine_inputs(
             ReasonCode.MISSING_IDENTITY_INPUTS,
             _missing_identity_message((key,)),
         )
+    _apply_revenue_basis(base, sources, source_fields, reasons)
 
     _resolve_senior_origination_fee(base, sources)
     # A9 — a segment's un-overridden ``adr_growth`` is ``None`` (it inherits
@@ -2954,6 +3032,31 @@ def _apply_topline(
                 "No market forecast for the last projected year — the exit-year NOI is not grown "
                 "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
             )
+
+
+def _apply_revenue_basis(
+    base: dict[str, Any],
+    sources: dict[str, str],
+    source_fields: dict[str, SourceField],
+    reasons: dict[str, dict[str, Any]],
+) -> None:
+    """Review I-5 — after every source had its say (analyst value, topline
+    Year 1, T-12 actual), a Year-1 occupancy / ADR still missing stays ABSENT
+    from ``base`` with a ``no_revenue_basis`` reason, and ``topline_status``
+    says so (``revenue_basis``). The runners turn it into the typed failure."""
+    missing = missing_revenue_basis(base)
+    for key in missing:
+        base.pop(key, None)
+        sources.pop(key, None)
+        source_fields.pop(key, None)
+        reasons[key] = _reason(ReasonCode.NO_REVENUE_BASIS, _missing_revenue_basis_message(missing))
+    status = base.get(TOPLINE_STATUS_KEY)
+    if isinstance(status, dict):
+        status["revenue_basis"] = {
+            "state": "missing" if missing else "present",
+            "missing": list(missing),
+            "message": _missing_revenue_basis_message(missing) if missing else None,
+        }
 
 
 def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
@@ -8102,6 +8205,8 @@ def _build_input_for(
     )
     if needed:
         raise MissingIdentityInputsError(tuple(sorted(needed)))
+    if engine_name == "revenue" and (basis_missing := missing_revenue_basis(base)):
+        raise MissingRevenueBasisError(basis_missing)
     deal_uuid = _coerce_uuid(deal_id)
 
     if engine_name == "revenue":
@@ -9120,6 +9225,11 @@ async def run_single_engine(
                 missing=sorted(needed),
             ),
         )
+    if (basis_failure := _revenue_basis_failure(engine_name, base_inputs)) is not None:
+        return await _persist_failure_row(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            failure=basis_failure,
+        )
 
     # B5 — the waterfall runs only on terms the deal carries. Without them the
     # engine is not applicable: a typed refusal row, never a run on defaults.
@@ -9328,6 +9438,14 @@ async def run_all_engines(
                 )
             )
             continue
+        if (basis_failure := _revenue_basis_failure(name, base_inputs)) is not None:
+            _record(
+                await _persist_failure_row(
+                    session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                    failure=basis_failure,
+                )
+            )
+            continue
 
         deps = ENGINE_DEPS[name]
         missing = [
@@ -9490,6 +9608,8 @@ async def run_returns_preview(
     missing = missing_identity_inputs(base)
     if missing:
         raise MissingIdentityInputsError(missing)
+    if basis_missing := missing_revenue_basis(base):
+        raise MissingRevenueBasisError(basis_missing)
     # Did the sandbox actually MOVE the LTV lever? The Returns tab posts all five
     # keys on every drag, so "ltv is present" is not the question — only a value
     # that differs from the canonical one may release the pinned senior
@@ -9935,6 +10055,10 @@ __all__ = [
     "EngineFailure",
     "EngineInputsLoadError",
     "MissingIdentityInputsError",
+    "MissingRevenueBasisError",
+    "REVENUE_BASIS_KEYS",
+    "missing_revenue_basis",
+    "revenue_basis_needed",
     "failures_of",
     "identity_inputs_needed",
     "missing_identity_inputs",

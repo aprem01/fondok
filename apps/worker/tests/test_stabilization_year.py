@@ -30,6 +30,7 @@ from tests.fixtures.kimpton_seed import (
     kimpton_partnership_field_overrides,
     kimpton_seed,
 )
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
@@ -71,7 +72,7 @@ async def _deal_with_overrides(session, overrides: dict) -> tuple[str, str]:
             "id": deal_id,
             "tenant": tenant_id,
             "name": "Stabilization Year Hotel",
-            "ov": json.dumps(overrides),
+            "ov": json.dumps(with_year1_rates(overrides)),
             "now": datetime.now(UTC),
         },
     )

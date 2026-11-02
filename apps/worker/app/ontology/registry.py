@@ -91,6 +91,7 @@ REASON_CODES: tuple[str, ...] = (
     "under_construction", "capital_deploying", "no_sale_value",
     # FON-116 / FON-117 (topline v2) — growth / benchmark refusals, legacy keys.
     "no_market_forecast", "no_benchmark", "license_withheld", "legacy_key_translated",
+    "no_revenue_basis",
 )
 
 #: Engines a concept may name: the engine_runner / provenance names plus the

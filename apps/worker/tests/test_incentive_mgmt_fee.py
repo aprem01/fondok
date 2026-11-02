@@ -33,6 +33,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
 from app.engines.expense import ExpenseEngine, ExpenseEngineInput  # noqa: E402
 from app.engines.fb_revenue import FBRevenueOutput, FBRevenueYear  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 KEY = "incentive_mgmt_fee_pct_of_gop"
 
@@ -226,7 +227,7 @@ async def _run_deal(overrides: dict) -> dict:
             {
                 "id": deal_id,
                 "tenant": tenant_id,
-                "ov": json.dumps(overrides),
+                "ov": json.dumps(with_year1_rates(overrides)),
                 "now": datetime.now(UTC),
             },
         )
