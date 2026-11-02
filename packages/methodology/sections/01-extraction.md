@@ -45,8 +45,10 @@ rather than quietly producing nothing.
 
 Fondok reads the file name and first pages and files the document as an Offering Memorandum, T-12,
 P&L, STR report, market study, benchmark report, rent roll, hotel program, capital plan, insurance,
-tax or contract. A document dropped without a tag is marked “Classified automatically — confirm” in
-the Data Room until you confirm or change the type.
+tax, debt or contract. A document dropped without a tag is marked “Classified automatically —
+confirm” in the Data Room until you confirm or change the type. A loan document — a term sheet, a
+loan agreement, the debt upload template — is filed as debt, never as a P&L, so it can never become
+the statement your Year-1 figures are read from.
 
 :::
 
@@ -178,7 +180,8 @@ actionable retry path.
 
 A Haiku 4.5 Router agent reads the filename plus the first ~2K characters and emits a doc_type: OM,
 T12, PNL, STR, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, RENT_ROLL, MARKET_STUDY, ROOM_MIX, or
-CONTRACT. A filename heuristic provides the fallback when the Router is unsure. Files dropped in the
+CONTRACT, DEBT. A filename heuristic provides the fallback when the Router is unsure; it files a
+debt / loan / mortgage / term-sheet filename as DEBT ahead of its T12 default. Files dropped in the
 “Drop everything here” zone carry no analyst tag, so the Router’s doc_type is the category; the Data
 Room marks them “Classified automatically — confirm” until the analyst confirms or reclassifies.
 Accepted formats: PDF, Excel (.xlsx / .xlsm / .xls), CSV, Word (.docx) and PowerPoint (.pptx) —
@@ -236,7 +239,10 @@ rolls back) and marks `deals.ai_confidence` with a column comment so it runs onc
 
 A post-extraction reclassifier reads p_and_l_usali.period_type off the extracted fields and narrows
 broad PNL/T12 classifications into PNL_MONTHLY, PNL_YTD, or T12. This is why a single-month upload
-no longer outranks an annual T-12 in the engine actuals loaders.
+no longer outranks an annual T-12 in the engine actuals loaders. An extraction under a P&L label
+that carries debt terms (three or more `in_place_debt.*`-style fields) and not one numeric
+`p_and_l_usali.*` line is retyped DEBT (`_is_debt_terms_extraction`), with the original label kept
+as the AI proposal; under an analyst's P&L tag it raises the misclassification banner instead.
 
 :::
 

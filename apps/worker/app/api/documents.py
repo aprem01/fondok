@@ -1686,6 +1686,12 @@ def _is_allowed_upload(filename: str, content_type: str | None) -> bool:
 _TINY_XLSX_BYTES = 30_000
 
 
+#: Filename tokens that name a debt / loan document (``_guess_doc_type``).
+_DEBT_FILENAME_TOKENS: frozenset[str] = frozenset(
+    {"debt", "loan", "loans", "mortgage", "termsheet", "refinance", "refinancing"}
+)
+
+
 def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
     """Cheap filename-driven hint. The Router agent overrides on extract.
 
@@ -1862,6 +1868,18 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
         return "MARKET_STUDY"
     if "p&l" in name or "pnl" in name or "p_l" in name:
         return "PNL"
+    # W5 (2026-11): a debt / loan document — term sheet, loan agreement, the
+    # Fondok debt upload template — is DEBT. Without this rule the Router's
+    # off-enum fallback dropped "Kimpton_Fondok_Debt_Upload_Template.xlsx"
+    # through to the T12 default, and the template outranked every real P&L
+    # on the deal as an undated "current" T-12. Checked after the statement
+    # rules so a "T12" / "P&L" filename keeps its statement type.
+    if (
+        tokens & _DEBT_FILENAME_TOKENS
+        or "term_sheet" in name.replace(" ", "_")
+        or "termsheet" in name
+    ):
+        return "DEBT"
     if "contract" in name:
         return "CONTRACT"
 
@@ -2057,6 +2075,40 @@ class RefinedClassification:
     router_overridden_original: str | None
 
 
+#: Root namespaces of debt-term fields (the OM ``in_place_debt`` block and the
+#: debt-document shapes the extractor emits for term sheets / templates).
+_DEBT_FIELD_ROOTS: frozenset[str] = frozenset(
+    {"in_place_debt", "debt", "debt_terms", "loan", "loans", "financing", "senior_loan"}
+)
+#: Fewest debt-term fields that make an extraction a debt document.
+_MIN_DEBT_TERM_FIELDS = 3
+
+
+def _is_debt_terms_extraction(fields: list[dict[str, Any]]) -> bool:
+    """True when the extraction carries debt terms and no P&L statement line.
+
+    A P&L line is any ``p_and_l_usali.*`` field with a numeric value; a debt
+    term is any field under :data:`_DEBT_FIELD_ROOTS`. A statement that also
+    quotes its loan keeps its P&L type — only an extraction with zero P&L
+    lines and at least :data:`_MIN_DEBT_TERM_FIELDS` debt terms qualifies.
+    """
+    if not isinstance(fields, list):
+        return False
+    debt = 0
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        name = str(f.get("field_name") or "").strip().lower()
+        root = name.split(".", 1)[0]
+        if root == "p_and_l_usali":
+            v = f.get("value")
+            if isinstance(v, int | float) and not isinstance(v, bool):
+                return False
+        elif root in _DEBT_FIELD_ROOTS:
+            debt += 1
+    return debt >= _MIN_DEBT_TERM_FIELDS
+
+
 def refine_doc_type_post_extraction(
     *,
     classified_doc_type: str | None,
@@ -2092,6 +2144,25 @@ def refine_doc_type_post_extraction(
     structural_pnl_score = float(structural_signals.pnl_score)
 
     router_overridden_original: str | None = None
+    # W5 (2026-11) — a P&L label on an extraction that carries debt terms and
+    # not one P&L statement line is a mis-typed debt document (the Fondok
+    # debt upload template typed T12 by the filename fallback). Retype it
+    # DEBT so it leaves the P&L family and can never become the primary
+    # statement; the original call travels on ``ai_proposed_doc_type``.
+    label = (refined_doc_type or classified_doc_type or "").upper().strip()
+    if (
+        label in _FINANCIAL_ROUTER_LABELS
+        and not structural_signals.is_pnl
+        and _is_debt_terms_extraction(fields)
+    ):
+        logger.info(
+            "debt-shaped extraction under a P&L label: %s → DEBT doc=%s",
+            label,
+            doc_id,
+        )
+        router_overridden_original = label
+        refined_doc_type = "DEBT"
+        classified_doc_type = "DEBT"
     router_call_for_override = (
         (refined_doc_type or classified_doc_type or "")
         .upper()
