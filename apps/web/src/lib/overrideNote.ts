@@ -58,11 +58,12 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // note. Added 2026-09-12 when the mirror test caught it missing here after
   // the Market slice extended the worker's list.
   'market.selected_comps',
-  // Selects which projection year the stabilized figures are read from.
-  // KNOWN GAP since topline v2 (FON-116): it also ends the default penetration
-  // ramp, so it moves occupancy / ADR in the ramp years. It stays exempt only
-  // until the Topline card collects a note for it; then drop it here and in the
-  // worker's `_NOTE_EXEMPT_KEYS` together.
+  // Selects which projection year the stabilized figures are read from — and,
+  // since topline v2, ends the default penetration ramp. DEPLOY-TRAIN BLOCKER
+  // (topline review I-6): the WORKER already requires a note for it (dropped
+  // from `_NOTE_EXEMPT_KEYS`; PATCH answers 422 `override_note_required`). The
+  // Topline card PR adds the note field and drops this entry — until then a
+  // save from the Stabilization Year control is refused by the API.
   'stabilization_year',
   // The Property Name. Text, not a number; the worker reads it back as
   // `property_name` and keeps the extracted value for Restore.
@@ -92,7 +93,10 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   'index_methodology',
   'index_market_segment',
   // FON-116 / FON-117 — the topline benchmark LEVEL choice (auto / comp set /
-  // submarket / market). A method choice; the analyst types no number.
+  // submarket / market). DEPLOY-TRAIN BLOCKER (topline review I-6): it moves
+  // Year 1, so the worker requires a note for it, and for the retired
+  // `index_methodology` above (read as a forced level). The Topline card PR
+  // collects the note and drops both entries here.
   'topline_benchmark_level',
 ]);
 
@@ -115,7 +119,10 @@ const DEAL_COLUMN_KEYS: ReadonlySet<string> = new Set([
   'keys',
   // FON-98 — the reopening / re-flag date. A deal column (never in
   // `field_overrides`); it re-anchors the default stabilization year (and,
-  // since topline v2, where the default penetration ramp ends).
+  // since topline v2, where the default penetration ramp ends). DEPLOY-TRAIN
+  // BLOCKER (topline review I-6): the worker requires `reopening_date_note`
+  // beside a CHANGED date on a non-draft deal (422 `override_note_required`,
+  // keys ["reopening_date"]); the Overview control must send it.
   'reopening_date',
 ]);
 

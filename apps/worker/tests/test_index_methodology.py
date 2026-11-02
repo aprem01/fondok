@@ -280,7 +280,10 @@ def test_index_assumption_source_is_in_the_ontology_registry() -> None:
 def test_method_choice_keys_are_note_exempt_and_values_are_not() -> None:
     from app.api.deals import _NOTE_EXEMPT_KEYS, _override_needs_note
 
-    assert "index_methodology" in _NOTE_EXEMPT_KEYS
+    # Review I-6 — the retired method key is read as a forced benchmark level
+    # (it moves numbers): it needs a note. The segment choice moves nothing.
+    assert "index_methodology" not in _NOTE_EXEMPT_KEYS
+    assert _override_needs_note("index_methodology", frozenset()) is True
     assert "index_market_segment" in _NOTE_EXEMPT_KEYS
     for key in (KEY_OCC_GROWTH, KEY_ADR_GROWTH, KEY_MPI_TARGET, KEY_ARI_TARGET):
         assert _override_needs_note(key, frozenset()) is True

@@ -509,7 +509,7 @@ async def test_every_changed_engine_key_is_named_in_the_refusal() -> None:
                     "gp_equity_pct": 0.12,
                     "lp_equity_pct": 0.88,
                     # ...and one that is fine, which must NOT be named.
-                    "stabilization_year": {"value": 3},
+                    "property_overview.name": {"value": "Multi Hotel"},
                 }
             },
         )
@@ -539,7 +539,8 @@ async def test_worksheet_layout_alone_is_200_with_no_note() -> None:
 async def test_keys_that_move_no_number_need_no_note() -> None:
     """Exempt by name, each for a stated reason (see ``_NOTE_EXEMPT_KEYS``)."""
     exempt = {
-        "stabilization_year": 3,
+        # (stabilization_year left this list in review I-6: since topline v2 it
+        # ends the default penetration ramp — test_topline_override_notes.py.)
         "property_overview.name": "The Angler's",
         "debt.completion_guarantee": "in_place",
         "partnership.waterfall.tier_count": 4,

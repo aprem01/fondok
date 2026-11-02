@@ -272,9 +272,10 @@ rule is enforced on the server as well as in the editor, so no path — screen, 
 integration — can record an unexplained number. The justification is never written for you.
 
 **What is exempt, and why.** Edits that change no modelled number need no note: the Historical P&L's
-row layout, the Stabilization Year, the Property Name, the completion-guarantee status, the number
-of promote tiers, and the IC memo's prose. Clearing an override is a return to source and needs no
-note either.
+row layout, the Property Name, the completion-guarantee status, the number of promote tiers, and the
+IC memo's prose. The Stabilization Year, the topline benchmark level and the reopening date DO need
+one: they move where the penetration ramp ends or which benchmark Year 1 is set from. Clearing an
+override is a return to source and needs no note either.
 
 **Target levered IRR, target equity multiple and target stabilized yield on cost are not
 overrides.** They are stated objectives — the benchmark the returns are read against and the hurdle
@@ -984,11 +985,15 @@ it never fills the field with a generated sentence about which page the edit was
 
 **What is exempt, and why.** The requirement follows one rule — a note is needed when the key routes
 into engine input. Edits that change no modelled number need none: the Historical P&L worksheet's
-row layout (`worksheet_layout`, presentation only), the **Stabilization Year** (it selects which
-projection year the stabilized figures are read from and moves no return), the **Property Name** (a
-name, not a number), the Completion Guarantee covenant status (qualitative — no covenant math), the
-number of promote tiers in the waterfall (its shape, not a value in it), and the IC memo's prose.
-Clearing an override is a revert to source, not an override, and needs no note either.
+row layout (`worksheet_layout`, presentation only), the **Property Name** (a name, not a number), the
+Completion Guarantee covenant status (qualitative — no covenant math), the number of promote tiers in
+the waterfall (its shape, not a value in it), the market-segment choice (`index_market_segment`,
+which moves nothing since topline v2), and the IC memo's prose. Since topline v2 the **Stabilization
+Year** (it ends the default penetration ramp), the **topline benchmark level**
+(`topline_benchmark_level`, the level Year 1 is penetrated against), the retired Index Analysis
+method key (read as a forced level) and the deal's **reopening date** (sent as
+`reopening_date_note` beside it; not on a draft) move numbers and need a note. Clearing an override
+is a revert to source, not an override, and needs no note either.
 
 **Target LIRR (levered IRR), Target MOIC and Target Stabilized Yield on Cost are not overrides.**
 They are stored on the deal as stated objectives — the benchmark the returns are read against and

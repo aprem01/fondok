@@ -97,7 +97,9 @@ async def test_create_read_list_update_round_trip() -> None:
         listed = {d["id"]: d for d in (await client.get("/deals")).json()}
         assert listed[deal_id]["reopening_date"] == "2027-03-15"
 
-        r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": "2027-09-01"})
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"reopening_date": "2027-09-01", "reopening_date_note": "Moved re-flag"}
+        )
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] == "2027-09-01"
 
@@ -120,13 +122,20 @@ async def test_optional_and_must_be_a_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_patch_of_the_date_needs_no_justification_note() -> None:
-    """It is a deal COLUMN, never a ``field_overrides`` key — the FON-74 gate
-    does not see it, and it is reporting-only in the model anyway."""
+async def test_a_patch_of_the_date_needs_a_justification_note() -> None:
+    """Review I-6 — a deal COLUMN, never a ``field_overrides`` key, but since
+    topline v2 it moves where the default penetration ramp ends: a change on an
+    underwritten deal carries ``reopening_date_note`` (contract pinned in
+    ``test_topline_override_notes.py``)."""
     async with _client() as client:
         r = await client.post("/deals", json={"name": "Column, not override"})
         deal_id = r.json()["id"]
         r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": "2027-03-15"})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["keys"] == ["reopening_date"]
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"reopening_date": "2027-03-15", "reopening_date_note": "Re-flag"}
+        )
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] == "2027-03-15"
 

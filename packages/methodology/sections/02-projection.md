@@ -872,7 +872,8 @@ shown beneath it as a *model-detected* hint, but it never selects the year — a
 close**: projection Year 1 is the first operating year after close, so the default is projection
 Year 3 and the Overview reads "Year 3 after close". For a **material repositioning or re-flag** the
 analyst sets the **reopening / re-flag date** on the Overview's Investment Profile card (stored on
-the deal as `reopening_date`; a plain deal field, no justification note). The default then counts
+the deal as `reopening_date`; a change on an underwritten deal carries a justification note, since it
+moves where the default penetration ramp ends). The default then counts
 Year 3 from the *first full operating year after reopening* — a hotel reopening in March 2027 has
 2028 as its first full year, so Year 3 is 2030 — placed on the projection through the same calendar
 the Future P&L column headers use, and the Overview and Future P&L read "Year 3 after reopening (Mar

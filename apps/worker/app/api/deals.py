@@ -313,6 +313,13 @@ class UpdateDealBody(BaseModel):
     # FON-98 — the reopening / re-flag date; null clears it (the
     # stabilization default returns to Year 3 after acquisition close).
     reopening_date: date | None = None
+    # Review I-6 (topline fix) — the analyst's justification for a CHANGED
+    # reopening date on an underwritten (non-draft) deal: since topline v2 the
+    # date moves where the default penetration ramp ends, so it is a
+    # number-moving input like a ``field_overrides`` key. Not a column; it is
+    # recorded on the ``deal.updated`` audit row. A clear (null) or the same
+    # date again needs none.
+    reopening_date_note: str | None = Field(default=None, max_length=2000)
     # Sam #6 — STR market / submarket; null clears. Changing ``market``
     # without sending ``str_market_id`` clears the id (a typed market has
     # none), so a stale STR id can never sit under a different market name.
@@ -863,35 +870,26 @@ def _coerce_float(value: Any) -> float | None:
 #:                             stabilized yield on cost), like the target_irr /
 #:                             target_moic deal columns. No engine reads it; the
 #:                             Overview compares the derived actual against it.
-#:   index_methodology         FON-61 / E-028 — a METHOD choice (STR comp set /
-#:                             market benchmark / CoStar comp set) for Index
-#:                             Analysis; the analyst types no number, and it
-#:                             moves nothing unless a penetration target (which
-#:                             DOES need a note) is also set.
 #:   index_market_segment      which chain-scale segment the market benchmark
-#:                             reads — the same kind of choice.
-#:   topline_benchmark_level   FON-116 — which benchmark level (auto / comp set /
-#:                             submarket / market) the topline is penetrated
-#:                             against; a METHOD choice, the analyst types no
-#:                             number.
-#:   stabilization_year        selects the stabilized year the stabilized
-#:                             figures are read from. KNOWN GAP since topline v2
-#:                             (FON-116): it also ends the default penetration
-#:                             ramp, so it moves Years 1..S−1 — it stays exempt
-#:                             only until the Future P&L's Topline card collects
-#:                             a note for it (topline web task); then drop it
-#:                             here and in the web mirror together.
+#:                             reads — a method choice; since topline v2 the
+#:                             market level always reads the market-wide
+#:                             figures, so it moves no number at all.
+#:
+#: NOT exempt (review I-6, topline fix): ``stabilization_year`` (it ends the
+#: default penetration ramp, so it moves Years 1..S−1),
+#: ``topline_benchmark_level`` (the level Year 1 is penetrated against) and the
+#: retired ``index_methodology`` (read as a forced benchmark level). They move
+#: numbers, so they carry a note like every other engine input. The deal
+#: column ``reopening_date`` follows the same rule through
+#: ``reopening_date_note`` (``update_deal``).
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
-        "stabilization_year",
         "property_overview.name",
         "debt.completion_guarantee",
         "partnership.waterfall.tier_count",
         "exit_noi_basis",
         "target_stabilized_yoc",
-        "index_methodology",
         "index_market_segment",
-        "topline_benchmark_level",
     }
 )
 
@@ -2174,6 +2172,31 @@ async def update_deal(
             # FON-98 — carry the ISO string through the diff / audit trail;
             # the SET loop below re-binds it for the live dialect.
             changes["reopening_date"] = changes["reopening_date"].isoformat()
+    # Review I-6 — a changed reopening date on an underwritten deal carries a
+    # note (same 422 contract as a field_overrides key). The note is not a
+    # column: popped here, recorded on the audit row below.
+    reopening_note_raw = changes.pop("reopening_date_note", None)
+    reopening_note = (
+        reopening_note_raw.strip()
+        if isinstance(reopening_note_raw, str) and reopening_note_raw.strip()
+        else None
+    )
+    if "reopening_date" in changes and changes["reopening_date"] is not None and existing_lifecycle != "draft":
+        prior_reopening = _coerce_date_optional(existing._mapping.get("reopening_date"))
+        moved = (prior_reopening.isoformat() if prior_reopening else None) != changes["reopening_date"]
+        if moved and reopening_note is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "override_note_required",
+                    "keys": ["reopening_date"],
+                    "message": (
+                        "The reopening date moves where the default penetration ramp ends, so a "
+                        "change carries an analyst justification. Send it as "
+                        '"reopening_date_note": "why" beside "reopening_date".'
+                    ),
+                },
+            )
     # Sam #6 / FON-96 — market / submarket and their taxonomy keys.
     market_fields_touched = any(col in changes for col in _MARKET_COLUMNS)
     if "market" in changes and "str_market_id" not in changes:
@@ -2500,7 +2523,10 @@ async def update_deal(
             deal_id=str(deal_id),
             actor_id="system",
             action="deal.updated",
-            payload={"changes": list(changes.keys())},
+            payload={
+                "changes": list(changes.keys()),
+                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+            },
         )
     else:
         await _write_audit(
@@ -2509,7 +2535,10 @@ async def update_deal(
             deal_id=str(deal_id),
             actor_id="system",
             action="deal.updated",
-            payload={"changes": _changes_for_audit(changes)},
+            payload={
+                "changes": _changes_for_audit(changes),
+                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+            },
         )
     await session.commit()
     # Wave 3 W3.5 — pipeline-view cache invalidation. A draft is not in the

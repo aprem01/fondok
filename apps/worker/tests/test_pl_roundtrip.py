@@ -262,7 +262,9 @@ def _assumption_rows() -> list[dict]:
     return [
         {"key": a.key, "label": a.label, "value": vals.get(a.key), "unit": a.unit,
          "source": "seed", "method": a.method,
-         "note_required": a.key != "stabilization_year", "current_note": None}
+         # Review I-6 — every assumption on the sheet moves a number, the
+         # stabilization year included (it ends the default penetration ramp).
+         "note_required": True, "current_note": None}
         for a in ASSUMPTIONS
     ]
 
@@ -290,8 +292,16 @@ def _parse(data: bytes, values: dict):
     cur = {r["key"]: r["value"] for r in _assumption_rows()}
     return parse_projections_import(
         data, deal_id="deal-1", current_values=values, current_assumptions=cur,
-        needs_note=lambda k: k != "stabilization_year",
+        needs_note=_real_note_rule,
     )
+
+
+def _real_note_rule(key: str) -> bool:
+    """The API's own rule (``pl_roundtrip._needs_note``) — since review I-6
+    the stabilization year needs a note like every other sheet assumption."""
+    from app.api.pl_roundtrip import _needs_note
+
+    return _needs_note(key)
 
 
 def test_projection_export_lists_every_assumption_with_key_and_source() -> None:
@@ -325,7 +335,7 @@ def test_projection_import_note_rule_and_computed_cells() -> None:
     wa.cell(row=keys["revpar_growth"], column=3).value = 0.05
     wa.cell(row=keys["revpar_growth"], column=9).value = "Broker comp set supports 5%"
     wa.cell(row=keys["expense_growth"], column=3).value = 0.04            # no note → rejected
-    wa.cell(row=keys["stabilization_year"], column=3).value = 4           # exempt → no note ok
+    wa.cell(row=keys["stabilization_year"], column=3).value = 4           # no note → rejected (I-6)
     wa.cell(row=keys["hold_years"], column=3).value = 5.5                 # not a whole number
     wa.cell(row=keys["mgmt_fee_pct"], column=3).value = "3%"              # non-numeric
     r = wa.max_row + 1
@@ -340,10 +350,12 @@ def test_projection_import_note_rule_and_computed_cells() -> None:
 
     p = _parse(buf.getvalue(), values)
     assert [(c["key"], c["old_value"], c["new_value"]) for c in p["changes"]] == [
-        ("revpar_growth", 0.045, 0.05), ("stabilization_year", 3, 4),
+        ("revpar_growth", 0.045, 0.05),
     ]
     assert p["changes"][0]["note"] == "Broker comp set supports 5%"
-    assert [(x["key"], x["reason"]) for x in p["rejected"]] == [("expense_growth", "note_required")]
+    assert sorted((x["key"], x["reason"]) for x in p["rejected"]) == [
+        ("expense_growth", "note_required"), ("stabilization_year", "note_required"),
+    ]
     assert sorted(x["key"] for x in p["non_numeric"]) == ["hold_years", "mgmt_fee_pct"]
     assert [x["reason"] for x in p["mapping_errors"]] == ["unknown_key"]
     assert len(p["computed_edits"]) == 1
@@ -361,7 +373,7 @@ async def test_projection_apply_writes_field_overrides_through_update_deal() -> 
     body = ProjApplyBody(changes=[
         {"key": "revpar_growth", "new_value": 0.0512, "note": "STR forecast"},
         {"key": "expense_growth", "new_value": 0.05, "note": ""},     # note required → skipped
-        {"key": "stabilization_year", "new_value": 2, "note": ""},    # exempt
+        {"key": "stabilization_year", "new_value": 2, "note": "IC: Year 2"},  # note required (I-6)
         {"key": "made_up", "new_value": 1, "note": "x"},
     ])
     async with get_session_factory()() as s:
@@ -381,7 +393,7 @@ async def test_projection_apply_writes_field_overrides_through_update_deal() -> 
         )).fetchall()
     fo = json.loads(row[0])
     assert fo["revpar_growth"] == {"value": 0.0512, "note": "STR forecast"}
-    assert fo["stabilization_year"] == 2
+    assert fo["stabilization_year"] == {"value": 2, "note": "IC: Year 2"}
     assert fo["exit_cap_rate"] == {"value": 0.08, "note": "kept"}  # untouched
     assert "expense_growth" not in fo
     assert ("override.set",) in [tuple(a) for a in audits]
