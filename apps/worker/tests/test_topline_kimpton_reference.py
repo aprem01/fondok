@@ -91,23 +91,31 @@ def str_rows() -> list:
     return _rows("str_ang_2025_05_extracted.json", "STR_TREND")
 
 
-def _run(bench: BenchmarkResolution, overrides: dict[str, object], rows: list):
+def _run(
+    bench: BenchmarkResolution,
+    overrides: dict[str, object],
+    rows: list,
+    *,
+    close: str = "2025-12-31",
+    years: list[int] = YEARS,
+):
+    hold = len(years)
     base = dict(overrides)
     inputs = read_topline_inputs(base, {}, set(overrides))
     growth = resolve_growth_by_year(
-        rows, inputs.growth, calendar_years=YEARS, hold_years=HOLD,
+        rows, inputs.growth, calendar_years=years, hold_years=hold,
         class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
         first_calendar_year=(bench.base_calendar_year + 1) if bench.base_calendar_year else None,
     )
-    build = build_topline(bench, growth, inputs, hold_years=HOLD, t12=None)
+    build = build_topline(bench, growth, inputs, hold_years=hold, t12=None)
     out = RevenueEngine().run(
         RevenueEngineInput(
             deal_id=uuid4(),
             keys=132,
             starting_occupancy=0.83,  # the subject's own level — never read: every year is driven
             starting_adr=233.45,
-            hold_years=HOLD,
-            acquisition_close_date="2025-12-31",
+            hold_years=hold,
+            acquisition_close_date=close,
             occupancy_growth=0.0,
             adr_growth=0.0,
             occupancy_growth_by_year=build.occupancy_growth_by_year,
@@ -223,3 +231,48 @@ def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
     assert out.years[0].occupancy == pytest.approx(expected_occ[0], rel=1e-6)
     assert out.years[1].occupancy == pytest.approx(expected_occ[1], rel=1e-6)
     assert out.years[0].adr == pytest.approx(310.7753 * 1.018 * 0.85, rel=1e-6)
+
+
+#: Review I-4 (a) — the same reference inputs keyed for Sam's REAL close,
+#: 2025-09-30. Operating Year 1 is the calendar year of the first operating
+#: month (October 2025 → 2025, ``projection_start_year``), so model year y is
+#: calendar 2024 + y: her 2026 column is Fondok's Year 2. Every per-year key
+#: moves one index later; Year 1 (2025, the TTM benchmark's own year) is
+#: outside her tab — no growth, penetration 100 for occupancy (her MPI row) and
+#: the default 85% ramp on the ADR side (her ARI row starts in 2026).
+REAL_CLOSE = "2025-09-30"
+REAL_CLOSE_YEARS = list(range(2025, 2033))
+SCENARIO_REAL_CLOSE: dict[str, object] = {
+    "occupancy_growth_by_year": [None, 0.0, None, None, None, 0.005, 0.0, 0.0],
+    "adr_growth_by_year": [None, -0.02, None, None, None, 0.02, 0.0425, 0.04],
+    "index_mpi_target": 100,
+    "index_ari_target": 100,
+    "index_mpi_target_by_year": [100, 100, 100, 100, 100],
+    "index_ari_target_by_year": [None, 97, 98, 99, 100],
+}
+
+
+def test_reference_path_on_the_real_close_date_is_the_tab_one_model_year_later() -> None:
+    build, out = _run(_keyed_comp_set(), SCENARIO_REAL_CLOSE, costar_rows(), close=REAL_CLOSE, years=REAL_CLOSE_YEARS)
+    subj = REFERENCE["SUBJECT PROPERTY"]
+    assert out.projection_calendar_years == REAL_CLOSE_YEARS
+    # Year 1 = 2025: the comp-set level as reported (not grown), ADR at the ramp.
+    assert build.status["growth_by_year"][0]["applied"] is False
+    assert out.years[0].occupancy == pytest.approx(0.755, rel=1e-12)
+    assert out.years[0].adr == pytest.approx(310.78 * 0.85, rel=1e-12)
+    # Years 2–8 = her 2026–2032 columns, exactly.
+    for i, cal in enumerate(REAL_CLOSE_YEARS[1:], start=1):
+        y, k = out.years[i], str(cal)
+        assert y.occupancy == pytest.approx(subj["Occupancy"][k], rel=1e-9, abs=0), cal
+        assert y.adr == pytest.approx(subj["ADR"][k], rel=1e-9, abs=0), cal
+        assert y.revpar == pytest.approx(subj["RevPAR"][k], rel=1e-9, abs=0), cal
+
+
+def test_unshifted_keys_on_the_real_close_date_do_not_reproduce_the_tab() -> None:
+    """The trap the review found: Sam's tab keyed as-is on her real close
+    places her 2026 growth on 2025 — the pinned mismatch, so nobody later
+    'discovers' it."""
+    _build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows(), close=REAL_CLOSE, years=list(range(2025, 2032)))
+    subj = REFERENCE["SUBJECT PROPERTY"]
+    # Year 2 (2026) runs at ARI 98 over a 2026 ADR grown by her 2027 −0.6%.
+    assert out.years[1].adr != pytest.approx(subj["ADR"]["2026"], rel=1e-6)

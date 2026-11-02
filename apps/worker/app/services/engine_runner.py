@@ -2759,6 +2759,15 @@ async def _load_engine_inputs(
     from .index_methodology import load_index_rows
 
     index_rows = await load_index_rows(session, deal_id=deal_id, tenant_id=effective_tenant)
+    # Review I-4 — with neither a close date nor an underwriting as-of date,
+    # the model calendar for a document forecast is assumed from the comp
+    # report's as-of (the comp lookback's anchor order); read only then.
+    topline_comp_dates: list[date] = []
+    if _iso_date_or_none(base.get("acquisition_close_date")) is None and underwriting_as_of is None:
+        _comps, _comp_info = await _load_comp_transactions(
+            session, deal_id=deal_id, tenant_id=effective_tenant, as_of=None, with_rows=True
+        )
+        topline_comp_dates = list(_comp_info.report_dates)
     _apply_topline(
         base,
         sources,
@@ -2771,6 +2780,7 @@ async def _load_engine_inputs(
         policy=data_policy,
         str_noted_keys=frozenset(str_noted_keys),
         t12=_t12_reference(revenue_actuals, revenue_prov),
+        comp_report_dates=topline_comp_dates,
     )
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
@@ -2928,8 +2938,16 @@ def _apply_topline(
     policy: TenantDataPolicies,
     str_noted_keys: frozenset[str],
     t12: ToplineReference | None,
+    comp_report_dates: Sequence[date] = (),
 ) -> None:
     """FON-116 / FON-117 — resolve the topline and park it on ``base``.
+
+    Review I-4 — the model calendar: the acquisition close date; with none,
+    and a document forecast on file, a calendar ASSUMED from the underwriting
+    as-of date, else the comp report's as-of (``comp_report_dates``, read by
+    the loader only when there is neither a close nor an as-of date), else
+    the run date. ``topline_status.calendar_anchor``
+    names the anchor.
 
     Writes ``base["topline"]`` (the ``ToplineDrivers`` payload), the per-year
     growth lists, ``base[TOPLINE_STATUS_KEY]`` (the ``topline_status`` block),
@@ -2946,8 +2964,14 @@ def _apply_topline(
         build_topline,
         read_topline_inputs,
     )
+    from ..engines.timeline import parse_iso_date
+    from .topline import NO_CALENDAR_ANCHOR, calendar_anchor
     from .topline_benchmark import resolve_benchmark
-    from .topline_growth import class_bucket_from_positioning, resolve_growth_by_year
+    from .topline_growth import (
+        class_bucket_from_positioning,
+        document_growth_on_file,
+        resolve_growth_by_year,
+    )
 
     try:
         hold = int(base.get("hold_years") or 5)
@@ -2967,10 +2991,20 @@ def _apply_topline(
     bench = resolve_benchmark(
         knowable, class_bucket=bucket, forced_level=inputs.forced_level, policy=policy, gated_doc_types=gated
     )
+    close = parse_iso_date(_iso_date_or_none(base.get("acquisition_close_date")))
+    if close is not None or document_growth_on_file(knowable):
+        anchor = calendar_anchor(
+            close,
+            underwriting_as_of=as_of,
+            comp_report_dates=list(comp_report_dates),
+            today=date.today(),
+        )
+    else:
+        anchor = NO_CALENDAR_ANCHOR
     growth = resolve_growth_by_year(
         knowable,
         inputs.growth,
-        calendar_years=_cal_years(_iso_date_or_none(base.get("acquisition_close_date")), hold),
+        calendar_years=_cal_years(anchor.date.isoformat(), hold) if anchor.date is not None else [],
         hold_years=hold,
         class_bucket=bucket,
         policy=policy,
@@ -2985,6 +3019,9 @@ def _apply_topline(
     base["adr_growth_by_year"] = build.adr_growth_by_year
     status = dict(build.status)
     status["data_policy"] = policy.as_dict()
+    status["calendar_anchor"] = anchor.as_dict()
+    if anchor.assumed:
+        status["notes"] = [*status.get("notes", []), anchor.label]
     base[_STATUS] = status
     # The per-year growth lists carry the source of their first projected
     # out-year (the per-year sources travel on ``topline_status``) — the

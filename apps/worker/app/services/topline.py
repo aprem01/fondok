@@ -323,6 +323,86 @@ def read_topline_inputs(
     )
 
 
+#: Review I-4 — where the model calendar comes from, most specific first. The
+#: same order the comp lookback measures from (``engine_runner.
+#: comp_lookback_anchor``), behind the deal's own close date.
+CALENDAR_ANCHOR_CLOSE = "acquisition_close"
+CALENDAR_ANCHOR_LABELS: dict[str, str] = {
+    CALENDAR_ANCHOR_CLOSE: "the acquisition close",
+    "underwriting_as_of": "the underwriting as-of date",
+    "comp_report_as_of": "the comp report's as-of date",
+    "run_date": "the run date",
+}
+
+
+@dataclass(frozen=True)
+class CalendarAnchor:
+    """The date the model years are placed from, and why.
+
+    Operating Year 1 is the calendar year of the first operating month (the
+    anchor + 1 month — ``revenue.projection_start_year``, FON-41): a
+    2025-09-30 close puts Year 1 on 2025, a 2025-12-31 close on 2026. With no
+    close date the anchor is ASSUMED (underwriting as-of, else the comp
+    report's as-of, else the run date) and used only to place a document
+    forecast; the statement's calendar stays blank."""
+
+    source: str | None
+    date: date | None
+    assumed: bool
+
+    @property
+    def first_model_year(self) -> int | None:
+        from ..engines.revenue import projection_start_year
+
+        return projection_start_year(self.date.isoformat()) if self.date is not None else None
+
+    @property
+    def label(self) -> str:
+        if self.source is None or self.date is None:
+            return "No acquisition close date and no market forecast to place — the model years carry no calendar."
+        where = CALENDAR_ANCHOR_LABELS.get(self.source, self.source)
+        if not self.assumed:
+            return (
+                f"Model calendar from {where} {self.date.isoformat()}: Year 1 = {self.first_model_year} "
+                "(the calendar year of the first operating month)."
+            )
+        return (
+            f"No acquisition close date — the market forecast is placed on a calendar assumed from {where} "
+            f"{self.date.isoformat()} (Year 1 = {self.first_model_year}). Set the acquisition close date to "
+            "place it exactly."
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "date": self.date.isoformat() if self.date is not None else None,
+            "assumed": self.assumed,
+            "first_model_year": self.first_model_year,
+            "label": self.label,
+        }
+
+
+NO_CALENDAR_ANCHOR = CalendarAnchor(source=None, date=None, assumed=False)
+
+
+def calendar_anchor(
+    close: date | None,
+    *,
+    underwriting_as_of: date | None,
+    comp_report_dates: Sequence[date],
+    today: date,
+) -> CalendarAnchor:
+    """The model-calendar anchor: the acquisition close; else (assumed) the
+    underwriting as-of date, the latest comp report as-of, the run date."""
+    if close is not None:
+        return CalendarAnchor(source=CALENDAR_ANCHOR_CLOSE, date=close, assumed=False)
+    if underwriting_as_of is not None:
+        return CalendarAnchor(source="underwriting_as_of", date=underwriting_as_of, assumed=True)
+    if comp_report_dates:
+        return CalendarAnchor(source="comp_report_as_of", date=max(comp_report_dates), assumed=True)
+    return CalendarAnchor(source="run_date", date=today, assumed=True)
+
+
 @dataclass(frozen=True)
 class LongRunGrowth:
     """A source's own long-run growth figure (CBRE Hotel Horizons "Long Run
@@ -656,7 +736,10 @@ __all__ = [
     "KEY_ADR_GROWTH_BY_YEAR",
     "KEY_OCC_GROWTH_BY_YEAR",
     "KEY_RAMP_BY_YEAR",
+    "CalendarAnchor",
     "LongRunGrowth",
+    "NO_CALENDAR_ANCHOR",
+    "calendar_anchor",
     "LEGACY_ADR_GROWTH",
     "LEGACY_OCC_GROWTH",
     "LEGACY_STR_SEED_FLAG",

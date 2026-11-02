@@ -291,6 +291,20 @@ def _cbre_series(rows: Sequence[FieldRow]) -> tuple[dict[str, dict[int, _DocYear
     return {"occupancy": {}, "adr": {}}, None
 
 
+_DOC_CHANGE_RE = re.compile(
+    r"^(?:cbre_horizons\.segment_all|market_study\.class\.[a-z_]+|market_study\.trend)"
+    r"\.(?:19|20)\d{2}\.(?:occupancy|adr)_change_pct$"
+)
+
+
+def document_growth_on_file(rows: Sequence[FieldRow]) -> bool:
+    """Does any row carry a per-calendar-year occupancy / ADR change (CBRE
+    Horizons All Hotels, a CoStar class or overall series)? Review I-4: such
+    a forecast is placed even without a close date (on an assumed calendar),
+    never reported as "no market forecast"."""
+    return any(_DOC_CHANGE_RE.match(r.lname) for r in rows)
+
+
 def _is_actual(period: str | None) -> bool:
     return (period or "").startswith(("actual", "hist"))
 
@@ -596,6 +610,7 @@ __all__ = [
     "class_bucket_from_positioning",
     "coerce_growth_list",
     "costar_withheld",
+    "document_growth_on_file",
     "growth_year",
     "resolve_growth_by_year",
     "vendor_of",

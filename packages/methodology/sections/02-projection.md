@@ -380,8 +380,16 @@ hotel's class → carried forward past the last year of the series the previous 
 data policy is {{reason:license_withheld}}. A CoStar report extracted before the class series were
 read (pipeline before v9, no class table) is never "not in the report": the class's years are
 {{reason:reextract_needed}} ("report on file but extracted before class forecasts were read —
-re-extract") and the overall series is not substituted. Document growth needs the acquisition close date to be
-placed on the calendar. Retired settings are read with {{reason:legacy_key_translated}}: the Index
+re-extract") and the overall series is not substituted.
+
+<!-- source: apps/worker/app/engines/revenue.py (projection_start_year), services/topline.py (calendar_anchor, CalendarAnchor), services/engine_runner.py (_apply_topline) -->
+Model years sit on the calendar from the acquisition close: Year 1 is the calendar year of the first
+operating month (close + 1 month), so a 30 September 2025 close puts Year 1 on 2025 and a
+31 December 2025 close puts it on 2026. A benchmark whose own period is Year 1's calendar year is
+used as reported; growth applies from the next year. With no close date a document forecast is
+still used: it is placed on a calendar assumed from the underwriting as-of date, else the comp
+report's as-of date, else the run date (the comp lookback's order), and the status names the anchor
+and asks for the close date. Only when there is no forecast at all does "no market forecast" show. Retired settings are read with {{reason:legacy_key_translated}}: the Index
 Analysis market growth reads as your all-years growth, the "Use STR rates" switch is ignored, and a
 Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year).
 

@@ -94,4 +94,8 @@ atlas:
   # precedence in `projection`; its detailed level next to the always-included
   # sections now needs 39,029 characters ("What exit cap rate does the model
   # use?" — tests/test_researcher_methodology.py).
-  max_chars: 40000
+  # 42000 (≈10.5k tokens), was 40000: the topline review fixes (2026-11-02)
+  # document the Year-1 basis refusal, the re-extract rule, the exit-growth
+  # convention and the model calendar in `projection`; that question now
+  # needs 40,998 characters.
+  max_chars: 42000
