@@ -776,6 +776,14 @@ describe('DebtTab — floating build-up (index + spread, floor / cap)', () => {
     expect(screen.getByTestId('edit-cap')).toHaveTextContent('None');
   });
 
+  it('pending floating terms: the all-in awaits a spread and says debt service runs at the rate on file', () => {
+    const PENDING = { ...FLOATING, spread: null, all_in_rate: null, terms_pending: true };
+    currentOutputs = makeOutputs({ interest_rate: 0.068, debt_stack: { tranches: [PENDING], total_debt: 23_000_000 } });
+    render(<DebtTab />);
+    expect(screen.getByText('Awaiting spread')).toBeInTheDocument();
+    expect(screen.getByText(/Floating terms pending — debt service runs at the 6\.80% rate on file until a spread is entered/)).toBeInTheDocument();
+  });
+
   it('editing the spread / index / floor writes fractions on the senior tranche keys', async () => {
     currentOutputs = makeOutputs({ interest_rate: 0.073, debt_stack: { tranches: [FLOATING], total_debt: 23_000_000 } });
     render(<DebtTab />);

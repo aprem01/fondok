@@ -236,7 +236,7 @@ def test_floating_senior_without_spread_is_pending_and_schedule_falls_back() -> 
     sr = out.debt_stack.tranches[0]
     assert sr.terms_pending is True and sr.all_in_rate is None
     assert out.interest_rate == pytest.approx(0.068)
-    assert any("terms not specified" in w.lower() for w in out.debt_stack.warnings)
+    assert any("floating terms pending" in w.lower() for w in out.debt_stack.warnings)
 
 
 def test_pace_funded_with_rate_and_amortization_terms_echo() -> None:

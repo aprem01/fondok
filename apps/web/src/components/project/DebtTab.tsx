@@ -898,7 +898,11 @@ export default function DebtTab() {
             kind: seniorPending ? 'awaiting' as const : 'calc' as const,
             state: seniorPending ? 'awaiting_data' as const : 'calculated' as const,
             value: seniorPending ? 'Awaiting spread' : pctv(allInRate, 2), bold: !seniorPending,
-            note: 'Benchmark (clamped) + Spread' },
+            // Pending floating terms: the engine still services the senior at
+            // the rate on file (the stack carries that same debt service).
+            note: seniorPending
+              ? `Floating terms pending — debt service runs at the ${has(wRate) ? pctv(wRate, 2) : 'rate'} rate on file until a spread is entered`
+              : 'Benchmark (clamped) + Spread' },
         ]
       : [
           { id: 'rate', label: 'Fixed Interest Rate', kind: 'input' as const, state: 'assumption' as const,

@@ -226,9 +226,15 @@ def test_fee_dollars_are_senior_beside_the_senior_pct_and_totals_follow_the_rule
     assert pr.total_exit_fee_usd == pytest.approx(pr.exit_fee_at_sale_usd)
 
 
-def test_a_senior_with_pending_floating_terms_is_said_to_run_on_the_rate_on_file() -> None:
+def test_a_senior_with_pending_floating_terms_is_carried_at_the_rate_on_file() -> None:
     out = _debt({"tranches": {0: {"rate_type": "floating"}}})
+    sr = out.debt_stack.tranches[0]
+    # The floating terms are pending, but the schedule services the senior at
+    # the rate on file — and the stack carries that SAME debt service.
+    assert sr.terms_pending is True
+    assert sr.annual_debt_service == pytest.approx(out.schedule[0].debt_service)
+    assert out.debt_stack.total_annual_debt_service == pytest.approx(out.annual_debt_service)
+    assert out.debt_stack.year_one_dscr == pytest.approx(out.year_one_dscr)
     w = " ".join(out.debt_stack.warnings)
-    assert "terms not specified" in w
-    assert "rate on file" in w
+    assert "floating terms pending" in w and "rate on file" in w
     assert "excluded from debt service" not in w

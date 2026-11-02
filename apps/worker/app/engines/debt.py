@@ -1166,6 +1166,29 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                         payload.noi_by_year[0],
                         debt_stack.total_annual_debt_service,
                     )
+            elif sr.terms_pending and senior_annual_ds > 0:
+                # Floating terms pending (no spread): the schedule — and so the
+                # headline, DSCR and Returns — services the senior at the rate
+                # on file. The stack carries that SAME debt service, so the two
+                # agree; the tranche stays ``terms_pending`` and says so.
+                sr.annual_debt_service = senior_annual_ds
+                debt_stack.total_annual_debt_service += senior_annual_ds
+                debt_stack.priced_debt += sr.loan_amount
+                if payload.noi_by_year and debt_stack.total_annual_debt_service > 0:
+                    debt_stack.year_one_dscr = _coverage_ratio(
+                        payload.noi_by_year[0],
+                        debt_stack.total_annual_debt_service,
+                    )
+                _pending_prefix = f"{sr.label}: floating terms pending"
+                debt_stack.warnings = [
+                    (
+                        f"{sr.label}: floating terms pending — debt service runs at the "
+                        f"{annual_rate * 100:.2f}% rate on file until they are entered."
+                    )
+                    if w.startswith(_pending_prefix)
+                    else w
+                    for w in debt_stack.warnings
+                ]
         # Priced junior tranches (PACE once it has a rate): a monthly schedule
         # across the hold, rolled up per year. Their stack Year-1 debt service
         # is reconciled to that roll-up (as the senior's is above), so the

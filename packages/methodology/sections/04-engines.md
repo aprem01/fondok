@@ -250,7 +250,10 @@ capitalised from it.
   begins, and maturity. Fixed prices off the entered coupon; Floating prices off the index assumption
   plus spread, clamped to an optional floor / cap. Switching basis asks for the term the new basis
   needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows
-  Fondok's flat SOFR assumption and says so — it is not market data.
+  Fondok's flat SOFR assumption and says so — it is not market data. If floating is picked without a
+  spread, the floating terms are pending: the all-in rate shows "Awaiting spread", and the senior is
+  serviced at the rate on file meanwhile — the schedule, the headline DSCR and the capital stack carry
+  the same debt service, and the tab says so.
 - **PACE loan (tranche 2).** One leverage rule: a tranche counts in Total Debt, LTV, LTC and debt
   yield exactly when the cash flows carry it — the senior always, the PACE loan once it is funded
   **and** priced. Once a rate is entered the tranche is in every cash flow: its principal is a **source
