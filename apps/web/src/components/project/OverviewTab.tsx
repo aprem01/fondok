@@ -686,7 +686,6 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   const wPurchase = cap('purchase_price');
   const wPricePerKey = cap('price_per_key');
-  const wEntryCap = cap('entry_cap_rate');
   const wTotalCapital = cap('total_capital_usd') ?? cap('total_capital');
   const wEquity = cap('equity_amount');
   const wDebtAmount = cap('debt_amount');
@@ -714,13 +713,19 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // Derived (all engine-sourced or engine-arithmetic — never fabricated).
   const purchase = wPurchase ?? findUse(/purchase/i);
-  const pricePerKey = wPricePerKey ?? (has(purchase) && has(keys) ? purchase / keys : undefined);
   // W5 "price" — the price on screen (the analyst's saved entry first, then
   // the engine's, then what the loader resolves: deal record / OM asking
   // price) and the Entry Cap Rate calculated FROM it.
   const priceInput = resolvePurchasePrice({ overrides, enginePrice: purchase, resolved: priceSource });
-  const entryCapCalc = entryCapRate(y1Noi, priceInput.value);
-  const entryCap = wEntryCap ?? entryCapCalc.value;
+  const entryCapCalc = entryCapRate(y1Noi, priceInput.value, outputs?.engines?.expense);
+  // The capital engine publishes no entry cap rate: it is always this
+  // derivation, so it can never disagree with the price on screen.
+  const entryCap = entryCapCalc.value;
+  // Price / Key follows the same price on screen, so a just-saved price moves
+  // it with the Entry Cap Rate rather than leaving it on the last run's price.
+  const pricePerKey = has(priceInput.value) && has(keys)
+    ? priceInput.value / keys
+    : wPricePerKey;
   const closing = findUse(/closing/i);
   const totalCapital = wTotalCapital;
   const totalPerKey = has(totalCapital) && has(keys) ? totalCapital / keys : undefined;

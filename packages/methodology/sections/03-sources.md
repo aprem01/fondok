@@ -181,9 +181,10 @@ price is kept as a note and sends nothing. There is no default price: until a pr
 engines that need it (capital, debt, returns, sensitivity, partnership and cash flow) do not run and
 say so. Enter the price at any time on the Overview (Entry Valuation) or on CAPEX → Deal Summary —
 the CAPEX tab shows the Purchase Price and Keys inputs even when the model could not run, pre-filled
-from the OM's stated asking price when it has one, or saying the OM does not state one. Your entry
-is saved as an Analyst Override with its note and the model re-runs. The order is your entry, then
-the deal record, then the OM's asking price; a price is never inferred from a broker cap rate.
+from the OM's stated asking price when it has one (it fills in once the OM has been read), or saying
+the OM does not state one; it never claims there is no OM when the Data Room could not be read. Your
+entry is saved as an Analyst Override with its note and the model re-runs. The order is your entry,
+then the deal record, then the OM's asking price; a price is never inferred from a broker cap rate.
 
 :::
 
@@ -739,9 +740,12 @@ or CAPEX → Deal Summary (one shared editor, `PurchasePriceField`); the CAPEX t
 Purchase Price / Keys inputs instead of an empty state when capital failed for a missing identity
 input, pre-filled from the OM asking-price row (`asking_price.headline_price_usd`,
 `asking_price.purchase_price` or `headline_price_usd`) when one was extracted, or stating that the
-OM does not give one. The entry is written as `field_overrides.purchase_price` `{value, note}` and
-triggers a run. Precedence: analyst override > deal row > OM asking price; the loader never derives
-a price from a broker cap rate or a price per key. The Property Name is not a deal-row field — see
+OM does not give one — or that it is still being read while an OM extracts, or that the Data Room
+could not be loaded (with a retry); the sources re-read after each run and when an OM finishes
+extracting, so the pre-fill needs no reload. Run buttons there start the real run once. The entry is
+written as `field_overrides.purchase_price` `{value, note}` and triggers a run. Precedence: analyst
+override > deal row > OM asking price; the loader never derives a price from a broker cap rate or a
+price per key. The Property Name is not a deal-row field — see
 below.
 
 :::

@@ -65,6 +65,8 @@ vi.mock('@/lib/hooks/useVariance', () => ({
 vi.mock('@/lib/hooks/useEngineOutputs', () => ({
   useEngineOutputs: () => ({ outputs: null }),
   getEngineField: () => null,
+  // The deal page's ProvenanceProvider re-reads its sources after a run.
+  subscribeEngineOutputs: () => () => {},
 }));
 vi.mock('@/lib/assumptions/fromDeal', () => ({ assumptionsFromDeal: () => ({}) }));
 vi.mock('@/stores/assumptionsStore', () => ({

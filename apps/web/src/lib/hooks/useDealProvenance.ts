@@ -8,9 +8,11 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -19,6 +21,7 @@ import { api, isWorkerConnected } from '@/lib/api';
 import type { AssumptionSourcesResponse, AssumptionSourceField } from '@/lib/api';
 import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 import { DisplacementStatusContext } from '@/lib/hooks/useDisplacementStatus';
+import { subscribeEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 
 export interface ResolvedSource {
   /**
@@ -49,6 +52,8 @@ export interface ResolvedSource {
 
 interface ProvCtx {
   get: (key: string) => ResolvedSource | null;
+  /** Re-read the payload (W5 "price": after an OM finishes extracting). */
+  refresh: () => void;
   /** True once the assumption_sources payload has loaded. */
   ready: boolean;
   /** True once the fetch has finished (success OR failure), or when there is
@@ -57,7 +62,7 @@ interface ProvCtx {
   settled: boolean;
 }
 
-const Ctx = createContext<ProvCtx>({ get: () => null, ready: false, settled: false });
+const Ctx = createContext<ProvCtx>({ get: () => null, refresh: () => {}, ready: false, settled: false });
 
 export function ProvenanceProvider({
   dealId,
@@ -68,6 +73,17 @@ export function ProvenanceProvider({
 }) {
   const [data, setData] = useState<AssumptionSourcesResponse | null>(null);
   const [settled, setSettled] = useState(false);
+  // W5 "price" — the payload is no longer read once per deal: a run (which
+  // follows every input save) or an explicit refresh (an OM finished
+  // extracting) re-reads it, so a source / pre-fill never needs a page
+  // reload. A re-read keeps the previous payload on screen until it lands.
+  const [nonce, setNonce] = useState(0);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  useEffect(() => {
+    if (!dealId) return;
+    return subscribeEngineOutputs(dealId, refresh);
+  }, [dealId, refresh]);
+  const loadedFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isWorkerConnected() || !dealId || /^\d+$/.test(dealId)) {
@@ -75,7 +91,11 @@ export function ProvenanceProvider({
       return;
     }
     const ac = new AbortController();
-    setSettled(false);
+    if (loadedFor.current !== dealId) {
+      loadedFor.current = dealId;
+      setData(null);
+      setSettled(false);
+    }
     api.deals
       .assumptionSources(dealId, ac.signal)
       .then(setData)
@@ -84,12 +104,13 @@ export function ProvenanceProvider({
         if (!ac.signal.aborted) setSettled(true);
       });
     return () => ac.abort();
-  }, [dealId]);
+  }, [dealId, nonce]);
 
   const value = useMemo<ProvCtx>(
     () => ({
       ready: !!data,
       settled,
+      refresh,
       get: (key: string) => {
         if (!data) return null;
         const src = data.sources?.[key];
@@ -109,7 +130,7 @@ export function ProvenanceProvider({
         };
       },
     }),
-    [data, settled],
+    [data, settled, refresh],
   );
 
   // FON-89 — the Year-1 displacement verdict rides on the same payload; it is
@@ -130,6 +151,11 @@ export function ProvenanceProvider({
 export function useProvenanceState(): { ready: boolean; settled: boolean } {
   const { ready, settled } = useContext(Ctx);
   return { ready, settled };
+}
+
+/** Re-read the deal's provenance map (no-op outside a ProvenanceProvider). */
+export function useProvenanceRefresh(): () => void {
+  return useContext(Ctx).refresh;
 }
 
 /** Resolve one assumption key's source, or null when unknown / no provider. */

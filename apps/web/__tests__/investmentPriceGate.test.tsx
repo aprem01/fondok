@@ -62,13 +62,17 @@ vi.mock('@/lib/hooks/useDeal', () => ({
 }));
 
 let mockDocs: Array<{ id: string; doc_type: string | null; filename: string; status: string }> = [];
+let mockDocsError: string | null = null;
+const docsRefreshSpy = vi.fn();
 vi.mock('@/lib/hooks/useDocuments', () => ({
-  useDocuments: () => ({ documents: mockDocs, extractions: {}, settled: true, loading: false, error: null }),
+  useDocuments: () => ({
+    documents: mockDocs, extractions: {}, settled: true, loading: false, error: mockDocsError, refresh: docsRefreshSpy,
+  }),
 }));
 
 vi.mock('@/lib/hooks/useHistoricalBaseline', () => ({ useHistoricalBaseline: () => ({ baseline: null }) }));
 
-const engineRunSpy = vi.fn(async () => {});
+const engineRunSpy = vi.fn((): Promise<void> => Promise.resolve());
 vi.mock('@/lib/hooks/useEngineRun', () => ({
   useEngineRun: () => ({ run: engineRunSpy, running: false, error: null }),
 }));
@@ -96,8 +100,10 @@ vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 let mockSource: { source: string; value: unknown; reason: string | null; field: Record<string, unknown> | null } | null = null;
+const provenanceRefreshSpy = vi.fn();
 vi.mock('@/lib/hooks/useDealProvenance', () => ({
   useSource: (key: string | undefined) => (key === 'purchase_price' ? mockSource : null),
+  useProvenanceRefresh: () => provenanceRefreshSpy,
 }));
 vi.mock('@/lib/hooks/useValueTrace', () => ({ useTraceGraph: () => ({ get: () => null }) }));
 
@@ -114,6 +120,10 @@ beforeEach(() => {
   mockDeal = { id: 'deal-uuid-1', keys: 132, field_overrides: {} };
   mockDocs = [OM_DOC];
   mockSource = { source: '', value: null, reason: 'missing_identity_inputs', field: null };
+  mockDocsError = null;
+  docsRefreshSpy.mockClear();
+  provenanceRefreshSpy.mockClear();
+  engineRunSpy.mockImplementation(() => Promise.resolve());
 });
 
 describe('CAPEX — capital refused for a missing purchase price', () => {
@@ -216,5 +226,84 @@ describe('CAPEX — capital has no output for another reason', () => {
     render(<InvestmentTab />);
     fireEvent.click(screen.getByRole('button', { name: 'Run Investment Engine' }));
     await waitFor(() => expect(engineRunSpy).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('CAPEX — round 2: never assert what the Data Room has not said', () => {
+  it('a failed documents fetch is an error with Retry — never "no OM"', () => {
+    mockDocs = [];
+    mockDocsError = 'Worker unreachable';
+    render(<InvestmentTab />);
+    expect(screen.getByTestId('identity-inputs-card')).toBeInTheDocument();
+    expect(screen.queryByText(/No Offering Memorandum/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/doesn't state/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn't load the Data Room/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(docsRefreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed documents fetch never shows the "Upload an OM" card', () => {
+    mockOutputs = NEVER_RUN;
+    mockDocs = [];
+    mockDocsError = 'Worker unreachable';
+    render(<InvestmentTab />);
+    expect(screen.queryByText(/Upload an/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn't load the Data Room/)).toBeInTheDocument();
+  });
+
+  it('an OM still extracting reads "still being read", not "states no price"', () => {
+    mockDocs = [{ ...OM_DOC, status: 'EXTRACTING' }];
+    render(<InvestmentTab />);
+    expect(screen.getByText(/The OM is still being read/)).toBeInTheDocument();
+    expect(screen.queryByText(/doesn't state/)).not.toBeInTheDocument();
+  });
+
+  it('a document still being classified never reads as "no OM"', () => {
+    mockDocs = [{ id: 'd1', doc_type: null, filename: 'deck.pdf', status: 'CLASSIFYING' }];
+    render(<InvestmentTab />);
+    expect(screen.queryByText(/No Offering Memorandum/)).not.toBeInTheDocument();
+    expect(screen.getByText(/still being read/)).toBeInTheDocument();
+  });
+
+  it('refreshes the price sources when the OM finishes extracting (no reload)', () => {
+    mockDocs = [{ ...OM_DOC, status: 'EXTRACTING' }];
+    const { rerender } = render(<InvestmentTab />);
+    expect(provenanceRefreshSpy).not.toHaveBeenCalled();
+    mockDocs = [{ ...OM_DOC, status: 'EXTRACTED' }];
+    rerender(<InvestmentTab />);
+    expect(provenanceRefreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys the worker did not list as missing (e.g. from the OM) get no Keys input', () => {
+    mockDeal = { id: 'deal-uuid-1', keys: null, field_overrides: {} };
+    mockSource = { source: 'om_broker', value: 40_000_000, reason: null, field: { page: 4 } };
+    render(<InvestmentTab />);
+    expect(screen.queryByLabelText('Override room count')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run model' })).toBeInTheDocument();
+  });
+
+  it('a Run button is disabled while its run is in flight — one click, one run', async () => {
+    mockOutputs = NEVER_RUN;
+    mockDocs = [];
+    engineRunSpy.mockImplementation(() => new Promise<void>(() => {}));
+    render(<InvestmentTab />);
+    const btn = screen.getByRole('button', { name: 'Run Investment Engine' });
+    fireEvent.click(btn);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Running…' }));
+    expect(engineRunSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('saving the price while the key count is still missing saves but does not start a doomed run', async () => {
+    mockOutputs = failedCapital(['keys', 'purchase_price']);
+    mockDeal = { id: 'deal-uuid-1', keys: null, field_overrides: {} };
+    render(<InvestmentTab />);
+    fireEvent.click(screen.getByTestId('purchase-price'));
+    fireEvent.change(screen.getByLabelText('Purchase price'), { target: { value: '36400000' } });
+    fireEvent.change(screen.getByLabelText('Override justification'), { target: { value: 'Our bid' } });
+    fireEvent.click(screen.getByLabelText('Save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engineRunSpy).not.toHaveBeenCalled();
   });
 });

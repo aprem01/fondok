@@ -467,6 +467,38 @@ describe('OverviewTab — W5 "price": the Purchase Price is editable here', () =
     expect(within(entry).getByTestId('overview-purchase-price')).toHaveTextContent('—');
   });
 
+  it('a never-run deal with a price reads Entry Cap "not run yet" (stale_run), not "engine skipped"', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { purchase_price: { value: 36_400_000, note: 'Our bid' } } };
+    outputsRef.value = { deal_id: 'deal-uuid-1', engines: {} } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    const row = within(entry).getByText('Entry Cap Rate').closest('div') as HTMLElement;
+    expect((row.querySelector('[data-refused]') as HTMLElement).getAttribute('data-refused')).toBe('stale_run');
+  });
+
+  it('a failed expense engine carries its own reason onto the Entry Cap dash', () => {
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { purchase_price: { value: 36_400_000, note: 'Our bid' } } };
+    const engines = { ...(OUTPUTS as unknown as { engines: Record<string, unknown> }).engines };
+    engines.expense = {
+      deal_id: 'deal-uuid-1', engine: 'expense', status: 'failed', summary: '', outputs: null, inputs: null,
+      error: 'boom', failure: { engine: 'expense', reason: 'engine_error', message: 'The expense engine failed.' },
+      runtime_ms: null, started_at: null, completed_at: null, run_id: 'run-2',
+    };
+    outputsRef.value = { ...OUTPUTS, engines } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    const row = within(entry).getByText('Entry Cap Rate').closest('div') as HTMLElement;
+    expect((row.querySelector('[data-refused]') as HTMLElement).getAttribute('data-refused')).toBe('engine_error');
+  });
+
+  it('Price / Key reads the saved price before the re-run lands', () => {
+    // Engine still on $34.0M; the analyst just saved $39.6M (132 keys → $300,000 / key).
+    mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { purchase_price: { value: 39_600_000, note: 'Revised bid' } } };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    expect(within(entry).getByText('$300,000')).toBeInTheDocument();
+  });
+
   it('an analyst price shows with its Override badge', () => {
     mockDealRef.deal = { ...mockDealRef.deal, field_overrides: { purchase_price: { value: 36_400_000, note: 'Our bid' } } };
     outputsRef.value = withoutCapital();

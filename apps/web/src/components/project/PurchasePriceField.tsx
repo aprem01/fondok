@@ -46,6 +46,9 @@ export interface PurchasePriceFieldProps {
   editable: boolean;
   /** After the PATCH lands (before the run finishes) — refresh the deal row. */
   onSaved?: () => void;
+  /** Run the model after the save (default true). False while another
+   *  identity input is still missing — that run could only be refused. */
+  runAfterSave?: boolean;
   /** What the empty, editable field invites (default "—"). */
   emptyLabel?: string;
   /** Show the source badge beside the value (default true). */
@@ -61,6 +64,7 @@ export default function PurchasePriceField({
   enginePrice,
   editable,
   onSaved,
+  runAfterSave = true,
   emptyLabel,
   showBadge = true,
   testId = 'purchase-price',
@@ -81,11 +85,15 @@ export default function PurchasePriceField({
         toast(`Save failed — ${workerErrorMessage(err)}`, { type: 'error' });
         return;
       }
-      toast('Purchase price saved — re-running the model…', { type: 'success' });
       onSaved?.();
-      void run.run();
+      if (runAfterSave) {
+        toast('Purchase price saved — re-running the model…', { type: 'success' });
+        void run.run();
+      } else {
+        toast('Purchase price saved — enter the key count to run the model.', { type: 'success' });
+      }
     },
-    [overrides, dealId, toast, onSaved, run],
+    [overrides, dealId, toast, onSaved, run, runAfterSave],
   );
 
   const ed = useInlineEdit<number>({

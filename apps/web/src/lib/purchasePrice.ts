@@ -14,6 +14,7 @@
 import type { EngineOutputResponse } from '@/lib/api';
 import type { ResolvedSource } from '@/lib/hooks/useDealProvenance';
 import { noteOf } from '@/lib/overrideNote';
+import { isReasonCode, type ReasonCode } from '@/lib/ontology/reasons.generated';
 
 /** The `field_overrides` key the price editor writes (`{value, note}`). */
 export const PURCHASE_PRICE_KEY = 'purchase_price';
@@ -57,9 +58,12 @@ function overrideValue(entry: unknown): number | undefined {
 /**
  * The purchase price on screen and its source, from what the deal actually
  * carries: the analyst's saved override first (so a just-saved price shows
- * before the re-run lands), then the capital engine's price, then the value
- * the worker's loader resolves today (`assumption_sources`: deal record or
- * the OM's asking price). Nothing else — no default, no derivation.
+ * before the re-run lands), then the value the worker's loader resolves today
+ * (`assumption_sources`: deal record or the OM's asking price — the value the
+ * NEXT run will use, with its own badge and page), then the capital engine's
+ * price on the last run with no badge (its source at run time is not known
+ * here, and pairing it with today's source could mis-attribute it). Nothing
+ * else — no default, no derivation.
  */
 export function resolvePurchasePrice({
   overrides,
@@ -80,17 +84,19 @@ export function resolvePurchasePrice({
   }
   const src = resolved?.source;
   const known: PurchasePriceSourceId | null =
-    src === 'deal_row' || src === 'om_broker' || src === 'analyst_override' ? src : null;
-  const value = enginePrice ?? (known ? num(resolved?.value) : undefined);
-  if (value === undefined) return empty;
-  return {
-    ...empty,
-    value,
-    source: known,
-    page: known === 'om_broker' ? (resolved?.field?.page ?? null) : null,
-    documentId: known === 'om_broker' ? (resolved?.field?.document_id ?? resolved?.docId ?? null) : null,
-    filename: known === 'om_broker' ? (resolved?.field?.filename ?? null) : null,
-  };
+    src === 'deal_row' || src === 'om_broker' ? src : null;
+  const current = known ? num(resolved?.value) : undefined;
+  if (known && current !== undefined) {
+    return {
+      ...empty,
+      value: current,
+      source: known,
+      page: known === 'om_broker' ? (resolved?.field?.page ?? null) : null,
+      documentId: known === 'om_broker' ? (resolved?.field?.document_id ?? resolved?.docId ?? null) : null,
+      filename: known === 'om_broker' ? (resolved?.field?.filename ?? null) : null,
+    };
+  }
+  return enginePrice !== undefined ? { ...empty, value: enginePrice } : empty;
 }
 
 /**
@@ -112,18 +118,25 @@ export function parsePurchasePrice(s: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+export type EntryCapRate =
+  | { value: number; reason: null; detail: null }
+  | { value: undefined; reason: ReasonCode; detail: string };
+
 /**
- * Entry Cap Rate = Entry NOI ÷ Purchase Price — or a dash with the reason
- * when either input is missing. Never computed the other way round.
+ * Entry Cap Rate = Entry NOI ÷ Purchase Price — or a dash with the TRUE
+ * reason when an input is missing. Never computed the other way round.
+ *
+ *  - no price → `missing_identity_inputs` (the deal has none to divide by);
+ *  - no Entry NOI and the expense engine never ran → `stale_run` (run the
+ *    model to compute it);
+ *  - no Entry NOI and the expense row failed → that row's own reason;
+ *  - otherwise (it completed without a Year-1 NOI) → `engine_skipped`.
  */
 export function entryCapRate(
   entryNoi: number | undefined,
   price: number | undefined,
-): { value: number; reason: null; detail: null } | {
-  value: undefined;
-  reason: 'missing_identity_inputs' | 'engine_skipped';
-  detail: string;
-} {
+  expenseRow?: EngineOutputResponse | null,
+): EntryCapRate {
   if (price === undefined || !Number.isFinite(price) || price <= 0) {
     return {
       value: undefined,
@@ -131,12 +144,27 @@ export function entryCapRate(
       detail: 'No purchase price — enter it on the Overview or CAPEX tab.',
     };
   }
-  if (entryNoi === undefined || !Number.isFinite(entryNoi)) {
+  if (entryNoi !== undefined && Number.isFinite(entryNoi)) {
+    return { value: entryNoi / price, reason: null, detail: null };
+  }
+  if (!expenseRow) {
     return {
       value: undefined,
-      reason: 'engine_skipped',
-      detail: 'No Entry NOI yet — the P&L engine has not produced a Year-1 NOI.',
+      reason: 'stale_run',
+      detail: 'The model has not run on this deal yet — run it to compute the Entry NOI.',
     };
   }
-  return { value: entryNoi / price, reason: null, detail: null };
+  if (expenseRow.status === 'failed') {
+    const r = expenseRow.failure?.reason;
+    return {
+      value: undefined,
+      reason: isReasonCode(r) ? r : 'engine_skipped',
+      detail: expenseRow.failure?.message ?? expenseRow.error ?? 'The P&L (expense) engine did not complete.',
+    };
+  }
+  return {
+    value: undefined,
+    reason: 'engine_skipped',
+    detail: 'No Entry NOI — the P&L engine produced no Year-1 NOI.',
+  };
 }

@@ -38,7 +38,7 @@ import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
 import { IntroCard } from '@/components/help/IntroCard';
 import { Refused, useRefusal, REFUSAL_GLYPH } from '@/components/help/Refused';
-import { useSource } from '@/lib/hooks/useDealProvenance';
+import { useProvenanceRefresh, useSource } from '@/lib/hooks/useDealProvenance';
 import { HOLD_DEAL_TYPE_DEFAULT_EXPLANATION, holdDefaultBadge } from '@/lib/engines/returns';
 import { sourceKind, sourceLabel } from '@/lib/provenance';
 import { AssumptionBadge } from '@/components/help/AssumptionBadge';
@@ -611,7 +611,7 @@ export default function InvestmentTab() {
             dealKeys={deal?.keys ?? null}
             editable={liveMode}
             onSaved={() => { void refreshDeal?.(); }}
-            onRun={() => { void invRun.run(); }}
+            onRun={() => invRun.run()}
           />
           <EngineRunHistory dealId={dealId} />
         </div>
@@ -1940,13 +1940,15 @@ function CloseDateField({
  * wrong. Read-only when there is no worker connection (mock data flow).
  */
 function KeysOverride({
-  dealId, currentKeys, onSaved, rerunsOnSave = false,
+  dealId, currentKeys, onSaved, afterSave = 'manual',
 }: {
   dealId: string;
   currentKeys: number | null | undefined;
   onSaved: () => void;
-  /** The caller runs the model after the save (the identity-inputs card). */
-  rerunsOnSave?: boolean;
+  /** What happens after the save: the caller re-runs the model (`rerun`),
+   *  the run still needs a purchase price (`needs-price`), or the analyst
+   *  re-runs when ready (`manual`, the Deal Summary row). */
+  afterSave?: 'rerun' | 'needs-price' | 'manual';
 }) {
   const { toast } = useToast();
   const editable = isWorkerConnected() && !/^\d+$/.test(dealId) && dealId.length > 0;
@@ -1963,9 +1965,11 @@ function KeysOverride({
     onSave: async (parsed) => {
       try {
         await api.deals.update(dealId, { keys: parsed });
-        toast(rerunsOnSave
+        toast(afterSave === 'rerun'
           ? `Room count saved: ${parsed} keys — re-running the model…`
-          : `Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
+          : afterSave === 'needs-price'
+            ? `Room count saved: ${parsed} keys — enter the purchase price to run the model.`
+            : `Room count saved: ${parsed} keys. Re-run engines to recompute.`, { type: 'success' });
         onSaved();
       } catch (err) {
 
@@ -2002,18 +2006,90 @@ function KeysOverride({
   );
 }
 
+/** Document statuses that mean "still being read" (useDocuments' in-flight set). */
+const DOC_IN_FLIGHT = new Set(['PARSING', 'UPLOADED', 'CLASSIFYING', 'EXTRACTING', 'PROCESSING']);
+
+/** What the Data Room can honestly say about an OM right now. */
+type OmState =
+  | 'unknown'      // the list has not loaded yet
+  | 'error'        // the list fetch failed — say nothing about the OM
+  | 'reading'      // an OM (or an unclassified doc) is still being read
+  | 'extracted'    // an OM has been read
+  | 'unreadable'   // OM docs exist but none could be read
+  | 'none';        // the list loaded and holds no OM
+
+function useOmState(dealId: string): { state: OmState; retry: () => void } {
+  const { documents, settled, error, refresh } = useDocuments(dealId);
+  const refreshProvenance = useProvenanceRefresh();
+  const oms = documents.filter((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
+  const omExtractedCount = oms.filter((d) => d.status === 'EXTRACTED').length;
+  // An OM that finishes extracting may carry an asking price: re-read the
+  // deal's sources so the pre-fill and its "OM · p.N" badge appear without a
+  // reload (and the caption stops saying the OM states none).
+  const prevExtracted = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevExtracted.current !== null && omExtractedCount > prevExtracted.current) refreshProvenance();
+    prevExtracted.current = omExtractedCount;
+  }, [omExtractedCount, refreshProvenance]);
+
+  let state: OmState;
+  if (error) state = 'error';
+  else if (!settled) state = 'unknown';
+  else if (oms.some((d) => DOC_IN_FLIGHT.has(d.status))) state = 'reading';
+  else if (omExtractedCount > 0) state = 'extracted';
+  else if (oms.length > 0) state = 'unreadable';
+  // A document not yet classified may still turn out to be the OM.
+  else if (documents.some((d) => !d.doc_type && DOC_IN_FLIGHT.has(d.status))) state = 'reading';
+  else state = 'none';
+  return { state, retry: refresh };
+}
+
+/** A Run button that cannot start a second run while its first is in flight. */
+function RunButton({ label, onRun }: { label: string; onRun: () => Promise<void> | void }) {
+  const [running, setRunning] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  return (
+    <Button
+      variant="primary"
+      size="sm"
+      className="mt-4"
+      disabled={running}
+      onClick={async () => {
+        if (running) return;
+        setRunning(true);
+        try { await onRun(); } finally { if (mounted.current) setRunning(false); }
+      }}
+    >
+      {running ? 'Running…' : label}
+    </Button>
+  );
+}
+
+function DataRoomError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <span>
+      Couldn&apos;t load the Data Room, so whether an OM is on file is unknown.{' '}
+      <button type="button" onClick={onRetry} className="underline font-medium">Retry</button>
+    </span>
+  );
+}
+
 /**
  * W5 "price" — what CAPEX shows when the capital engine has no output.
  *
  *  - Refused for a missing identity input (`missing_identity_inputs`): the
  *    Deal Summary inputs themselves — Purchase Price (the shared editor,
  *    pre-filled from the OM's stated asking price when there is one) and Keys
- *    when it is missing too. Before this the only price editor sat inside the
- *    summary that cannot render without a price: a deadlock.
- *  - No OM document on the deal: the "Upload an OM" card.
- *  - Otherwise (not run yet, or another failure): the failure's own sentence.
+ *    when the worker says it is missing too. Before this the only price
+ *    editor sat inside the summary that cannot render without a price.
+ *  - The Data Room loaded and holds no OM: the "Upload an OM" card.
+ *  - Otherwise (not run yet, another failure, or the Data Room could not be
+ *    read): the failure's own sentence — never a claim about the OM that the
+ *    document list has not made.
  *
- * Every Run button here starts the real model run.
+ * Every Run button starts the real model run, once, and is hidden on a deal
+ * that cannot run (a sample / offline deal).
  */
 function CapitalUnavailable({
   dealId, capitalRow, overrides, dealKeys, editable, onSaved, onRun,
@@ -2024,18 +2100,12 @@ function CapitalUnavailable({
   dealKeys: number | null;
   editable: boolean;
   onSaved: () => void;
-  onRun: () => void;
+  onRun: () => Promise<void> | void;
 }) {
   const missing = missingIdentityInputs(capitalRow);
   // Mounted only in this state, so a deal whose model ran never lists its
   // documents from here.
-  const { documents, settled } = useDocuments(dealId);
-  const hasOm = documents.some((d) => (d.doc_type ?? '').toUpperCase() === 'OM');
-  const runButton = (label: string) => (
-    <Button variant="primary" size="sm" className="mt-4" onClick={onRun}>
-      {label}
-    </Button>
-  );
+  const om = useOmState(dealId);
 
   if (missing) {
     return (
@@ -2045,8 +2115,7 @@ function CapitalUnavailable({
         message={capitalRow?.failure?.message ?? null}
         overrides={overrides}
         dealKeys={dealKeys}
-        hasOm={hasOm}
-        omKnown={settled}
+        om={om}
         editable={editable}
         onSaved={onSaved}
         onRun={onRun}
@@ -2054,7 +2123,7 @@ function CapitalUnavailable({
     );
   }
 
-  if (settled && !hasOm) {
+  if (om.state === 'none') {
     return (
       <Card className="p-16 text-center">
         <div className="w-12 h-12 rounded-lg bg-ink-300/20 flex items-center justify-center mx-auto mb-4">
@@ -2065,7 +2134,7 @@ function CapitalUnavailable({
           Upload an <span className="font-medium">Offering Memorandum</span> (the broker&apos;s pitch deck) into
           the Data Room and we&apos;ll populate the investment summary automatically.
         </p>
-        {runButton('Run Investment Engine')}
+        {editable && <RunButton label="Run Investment Engine" onRun={onRun} />}
       </Card>
     );
   }
@@ -2080,39 +2149,47 @@ function CapitalUnavailable({
       </div>
       <h3 className="text-[15px] font-semibold text-ink-900">No investment summary yet</h3>
       <p className="text-[12.5px] text-ink-500 mt-1 max-w-md mx-auto leading-relaxed">{why}</p>
-      {runButton('Run Investment Engine')}
+      {om.state === 'error' && (
+        <p className="text-[12px] text-ink-500 mt-2 max-w-md mx-auto"><DataRoomError onRetry={om.retry} /></p>
+      )}
+      {editable && <RunButton label="Run Investment Engine" onRun={onRun} />}
     </Card>
   );
 }
 
 function IdentityInputsCard({
-  dealId, missing, message, overrides, dealKeys, hasOm, omKnown, editable, onSaved, onRun,
+  dealId, missing, message, overrides, dealKeys, om, editable, onSaved, onRun,
 }: {
   dealId: string;
   missing: string[];
   message: string | null;
   overrides: Record<string, unknown>;
   dealKeys: number | null;
-  hasOm: boolean;
-  omKnown: boolean;
+  om: { state: OmState; retry: () => void };
   editable: boolean;
   onSaved: () => void;
-  onRun: () => void;
+  onRun: () => Promise<void> | void;
 }) {
   const priceSource = useSource('purchase_price');
   const price = resolvePurchasePrice({ overrides, enginePrice: undefined, resolved: priceSource });
-  const keysMissing = missing.includes('keys') || !(dealKeys != null && dealKeys > 0);
-  const priceCaption = price.source === 'om_broker'
+  // Only what the worker said is missing: keys the loader resolves from the
+  // OM (the row is null) are not asked for again. A count saved since the
+  // refusal counts as entered.
+  const keysMissing = missing.includes('keys') && !(dealKeys != null && dealKeys > 0);
+  const priceCaption: ReactNode = price.source === 'om_broker'
     ? `The OM states this asking price${price.page != null ? ` (p. ${price.page})` : ''}. Run the model to use it, or enter your own.`
     : price.source === 'deal_row'
       ? 'The deal record carries this price. Run the model to use it, or enter your own.'
       : price.source === 'analyst_override'
-        ? 'Your saved price. The model re-runs on save.'
-        : !omKnown
-          ? null
-          : hasOm
-            ? "The OM doesn't state a purchase price."
-            : 'No Offering Memorandum is in the Data Room — enter the price, or upload an OM that states one.';
+        ? 'Your saved price.'
+        : {
+          unknown: null,
+          error: <DataRoomError onRetry={om.retry} />,
+          reading: 'The OM is still being read — if it states an asking price, it will fill in here.',
+          extracted: "The OM doesn't state a purchase price.",
+          unreadable: 'The OM could not be read — enter the price, or re-run its extraction in the Data Room.',
+          none: 'No Offering Memorandum is in the Data Room — enter the price, or upload an OM that states one.',
+        }[om.state];
   // A run can only succeed once both identity inputs resolve.
   const runnable = price.value !== undefined && !keysMissing;
   const rowLabel: CSSProperties = { fontSize: 12.5, color: palette.textSecondary };
@@ -2127,7 +2204,8 @@ function IdentityInputsCard({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
           <span style={rowLabel}>Purchase Price</span>
           <PurchasePriceField dealId={dealId} overrides={overrides} enginePrice={undefined}
-            editable={editable} onSaved={onSaved} emptyLabel="Enter purchase price" bold />
+            editable={editable} onSaved={onSaved} runAfterSave={!keysMissing}
+            emptyLabel="Enter purchase price" bold />
         </div>
         {priceCaption && (
           <div style={{ fontSize: 11.5, color: palette.textMuted, padding: '4px 0 8px' }}>{priceCaption}</div>
@@ -2135,15 +2213,11 @@ function IdentityInputsCard({
         {keysMissing && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: `1px solid ${palette.hairlineRow}` }}>
             <span style={rowLabel}>Keys</span>
-            <KeysOverride dealId={dealId} currentKeys={dealKeys} rerunsOnSave
-              onSaved={() => { onSaved(); onRun(); }} />
+            <KeysOverride dealId={dealId} currentKeys={dealKeys} afterSave={price.value !== undefined ? 'rerun' : 'needs-price'}
+              onSaved={() => { onSaved(); if (price.value !== undefined) void onRun(); }} />
           </div>
         )}
-        {runnable && (
-          <Button variant="primary" size="sm" className="mt-4" onClick={onRun}>
-            Run model
-          </Button>
-        )}
+        {runnable && editable && <RunButton label="Run model" onRun={onRun} />}
       </div>
     </SectionCard>
   );
