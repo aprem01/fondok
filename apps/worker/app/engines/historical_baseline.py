@@ -189,14 +189,30 @@ class HistoricalYear:
     revpar: float | None = None
     rooms_revenue: float | None = None
     fnb_revenue: float | None = None
+    # Other Revenue = Other Operated Departments + Miscellaneous Income (Wave
+    # 5, Sam #3 — the same pool the revenue engine projects and the web's
+    # Historical P&L shows); the two lines as stated beside it.
     other_revenue: float | None = None
+    other_operated_revenue: float | None = None
+    misc_income: float | None = None
     total_revenue: float | None = None
     rooms_dept_expense: float | None = None
     fnb_dept_expense: float | None = None
     other_dept_expense: float | None = None
     undistributed: float | None = None  # A&G + sales/mkt + utilities + prop_ops + IT
     gop: float | None = None
-    fixed_expenses: float | None = None  # property_tax + insurance + mgmt_fee
+    # Fees & fixed = mgmt fee + FF&E reserve + property tax + insurance + rent
+    # + other non-operating expense, over the lines the statement states.
+    fixed_expenses: float | None = None
+    ffe_reserve: float | None = None
+    rent: float | None = None
+    other_nonop_expense: float | None = None
+    # Non-operating INCOME, signed by the statement's own convention
+    # (``services.statement_lines.normalize_nonop_income``); None when the
+    # statement's figures do not settle the sign (``nonop_income_basis``
+    # "unresolved").
+    nonop_income: float | None = None
+    nonop_income_basis: str | None = None
     noi: float | None = None
     source_document_ids: list[str] = field(default_factory=list)
 
@@ -392,12 +408,65 @@ def _period_basis(fields: Any, doc_type: str | None) -> tuple[str, bool]:
     return basis, basis in _PARTIAL_BASES
 
 
+def _resolve_read(
+    fields: Any, concept: str, raw_text: dict[str, str]
+) -> tuple[float | None, str | None, list[tuple[float, float]]]:
+    """``(value, field_name, [(value, half_unit) of every admissible
+    candidate])`` for one registry concept."""
+    from ..ontology.registry import resolve
+    from ..services.statement_lines import half_unit
+
+    res = resolve(fields, concept)
+    reads: list[tuple[float, float]] = []
+    for cand in res.candidates:
+        if cand.excluded is not None:
+            continue
+        v = _coerce_num(cand.value)
+        if v is None:
+            continue
+        reads.append((v, half_unit(v, raw_text.get(cand.field_name))))
+    value = _coerce_num(res.value)
+    return value, res.field_name, reads
+
+
+def _nonop_lines(
+    fields: Any, raw_text: dict[str, str]
+) -> tuple[float | None, float | None, float | None, str | None]:
+    """``(rent, other_nonop_expense, nonop_income, nonop_income_basis)``.
+
+    Non-operating income is settled against the statement's stated
+    "total non-operating" line (``fixed_charges`` candidates) using the
+    section's other lines — the same rule the web worksheet applies.
+    """
+    from ..services.statement_lines import ReadFigure, half_unit, normalize_nonop_income
+
+    def fig(concept: str) -> tuple[float | None, ReadFigure | None]:
+        v, name, _ = _resolve_read(fields, concept, raw_text)
+        if v is None:
+            return None, None
+        return v, ReadFigure(v, half_unit(v, raw_text.get(name or "")))
+
+    rent, rent_f = fig("rent_expense")
+    other, other_f = fig("other_nonop_expense")
+    _tax, tax_f = fig("property_taxes")
+    _ins, ins_f = fig("insurance")
+    income, income_f = fig("nonop_income")
+    _t, _n, totals = _resolve_read(fields, "fixed_charges", raw_text)
+    value, basis = normalize_nonop_income(
+        income_f,
+        [f for f in (rent_f, tax_f, ins_f, other_f) if f is not None],
+        [ReadFigure(v, h) for v, h in totals],
+    )
+    return rent, other, value if income is not None else None, basis
+
+
 def _build_year_from_flat(
     flat: dict[str, Any],
     *,
     fiscal_year: int,
     doc_id: str | None,
     doc_type: str | None = None,
+    raw_fields: list[dict[str, Any]] | None = None,
 ) -> HistoricalYear:
     """Project a per-year flat extraction dict into ``HistoricalYear``.
 
@@ -437,9 +506,30 @@ def _build_year_from_flat(
     if revpar is None and occ is not None and adr is not None:
         revpar = occ * adr
 
+    # The statement as extracted (field list with raw text) — what the
+    # registry resolves the non-operating section on and what each figure's
+    # read precision comes from. Falls back to the flat dict.
+    source_fields: Any = raw_fields if raw_fields else dict(flat)
+    raw_text: dict[str, str] = {
+        str(f.get("field_name")): str(f.get("raw_text"))
+        for f in (raw_fields or [])
+        if isinstance(f, dict) and f.get("raw_text")
+    }
+
     rooms_rev = _resolve(flat, "rooms_revenue")
     fnb_rev = _resolve(flat, "fb_revenue")
-    other_rev = _resolve(flat, "other_revenue")
+    # Other Revenue = Other Operated Departments + Miscellaneous Income, each
+    # resolved on its own (a field counted once) — Wave 5 (Sam #3). Reading
+    # ``other_revenue`` alone dropped the Misc. Income line ($1,004,790 on the
+    # Kimpton FY2023 P&L) from the exports.
+    ood_rev, ood_name, _ = _resolve_read(source_fields, "other_revenue", raw_text)
+    misc_inc, misc_name, _ = _resolve_read(source_fields, "misc_revenue", raw_text)
+    if ood_rev is None:
+        ood_rev = _resolve(flat, "other_revenue")
+    if misc_name is not None and misc_name == ood_name:
+        misc_inc = None
+    other_parts = [v for v in (ood_rev, misc_inc) if v is not None]
+    other_rev = sum(other_parts) if other_parts else None
     total_rev = _resolve(flat, "total_revenue")
 
     rooms_dept = _resolve(flat, "rooms_dept_expense")
@@ -481,12 +571,19 @@ def _build_year_from_flat(
     prop_tax = _resolve(flat, "property_tax")
     insurance = _resolve(flat, "insurance_expense")
     mgmt_fee = _resolve(flat, "mgmt_fee")
-    fixed_parts = [v for v in (prop_tax, insurance, mgmt_fee) if v is not None]
+    # Wave 5 (Sam #3) — the rest of the block below GOP, as the web worksheet
+    # reads it: FF&E reserve, rent, other non-operating expense; non-operating
+    # income signed by the statement's own convention.
+    ffe, _ffe_name, _ = _resolve_read(source_fields, "ffe_reserve", raw_text)
+    rent, other_nonop, nonop_income, nonop_basis = _nonop_lines(source_fields, raw_text)
+    fixed_parts = [
+        v for v in (mgmt_fee, ffe, prop_tax, insurance, rent, other_nonop) if v is not None
+    ]
     fixed = sum(fixed_parts) if fixed_parts else None
 
     noi = _resolve(flat, "noi")
-    if noi is None and gop is not None and fixed is not None:
-        noi = gop - fixed
+    if noi is None and gop is not None and fixed is not None and nonop_basis != "unresolved":
+        noi = gop - fixed + (nonop_income or 0.0)
 
     return HistoricalYear(
         fiscal_year=fiscal_year,
@@ -498,6 +595,8 @@ def _build_year_from_flat(
         rooms_revenue=rooms_rev,
         fnb_revenue=fnb_rev,
         other_revenue=other_rev,
+        other_operated_revenue=ood_rev,
+        misc_income=misc_inc,
         total_revenue=total_rev,
         rooms_dept_expense=rooms_dept,
         fnb_dept_expense=fnb_dept,
@@ -505,6 +604,11 @@ def _build_year_from_flat(
         undistributed=undist,
         gop=gop,
         fixed_expenses=fixed,
+        ffe_reserve=ffe,
+        rent=rent,
+        other_nonop_expense=other_nonop,
+        nonop_income=nonop_income,
+        nonop_income_basis=nonop_basis,
         noi=noi,
         source_document_ids=[doc_id] if doc_id else [],
     )
@@ -557,12 +661,19 @@ def build_baseline_from_pnls(
         )
         doc_id = row.get("document_id")
         doc_type = row.get("doc_type")
+        raw_fields = fields
+        if isinstance(raw_fields, str):
+            try:
+                raw_fields = json.loads(raw_fields)
+            except json.JSONDecodeError:
+                raw_fields = None
         years.append(
             _build_year_from_flat(
                 flat,
                 fiscal_year=fy,
                 doc_id=str(doc_id) if doc_id else None,
                 doc_type=str(doc_type) if doc_type else None,
+                raw_fields=raw_fields if isinstance(raw_fields, list) else None,
             )
         )
 

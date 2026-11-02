@@ -1246,7 +1246,7 @@ concepts:
       actuals_attr: ffe_reserve
       scorer_key: ffe_reserve
       recognizer: ffe_reserve
-      worksheet: {row: ffe, override_key: ffe_reserve, y1_read: [ffe_reserve]}
+      worksheet: {row: ffe, hist_key: ffe_reserve, meta_key: ffe, override_key: ffe_reserve, y1_read: [ffe_reserve]}
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.fees_and_reserves.ffe_reserve
@@ -1394,6 +1394,7 @@ concepts:
     engines: []
     bindings:
       actuals_attr: fixed_charges.rent
+      worksheet: {row: rent, hist_key: rent, meta_key: rent, y1_read: [fixed_charges, rent]}
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.fixed_charges.rent
@@ -1418,7 +1419,8 @@ concepts:
     identity_tolerance: 0.005
     usali_rules: []
     engines: []
-    bindings: {}
+    bindings:
+      worksheet: {row: nonop_income, hist_key: nonop_income, meta_key: nonop_income}
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.non_operating.income_usd
@@ -1443,6 +1445,7 @@ concepts:
     engines: []
     bindings:
       actuals_attr: fixed_charges.other_fixed
+      worksheet: {row: other_nonop, hist_key: other_nonop_expense, meta_key: other_nonop, y1_read: [fixed_charges, other_fixed]}
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.non_operating.other_usd

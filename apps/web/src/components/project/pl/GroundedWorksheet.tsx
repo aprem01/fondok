@@ -50,7 +50,7 @@ import { useSource } from '@/lib/hooks/useDealProvenance';
 import { sourceKind, sourceExplanation, formatPeriodBasis } from '@/lib/provenance';
 import { useWorksheetLayout } from '@/lib/hooks/useWorksheetLayout';
 import {
-  diffHistColumn, footGop, footRevenue, footingSentence, fmtSignedCurrency,
+  diffHistColumn, footGop, footNoi, footRevenue, footingGapText, footingSentence, fmtSignedCurrency,
   FOOTING_REASON_TEXT, type CellChange, type FootingResult,
 } from '@/lib/worksheetFooting';
 import type { SplitChild, CuratedLine } from '@/lib/hooks/useWorksheetLayout';
@@ -91,7 +91,7 @@ const sumKeys = (v: Record<string, number>, keys: string[]) =>
   keys.reduce((s, k) => s + (v[k] ?? 0), 0);
 
 const UNDIST_IDS = ['ag', 'sm', 'pom', 'util', 'it'];
-const FIXED_FEE_IDS = ['mgmt', 'ffe', 'taxes', 'insurance'];
+const FIXED_FEE_IDS = ['mgmt', 'ffe', 'taxes', 'insurance', 'rent', 'other_nonop'];
 const DEPT_IDS = ['rooms_dept', 'fb_dept', 'other_dept'];
 
 // metaKey (FON-41 Part B): every line ``buildHistYear`` resolves from a P&L
@@ -133,7 +133,10 @@ const ROWS: RowDef[] = [
   { id: 's_rev', label: 'Revenue', kind: 'section' },
   { ...ws('rooms_rev'), label: 'Rooms Revenue', kind: 'input' },
   { ...ws('fb_rev'), label: 'Food & Beverage Revenue', kind: 'input' },
-  { ...ws('other_rev'), label: 'Other Revenue', kind: 'input' },
+  // Wave 5 (Sam #3) — Other Operated Departments + Miscellaneous Income, the
+  // pool the revenue engine projects as one line; a historical cell sums the
+  // two statement lines (``buildHistYear``).
+  { ...ws('other_rev'), label: 'Other Revenue (Other Operated + Misc. Income)', kind: 'input' },
   // FON-90 — in a historical column this row shows the statement's OWN stated
   // total when it publishes one (``HistYear.total_revenue_stated``, sourced
   // via ``meta.total_rev``) and the sum of the lines, labelled "calculated",
@@ -163,11 +166,21 @@ const ROWS: RowDef[] = [
   { ...ws('ffe'), label: 'FF&E Reserve', kind: 'input' },
   { ...ws('taxes'), label: 'Property Taxes', kind: 'input' },
   { ...ws('insurance'), label: 'Insurance', kind: 'input' },
+  // Wave 5 (Sam #3) — rent and other non-operating expense: stated on many
+  // statements below GOP, and deducted by the expense engine
+  // (``fixed_charges.rent`` / ``other_fixed``).
+  { ...ws('rent'), label: 'Rent', kind: 'input' },
+  { ...ws('other_nonop'), label: 'Other Non-Operating Expense', kind: 'input' },
   { ...ws('fixed_total'), label: 'Total Fees & Fixed', kind: 'subtotal',
     compute: (v) => sumKeys(v, FIXED_FEE_IDS) },
 
+  // Non-operating INCOME is added back on the way to NOI. The engine models
+  // none, so the Model column shows a dash, not $0.
+  { id: 's_nonop', label: 'Other Income', kind: 'section' },
+  { ...ws('nonop_income'), label: 'Non-Operating Income', kind: 'input' },
+
   { ...ws('noi'), label: 'Net Operating Income (NOI)', kind: 'computed',
-    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS) },
+    compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) - sumKeys(v, FIXED_FEE_IDS) + (v.nonop_income ?? 0) },
 ];
 
 // Input (editable) member rows per section, and a row lookup — used by the
@@ -330,6 +343,9 @@ interface InspectTarget {
   /** FON-90 — the column's stated Total Revenue, when its statement publishes
    *  one; the panel's propagation copy says Total Revenue will not re-sum. */
   statedTotalRevenue?: number | null;
+  /** Wave 5 — the extracted lines a summed historical cell adds up (Other
+   *  Revenue = Other Operated + Misc. Income). A correction edits ONE line. */
+  parts?: { field: string; value: number; confidence: number }[];
 }
 
 /** E-012 — a "correct at source" save awaiting its refreshed column. */
@@ -1334,6 +1350,7 @@ export default function GroundedWorksheet({
           <tfoot>
             <FootingRow id="revenue" label="Revenue footing" foot={footRevenue} cols={cols} />
             <FootingRow id="gop" label="GOP footing" foot={footGop} cols={cols} />
+            <FootingRow id="noi" label="NOI footing" foot={footNoi} cols={cols} gapText />
           </tfoot>
         </table>
       </HScroll>
@@ -1409,6 +1426,9 @@ function WorksheetCell({
   let value: number | null = null;
   if (historical) {
     value = histYear ? histValue(row.id, histYear) : null;
+  } else if (!row.y1Read && !row.compute) {
+    // A line the engine does not model (non-operating income): a dash, not $0.
+    value = null;
   } else {
     value = modelLive[row.id] ?? 0;
   }
@@ -1473,6 +1493,7 @@ function WorksheetCell({
       fmt: row.fmt,
       rowId: row.id,
       year: historical ? histYear?.year : undefined,
+      parts: historical ? histMeta?.parts : undefined,
       statedTotalRevenue: historical
         ? (typeof histYear?.total_revenue_stated === 'number' && Number.isFinite(histYear.total_revenue_stated)
           ? histYear.total_revenue_stated : null)
@@ -1734,12 +1755,14 @@ function PropagationNote({
  *  own stated figure? "✓ foots" / "Δ +$5" with the full sentence on hover; a
  *  dash (with why) where the statement states no total or a line is missing. */
 function FootingRow({
-  id, label, foot, cols,
+  id, label, foot, cols, gapText = false,
 }: {
   id: string;
   label: string;
   foot: (h: HistYear) => FootingResult;
   cols: { id: string; year: HistYear }[];
+  /** Wave 5 — spell a miss out as "doesn't foot by $X — source gap". */
+  gapText?: boolean;
 }) {
   return (
     <tr className="border-t border-border bg-surface-2/40 text-[11px]" data-testid={`footing-${id}`}>
@@ -1770,7 +1793,7 @@ function FootingRow({
             data-foots={f.foots ? 'true' : 'false'}
           >
             <span className={cn('tabular-nums px-1 rounded', f.foots ? 'text-success-700 bg-success-50' : 'text-warn-700 bg-warn-50')}>
-              {f.foots ? '✓ foots' : `Δ ${fmtSignedCurrency(f.difference)}`}
+              {gapText ? footingGapText(f) : f.foots ? '✓ foots' : `Δ ${fmtSignedCurrency(f.difference)}`}
             </span>
           </td>
         );
@@ -1956,11 +1979,11 @@ function CuratedRow({
 
 function formulaFor(id: string): string {
   switch (id) {
-    case 'total_rev': return 'Rooms + F&B + Other Revenue';
+    case 'total_rev': return 'Rooms + F&B + Other Revenue (Other Operated + Misc. Income)';
     case 'undist_total': return 'A&G + Sales & Marketing + Property Ops + Utilities + Info & Telecom';
-    case 'fixed_total': return 'Management Fee + FF&E Reserve + Property Taxes + Insurance';
+    case 'fixed_total': return 'Management Fee + FF&E Reserve + Property Taxes + Insurance + Rent + Other Non-Operating Expense';
     case 'gop': return 'Total Revenue − Departmental Expenses − Total Undistributed';
-    case 'noi': return 'Total Revenue − Departmental − Undistributed − Fees & Fixed';
+    case 'noi': return 'Total Revenue − Departmental − Undistributed − Fees & Fixed + Non-Operating Income';
     default: return '';
   }
 }
@@ -2085,6 +2108,19 @@ function SourcePanel({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {target.parts && target.parts.length > 1 && (
+            <div className="rounded-lg bg-sky-50 border border-sky-100 px-3 py-2.5 space-y-1" data-testid="source-parts">
+              <div className="text-[10.5px] uppercase tracking-wide text-sky-700 font-semibold">Sum of {target.parts.length} extracted lines</div>
+              {target.parts.map((p) => (
+                <div key={p.field} className="flex items-center justify-between gap-3 text-[12px] text-ink-800">
+                  <span className="truncate">{p.field}</span>
+                  <span className="tabular-nums">{fmtCurrency(p.value)}</span>
+                </div>
+              ))}
+              <div className="text-[11px] text-ink-500">A correction below edits the one line it names, not the sum.</div>
             </div>
           )}
 

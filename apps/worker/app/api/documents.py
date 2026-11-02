@@ -73,6 +73,7 @@ from ..services.comp_set_drift import (
     compute_comp_set_drift,
     drift_report_to_pydantic,
 )
+from ..services.deal_confidence import refresh_deal_ai_confidence_best_effort
 from ..services.financial_source_rank import (
     FULL_YEAR_DOC_TYPES as _SHARED_FULL_YEAR_DOC_TYPES,
 )
@@ -4669,14 +4670,27 @@ class HistoricalYearOut(BaseModel):
     revpar: float | None = None
     rooms_revenue: float | None = None
     fnb_revenue: float | None = None
+    #: Other Operated Departments + Miscellaneous Income (Wave 5), with the
+    #: two lines as stated.
     other_revenue: float | None = None
+    other_operated_revenue: float | None = None
+    misc_income: float | None = None
     total_revenue: float | None = None
     rooms_dept_expense: float | None = None
     fnb_dept_expense: float | None = None
     other_dept_expense: float | None = None
     undistributed: float | None = None
     gop: float | None = None
+    #: mgmt fee + FF&E reserve + property tax + insurance + rent + other
+    #: non-operating expense (Wave 5).
     fixed_expenses: float | None = None
+    ffe_reserve: float | None = None
+    rent: float | None = None
+    other_nonop_expense: float | None = None
+    #: Non-operating income signed by the statement's own convention; None
+    #: when ``nonop_income_basis`` is ``unresolved``.
+    nonop_income: float | None = None
+    nonop_income_basis: str | None = None
     noi: float | None = None
     source_document_ids: list[str] = Field(default_factory=list)
 
@@ -5154,6 +5168,11 @@ async def delete_document(
         logger.exception("delete_document: audit log failed for doc=%s", doc_id)
 
     await session.commit()
+    # Wave 5 — the deleted document's extraction leaves the deal's AI
+    # Confidence rollup (NULL when it was the last one).
+    await refresh_deal_ai_confidence_best_effort(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     # Best-effort object-store cleanup. We don't roll back DB on
     # storage failure — orphaned blobs are an ops nuisance, not a
@@ -7301,6 +7320,11 @@ async def review_extraction_field(
     except Exception:  # noqa: BLE001 — audit is best-effort
         logger.warning("review_extraction_field: audit log failed", exc_info=True)
     await session.commit()
+    # Wave 5 — the corrected field moved this document's confidence report,
+    # so the deal's AI Confidence rollup moves with it.
+    await refresh_deal_ai_confidence_best_effort(
+        session, deal_id=deal_id, tenant_id=tenant_id
+    )
 
     logger.info(
         "review_extraction_field: %s %r on doc=%s (overall=%.3f)",
@@ -7818,6 +7842,11 @@ async def _run_extraction_pipeline_inner(
                     _job_tag(),
                     kind,
                 )
+                # A re-extraction that failed takes this document out of the
+                # deal's AI Confidence rollup (it counts EXTRACTED docs only).
+                await refresh_deal_ai_confidence_best_effort(
+                    session, deal_id=deal_id, tenant_id=tenant_id
+                )
             else:
                 # Persist the Router agent's classification back to the
                 # documents row when it differs from the filename-heuristic
@@ -8091,6 +8120,13 @@ async def _run_extraction_pipeline_inner(
                 doc_id=doc_id,
                 fields=fields,
                 extraction_data=extraction_data,
+            )
+
+            # Wave 5 — the deal's AI Confidence is this rollup, persisted now
+            # that the extraction (and its verifier-adjusted confidence) has
+            # landed. Best-effort; never blocks completion.
+            await refresh_deal_ai_confidence_best_effort(
+                session, deal_id=deal_id, tenant_id=tenant_id
             )
 
             # Cross-field critic pass — looks for narrative issues spanning

@@ -6,7 +6,7 @@
  * Standing rule (no invented data): every numeric field is `number | null`,
  * and `null` means the worker has not produced the value. A null never
  * renders as 0 — the header prints a dash (`formatKeys`, the confidence pill
- * reads "Awaiting docs"). Nothing here is ever built from a fixture.
+ * reads "AI Confidence —"). Nothing here is ever built from a fixture.
  */
 import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
 
@@ -22,7 +22,8 @@ export interface Project {
   status: ProjectStatus | null;
   /** Null when the deal row carries none — no badge is shown, never an invented "Teaser". */
   dealStage: DealStage | null;
-  risk: Risk;
+  /** The deal row's risk, or null when it has none (renders "—", never a default). */
+  risk: Risk | null;
   /** Whole-percent confidence, or null when the worker has not scored the deal. */
   aiConfidence: number | null;
   assignee: string;

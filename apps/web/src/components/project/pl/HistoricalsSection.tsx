@@ -24,7 +24,9 @@
 import type { ExtractionField } from '@/lib/api';
 import {
   HISTORICALS_ALIASES, UNDISTRIBUTED_DETAIL_ALIASES, PERIOD_ALIASES, isSubordinatePath, pnlAliases,
+  OTHER_REVENUE_PART_ALIASES, FIXED_DETAIL_ALIASES, NONOP_TOTAL_ALIASES,
 } from '@/lib/ontology/adapters';
+import { halfUnitOf, normalizeNonopIncome, type NonopIncomeBasis, type ReadFigure } from '@/lib/statementLines';
 import { PERIOD_TYPES } from '@/lib/ontology/concepts.generated';
 import type { ReasonCode } from '@/lib/ontology/reasons.generated';
 
@@ -70,7 +72,13 @@ export interface HistYear {
   revpar: number | null;
   rooms: number;        // $ (top-of-house)
   fb: number;           // $
-  misc: number;         // $
+  /** "Other Revenue" — Other Operated Departments + Miscellaneous Income
+   *  (Wave 5, Sam #3: the sum of the two lines, each counted once). ``null``
+   *  when the statement states neither — a dash, never $0. */
+  misc: number | null;
+  /** The two lines behind ``misc``, as the statement states them. */
+  other_operated_revenue?: number | null;
+  misc_income?: number | null;
   // ─── Expenses / profitability (Task C 2026-06-29) ───
   // Engine-canonical slugs, ``null`` when the extractor didn't ship the
   // line (renders em-dash). USALI convention: expenses are POSITIVE
@@ -90,8 +98,25 @@ export interface HistYear {
   utilities?: number | null;
   info_telecom?: number | null;
   gop: number | null;
-  /** property_tax + insurance + mgmt_fee (institutional fixed-block). */
+  /** Total Fees & Fixed — mgmt fee + FF&E reserve + property tax + insurance
+   *  + rent + other non-operating expense, over the lines the statement
+   *  states (the worksheet's Model "Total Fees & Fixed" on the same basis).
+   *  ``null`` when it states none of them. */
   fixed_expenses: number | null;
+  /** Wave 5 (Sam #3) — the fixed-block lines below GOP, when stated. */
+  ffe_reserve?: number | null;
+  rent?: number | null;
+  other_nonop_expense?: number | null;
+  /** Non-operating INCOME — added back on the way to NOI — signed by the
+   *  statement's own convention (``nonop_income_basis``); ``null`` when the
+   *  statement's figures do not settle the sign. */
+  nonop_income?: number | null;
+  /** The non-operating income line exactly as printed. */
+  nonop_income_stated?: number | null;
+  nonop_income_basis?: NonopIncomeBasis | null;
+  /** Half a unit of the last significant figure each line was read at, keyed
+   *  like ``meta`` — the footing tolerance is the sum over the summed lines. */
+  half_units?: Record<string, number>;
   noi: number | null;
   /** ``true`` when all numeric series are present; ``false`` for placeholder/empty columns. */
   populated: boolean;
@@ -127,6 +152,10 @@ export interface HistLineMeta {
   confidence: number;
   field: string;
   docId?: string;
+  /** Wave 5 — a cell summed from more than one extracted line (Other Revenue
+   *  = Other Operated + Misc. Income) lists each; ``field`` / ``confidence``
+   *  are then the lowest-confidence part, so a review flag lands on it. */
+  parts?: { field: string; value: number; confidence: number }[];
 }
 
 export interface HistData {
@@ -218,6 +247,23 @@ export function findField(fields: ExtractionField[], aliases: string[]): Extract
     if (last && (aSet.has(last) || aSet.has(stripUnit(last)))) return f;
   }
   return undefined;
+}
+
+/**
+ * Every field matching ``aliases`` (full-path matches first, then
+ * last-segment matches), each once — for a line a statement may state more
+ * than once (the "total non-operating" candidates), where the caller decides
+ * which one the arithmetic agrees with.
+ */
+export function findFields(fields: ExtractionField[], aliases: string[]): ExtractionField[] {
+  const out: ExtractionField[] = [];
+  let rest = fields;
+  for (;;) {
+    const f = findField(rest, aliases);
+    if (!f) return out;
+    out.push(f);
+    rest = rest.filter((x) => x !== f);
+  }
 }
 
 /**
@@ -620,11 +666,18 @@ export function buildHistYear(
   // wrapper over findField that records meta then returns the numeric value —
   // the value logic below is unchanged.
   const meta: Record<string, HistLineMeta> = {};
-  const pick = (key: string): number | null => {
-    const f = findField(fields, HISTORICALS_ALIASES[key] ?? []);
+  // Wave 5 — the precision each line was read at (half a unit of its last
+  // significant figure), keyed like ``meta``; the footing checks sum these.
+  const halfUnits: Record<string, number> = {};
+  const record = (key: string, f: ExtractionField | undefined) => {
     if (f && typeof f.confidence === 'number') {
       meta[key] = { confidence: f.confidence, field: f.field_name, docId };
     }
+    if (f && num(f) != null) halfUnits[key] = halfUnitOf({ value: num(f), raw_text: f.raw_text });
+  };
+  const pick = (key: string): number | null => {
+    const f = findField(fields, HISTORICALS_ALIASES[key] ?? []);
+    record(key, f);
     return num(f);
   };
 
@@ -642,16 +695,54 @@ export function buildHistYear(
   // the full normalized name and the last dotted segment with the unit
   // suffix stripped — tiers 4-5 of the worker resolver.
   //
-  // Historicals COLLAPSES the registry's two revenue concepts —
-  // ``other_revenue`` (Other Operated Departments) and ``misc_revenue``
-  // (Miscellaneous Income) — into the single "Misc. Income" column, so the
-  // ``misc`` list is the union of both. See DRIFT_NOTES.web.md.
+  // Historicals' "Other Revenue" row is the registry's two revenue concepts
+  // together — ``other_revenue`` (Other Operated Departments) PLUS
+  // ``misc_revenue`` (Miscellaneous Income), the same pool the revenue engine
+  // projects. Wave 5 (Sam #3): each is resolved on its own and the two are
+  // SUMMED (a field counted once). Reading the ``misc`` union with
+  // ``findField`` returned whichever line matched first and dropped the
+  // other — the FY2023 Kimpton column was short by exactly its Misc. Income.
   const occ = pick('occ');
   const adr = pick('adr');
   const revpar = pick('revpar');
   const rooms = pick('rooms');
   const fb = pick('fb');
-  const misc = pick('misc');
+  const oodField = findField(fields, OTHER_REVENUE_PART_ALIASES.other_operated);
+  const miscIncomeField = findField(fields, OTHER_REVENUE_PART_ALIASES.misc_income);
+  const otherOperated = num(oodField);
+  const miscIncome = miscIncomeField && miscIncomeField.field_name !== oodField?.field_name
+    ? num(miscIncomeField)
+    : null;
+  const miscParts: { field: string; value: number; confidence: number | null }[] = [];
+  const confOf = (fld: ExtractionField): number | null =>
+    typeof fld.confidence === 'number' ? fld.confidence : null;
+  if (oodField && otherOperated != null) {
+    miscParts.push({ field: oodField.field_name, value: otherOperated, confidence: confOf(oodField) });
+  }
+  if (miscIncomeField && miscIncome != null) {
+    miscParts.push({ field: miscIncomeField.field_name, value: miscIncome, confidence: confOf(miscIncomeField) });
+  }
+  const misc = miscParts.length ? miscParts.reduce((a, p) => a + p.value, 0) : null;
+  if (misc != null) {
+    halfUnits['misc'] =
+      (oodField && otherOperated != null ? halfUnitOf({ value: otherOperated, raw_text: oodField.raw_text }) : 0) +
+      (miscIncomeField && miscIncome != null ? halfUnitOf({ value: miscIncome, raw_text: miscIncomeField.raw_text }) : 0);
+  }
+  // Source meta (as for every other line) only from parts that carry a
+  // confidence; the weakest one answers for the cell so a review flag lands
+  // on the line that needs it. A summed cell lists both parts.
+  const scored = miscParts.filter(
+    (p): p is { field: string; value: number; confidence: number } => p.confidence != null,
+  );
+  if (scored.length) {
+    const weakest = scored.reduce((a, p) => (p.confidence < a.confidence ? p : a));
+    meta['misc'] = {
+      confidence: weakest.confidence,
+      field: weakest.field,
+      docId,
+      ...(scored.length > 1 ? { parts: scored } : {}),
+    };
+  }
 
   // ─── Expenses / profitability (Task C 2026-06-29) ───
   const roomsDept = pick('rooms_dept');
@@ -662,7 +753,33 @@ export function buildHistYear(
   const propTax = pick('property_tax');
   const insurance = pick('insurance');
   const mgmtFee = pick('mgmt_fee');
-  const fixedParts = [propTax, insurance, mgmtFee].filter(
+  // Wave 5 (Sam #3) — the rest of the block below GOP, when stated.
+  const pickFixed = (key: keyof typeof FIXED_DETAIL_ALIASES, metaKey: string): number | null => {
+    const f = findField(fields, FIXED_DETAIL_ALIASES[key]);
+    record(metaKey, f);
+    return num(f);
+  };
+  const ffeReserve = pickFixed('ffe_reserve', 'ffe');
+  const rent = pickFixed('rent', 'rent');
+  const otherNonop = pickFixed('other_nonop', 'other_nonop');
+  // Non-operating INCOME is signed by the statement's own convention, settled
+  // against its stated "total non-operating" line (lib/statementLines). The
+  // Kimpton FY2023 P&L prints it −9,638.44 inside an expense-signed section;
+  // the T-12 prints +21,923.6 income-positive. Unsettled → null (a dash).
+  const nonopStated = pickFixed('nonop_income', 'nonop_income');
+  const figure = (key: string, v: number | null): ReadFigure | null =>
+    v == null ? null : { value: v, halfUnit: halfUnits[key] ?? 0 };
+  const nonopTotals = findFields(fields, NONOP_TOTAL_ALIASES)
+    .filter((f) => num(f) != null)
+    .map((f) => ({ value: num(f) as number, halfUnit: halfUnitOf({ value: num(f), raw_text: f.raw_text }) }));
+  const nonopSigned = normalizeNonopIncome(
+    figure('nonop_income', nonopStated),
+    [figure('rent', rent), figure('property_tax', propTax), figure('insurance', insurance), figure('other_nonop', otherNonop)]
+      .filter((x): x is ReadFigure => x != null),
+    nonopTotals,
+  );
+  const nonopIncome = nonopSigned.value;
+  const fixedParts = [mgmtFee, ffeReserve, propTax, insurance, rent, otherNonop].filter(
     (v): v is number => v != null,
   );
   const fixedExpenses = fixedParts.length ? fixedParts.reduce((a, b) => a + b, 0) : null;
@@ -677,6 +794,9 @@ export function buildHistYear(
   // footing check compares the SUM of the lines against it.
   const totalRevField = findField(fields, pnlAliases('total_revenue'));
   const totalRevStated = num(totalRevField);
+  if (totalRevField && totalRevStated != null) {
+    halfUnits['total_rev'] = halfUnitOf({ value: totalRevStated, raw_text: totalRevField.raw_text });
+  }
   if (totalRevField && totalRevStated != null && typeof totalRevField.confidence === 'number') {
     meta['total_rev'] = { confidence: totalRevField.confidence, field: totalRevField.field_name, docId };
   }
@@ -726,7 +846,9 @@ export function buildHistYear(
     revpar: revparNorm,
     rooms: roomsNorm,
     fb: fb ?? 0,
-    misc: misc ?? 0,
+    misc,
+    other_operated_revenue: otherOperated,
+    misc_income: miscIncome,
     rooms_dept_expense: roomsDept,
     fb_dept_expense: fbDept,
     other_dept_expense: otherDept,
@@ -738,6 +860,13 @@ export function buildHistYear(
     info_telecom: infoTelecom,
     gop,
     fixed_expenses: fixedExpenses,
+    ffe_reserve: ffeReserve,
+    rent,
+    other_nonop_expense: otherNonop,
+    nonop_income: nonopIncome,
+    nonop_income_stated: nonopStated,
+    nonop_income_basis: nonopSigned.basis,
+    half_units: halfUnits,
     mgmt_fee: mgmtFee,
     property_tax: propTax,
     insurance,
@@ -765,7 +894,7 @@ export function emptyFiveYearSkeleton(): HistData {
       periodLabel: String(y),
       days: y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 366 : 365,
       occupancyPct: null, adr: null, revpar: null,
-      rooms: 0, fb: 0, misc: 0,
+      rooms: 0, fb: 0, misc: null,
       rooms_dept_expense: null, fb_dept_expense: null,
       other_dept_expense: null, undistributed: null,
       gop: null, fixed_expenses: null, noi: null,

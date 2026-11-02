@@ -190,14 +190,15 @@ async def test_patch_deal_updates_and_logs_audit() -> None:
             json={
                 "name": "Patched Hotel",
                 "deal_stage": "LOI",
-                "ai_confidence": 0.75,
             },
         )
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["name"] == "Patched Hotel"
         assert body["deal_stage"] == "LOI"
-        assert body["ai_confidence"] == 0.75
+        # Wave 5 — ai_confidence is server-computed (services.deal_confidence);
+        # it is not a PATCH field.
+        assert body["ai_confidence"] is None
         # Untouched fields preserved.
         assert body["city"] == "NYC"
         assert body["keys"] == 100

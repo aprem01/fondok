@@ -623,6 +623,16 @@ value, growth, index or penetration where present — down to the source rows. W
 carries no walk for a cell the drawer says "No trace available for this cell."; the app never prints
 a formula it did not record.
 
+**Implied Value row.** `IMPLIED_VALUE_LABEL` "Implied Value (Cash NOI ÷ exit cap)", below the Forward
+12-Month Cash NOI row (`lib/impliedExitValue.ts`). Operating year *i* = `expense.years[i].noi` ÷ the
+exit cap the returns engine ran on (`returns.exit_cap_rate`; until the returns engine has run the
+row dashes — nothing stands in). The Cash NOI row above it is the same `expense.years[i].noi` (a run
+that predates `noi_institutional` used to have the reserve deducted twice). The Exit Year cell = `returns.gross_sale_price` (= `terminal_noi ÷
+exit_cap_rate`), as published. Each cell's tooltip states its basis; a missing cap rate, Cash NOI or
+sale price renders "—" with the reason, and no hard-coded default cap rate is used. Until Wave 5 the
+row (then "Implied Exit Value") capitalised GOP − management fee, about 50% above the engine's sale
+price on the Kimpton deals.
+
 **Ratios.** The "% Rev" sub-column (the *Show %* switch, on by default) is each line as a share of
 that year's Total Revenue. Departmental expense lines follow the USALI convention instead — Rooms
 expense ÷ Rooms revenue, F&B expense ÷ F&B revenue, Other Operated expense ÷ Other Operated revenue

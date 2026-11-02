@@ -14,6 +14,7 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { useToast } from '@/components/ui/Toast';
 import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
 import { displayConfidence, type Project } from '@/lib/project';
+import DealCollaborators from '@/components/project/DealCollaborators';
 import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { cn, fmtDate } from '@/lib/format';
 import { formatKeys } from '@/lib/formatKeys';
@@ -264,9 +265,10 @@ export default function ProjectDetailPage() {
     // Absent on the row → null → no badge. Never an invented "Draft" / "Teaser".
     status: (deal.status as ProjectStatus) || null,
     dealStage: (deal.deal_stage as DealStage) || null,
-    risk: ((deal.risk as Risk) || 'Medium'),
-    // Null until the worker has scored the deal — the pill reads "Awaiting
-    // docs"; a number (even 0) is the worker's own figure.
+    // The deal's own risk, or null (rendered "—") — never an invented "Medium".
+    risk: (deal.risk as Risk) || null,
+    // Null until an extraction has scored the deal — the pill reads "AI
+    // Confidence —"; a number (even 0) is the worker's own rollup.
     aiConfidence: displayConfidence(deal.ai_confidence),
     assignee: '—',
     // Deterministic (UTC / en-US). ``toLocaleDateString()`` depends on the
@@ -633,13 +635,15 @@ export default function ProjectDetailPage() {
                 onMouseLeave={() => setConfidenceOpen(false)}
                 onFocus={() => setConfidenceOpen(true)}
                 onBlur={() => setConfidenceOpen(false)}
-                aria-label={project.aiConfidence == null ? 'Awaiting documents' : `AI confidence ${project.aiConfidence}%`}
+                aria-label={project.aiConfidence == null ? 'AI confidence not available — no extracted document yet' : `AI confidence ${project.aiConfidence}%`}
                 aria-describedby={confidenceOpen ? 'ai-confidence-tooltip' : undefined}
-                title="The AI's certainty in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set."
+                title="Average extraction confidence across this deal's extracted documents (each document's latest extraction). A dash until a document has been extracted."
                 className="h-8 px-2.5 bg-brand-50 hover:bg-brand-100 border border-brand-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Sparkles size={12} aria-hidden="true" />
-                {project.aiConfidence == null ? 'Awaiting docs' : (
+                {project.aiConfidence == null ? (
+                  <span>AI Confidence —</span>
+                ) : (
                   <span className="tabular-nums"><span className="font-semibold">{project.aiConfidence}%</span> AI Confidence</span>
                 )}
               </button>
@@ -652,7 +656,7 @@ export default function ProjectDetailPage() {
                   <div className="text-[12px] font-semibold text-ink-900 mb-1.5">AI Confidence Breakdown</div>
                   <div className="space-y-1 tabular-nums">
                     <div className="flex justify-between"><span className="text-ink-500">Doc count</span><span className="font-medium text-ink-900">{docCount}</span></div>
-                    <div className="flex justify-between"><span className="text-ink-500">Avg field confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence == null ? '—' : `${avgFieldConfidence}%`}</span></div>
+                    <div className="flex justify-between"><span className="text-ink-500">Avg extraction confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence == null ? '—' : `${avgFieldConfidence}%`}</span></div>
                     <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount == null ? '—' : varianceFlagCount}</span></div>
                   </div>
                 </div>
@@ -680,21 +684,9 @@ export default function ProjectDetailPage() {
                     className="absolute right-0 top-full mt-1.5 z-30 w-64 rounded-md border border-border bg-white p-3 shadow-card"
                   >
                     <div className="text-[12px] font-semibold text-ink-900 mb-2">Collaborators</div>
-                    <div className="space-y-2">
-                      {[
-                        { initials: 'SC', name: 'Sarah Chen', role: 'Admin' },
-                        { initials: 'MJ', name: 'Mike Johnson', role: 'Analyst' },
-                        { initials: 'AW', name: 'Alex Wong', role: 'Analyst' },
-                      ].map(p => (
-                        <div key={p.name} className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10.5px] font-semibold text-ink-700">{p.initials}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[12px] font-medium text-ink-900 truncate">{p.name}</div>
-                            <div className="text-[10.5px] text-ink-500">{p.role}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    {/* Wave 5 — the workspace's real members (every member of the
+                        tenant can open this deal), never placeholder people. */}
+                    <DealCollaborators />
                     <button
                       type="button"
                       onClick={() => { setCollabOpen(false); toast('Invitations available on enterprise plans', { type: 'info' }); }}

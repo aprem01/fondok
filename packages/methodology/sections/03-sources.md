@@ -4,6 +4,7 @@ title: "Where market assumptions come from"
 decisions: [FON-61, FON-74, FON-96, FON-109]
 anchors:
   - brand-positioning-methodology
+  - implied-value-methodology
   - market-submarket-methodology
   - market-data-policy-methodology
   - market-tab-methodology
@@ -319,6 +320,20 @@ primary statement. Earlier years still feed the Historical P&L and the variance 
   statement's stated total when it publishes one, and the sum of the extracted lines — labelled
   calculated — only when it does not. The Revenue footing row under the grid always compares the two
   and shows the difference; no total is invented when neither exists.
+- {testid=implied-value-methodology} **Implied Value is priced like the sale.** The Future P&L's
+  Implied Value row is each year's Cash NOI — after property taxes, insurance and the FF&E reserve —
+  ÷ the exit cap rate the returns model ran on; the Exit Year column shows the model's own gross sale
+  price, the figure IRR is computed from. It never capitalises EBITDA, and until the returns model has
+  run it is a dash with the reason — no default cap rate stands in.
+- **Other Revenue is both lines.** The Historical P&L's Other Revenue row is Other Operated
+  Departments plus Miscellaneous Income, each as the statement states it — the same pool the Future
+  P&L projects. A statement that states neither shows a dash.
+- **NOI foots to GOP.** Below GOP the Historical P&L carries every line a statement states: management
+  fee, FF&E reserve, property taxes, insurance, rent and other non-operating expense (together, Total
+  Fees & Fixed), then non-operating income. The NOI footing row under the grid checks GOP − Total Fees
+  & Fixed + non-operating income against the statement's NOI, and where a year does not foot it says
+  so with the amount — "doesn't foot by $X — source gap". Non-operating income takes the sign the
+  statement's own non-operating total implies, and rounding in the figures as read is never a gap.
 - **Every historical column states its period.** A statement is read as a full year, a year to date
   through a month end, or a trailing twelve months ending at a month end, and the column header says
   which. When the basis cannot be established the column shows the bare year with a “basis unknown”
@@ -964,6 +979,37 @@ Provenance runs on two levels, and every figure on the platform carries one or t
   its own: it is reviewed through the lines that foot to it. Correcting a revenue line at source
   re-sums a derived total; a stated total stays what the statement says, and the footing check carries
   the resulting difference.
+- **Other Revenue sums both concepts.** The Historical P&L's Other Revenue row
+  (`other_revenue.bindings.worksheet`, hist key `misc`) is `other_revenue` (Other Operated
+  Departments) + `misc_revenue` (Miscellaneous Income), each resolved on its own from the statement
+  and a field counted once (`buildHistYear`, `OTHER_REVENUE_PART_ALIASES`). It used to read the union
+  of both alias lists with one first-match lookup, which showed one line and dropped the other (the
+  Kimpton FY2023 column was short by exactly its $1,004,790 of Misc. Income). A summed cell's SOURCE
+  panel lists both lines; a correction edits one line, not the sum.
+- **NOI footing.** The historical fixed block reads `ffe_reserve`, `rent_expense` and
+  `other_nonop_expense` (worksheet rows `ffe`, `rent`, `other_nonop`) beside management fee, property
+  taxes and insurance; `HistYear.fixed_expenses` (Total Fees & Fixed) is their sum over the lines the
+  statement states. `nonop_income` is its own row, added back. The **NOI footing** row compares stated
+  GOP − Total Fees & Fixed + non-operating income with the stated NOI and prints "✓ foots" or "doesn't
+  foot by $X — source gap"; a dash, with the reason, when the statement states no GOP or NOI.
+- **Non-operating income sign.** Statements print the line two ways: income-positive (total
+  non-operating = rent + taxes + insurance + other − income; the Kimpton T-12, +21,923.6) or inside an
+  expense-signed section where income is a negative deduction (total = the printed lines summed; the
+  Kimpton FY2023 P&L prints −9,638.44). The extractor transcribes the print, so the reader settles the
+  sign against the stated `fixed_charges` total(s) (`statementLines.normalizeNonopIncome` /
+  `services.statement_lines.normalize_nonop_income`); when no stated total agrees under either
+  convention the sign is `unresolved`: the row is "—" and the NOI footing says the sign is unsettled
+  instead of reporting a source gap.
+- **Footing tolerance = read precision.** Every footing (revenue, GOP, NOI) tolerates the sum of half
+  a unit of the last significant figure each summed line and the stated figure were read at
+  (`halfUnitOf`: the raw token, e.g. "1.29402e+07" → ±50; without one, the value's own digits). The
+  Kimpton statements miss by $1–$17 on 6-significant-figure reads with no line missing; a line
+  genuinely absent is far outside that.
+- **Exports read the statement the same way.** The worker's historical baseline
+  (`engines/historical_baseline.py` → `GET /deals/{id}/historical-baseline`, the export workbook's
+  Historical Baseline sheet and the memo walk) carries Other Revenue = Other Operated + Misc. Income,
+  Fees & Fixed with FF&E reserve, rent and other non-operating expense, and the signed non-operating
+  income — Kimpton FY2023 Other Revenue is 1,020,675.6 on screen and in the exports.
 - **Every historical column states its period.** A statement is read on one of three bases and the
   column says which: a **full year** ("FY2024"), **year-to-date** through a month end ("YTD Mar
   2025"), or a **trailing twelve months** ending at a month end ("T12 Mar 2025"). The basis comes from

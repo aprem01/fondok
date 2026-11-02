@@ -233,7 +233,7 @@ function blankYear(year: string): HistYear {
     // refuse one: nothing was uploaded to mis-read).
     year, periodBasis: 'UNKNOWN', periodEnd: null, periodLabel: year,
     days: 365, occupancyPct: 0, adr: 0, revpar: 0,
-    rooms: 0, fb: 0, misc: 0,
+    rooms: 0, fb: 0, misc: null,
     rooms_dept_expense: null, fb_dept_expense: null, other_dept_expense: null,
     undistributed: null, gop: null, fixed_expenses: null, noi: null,
     populated: false,
@@ -258,6 +258,12 @@ function extractEmbeddedYears(
   return out;
 }
 
+/** Σ of the stated parts; ``null`` when none is stated (a dash, never $0). */
+function sumStated(...parts: (number | null)[]): number | null {
+  const xs = parts.filter((x): x is number => x != null);
+  return xs.length ? xs.reduce((a, b) => a + b, 0) : null;
+}
+
 // Map one OM-embedded year's USALI lines (all `*_usd`, in dollars) to a HistYear.
 function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
   const n = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
@@ -276,7 +282,11 @@ function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
     revpar: num(v.revpar_usd),
     rooms: num(v.rooms_revenue_usd),
     fb: num(v.fb_revenue_usd),
-    misc: num(v.other_operated_depts_revenue_usd) + num(v.miscellaneous_revenue_usd),
+    // Wave 5 (Sam #3) — Other Operated + Misc. Income, each when stated; a
+    // dash (null) when the OM states neither.
+    misc: sumStated(n(v.other_operated_depts_revenue_usd), n(v.miscellaneous_revenue_usd)),
+    other_operated_revenue: n(v.other_operated_depts_revenue_usd),
+    misc_income: n(v.miscellaneous_revenue_usd),
     // E-012 — the OM's own stated total for that year, when it prints one.
     total_revenue_stated: n(v.total_revenue_usd),
     rooms_dept_expense: n(v.rooms_dept_expense_usd),
@@ -286,9 +296,15 @@ function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
     gop: n(v.gop_usd),
     // Fees & fixed = mgmt + FF&E + property tax + insurance + rent (matches the
     // worksheet's Model "Total Fees & Fixed" so the columns reconcile).
-    fixed_expenses:
-      num(v.management_fee_usd) + num(v.ffe_reserve_usd) + num(v.property_tax_usd) +
-      num(v.insurance_expense_usd) + num(v.rent_usd),
+    fixed_expenses: sumStated(
+      n(v.management_fee_usd), n(v.ffe_reserve_usd), n(v.property_tax_usd),
+      n(v.insurance_expense_usd), n(v.rent_usd),
+    ),
+    mgmt_fee: n(v.management_fee_usd),
+    ffe_reserve: n(v.ffe_reserve_usd),
+    property_tax: n(v.property_tax_usd),
+    insurance: n(v.insurance_expense_usd),
+    rent: n(v.rent_usd),
     noi: n(v.noi_usd),
     populated: true,
   };

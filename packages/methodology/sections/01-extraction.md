@@ -66,6 +66,11 @@ A second pass re-reads each cited figure against the page it came from. A figure
 a high confidence; one that does not is lowered so it shows as “to review”. The confidence badge
 beside each field is this result.
 
+The deal's **AI Confidence** (deal header and deal list) is the average of these document scores —
+each extracted document's latest extraction, counted once. It updates when a document is extracted,
+a value is corrected, or a document is removed, and reads “—” until a document has been extracted;
+it is never shown as 0% for a deal that has not been scored.
+
 :::
 
 ::: stage {n=6 icon=ArrowRight}
@@ -180,6 +185,17 @@ department total unreviewed.
 A Critic pass re-reads each cited number against the parser cache. Verified fields get a 0.98
 confidence floor; mismatches drop to 0.50. The downstream UI surfaces this as the field-level
 confidence badge.
+
+`deals.ai_confidence` is the mean of `confidence_report.overall` over each EXTRACTED document's
+latest `extraction_results` row (`services.deal_confidence`), written after the verifier pass, after
+a field review/correction, after a failed re-extraction and after a document delete — NULL when no
+extracted document carries a score; it is rounded to the stored two decimals and the deal row is
+locked while it is rewritten, so `GET /deals/{id}/status` (same helper) and the row agree. It is not
+a client field: `PATCH /deals/{id}` with `ai_confidence` is a 422. The one-time backfill
+(`migrations.backfill_deal_ai_confidence`, in Python so it applies this same rollup) nulled the
+pre-A11 0.00 values (never computed) and filled every scored deal; on Postgres it lifts forced
+row-level security for its own transaction, checks every UPDATE's row count (a mismatch raises and
+rolls back) and marks `deals.ai_confidence` with a column comment so it runs once.
 
 :::
 

@@ -4215,7 +4215,10 @@ export interface HistoricalYear {
   revpar: number | null;
   rooms_revenue: number | null;
   fnb_revenue: number | null;
+  /** Other Operated Departments + Miscellaneous Income (Wave 5). */
   other_revenue: number | null;
+  other_operated_revenue?: number | null;
+  misc_income?: number | null;
   total_revenue: number | null;
   rooms_dept_expense: number | null;
   fnb_dept_expense: number | null;
@@ -4223,8 +4226,16 @@ export interface HistoricalYear {
   /** A&G + sales/mkt + utilities + prop_ops + info/telecom. */
   undistributed: number | null;
   gop: number | null;
-  /** property_tax + insurance + mgmt_fee (institutional fixed-block). */
+  /** mgmt fee + FF&E reserve + property tax + insurance + rent + other
+   *  non-operating expense (Wave 5). */
   fixed_expenses: number | null;
+  ffe_reserve?: number | null;
+  rent?: number | null;
+  other_nonop_expense?: number | null;
+  /** Non-operating income signed by the statement's own convention; null when
+   *  ``nonop_income_basis`` is ``unresolved``. */
+  nonop_income?: number | null;
+  nonop_income_basis?: 'income_positive' | 'expense_signed' | 'zero' | 'unresolved' | null;
   noi: number | null;
   source_document_ids: string[];
 }

@@ -270,7 +270,9 @@ class UpdateDealBody(BaseModel):
     status: str | None = None
     deal_stage: str | None = None
     risk: str | None = None
-    ai_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    # ``ai_confidence`` is deliberately NOT a field: it is the server-computed
+    # extraction rollup (services.deal_confidence), never a client's number —
+    # a PATCH carrying it is a 422 (extra="forbid").
     # FON-59 — Investment Profile is now editable inline on Overview.
     deal_type: str | None = Field(default=None, max_length=40)
     return_profile: str | None = None
@@ -3061,34 +3063,15 @@ async def get_deal_status(
     else:
         agg = "draft"
 
-    # Roll up extraction confidence across all extracted docs.
-    confidence: float | None = _coerce_float(deal_row._mapping.get("ai_confidence"))
-    if docs_extracted:
-        cr_rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                """
-                SELECT confidence_report
-                  FROM extraction_results
-                 WHERE deal_id = :id AND tenant_id = :tenant
-                """
-            ),
-            {"id": str(deal_id), "tenant": tenant_id_str},
-        )
-        scores: list[float] = []
-        for r in cr_rows.fetchall():
-            blob = r._mapping["confidence_report"]
-            if isinstance(blob, str):
-                try:
-                    blob = json.loads(blob) if blob else None
-                except json.JSONDecodeError:
-                    blob = None
-            if isinstance(blob, dict):
-                overall = blob.get("overall")
-                if isinstance(overall, (int, float)):
-                    scores.append(float(overall))
-        if scores:
-            confidence = sum(scores) / len(scores)
+    # Wave 5 — the ONE extraction-confidence rollup (services.deal_confidence),
+    # the same value the extraction pipeline persists on the deal row, so the
+    # pill, the header and the exports cannot disagree. None ("—") when no
+    # extracted document carries a score — never the row's legacy 0.
+    from ..services.deal_confidence import compute_deal_ai_confidence
+
+    confidence: float | None = await compute_deal_ai_confidence(
+        session, deal_id=deal_id, tenant_id=tenant_id_str
+    )
 
     deal_status = deal_row._mapping["status"] or "Draft"
     return DealStatusResponse(

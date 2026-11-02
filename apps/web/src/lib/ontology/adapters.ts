@@ -116,6 +116,37 @@ export const UNDISTRIBUTED_DETAIL_ALIASES: Readonly<Record<string, string[]>> = 
 };
 
 /**
+ * Wave 5 (Sam #3) — the two concepts behind the worksheet's "Other Revenue"
+ * row, resolved SEPARATELY and summed by ``buildHistYear``. ``findField``
+ * returns the first match, so reading the ``misc`` union picked ONE of the
+ * two lines and dropped the other (the FY2023 Kimpton column was short by
+ * exactly its Misc. Income). The union in ``HISTORICALS_ALIASES.misc`` stays
+ * as the pinned contract of what the row may read.
+ */
+export const OTHER_REVENUE_PART_ALIASES: Readonly<Record<'other_operated' | 'misc_income', string[]>> = {
+  other_operated: pnlAliases('other_revenue'),
+  misc_income: pnlAliases('misc_revenue'),
+};
+
+/**
+ * Wave 5 (Sam #3) — the fixed-block lines a statement may state below GOP
+ * that the worksheet did not read: the FF&E reserve, rent, other
+ * non-operating expense and non-operating income. With them the historical
+ * column's NOI = GOP − fees & fixed + non-operating income reconciles where
+ * the statement states the lines.
+ */
+export const FIXED_DETAIL_ALIASES: Readonly<Record<'ffe_reserve' | 'rent' | 'other_nonop' | 'nonop_income', string[]>> = {
+  ffe_reserve: pnlAliases('ffe_reserve'),
+  rent: pnlAliases('rent_expense'),
+  other_nonop: pnlAliases('other_nonop_expense'),
+  nonop_income: pnlAliases('nonop_income'),
+};
+
+/** Every "total non-operating income & expenses" path a statement may state —
+ *  what non-operating income's sign is settled against. */
+export const NONOP_TOTAL_ALIASES = pnlAliases('fixed_charges');
+
+/**
  * WEB-ONLY aliases — paths the hand-written lists carried that the registry
  * does not (yet). They stay inline so nothing that resolved before stops
  * resolving; the registry builder folds them in as a follow-up. See

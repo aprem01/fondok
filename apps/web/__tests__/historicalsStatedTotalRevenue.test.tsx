@@ -137,7 +137,7 @@ describe('useHistoricals — the column carries the stated total and its source 
     const col = realColumn(WITH_STATED);
     expect(col.year).toBe('2024');
     expect(col.total_revenue_stated).toBe(13_480_000);
-    expect(col.rooms + col.fb + col.misc).toBe(12_300_000);
+    expect(col.rooms + col.fb + (col.misc ?? 0)).toBe(12_300_000);
     expect(col.meta?.total_rev).toEqual({ confidence: 0.5, field: 'p_and_l_usali.total_revenue_usd', docId: 'd2024' });
   });
 

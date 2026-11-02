@@ -155,6 +155,7 @@ export const METHODOLOGY_SECTIONS: readonly MethodologySection[] = [
     ],
     "anchors": [
       "brand-positioning-methodology",
+      "implied-value-methodology",
       "market-submarket-methodology",
       "market-data-policy-methodology",
       "market-tab-methodology",

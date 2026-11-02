@@ -5,6 +5,10 @@
  *       meta line reads "— keys", never "0 keys".
  *  A11  `ai_confidence: 0.0` (persisted on create) → the pill reads
  *       "Awaiting docs" and the breakdown reads "—", never "0%".
+ *  W5   the pill reads "AI Confidence —" when no extraction has scored the
+ *       deal (the worker now persists the real rollup and nulls the legacy
+ *       0.00s); the Collaborators popover lists the workspace's real members,
+ *       never placeholder people.
  *  C4   with no worker URL the page renders the "Worker not configured"
  *       state — no sample deal, no skeleton.
  *
@@ -75,9 +79,15 @@ vi.mock('@/lib/api', async () => {
 });
 vi.mock('next/dynamic', () => ({ default: () => () => null }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
-vi.mock('@/lib/auth', () => ({ useCurrentRole: () => 'org:member' }));
+vi.mock('@/lib/auth', () => ({
+  useCurrentRole: () => 'org:member',
+  useOrgMembers: () => ({ members: [], loading: false, demo: true }),
+}));
 
 import ProjectDetailPage from '@/app/projects/[id]/page';
+
+/** The pill's accessible name when no extraction has scored the deal. */
+const NO_CONFIDENCE_LABEL = 'AI confidence not available — no extracted document yet';
 
 const DEAL = {
   id: 'fff00000-0000-0000-0000-000000000aaa',
@@ -124,11 +134,31 @@ describe('Deal header — a wizard deal before extraction', () => {
     expect(container.textContent).not.toMatch(/\b0\s*keys/);
   });
 
-  it('an unscored (null) confidence reads "Awaiting docs" and the breakdown "—", never "0%"', () => {
+  it('an unscored (null) confidence reads "AI Confidence —" and the breakdown "—", never "0%"', () => {
     loaded(DEAL);
     const { container } = render(<ProjectDetailPage />);
-    expect(screen.getByRole('button', { name: 'Awaiting documents' })).toHaveTextContent('Awaiting docs');
+    const pill = screen.getByRole('button', { name: NO_CONFIDENCE_LABEL });
+    expect(pill).toHaveTextContent('AI Confidence —');
     expect(container.textContent).not.toMatch(/\b0%/);
+    fireEvent.focus(pill);
+    expect(screen.getByRole('tooltip').textContent).toMatch(/Avg extraction confidence—/);
+  });
+
+  it('a deal with no risk never shows an invented "Medium"', () => {
+    loaded({ ...DEAL, risk: null });
+    const { container } = render(<ProjectDetailPage />);
+    expect(container.textContent).not.toMatch(/\bMedium\b/);
+  });
+
+  it('the Collaborators popover never shows placeholder people', () => {
+    loaded(DEAL);
+    render(<ProjectDetailPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Manage collaborators' }));
+    const dialog = screen.getByRole('dialog', { name: 'Collaborators' });
+    for (const n of ['Sarah Chen', 'Mike Johnson', 'Alex Wong']) {
+      expect(dialog.textContent).not.toContain(n);
+    }
+    expect(within(dialog).getByTestId('collaborators-empty')).toBeInTheDocument();
   });
 
   it('a scored deal still prints its confidence — and a measured 0 is a value, printed as 0%', () => {
@@ -163,7 +193,7 @@ describe('Deal header — a wizard deal before extraction', () => {
   it('asks for the variance report only once the confidence tooltip opens, and stops when it closes', () => {
     loaded(DEAL);
     render(<ProjectDetailPage />);
-    const pill = screen.getByRole('button', { name: 'Awaiting documents' });
+    const pill = screen.getByRole('button', { name: NO_CONFIDENCE_LABEL });
     fireEvent.focus(pill);
     expect(hoisted.varianceIds[hoisted.varianceIds.length - 1]).toBe(DEAL.id);
     fireEvent.blur(pill);
@@ -174,7 +204,7 @@ describe('Deal header — a wizard deal before extraction', () => {
     loaded(DEAL);
     render(<ProjectDetailPage />);
     // The breakdown is the pill's hover/focus tooltip.
-    fireEvent.focus(screen.getByRole('button', { name: 'Awaiting documents' }));
+    fireEvent.focus(screen.getByRole('button', { name: NO_CONFIDENCE_LABEL }));
     const tip = screen.getByRole('tooltip');
     expect(tip.textContent).toMatch(/Variance flags—/);
     expect(tip.textContent).not.toMatch(/Variance flags0/);
@@ -182,7 +212,7 @@ describe('Deal header — a wizard deal before extraction', () => {
     hoisted.varianceFlags = [{}, {}, {}];
     loaded(DEAL);
     render(<ProjectDetailPage />);
-    fireEvent.focus(screen.getByRole('button', { name: 'Awaiting documents' }));
+    fireEvent.focus(screen.getByRole('button', { name: NO_CONFIDENCE_LABEL }));
     expect(screen.getByRole('tooltip').textContent).toMatch(/Variance flags3/);
   });
 
