@@ -1,0 +1,950 @@
+{
+ "_note": "Latest prod extraction of 'Angler_s 2019 P&L.xlsx' (deal 3b4e50d9\u2026, doc_type PNL, user tag PNL, agent_version router:extractor;dt:PNL;extractor;pv=v1), copied read-only 2026-11-02 for the W5 trailing-twelve classification tests. Values are the Angler's data-room workbook's own figures.",
+ "doc_type": "PNL",
+ "fields": [
+  {
+   "unit": null,
+   "value": "Angler's",
+   "raw_text": "Angler's\nFORECASTED STATEMENT OF INCOME",
+   "confidence": 0.99,
+   "field_name": "property_overview.name",
+   "source_page": 1
+  },
+  {
+   "unit": "date",
+   "value": "2019-12-31",
+   "raw_text": "FOR THE PERIOD ENDING DECEMBER 31, 2019",
+   "confidence": 0.99,
+   "field_name": "property_overview.statement_period",
+   "source_page": 1
+  },
+  {
+   "unit": "count",
+   "value": 48180,
+   "raw_text": "Available Rooms\t4092\t3696\t4092\t3960\t4092\t3960\t4092\t4092\t3960\t4092\t3960\t4092\t48180",
+   "confidence": 0.99,
+   "field_name": "property_overview.available_rooms_annual",
+   "source_page": 1
+  },
+  {
+   "unit": "keys",
+   "value": 132,
+   "raw_text": "Available Rooms\t4092\t3696\t4092\t3960\t4092\t3960\t4092\t4092\t3960\t4092\t3960\t4092\t48180",
+   "confidence": 0.92,
+   "field_name": "property_overview.keys",
+   "source_page": 1
+  },
+  {
+   "unit": "count",
+   "value": 32564,
+   "raw_text": "Total Rooms Sold\t2844\t2635\t3023\t2720\t2573\t2176\t2500\t2797\t2114\t2731\t2966\t3485\t32564",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.rooms.total_rooms_sold_annual",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.675882,
+   "raw_text": "Occupancy\t0.695\t0.7129\t0.7388\t0.6869\t0.6288\t0.5495\t0.6109\t0.6835\t0.5338\t0.6674\t0.749\t0.8517\t0.675882",
+   "confidence": 0.99,
+   "field_name": "ttm_performance.subject.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 194.692,
+   "raw_text": "Average Daily Rate\t225.911\t261.598\t262.76\t220.484\t185.051\t153.271\t157.46\t135.798\t123.772\t143.734\t169.708\t250.626\t194.692",
+   "confidence": 0.99,
+   "field_name": "ttm_performance.subject.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 131.589,
+   "raw_text": "Revenue per Available Room\t157.011\t186.502\t194.116\t151.443\t116.358\t84.2218\t96.1998\t92.8218\t66.0742\t95.9279\t127.109\t213.448\t131.589",
+   "confidence": 0.99,
+   "field_name": "ttm_performance.subject.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 6339940,
+   "raw_text": "Rooms\t642490\t689311\t794323\t599715\t476137\t333518\t393649\t379827\t261654\t392537\t503353\t873430\t6.33994e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.rooms.revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1028110,
+   "raw_text": "Food & Beverage\t88536.8\t96922.7\t101271\t67971\t61227.7\t54970.4\t72423.6\t59755.7\t38088.8\t76017.7\t132417\t178512\t1.02811e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.fb.revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 245529,
+   "raw_text": "Other Operated Departments\t22021.5\t17748\t19776.2\t23529.7\t19740.6\t16670.5\t21067.1\t22378.5\t14207.4\t20314.6\t22223.2\t25851.5\t245529",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.other_operated_departments.revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 772403,
+   "raw_text": "Miscellaneous Income\t63933.2\t62791.2\t54424.1\t69012.6\t61550.2\t48519.5\t55299.3\t68432.8\t53040.1\t60217.8\t98858\t76324\t772403",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.miscellaneous_income.revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 8385990,
+   "raw_text": "Total Revenues\t816981\t866773\t969794\t760229\t618655\t453679\t542439\t530394\t366990\t549087\t756850\t1.15412e+06\t8.38599e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1763710,
+   "raw_text": "Rooms\t159112\t149435\t163737\t153761\t148317\t149032\t130807\t131536\t118085\t140341\t147774\t171769\t1.76371e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.rooms.departmental_expense",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1365820,
+   "raw_text": "Food & Beverage\t90710.6\t108593\t109847\t80522.6\t86634.1\t88506.6\t77405.1\t82548.4\t88326.3\t137751\t217045\t197928\t1.36582e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.fb.departmental_expense",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 278331,
+   "raw_text": "Other Operated Departments\t18220.6\t22768.8\t30526.4\t21786.8\t26266.8\t24260.3\t22646.6\t28736.4\t20260.4\t17081.7\t10808.3\t34967.9\t278331",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.other_operated_departments.departmental_expense",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 3407850,
+   "raw_text": "Total Departmental Expense\t268043\t280796\t304110\t256070\t261218\t261799\t230859\t242821\t226671\t295174\t375627\t404665\t3.40785e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.total_departmental_expense",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 4978140,
+   "raw_text": "Total Departmental Profit\t548938\t585977\t665684\t504159\t357437\t191880\t311581\t287573\t140319\t253913\t381223\t749453\t4.97814e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.total_departmental_profit",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1042260,
+   "raw_text": "Administrative & General\t77459\t102448\t112369\t81188.2\t75823.7\t69485.8\t75854.4\t72291.3\t77642.8\t94727.4\t87396.7\t115570\t1.04226e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.undistributed.administrative_and_general",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 172416,
+   "raw_text": "Information & Telecom Systems\t13951.3\t17511.3\t18663.2\t17553.8\t20129\t18862.7\t15039.7\t15455\t-9006.9\t12609.3\t12816.9\t18830.9\t172416",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_systems",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1152220,
+   "raw_text": "Sales & Marketing\t77478.9\t99759.3\t112768\t92905.1\t91102.2\t109592\t75955.2\t76633.6\t89760.7\t95215\t106093\t124957\t1.15222e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.undistributed.sales_and_marketing",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 536654,
+   "raw_text": "Property Operation & Maintenan\t43781\t50924.3\t43487.3\t48201.8\t48405.8\t45096.2\t44740.2\t39960.3\t42780.9\t36516.7\t42872.8\t49886.4\t536654",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.undistributed.property_operations_maintenance",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 162531,
+   "raw_text": "Utilities\t11990\t10814\t12837.9\t10083.6\t12816.8\t15471.7\t14351.8\t15453.9\t11860\t16942.1\t16096.3\t13812.6\t162531",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.undistributed.utilities",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 3066080,
+   "raw_text": "Total Undistributed Expenses\t224660\t281457\t300126\t249932\t248278\t258508\t225941\t219794\t213038\t256010\t265276\t323056\t3.06608e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.total_undistributed_expenses",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1912060,
+   "raw_text": "Gross Operating Profit\t324278\t304520\t365558\t254226\t109160\t-66628.6\t85639.3\t67779.1\t-72718.9\t-2097.43\t115947\t426397\t1.91206e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 267746,
+   "raw_text": "Management Fees\t26131.7\t27583.7\t31125.3\t24733.4\t19629.9\t14391\t17183.5\t17059.5\t11795.9\t17571.5\t24459.7\t36081.3\t267746",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.management_fees",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1644310,
+   "raw_text": "Income before non-operating inc & expense\t298146\t276936\t334432\t229493\t89529.8\t-81019.5\t68455.8\t50719.6\t-84514.8\t-19668.9\t91487.7\t390316\t1.64431e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.income_before_non_operating",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 10719.1,
+   "raw_text": "Rent\t721.81\t834.55\t685.8\t580.75\t697.2\t917.23\t1346.39\t453.5\t386.07\t2287.23\t814.51\t994.02\t10719.1",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.fixed_charges.rent",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 548002,
+   "raw_text": "Property & Other Taxes\t34673\t34673\t34673\t54062.2\t31873\t34673\t34673\t36023\t35303\t34673\t107530\t75172.4\t548002",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.fixed_charges.property_and_other_taxes",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 662426,
+   "raw_text": "Insurance\t50766.6\t50358.8\t50717.3\t49993.6\t50358.8\t49971.6\t49971.6\t58801.1\t68325.4\t61201.4\t61201.4\t60758.8\t662426",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.fixed_charges.insurance",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1221150,
+   "raw_text": "Total non-operating income & expenses\t86161.4\t85866.3\t86076.1\t104636\t82928.9\t85561.8\t85991\t95277.6\t104014\t98161.6\t169546\t136925\t1.22115e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.total_non_operating_expenses",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 423166,
+   "raw_text": "EBITDA\t211985\t191070\t248356\t124856\t6600.8\t-166581\t-17535.2\t-44558\t-188529\t-117831\t-78058.7\t253391\t423166",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.ebitda",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 335440,
+   "raw_text": "FF&E Proforma Calculation\t32679.2\t34670.9\t38791.7\t30409.2\t24746.2\t18147.2\t21697.6\t21215.8\t14679.6\t21963.5\t30274\t46164.7\t335440",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.ffe_reserve",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 87726,
+   "raw_text": "EBITDA: less Replacement Reserve\t179306\t156399\t209564\t94447.3\t-18145.4\t-184729\t-39232.8\t-65773.7\t-203209\t-139794\t-108333\t207226\t87726",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.ebitda_less_replacement_reserve",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 4576230,
+   "raw_text": "Rooms\t642490\t689311\t794323\t599715\t476137\t333518\t393649\t379827\t261654\t392537\t503353\t873430\t6.33994e+06 ... Rooms\t159112\t149435\t163737\t153761\t148317\t149032\t130807\t131536\t118085\t140341\t147774\t171769\t1.76371e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.rooms.departmental_profit",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -337710,
+   "raw_text": "Food & Beverage revenue 1.02811e+06 less Food & Beverage expense 1.36582e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.fb.departmental_profit",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.2281,
+   "raw_text": "Gross Operating Profit 1.91206e+06 / Total Revenues 8.38599e+06",
+   "confidence": 0.92,
+   "field_name": "p_and_l_usali.gop_margin",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.03193,
+   "raw_text": "Management Fees 267746 / Total Revenues 8.38599e+06",
+   "confidence": 0.92,
+   "field_name": "p_and_l_usali.management_fee_pct_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.04001,
+   "raw_text": "FF&E Proforma Calculation 335440 / Total Revenues 8.38599e+06",
+   "confidence": 0.92,
+   "field_name": "p_and_l_usali.ffe_reserve_pct_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.695,
+   "raw_text": "Occupancy\t0.695\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.7129,
+   "raw_text": "Occupancy\t0.695\t0.7129\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.7388,
+   "raw_text": "Occupancy\t...\t0.7388\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.6869,
+   "raw_text": "Occupancy\t...\t0.6869\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.6288,
+   "raw_text": "Occupancy\t...\t0.6288\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.5495,
+   "raw_text": "Occupancy\t...\t0.5495\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.6109,
+   "raw_text": "Occupancy\t...\t0.6109\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.6835,
+   "raw_text": "Occupancy\t...\t0.6835\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.5338,
+   "raw_text": "Occupancy\t...\t0.5338\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.6674,
+   "raw_text": "Occupancy\t...\t0.6674\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.749,
+   "raw_text": "Occupancy\t...\t0.749\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "pct",
+   "value": 0.8517,
+   "raw_text": "Occupancy\t...\t0.8517\t0.675882",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.occupancy",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 225.911,
+   "raw_text": "Average Daily Rate\t225.911\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 261.598,
+   "raw_text": "Average Daily Rate\t225.911\t261.598\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 262.76,
+   "raw_text": "Average Daily Rate\t...\t262.76\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 220.484,
+   "raw_text": "Average Daily Rate\t...\t220.484\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 185.051,
+   "raw_text": "Average Daily Rate\t...\t185.051\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 153.271,
+   "raw_text": "Average Daily Rate\t...\t153.271\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 157.46,
+   "raw_text": "Average Daily Rate\t...\t157.46\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 135.798,
+   "raw_text": "Average Daily Rate\t...\t135.798\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 123.772,
+   "raw_text": "Average Daily Rate\t...\t123.772\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 143.734,
+   "raw_text": "Average Daily Rate\t...\t143.734\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 169.708,
+   "raw_text": "Average Daily Rate\t...\t169.708\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 250.626,
+   "raw_text": "Average Daily Rate\t...\t250.626\t194.692",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.adr",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 157.011,
+   "raw_text": "Revenue per Available Room\t157.011\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 186.502,
+   "raw_text": "Revenue per Available Room\t157.011\t186.502\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 194.116,
+   "raw_text": "Revenue per Available Room\t...\t194.116\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 151.443,
+   "raw_text": "Revenue per Available Room\t...\t151.443\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 116.358,
+   "raw_text": "Revenue per Available Room\t...\t116.358\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 84.2218,
+   "raw_text": "Revenue per Available Room\t...\t84.2218\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 96.1998,
+   "raw_text": "Revenue per Available Room\t...\t96.1998\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 92.8218,
+   "raw_text": "Revenue per Available Room\t...\t92.8218\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 66.0742,
+   "raw_text": "Revenue per Available Room\t...\t66.0742\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 95.9279,
+   "raw_text": "Revenue per Available Room\t...\t95.9279\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 127.109,
+   "raw_text": "Revenue per Available Room\t...\t127.109\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 213.448,
+   "raw_text": "Revenue per Available Room\t...\t213.448\t131.589",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 642490,
+   "raw_text": "Rooms\t642490\t689311\t794323\t599715\t476137\t333518\t393649\t379827\t261654\t392537\t503353\t873430\t6.33994e+06",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 689311,
+   "raw_text": "Rooms\t642490\t689311\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 794323,
+   "raw_text": "Rooms\t...\t794323\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 599715,
+   "raw_text": "Rooms\t...\t599715\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 476137,
+   "raw_text": "Rooms\t...\t476137\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 333518,
+   "raw_text": "Rooms\t...\t333518\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 393649,
+   "raw_text": "Rooms\t...\t393649\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 379827,
+   "raw_text": "Rooms\t...\t379827\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 261654,
+   "raw_text": "Rooms\t...\t261654\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 392537,
+   "raw_text": "Rooms\t...\t392537\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 503353,
+   "raw_text": "Rooms\t...\t503353\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 873430,
+   "raw_text": "Rooms\t...\t873430\t6.33994e+06",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.rooms_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 816981,
+   "raw_text": "Total Revenues\t816981\t866773\t969794\t760229\t618655\t453679\t542439\t530394\t366990\t549087\t756850\t1.15412e+06\t8.38599e+06",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 866773,
+   "raw_text": "Total Revenues\t816981\t866773\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 969794,
+   "raw_text": "Total Revenues\t...\t969794\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 760229,
+   "raw_text": "Total Revenues\t...\t760229\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 618655,
+   "raw_text": "Total Revenues\t...\t618655\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 453679,
+   "raw_text": "Total Revenues\t...\t453679\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 542439,
+   "raw_text": "Total Revenues\t...\t542439\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 530394,
+   "raw_text": "Total Revenues\t...\t530394\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 366990,
+   "raw_text": "Total Revenues\t...\t366990\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 549087,
+   "raw_text": "Total Revenues\t...\t549087\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 756850,
+   "raw_text": "Total Revenues\t...\t756850\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 1154120,
+   "raw_text": "Total Revenues\t...\t1.15412e+06\t8.38599e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.dec.total_revenue",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 324278,
+   "raw_text": "Gross Operating Profit\t324278\t304520\t365558\t254226\t109160\t-66628.6\t85639.3\t67779.1\t-72718.9\t-2097.43\t115947\t426397\t1.91206e+06",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 304520,
+   "raw_text": "Gross Operating Profit\t324278\t304520\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.feb.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 365558,
+   "raw_text": "Gross Operating Profit\t...\t365558\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.mar.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 254226,
+   "raw_text": "Gross Operating Profit\t...\t254226\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.apr.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 109160,
+   "raw_text": "Gross Operating Profit\t...\t109160\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.may.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -66628.6,
+   "raw_text": "Gross Operating Profit\t...\t-66628.6\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 85639.3,
+   "raw_text": "Gross Operating Profit\t...\t85639.3\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jul.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 67779.1,
+   "raw_text": "Gross Operating Profit\t...\t67779.1\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.aug.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -72718.9,
+   "raw_text": "Gross Operating Profit\t...\t-72718.9\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -2097.43,
+   "raw_text": "Gross Operating Profit\t...\t-2097.43\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.oct.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 115947,
+   "raw_text": "Gross Operating Profit\t...\t115947\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.nov.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 426397,
+   "raw_text": "Gross Operating Profit\t...\t426397\t1.91206e+06",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.gop",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 211985,
+   "raw_text": "EBITDA\t211985\t191070\t248356\t124856\t6600.8\t-166581\t-17535.2\t-44558\t-188529\t-117831\t-78058.7\t253391\t423166",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jan.ebitda",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -166581,
+   "raw_text": "EBITDA\t...\t-166581\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.jun.ebitda",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": -188529,
+   "raw_text": "EBITDA\t...\t-188529\t...",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.sep.ebitda",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 253391,
+   "raw_text": "EBITDA\t...\t253391\t423166",
+   "confidence": 0.99,
+   "field_name": "p_and_l_usali.monthly.dec.ebitda",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 213.448,
+   "raw_text": "Revenue per Available Room\t157.011\t186.502\t194.116\t151.443\t116.358\t84.2218\t96.1998\t92.8218\t66.0742\t95.9279\t127.109\t213.448\t131.589",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.seasonality.peak_month_revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "USD",
+   "value": 66.0742,
+   "raw_text": "Revenue per Available Room\t...\t66.0742\t...",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.seasonality.trough_month_revpar",
+   "source_page": 1
+  },
+  {
+   "unit": "ratio",
+   "value": 3.229,
+   "raw_text": "Peak RevPAR 213.448 (Dec) / Trough RevPAR 66.0742 (Sep) = 3.229",
+   "confidence": 0.92,
+   "field_name": "p_and_l_usali.seasonality.peak_to_trough_ratio",
+   "source_page": 1
+  }
+ ]
+}

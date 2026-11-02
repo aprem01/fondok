@@ -635,7 +635,18 @@ async def _audit_re_extract_requested(
 # legacy prompt now splices in verbatim) — plus the critic pass that reconciles
 # each printed YoY change to its two levels. Cached CoStar submarket
 # extractions carry none of the class rows and must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v9"
+# v10 (W5, 2026-11-02): P&L-family workbooks with a dated ``T12`` sheet whose
+# twelve months add up to its TOTAL are typed a trailing twelve months
+# (``extraction/trailing_twelve``): the sheet's USALI totals and KPIs are added
+# at the canonical paths when the extraction holds no other full-period
+# statement, and ``p_and_l_usali.period_type = trailing_twelve`` /
+# ``period_ending`` are stated, so the refine types them T12. The Summary-sheet
+# label reader also reads the non-operating block (rent / property & other
+# taxes / insurance) that follows "Income before non-operating" on layouts
+# without a separate header, and the clipped "Property Operation & Maintenan"
+# label. Every "<Month> Financials" extraction cached under v9 was typed and
+# read as a single month and must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v10"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -2226,7 +2237,28 @@ def refine_doc_type_post_extraction(
     _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
     user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
 
-    if structural_signals.is_pnl and user_tag_is_pnl:
+    from ..extraction.trailing_twelve import is_derived_trailing_twelve
+
+    if (
+        user_tag_is_pnl
+        and canonical_user != "T12"
+        and is_derived_trailing_twelve(fields)
+    ):
+        # W5 (2026-11) — the statement's own dated month columns and lines
+        # prove a trailing twelve months (``extraction.trailing_twelve``),
+        # but the analyst tagged it monthly / YTD / annual. Keep the tag as
+        # the document type, never silently: raise the banner proposing T-12.
+        # The engines rank on the statement's period fields, which already say
+        # trailing twelve.
+        misclassified_flag = True
+        normalized_ai = "T12"
+        logger.info(
+            "router v4: doc=%s user tagged %s, dated monthly columns prove a "
+            "trailing twelve — proposing T12",
+            doc_id,
+            user_provided_doc_type,
+        )
+    elif structural_signals.is_pnl and user_tag_is_pnl:
         # Trust the user's tag — recognizer confirms shape.
         if misclassified_flag:
             logger.info(
@@ -10320,6 +10352,11 @@ async def _apply_pnl_quality_passes(
        ``reconciled_from = {"added": true, …}``. The original
        workbook bytes are fetched from the raw store for full-precision
        cell values; on any storage failure the cached grid is used.
+    1b. **Trailing-twelve statement** (``extraction/trailing_twelve``): a
+       workbook with a dated ``T12`` sheet whose twelve months add up to its
+       TOTAL gets that sheet's totals at the canonical paths (when the
+       extraction holds no other full-period statement) and
+       ``period_type = trailing_twelve`` with its ``period_ending``.
     2. **Statement plausibility** (``agents/critic``): F&B / Rooms / Total
        revenue below 25% of the median of the deal's other full-period
        statements is capped at 0.5 confidence with the reason on the
@@ -10383,6 +10420,54 @@ async def _apply_pnl_quality_passes(
             )
     except Exception as exc:  # never block extraction
         logger.warning("summary reconcile: failed for doc=%s: %s", doc_id, exc)
+
+    # ── 1b. Trailing-twelve statement (W5) ──────────────────────────
+    # A workbook whose dated T12 sheet adds up is a trailing twelve months:
+    # read that statement and state its period_type / period_ending
+    # (``extraction/trailing_twelve``) so the post-extraction refine types it
+    # T12 and the ranking reads its real period.
+    try:
+        from ..extraction.trailing_twelve import (
+            find_trailing_twelve_sheet,
+            label_trailing_twelve,
+        )
+
+        ttm_pages = (
+            (extraction_data or {}).get("pages")
+            if isinstance(extraction_data, dict)
+            else None
+        )
+        ttm_bytes: bytes | None = None
+        if storage_key and find_trailing_twelve_sheet(ttm_pages) is not None:
+            try:
+                ttm_bytes = await get_raw_store(get_settings()).get(storage_key)
+            except Exception as exc:  # cached grid is the fallback
+                logger.info(
+                    "trailing twelve: raw-store fetch failed for doc=%s (%s); "
+                    "using the parser cache (6 significant digits)",
+                    doc_id,
+                    exc,
+                )
+        ttm = label_trailing_twelve(
+            fields,
+            confidence,
+            doc_type=doc_type,
+            extraction_data=extraction_data,
+            file_bytes=ttm_bytes,
+        )
+        if ttm.applied:
+            fields, confidence = ttm.fields, ttm.confidence
+            logger.info(
+                "trailing twelve: doc=%s deal=%s typed a trailing twelve "
+                "ending %s from sheet %r (added %s)",
+                doc_id,
+                deal_id,
+                ttm.period_end,
+                ttm.detail.get("sheet"),
+                ", ".join(ttm.detail.get("added") or []) or "nothing",
+            )
+    except Exception as exc:  # never block extraction
+        logger.warning("trailing twelve: failed for doc=%s: %s", doc_id, exc)
 
     # ── 2. Per-deal statement plausibility ──────────────────────────
     if session is None:

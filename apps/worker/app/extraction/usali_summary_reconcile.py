@@ -831,6 +831,10 @@ def _concept_for_label(label: str, section: str | None) -> str | None:
         return "noi"
     if lab.startswith("total non-operating") or lab.startswith("total non operating"):
         return None  # includes non-op income / rent / other — not a Fondok concept
+    # A layout that clips long labels at the column width ("Property Operation
+    # & Maintenan" on the Angler's monthly-financials T12 sheet).
+    if section == "undistributed" and lab.startswith("property operation"):
+        return "property_operations"
     if section and section in _SECTION_SCOPED_LABELS:
         return _SECTION_SCOPED_LABELS[section].get(lab)
     return None
@@ -893,6 +897,13 @@ def parse_summary_grid(
         if section == "skip":
             continue
         concept = _concept_for_label(label, section)
+        if concept == "income_before_nonop" and section != "skip":
+            # USALI: the non-operating block (rent, property & other taxes,
+            # insurance) follows "Income before non-operating income and
+            # expenses". Layouts without a separate "Non-Operating" header
+            # (the monthly-financials T12 sheet) would otherwise leave those
+            # rows scoped to the undistributed section and unread.
+            section = "nonop"
         if concept is None:
             continue
         labelled.append((i, label, concept, row))

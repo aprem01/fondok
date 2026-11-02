@@ -470,8 +470,9 @@ Room badges Primary source. The ranking is full-year statements before partial o
 recent period first, a T-12 ahead of a calendar-year P&L of the same year, then the more complete
 extraction. Two statements are never averaged. A line the chosen statement does not carry is read
 from the next statement of the same period, then from the most recent statement whose line covers
-twelve months (a full year, or a trailing twelve however the document is typed: an unlabelled
-statement whose monthly block spans twelve months), never from a monthly or year-to-date slice and
+twelve months (a full year, or a trailing twelve: a monthly package whose dated T12 sheet the
+extraction typed as one, or — for extractions made before that — an unlabelled statement whose
+monthly block spans twelve months), never from a monthly or year-to-date slice and
 never from a statement whose period ends more than two years before the Year-1 basis period; then
 the labelled default. Every line not read from the chosen statement, and every line left on the
 default for those reasons, is marked {{reason:needs_review}} with its source document and period.

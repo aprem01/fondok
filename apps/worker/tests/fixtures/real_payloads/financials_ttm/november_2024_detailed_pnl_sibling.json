@@ -1,0 +1,3041 @@
+{
+ "_note": "Latest prod extraction of 'Angler_s 2024 November Detailed P&L.xlsm' (deal 7a9928e0\u2026, doc_type PNL_MONTHLY, user tag PNL_MONTHLY, agent_version template:sibling:v1;pv=v1), copied read-only 2026-11-02 for the W5 trailing-twelve classification tests. Values are the Angler's data-room workbook's own figures.",
+ "doc_type": "PNL_MONTHLY",
+ "fields": [
+  {
+   "unit": "USD",
+   "value": 237.63,
+   "raw_text": "total adr/ occ% ... 237.635",
+   "confidence": 0.98,
+   "field_name": "adr_usd",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 197.5,
+   "raw_text": "revenue per available room ... 197.498",
+   "confidence": 0.98,
+   "field_name": "revpar_usd",
+   "source_page": 5
+  },
+  {
+   "unit": "pct",
+   "value": 0.83,
+   "raw_text": "total adr/ occ% ... 0.831098",
+   "confidence": 0.98,
+   "field_name": "occupancy_pct",
+   "source_page": 7
+  },
+  {
+   "unit": "keys",
+   "value": 132.0,
+   "raw_text": "number of rooms on property ... 132",
+   "confidence": 0.98,
+   "field_name": "property_overview.keys",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 237.63,
+   "raw_text": "total adr/ occ% ... 237.635",
+   "confidence": 0.98,
+   "field_name": "ttm_summary_per_om.adr_usd",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 248.21,
+   "raw_text": "total adr/ occ% ... 248.206",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.budget.adr_usd",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 197.5,
+   "raw_text": "revenue per available room ... 197.498",
+   "confidence": 0.98,
+   "field_name": "ttm_summary_per_om.revpar_usd",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": -29643.0,
+   "raw_text": "rooms: allowances ... -29643",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_allowances",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 247.08,
+   "raw_text": "total adr/ occ% ... 247.078",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.prior_year.adr_usd",
+   "source_page": 7
+  },
+  {
+   "unit": "count",
+   "value": 3720.0,
+   "raw_text": "total rooms occupied ... 3720",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.apr",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3033.0,
+   "raw_text": "total rooms occupied ... 3033",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.aug",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3593.0,
+   "raw_text": "total rooms occupied ... 3593",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.feb",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3694.0,
+   "raw_text": "total rooms occupied ... 3694",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.jan",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3034.0,
+   "raw_text": "total rooms occupied ... 3034",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.jul",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3105.0,
+   "raw_text": "total rooms occupied ... 3105",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.jun",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3831.0,
+   "raw_text": "total rooms occupied ... 3831",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.mar",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3473.0,
+   "raw_text": "total rooms occupied ... 3473",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.may",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3534.0,
+   "raw_text": "total rooms occupied ... 3534",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.nov",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 3186.0,
+   "raw_text": "total rooms occupied ... 3186",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.oct",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 2632.0,
+   "raw_text": "total rooms occupied ... 2632",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.sep",
+   "source_page": 48
+  },
+  {
+   "unit": "pct",
+   "value": 0.83,
+   "raw_text": "total adr/ occ% ... 0.831098",
+   "confidence": 0.98,
+   "field_name": "ttm_summary_per_om.occupancy_pct",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 1074350.0,
+   "raw_text": "total revenue ... 1.07435e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.monthly_revenue.apr",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 589395.0,
+   "raw_text": "total revenue ... 589395",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.aug",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1356810.0,
+   "raw_text": "total revenue ... 1.35681e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.monthly_revenue.feb",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1176930.0,
+   "raw_text": "total revenue ... 1.17693e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.monthly_revenue.jan",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 649801.0,
+   "raw_text": "total revenue ... 649801",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.jul",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 630684.0,
+   "raw_text": "total revenue ... 630684",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.jun",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1295730.0,
+   "raw_text": "total revenue ... 1.29573e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.monthly_revenue.mar",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 894358.0,
+   "raw_text": "total revenue ... 894358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.may",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 816401.0,
+   "raw_text": "total revenue ... 816401",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.nov",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 718139.0,
+   "raw_text": "total revenue ... 718139",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.oct",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 502528.0,
+   "raw_text": "total revenue ... 502528",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly_revenue.sep",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1206890.0,
+   "raw_text": "total group room rev ... 1.20689e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.rooms_revenue_group",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 109274.0,
+   "raw_text": "other rooms revenue ... 109274",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_revenue_other",
+   "source_page": 6
+  },
+  {
+   "unit": "rooms",
+   "value": 48180.0,
+   "raw_text": "available rooms ... 48180",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.available_rooms_2023",
+   "source_page": 72
+  },
+  {
+   "unit": "pct",
+   "value": 0.83,
+   "raw_text": "total adr/ occ% ... 0.831098",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.budget.occupancy_pct",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 9985570.0,
+   "raw_text": "total rooms revenue ... 9.98557e+06",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.budget.rooms_revenue",
+   "source_page": 7
+  },
+  {
+   "unit": "rooms",
+   "value": 40152.0,
+   "raw_text": "total rooms sold ... 40152",
+   "confidence": 0.98,
+   "field_name": "property_overview.rooms_sold_annual",
+   "source_page": 5
+  },
+  {
+   "unit": "rooms",
+   "value": 48312.0,
+   "raw_text": "available rooms ... 48312",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.available_rooms_annual",
+   "source_page": 72
+  },
+  {
+   "unit": "count",
+   "value": 339.0,
+   "raw_text": "smerf ... 3.39353",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.fb_detail.total_covers",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 8255020.0,
+   "raw_text": "total transient room rev ... 8.25502e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.rooms_revenue_transient",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 58113.4,
+   "raw_text": "meals ... 58113.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.meals_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 9807990.0,
+   "raw_text": "total rooms revenue ... 9.80799e+06",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.prior_year.rooms_revenue",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 12647.6,
+   "raw_text": "payroll taxes ... 12647.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.payroll_taxes_jan",
+   "source_page": 74
+  },
+  {
+   "unit": "count",
+   "value": 39886.0,
+   "raw_text": "total rooms occupied ... 39886",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.total_2023",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 40358.0,
+   "raw_text": "total rooms occupied ... 40358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.total_2024",
+   "source_page": 52
+  },
+  {
+   "unit": "rooms",
+   "value": 40358.0,
+   "raw_text": "total rooms occupied ... 40358",
+   "confidence": 0.98,
+   "field_name": "property_overview.rooms_occupied_annual",
+   "source_page": 52
+  },
+  {
+   "unit": "rooms",
+   "value": 48180.0,
+   "raw_text": "available rooms ... 48180",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.available_rooms_prior_year",
+   "source_page": 72
+  },
+  {
+   "unit": "rooms",
+   "value": 48180.0,
+   "raw_text": "available rooms ... 48180",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms.available_rooms_2023",
+   "source_page": 72
+  },
+  {
+   "unit": "rooms",
+   "value": 48312.0,
+   "raw_text": "available rooms ... 48312",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms.available_rooms_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "count",
+   "value": 40231.0,
+   "raw_text": "total rooms occupied ... 40231",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.rooms_occupied.budget_2024",
+   "source_page": 48
+  },
+  {
+   "unit": "rooms",
+   "value": 48312.0,
+   "raw_text": "available rooms ... 48312",
+   "confidence": 0.98,
+   "field_name": "property_overview.available_rooms_annual",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 2751640.0,
+   "raw_text": "total expenses ... 2.75164e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.departmental_expenses.rooms",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 62000.0,
+   "raw_text": "# of gds reservations ... 62",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.food_beverage.cos_fb_annual",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 98288.6,
+   "raw_text": "total expenses ... 98288.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.total_expenses",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 2956.8,
+   "raw_text": "res cost - gds fees ... 2956.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.budget_gds_fees",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 17103.0,
+   "raw_text": "total revenue ... 17103",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.misc_revenue",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 50835.1,
+   "raw_text": "holiday pay ... 50835.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.holiday_pay_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 5162.69,
+   "raw_text": "security ... 5162.69",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_security_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "pct",
+   "value": 0.21,
+   "raw_text": "rooms ... 0.212349",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.fb_total_cost_pct",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 1219940.0,
+   "raw_text": "total revenue ... 1.21994e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.other_revenue",
+   "source_page": 52
+  },
+  {
+   "unit": "USD",
+   "value": 9541540.0,
+   "raw_text": "total rooms revenue ... 9.54154e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 10876500.0,
+   "raw_text": "total revenue ... 1.08765e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 89897.0,
+   "raw_text": "vacation pay ... 89897",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.vacation_pay_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 31835.4,
+   "raw_text": "wellness pay ... 31835.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.wellness_pay_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 40102.5,
+   "raw_text": "workers comp expense ... 40102.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.workers_comp_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 20183.0,
+   "raw_text": "donations ... 20183",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_donations_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 163890.0,
+   "raw_text": "payroll taxes ... 163890",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.payroll_taxes_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 142850.0,
+   "raw_text": "payroll taxes ... 142850",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.payroll_taxes_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 2779.8,
+   "raw_text": "res cost - gds fees ... 2779.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.prior_year_gds_fees",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 80.0,
+   "raw_text": "contracted & leased labor ... 0.0805269",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.fb_detail.average_check_breakfast",
+   "source_page": 9
+  },
+  {
+   "unit": "pct",
+   "value": 0.18,
+   "raw_text": "total cost of sales ... 0.180733",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.cos_beer_pct_annual",
+   "source_page": 50
+  },
+  {
+   "unit": "pct",
+   "value": 0.25,
+   "raw_text": "commissions ... 0.245417",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.cos_food_pct_annual",
+   "source_page": 52
+  },
+  {
+   "unit": "count",
+   "value": 80.0,
+   "raw_text": "postage and overnight delivery ... 80",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.total_covers_annual",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 133279.0,
+   "raw_text": "payroll taxes ... 133279",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.payroll_taxes_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 173186.0,
+   "raw_text": "information & telecom systems ... 173186",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 19.28,
+   "raw_text": "retail shop ... 19.28",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.retail_shop_revenue",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 518.4,
+   "raw_text": "res cost - gds fees ... 518.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_apr",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 275.5,
+   "raw_text": "res cost - gds fees ... 275.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_aug",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 230.4,
+   "raw_text": "res cost - gds fees ... 230.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_feb",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 108.0,
+   "raw_text": "res cost - gds fees ... 108",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_jan",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 275.2,
+   "raw_text": "res cost - gds fees ... 275.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_jul",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 275.2,
+   "raw_text": "res cost - gds fees ... 275.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_jun",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 396.8,
+   "raw_text": "res cost - gds fees ... 396.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_mar",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 134.4,
+   "raw_text": "res cost - gds fees ... 134.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_may",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 172.8,
+   "raw_text": "res cost - gds fees ... 172.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_nov",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 172.8,
+   "raw_text": "res cost - gds fees ... 172.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_oct",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 96.0,
+   "raw_text": "res cost - gds fees ... 96",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_sep",
+   "source_page": 8
+  },
+  {
+   "unit": "count",
+   "value": 40358.0,
+   "raw_text": "total rooms occupied ... 40358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.rooms_occupied_annual",
+   "source_page": 52
+  },
+  {
+   "unit": "count",
+   "value": 40231.0,
+   "raw_text": "total rooms occupied ... 40231",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.rooms_occupied_budget",
+   "source_page": 48
+  },
+  {
+   "unit": "USD",
+   "value": 18853.7,
+   "raw_text": "bank charges ... 18853.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_bank_charges_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 354.98,
+   "raw_text": "travel - other ... 354.98",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_travel_other_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 3922.29,
+   "raw_text": "dental insurance ... 3922.29",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.dental_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 219692.0,
+   "raw_text": "health insurance ... 219692",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.health_insurance_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 146992.0,
+   "raw_text": "health insurance ... 146992",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.health_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 195843.0,
+   "raw_text": "supplemental pay ... 195843",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.supplemental_pay_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 177844.0,
+   "raw_text": "supplemental pay ... 177844",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.supplemental_pay_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 139383.0,
+   "raw_text": "media ... 139383",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.media",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 5563.53,
+   "raw_text": "minor operated departments ... 5563.53",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.other_operated",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 12940200.0,
+   "raw_text": "total revenue ... 1.29402e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_2023",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 13721700.0,
+   "raw_text": "total revenue ... 1.37217e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 11539.5,
+   "raw_text": "total department profit (loss) ... 11539.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_profit",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 410233.0,
+   "raw_text": "employee benefits ... 410233",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.employee_benefits_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 290510.0,
+   "raw_text": "employee benefits ... 290510",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.employee_benefits_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 244094.0,
+   "raw_text": "health insurance ... 244094",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.health_insurance_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 165781.0,
+   "raw_text": "supplemental pay ... 165781",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.supplemental_pay_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 4235.3,
+   "raw_text": "legal services ... 4235.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_legal_services_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "pct",
+   "value": 0.09,
+   "raw_text": "total expenses ... 0.0918033",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "pct",
+   "value": 0.02,
+   "raw_text": "association/ convention ... 0.0160067",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_pct_of_revenue_2023",
+   "source_page": 7
+  },
+  {
+   "unit": "pct",
+   "value": 0.02,
+   "raw_text": "association/ convention ... 0.0160067",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_pct_of_revenue_2024",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 1125.0,
+   "raw_text": "entertainment/ sports ... 1125",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.other_exp_702600_annual",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 340.0,
+   "raw_text": "payroll taxes ... 3.40161",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.food_beverage.other_exp_703500_annual",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 220.0,
+   "raw_text": "total department profit (loss) ... 0.217059",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.food_beverage.other_exp_703510_annual",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 250.0,
+   "raw_text": "commissions ... 0.245417",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.food_beverage.other_exp_703700_annual",
+   "source_page": 52
+  },
+  {
+   "unit": "USD",
+   "value": 1000.0,
+   "raw_text": "music and entertainment ... 1000",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.other_exp_704100_annual",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 17103.0,
+   "raw_text": "total revenue ... 17103",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_revenue",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 301098.0,
+   "raw_text": "employee benefits ... 301098",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.employee_benefits_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 2873.1,
+   "raw_text": "res cost - gds fees ... 2873.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.res_cost_gds_fees_annual",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 32427.0,
+   "raw_text": "website ... 32427",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.website",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": -50000.0,
+   "raw_text": "uniform costs ... -500",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.utilities.rebate_credit",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 11239200.0,
+   "raw_text": "total revenue ... 1.12392e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_budget",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 5563.53,
+   "raw_text": "minor operated departments ... 5563.53",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_expenses",
+   "source_page": 38
+  },
+  {
+   "unit": "pct",
+   "value": 0.01,
+   "raw_text": "total payroll related ... 0.0121414",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.payroll_taxes_pct_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "count",
+   "value": 39886.0,
+   "raw_text": "total rooms occupied ... 39886",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.rooms_occupied_prior_year",
+   "source_page": 48
+  },
+  {
+   "unit": "USD",
+   "value": 14103.1,
+   "raw_text": "licenses & permits ... 14103.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_licenses_permits_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 53755.5,
+   "raw_text": "supplemental pay ... 53755.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_supplemental_pay_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 580.43,
+   "raw_text": "training ... 580.43",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.training",
+   "source_page": 55
+  },
+  {
+   "unit": "pct",
+   "value": 0.02,
+   "raw_text": "travel - meals & entertainment ... 0.0203883",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_pct_of_revenue_budget",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 17027.1,
+   "raw_text": "hvac equipment ... 17027.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.hvac",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 450.0,
+   "raw_text": "food and beverage ... 0.446421",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.food_beverage.lunch_beer_revenue_annual",
+   "source_page": 58
+  },
+  {
+   "unit": "count",
+   "value": 80.0,
+   "raw_text": "postage and overnight delivery ... 80",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.venue_lunch_covers_annual",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 3712.92,
+   "raw_text": "disability insurance ... 3712.92",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.disability_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 2038.72,
+   "raw_text": "group life insurance ... 2038.72",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.group_life_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 98288.6,
+   "raw_text": "total operations expense ... 98288.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.total_reservations_expense",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 129556.0,
+   "raw_text": "total adjustments ... 129556",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_adjustments_total_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 5110.32,
+   "raw_text": "contract services ... 5110.32",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_contract_services_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 3922.75,
+   "raw_text": "professional fees ... 3922.75",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_professional_fees_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 1312.57,
+   "raw_text": "contract services ... 1312.57",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_contract_services_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 20203.6,
+   "raw_text": "promotion ... 20203.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.promotion",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 1074350.0,
+   "raw_text": "total revenue ... 1.07435e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_apr_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 589395.0,
+   "raw_text": "total revenue ... 589395",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_aug_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1356810.0,
+   "raw_text": "total revenue ... 1.35681e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_feb_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1176930.0,
+   "raw_text": "total revenue ... 1.17693e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_jan_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 649801.0,
+   "raw_text": "total revenue ... 649801",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_jul_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 630684.0,
+   "raw_text": "total revenue ... 630684",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_jun_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 1295730.0,
+   "raw_text": "total revenue ... 1.29573e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_mar_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 894358.0,
+   "raw_text": "total revenue ... 894358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_may_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 816401.0,
+   "raw_text": "total revenue ... 816401",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_nov_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 718139.0,
+   "raw_text": "total revenue ... 718139",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_oct_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 502528.0,
+   "raw_text": "total revenue ... 502528",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_sep_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 11539.5,
+   "raw_text": "total department profit (loss) ... 11539.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.total_departmental_profit",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 27410.6,
+   "raw_text": "dues and subscriptions ... 27410.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_dues_subscriptions_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 9324.78,
+   "raw_text": "recruiting ... 9324.78",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.recruiting",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 4.31,
+   "raw_text": "dues and subscriptions ... 4.31",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_dues_subscriptions_2024",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 35.0,
+   "raw_text": "operating supplies ... 35",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_operating_supplies_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "count",
+   "value": 26.0,
+   "raw_text": "entertainment/ sports ... 26",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.break_covers_dept_d2248",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 190.0,
+   "raw_text": "total other revenue ... 0.191548",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.misc_revenue.misc_other",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 1461.55,
+   "raw_text": "total revenue ... 1461.55",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.apr",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 900.7,
+   "raw_text": "total revenue ... 900.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.aug",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1452.64,
+   "raw_text": "total revenue ... 1452.64",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.feb",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1778.05,
+   "raw_text": "total revenue ... 1778.05",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.jan",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1646.04,
+   "raw_text": "total revenue ... 1646.04",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.jul",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 971.47,
+   "raw_text": "total revenue ... 971.47",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.jun",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 2514.51,
+   "raw_text": "total revenue ... 2514.51",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.mar",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 686.39,
+   "raw_text": "total revenue ... 686.39",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.may",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 2028.13,
+   "raw_text": "total revenue ... 2028.13",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.nov",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1388.87,
+   "raw_text": "total revenue ... 1388.87",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.oct",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 865.48,
+   "raw_text": "total revenue ... 865.48",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_monthly.sep",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 17103.0,
+   "raw_text": "total revenue ... 17103",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.total_departmental_revenue",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 2779.8,
+   "raw_text": "res cost - gds fees ... 2779.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.prior_year_reservations_fees",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 95091.7,
+   "raw_text": "accounting ... 95091.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_accounting_salaries_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 322351.0,
+   "raw_text": "management ... 322351",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_management_salaries_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 41084.8,
+   "raw_text": "agency fees ... 41084.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.agency_fees",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 5331.63,
+   "raw_text": "trade shows ... 5331.63",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.trade_shows",
+   "source_page": 59
+  },
+  {
+   "unit": "pct",
+   "value": 0.21,
+   "raw_text": "rooms ... 0.212349",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.food_beverage.fb_total_cost_pct_prior_year",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 30.0,
+   "raw_text": "total cost of other revenue ... 0.032027",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.food_beverage.venue_lunch_avg_check_annual",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 690.0,
+   "raw_text": "employee relations ... 0.693495",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.misc_revenue.line_468300",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 12940200.0,
+   "raw_text": "total revenue ... 1.29402e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_prior_year",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 5563.53,
+   "raw_text": "minor operated departments ... 5563.53",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.total_departmental_expenses",
+   "source_page": 38
+  },
+  {
+   "unit": "pct",
+   "value": 0.03,
+   "raw_text": "payroll taxes ... 0.0273235",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.employee_benefits_pct_revenue_2024",
+   "source_page": 9
+  },
+  {
+   "unit": "count",
+   "value": 472.88,
+   "raw_text": "# of gds reservations ... 472.88",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.gds_reservations_count_annual",
+   "source_page": 8
+  },
+  {
+   "unit": "count",
+   "value": 462.0,
+   "raw_text": "# of gds reservations ... 462",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.gds_reservations_count_budget",
+   "source_page": 8
+  },
+  {
+   "unit": "pct",
+   "value": 0.05,
+   "raw_text": "total labor & related exp ... 0.0462301",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_labor_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 5320.63,
+   "raw_text": "administrative and general ... 5320.63",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_ag_system_expense_ag_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 7311.4,
+   "raw_text": "other ... 7311.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_other_system_expense_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 14821.2,
+   "raw_text": "building ... 14821.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.building",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 4299.12,
+   "raw_text": "plumbing ... 4299.12",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.plumbing",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 5824.69,
+   "raw_text": "travel - other ... 5824.69",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.travel_other",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 49.0,
+   "raw_text": "national negotiated ... 49",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.beverage_lunch_dept_d2146",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 3430.0,
+   "raw_text": "supplemental pay ... 3.43146",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.beverage_lunch_dept_d2248",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 11239200.0,
+   "raw_text": "total revenue ... 1.12392e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_budget_2024",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 9022.2,
+   "raw_text": "total department profit (loss) ... 9022.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_profit_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 166602.0,
+   "raw_text": "total payroll related ... 166602",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_total_payroll_related_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 26638.3,
+   "raw_text": "payroll taxes ... 26638.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.payroll_taxes",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 7096.69,
+   "raw_text": "guest laundry & dry cleaning ... 7096.69",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.guest_laundry_revenue_2023",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 7507.94,
+   "raw_text": "in room items ... 7507.94",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.in_room_items_revenue_2023",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 16092.4,
+   "raw_text": "total revenue ... 16092.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_revenue_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 37923.3,
+   "raw_text": "contributory savings plan ... 37923.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.contributory_savings_plan_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 6.08,
+   "raw_text": "gds cost per reservation ... 6.07575",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.gds_cost_per_reservation_annual",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 6.4,
+   "raw_text": "gds cost per reservation ... 6.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.gds_cost_per_reservation_budget",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 95415.5,
+   "raw_text": "reservations operating expenses ... 95415.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.reservations_operating_expenses",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 2087.46,
+   "raw_text": "other cost of services ... 2087.46",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_other_cost_of_services_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "pct",
+   "value": 0.09,
+   "raw_text": "sales & marketing ... 0.0867134",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.pct_of_revenue",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 1189860.0,
+   "raw_text": "total expenses ... 1.18986e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.total_expenses",
+   "source_page": 59
+  },
+  {
+   "unit": "count",
+   "value": 52.0,
+   "raw_text": "travel - other ... 52",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.breakfast_covers_dept_d2248",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 80.0,
+   "raw_text": "contracted & leased labor ... 0.0805269",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.dinner_avg_check_dept_d2248",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 1360.0,
+   "raw_text": "cancellation penalties ... 1.36176",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.food_cost_561500_dept_d2248",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 10876500.0,
+   "raw_text": "total revenue ... 1.08765e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenue_2024_hr_sheet",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 7070.2,
+   "raw_text": "total cost of sales ... 7070.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_expenses_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 32295.0,
+   "raw_text": "national medical insurance ... 32295",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_medical_insurance_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 27358.0,
+   "raw_text": "national medical insurance ... 27358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_medical_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 2933.51,
+   "raw_text": "bank charges ... 2933.51",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_bank_charges_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 9858.8,
+   "raw_text": "rooms ... 9858.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_ag_system_expense_rooms_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 9518.55,
+   "raw_text": "life/safety ... 9518.55",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.life_safety",
+   "source_page": 60
+  },
+  {
+   "unit": "pct",
+   "value": 0.18,
+   "raw_text": "total cost of sales ... 0.180733",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.beverage_cost_pct_dept_d2146",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 7241.58,
+   "raw_text": "guest laundry & dry cleaning ... 7241.58",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.guest_laundry_revenue_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 7643.89,
+   "raw_text": "in room items ... 7643.89",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.in_room_items_revenue_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 27720.0,
+   "raw_text": "guest communication ... 27.72",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.operating_revenue.reception_revenue_dept_d2248",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 28846.8,
+   "raw_text": "national medical insurance ... 28846.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_medical_insurance_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "pct",
+   "value": 0.05,
+   "raw_text": "total labor & related exp ... 0.0462301",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.total_payroll_related_pct_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 102813.0,
+   "raw_text": "total operations expense ... 102813",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.budget_total_reservations_expense",
+   "source_page": 8
+  },
+  {
+   "unit": "count",
+   "value": 435.0,
+   "raw_text": "# of gds reservations ... 435",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.gds_reservations_count_prior_year",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 2873.1,
+   "raw_text": "res cost - gds fees ... 2873.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.total_reservations_fees_and_other",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 19409.6,
+   "raw_text": "human resources ... 19409.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_human_resources_salaries_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 250.26,
+   "raw_text": "uniforms laundry ... 250.26",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.uniforms_laundry",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 105932.0,
+   "raw_text": "loyalty programs ... 105932",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.loyalty_programs",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 32034.9,
+   "raw_text": "supplemental pay ... 32034.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.supplemental_pay",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 1363.1,
+   "raw_text": "uniforms laundry ... 1363.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.uniforms_laundry",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 310.0,
+   "raw_text": "venues beverage rev ... 0.307444",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.departmental_expenses.rooms.expense_line_702900",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 255.0,
+   "raw_text": "administrative and general ... 255",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.rooms.expense_line_715800",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 34200.0,
+   "raw_text": "personal days ... 342",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.departmental_expenses.rooms.expense_line_716200",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 8657.61,
+   "raw_text": "total department profit (loss) ... 8657.61",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_profit_prior_year",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1937.57,
+   "raw_text": "state unemployment insurance ... 1937.57",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.state_unemployment_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "count",
+   "value": 1584.0,
+   "raw_text": "contract services ... 1584",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.number_of_rooms_on_property_annual",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 15669.0,
+   "raw_text": "computer costs ... 15669",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_computer_costs_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 23328.2,
+   "raw_text": "payroll taxes ... 23328.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.payroll_taxes",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 26135.9,
+   "raw_text": "swimming pool ... 26135.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.swimming_pool",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 30486.4,
+   "raw_text": "waste removal ... 30486.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.waste_removal",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 5890.01,
+   "raw_text": "contract services ... 5890.01",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.contract_services",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 47616.0,
+   "raw_text": "employee benefits ... 47616",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.employee_benefits",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 620.0,
+   "raw_text": "total departmental profit ... 0.623187",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.food_revenue_461100_dept_d2146",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 110.0,
+   "raw_text": "administrative and general ... 0.113633",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.reception_avg_check_dept_d2248",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 15866.3,
+   "raw_text": "total revenue ... 15866.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.other_operated.minor_operated_revenue_prior_year",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 129692.0,
+   "raw_text": "national retirement insurance ... 129692",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_retirement_insurance_total_2023",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 110514.0,
+   "raw_text": "national retirement insurance ... 110514",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_retirement_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 1218.98,
+   "raw_text": "dues and subscriptions ... 1218.98",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.dues_subscriptions",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 28651.1,
+   "raw_text": "employee relations ... 28651.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.employee_relations",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 184419.0,
+   "raw_text": "total expenses ... 184419",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom.total_expenses",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 28.17,
+   "raw_text": "travel - meals & entertainment ... 28.17",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_travel_meals_entertainment_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 648627.0,
+   "raw_text": "total expenses ... 648627",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_expenses",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 44993.0,
+   "raw_text": "bonuses & incentives ... 44993",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.bonuses_incentives",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 38180.6,
+   "raw_text": "dues and subscriptions ... 38180.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.dues_subscriptions",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 139383.0,
+   "raw_text": "media ... 139383",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.media_consolidated",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 73588.3,
+   "raw_text": "national retirement insurance ... 73588.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_retirement_insurance_budget_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 220.0,
+   "raw_text": "minor operated departments ... 0.217059",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.reservations.total_res_exp_per_reservation_annual",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 30903.4,
+   "raw_text": "bonuses & incentives ... 30903.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_bonuses_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 89647.6,
+   "raw_text": "credit card fees ... 89647.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_credit_card_fees_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 3194.84,
+   "raw_text": "licenses and permits expense ... 3194.84",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_licenses_permits_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 439.39,
+   "raw_text": "postage and delivery ... 439.39",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_postage_delivery_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 514110.0,
+   "raw_text": "total labor & related exp ... 514110",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.total_labor_related",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 1261.7,
+   "raw_text": "total guest communication rev ... 1261.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.guest_communication_revenue_2023",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 3025.22,
+   "raw_text": "national unemployment insurance ... 3025.22",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.payroll.national_unemployment_insurance_total_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "USD",
+   "value": 102946.0,
+   "raw_text": "total operations expense ... 102946",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.reservations.prior_year_total_reservations_expense",
+   "source_page": 8
+  },
+  {
+   "unit": "USD",
+   "value": 43352.3,
+   "raw_text": "human resources (consolidated) ... 43352.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_human_resources_consolidated_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 168.53,
+   "raw_text": "food and beverage ... 168.53",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_food_beverage_system_expense_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 27476.4,
+   "raw_text": "supplemental pay ... 27476.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.supplemental_pay",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 64751.9,
+   "raw_text": "advertising / marketing fees ... 64751.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.restaurant_marketing",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 675748.0,
+   "raw_text": "total operations expense ... 675748",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.total_other_expenses",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 320827.0,
+   "raw_text": "total salaries and wages ... 320827",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.total_salaries_wages",
+   "source_page": 59
+  },
+  {
+   "unit": "count",
+   "value": 39886.0,
+   "raw_text": "total rooms occupied ... 39886",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.department.fb_retail_shop.rooms_occupied_total_2023",
+   "source_page": 48
+  },
+  {
+   "unit": "count",
+   "value": 40358.0,
+   "raw_text": "total rooms occupied ... 40358",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.department.fb_retail_shop.rooms_occupied_total_2024",
+   "source_page": 52
+  },
+  {
+   "unit": "USD",
+   "value": 17300.0,
+   "raw_text": "government ... 173",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.operating_revenue.breakfast_food_revenue_dept_d2248",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 15866.3,
+   "raw_text": "total revenue ... 15866.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_total_revenue_2023",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 17103.0,
+   "raw_text": "total revenue ... 17103",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_total_revenue_2024",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 11265.6,
+   "raw_text": "dues and subscriptions ... 11265.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_dues_subscriptions_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 1263.59,
+   "raw_text": "reservation system ... 1263.59",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_reservation_system_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "pct",
+   "value": 0.03,
+   "raw_text": "total salaries and wages ... 0.0318365",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_salaries_wages_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 10876500.0,
+   "raw_text": "total revenue ... 1.08765e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_revenue_ref",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 46836.3,
+   "raw_text": "contract services ... 46836.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.contract_services",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 61712.4,
+   "raw_text": "employee benefits ... 61712.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.employee_benefits",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 27932.3,
+   "raw_text": "total adjustments ... 27932.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_adjustments",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 106289.0,
+   "raw_text": "total payroll related ... 106289",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.total_payroll_related",
+   "source_page": 59
+  },
+  {
+   "unit": "count",
+   "value": 40231.0,
+   "raw_text": "total rooms occupied ... 40231",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.department.fb_retail_shop.rooms_occupied_budget_2024",
+   "source_page": 48
+  },
+  {
+   "unit": "USD",
+   "value": 8657.61,
+   "raw_text": "total department profit (loss) ... 8657.61",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.net_operating_income.minor_operated_dept_profit_2023",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 11539.5,
+   "raw_text": "total department profit (loss) ... 11539.5",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.net_operating_income.minor_operated_dept_profit_2024",
+   "source_page": 38
+  },
+  {
+   "unit": "USD",
+   "value": 1206.93,
+   "raw_text": "total guest communication rev ... 1206.93",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.guest_communication_revenue_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "pct",
+   "value": 0.06,
+   "raw_text": "guest relocation ... 0.06",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_guest_comm_pct_2024",
+   "source_page": 6
+  },
+  {
+   "unit": "USD",
+   "value": 53872.0,
+   "raw_text": "total system expenses ... 53872",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom.it_systems_expense",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 42994.3,
+   "raw_text": "cost of internet services ... 42994.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_cost_internet_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 12940200.0,
+   "raw_text": "total revenue ... 1.29402e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_revenue_2023",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 82451.0,
+   "raw_text": "corporate office reimbursement ... 82451",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_corporate_office_reimbursement_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 71470.7,
+   "raw_text": "corporate office reimbursement ... 71470.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_corporate_office_reimbursement_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 1243.0,
+   "raw_text": "bonuses & incentives ... 1243",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.bonuses_incentives",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 3596.53,
+   "raw_text": "operating supplies ... 3596.53",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.operating_supplies",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": -1189860.0,
+   "raw_text": "department profit (loss) ... -1.18986e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.department_profit_loss",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 47216.1,
+   "raw_text": "non-mgmt. (sales & marketing) ... 47216.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.salaries_wages_nonmgmt",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 6517.42,
+   "raw_text": "guest laundry cost of sales ... 6517.42",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_laundry_cos_2024",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 1200.0,
+   "raw_text": "total operations expense ... 1.20217",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.departmental_expenses.other_expense_701600_dept_d2146",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 900.0,
+   "raw_text": "music and entertainment ... 900",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.other_expense_702600_dept_d2146",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 270.0,
+   "raw_text": "total interest, depreciation & amortization ... 0.2702",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.departmental_expenses.other_expense_703200_dept_d2146",
+   "source_page": 5
+  },
+  {
+   "unit": "pct",
+   "value": 0.18,
+   "raw_text": "total cost of sales ... 0.180733",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.beverage_cost_pct_liquor_dept_d2248",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 16092.4,
+   "raw_text": "total revenue ... 16092.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_total_revenue_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 634357.0,
+   "raw_text": "total labor & related exp ... 634357",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_labor_total_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 210497.0,
+   "raw_text": "total expenses ... 210497",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom.total_expenses_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "pct",
+   "value": 0.02,
+   "raw_text": "association/ convention ... 0.0160067",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_pct_of_revenue_2024",
+   "source_page": 7
+  },
+  {
+   "unit": "USD",
+   "value": 210497.0,
+   "raw_text": "total expenses ... 210497",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_expenses_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 173186.0,
+   "raw_text": "total expenses ... 173186",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_expenses_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "pct",
+   "value": -0.02,
+   "raw_text": "department profit (loss) ... -0.0159229",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_dept_profit_loss_pct_of_revenue_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 33176.2,
+   "raw_text": "grounds maint & landscaping ... 33176.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.grounds_landscaping",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 394326.0,
+   "raw_text": "total labor & related exp ... 394326",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_labor_related",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 42000.0,
+   "raw_text": "contracted & leased labor ... 42000",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.contracted_leased_labor",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 9022.2,
+   "raw_text": "total department profit (loss) ... 9022.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.net_operating_income.minor_operated_dept_profit_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 13721700.0,
+   "raw_text": "total revenue ... 1.37217e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_total_revenue_ref",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 43352.3,
+   "raw_text": "human resources (consolidated) ... 43352.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.total_operations_expense",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 72976.0,
+   "raw_text": "total system expenses ... 72976",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_system_expenses_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 46663.1,
+   "raw_text": "total system expenses ... 46663.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_system_expenses_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 11239200.0,
+   "raw_text": "total revenue ... 1.12392e+07",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_revenue_budget",
+   "source_page": 72
+  },
+  {
+   "unit": "USD",
+   "value": 73054.7,
+   "raw_text": "corporate office reimbursement ... 73054.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_corporate_office_reimbursement_budget",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 33347.9,
+   "raw_text": "elevators & escalators ... 33347.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.elevators_escalators",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 254301.0,
+   "raw_text": "total operations expense ... 254301",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_other_expenses",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 280566.0,
+   "raw_text": "total salaries and wages ... 280566",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_salaries_wages",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 6329.09,
+   "raw_text": "guest laundry cost of sales ... 6329.09",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_laundry_cos_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "pct",
+   "value": 0.33,
+   "raw_text": "state unemployment insurance ... 0.332433",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_guest_laundry_pct_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "pct",
+   "value": 0.6,
+   "raw_text": "national medical insurance ... 0.597093",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_in_room_items_pct_2024",
+   "source_page": 74
+  },
+  {
+   "unit": "pct",
+   "value": 1.0,
+   "raw_text": "total revenue ... 1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.minor_operated_total_revenue_pct_2024",
+   "source_page": 9
+  },
+  {
+   "unit": "USD",
+   "value": 37296.3,
+   "raw_text": "payroll taxes ... 37296.3",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_payroll_taxes_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 8235.45,
+   "raw_text": "cost of cell phones ... 8235.45",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_cost_cell_phones_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 52747.7,
+   "raw_text": "total cost of services ... 52747.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_cost_of_services_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 53317.2,
+   "raw_text": "total cost of services ... 53317.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_cost_of_services_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": -173186.0,
+   "raw_text": "department profit (loss) ... -173186",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_dept_profit_loss_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 184419.0,
+   "raw_text": "total expenses ... 184419",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_total_expenses_budget",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 6555.07,
+   "raw_text": "human resources ... 6555.07",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_ag_system_expense_human_resources_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 17448.7,
+   "raw_text": "sales and marketing ... 17448.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_ag_system_expense_sales_marketing_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "pct",
+   "value": 0.01,
+   "raw_text": "employee benefits ... 0.00550585",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.it_operations_expense_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 7888.21,
+   "raw_text": "electrical & mechanical equipment ... 7888.21",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.electrical_mechanical",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 10844.9,
+   "raw_text": "painting & wallcovering ... 10844.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.painting_wallcovering",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 112517.0,
+   "raw_text": "total payroll related ... 112517",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.total_payroll_related",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 273611.0,
+   "raw_text": "management ... 273611",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.salaries_wages_management",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 552.77,
+   "raw_text": "total guest communication cos ... 552.774",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_guest_comm_cos_2024",
+   "source_page": 50
+  },
+  {
+   "unit": "pct",
+   "value": 0.09,
+   "raw_text": "administrative & general ... 0.0918033",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_pct_of_revenue_2024",
+   "source_page": 5
+  },
+  {
+   "unit": "USD",
+   "value": 436852.0,
+   "raw_text": "total salaries and wages ... 436852",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_salaries_wages_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 1259700.0,
+   "raw_text": "total expenses ... 1.2597e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_total_expenses_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "pct",
+   "value": 0.02,
+   "raw_text": "management ... 0.023492",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_management_salaries_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": -184419.0,
+   "raw_text": "department profit (loss) ... -184419",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom.department_profit_loss",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 53872.0,
+   "raw_text": "total system expenses ... 53872",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_system_expenses_budget",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": -648627.0,
+   "raw_text": "department profit (loss) ... -648627",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.department_profit_loss",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 204932.0,
+   "raw_text": "non-mgmt. (po & m) ... 204932",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.salaries_wages_nonmgmt",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 3221.31,
+   "raw_text": "travel - meals & entertainment ... 3221.31",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.travel_meals_entertainment",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 4867.16,
+   "raw_text": "office printing and supplies ... 4867.16",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_office_printing_supplies_adjustment_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 72976.0,
+   "raw_text": "total system expenses ... 72976",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom.it_systems_expense_2023",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 55908.0,
+   "raw_text": "total cost of services ... 55908",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_cost_of_services_budget",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 73205.7,
+   "raw_text": "total operations expense ... 73205.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_operations_expense_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 0.0,
+   "raw_text": "contracted & leased labor ... 0",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.contracted_leased_labor",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 7070.2,
+   "raw_text": "total cost of sales ... 7070.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_cost_of_services_2024",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": 879.63,
+   "raw_text": "total guest communication cos ... 879.63",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_guest_comm_cos_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "USD",
+   "value": -1259700.0,
+   "raw_text": "department profit (loss) ... -1.2597e+06",
+   "reviewed": "accepted",
+   "confidence": 1.0,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_dept_profit_loss_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 5801.96,
+   "raw_text": "complimentary services & gifts ... 5801.96",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.complimentary_services_gifts",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 75549.8,
+   "raw_text": "employee benefits ... 75549.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_employee_benefits_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 54120.4,
+   "raw_text": "total operations expense ... 54120.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.total_operations_expense_2023",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 75634.1,
+   "raw_text": "management ... 75634.1",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.salaries_wages_management",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 105932.0,
+   "raw_text": "loyalty programs ... 105932",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.loyalty_programs_consolidated",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 7208.72,
+   "raw_text": "total cost of sales ... 7208.72",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.minor_operated_cost_of_services_budget",
+   "source_page": 50
+  },
+  {
+   "unit": "pct",
+   "value": 0.03,
+   "raw_text": "total salaries and wages ... 0.0318365",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_credit_card_commissions_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 190831.0,
+   "raw_text": "corporate office reimbursement ... 190831",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.corporate_office_reimbursement",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 58079.2,
+   "raw_text": "total operations expense ... 58079.2",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.human_resources.total_operations_expense_budget",
+   "source_page": 55
+  },
+  {
+   "unit": "USD",
+   "value": 625343.0,
+   "raw_text": "total operations expense ... 625343",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_other_expenses_total_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 10646.8,
+   "raw_text": "outside services market research ... 10646.8",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.outside_services_market_research",
+   "source_page": 59
+  },
+  {
+   "unit": "USD",
+   "value": 13088.4,
+   "raw_text": "contract cleaning ... 13088.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.adjustments_contract_cleaning",
+   "source_page": 60
+  },
+  {
+   "unit": "USD",
+   "value": 375935.0,
+   "raw_text": "credit card commissions ... 375935",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_credit_card_commissions_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 14843.9,
+   "raw_text": "repairs and maintenance ... 14843.9",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations.adjustments_repairs_maintenance",
+   "source_page": 60
+  },
+  {
+   "unit": "pct",
+   "value": 0.01,
+   "raw_text": "corporate office reimbursement ... 0.00520857",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.ag_corporate_office_reimbursement_pct_of_revenue_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 22299.6,
+   "raw_text": "provision for doubtful accounts ... 22299.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_provision_doubtful_accounts_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 71470.7,
+   "raw_text": "corporate office reimbursement ... 71470.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom_corporate_office_reimbursement_2024",
+   "source_page": 58
+  },
+  {
+   "unit": "USD",
+   "value": 71470.7,
+   "raw_text": "corporate office reimbursement ... 71470.7",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.administrative_general_corporate_office_reimbursement_2024",
+   "source_page": 57
+  },
+  {
+   "unit": "USD",
+   "value": 190831.0,
+   "raw_text": "corporate office reimbursement ... 190831",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing.corporate_office_reimbursement_consolidated",
+   "source_page": 59
+  }
+ ]
+}

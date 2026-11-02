@@ -1,0 +1,734 @@
+{
+ "_note": "Latest prod extraction of 'The Angler_s - Jun 2025 Financials.xlsx' (deal 2e1db521\u2026, doc_type PNL_MONTHLY, user tag PNL_MONTHLY, agent_version template:sibling:v1;pv=v1), copied read-only 2026-11-02 for the W5 trailing-twelve classification tests. Values are the Angler's data-room workbook's own figures.",
+ "doc_type": "PNL_MONTHLY",
+ "fields": [
+  {
+   "unit": "USD",
+   "value": 233.59,
+   "raw_text": "average daily rate ... 233.593",
+   "confidence": 0.98,
+   "field_name": "adr_usd",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 194.13,
+   "raw_text": "revenue per available room ... 194.132",
+   "confidence": 0.98,
+   "field_name": "revpar_usd",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.83,
+   "raw_text": "occupancy ... 0.831071",
+   "confidence": 0.98,
+   "field_name": "occupancy_pct",
+   "source_page": 4
+  },
+  {
+   "unit": "count",
+   "value": 48180.0,
+   "raw_text": "available rooms ... 48180",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.available_rooms",
+   "source_page": 4
+  },
+  {
+   "unit": "count",
+   "value": 40041.0,
+   "raw_text": "total rooms sold ... 40041",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.total_rooms_sold",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 4497310.0,
+   "raw_text": "income before non-operating inc & expense ... 4.49731e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.income_before_nonop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 3559260.0,
+   "raw_text": "total undistributed expenses ... 3.55926e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.undistributed.total",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 266.57,
+   "raw_text": "average daily rate ... 266.566",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.apr_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 617867.0,
+   "raw_text": "gross operating profit ... 617867",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.apr_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 158.69,
+   "raw_text": "average daily rate ... 158.695",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 119073.0,
+   "raw_text": "gross operating profit ... 119073",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 278.77,
+   "raw_text": "average daily rate ... 278.767",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.dec_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 646102.0,
+   "raw_text": "gross operating profit ... 646102",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.dec_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 341.19,
+   "raw_text": "average daily rate ... 341.186",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.feb_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 858034.0,
+   "raw_text": "gross operating profit ... 858034",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.feb_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 280.59,
+   "raw_text": "average daily rate ... 280.593",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jan_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 637016.0,
+   "raw_text": "gross operating profit ... 637016",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jan_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 179.43,
+   "raw_text": "average daily rate ... 179.427",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 179204.0,
+   "raw_text": "gross operating profit ... 179204",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 175.04,
+   "raw_text": "average daily rate ... 175.04",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jun_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 249624.0,
+   "raw_text": "gross operating profit ... 249624",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jun_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 296.99,
+   "raw_text": "average daily rate ... 296.993",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.mar_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 770633.0,
+   "raw_text": "gross operating profit ... 770633",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.mar_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 222.62,
+   "raw_text": "average daily rate ... 222.623",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.may_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 364576.0,
+   "raw_text": "gross operating profit ... 364576",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.may_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 197.74,
+   "raw_text": "average daily rate ... 197.742",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.nov_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 354736.0,
+   "raw_text": "gross operating profit ... 354736",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.nov_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 192.32,
+   "raw_text": "average daily rate ... 192.317",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.oct_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 266490.0,
+   "raw_text": "gross operating profit ... 266490",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.oct_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 160.4,
+   "raw_text": "average daily rate ... 160.402",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.adr",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 93191.6,
+   "raw_text": "gross operating profit ... 93191.6",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.gop",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 5156550.0,
+   "raw_text": "gross operating profit ... 5.15655e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.gross_operating_profit",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 247.99,
+   "raw_text": "revenue per available room ... 247.987",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.apr_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 117.51,
+   "raw_text": "revenue per available room ... 117.509",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 244.84,
+   "raw_text": "revenue per available room ... 244.841",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.dec_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 316.26,
+   "raw_text": "revenue per available room ... 316.262",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.feb_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 254.33,
+   "raw_text": "revenue per available room ... 254.33",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jan_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 132.25,
+   "raw_text": "revenue per available room ... 132.246",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 141.76,
+   "raw_text": "revenue per available room ... 141.756",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jun_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 271.23,
+   "raw_text": "revenue per available room ... 271.228",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.mar_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 180.84,
+   "raw_text": "revenue per available room ... 180.84",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.may_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 175.57,
+   "raw_text": "revenue per available room ... 175.571",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.nov_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 149.13,
+   "raw_text": "revenue per available room ... 149.126",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.oct_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 106.33,
+   "raw_text": "revenue per available room ... 106.327",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 285263.0,
+   "raw_text": "utilities ... 285263",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.utilities",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 8715800.0,
+   "raw_text": "total departmental profit ... 8.7158e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.departmental_profit.total",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 659234.0,
+   "raw_text": "management fees ... 659234",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.fees_and_reserves.mgmt_fee",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.74,
+   "raw_text": "occupancy ... 0.737048",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.occupancy",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.88,
+   "raw_text": "occupancy ... 0.878299",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.dec_2024.occupancy",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.74,
+   "raw_text": "occupancy ... 0.737048",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.occupancy",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.81,
+   "raw_text": "occupancy ... 0.812317",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.may_2024.occupancy",
+   "source_page": 4
+  },
+  {
+   "unit": "pct",
+   "value": 0.66,
+   "raw_text": "occupancy ... 0.662879",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.occupancy",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 2781420.0,
+   "raw_text": "rooms ... 2.78142e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.departmental_expenses.rooms",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 5460680.0,
+   "raw_text": "total departmental expense ... 5.46068e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.departmental_expenses.total",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 316.26,
+   "raw_text": "revenue per available room ... 316.262",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.seasonality.peak_month_revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1113160.0,
+   "raw_text": "sales & marketing ... 1.11316e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.undistributed.sales_marketing",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 982030.0,
+   "raw_text": "rooms ... 982030",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.apr_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 480846.0,
+   "raw_text": "rooms ... 480846",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1001890.0,
+   "raw_text": "rooms ... 1.00189e+06",
+   "confidence": 0.95,
+   "field_name": "p_and_l_usali.monthly.dec_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1168900.0,
+   "raw_text": "rooms ... 1.1689e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.feb_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1040720.0,
+   "raw_text": "rooms ... 1.04072e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.jan_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 541151.0,
+   "raw_text": "rooms ... 541151",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 561352.0,
+   "raw_text": "rooms ... 561352",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jun_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1109860.0,
+   "raw_text": "rooms ... 1.10986e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.mar_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 739998.0,
+   "raw_text": "rooms ... 739998",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.may_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 695259.0,
+   "raw_text": "rooms ... 695259",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.nov_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 610222.0,
+   "raw_text": "rooms ... 610222",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.oct_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 421056.0,
+   "raw_text": "rooms ... 421056",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1286930.0,
+   "raw_text": "miscellaneous income ... 1.28693e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.operating_revenue.misc_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1508820.0,
+   "raw_text": "total revenues ... 1.50882e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.apr_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 772840.0,
+   "raw_text": "total revenues ... 772840",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.aug_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1434480.0,
+   "raw_text": "total revenues ... 1.43448e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.dec_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1686090.0,
+   "raw_text": "total revenues ... 1.68609e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.feb_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1504430.0,
+   "raw_text": "total revenues ... 1.50443e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.jan_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 856366.0,
+   "raw_text": "total revenues ... 856366",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jul_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 993515.0,
+   "raw_text": "total revenues ... 993515",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.jun_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1589910.0,
+   "raw_text": "total revenues ... 1.58991e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.mar_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1169930.0,
+   "raw_text": "total revenues ... 1.16993e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.may_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1047680.0,
+   "raw_text": "total revenues ... 1.04768e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.monthly.nov_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 909674.0,
+   "raw_text": "total revenues ... 909674",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.oct_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 702757.0,
+   "raw_text": "total revenues ... 702757",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.monthly.sep_2024.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 22225.4,
+   "raw_text": "other operated departments ... 22225.4",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.operating_revenue.other_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 9353290.0,
+   "raw_text": "rooms ... 9.35329e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.operating_revenue.rooms_revenue",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 106.33,
+   "raw_text": "revenue per available room ... 106.327",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.seasonality.trough_month_revpar",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 14176500.0,
+   "raw_text": "total revenues ... 1.41765e+07",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.operating_revenue.total_revenues",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 178231.0,
+   "raw_text": "information & telecom systems ... 178231",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.information_telecom",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 651856.0,
+   "raw_text": "property operations & maintenance ... 651856",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.undistributed.property_operations",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 2670570.0,
+   "raw_text": "food & beverage ... 2.67057e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.departmental_expenses.food_beverage",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 8690.18,
+   "raw_text": "other operated departments ... 8690.18",
+   "confidence": 0.98,
+   "field_name": "p_and_l_usali.departmental_expenses.other_operated",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 1330750.0,
+   "raw_text": "administrative & general ... 1.33075e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.undistributed.administrative_general",
+   "source_page": 4
+  },
+  {
+   "unit": "USD",
+   "value": 3514040.0,
+   "raw_text": "food & beverage ... 3.51404e+06",
+   "confidence": 0.5,
+   "field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue",
+   "source_page": 4
+  }
+ ]
+}

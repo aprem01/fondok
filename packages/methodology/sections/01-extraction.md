@@ -48,7 +48,8 @@ P&L, STR report, market study, benchmark report, rent roll, hotel program, capit
 tax, debt or contract. A document dropped without a tag is marked “Classified automatically —
 confirm” in the Data Room until you confirm or change the type. A loan document — a term sheet, a
 loan agreement, the debt upload template — is filed as debt, never as a P&L, so it can never become
-the statement your Year-1 figures are read from.
+the statement your Year-1 figures are read from. A monthly financial package that includes its own
+trailing-twelve-month sheet is filed as a T-12 for the period that sheet ends on.
 
 :::
 
@@ -212,6 +213,15 @@ statement's F&B, Rooms or Total revenue at 50% confidence when it is below a qua
 other full-period statements for the same line, so a single-outlet GL line can never pass as the
 department total unreviewed.
 
+A monthly financial package that also carries a dated T12 sheet — twelve consecutive month-end
+columns and a TOTAL, the month columns adding up to the TOTAL — is read as the trailing twelve
+months it states (`extraction/trailing_twelve`): the sheet's USALI totals and occupancy / ADR /
+RevPAR are added at their canonical paths when the extraction holds no other full-period statement
+(the month and year-to-date columns stay as read), and `period_type = trailing_twelve` with the last
+month-end as `period_ending` is stated, with the sheet, the twelve months and the footing kept as
+provenance. A sheet title "for the period ending …" must name the same month-end; a forecast,
+budget or adjusted sheet never counts, and a workbook without such a sheet stays monthly.
+
 :::
 
 ::: stage {n=5 icon=Link2}
@@ -243,6 +253,8 @@ no longer outranks an annual T-12 in the engine actuals loaders. An extraction u
 that carries debt terms (three or more `in_place_debt.*`-style fields) and not one numeric
 `p_and_l_usali.*` line is retyped DEBT (`_is_debt_terms_extraction`), with the original label kept
 as the AI proposal; under an analyst's P&L tag it raises the misclassification banner instead.
+A statement the reconcile stage typed a trailing twelve narrows to T12 the same way; under an
+analyst's monthly, YTD or annual tag the tag is kept and the banner proposes T-12.
 
 :::
 
