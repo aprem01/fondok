@@ -482,7 +482,9 @@ rooms line, or whose lines miss its stated total, marks the revenue-derived assu
 <!-- source: apps/worker/app/services/engine_runner.py (_resolve_statement_lines, _COST_SECTION_SEGMENTS / _REVENUE_SECTION_SEGMENTS; _choose_period_statements, _HEADLINE_LINES, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25; _loader_notices) -->
 A line resolves by its exact field path first; only when no exact path exists does a field whose
 last segment names the line count, and never one under a cost or expense section for a revenue line
-(or a revenue section for an expense line). A period is a full year identified by its stated period
+(or a revenue section for an expense line). Insurance and property taxes are read wherever an
+annual statement files them — under fixed charges or under non-operating expenses, with or without
+a `_usd` suffix — but never from a prior-year, budget or per-key row. A period is a full year identified by its stated period
 end (else its fiscal year; an undated T-12 is the current trailing twelve months), or a partial
 period identified by a stated end and its period type; a partial statement with no stated end stands
 alone, and no date is ever inferred into a note. A fiscal year known only by its year is the

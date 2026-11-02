@@ -1332,6 +1332,9 @@ concepts:
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.fixed_charges.property_taxes
+        - p_and_l_usali.fixed_charges.property_taxes_usd
+        - p_and_l_usali.fixed_charges.property_and_other_taxes
+        - p_and_l_usali.fixed_charges.property_and_other_taxes_usd
         - p_and_l_usali.non_operating.property_and_other_taxes_usd
         - p_and_l_usali.non_operating.property_other_taxes_usd
         - p_and_l_usali.non_operating.property_taxes
@@ -1368,6 +1371,7 @@ concepts:
     aliases:
       PNL_FAMILY:
         - p_and_l_usali.fixed_charges.insurance
+        - p_and_l_usali.fixed_charges.insurance_usd
         - p_and_l_usali.non_operating.insurance_usd
         - p_and_l_usali.non_operating.insurance
         - p_and_l_usali.insurance

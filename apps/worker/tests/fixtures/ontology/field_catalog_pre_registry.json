@@ -1,5 +1,5 @@
 {
-  "_note": "Pre-registry snapshot of apps/worker/app/extraction/field_catalog.py's six public constants, taken before the registry adapter landed (Phase 1.3a). 'constants' holds the exported values with sorted keys; 'insertion_order' pins the key order each dict was built in; 'source_lists' holds the {canonical: [alias, ...]} lists from field_catalog.yaml in their original order, which is what the inverted dicts' ordering semantics derive from.",
+  "_note": "Pre-registry snapshot of apps/worker/app/extraction/field_catalog.py's six public constants, taken before the registry adapter landed (Phase 1.3a). 'constants' holds the exported values with sorted keys; 'insertion_order' pins the key order each dict was built in; 'source_lists' holds the {canonical: [alias, ...]} lists from field_catalog.yaml in their original order, which is what the inverted dicts' ordering semantics derive from. Deliberate widening (W5 extract, 2026-11-02): t12_expense.property_taxes and t12_expense.insurance gained the exact statement-level paths the real Angler's annual P&Ls carry (fixed_charges.*_usd, fixed_charges.property_and_other_taxes[_usd], non_operating.insurance_usd / property_and_other_taxes_usd); Kimpton golden unchanged.",
   "constants": {
     "T12_EXPENSE_FIELD_ALIASES": {
       "admin_general": "administrative_general",
@@ -18,7 +18,13 @@
       "p_and_l_usali.fees_and_reserves.ffe_reserve": "ffe_reserve",
       "p_and_l_usali.fees_and_reserves.mgmt_fee": "mgmt_fee",
       "p_and_l_usali.fixed_charges.insurance": "insurance",
+      "p_and_l_usali.fixed_charges.insurance_usd": "insurance",
+      "p_and_l_usali.fixed_charges.property_and_other_taxes": "property_taxes",
+      "p_and_l_usali.fixed_charges.property_and_other_taxes_usd": "property_taxes",
       "p_and_l_usali.fixed_charges.property_taxes": "property_taxes",
+      "p_and_l_usali.fixed_charges.property_taxes_usd": "property_taxes",
+      "p_and_l_usali.non_operating.insurance_usd": "insurance",
+      "p_and_l_usali.non_operating.property_and_other_taxes_usd": "property_taxes",
       "p_and_l_usali.undistributed.administrative_general": "administrative_general",
       "p_and_l_usali.undistributed.information_telecom": "information_telecom",
       "p_and_l_usali.undistributed.property_operations": "property_operations",
@@ -262,10 +268,16 @@
       ],
       "property_taxes": [
         "p_and_l_usali.fixed_charges.property_taxes",
+        "p_and_l_usali.fixed_charges.property_taxes_usd",
+        "p_and_l_usali.fixed_charges.property_and_other_taxes",
+        "p_and_l_usali.fixed_charges.property_and_other_taxes_usd",
+        "p_and_l_usali.non_operating.property_and_other_taxes_usd",
         "property_taxes"
       ],
       "insurance": [
         "p_and_l_usali.fixed_charges.insurance",
+        "p_and_l_usali.fixed_charges.insurance_usd",
+        "p_and_l_usali.non_operating.insurance_usd",
         "insurance"
       ]
     },

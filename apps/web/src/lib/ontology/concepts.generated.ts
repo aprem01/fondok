@@ -3966,6 +3966,21 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
           "scope": null
         },
         {
+          "path": "p_and_l_usali.fixed_charges.property_taxes_usd",
+          "basis": null,
+          "scope": null
+        },
+        {
+          "path": "p_and_l_usali.fixed_charges.property_and_other_taxes",
+          "basis": null,
+          "scope": null
+        },
+        {
+          "path": "p_and_l_usali.fixed_charges.property_and_other_taxes_usd",
+          "basis": null,
+          "scope": null
+        },
+        {
           "path": "p_and_l_usali.non_operating.property_and_other_taxes_usd",
           "basis": null,
           "scope": null
@@ -4074,6 +4089,11 @@ export const CONCEPTS: Record<ConceptId, ConceptDef> = {
       "PNL_FAMILY": [
         {
           "path": "p_and_l_usali.fixed_charges.insurance",
+          "basis": null,
+          "scope": null
+        },
+        {
+          "path": "p_and_l_usali.fixed_charges.insurance_usd",
           "basis": null,
           "scope": null
         },

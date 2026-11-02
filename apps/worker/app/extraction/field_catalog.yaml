@@ -83,11 +83,21 @@ t12_expense:
   ffe_reserve:
     - p_and_l_usali.fees_and_reserves.ffe_reserve
     - ffe_reserve
+  # W5 (2026-11-02): the statement-level fixed-charge paths the annual
+  # Angler's P&Ls actually carry (read-only audit of every prod P&L-family
+  # extraction). Exact full paths only — never a bare ``insurance_usd`` tail,
+  # which also ends prior-year / budget / per-key rows.
   property_taxes:
     - p_and_l_usali.fixed_charges.property_taxes
+    - p_and_l_usali.fixed_charges.property_taxes_usd
+    - p_and_l_usali.fixed_charges.property_and_other_taxes
+    - p_and_l_usali.fixed_charges.property_and_other_taxes_usd
+    - p_and_l_usali.non_operating.property_and_other_taxes_usd
     - property_taxes
   insurance:
     - p_and_l_usali.fixed_charges.insurance
+    - p_and_l_usali.fixed_charges.insurance_usd
+    - p_and_l_usali.non_operating.insurance_usd
     - insurance
 
 # ─── T-12 revenue / KPIs → revenue engine actuals ────────────────────
