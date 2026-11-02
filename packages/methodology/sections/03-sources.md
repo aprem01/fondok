@@ -177,8 +177,13 @@ source for the Sources & Uses origination-fee line and the Overview's Financing 
 Entered on the new-deal wizard or the Overview: project name, city, brand, keys, the reopening date
 — and the **purchase price**. The wizard's price field is read to whole dollars (“$36.4M”,
 “36,400,000”; a range stores its midpoint and is labelled as such). Text that does not read as a
-price is kept as a note and sends nothing — the model keeps its default until you set the price on
-CAPEX → Deal Summary.
+price is kept as a note and sends nothing. There is no default price: until a price is set, the
+engines that need it (capital, debt, returns, sensitivity, partnership and cash flow) do not run and
+say so. Enter the price at any time on the Overview (Entry Valuation) or on CAPEX → Deal Summary —
+the CAPEX tab shows the Purchase Price and Keys inputs even when the model could not run, pre-filled
+from the OM's stated asking price when it has one, or saying the OM does not state one. Your entry
+is saved as an Analyst Override with its note and the model re-runs. The order is your entry, then
+the deal record, then the OM's asking price; a price is never inferred from a broker cap rate.
 
 :::
 
@@ -727,9 +732,16 @@ as "$120-140M" stores its *midpoint* and is labelled "range midpoint" on the Rev
 as `purchase_price`, which seeds the model's purchase price with this badge rather than "Seed". A
 bare figure under $1,000,000 with no unit ("36400", "1,200") and a two-year period ("2024-2025") are
 not read as prices — the hint asks for M / MM or the full dollars. Text that does not read as a
-price is kept as a note and sends nothing — the model keeps its seed until the analyst sets the
-price on CAPEX → Deal Summary, where it stays editable. The Property Name is not a deal-row field —
-see below.
+price is kept as a note and sends nothing. There is no seed price (`IDENTITY_INPUT_KEYS` have no
+default): with no price the price-dependent engines are refused with `missing_identity_inputs`, and
+the message names where to enter it. The analyst enters it at any time on Overview → Entry
+Valuation or CAPEX → Deal Summary (one shared editor, `PurchasePriceField`); the CAPEX tab renders
+the Purchase Price / Keys inputs instead of an empty state when capital failed for a missing
+identity input, pre-filled from the OM asking-price row (`asking_price.headline_price_usd`) when one
+was extracted, or stating that the OM does not give one. The entry is written as
+`field_overrides.purchase_price` `{value, note}` and triggers a run. Precedence: analyst override >
+deal row > OM asking price; the loader never derives a price from a broker cap rate or a price per
+key. The Property Name is not a deal-row field — see below.
 
 :::
 

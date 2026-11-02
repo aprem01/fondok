@@ -742,3 +742,87 @@ def test_identity_needs_are_transitive_over_engine_deps() -> None:
     for name in ("debt", "returns", "sensitivity", "partnership", "cash_flow"):
         assert identity_inputs_needed(name) == frozenset({"keys", "purchase_price"}), name
     assert set(ENGINE_NAMES) >= {"revenue", "capital"}
+
+
+# ───────────── W5 "price": the refusal names where to enter it ─────────────
+
+PRICE_GUIDANCE = "Enter the purchase price on the deal's Overview or CAPEX tab"
+KEYS_GUIDANCE = "Enter the key count on the deal's CAPEX tab"
+
+
+def test_missing_price_message_names_where_to_enter_it() -> None:
+    """W5 — "Enter it on the deal" named no control, and the control it meant
+    was hidden in exactly this state. The message now names the tabs that
+    carry the editor, and never suggests a placeholder or an OM is needed."""
+    from app.services.engine_runner import _missing_identity_message
+
+    price = _missing_identity_message(("purchase_price",))
+    assert price.startswith("The deal has no purchase price.")
+    assert PRICE_GUIDANCE in price
+    assert "upload an OM" not in price
+    assert "placeholder" in price  # still says the model never substitutes one
+
+    keys = _missing_identity_message(("keys",))
+    assert keys.startswith("The deal has no key count.")
+    assert KEYS_GUIDANCE in keys
+    assert "purchase price" not in keys
+
+    both = _missing_identity_message(("purchase_price", "keys"))
+    assert both.startswith("The deal has no key count or purchase price.")
+    assert KEYS_GUIDANCE in both
+    assert PRICE_GUIDANCE.replace("Enter", "enter") in both
+
+
+@pytest.mark.asyncio
+async def test_missing_price_failure_carries_the_guidance_on_the_typed_contract() -> None:
+    """The persisted EngineFailure keeps its typed shape (reason + missing);
+    only the sentence changed."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import run_all_engines
+
+    tenant_id = str(uuid4())
+    async with get_session_factory()() as session:
+        deal_id = await _insert_deal(session, tenant_id=tenant_id, keys=132)
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+    cap = results["capital"]
+    assert cap["status"] == "failed"
+    assert cap["failure"]["reason"] == "missing_identity_inputs"
+    assert cap["failure"]["missing"] == ["purchase_price"]
+    assert PRICE_GUIDANCE in cap["failure"]["message"]
+    assert cap["error"] == cap["failure"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_an_analyst_price_override_alone_runs_the_capital_stack() -> None:
+    """The tester's deal: no deal-row price, no OM price. Entering the price
+    as an analyst override (the Overview / CAPEX editor's write) is enough —
+    the price-dependent engines run on it, labelled ``analyst_override``."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        _load_engine_inputs,
+        run_all_engines,
+    )
+
+    tenant_id = str(uuid4())
+    fo = json.dumps(
+        {"purchase_price": {"value": 36_400_000, "note": "Sam's model price (FON-67)"}}
+    )
+    async with get_session_factory()() as session:
+        deal_id = await _insert_deal(
+            session, tenant_id=tenant_id, keys=132, field_overrides=fo
+        )
+        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        results = await run_all_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+        )
+
+    assert base["purchase_price"] == pytest.approx(36_400_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_ANALYST_OVERRIDE
+    assert "purchase_price" not in base["__reasons__"]
+    for name in ("capital", "debt", "returns", "sensitivity", "cash_flow"):
+        assert results[name]["status"] == "complete", (name, results[name])
+    uses = {u["label"]: u["amount"] for u in results["capital"]["outputs"]["uses"]}
+    assert uses["Purchase Price"] == pytest.approx(36_400_000.0)

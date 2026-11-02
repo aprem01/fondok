@@ -614,14 +614,29 @@ class MissingIdentityInputsError(LookupError):
         super().__init__(_missing_identity_message(missing))
 
 
+#: Where the analyst enters each identity input, in the words the refusal
+#: prints (W5 "price"). The price has an editor on Overview (Entry Valuation)
+#: and on CAPEX (Deal Summary — rendered even when the capital engine has no
+#: output); the key count is edited on CAPEX. Both write the inputs the loader
+#: reads (``field_overrides.purchase_price`` / ``deals.keys``).
+_IDENTITY_INPUT_ENTRY: dict[str, tuple[str, str]] = {
+    "keys": ("key count", "the deal's CAPEX tab"),
+    "purchase_price": ("purchase price", "the deal's Overview or CAPEX tab"),
+}
+
+
 def _missing_identity_message(missing: tuple[str, ...] | frozenset[str]) -> str:
-    labels = {"keys": "key count", "purchase_price": "purchase price"}
-    names = [labels.get(k, k) for k in sorted(missing)]
+    keys = sorted(missing)
+    names = [_IDENTITY_INPUT_ENTRY.get(k, (k, "the deal"))[0] for k in keys]
+    steps = [
+        f"enter the {label} on {where}"
+        for label, where in (_IDENTITY_INPUT_ENTRY.get(k, (k, "the deal")) for k in keys)
+    ]
+    guidance = ", ".join(steps) + ("," if len(steps) > 1 else "")
     return (
-        f"The deal has no {' or '.join(names)}. Enter "
-        f"{'it' if len(names) == 1 else 'them'} on the deal (or upload an OM "
-        f"that carries {'it' if len(names) == 1 else 'them'}) and run the "
-        f"model again — the model never substitutes a placeholder property."
+        f"The deal has no {' or '.join(names)}. {guidance[0].upper()}{guidance[1:]} "
+        f"and run the model again — the model never substitutes a placeholder "
+        f"property."
     )
 
 

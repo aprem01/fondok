@@ -180,8 +180,10 @@ of the five shows "Awaiting model run".
 A failed engine records one failure row with a reason — the engine raised (engine error), the
 loader could not read the deal's data (load error), or an upstream engine did not complete
 (engine skipped) — and the tabs it feeds read as that explicit error, never as silent dashes. A
-deal with no key count or purchase price is refused before any engine runs (missing identity
-inputs). A saved run older than the current version is marked stale and the affected tabs are
+deal with no key count or purchase price is refused before any engine that needs them runs
+(missing identity inputs); the message names where to enter them — the purchase price on the
+Overview or CAPEX tab, the key count on CAPEX — and CAPEX shows those inputs in place of its
+summary until the model can run. A saved run older than the current version is marked stale and the affected tabs are
 named.
 
 :::

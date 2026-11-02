@@ -231,9 +231,10 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "ui": REFUSAL_GLYPH,
         "explanation": (
             "The deal has no key count and/or no purchase price, so the engines "
-            "that need them did not run. Enter them on the deal (or upload an "
-            "OM that carries them) and run the model again; Fondok never "
-            "substitutes a placeholder property."
+            "that need them did not run. Enter the purchase price on the deal's "
+            "Overview or CAPEX tab and the key count on its CAPEX tab, then run "
+            "the model again; Fondok never substitutes a placeholder property, "
+            "and never infers a price from a broker cap rate."
         ),
     },
     ReasonCode.LOAD_ERROR: {

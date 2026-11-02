@@ -1409,3 +1409,85 @@ async def test_analyst_override_still_wins_over_the_om_in_place_debt() -> None:
     assert base["__sources__"]["ltv"] == SOURCE_OM_BROKER
     assert base["__sources__"]["loan_amount"] == SOURCE_OM_BROKER
     assert base["__source_fields__"]["ltv"]["field_name"] == "in_place_debt.ltv_pct"
+
+
+# ═════════════ W5 "price" — purchase price precedence, end to end ═════════════
+
+
+_OM_ASKING_ROW = {
+    "field_name": "asking_price.headline_price_usd",
+    "value": 40_000_000.0,
+    "source_page": 4,
+    "confidence": 0.9,
+}
+
+
+@pytest.mark.asyncio
+async def test_purchase_price_precedence_override_beats_row_beats_om() -> None:
+    """override > deal record > OM asking price. The analyst's entry wins
+    over both the deal row and the OM headline; the row wins over the OM."""
+    from app.services.engine_runner import (
+        SOURCE_ANALYST_OVERRIDE,
+        SOURCE_DEAL_ROW,
+        SOURCE_OM_BROKER,
+    )
+
+    override = {"purchase_price": {"value": 38_000_000, "note": "Our bid"}}
+
+    # All three present → the override.
+    all_three = uuid4()
+    await _insert_deal(
+        all_three, name="All three", keys=132, purchase=36_400_000,
+        field_overrides=override,
+    )
+    await _insert_om_extraction(all_three, fields=[_OM_ASKING_ROW])
+    base = await _base_for(all_three)
+    assert base["purchase_price"] == pytest.approx(38_000_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_ANALYST_OVERRIDE
+
+    # Override + OM, no row → the override.
+    override_om = uuid4()
+    await _insert_deal(
+        override_om, name="Override and OM", keys=132, purchase=0,
+        field_overrides=override,
+    )
+    await _insert_om_extraction(override_om, fields=[_OM_ASKING_ROW])
+    base = await _base_for(override_om)
+    assert base["purchase_price"] == pytest.approx(38_000_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_ANALYST_OVERRIDE
+
+    # Row + OM, no override → the row.
+    row_om = uuid4()
+    await _insert_deal(row_om, name="Row and OM", keys=132, purchase=36_400_000)
+    await _insert_om_extraction(row_om, fields=[_OM_ASKING_ROW])
+    base = await _base_for(row_om)
+    assert base["purchase_price"] == pytest.approx(36_400_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_DEAL_ROW
+
+    # OM only → the OM, with the row it was read off (page included).
+    om_only = uuid4()
+    await _insert_deal(om_only, name="OM only", keys=132, purchase=0)
+    await _insert_om_extraction(om_only, fields=[_OM_ASKING_ROW])
+    base = await _base_for(om_only)
+    assert base["purchase_price"] == pytest.approx(40_000_000.0)
+    assert base["__sources__"]["purchase_price"] == SOURCE_OM_BROKER
+    assert base["__source_fields__"]["purchase_price"]["source_page"] == 4
+
+
+@pytest.mark.asyncio
+async def test_no_price_anywhere_is_refused_and_never_inferred_from_a_cap_rate() -> None:
+    """An unpriced OM that states a broker cap rate (and a price per key)
+    never yields a purchase price: no NOI ÷ cap, no per-key × keys. The key
+    stays absent with the ``missing_identity_inputs`` reason."""
+    om_cap_only = uuid4()
+    await _insert_deal(om_cap_only, name="Unpriced OM", keys=132, purchase=0)
+    await _insert_om_extraction(
+        om_cap_only,
+        fields=[
+            {"field_name": "broker_proforma.cap_rate", "value": 0.07},
+            {"field_name": "broker_proforma.noi_usd", "value": 2_500_000.0},
+        ],
+    )
+    base = await _base_for(om_cap_only)
+    assert "purchase_price" not in base
+    assert base["__reasons__"]["purchase_price"]["code"] == "missing_identity_inputs"
