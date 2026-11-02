@@ -25,18 +25,22 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
-# The Kimpton fixture's returns block. Was the 2026-10-16 baseline
-# (returns-exit-plan.md §1.6: levered IRR 0.30507763569294777, unlevered
-# 0.1966981834769953, EM 3.173073565683279, terminal NOI 5133453.812007522,
-# gross sale 73335054.45725031, net proceeds 49645085.86905478); moved by the
-# 2026-11 engine fixes (departmental ratio, F&B price inflation — see
-# docs/REGRESSION_BASELINE.md "2026-11 re-baseline: pending").
-BASELINE_LEVERED_IRR = 0.31285191262521883
-BASELINE_UNLEVERED_IRR = 0.20148929715914543
-BASELINE_EQUITY_MULTIPLE = 3.2589691094538953
-BASELINE_TERMINAL_NOI = 5235792.415512596
-BASELINE_GROSS_SALE = 74797034.5073228
-BASELINE_NET_PROCEEDS = 51077826.318125814
+# The Kimpton fixture's returns block (evals/baselines/
+# kimpton-golden-2026-11-02-topline-v2.json). History: the 2026-10-16
+# baseline (levered IRR 0.30507763569294777, unlevered 0.1966981834769953,
+# EM 3.173073565683279, terminal NOI 5133453.812007522, gross sale
+# 73335054.45725031, net proceeds 49645085.86905478); the 2026-11-01 engine
+# fixes (0.31285191262521883 / 0.20148929715914543 / 3.2589691094538953 /
+# 5235792.415512596 / 74797034.5073228 / 51077826.318125814); then topline
+# methodology v2 (2026-11-02, docs/REGRESSION_BASELINE.md): the seed fixture
+# has no market data and no growth seed any more, so its rates are flat and
+# the exit-year NOI is not grown.
+BASELINE_LEVERED_IRR = 0.08060211864030331
+BASELINE_UNLEVERED_IRR = 0.07486588152182339
+BASELINE_EQUITY_MULTIPLE = 1.376242341300707
+BASELINE_TERMINAL_NOI = 2957514.990325582
+BASELINE_GROSS_SALE = 42250214.147508316
+BASELINE_NET_PROCEEDS = 19181942.36550762
 
 
 @pytest.fixture(autouse=True)

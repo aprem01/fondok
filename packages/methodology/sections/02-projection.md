@@ -31,25 +31,46 @@ precedence for each input is below.
 :::
 
 ::: card
-#### Year-1 occupancy and ADR
+#### How occupancy and ADR are projected
+
+Every projected year's occupancy and ADR is the **benchmark** for that year × the hotel's
+**penetration** of it. The chain, in order:
 
 ::: chain
-1. **Your override** — Set in the inline editor on the Overview or the P&L — wins over every other
-   source and carries your justification note.
-2. **T-12 actual** — Read from the statement the Data Room badges as Primary source: full-year
-   statements first, the most recent period first, a T-12 ahead of a calendar-year P&L of the same
-   year.
-3. **Market forecast** — When the deal has no T-12 but a CBRE Hotel Horizons report is uploaded, its
-   Year-1 forecast for the submarket and chain scale anchors the year.
-4. **Platform default** — A last-resort fallback used only on deals with no extracted data, badged as a
-   default so it is never mistaken for a sourced figure.
+1. **Your override** — A Year-1 occupancy or ADR you enter yourself (with a note) is used as typed.
+   Penetration and the ramp are not applied to it; later years grow it at that year's market growth.
+2. **Benchmark** — The competitive set (the STR comp set, else a CoStar comp set); else the hotel's
+   class in the CoStar submarket report (its latest actual year); else the market. The Future P&L
+   names the level in use, its report and period, and why a higher level was not available. The
+   benchmark describes its own period — an STR trailing twelve months to May 2025 describes 2025 —
+   and is grown into every projected year, Year 1 included, by the market growth below.
+3. **Market growth, year by year** — Your growth for that year; else your all-years growth; else the
+   CBRE Hotel Horizons forecast for that calendar year; else the CoStar submarket forecast for the
+   hotel's class. Past the last forecast year the last forecast year's growth is carried forward and
+   labelled an assumption. With no forecast at all the rate is held flat and the Future P&L says
+   "No market forecast — set growth manually". A 4.5% RevPAR growth is offered as a labelled
+   platform suggestion you can apply; it is never applied for you.
+4. **Penetration at stabilization** — 100 (parity with the benchmark) unless you set it; the hotel's
+   current STR index (for example an MPI of 110) is printed beside the default so you can raise it.
+   A penetration you set for a specific year beats the formula for that year.
+5. **Ramp** — Before the stabilization year the hotel runs at a share of its stabilized penetration:
+   85% in Year 1 and 95% in Year 2 for a Year-3 stabilization (85% in Year 1 for Year 2). For a later
+   stabilization year the years in between run at 100% until you enter them — no ramp is invented.
+6. **The T-12** — Shown beside the projection as a reference row, not the basis.
 
 :::
 
+Occupancy stays at or below 95%; a year that would exceed it is held at 95% and says so. With no
+benchmark at all the hotel is projected from its own starting occupancy and ADR (the T-12 actual
+where one is extracted) and that is stated. A CoStar figure is withheld when the workspace's data
+policy says so, and the Future P&L names the policy.
+
 **F&B revenue grows with prices, not only with occupancy.** F&B revenue is F&B dollars per occupied
 room × occupied rooms. The Year-1 dollars per occupied room come from the T-12 (F&B revenue ÷
-occupied rooms) or the default, and inflate each year at the deal's ADR growth, so F&B keeps pace
-with room rates. A renovation lowers occupied rooms, never the F&B price.
+occupied rooms) or the default, and inflate each year at the market ADR growth the benchmark grows
+by — not at the penetration ramp, which is the hotel's position in its market rather than a price
+change. A year with no ADR growth figure holds the F&B price flat. A renovation lowers occupied
+rooms, never the F&B price.
 
 :::
 
@@ -178,9 +199,10 @@ comparison row — is read from that year, published once so two screens cannot 
 
 The stabilization year defaults to **Year 3 of operations** (badged “Default — confirm”); on a
 shorter hold it is the last projected year, and the card says so. You can override it on the Future
-P&L's Assumptions panel. It is a **reporting** assumption: it selects which year the stabilized
-figures are read from and moves no cash flow, so changing it leaves the sale price, both IRRs and
-the equity multiple unchanged.
+P&L's Assumptions panel. It selects which year the stabilized figures are read from, and it is
+also the year the hotel reaches its stabilized penetration of the benchmark: the ramp runs in the
+years before it. Changing it therefore moves the projected occupancy and ADR of the ramp years and
+everything built on them, and an override carries a justification note.
 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the acquisition close,
 and the Overview reads “Year 3 after close”. For a material repositioning or re-flag, set the
@@ -331,24 +353,48 @@ and an analyst override replaces it.
 :::
 
 ::: card
-#### Year-1 occupancy and ADR — precedence and the defaults
+#### Occupancy and ADR — topline methodology v2
 
-<!-- source: apps/worker/app/services/engine_runner.py (_seed_defaults, SOURCE_* labels, load_engine_inputs) -->
-1. Analyst override (badge Analyst Override) — wins; carries the justification note.
-2. T-12 actual — the primary statement's own occupancy and ADR (badge T-12).
-3. CBRE Hotel Horizons Year-1 forecast for the submarket and chain scale (badge CBRE) when no
-   T-12 is extracted.
-4. Platform default (badge Seed) — starting occupancy 76.2% and starting ADR $385.00, with the
-   reason recorded (no document of the needed type, or no field that resolves to the concept).
+<!-- source: apps/worker/app/services/topline.py, topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline) -->
+For each projected year y with stabilization year S, benchmark B, stabilized penetration P (index
+points, default 100), ramp r and a per-year penetration V you may set:
+penetration = V when set; P × r(y) when y \< S and the ramp defines the year; P otherwise.
+Occupancy = min(95%, B occupancy × penetration ÷ 100); ADR = B ADR × penetration ÷ 100. Renovation
+displacement multiplies on top, unchanged. Default ramp: 85% / 95% for S = 3, 85% for S = 2;
+undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4.
 
-<!-- source: apps/worker/app/services/engine_runner.py (_seed_defaults) -->
-Growth defaults when no document and no override sets them: occupancy growth 0.8% a year, ADR
-growth 4.0%, RevPAR growth 4.5%, expense growth 3.5%, F&B revenue $88.00 per occupied room, other
-revenue 6.5% of rooms revenue. Each is badged Seed until replaced.
+<!-- source: apps/worker/app/services/topline_benchmark.py (resolve_benchmark), services/topline.py (build_topline) -->
+Benchmark level, first available unless you force one: competitive set (STR TTM blend = subject
+TTM ÷ MPI / ARI from one report; else a CoStar comp set) → CoStar submarket, the hotel's class, the
+latest actual year (overall series, labelled, when the class is not in the report or no positioning
+tier is set) → market (market-wide report figures, else CBRE Hotel Horizons All Hotels). The level is
+grown from its own calendar year into each projected year: B(y) = level × Π(1 + growth) over the
+calendar years after the level's period up to year y's. A step with no growth figure holds B flat.
+
+<!-- source: apps/worker/app/services/topline_growth.py (resolve_growth_by_year), services/topline.py (read_topline_inputs) -->
+Growth per year and metric, first hit: your per-year growth → your all-years growth (your RevPAR
+growth alone sets ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 for each year) →
+CBRE Hotel Horizons All Hotels change for that calendar year → CoStar submarket change for the
+hotel's class → carried forward past the last year of the series the previous year used
+(an assumption) → none (held flat, {{reason:no_market_forecast}}). A CoStar figure under a withhold
+data policy is {{reason:license_withheld}}. Document growth needs the acquisition close date to be
+placed on the calendar. Retired settings are read with {{reason:legacy_key_translated}}: the Index
+Analysis market growth reads as your all-years growth, the "Use STR rates" switch is ignored, and a
+Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year).
+
+<!-- source: apps/worker/app/services/engine_runner.py (_apply_topline: revpar_growth), services/topline.py (terminal_revpar_growth) -->
+Returns grows the exit-year NOI at your RevPAR growth when you set one, else at the last projected
+year's resolved RevPAR growth, (1 + occupancy growth) × (1 + ADR growth) − 1, and at 0% (badged No
+forecast) when that year has no figure.
+
+<!-- source: apps/worker/app/services/engine_runner.py (_default_assumptions) -->
+Defaults that remain labelled suggestions: starting occupancy 76.2% and ADR $385.00 (used only when
+there is no benchmark and no T-12), expense growth 3.5%, F&B revenue $88.00 per occupied room, other
+revenue 6.5% of rooms revenue. Each is badged Seed until replaced. There is no growth default.
 
 <!-- source: apps/worker/app/engines/revenue.py (fb_price_index) -->
-F&B revenue = occupied rooms × F&B $ per occupied room × Π(1 + ADR growth) since Year 1 (scalar or
-per-year list; a missing year holds flat).
+F&B revenue = occupied rooms × F&B $ per occupied room × Π(1 + ADR growth) since Year 1, where the
+ADR growth is the resolved per-year market growth (a year without a figure holds flat).
 
 <!-- source: apps/worker/app/services/engine_runner.py (_load_engine_inputs: fb_revenue_per_occupied_room, other_revenue_pct_of_rooms, OTHER_REVENUE_PCT_CAP 0.30, uncapped_ratio / cap on the source field, _loader_notices) -->
 When the primary statement carries the lines, the two revenue-mix anchors come from it: F&B revenue
@@ -544,23 +590,31 @@ chain by metric:
 :::
 
 ::: card
-#### Year-1 Occupancy + ADR
+#### Occupancy + ADR by year (topline methodology v2)
 
+<!-- source: apps/worker/app/services/engine_runner.py (_apply_topline), services/topline.py, topline_benchmark.py, topline_growth.py, engines/revenue.py (_plan_topline) -->
 ::: chain
-1. **Analyst override** — Set via the Overview inline editor — wins over every other source.
-2. **T-12 actual** — Extracted from the deal's primary financial statement — the same document the Data
-   Room badges as Primary source (full-year statements first, most recent period first, a T-12 ahead of
-   a calendar-year P&L of the same year).
-3. **CBRE Horizons Y1 forecast** — When the deal has no T-12 but a CBRE Horizons report is uploaded,
-   the segmented Y1 forecast feeds the anchor.
-4. **Fondok platform default** — Last-resort fallback used only on deals with no extracted data.
-   Surfaced as a Seed badge.
+1. **Analyst override** — an explicit `starting_occupancy` / `starting_adr` is that metric's Year 1
+   (`topline.explicit_year1`, status `explicit_value`): not penetrated, grown at the resolved growth.
+2. **Benchmark × penetration × ramp** — `benchmark_by_year[y] × pen(y) ÷ 100`, the benchmark from
+   `resolve_benchmark` (comp set → submarket → market → none; `topline_benchmark_level` forces one)
+   grown from its own period by the resolved per-year growth; `starting_*` carries the Year-1 value,
+   badged `topline_benchmark`.
+3. **Subject's own level** — with no benchmark for a metric, the T-12 actual (else the labelled seed)
+   × the resolved growth (`benchmark_unavailable`, or `flat_no_growth` for a year with no figure).
 
 :::
 
+Growth lists (`occupancy_growth_by_year` / `adr_growth_by_year` on the revenue input) are the
+RESOLVED figures; index 0 is the growth that took the benchmark into Year 1 when it was applied. The
+CBRE Hotel Horizons forecast-window CAGR and its Year-1 anchors no longer feed the model (the
+broker-vs-market variance flag still compares against the CAGR).
+
 **F&B price inflation.** `fb_revenue = occupied_rooms × fb_revenue_per_occupied_room ×
-fb_price_index`, where `fb_price_index` compounds the deal's ADR growth path from Year 1 (the scalar
-`adr_growth`, or `adr_growth_by_year` with `None` held flat) and is 1 in Year 1. The trace on
+fb_price_index`, where `fb_price_index` compounds the resolved per-year ADR growth
+(`adr_growth_by_year`, `None` held flat) from Year 1 and is 1 in Year 1. Under the topline that is
+the market ADR growth the benchmark grows by — deliberately not the penetration ramp, which moves the
+hotel's position in its market, not its prices. The trace on
 `revenue.years[].fb_revenue` carries the index. Before 2026-11 the F&B $ per occupied room was held
 flat for the hold, so F&B revenue grew only with occupancy (about 0.8% a year on the Kimpton
 fixture against 4% ADR growth). Renovation displacement moves occupied rooms, never the index.
@@ -1016,7 +1070,9 @@ Every precedence chain above can end at the platform seed, and when it does the 
 machine-readable reason rather than an unexplained default — one of the codes in Section 7:
 `no_document` when the deal carries no document of the type that would ground it, `no_source` when
 the document is there but none of its extracted fields resolves to that assumption, and
-`str_unavailable` when STR rates were requested but could not populate. Each grounded value carries
+`str_unavailable` on runs before 2 November 2026 when STR rates were requested but could not
+populate. Growth never falls through to a seed: with no figure it is `no_market_forecast` (held
+flat) or `license_withheld`. Each grounded value carries
 the opposite record: the exact extraction row behind it — document, field path, page and the concept
 it resolved to — so "which line of which statement is this?" is answered from data, not inference. A
 figure derived from several rows (a growth CAGR, a corroborated median across statements) names its

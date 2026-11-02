@@ -265,3 +265,93 @@ headline set is identical to round 1. Added leaves:
 move: a $76,000 "Management fee in lieu" line every year (flat — the HMA
 states no escalation), so NOI before and after the reserve falls by $76,000
 a year.
+
+## 2026-11-02 re-baseline: topline methodology v2 (`kimpton-golden-2026-11-02-topline-v2.json`)
+
+Prem approved the topline re-baseline (FON-116 / FON-117, plan
+`docs/plans/go-live-2026-10-30/topline-growth-plan.md`; decisions from Sam,
+2026-11-01). The moving commits carry `golden: expected`. The file now holds
+**two fixtures** (`scripts/compare_golden_baseline.py` runs and diffs both):
+
+* `engines` — the **seed fixture** (`tests/fixtures/kimpton_seed.py`, no
+  documents). It mirrors the production defaults, which no longer carry a
+  growth seed, so it pins the deterministic "no market forecast" state:
+  every rate held flat, no benchmark, `revpar_growth` 0 for the exit year.
+* `docs_fixture.engines` — the **documents fixture**
+  (`tests/fixtures/kimpton_docs_fixture.py`): a database deal (132 keys,
+  $36.4M, upper-upscale) carrying the May 2025 STAR report
+  (`ANG-20250500-USD-E.xlsx` through the STR template extractor) and the
+  Miami Beach CoStar submarket report, with the reference Index Analysis
+  inputs as overrides and a 2025-12-31 close (Year 1 = 2026). It is new, so
+  it has no "before".
+
+Both runs record `topline_methodology_version` 2 (the header field
+`topline_methodology`); the compare prints "TOPLINE METHODOLOGY CHANGED v1 ->
+v2" against any earlier file. Values below are the seed fixture against
+`kimpton-golden-2026-11-01-engfix.json` (kept for history): **105 headline
+fields moved, 86 unchanged; Year 1 does not move** (the seed's 76.2% /
+$385.00 Year 1 is unchanged — only growth is gone).
+
+### Why each field moved
+
+One cause: the 0.8% occupancy / 4.0% ADR / 4.5% RevPAR growth seeds are
+retired. They were applied to every deal as if they were the market's; growth
+now comes from the analyst or a market forecast and is otherwise unavailable
+(held flat, with the 4.5% offered as a labelled suggestion that is never
+applied for you). On the seed fixture that means:
+
+| Headline field | Before | After | Why |
+| --- | --- | --- | --- |
+| Occupancy Y2 / Y3 / Y4 / Y5 | 76.81% / 77.42% / 78.04% / 78.67% | 76.20% every year | no occupancy growth |
+| ADR Y2 / Y3 / Y4 / Y5 | $400.40 / $416.42 / $433.07 / $450.40 | $385.00 every year | no ADR growth |
+| RevPAR Y2 / Y5 | $307.55 / $354.32 | $293.37 | the two above |
+| Rooms revenue Y2 / Y5 | 14,817,548.86 / 17,070,961.47 | 14,134,566.60 | the two above |
+| Total revenue Y2 / Y3 / Y4 / Y5 | 19,167,557.84 / 20,093,734.24 / 21,064,663.48 / 22,082,508.02 | 18,284,071.51 every year | rooms revenue; F&B price follows the (absent) ADR growth |
+| Dept. Rooms / F&B / Other Y5 | 5,121,288.44 / 2,926,450.54 / 554,806.25 | 4,240,369.98 / 2,423,068.56 / 459,373.41 | departmental ratio × flat department revenue |
+| Management fee / FF&E reserve Y5 | 662,475.24 / 883,300.32 | 548,522.15 / 731,362.86 | % of flat revenue |
+| GOP Y2 / Y5 | 6,780,327.97 / 8,024,800.71 | 6,241,015.91 / 5,706,097.48 | flat revenue, undistributed costs still grow 3.5% |
+| Cash NOI Y2 / Y3 / Y4 / Y5 | 4,113,917.94 / 4,395,884.85 / 4,694,387.79 / 5,010,327.67 | 3,636,449.92 / 3,417,877.56 / 3,191,655.17 / 2,957,514.99 | the same |
+| NOI before reserve Y5 | 5,893,627.99 | 3,688,877.85 | the same |
+| Stabilized occupancy / ADR / revenue | 77.42% / $416.42 / 20,093,734.24 | 76.20% / $385.00 / 18,284,071.51 | Year 3 of the flat path |
+| Stabilized NOI / Cash NOI / margin | 5,199,634.22 / 4,395,884.85 / 25.88% | 4,149,240.42 / 3,417,877.56 / 22.69% | the same |
+| DSCR Y2 / Y3 / Y4 / Y5, stabilized / average | 2.22x / 2.37x / 2.54x / 2.71x, 2.37x / 2.38x | 1.96x / 1.85x / 1.72x / 1.60x, 1.85x / 1.84x | Cash NOI over unchanged debt service |
+| Exit NOI | 5,235,792.42 | 2,957,514.99 | Year-5 Cash NOI not grown: `revpar_growth` 0 (`market_forecast_unavailable`) instead of the 4.5% seed |
+| Exit value / net sale proceeds | 74,797,034.51 / 51,077,826.32 | 42,250,214.15 / 19,181,942.37 | exit NOI ÷ 7.0% |
+| Levered / unlevered IRR | 31.2852% / 20.1489% | 8.0602% / 7.4866% | flat operations and the lower sale |
+| Equity multiple | 3.2590x | 1.3762x | the same |
+| Exit-year rows 1–4 (levered IRR) | 88.22% / 51.22% / 40.35% / 35.07% | 52.75% / 22.37% / 13.05% / 8.11% | each row's forward NOI is flat |
+| LP / GP IRR, GP promote | 28.3142% / 42.4455%, 3,675,179.31 | 7.7555% / 7.7555%, 0.00 | below the first hurdle, no promote |
+
+Also moved (same cause): the per-year departmental / undistributed /
+fixed-charge leaves, cash-flow statement rows, sensitivity grid cells and the
+partnership distributions built on them. Unchanged: Year 1 everywhere, the
+capital stack, debt sizing and debt service. New leaves: `revenue.topline_by_year`
+records carry the topline fields (`benchmark_level` "none", growth source
+"unavailable", `flat_no_growth`).
+
+### The documents fixture (new) and the reference path
+
+Year by year (2026–2030) the documents fixture projects occupancy 75.4959% /
+75.4959% / 74.5899% / 76.8276% / 77.2118% and ADR $295.42 / $296.68 /
+$311.09 / $323.03 / $329.50 — the reference Index Analysis tab's subject rows
+(75.5% / 75.5% / 74.594% / 76.832% / 77.216%, $295.43 / $296.68 / $311.10 /
+$323.04 / $329.50) to within the reference's own rounding of its keyed
+comp-set level (75.496% → 75.5%, $310.776 → $310.78; every year differs by
+exactly those two ratios — `tests/test_topline_kimpton_reference.py`). From the
+keyed level itself the path matches to 1e-9. Headlines: levered IRR 8.4911%,
+unlevered 7.7223%, equity multiple 1.4467x, exit value 46,224,062.47, exit NOI
+3,235,684.37 (the expense side is still the seed's ratios — the fixture carries
+no T-12, so it is a topline fixture, not the reference model's P&L).
+
+### Also in this change
+
+* `evals/golden-set/kimpton-angler/expected/model.json` (the 0.5%-tolerance
+  eval, `evals/run.py`) does **not** move: it drives the engines directly with
+  explicit inputs and never reaches the loader, so the plan's premise for
+  retiring it (that it fails under v2) does not hold. It is kept; it does not
+  exercise the topline.
+* `tests/test_assumption_sources_snapshot.py` regenerated with the recorded
+  reason (growth keys leave `sources` / `values`; `revpar_growth` 0.0
+  `market_forecast_unavailable`).
+* `tests/test_exit_schedule_runner.py` and `test_run_all_engines_kimpton`
+  re-pinned / re-banded with the reason in each docstring.

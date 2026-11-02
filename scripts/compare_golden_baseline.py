@@ -5,7 +5,8 @@ Sam (2026-10-16): "preserve the current Kimpton model outputs so we can
 distinguish expected changes from unintended calculation discrepancies during
 regression testing."
 
-The fixture is the Kimpton Angler seed set in
+Two fixtures (FON-116 / FON-117, topline v2). The SEED fixture is the
+Kimpton Angler seed set in
 ``apps/worker/tests/fixtures/kimpton_seed.py`` (``kimpton_seed()``, deal id
 ``KIMPTON_FIXTURE_DEAL_ID``), injected explicitly through
 ``run_all_engines(..., assumptions=...)`` — nothing is read from a deal row or
@@ -13,7 +14,13 @@ a document — exactly as
 ``apps/worker/tests/test_engine_runner.py::test_run_all_engines_kimpton``
 does, against a throwaway SQLite database. (Until 2026-10-30 the same values
 were the production loader's defaults, reached through a non-UUID demo deal
-id; that fork is gone and the fixture is the only place they live.)
+id; that fork is gone and the fixture is the only place they live.) It has
+no documents, so under topline v2 it pins the "no market forecast" state. The
+DOCUMENTS fixture (``apps/worker/tests/fixtures/kimpton_docs_fixture.py``) is
+a database deal carrying the deal's own STR and CoStar extractions and the
+reference Index Analysis inputs, run like any production deal. A baseline
+carries both (``engines`` and ``docs_fixture.engines``); a baseline cut before
+the documents fixture existed reports it as "not in this baseline".
 
 Usage (from the repo root)::
 
@@ -66,13 +73,17 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "apps" / "worker"
-DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-01-engfix.json"
+DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-02-topline-v2.json"
 
 # The fixture module is pure data (no ``app`` import), so it is safe to import
 # before ``_bootstrap`` pins DATABASE_URL; ``_bootstrap`` re-adds the same
 # paths idempotently for the ``app`` imports that follow.
 if str(WORKER) not in sys.path:
     sys.path.insert(0, str(WORKER))
+from tests.fixtures.kimpton_docs_fixture import (  # noqa: E402
+    KIMPTON_DOCS_FIXTURE_DEAL_ID,
+    seed_kimpton_docs_deal,
+)
 from tests.fixtures.kimpton_seed import (  # noqa: E402
     KIMPTON_FIXTURE_DEAL_ID,
     kimpton_seed,
@@ -84,6 +95,16 @@ FIXTURE_DESCRIPTION = (
     "injected via run_all_engines(assumptions=...); no deal row, no documents, "
     "no overrides), run through run_all_engines exactly as "
     "tests/test_engine_runner.py::test_run_all_engines_kimpton does."
+)
+#: FON-116 / FON-117 (topline v2) — the second fixture: a DATABASE deal with
+#: the deal's own STR and CoStar documents and the reference Index Analysis
+#: inputs as overrides (apps/worker/tests/fixtures/kimpton_docs_fixture.py).
+DOCS_FIXTURE_DEAL_ID = KIMPTON_DOCS_FIXTURE_DEAL_ID
+DOCS_FIXTURE_DESCRIPTION = (
+    "Kimpton Angler documents fixture (apps/worker/tests/fixtures/kimpton_docs_fixture.py): "
+    "a deal row (132 keys, $36.4M, upper-upscale) with the May 2025 STAR report and the "
+    "Miami Beach CoStar submarket report as extraction rows and the reference Index "
+    "Analysis inputs as field_overrides, run through run_all_engines like any deal."
 )
 
 
@@ -121,8 +142,19 @@ def _cleanup() -> None:
         _TMP = None
 
 
-async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
-    """``{engine: {status, outputs}}`` for one fresh Kimpton chain run."""
+def _round_trip(results: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    # Round-trip through JSON so the comparison sees exactly what a baseline
+    # file holds (and what engine_outputs persists).
+    raw = {
+        name: {"status": r.get("status"), "outputs": r.get("outputs")}
+        for name, r in sorted(results.items())
+    }
+    return json.loads(json.dumps(raw, default=str))
+
+
+async def run_fixture(db: Path) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """``({engine: {status, outputs}}`` of the seed fixture, the same of the
+    documents fixture``)`` — one fresh chain run each."""
     from uuid import uuid4
 
     from app.database import dispose_engine, get_engine, get_session_factory
@@ -138,23 +170,22 @@ async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
     try:
         await run_startup_migrations()
         async with get_session_factory()() as session:
-            results = await run_all_engines(
+            seed = await run_all_engines(
                 session,
                 deal_id=FIXTURE_DEAL_ID,
                 tenant_id=str(uuid4()),
                 run_id=str(uuid4()),
                 assumptions=kimpton_seed(),
             )
+        async with get_session_factory()() as session:
+            deal_id, tenant_id = await seed_kimpton_docs_deal(session)
+            docs = await run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+            )
     finally:
         # Close the aiosqlite connections before the directory goes away.
         await dispose_engine()
-    # Round-trip through JSON so the comparison sees exactly what a baseline
-    # file holds (and what engine_outputs persists).
-    raw = {
-        name: {"status": r.get("status"), "outputs": r.get("outputs")}
-        for name, r in sorted(results.items())
-    }
-    return json.loads(json.dumps(raw, default=str))
+    return _round_trip(seed), _round_trip(docs)
 
 
 def _git_head() -> str | None:
@@ -230,7 +261,7 @@ def main() -> int:
     args = ap.parse_args()
 
     db = _bootstrap()
-    head = asyncio.run(run_fixture(db))
+    head, head_docs = asyncio.run(run_fixture(db))
 
     if args.write:
         from datetime import date
@@ -247,22 +278,61 @@ def main() -> int:
             # so a later compare can say loudly when the method moved.
             "topline_methodology": _topline_methodology(head, None),
             "engines": head,
+            "docs_fixture": {
+                "fixture": DOCS_FIXTURE_DEAL_ID,
+                "fixture_description": DOCS_FIXTURE_DESCRIPTION,
+                "topline_methodology": _topline_methodology(head_docs, None),
+                "engines": head_docs,
+            },
         }
         args.write.parent.mkdir(parents=True, exist_ok=True)
         args.write.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
         print(f"wrote {args.write}")
         return 0
 
-    from app.services.run_compare import diff_fields, extract_headline_fields
-
     baseline = json.loads(args.baseline.read_text())
-    base_eng = baseline["engines"]
 
     print(f"Baseline : {args.baseline.relative_to(REPO) if args.baseline.is_relative_to(REPO) else args.baseline}")
     print(f"           generated from {baseline.get('generated_from_commit')} on {baseline.get('generated_on')}")
     print(f"Head     : working tree at {_git_head()}")
-    print(f"Fixture  : {FIXTURE_DEAL_ID}")
 
+    moved = 0
+    added_total = 0
+    for title, fixture_id, base_block, head_eng in (
+        ("Seed fixture (no documents)", FIXTURE_DEAL_ID, baseline, head),
+        ("Documents fixture", DOCS_FIXTURE_DEAL_ID, baseline.get("docs_fixture"), head_docs),
+    ):
+        print(f"\n==== {title} — {fixture_id}")
+        if not isinstance(base_block, dict):
+            print("Not in this baseline (cut a new baseline with --write to carry it).")
+            continue
+        n_moved, n_added = _compare(args, base_block, head_eng)
+        moved += n_moved
+        added_total += n_added
+
+    if not moved:
+        if added_total:
+            print(
+                f"\nNo headline differences: the Kimpton fixtures match the baseline "
+                f"({added_total} added field(s) have no baseline value — cut a new "
+                "baseline with --write to carry them)."
+            )
+        else:
+            print("\nNo headline differences: the Kimpton fixtures match the baseline.")
+        return 0
+    if args.exit_nonzero_on_headline_diff:
+        # Distinct from 2 ("could not run"): the comparison completed and
+        # found a fixture moved. ``scripts/check_golden_gate.py`` maps this
+        # to pass/fail by looking for the ``golden: expected`` trailer.
+        return 3
+    return 0
+
+
+def _compare(args: argparse.Namespace, base_block: dict[str, Any], head: dict[str, Any]) -> tuple[int, int]:
+    """Report one fixture; ``(headline changes + status moves, added fields)``."""
+    from app.services.run_compare import diff_fields, extract_headline_fields
+
+    base_eng = base_block["engines"]
     status_moves = [
         (n, base_eng.get(n, {}).get("status"), head.get(n, {}).get("status"))
         for n in sorted(set(base_eng) | set(head))
@@ -301,12 +371,12 @@ def main() -> int:
     # baseline cut before the field exists reads as the legacy method (1).
     # "0 headline changes" is never claimed across methods: the line below
     # is printed whenever the two differ.
-    base_method = _topline_methodology(base_eng, baseline.get("topline_methodology"))
+    base_method = _topline_methodology(base_eng, base_block.get("topline_methodology"))
     head_method = _topline_methodology(head, None)
     if base_method != head_method:
         print(
             f"TOPLINE METHODOLOGY CHANGED: baseline v{base_method} -> head v{head_method} "
-            "(revenue.topline_methodology_version) — the headline diff below compares "
+            "(revenue.topline_methodology_version) — the headline diff above compares "
             "two methods, not one method's drift."
         )
 
@@ -342,22 +412,7 @@ def main() -> int:
                     print(f"  {eng}.{key}: {b!r} -> {h!r}")
         print(f"Raw leaves changed: {n_changed} (added: {n_added}, removed: {n_removed})")
 
-    if not changed and not status_moves:
-        if added:
-            print(
-                f"\nNo headline differences: the Kimpton fixture matches the baseline "
-                f"({len(added)} added field(s) have no baseline value — cut a new "
-                "baseline with --write to carry them)."
-            )
-        else:
-            print("\nNo headline differences: the Kimpton fixture matches the baseline.")
-        return 0
-    if args.exit_nonzero_on_headline_diff:
-        # Distinct from 2 ("could not run"): the comparison completed and
-        # found the fixture moved. ``scripts/check_golden_gate.py`` maps this
-        # to pass/fail by looking for the ``golden: expected`` trailer.
-        return 3
-    return 0
+    return len(changed) + len(status_moves), len(added)
 
 
 if __name__ == "__main__":

@@ -83,27 +83,92 @@ but only a value that actually changed is recorded as one; see “What counts as
 
 ::: badge {source=str_subject_ttm name="STR · Subject TTM Actual"}
 The subject property's own trailing-twelve-month occupancy and ADR as reported by STR — an actual,
-not a forecast. This is what the Base Year is seeded from when the STR basis is on.
+not a forecast. Runs before 2 November 2026 could seed the Base Year from it through the retired
+"Use STR rates" switch; it is now the reference the current STR index is computed from.
 
 :::
 
 ::: badge {source=str_comp_set name="STR Comp-Set Rates"}
-The comp set's blended occupancy and ADR shown on the Market Comps tab, applied as the Year-1 input
-by “Use STR rates in the model”. This is the competitive set's performance, not the subject's own,
-and the Market Comps tab shows the two as separate figures.
+The comp set's blended occupancy and ADR shown on the Market Comps tab — the competitive set's
+performance, not the subject's own. Since topline methodology v2 it is the model's benchmark by
+default: every projected year is this level grown at the market growth × the hotel's penetration.
 
 :::
 
 ::: badge {source=str_forecast name="STR Trend Forecast"}
-The forward-forecast scenario's month-twelve point — a projection of the subject, used only when the
-subject's own trailing twelve months is not extracted. The P&L shows the active basis and a
-one-click Revert whenever rates carry any STR tag.
+The forward-forecast scenario's month-twelve point — a projection of the subject. Retired as a model
+input on 2 November 2026 (the STR forecast chart on the Market tab stays); the badge remains on runs
+saved before then.
 
 :::
 
 ::: badge {source=str_forecast_unavailable name="STR Unavailable"}
-STR rates were requested but could not populate. The model stays on the T-12 base and says so — an
-STR basis is never silently “active”.
+STR rates were requested but could not populate (runs before 2 November 2026, when the retired
+"Use STR rates" switch existed). The model then stayed on the T-12 base and said so.
+
+:::
+
+::: badge {source=topline_benchmark name="Benchmark × penetration"}
+The year's occupancy or ADR is the benchmark for that year × the hotel's penetration ÷ 100, with
+the pre-stabilization ramp (topline methodology v2). The benchmark's own badge, report and period
+are named beside it.
+
+:::
+
+::: badge {source=costar_comp_set name="CoStar Comp Set"}
+A CoStar Property Analytics competitive set uploaded to the deal — the benchmark when no STR comp set
+is on file.
+
+:::
+
+::: badge {source=costar_submarket name="CoStar Submarket"}
+The latest actual year of the deal's CoStar submarket report for the hotel's class (the whole
+submarket, labelled, when the class is not in the report or no positioning tier is set) — the
+benchmark when no competitive set is on file.
+
+:::
+
+::: badge {source=costar_market name="CoStar Market"}
+Market-wide occupancy and ADR from the deal's CoStar market report — the benchmark when neither a
+competitive set nor a submarket series is on file.
+
+:::
+
+::: badge {source=market_benchmark name="Market Benchmark"}
+Market-wide occupancy and ADR from another uploaded market report — the benchmark when neither a
+competitive set nor a submarket series is on file.
+
+:::
+
+::: badge {source=costar_submarket_forecast name="CoStar Submarket Forecast"}
+The year's occupancy or ADR change from the deal's CoStar submarket report for the hotel's class,
+with the report, page and class named — a market forecast, not the hotel's own.
+
+:::
+
+::: badge {source=growth_carried_forward name="Carried Forward"}
+The year is past the last year of the market forecast, so that last year's growth is reused — an
+assumption, labelled with the report and year it carries.
+
+:::
+
+::: badge {source=market_forecast_unavailable name="No Market Forecast"}
+No market forecast and no figure of yours covers the year: the rate is held flat (growth 0 is the
+absence of growth, not a rate) and the Future P&L asks you to set growth. The 4.5% figure is offered
+as a labelled suggestion and is applied only if you choose it.
+
+:::
+
+::: badge {source=costar_withheld_by_policy name="Withheld by Data Policy"}
+A CoStar forecast or benchmark is on file, but the workspace's data policy withholds CoStar-derived
+defaults. A client's own uploaded CoStar report is allowed by default; data Fondok licenses is
+withheld until the licence covers the workspace. Nothing is shared between workspaces.
+
+:::
+
+::: badge {source=penetration_default name="Penetration Default"}
+Parity with the benchmark (index 100) at stabilization, with the 85% / 95% ramp in Years 1 and 2 for
+a Year-3 stabilization — a labelled suggestion; the hotel's current STR index is shown beside it.
 
 :::
 
@@ -136,19 +201,12 @@ default 75% / 15% / 10% — no itemized renovation budget is on file.
 :::
 
 ::: badge {source=index_assumption name="Index Analysis Assumption"}
-Index Analysis indexes the subject against one of three benchmarks, chosen on Market Comps → Index
-Analysis: the **STR competitive set** (the default), a **market or chain-scale benchmark** from the
-deal's market reports, or a **CoStar comp set** when that export has been extracted. Four
-assumptions ride on the choice — market occupancy growth, market ADR growth, and the occupancy and
-rate penetration targets — each showing its document source or “Your override”. They feed the Future
-P&L only while “Use STR rates in the model” is on; with the toggle off nothing moves. \
-**Targets by
-year.** Penetration targets can be set per model year; a by-year entry beats the all-years target.
-The all-years target drives Year 1 only — later years are indexed only where a by-year target is set
-or you override that metric's market growth; otherwise the year follows the model's own growth and
-is flagged as applying the all-years target to Year 1 only. A year with a target but no benchmark
-value is flagged as benchmark unavailable: the model keeps its own growth and no figure is invented.
-\
+Runs before 2 November 2026: a rate set by the Index Analysis assumptions while the retired "Use STR
+rates in the model" switch was on. Since topline methodology v2 the penetration targets are the
+model's penetration at stabilization (all years) and per year, applied on every deal with no switch;
+a per-year entry beats the stabilized target for that year, and the ramp applies before the
+stabilization year. The market growth assumptions became the per-year growth of the Future P&L; a
+value stored under the old names is read as your all-years growth and says so. \
 **Target units.** A target is index points from 25 to 250 (100 is parity) or a ratio from 0.25 to
 2.5 (1.0 is parity); the two bands do not overlap, so a value names its own unit. A stored target
 outside both bands is ignored by the model and the panel says so, with a prompt to re-enter it.
@@ -429,7 +487,8 @@ A penetration target is index points from 25 to 250 (100 is parity) or a ratio f
 (1.0 is parity); the two bands do not overlap, so a value names its own unit. A stored target
 outside both bands is ignored by the model and the panel says so. A by-year target beats the
 all-years target; the all-years target drives Year 1 only. The assumptions feed the Future P&L
-only while "Use STR rates in the model" is on.
+on every deal (topline methodology v2): the all-years target is the stabilized penetration and a
+by-year target sets that year.
 
 :::
 
@@ -610,36 +669,110 @@ override" and "Every override carries a justification" below.
 
 ::: badge {source=str_subject_ttm name="STR · Subject TTM Actual"}
 The subject property's OWN trailing-twelve-month occupancy & ADR as reported by STR — an actual, not
-a forecast. This is what the model seeds the Base Year from when the STR basis is on: the forward
-forecast's Month-12 point can land far below the subject's current performance, which would
-understate the deal. Because the Base Year is a TTM window, Index Analysis shows N/A for the first
+a forecast. Runs before 2 November 2026 could seed the Base Year from it through the retired "Use
+STR rates" switch (`revenue_seed_from_str_forecast`, now ignored and reported in
+`topline_status.legacy_flags`); since topline v2 it is the numerator of the comp-set blend and of
+the current MPI / ARI printed beside the penetration default. Because the Base Year is a TTM window, Index Analysis shows N/A for the first
 forecast year's growth whenever the last historical column is a reported actual (a P&L fiscal year
 or an STR calendar year) — the two are not the same period basis.
 
 :::
 
 ::: badge {source=str_comp_set name="STR Comp-Set Rates"}
-The comp set's blended occupancy & ADR shown on the Market Comps tab, applied as the Year-1 input by
-"Use STR rates in the model" (explicit overrides carrying the note "STR comp-set market rates
-(Market tab)"). This is the competitive set's performance, not the subject's own — the Market Comps
-tab states the comp-set benchmark and the model's Base Year as two separate figures and never claims
-the benchmark is the assumption.
+The comp set's blended occupancy & ADR shown on the Market Comps tab (subject STR TTM ÷ MPI / ARI from
+one report, `market_comp_set.derive_ttm_blend`). Since topline v2 it is the `comp_set` benchmark level
+(`services/topline_benchmark.py`, `topline_status.benchmark.source_id = str_comp_set`). Explicit
+`starting_*` overrides carrying the retired note "STR comp-set market rates (Market tab)" are treated
+as a legacy seed (`treated_as_legacy_seed`): the benchmark × penetration × ramp sets Year 1.
 
 :::
 
 ::: badge {source=str_forecast name="STR Trend Forecast"}
-The BASE STR forward-forecast scenario's Month-12 point — a projection of the subject, used only
-when the subject's own TTM is not extracted. P&L → Future P&L shows "Active basis: Market / STR ·
-Revert" when the rates carry any of these three tags, and the Market Comps tab's STR card reads the
-same tags — "STR / Market basis active", "STR rates unavailable — using T-12 base", or "Pending
-re-run" when the worker has not tagged the rates yet — never the request flag alone.
+The BASE STR forward-forecast scenario's Month-12 point — a projection of the subject. Retired as a
+model input on 2 November 2026 (`_load_str_forecast_for_seed` removed); the 24-month STR forecast
+engine stays for the Market tab chart, and the label remains on runs saved before then.
 
 :::
 
 ::: badge {source=str_forecast_unavailable name="STR Unavailable"}
-STR rates were requested but could not populate (no STR Trend extraction, coverage too low, or a
-loader failure). The model stays on the T-12 base and says so — the STR seed is never silently
-"active". Reason code: {{reason:str_unavailable}}.
+Runs before 2 November 2026 only: STR rates were requested through the retired switch but could not
+populate; the model stayed on the T-12 base and said so. Reason code: {{reason:str_unavailable}}.
+
+:::
+
+::: badge {source=topline_benchmark name="Benchmark × penetration"}
+`starting_occupancy` / `starting_adr` set by the topline (`services/topline.py::build_topline`):
+Year-1 benchmark × penetration ÷ 100 (per-year override, else stabilized penetration × the Year-1
+ramp), occupancy capped at 0.95. The engine evaluates every year the same way
+(`engines/revenue.py::_plan_topline`, `RevenueEngineInput.topline`) and echoes one
+`revenue.topline_by_year[]` record per year (benchmark level / value / label, applied penetration,
+`ramp_pct`, `ramp_state`, growth source and label, T-12 reference, `capped_95`, status `driven` /
+`benchmark_unavailable` / `flat_no_growth` / `explicit_value`); `revenue.topline_methodology_version`
+is 2.
+
+:::
+
+::: badge {source=costar_comp_set name="CoStar Comp Set"}
+Benchmark level `comp_set` read from `costar_comp_set.(occupancy|adr)*` rows when no STR comp set
+is available; skipped (with the reason) under a `costar_derived_defaults: withhold` policy.
+
+:::
+
+::: badge {source=costar_submarket name="CoStar Submarket"}
+Benchmark level `submarket`: `market_study.class.<bucket>.<YYYY>.(occupancy_pct|adr_usd)` for the
+latest year tagged `actual` (bucket from `deals.positioning`: luxury / upper upscale →
+`luxury_upper_upscale`, upscale / upper midscale → `upscale_upper_midscale`, midscale / economy →
+`midscale_economy`, anything else → `all`, the overall `market_study.trend` series, labelled).
+
+:::
+
+::: badge {source=costar_market name="CoStar Market"}
+Benchmark level `market` from CoStar-vendor market rows (`market_study.market.*`,
+`pnl_benchmark.market.*` in the MARKET_STUDY lane).
+
+:::
+
+::: badge {source=market_benchmark name="Market Benchmark"}
+Benchmark level `market` from a non-CoStar market report (`ttm_performance.market.*`,
+`pnl_benchmark.market.*`); CBRE Hotel Horizons All Hotels levels carry `cbre_horizons`.
+
+:::
+
+::: badge {source=costar_submarket_forecast name="CoStar Submarket Forecast"}
+Growth INTO a calendar year from `market_study.class.<bucket>.<YYYY>.(occupancy|adr)_change_pct`
+(`services/topline_growth.py`), behind the analyst's figures and CBRE Hotel Horizons
+(`cbre_horizons.segment_all.<YYYY>.*_change_pct`). A bucket year missing inside the series is
+unavailable, never patched from another bucket.
+
+:::
+
+::: badge {source=growth_carried_forward name="Carried Forward"}
+A calendar year past `series_last_year` of the document series the previous year used reuses that
+year's growth (`source = carried_forward`); never extended from a withheld or unavailable year.
+
+:::
+
+::: badge {source=market_forecast_unavailable name="No Market Forecast"}
+No growth figure for the year (`growth = None`): the engine holds the metric flat and the year is
+`flat_no_growth`; `revpar_growth` for Returns is 0.0 with this badge when the last projected year has
+no figure. Reason {{reason:no_market_forecast}}; `topline_status.suggestions` offers the labelled
+4.5% RevPAR suggestion, never applied by the loader.
+
+:::
+
+::: badge {source=costar_withheld_by_policy name="Withheld by Data Policy"}
+A CoStar-derived candidate under `tenants.data_policies.costar_derived_defaults = withhold` (own
+uploads; default allow) or `costar_licensed_defaults = withhold` (Fondok-licensed data; default
+withhold): `source = withheld_by_policy`, reason {{reason:license_withheld}}. The policy is read once
+per load (`base["__data_policy__"]`) and is part of the read-cache fingerprint.
+
+:::
+
+::: badge {source=penetration_default name="Penetration Default"}
+`penetration_occ` / `penetration_adr` = 100 with source `default` when the analyst set no
+`index_mpi_target` / `index_ari_target`; default ramp `[0.85, 0.95]` for S = 3, `[0.85]` for S = 2,
+undefined for Years 3..S−1 when S ≥ 4 (`ramp_state = undefined_for_stabilization_year`).
+`topline_status.current_mpi` / `current_ari` print the STR-published index beside it.
 
 :::
 
@@ -680,11 +813,13 @@ chain-scale segment occupancy & ADR in the deal's CoStar / STR market reports), 
 Property Analytics comp set** (only when that export has been extracted — otherwise the option is
 disabled and says why). Each benchmark figure names its document and page. Four assumptions ride on
 the choice — market occupancy growth, market ADR growth, and the MPI / ARI penetration targets —
-each showing its document source, the documents a computed default used, or "Your override". They
-feed the Future P&L only while "Use STR rates in the model" is on and the STR seed has landed: then
-Year-1 occupancy = benchmark occupancy × MPI target, Year-1 ADR = benchmark ADR × ARI target, and
-the growth rates replace the model's, each only where you set one and never over an explicit
-override of that input. With the toggle off nothing moves. Index Analysis also restates the Future
+each showing its document source, the documents a computed default used, or "Your override". Since
+topline methodology v2 (2 November 2026) the MODEL reads them through `services/topline.py` on every
+deal, with no switch: `index_mpi_target` / `index_ari_target` are the stabilized penetration,
+`index_*_target_by_year` the per-year penetration override, and the market-growth keys are read once
+as the all-years growth with `legacy_key_translated` (`topline_status.legacy_flags`); the panel's
+by-year grid below is the retired display (`by_year_applies = false`). The rest of this badge
+describes that display. Index Analysis also restates the Future
 P&L Base Year (revenue engine Year 1, its source and every step to it) beside its own figures, and
 the STR subject TTM it indexes against is named as a different source and period. \
 **Targets by
