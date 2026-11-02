@@ -100,8 +100,13 @@ def test_default_is_unchanged_when_no_methods() -> None:
     out = _run()
     assert [y.model_dump() for y in out.years] == [y.model_dump() for y in base.years]
     assert out.provenance.keys() == base.provenance.keys()
-    # The active method is still published — growth at the model expense growth.
+    # The active method is still published. Departmental lines ride their own
+    # department's revenue at the Year-1 cost ratio (Sam, Kimpton finding 2);
+    # undistributed lines grow at the model expense growth.
     lm = out.line_methods["rooms_dept_expense"]
+    assert (lm.method, lm.source) == ("pct_revenue", "default")
+    assert lm.value == pytest.approx(2_500_000.0 / 10_000_000.0)
+    lm = out.line_methods["utilities"]
     assert (lm.method, lm.value, lm.source) == ("growth", 0.03, "default")
     assert set(out.line_methods) == {
         "rooms_dept_expense", "fb_dept_expense", "other_dept_expense",
@@ -114,6 +119,16 @@ def test_default_label_is_pct_revenue_when_not_growing_independently() -> None:
     out = _run(grow=False)
     lm = out.line_methods["fb_dept_expense"]
     assert lm.method == "pct_revenue" and lm.source == "default"
+    # The T-12 F&B expense over the projected Year-1 F&B revenue (no T-12 F&B
+    # revenue was passed), carried in every year.
+    assert lm.value == pytest.approx(2_100_000.0 / 3_000_000.0)
+    out_default = ExpenseEngine().run(
+        ExpenseEngineInput(
+            deal_id=uuid4(), revenue=_revenue(), hotel_type="full",
+            grow_opex_independently=False,
+        )
+    )
+    lm = out_default.line_methods["fb_dept_expense"]
     assert lm.value == pytest.approx(0.75)  # HOTEL_TYPE_DEFAULTS['full'].fb_dept_pct
 
 

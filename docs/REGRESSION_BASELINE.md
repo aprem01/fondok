@@ -129,3 +129,42 @@ When a change is *intended* to
 move Kimpton numbers, run it and list every changed value in the change
 description. Then cut a new dated baseline with `--write`, and keep the old
 file so the history stays readable.
+
+## 2026-11 re-baseline: pending
+
+Prem approved ONE Kimpton re-baseline for branch `w5/topline`. The engine
+fixes below move the golden on purpose; the baseline file is cut once, by the
+topline task on the same branch, covering every move listed here. Each moving
+commit carries the `golden: expected` trailer (`scripts/check_golden_gate.py`).
+Values are `scripts/compare_golden_baseline.py` against
+`evals/baselines/kimpton-golden-2026-10-16.json`, measured cumulatively after
+each fix (so a fix's numbers include the fixes above it).
+
+### Fix 1a: departmental expense = Year-1 cost ratio × own department revenue (Sam finding 2a)
+
+Why: out-year Rooms / F&B / Other Operated expense grew the Year-1 dollars at
+the 3.5% expense growth while each department's revenue grew at its own rate,
+so the F&B cost ratio drifted 75.0% → 83.4% by Year 5 on the fixture. The
+ratio is now fixed in Year 1 (the fixture has no T-12, so it is the
+lifestyle hotel-type ratio: rooms 30%, F&B 75%, other 50%) and applied to every
+year's department revenue. Year 1 does not move. Undistributed and fixed
+charges keep their dollar growth.
+
+| Headline field | Before | After |
+| --- | --- | --- |
+| Y2 dept. Rooms / F&B / Other | 4,388,782.93 / 2,507,875.96 / 475,451.48 | 4,445,264.66 / 2,442,453.11 / 481,570.34 |
+| Y3 dept. Rooms / F&B / Other | 4,542,390.33 / 2,595,651.62 / 492,092.29 | 4,660,059.85 / 2,461,992.73 / 504,839.82 |
+| Y4 dept. Rooms / F&B / Other | 4,701,373.99 / 2,686,499.42 / 509,315.52 | 4,885,233.94 / 2,481,688.68 / 529,233.68 |
+| Y5 dept. Rooms / F&B / Other | 4,865,922.08 / 2,780,526.90 / 527,141.56 | 5,121,288.44 / 2,501,542.18 / 554,806.25 |
+| Cash NOI Y2 / Y3 / Y4 / Y5 | 4,087,648.12 / 4,344,427.35 / 4,618,985.49 / 4,912,395.99 | 4,090,470.39 / 4,347,669.19 / 4,620,018.13 / 4,908,349.67 |
+| Levered / unlevered IRR | 30.5078% / 19.6698% | 30.4867% / 19.6556% |
+| Equity multiple | 3.1731x | 3.1702x |
+| Exit value | 73,335,054.46 | 73,274,648.58 |
+
+Also moves (same cause): departmental total, GOP and both NOI bases Y2–Y5,
+the stabilization block NOI and margin, DSCR Y2–Y5 / stabilized / average,
+net sale proceeds, exit NOI, every partnership headline, and the cash-flow
+statement rows built from them. Non-numeric leaves: `expense.line_methods`
+for the three departmental lines now read `pct_revenue` at the ratio (were
+`growth` at 3.5%), and `expense.provenance` gains a trace per departmental
+line for Years 2–5.

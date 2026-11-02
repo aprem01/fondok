@@ -81,6 +81,15 @@ value keeps the line's own Year-1 ratio, so no benchmark figure is introduced. A
 touched runs exactly as before. Every method change needs a justification note, and the Excel export
 lists each line's method and value on its Assumptions sheet.
 
+**Departmental expense rides its own department's revenue.** Unless you pick another method, Rooms,
+F&B and Other Operated expense are each a cost ratio to that department's revenue, fixed in Year 1
+and applied in every year, Year 1 included. The ratio is the T-12 departmental expense divided by
+the T-12 revenue of the same department when the statement gives both. Otherwise it is your ratio
+override or applied benchmark, else the platform ratio for the hotel type. When the T-12 gives the
+expense but not the department's revenue, Year 1 is the T-12 dollars and later years keep their
+ratio to Year-1 revenue. A year whose revenue a renovation displaces carries displaced departmental
+expense too. Undistributed lines and fixed charges grow at the expense growth.
+
 **Operating model.** The new-deal wizard records whether the hotel is owner-operated, third-party
 managed or brand-managed. It is shown on the Overview and beside the management fee. It moves no
 number: the management fee is yours to set, and the check against the usual two to six percent of
@@ -350,6 +359,17 @@ revenue: departmental lines against their own department's revenue, undistribute
 total revenue; a method with no value keeps the line's own Year-1 ratio. Per occupied room and per
 available room need the key count; without it the line keeps its default and says why.
 
+<!-- source: apps/worker/app/engines/expense.py (dept_ratio, _resolve_dept_ratio, t12_dept_revenue), apps/worker/app/services/engine_runner.py (t12_dept_revenue) -->
+The default for a departmental line is % of its own department's revenue, every year. Ratio = T-12
+departmental expense ÷ T-12 revenue of that department when both are stated (the T-12 rooms
+revenue; the T-12 F&B revenue; the T-12 other operated plus miscellaneous revenue, less resort
+fees stated on their own line). Without a T-12 expense the ratio is the override / applied
+benchmark / hotel-type ratio below. A T-12 expense with no T-12 revenue for the department makes
+Year 1 the T-12 dollars and the ratio those dollars ÷ projected Year-1 department revenue. Each
+year's departmental expense = ratio × that year's projected (displaced, where a renovation
+displaces it) department revenue. Undistributed lines and fixed charges grow at the expense
+growth (undistributed at the other-expense inflation when set).
+
 <!-- source: apps/worker/app/services/engine_runner.py (ratio precedence: analyst_override > t12_actual > portfolio_pnl > seed), apps/worker/app/engines/expense.py (hotel-type ratio table) -->
 A line the statement does not carry runs on a ratio resolved in this order: analyst override, the
 T-12 actual, the firm's portfolio P&L ratio when one is on the deal, then the platform default
@@ -561,6 +581,17 @@ Property Operations and Utilities. Management fee, FF&E reserve and fixed charge
 drivers. The four methods are **Growth** (Year 1 grown each year; blank = the model expense
 inflation), **% of revenue** (the department's own revenue for departmental lines, total revenue for
 undistributed lines), **POR** (dollars per occupied room) and **PAR** (dollars per available room).
+
+**Default for departmental lines.** With no method picked, Rooms, F&B and Other Operated expense
+are `% of revenue` of their own department at a ratio fixed in Year 1 (`expense.line_methods`
+reports it): T-12 departmental expense ÷ T-12 department revenue (`t12_dept_revenue`, the same T-12
+rows that ground the revenue anchors) when both exist, else the ratio override / applied benchmark /
+hotel-type ratio. A T-12 expense with no T-12 department revenue anchors Year 1 at the T-12 dollars
+and carries their ratio to projected Year-1 revenue. Every year, Year 1 included, is ratio × that
+year's projected department revenue, so a renovation-displaced year's departmental expense is
+displaced with its revenue (before 2026-11 the T-12 dollars sat against displaced revenue and later
+years grew the dollars at the expense growth, which put F&B expense at 130% of F&B revenue on the
+Kimpton Angler). Undistributed and fixed lines keep their dollar growth.
 
 A method picked without a value holds the line's own Year-1 ratio, so no benchmark number is
 introduced. POR and PAR need the key count; without it the line stays on its default and says why. A
