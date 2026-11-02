@@ -807,51 +807,23 @@ default 75% / 15% / 10% — no itemized renovation budget is on file.
 :::
 
 ::: badge {source=index_assumption name="Index Analysis Assumption"}
-Index Analysis indexes the subject against one of three benchmarks, chosen on Market Comps → Index
-Analysis: the **STR competitive set** (the default — subject STR TTM ÷ the published MPI / ARI, the
-same blend Market Overview shows), a **market / chain-scale benchmark** (the market-wide or
-chain-scale segment occupancy & ADR in the deal's CoStar / STR market reports), or a **CoStar
-Property Analytics comp set** (only when that export has been extracted — otherwise the option is
-disabled and says why). Each benchmark figure names its document and page. Four assumptions ride on
-the choice — market occupancy growth, market ADR growth, and the MPI / ARI penetration targets —
-each showing its document source, the documents a computed default used, or "Your override". Since
-topline methodology v2 (2 November 2026) the MODEL reads them through `services/topline.py` on every
-deal, with no switch: `index_mpi_target` / `index_ari_target` are the stabilized penetration,
-`index_*_target_by_year` the per-year penetration override, and the market-growth keys are read once
-as the all-years growth with `legacy_key_translated` (`topline_status.legacy_flags`); the panel's
-by-year grid below is the retired display (`by_year_applies = false`). The rest of this badge
-describes that display. Index Analysis also restates the Future
-P&L Base Year (revenue engine Year 1, its source and every step to it) beside its own figures, and
-the STR subject TTM it indexes against is named as a different source and period. \
-**Targets by
-year.** The penetration targets can be set per model year (`index_mpi_target_by_year` /
-`index_ari_target_by_year`; a by-year entry beats the all-years target). The all-years target drives
-**Year 1 only**: Years 2+ are indexed only where a by-year target is set for that year or the
-analyst overrides that metric's market growth; otherwise the year follows the model's own growth and
-is flagged `scalar_year1_only`, so an existing deal never changes because a report's default growth
-appeared. With the STR basis on, each indexed model year's occupancy = that year's benchmark
-occupancy × MPI target ÷ 100 and ADR = that year's benchmark ADR × ARI target ÷ 100, where the
-benchmark series follows the selected method: the STR or CoStar comp set is the reported TTM level
-in Year 1 grown at the market occupancy / ADR growth assumptions after it; the market benchmark is
-the reported level in Year 1 and the CBRE Horizons forecast for that model year's calendar year
-after it (the segment table named like the chosen segment when the report carries one, else All
-Hotels). RGI is derived — MPI × ARI ÷ 100 — never an input. A year with a target but no benchmark
-value (no growth assumption, no CBRE year, no close date to place it) is flagged`
-benchmark_unavailable`: the model keeps its own growth from the last driven year and no figure is
-invented. Every driven year records the benchmark (value, document, page or growth step), the target
-and the resulting occupancy / ADR on the revenue output (`revenue.index_drivers_by_year`) and in the
-lineage of that year's rooms revenue; the Future P&L Assumptions sheet carries one row per metric
-per year (`index_mpi_target_by_year.3`) so the targets round-trip through Excel with the same
-justification rule. \
-**Target units.** A target is index points 25–250 (100 = parity with the
-benchmark) or a ratio 0.25–2.5 (1.0 = parity) — the two bands do not overlap, so a value names its
-own unit: 1.10 is 110 points everywhere (the panel, the by-year grid, the penetration table, the
-at-target opportunity and the model), never 1.1. The range is checked on every write *and every
-read*: a legacy stored target outside both bands (e.g. 5, written before the check existed) is
-ignored by the model and the grid — it never moves Year-1 occupancy or ADR — and the panel shows "—"
-sourced "Stored override ignored" (never "Your override") with "Stored all-years MPI target 5 is
-outside 25–250 index points … re-enter it"; a by-year entry out of range falls back to the all-years
-target and is named the same way.
+Since topline methodology v2 (2 November 2026) Index Analysis shows and edits the topline the model
+runs on — there is no method selector and no switch. Its Topline panel is the same as the Future
+P&L's Topline card: the benchmark level in use (automatic — the competitive set, else the CoStar
+submarket for the hotel's class, else the market — or one you force), the penetration at
+stabilization for occupancy (MPI) and ADR (ARI), 100 by default with the hotel's current STR index
+beside it, and the ramp for each year before stabilization. Below it a year-by-year table shows the
+benchmark (with its Actual / Forecast / Assumption chip and label), the penetration the model
+applied, the ramp and the resulting occupancy and ADR; a penetration can be set for any single year
+there. Every change carries a justification and re-runs the model. Runs before 2 November 2026: a
+rate set by the retired Index Analysis assumptions while the "Use STR rates" switch was on carried
+this badge; the old market-growth and method settings are now read as your all-years growth and a
+forced level, listed on the Future P&L as settings from retired controls. \
+**Target units.** A penetration is index points 25–250 (100 = parity with the benchmark) or a ratio
+0.25–2.5 (1.0 = parity) — the two bands do not overlap, so a value names its own unit: 1.10 is 110
+points everywhere, never 1.1. The range is checked on every write and every read: a stored value
+outside both bands is ignored by the model, never moves a number, and the Future P&L lists it among
+the values it ignored.
 
 :::
 
@@ -865,12 +837,13 @@ read "Year N" with a one-line note; a year is never guessed. Subject history is 
 subject figures (`ttm_performance.subject.annual.<YYYY>`) where the report carries them, else the
 P&L fiscal year — a Source row says which per column. The comp-set table (titled **STR Competitive
 Set** — it is STR data, never labelled a CoStar market table) is the STR TTM blend (subject ÷ MPI /
-ARI / RGI) in the last historical column. Its forecast columns are the same series the STR comp-set
-index method runs on: the TTM level as the Year-1 benchmark, grown at the market occupancy / ADR
-growth assumption after it (the document default or your override), banded "comp set grown at market
-growth (assumption)" with the growth source on hover. STR publishes no comp-set forecast, so this is
-an assumption, never an STR figure; with no growth value the out-years stay "—" with the reason, and
-the subject's growth is never re-scaled into them. The by-year fair share, variances and Revenue
+ARI / RGI) in the last historical column. When the model's benchmark is the competitive set its
+forecast columns are that benchmark by year — the level grown by each year's market growth (the CBRE
+or CoStar forecast, your override, or carried forward), each column labelled with its basis; when
+the model runs on the submarket or market level the comp-set forecast is blank with the reason and
+the penetration rows index against that level instead. STR publishes no comp-set forecast, so a
+grown year is never presented as an STR figure, and the subject's growth is never re-scaled into
+it. The by-year fair share, variances and Revenue
 Opportunity at Par fill from it. A separate Market row carries market-level actuals (market study /
 STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the report's own
 calendar year (`cbre_horizons.year_<n>.calendar_year`, pipeline v7) and labelled Market / CBRE
@@ -889,13 +862,12 @@ fiscal years, are labelled Actual with their year and document. The by-year grid
 label under each benchmark value plus one line naming the Year-1 actual and the Year-2+ forecast;
 the Index Analysis tables carry the chip in their Source row and the full label in a Basis row. A
 value with no source shows "—" and no chip. The labels are display only — the revenue engine's
-by-year drivers are unchanged. Penetration rows follow the benchmark selected on Index methodology.
+by-year drivers are unchanged. Penetration rows follow the benchmark the model runs on.
 With the STR comp set: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
-forecast columns the analyst's MPI / ARI target for that model year where one is set (by-year, else
-the all-years target; RGI derived as MPI × ARI ÷ 100) while "Use STR rates in the model" is on — so
-the index rows only print a target the Subject rows actually run on — else the published index held
-flat, with a one-line note when targets are set but not applied; the hover text says which. With the
-market benchmark (or the CoStar comp set) selected, the index rows read "vs \<benchmark\>": the
+forecast columns the penetration the model applied that year (your per-year value, else the
+stabilized penetration, 100 by default; RGI derived as MPI × ARI ÷ 100) — always what the Subject
+rows run on; the hover text says which. With the submarket or market level, the index rows read
+"vs \<benchmark\>": the
 anchor column is the subject STR TTM ÷ that benchmark × 100 and each forecast column is the subject
 ÷ that year's benchmark (the same by-year benchmark the model indexes against), or the analyst's
 target where one applies — never the STR-published indices, which are against the comp set; the
@@ -904,8 +876,7 @@ Share of Supply = subject rooms ÷ (comp-set rooms + subject rooms), fair-share 
 share of demand, fair-share rooms revenue, and the signed Revenue Opportunity at Par and at Target,
 the latter computed per year against the analyst-set target that applies to that year and priced on
 the selected benchmark (target RevPAR = benchmark occupancy × MPI ÷ 100 × benchmark ADR × ARI ÷
-100). It is gated exactly like the index rows: only while "Use STR rates in the model" is on,
-otherwise "—" with "Targets set but not applied". A document default — the published index itself —
+100). It uses exactly the penetration the index rows print. A document default — the published index itself —
 is not a target, so with none set the row is "—" and says so. Every cell shows its formula and
 inputs on hover; a cell with no reported input is "—".
 

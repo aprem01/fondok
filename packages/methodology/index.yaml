@@ -98,4 +98,9 @@ atlas:
   # document the Year-1 basis refusal, the re-extract rule, the exit-growth
   # convention, the model calendar and the ramp policy in `projection`; that
   # question now needs 41,210 characters.
-  max_chars: 42000
+  # 46000 (≈11.5k tokens), was 42000: the topline web task (2026-11-02)
+  # documents the Future P&L's topline basis line, banner, reference rows,
+  # Topline card, Excel rows and the no-Year-1-rates entry in `projection`
+  # (conceptual) plus the calendar_unknown rule; that question now needs
+  # 45,108 characters.
+  max_chars: 46000

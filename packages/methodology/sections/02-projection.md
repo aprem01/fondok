@@ -1,7 +1,7 @@
 ---
 id: projection
 title: "How the Future P&L is built"
-decisions: [FON-44, FON-59, FON-67, FON-98, FON-101, FON-102, FON-109, FON-118]
+decisions: [FON-44, FON-59, FON-67, FON-98, FON-101, FON-102, FON-109, FON-116, FON-117, FON-118]
 anchors:
   - benchmark-column-methodology
   - benchmark-suggestions-methodology
@@ -20,7 +20,10 @@ anchors:
   - methodology-renovation-budget-precedence
   - methodology-returns-by-exit-year
   - methodology-stabilization-anchor
+  - no-revenue-basis-methodology
   - primary-statement-methodology
+  - topline-card-methodology
+  - topline-ui-methodology
 ---
 <!-- section 2: How the Future P&L is built — from page.tsx lines 117-415 -->
 ::: conceptual {title="How the Future P&L is built"}
@@ -180,6 +183,42 @@ the value the model is on now. *Apply benchmark* opens a prefilled justification
 saving writes an ordinary analyst override and re-runs the model. *Reset to source* removes it
 again. Until you act, each assumption keeps its existing source: your portfolio ratio when one is on
 the deal, else the platform default, labelled as such.
+
+{testid=topline-ui-methodology} **The topline on screen.** Under the Future P&L header one line names what the
+occupancy and ADR run on: the benchmark (level, report and period, and why a higher level was not
+used), the market growth source with the hotel's class, the stabilized year and the ramp actually
+applied — "Ramp 85/95/100 (default)", your own ramp, or "the default ramp does not apply to this
+deal" with the ramp policy. Each projected Occupancy and ADR column carries a chip saying whether
+that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the benchmark ×
+penetration × ramp that produced the figure. Two reference rows sit under RevPAR: the benchmark for
+each year, and the hotel's own T-12 repeated with its period — neither moves a number. When growth
+is missing the Future P&L says "No market forecast — set growth manually" (or that a CoStar forecast
+is withheld by the workspace's data policy, or that the forecast covers only some years) and offers
+the labelled 4.5% RevPAR suggestion with a prefilled note you can edit; nothing is applied until you
+save. When a market forecast is on file but the deal has no acquisition close date, the same banner
+asks for the close date first, with the date entry beside it (the same field as the CAPEX tab's
+Acquisition Date), ranked above the suggestion. A CoStar report read by an older extraction says
+"CoStar report extracted before class forecasts — re-extract" and links to the Data Room's
+re-extract action. Settings written by retired controls are listed with how they are read now, and
+"Clear legacy keys" removes them in one audited save. A run made before this method existed shows a
+one-time notice — "The topline method changed; this run predates it — re-run, then compare runs" —
+and the run comparison labels the method change.
+
+{testid=topline-card-methodology} **The Topline card.** The Assumptions panel's Topline card holds the benchmark level (automatic,
+or forced to the competitive set, submarket or market), the stabilization year, the penetration at
+stabilization for occupancy and ADR (100 by default, with the hotel's current STR index printed
+beside it) and the ramp for each year before stabilization. The Growth card shows the market growth
+into each year with its source, editable year by year; RevPAR growth stays as an all-years
+shorthand and shows no figure unless you or the market data set one. Every change asks for a
+justification and re-runs the model. The Excel export's Assumptions sheet carries the same inputs —
+growth for each year, the ramp for each year before stabilization, the two penetrations and the
+benchmark level — and re-imports them under the same justification rule.
+
+{testid=no-revenue-basis-methodology} **No Year-1 rates, no projection.** When a deal has no T-12, no STR or market benchmark and no
+Year-1 occupancy or ADR of yours, the revenue model does not run and the Future P&L and Overview say
+so in the model's own words: "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR". The
+entry is right there; your rates are saved with a note and the model re-runs. No placeholder rate is
+ever substituted.
 
 **The waterfall below Total Revenue** runs gross operating profit, then management fees (and the
 incentive fee when one is modelled), then fixed charges — property taxes, insurance, rent, other —
@@ -602,7 +641,10 @@ Year 1 on its own.
 The key count and the purchase price have no default. A deal missing either does not run: the
 run is recorded as refused under the reason "missing identity inputs", naming the inputs, and
 every figure that depends on the model shows a dash with that reason. No placeholder property is
-ever substituted.
+ever substituted. The Year-1 occupancy and ADR have no default either: with no T-12, no STR or
+market benchmark and no analyst rate the revenue model and everything built on it are refused under
+"no Year-1 occupancy / ADR" ({{reason:no_revenue_basis}}), and the Future P&L and Overview take the
+missing rate in place.
 
 :::
 :::

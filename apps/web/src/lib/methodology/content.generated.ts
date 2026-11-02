@@ -74,6 +74,8 @@ export const METHODOLOGY_SECTIONS: readonly MethodologySection[] = [
       "FON-101",
       "FON-102",
       "FON-109",
+      "FON-116",
+      "FON-117",
       "FON-118"
     ],
     "anchors": [
@@ -94,7 +96,10 @@ export const METHODOLOGY_SECTIONS: readonly MethodologySection[] = [
       "methodology-renovation-budget-precedence",
       "methodology-returns-by-exit-year",
       "methodology-stabilization-anchor",
-      "primary-statement-methodology"
+      "no-revenue-basis-methodology",
+      "primary-statement-methodology",
+      "topline-card-methodology",
+      "topline-ui-methodology"
     ],
     "keywords": [
       "projection*",
