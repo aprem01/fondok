@@ -2982,7 +2982,11 @@ def _apply_topline(
         r for r in rows
         if not _is_after_as_of(getattr(r, "report_as_of", None), getattr(r, "report_as_of_precision", None), as_of)
     ]
-    gated = sorted({(r.doc_type or "").upper() for r in rows if r not in knowable})
+    # Review M-1 — identity, not equality: ``r not in knowable`` compared
+    # frozen dataclasses field by field, quadratic on a deal with thousands
+    # of extracted rows.
+    knowable_ids = {id(r) for r in knowable}
+    gated = sorted({(r.doc_type or "").upper() for r in rows if id(r) not in knowable_ids})
     inputs = read_topline_inputs(
         base, sources, analyst_override_paths, str_noted_keys=str_noted_keys,
         derived_adr_source=SOURCE_DERIVED_FROM_REVPAR_GROWTH,
@@ -8300,6 +8304,16 @@ def _build_input_for(
                     if field in _SEGMENT_FIELDS:
                         s[field] = value
         segments = [RevenueSegment(**s) for s in seg_dicts]
+        # Review M-4 — the engine compounds the RESOLVED per-year lists; a
+        # revenue input built without them (the topline step did not run)
+        # would silently compound the 0.0 scalar fallback below. Fail loud.
+        if not isinstance(base.get("occupancy_growth_by_year"), list) or not isinstance(
+            base.get("adr_growth_by_year"), list
+        ):
+            raise ValueError(
+                "revenue input needs the resolved per-year growth lists "
+                "(occupancy_growth_by_year / adr_growth_by_year from _apply_topline)"
+            )
         return RevenueEngineInput(
             deal_id=deal_uuid,
             keys=base["keys"],

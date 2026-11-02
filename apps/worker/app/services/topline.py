@@ -658,6 +658,27 @@ def build_topline(
     )
 
 
+def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolution) -> list[dict[str, Any]]:
+    """Review M-2 — a Year-1 rate the retired "Use STR rates" button wrote is
+    set aside for the benchmark × penetration × ramp ONLY when a benchmark is
+    in use; with none (as-of gated, forced level unavailable) it stays the
+    Year-1 rate, and the flag must say so."""
+    out: list[dict[str, Any]] = []
+    for flag in flags:
+        if flag.get("treatment") == "treated_as_legacy_seed" and bench.level == "none":
+            flag = {
+                **flag,
+                "treatment": "kept_no_benchmark",
+                "detail": (
+                    "This Year-1 rate was written by the retired \"Use STR rates\" button. No benchmark "
+                    "is in use, so it stays the Year-1 rate (badged STR comp set) — enter your own value "
+                    "or clear it."
+                ),
+            }
+        out.append(dict(flag))
+    return out
+
+
 def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None) -> dict[str, Any]:
     """``{value, source_id, basis, label}`` of the exit-year growth convention."""
     if long_run is not None:
@@ -788,7 +809,7 @@ def _status(
         "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
         "terminal_revpar_growth": dict(terminal),
         "suggestions": suggestions,
-        "legacy_flags": list(inputs.legacy_flags),
+        "legacy_flags": _legacy_flags_for(inputs.legacy_flags, bench),
         "problems": list(inputs.problems),
         "notes": notes,
         "reextract_needed": list(growth.reextract_needed),
