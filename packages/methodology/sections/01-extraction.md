@@ -45,8 +45,11 @@ rather than quietly producing nothing.
 
 Fondok reads the file name and first pages and files the document as an Offering Memorandum, T-12,
 P&L, STR report, market study, benchmark report, rent roll, hotel program, capital plan, insurance,
-tax or contract. A document dropped without a tag is marked “Classified automatically — confirm” in
-the Data Room until you confirm or change the type.
+tax, debt or contract. A document dropped without a tag is marked “Classified automatically —
+confirm” in the Data Room until you confirm or change the type. A loan document — a term sheet, a
+loan agreement, the debt upload template — is filed as debt, never as a P&L, so it can never become
+the statement your Year-1 figures are read from. A monthly financial package that includes its own
+trailing-twelve-month sheet is filed as a T-12 for the period that sheet ends on.
 
 :::
 
@@ -56,7 +59,10 @@ the Data Room until you confirm or change the type.
 Every grounded figure, identifier and date is pulled into a typed list, each entry carrying the page
 it was read from and a confidence score. Anything not grounded in the source is dropped. A field
 below the review threshold is flagged in the Data Room and in the Historical P&L until you accept or
-correct it.
+correct it. A correction to a figure is a number — the editor starts from the extracted figure, and
+an abbreviation such as “$10M” is refused, because no calculation could read it. A value Fondok had
+to clear because an earlier edit saved such an abbreviation shows as “—” with a note saying why, and
+is listed under Needs review until you enter the statement's figure or re-extract the document.
 
 :::
 
@@ -178,7 +184,11 @@ actionable retry path.
 
 A Haiku 4.5 Router agent reads the filename plus the first ~2K characters and emits a doc_type: OM,
 T12, PNL, STR, STR_TREND, CBRE_HORIZONS, PNL_BENCHMARK, RENT_ROLL, MARKET_STUDY, ROOM_MIX, or
-CONTRACT. A filename heuristic provides the fallback when the Router is unsure. Files dropped in the
+CONTRACT, DEBT. A filename heuristic provides the fallback when the Router is unsure; it files a
+term sheet, or a debt / loan / mortgage name that also says agreement, terms, note, commitment,
+template or upload, as DEBT ahead of its T12 default — never a name that also says statement,
+financials, budget, operating, forecast, appraisal, service, sizing or report. DEBT is a
+non-financial label for the structural override, so a real P&L that lands there is retyped a P&L. Files dropped in the
 “Drop everything here” zone carry no analyst tag, so the Router’s doc_type is the category; the Data
 Room marks them “Classified automatically — confirm” until the analyst confirms or reclassifies.
 Accepted formats: PDF, Excel (.xlsx / .xlsm / .xls), CSV, Word (.docx) and PowerPoint (.pptx) —
@@ -207,7 +217,29 @@ sheet that differs from the Summary by more than 5% is replaced with the Summary
 reconciled with the original value and source kept beside it. A second per-deal check caps a
 statement's F&B, Rooms or Total revenue at 50% confidence when it is below a quarter of the deal's
 other full-period statements for the same line, so a single-outlet GL line can never pass as the
-department total unreviewed.
+department total unreviewed. A statement total that holds text instead of a figure (a “$10M”
+saved by the old Data Room editor, which started from the display string) is replaced from the
+Summary the same way, with the text kept as the original value. The review endpoint refuses a
+non-numeric correction of a numeric field — numeric by its value, its unit or its registry concept,
+whatever it holds now (`extraction/edited_figures`: a number or a plain written figure such as
+“9,496,407.22”; letters and percent signs are not a figure, a percentage is entered as its ratio).
+A one-time data repair (`migrations.repair_display_string_edits`) turned the display strings already
+stored back into a number only where the field record kept the exact value they displayed; every
+other one was cleared to empty, marked Needs review and audited — a figure is never guessed from
+“$10M”. A cleared value is never hidden: `reviewReasons.isClearedForReview` (empty numeric field,
+no review, note starting “Needs review”) puts it in the document's flagged list after its worksheet
+cells, so it counts in Review Recommended, the reason line and the global count; the Data Room
+review row and the document page show it as “—” with the worker's `note`, which both now render
+for every field.
+
+A monthly financial package that also carries a dated T12 sheet — twelve consecutive month-end
+columns and a TOTAL, the month columns adding up to the TOTAL — is read as the trailing twelve
+months it states (`extraction/trailing_twelve`): the sheet's USALI totals and occupancy / ADR /
+RevPAR are added at their canonical paths when the extraction holds no other full-period statement
+(the month and year-to-date columns stay as read), and `period_type = trailing_twelve` with the last
+month-end as `period_ending` is stated, with the sheet, the twelve months and the footing kept as
+provenance. A sheet title "for the period ending …" must name the same month-end; a forecast,
+budget or adjusted sheet never counts, and a workbook without such a sheet stays monthly.
 
 :::
 
@@ -236,7 +268,12 @@ rolls back) and marks `deals.ai_confidence` with a column comment so it runs onc
 
 A post-extraction reclassifier reads p_and_l_usali.period_type off the extracted fields and narrows
 broad PNL/T12 classifications into PNL_MONTHLY, PNL_YTD, or T12. This is why a single-month upload
-no longer outranks an annual T-12 in the engine actuals loaders.
+no longer outranks an annual T-12 in the engine actuals loaders. An extraction under a P&L label
+that carries debt terms (three or more `in_place_debt.*`-style fields) and not one numeric
+`p_and_l_usali.*` line is retyped DEBT (`_is_debt_terms_extraction`), with the original label kept
+as the AI proposal; under an analyst's P&L tag it raises the misclassification banner instead.
+A statement the reconcile stage typed a trailing twelve narrows to T12 the same way; under an
+analyst's monthly, YTD or annual tag the tag is kept and the banner proposes T-12.
 
 :::
 

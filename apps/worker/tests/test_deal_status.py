@@ -704,8 +704,9 @@ async def test_an_unreachable_database_does_not_stop_the_boot(
     engine = _UnreachableEngine(exc)
     monkeypatch.setattr(migrations, "get_migrations_engine", lambda: engine)
     await migrations.run_startup_migrations()  # no raise
-    # every DDL entry tried, plus the one-time ai_confidence backfill
-    assert engine.attempts == len(migrations.SQLITE_MIGRATIONS) + 1
+    # every DDL entry tried, plus the one-time ai_confidence backfill and the
+    # display-string repair (W5) — each logged, none stopping the boot
+    assert engine.attempts == len(migrations.SQLITE_MIGRATIONS) + 2
     assert any("database unavailable" in r.getMessage() for r in caplog.records)
 
 

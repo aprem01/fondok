@@ -35,7 +35,7 @@ def _auth() -> object:
     )
 
 
-async def _setup(deal_id: UUID, doc_id: UUID) -> None:
+async def _setup(deal_id: UUID, doc_id: UUID, extra_fields: list[dict] | None = None) -> None:
     from app.database import get_session_factory
 
     factory = get_session_factory()
@@ -58,7 +58,7 @@ async def _setup(deal_id: UUID, doc_id: UUID) -> None:
         fields = [
             {"field_name": "rooms_revenue", "value": 9810000, "confidence": 0.55},
             {"field_name": "adr", "value": 247, "confidence": 0.96},
-        ]
+        ] + list(extra_fields or [])
         cr = {
             "overall": 0.755,
             "by_field": {"rooms_revenue": 0.55, "adr": 0.96},
@@ -222,3 +222,125 @@ async def test_cross_tenant_deal_404s() -> None:
     with pytest.raises(HTTPException) as exc:
         await _call(uuid4(), doc_id, field_name="rooms_revenue", action="accept")
     assert exc.value.status_code == 404
+
+
+# ── W5 (2026-11): a numeric line is corrected with a figure, never a label ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["$10M", "$1.24M", "10m", "9.5 million", "12%", True])
+async def test_edit_of_a_figure_with_a_display_string_422s(value) -> None:
+    """Prod deal 7a9928e0: the Data Room editor sent back its display string
+    "$10M" and the worker stored it as rooms revenue."""
+    from fastapi import HTTPException
+
+    from app.api.documents import FIELD_EDIT_NOT_A_FIGURE
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            deal_id, doc_id, field_name="rooms_revenue", action="edit",
+            value=value, note="Per the Summary sheet",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == FIELD_EDIT_NOT_A_FIGURE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [("9,496,407.22", 9496407.22), ("$9,496,407.22", 9496407.22), (9496407.22, 9496407.22), ("(1,234)", -1234.0)],
+)
+async def test_edit_of_a_figure_stores_the_number(value, stored) -> None:
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    res = await _call(
+        deal_id, doc_id, field_name="rooms_revenue", action="edit",
+        value=value, note="Per the Summary sheet row 39",
+    )
+    rooms = next(f for f in res.fields if f.field_name == "rooms_revenue")
+    assert rooms.value == pytest.approx(stored)
+    assert isinstance(rooms.value, float)
+
+
+# ── Review round 2 (I3): the FIELD decides, not the value it holds now ──
+
+_PROD_SHAPES = [
+    # The 8 prod rows: a USD statement line already holding the display text.
+    {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": "$10M",
+     "unit": "USD", "confidence": 1.0, "reviewed": "edited"},
+    # A numeric line extracted with no value yet.
+    {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": None,
+     "unit": "USD", "confidence": 0.5},
+    # A percent line.
+    {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.83,
+     "unit": "pct", "confidence": 0.5},
+    # A text field: free text stays free text.
+    {"field_name": "in_place_debt.senior_loan.rate_type", "value": "Floating",
+     "confidence": 0.5},
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field_name",
+    ["p_and_l_usali.operating_revenue.rooms_revenue", "p_and_l_usali.fixed_charges.insurance"],
+)
+async def test_a_numeric_field_refuses_a_display_string_whatever_it_holds(field_name) -> None:
+    from fastapi import HTTPException
+
+    from app.api.documents import FIELD_EDIT_NOT_A_FIGURE
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id, _PROD_SHAPES)
+    with pytest.raises(HTTPException) as exc:
+        await _call(deal_id, doc_id, field_name=field_name, action="edit", value="$10M", note="n")
+    assert exc.value.status_code == 422
+    assert exc.value.detail == FIELD_EDIT_NOT_A_FIGURE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field_name",
+    ["p_and_l_usali.operating_revenue.rooms_revenue", "p_and_l_usali.fixed_charges.insurance"],
+)
+async def test_a_numeric_field_holding_text_or_nothing_stores_a_written_figure_as_a_number(field_name) -> None:
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id, _PROD_SHAPES)
+    res = await _call(
+        deal_id, doc_id, field_name=field_name, action="edit", value="9,496,407.22",
+        note="Summary row 39",
+    )
+    f = next(x for x in res.fields if x.field_name == field_name)
+    assert f.value == pytest.approx(9_496_407.22)
+    assert isinstance(f.value, float)
+
+
+@pytest.mark.asyncio
+async def test_a_percent_field_asks_for_the_ratio() -> None:
+    from fastapi import HTTPException
+
+    from app.api.documents import FIELD_EDIT_NOT_A_FIGURE
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id, _PROD_SHAPES)
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            deal_id, doc_id, field_name="p_and_l_usali.operational_kpis.occupancy_pct",
+            action="edit", value="83.2%", note="n",
+        )
+    assert exc.value.status_code == 422
+    assert "0.832" in FIELD_EDIT_NOT_A_FIGURE
+
+
+@pytest.mark.asyncio
+async def test_a_text_field_keeps_free_text() -> None:
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id, _PROD_SHAPES)
+    res = await _call(
+        deal_id, doc_id, field_name="in_place_debt.senior_loan.rate_type", action="edit",
+        value="Fixed", note="Per the signed term sheet",
+    )
+    f = next(x for x in res.fields if x.field_name == "in_place_debt.senior_loan.rate_type")
+    assert f.value == "Fixed"

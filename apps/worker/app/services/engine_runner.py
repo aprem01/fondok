@@ -62,6 +62,7 @@ from .renovation_budget import SOURCE_PIP_DOCUMENT
 # 2026-10 — ONE primary-financial-source key, shared with the Data Room
 # badge (``api.documents._mark_primary_financial``). See the module
 # docstring for the order of preference and the live bug that forced it.
+from ..extraction.debt_terms import is_debt_terms_extraction
 from .financial_source_rank import (
     CURRENT_PERIOD_SORTKEY,
     FULL_YEAR_PERIOD_TYPES as _SHARED_FULL_YEAR_PERIOD_TYPES,
@@ -4768,6 +4769,10 @@ def _rank_pnl_shims(rows: list[Any]) -> list[tuple[list[Any], str, Any]]:
             except (json.JSONDecodeError, TypeError):
                 continue
         if not isinstance(raw_fields, list):
+            continue
+        # W5 review I2: an extraction that is only debt terms (a loan template
+        # typed — or analyst-tagged — T-12) is not a statement and never ranks.
+        if is_debt_terms_extraction(raw_fields):
             continue
         key = financial_source_sort_key(
             doc_type=m.get("doc_type"),

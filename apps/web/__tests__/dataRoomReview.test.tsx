@@ -194,3 +194,17 @@ describe('Data Room — reason line on financial statements (FON-41 testers)', (
     expect(screen.queryByText(REASON_2023)).toBeNull();
   });
 });
+
+// W5 (2026-11) — prod deal 7a9928e0 stored rooms revenue as the text "$10M":
+// the correction editor started from the DISPLAY value and an unchanged save
+// sent it back. The editor starts from the extracted number.
+describe('Data Room — field correction editor starts from the extracted number', () => {
+  it('pre-fills the raw value, not the formatted display string', () => {
+    render(<DataRoomTab projectId={DEAL_ID} />);
+    fireEvent.click(screen.getByText('2 fields at 50–70% · F&B Revenue (p.2), Rooms Dept Expense (p.2)'));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit ✎' })[0]);
+    const input = screen.getByRole('textbox', { name: 'Corrected value for F&B Revenue' }) as HTMLInputElement;
+    expect(input.value).toBe('2000000');
+    expect(input.value).not.toMatch(/[$MK]/);
+  });
+});

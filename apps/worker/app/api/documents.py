@@ -635,7 +635,18 @@ async def _audit_re_extract_requested(
 # legacy prompt now splices in verbatim) — plus the critic pass that reconciles
 # each printed YoY change to its two levels. Cached CoStar submarket
 # extractions carry none of the class rows and must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v9"
+# v10 (W5, 2026-11-02): P&L-family workbooks with a dated ``T12`` sheet whose
+# twelve months add up to its TOTAL are typed a trailing twelve months
+# (``extraction/trailing_twelve``): the sheet's USALI totals and KPIs are added
+# at the canonical paths when the extraction holds no other full-period
+# statement, and ``p_and_l_usali.period_type = trailing_twelve`` /
+# ``period_ending`` are stated, so the refine types them T12. The Summary-sheet
+# label reader also reads the non-operating block (rent / property & other
+# taxes / insurance) that follows "Income before non-operating" on layouts
+# without a separate header, and the clipped "Property Operation & Maintenan"
+# label. Every "<Month> Financials" extraction cached under v9 was typed and
+# read as a single month and must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v10"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
@@ -1235,6 +1246,10 @@ def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
         for r in records
         if (r.doc_type or "").upper() in _FINANCIAL_DOC_TYPES
         and r.status == DOC_STATUS_EXTRACTED
+        # W5 review I2: a debt document an analyst tagged as a P&L keeps the
+        # tag (banner) but is never the primary statement — the loader's
+        # ranking drops it on the same evidence (``extraction.debt_terms``).
+        and not (r.misclassified and (r.ai_proposed_doc_type or "").upper() == "DEBT")
     ]
     if not eligible:
         return
@@ -1686,6 +1701,21 @@ def _is_allowed_upload(filename: str, content_type: str | None) -> bool:
 _TINY_XLSX_BYTES = 30_000
 
 
+#: Filename tokens that name debt (``_guess_doc_type``) …
+_DEBT_FILENAME_TOKENS: frozenset[str] = frozenset({"debt", "loan", "loans", "mortgage"})
+#: … and the document forms that make such a file a debt DOCUMENT.
+_DEBT_DOCUMENT_FORM_TOKENS: frozenset[str] = frozenset(
+    {"template", "upload", "agreement", "agreements", "terms", "note", "commitment", "input", "inputs"}
+)
+#: Words that name a financial statement or report: never a debt document.
+_STATEMENT_FILENAME_TOKENS: frozenset[str] = frozenset(
+    {
+        "statement", "statements", "financials", "financial", "budget", "operating",
+        "forecast", "appraisal", "service", "sizing", "reporting", "report",
+    }
+)
+
+
 def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
     """Cheap filename-driven hint. The Router agent overrides on extract.
 
@@ -1862,6 +1892,21 @@ def _guess_doc_type(filename: str, size_bytes: int | None = None) -> str:
         return "MARKET_STUDY"
     if "p&l" in name or "pnl" in name or "p_l" in name:
         return "PNL"
+    # W5 (2026-11): a debt / loan DOCUMENT — term sheet, loan agreement, the
+    # Fondok debt upload template — is DEBT. Without this rule the Router's
+    # off-enum fallback dropped "Kimpton_Fondok_Debt_Upload_Template.xlsx"
+    # through to the T12 default, and the template outranked every real P&L
+    # on the deal as an undated "current" T-12. A loan word alone is not
+    # enough ("Operating Statement - Loan Package.xlsx" is a P&L): the name
+    # must also say what kind of debt document it is, and must not name a
+    # statement. DEBT is a non-financial Router label, so a real P&L that
+    # still lands here is rescued by the structural recognizer (Bug H).
+    if not (tokens & _STATEMENT_FILENAME_TOKENS) and (
+        "term_sheet" in name.replace(" ", "_")
+        or "termsheet" in name
+        or (tokens & _DEBT_FILENAME_TOKENS and tokens & _DEBT_DOCUMENT_FORM_TOKENS)
+    ):
+        return "DEBT"
     if "contract" in name:
         return "CONTRACT"
 
@@ -1989,6 +2034,8 @@ def _refine_pnl_doc_type(
 # the YoY / broker-question engines (which filter T12/PNL/PNL_MONTHLY/
 # PNL_YTD) actually see the row.
 _NON_FINANCIAL_ROUTER_LABELS = {
+    # W5 review I1: a P&L typed DEBT (filename hint / Router) is rescued.
+    "DEBT",
     "PROPERTY_INFO",
     "UNKNOWN",
     "CONTRACT",
@@ -2057,6 +2104,14 @@ class RefinedClassification:
     router_overridden_original: str | None
 
 
+def _is_debt_terms_extraction(fields: list[dict[str, Any]]) -> bool:
+    """See :func:`app.extraction.debt_terms.is_debt_terms_extraction` — the one
+    predicate the T-12 loader's ranking shares."""
+    from ..extraction.debt_terms import is_debt_terms_extraction
+
+    return is_debt_terms_extraction(fields)
+
+
 def refine_doc_type_post_extraction(
     *,
     classified_doc_type: str | None,
@@ -2092,6 +2147,25 @@ def refine_doc_type_post_extraction(
     structural_pnl_score = float(structural_signals.pnl_score)
 
     router_overridden_original: str | None = None
+    # W5 (2026-11) — a P&L label on an extraction that carries debt terms and
+    # not one P&L statement line is a mis-typed debt document (the Fondok
+    # debt upload template typed T12 by the filename fallback). Retype it
+    # DEBT so it leaves the P&L family and can never become the primary
+    # statement; the original call travels on ``ai_proposed_doc_type``.
+    label = (refined_doc_type or classified_doc_type or "").upper().strip()
+    if (
+        label in _FINANCIAL_ROUTER_LABELS
+        and not structural_signals.is_pnl
+        and _is_debt_terms_extraction(fields)
+    ):
+        logger.info(
+            "debt-shaped extraction under a P&L label: %s → DEBT doc=%s",
+            label,
+            doc_id,
+        )
+        router_overridden_original = label
+        refined_doc_type = "DEBT"
+        classified_doc_type = "DEBT"
     router_call_for_override = (
         (refined_doc_type or classified_doc_type or "")
         .upper()
@@ -2155,7 +2229,28 @@ def refine_doc_type_post_extraction(
     _PNL_TAG_CANONICALS = {"T12", "PNL", "PNLMONTHLY", "PNLYTD"}
     user_tag_is_pnl = canonical_user in _PNL_TAG_CANONICALS
 
-    if structural_signals.is_pnl and user_tag_is_pnl:
+    from ..extraction.trailing_twelve import is_derived_trailing_twelve
+
+    if (
+        user_tag_is_pnl
+        and canonical_user != "T12"
+        and is_derived_trailing_twelve(fields)
+    ):
+        # W5 (2026-11) — the statement's own dated month columns and lines
+        # prove a trailing twelve months (``extraction.trailing_twelve``),
+        # but the analyst tagged it monthly / YTD / annual. Keep the tag as
+        # the document type, never silently: raise the banner proposing T-12.
+        # The engines rank on the statement's period fields, which already say
+        # trailing twelve.
+        misclassified_flag = True
+        normalized_ai = "T12"
+        logger.info(
+            "router v4: doc=%s user tagged %s, dated monthly columns prove a "
+            "trailing twelve — proposing T12",
+            doc_id,
+            user_provided_doc_type,
+        )
+    elif structural_signals.is_pnl and user_tag_is_pnl:
         # Trust the user's tag — recognizer confirms shape.
         if misclassified_flag:
             logger.info(
@@ -7148,6 +7243,30 @@ FIELD_EDIT_NOTE_REQUIRED = (
     "number replaces the statement's."
 )
 
+FIELD_EDIT_NOT_A_FIGURE = (
+    "This line is a figure: enter the full number as the statement states it "
+    "(for example 9,496,407.22), not an abbreviation such as $10M. A percentage "
+    "is entered as its ratio (0.832 for 83.2%)."
+)
+
+def _is_numeric_field(field: dict[str, Any]) -> bool:
+    """W5 review I3 — see :func:`app.extraction.edited_figures.is_numeric_field`:
+    the FIELD decides, not the value it holds now."""
+    from ..extraction.edited_figures import is_numeric_field
+
+    return is_numeric_field(field)
+
+
+def _edited_figure(value: Any) -> float | None:
+    """W5 (2026-11) — the corrected value of a numeric field, as a number
+    (:func:`app.extraction.edited_figures.edited_figure`): a number or a plain
+    written figure passes; "$10M", "83.2%" or a boolean is not a figure. Prod
+    deal 7a9928e0 stored ``rooms_revenue = "$10M"``, no reader could use it,
+    and the loader fell back to a prior-year line."""
+    from ..extraction.edited_figures import edited_figure
+
+    return edited_figure(value)
+
 
 @router.patch(
     "/{deal_id}/documents/{doc_id}/fields",
@@ -7247,7 +7366,16 @@ async def review_extraction_field(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=FIELD_EDIT_NOTE_REQUIRED,
             )
-        fields[idx]["value"] = body.value
+        new_value = body.value
+        if _is_numeric_field(fields[idx]):
+            figure = _edited_figure(body.value)
+            if figure is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=FIELD_EDIT_NOT_A_FIGURE,
+                )
+            new_value = figure
+        fields[idx]["value"] = new_value
         fields[idx]["confidence"] = 1.0
         fields[idx]["reviewed"] = "edited"
         fields[idx]["review_note"] = review_note
@@ -10249,6 +10377,11 @@ async def _apply_pnl_quality_passes(
        ``reconciled_from = {"added": true, …}``. The original
        workbook bytes are fetched from the raw store for full-precision
        cell values; on any storage failure the cached grid is used.
+    1b. **Trailing-twelve statement** (``extraction/trailing_twelve``): a
+       workbook with a dated ``T12`` sheet whose twelve months add up to its
+       TOTAL gets that sheet's totals at the canonical paths (when the
+       extraction holds no other full-period statement) and
+       ``period_type = trailing_twelve`` with its ``period_ending``.
     2. **Statement plausibility** (``agents/critic``): F&B / Rooms / Total
        revenue below 25% of the median of the deal's other full-period
        statements is capped at 0.5 confidence with the reason on the
@@ -10304,7 +10437,9 @@ async def _apply_pnl_quality_passes(
                 result.table.page_index if result.table else None,
                 ", ".join(
                     [
-                        f"{c.field_name} {c.old_value:,.0f}→{c.new_value:,.0f}"
+                        f"{c.field_name} "
+                        + (repr(c.old_value) if isinstance(c.old_value, str) else f"{c.old_value:,.0f}")
+                        + f"→{c.new_value:,.0f}"
                         for c in result.changes
                     ]
                     + [f"+{a.field_name}={a.value:,.0f}" for a in result.additions]
@@ -10312,6 +10447,54 @@ async def _apply_pnl_quality_passes(
             )
     except Exception as exc:  # never block extraction
         logger.warning("summary reconcile: failed for doc=%s: %s", doc_id, exc)
+
+    # ── 1b. Trailing-twelve statement (W5) ──────────────────────────
+    # A workbook whose dated T12 sheet adds up is a trailing twelve months:
+    # read that statement and state its period_type / period_ending
+    # (``extraction/trailing_twelve``) so the post-extraction refine types it
+    # T12 and the ranking reads its real period.
+    try:
+        from ..extraction.trailing_twelve import (
+            find_trailing_twelve_sheet,
+            label_trailing_twelve,
+        )
+
+        ttm_pages = (
+            (extraction_data or {}).get("pages")
+            if isinstance(extraction_data, dict)
+            else None
+        )
+        ttm_bytes: bytes | None = None
+        if storage_key and find_trailing_twelve_sheet(ttm_pages) is not None:
+            try:
+                ttm_bytes = await get_raw_store(get_settings()).get(storage_key)
+            except Exception as exc:  # cached grid is the fallback
+                logger.info(
+                    "trailing twelve: raw-store fetch failed for doc=%s (%s); "
+                    "using the parser cache (6 significant digits)",
+                    doc_id,
+                    exc,
+                )
+        ttm = label_trailing_twelve(
+            fields,
+            confidence,
+            doc_type=doc_type,
+            extraction_data=extraction_data,
+            file_bytes=ttm_bytes,
+        )
+        if ttm.applied:
+            fields, confidence = ttm.fields, ttm.confidence
+            logger.info(
+                "trailing twelve: doc=%s deal=%s typed a trailing twelve "
+                "ending %s from sheet %r (added %s)",
+                doc_id,
+                deal_id,
+                ttm.period_end,
+                ttm.detail.get("sheet"),
+                ", ".join(ttm.detail.get("added") or []) or "nothing",
+            )
+    except Exception as exc:  # never block extraction
+        logger.warning("trailing twelve: failed for doc=%s: %s", doc_id, exc)
 
     # ── 2. Per-deal statement plausibility ──────────────────────────
     if session is None:

@@ -664,7 +664,7 @@ class SummaryTable:
 class ReconciledChange:
     field_name: str
     concept: str
-    old_value: float
+    old_value: float | str  #: a str when the field held text, not a figure
     new_value: float
     sheet: str
     row: int
@@ -831,6 +831,10 @@ def _concept_for_label(label: str, section: str | None) -> str | None:
         return "noi"
     if lab.startswith("total non-operating") or lab.startswith("total non operating"):
         return None  # includes non-op income / rent / other — not a Fondok concept
+    # A layout that clips long labels at the column width ("Property Operation
+    # & Maintenan" on the Angler's monthly-financials T12 sheet).
+    if section == "undistributed" and lab.startswith("property operation"):
+        return "property_operations"
     if section and section in _SECTION_SCOPED_LABELS:
         return _SECTION_SCOPED_LABELS[section].get(lab)
     return None
@@ -893,6 +897,13 @@ def parse_summary_grid(
         if section == "skip":
             continue
         concept = _concept_for_label(label, section)
+        if concept == "income_before_nonop" and section != "skip":
+            # USALI: the non-operating block (rent, property & other taxes,
+            # insurance) follows "Income before non-operating income and
+            # expenses". Layouts without a separate "Non-Operating" header
+            # (the monthly-financials T12 sheet) would otherwise leave those
+            # rows scoped to the undistributed section and unread.
+            section = "nonop"
         if concept is None:
             continue
         labelled.append((i, label, concept, row))
@@ -1039,6 +1050,19 @@ def canonical_path_for_concept(concept: str, doc_type: str | None) -> str | None
     return None
 
 
+def coerce_text_number(value: str) -> float | None:
+    """A plain written figure (``"9,496,407.22"``, ``"$1,234"``) as a float;
+    ``None`` for anything else — an abbreviation like ``"$10M"`` is not a
+    figure (its precision is gone)."""
+    from .numeric import coerce_cell_number
+
+    return coerce_cell_number(value)
+
+
+def _fmt_old(v: float | str) -> str:
+    return repr(v) if isinstance(v, str) else f"{v:,.2f}"
+
+
 def _is_whole_dollar(unit: Any) -> bool:
     if unit is None:
         return True
@@ -1083,11 +1107,21 @@ def reconcile_fields(
         occupied = _present_concept(name, dt)
         if occupied:
             present_concepts.add(occupied)
+        # W5 (2026-11): a statement-level total holding TEXT ("$10M" — the
+        # Data Room review editor used to save its display string) counts as
+        # present, so the add rule never supplied the figure, and it was not
+        # a number, so the replace rule never touched it: no reader could use
+        # the line. A non-numeric value on a statement-level total the
+        # Summary states is replaced like a disagreeing number.
+        text_value = (
+            isinstance(value, str)
+            and value.strip() != ""
+            and coerce_text_number(value) is None
+        )
         if (
             not isinstance(name, str)
             or not name
-            or not isinstance(value, int | float)
-            or isinstance(value, bool)
+            or (not text_value and (not isinstance(value, int | float) or isinstance(value, bool)))
             or not _is_whole_dollar(fd.get("unit"))
         ):
             out_fields.append(fd)
@@ -1097,8 +1131,8 @@ def reconcile_fields(
         if row is None:
             out_fields.append(fd)
             continue
-        old = float(value)
-        if abs(old - row.annual) <= RECONCILE_TOLERANCE * abs(row.annual):
+        old: float | str = value.strip() if text_value else float(value)
+        if not text_value and abs(float(old) - row.annual) <= RECONCILE_TOLERANCE * abs(row.annual):
             out_fields.append(fd)
             continue
         old_page = fd.get("source_page")
@@ -1117,9 +1151,10 @@ def reconcile_fields(
             "old_source_page": old_page,
             "old_raw_text": (str(old_raw)[:200] if old_raw else None),
         }
+        read = f"the text {old!r}, which is not a figure" if isinstance(old, str) else f"{old:,.2f}"
         fd["note"] = (
             f"Reconciled to the {table.sheet_name} sheet's '{row.label}' annual total "
-            f"(row {row.row}): {row.annual:,.2f}. The extractor read {old:,.2f}"
+            f"(row {row.row}): {row.annual:,.2f}. The extraction held {read}"
             + (f" from page {old_page}" if old_page is not None else "")
             + "."
         )
@@ -1302,7 +1337,7 @@ def reconcile_extraction(
             table.annual_column_rule,
             table.source,
             len(result.changes),
-            ", ".join(f"{c.field_name} {c.old_value:,.2f}→{c.new_value:,.2f}" for c in result.changes),
+            ", ".join(f"{c.field_name} {_fmt_old(c.old_value)}→{c.new_value:,.2f}" for c in result.changes),
         )
     if result.additions:
         logger.info(

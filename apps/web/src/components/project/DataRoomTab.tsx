@@ -1061,7 +1061,14 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
   // shared review state's total — exactly the red cells the worksheet shows
   // across every statement's column (validation lives there now, not a
   // duplicate P&L here — team sync 2026-08).
-  const flaggedFinancialCount = liveMode ? reviewState.total : 0;
+  // R2-I1 — the same per-document lists the badges count (worksheet cells
+  // plus cleared "Needs review" values), so the global count is their sum.
+  const flaggedFinancialCount = liveMode
+    ? docs.reduce(
+        (n, d) => n + (FINANCIAL_DOC_TYPES.has(d.type) ? (flaggedByDoc.get(d.id)?.length ?? 0) : 0),
+        0,
+      )
+    : 0;
 
   return (
     <div className="space-y-5">
@@ -1580,7 +1587,12 @@ type ReviewField = {
   key: string;
   fieldName: string;
   label: string;
+  /** The display string ("$10M") — for reading, never for editing. */
   value: string;
+  /** The extracted value as stored — what the correction editor starts from.
+   *  W5: the editor used to start from ``value`` and an unchanged save stored
+   *  "$10M" as rooms revenue (prod deal 7a9928e0). */
+  rawValue: string;
   conf: number;
   reviewed: string | null;
   resolved: boolean;
@@ -1592,6 +1604,8 @@ type ReviewField = {
   rawText: string | null;
   /** Exactly 0.5 with raw text present — a chart / multi-column table read. */
   chartTableRead: boolean;
+  /** The worker's note on this field (reconciler / critic / repair), verbatim. */
+  note: string | null;
 };
 
 function InlineDocumentReview({
@@ -1655,6 +1669,7 @@ function InlineDocumentReview({
         // R-045 — pipeline-stage paths keep their stage word in the label.
         label: humanizeReviewField(f.field_name),
         value: formatValue(f.value, f.unit, f.field_name),
+        rawValue: f.value === null || f.value === undefined ? '' : String(f.value),
         conf,
         reviewed,
         resolved,
@@ -1663,6 +1678,7 @@ function InlineDocumentReview({
         explanation: fieldExplanation(f.confidence, f.source_page, doc.name),
         rawText: f.raw_text ?? null,
         chartTableRead: isChartTableRead(f.confidence, f.raw_text),
+        note: typeof f.note === 'string' && f.note.trim() ? f.note.trim() : null,
       });
     }
     return order.map((label) => ({ label, fields: map.get(label)! }));
@@ -2102,7 +2118,7 @@ function ReviewFieldRow({
   onReview: (action: 'accept' | 'edit' | 'reject', value?: string, note?: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(field.value);
+  const [draft, setDraft] = useState(field.rawValue);
   // FON-74 — why the corrected value replaces the extracted one (required).
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2166,6 +2182,14 @@ function ReviewFieldRow({
           <ProvenanceDot state="document_sourced" review={flagged} size={8} />
           {field.label}
         </span>
+        {field.note && (
+          <span
+            data-testid="field-note"
+            style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.45, wordBreak: 'break-word' }}
+          >
+            {field.note}
+          </span>
+        )}
         {flagged && (
           <>
             <span
@@ -2305,7 +2329,7 @@ function ReviewFieldRow({
               disabled={busy}
               onClick={() => {
                 setEditing(false);
-                setDraft(field.value);
+                setDraft(field.rawValue);
               }}
               style={btnGhost}
             >
@@ -2343,7 +2367,7 @@ function ReviewFieldRow({
               type="button"
               disabled={busy}
               onClick={() => {
-                setDraft(field.value);
+                setDraft(field.rawValue);
                 setEditing(true);
               }}
               title="Edit"
@@ -2357,7 +2381,7 @@ function ReviewFieldRow({
             type="button"
             disabled={busy}
             onClick={() => {
-              setDraft(field.value);
+              setDraft(field.rawValue);
               setEditing(true);
             }}
             title="Edit"

@@ -1209,6 +1209,10 @@ export interface ExtractionField {
   reviewed?: string | null;
   /** FON-74 — the analyst's justification when `reviewed === 'edited'`. */
   review_note?: string | null;
+  /** One-sentence provenance / review note the worker attached (Summary
+   *  reconciler, plausibility critic, trailing-twelve pass, or the W5
+   *  display-string repair's "Needs review: …"). Rendered verbatim. */
+  note?: string | null;
 }
 
 export interface ExtractionConfidenceReport {

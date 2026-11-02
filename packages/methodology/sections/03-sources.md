@@ -526,12 +526,14 @@ required equity and LTC.
 
 <!-- source: apps/worker/app/services/engine_runner.py (primary-statement ranking shared with the Data Room badge: full-year before partial, most recent period first, T-12 ahead of a calendar-year P&L of the same year; _choose_period_statements: one statement per period, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25, three or more statements; _resolve_statement_lines: exact alias first, no tail match through the opposite section; _loader_notices: needs_review) -->
 One statement supplies Year-1 occupancy, ADR, revenue lines and expense lines: the one the Data
-Room badges Primary source. The ranking is full-year statements before partial ones, the most
+Room badges Primary source. A document whose extraction holds only loan terms and no statement line
+(a debt template) is never that statement, even under an analyst's T-12 or P&L tag. The ranking is full-year statements before partial ones, the most
 recent period first, a T-12 ahead of a calendar-year P&L of the same year, then the more complete
 extraction. Two statements are never averaged. A line the chosen statement does not carry is read
 from the next statement of the same period, then from the most recent statement whose line covers
-twelve months (a full year, or a trailing twelve however the document is typed: an unlabelled
-statement whose monthly block spans twelve months), never from a monthly or year-to-date slice and
+twelve months (a full year, or a trailing twelve: a monthly package whose dated T12 sheet the
+extraction typed as one, or — for extractions made before that — an unlabelled statement whose
+monthly block spans twelve months), never from a monthly or year-to-date slice and
 never from a statement whose period ends more than two years before the Year-1 basis period; then
 the labelled default. Every line not read from the chosen statement, and every line left on the
 default for those reasons, is marked {{reason:needs_review}} with its source document and period.
@@ -542,7 +544,9 @@ rooms line, or whose lines miss its stated total, marks the revenue-derived assu
 <!-- source: apps/worker/app/services/engine_runner.py (_resolve_statement_lines, _COST_SECTION_SEGMENTS / _REVENUE_SECTION_SEGMENTS; _choose_period_statements, _HEADLINE_LINES, _SAME_PERIOD_CONFLICT_TOLERANCE 0.05, _SAME_PERIOD_OUTLIER_TOLERANCE 0.25; _loader_notices) -->
 A line resolves by its exact field path first; only when no exact path exists does a field whose
 last segment names the line count, and never one under a cost or expense section for a revenue line
-(or a revenue section for an expense line). A period is a full year identified by its stated period
+(or a revenue section for an expense line). Insurance and property taxes are read wherever an
+annual statement files them — under fixed charges or under non-operating expenses, with or without
+a `_usd` suffix — but never from a prior-year, budget or per-key row. A period is a full year identified by its stated period
 end (else its fiscal year; an undated T-12 is the current trailing twelve months), or a partial
 period identified by a stated end and its period type; a partial statement with no stated end stands
 alone, and no date is ever inferred into a note. A fiscal year known only by its year is the
