@@ -7080,8 +7080,9 @@ def _selected_exit_month(base: dict[str, Any]) -> int:
     return max(1, min(full_term, override)) if override is not None else full_term
 
 
-def _analyst_year_one_mgmt_fee(base: Mapping[str, Any]) -> float | None:
-    """The analyst's explicit Year-1 management-fee dollars, else ``None``.
+def _analyst_year_one_dollars(base: Mapping[str, Any], key: str) -> float | None:
+    """The analyst's explicit Year-1 ``mgmt_fee`` / ``ffe_reserve`` dollars,
+    else ``None``.
 
     Sam finding 4 (2026-11): the base management fee is contractual —
     ``mgmt_fee_pct`` × projected total revenue in every year — so the T-12
@@ -7091,14 +7092,16 @@ def _analyst_year_one_mgmt_fee(base: Mapping[str, Any]) -> float | None:
     from what the deal resolved to counts (``sources`` reads
     ``analyst_override``): re-saving the T-12 figure unchanged is not a fee
     statement. A persisted override lands in ``t12_expense_actuals``; a
-    request-body override lands on ``base`` itself.
+    request-body override lands on ``base`` itself. The FF&E reserve
+    (review I-3) follows the same rule. The figure is a fixed Year-1 dollar
+    amount: it does not follow renovation displacement.
     """
-    if (base.get("__sources__") or {}).get("mgmt_fee") != SOURCE_ANALYST_OVERRIDE:
+    if (base.get("__sources__") or {}).get(key) != SOURCE_ANALYST_OVERRIDE:
         return None
     raw = (
-        base["mgmt_fee"]
-        if "mgmt_fee" in base
-        else (base.get("t12_expense_actuals") or {}).get("mgmt_fee")
+        base[key]
+        if key in base
+        else (base.get("t12_expense_actuals") or {}).get(key)
     )
     try:
         value = float(raw) if raw is not None else None
@@ -7283,7 +7286,9 @@ def _build_input_for(
             # Sam finding 4 — the base fee is contractual (mgmt_fee_pct ×
             # revenue, Year 1 included). Only an analyst's explicit Year-1 fee
             # reaches the engine; the extracted T-12 fee line never does.
-            mgmt_fee_y1_override=_analyst_year_one_mgmt_fee(base),
+            mgmt_fee_y1_override=_analyst_year_one_dollars(base, "mgmt_fee"),
+            # Review I-3 — the FF&E reserve, the same rule.
+            ffe_reserve_y1_override=_analyst_year_one_dollars(base, "ffe_reserve"),
             # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine
             # publishes it (it is the one engine holding revenue AND NOI on the
             # same year index); these are the inputs it cannot derive itself.

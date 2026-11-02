@@ -206,6 +206,12 @@ class ExpenseEngineInput(BaseModel):
     # the analyst's value differs from what the deal resolved to); None → the
     # contractual % for Year 1 as for every other year.
     mgmt_fee_y1_override: Annotated[float, Field(ge=0.0)] | None = None
+    # Review I-3 (2026-11) — the FF&E reserve is contractual in the same way:
+    # ``ffe_reserve_pct`` × projected total revenue in every year, Year 1
+    # included; the T-12 ``ffe_reserve`` dollars never drive the projection.
+    # Only an analyst's explicit Year-1 reserve (a fixed dollar figure that
+    # does not follow displacement) wins for Year 1.
+    ffe_reserve_y1_override: Annotated[float, Field(ge=0.0)] | None = None
     overrides: dict[str, float] = Field(default_factory=dict)
     grow_opex_independently: bool = Field(
         default=False,
@@ -231,9 +237,9 @@ class ExpenseEngineInput(BaseModel):
             "Recognized keys: rooms_dept_expense, fb_dept_expense, "
             "other_dept_expense, administrative_general, "
             "information_telecom, sales_marketing, property_operations, "
-            "utilities, insurance, property_taxes, ffe_reserve. A mgmt_fee "
-            "line is accepted but never drives the projection (the base fee "
-            "is contractual: mgmt_fee_pct × revenue)."
+            "utilities, insurance, property_taxes. mgmt_fee and ffe_reserve "
+            "lines are accepted but never drive the projection (both are "
+            "contractual: mgmt_fee_pct / ffe_reserve_pct × revenue)."
         ),
     )
     # The T-12 revenue of each operated department, keyed by the revenue
@@ -398,7 +404,9 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         # years are always grown forward from the chosen Y1 anchor. The
         # management fee is contractual (% of revenue), so a T-12 fee line
         # grounds nothing and is not listed.
-        sourced: list[str] = sorted(k for k in actuals if k != "mgmt_fee")
+        sourced: list[str] = sorted(
+            k for k in actuals if k not in ("mgmt_fee", "ffe_reserve")
+        )
 
         # Undistributed canonical USALI bucket weights. Sales & Marketing
         # and Utilities used to share the same 0.24 multiplier, which
@@ -922,11 +930,31 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 if mgmt_from_override
                 else total * payload.mgmt_fee_pct
             )
+            # Review I-3 — reserve % × this year's (possibly displaced) total
+            # revenue; only an analyst's explicit Year-1 reserve overrides it.
+            ffe_from_override = is_y1 and payload.ffe_reserve_y1_override is not None
             ffe = (
-                actuals["ffe_reserve"]
-                if use_actuals and "ffe_reserve" in actuals
+                float(payload.ffe_reserve_y1_override)  # type: ignore[arg-type]
+                if ffe_from_override
                 else total * payload.ffe_reserve_pct
             )
+            # Review M-1 — an analyst's Year-1 fee / reserve is a fixed dollar
+            # figure; its trace says so (it does not follow displacement).
+            for _key, _flag, _val, _pct in (
+                ("mgmt_fee", mgmt_from_override, mgmt_fee, "mgmt_fee_pct"),
+                ("ffe_reserve", ffe_from_override, ffe, "ffe_reserve_pct"),
+            ):
+                if _flag:
+                    prov[f"years[{idx}].{_key}"] = ValueTrace(
+                        value=_val,
+                        formula=f"{_key} = analyst Year-1 override (fixed $)",
+                        assumption_key=_key,
+                        note=(
+                            "Analyst Year-1 override: a fixed dollar amount, not a % "
+                            "of revenue — it does not follow renovation displacement. "
+                            f"Later years run at {_pct} × total revenue."
+                        ),
+                    )
             fixed = FixedCharges(
                 property_taxes=fixed_lines["property_taxes"],
                 insurance=fixed_lines["insurance"],
@@ -995,7 +1023,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # cross-engine pointer is ``fb.*`` — the revenue engine's own
             # total_revenue is one hop further up, reached through fb's inputs.
             mgmt_from_actual = mgmt_from_override
-            ffe_from_actual = use_actuals and "ffe_reserve" in actuals
+            ffe_from_actual = ffe_from_override
             prov[f"years[{idx}].gop"] = ValueTrace(
                 value=gop,
                 formula="gop = total_revenue − departmental_expenses − undistributed_expenses",

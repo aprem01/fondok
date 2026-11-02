@@ -77,7 +77,19 @@ interface RowDef {
   y1Src?: 'expense' | 'fb' | 'revenue'; // which engine feeds the Model column (default expense)
   fmt?: RowFmt;            // cell number format (default currency)
   compute?: (v: Record<string, number>) => number; // model-col derived value
+  // Review M-1 (2026-11) — shown beside the label while the row's override is
+  // in force: what that override means in the model.
+  overrideHint?: { chip: string; title: string };
 }
+
+// The management fee and FF&E reserve are a % of each year's total revenue;
+// a Year-1 dollar override replaces Year 1 only and stays that dollar figure.
+const FIXED_YEAR1_HINT = {
+  chip: 'Fixed Year-1 $',
+  title:
+    'This Year-1 override is a fixed dollar amount, not a % of revenue: it replaces Year 1 only ' +
+    'and does not follow renovation displacement. Later years run at the % of total revenue.',
+};
 
 // Cell number format. Occupancy is a 0..1 ratio shown as %; ADR/RevPAR are
 // plain dollars-per-unit; everything else is compact currency.
@@ -162,8 +174,8 @@ const ROWS: RowDef[] = [
     compute: (v) => v.total_rev - sumKeys(v, DEPT_IDS) - sumKeys(v, UNDIST_IDS) },
 
   { id: 's_fixed', label: 'Management Fee & Fixed Charges', kind: 'section' },
-  { ...ws('mgmt'), label: 'Management Fee', kind: 'input' },
-  { ...ws('ffe'), label: 'FF&E Reserve', kind: 'input' },
+  { ...ws('mgmt'), label: 'Management Fee', kind: 'input', overrideHint: FIXED_YEAR1_HINT },
+  { ...ws('ffe'), label: 'FF&E Reserve', kind: 'input', overrideHint: FIXED_YEAR1_HINT },
   { ...ws('taxes'), label: 'Property Taxes', kind: 'input' },
   { ...ws('insurance'), label: 'Insurance', kind: 'input' },
   // Wave 5 (Sam #3) — rent and other non-operating expense: stated on many
@@ -1299,6 +1311,14 @@ export default function GroundedWorksheet({
                     ) : (
                       <span className="inline-flex items-center gap-2">
                         {labelOf(row.id, row.label)}
+                        {row.overrideHint && isOverridden(row.overrideKey) && (
+                          <span
+                            title={row.overrideHint.title}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-ink-100 text-ink-700"
+                          >
+                            {row.overrideHint.chip}
+                          </span>
+                        )}
                         {isInput && item.splitDelta != null && (
                           <span
                             title="Split parts vs this line"

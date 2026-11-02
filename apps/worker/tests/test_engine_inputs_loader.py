@@ -1698,3 +1698,25 @@ async def test_analyst_expense_override_unpairs_the_department() -> None:
     base = await _base_for(deal_id)
     assert base["t12_expense_actuals"]["fb_dept_expense"] == pytest.approx(2_000_000.0)
     assert "fb_revenue" not in base["t12_dept_revenue"]
+
+
+@pytest.mark.asyncio
+async def test_ffe_reserve_t12_dollars_never_reach_year_one_but_an_analyst_figure_does() -> None:
+    rows = [
+        *_T12_WITH_FEE,
+        {"field_name": "p_and_l_usali.fees_and_reserves.ffe_reserve", "value": 480_135.0},
+    ]
+    plain = uuid4()
+    await _insert_deal(plain, name="T12 reserve", keys=120, purchase=40_000_000)
+    await _insert_t12_extraction(plain, fields=rows)
+    exp_in = await _expense_input_for(await _base_for(plain), plain)
+    assert exp_in.ffe_reserve_y1_override is None
+
+    analyst = uuid4()
+    await _insert_deal(
+        analyst, name="Analyst reserve", keys=120, purchase=40_000_000,
+        field_overrides={"ffe_reserve": {"value": 500_000.0, "note": "lender reserve"}},
+    )
+    await _insert_t12_extraction(analyst, fields=rows)
+    exp_in = await _expense_input_for(await _base_for(analyst), analyst)
+    assert exp_in.ffe_reserve_y1_override == pytest.approx(500_000.0)

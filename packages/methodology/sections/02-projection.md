@@ -397,9 +397,8 @@ hotel-type default 5.50% of total revenue (select)”).
 #### Management fee, incentive fee and the waterfall
 
 <!-- source: apps/worker/app/engines/expense.py (mgmt_fee_pct, ffe_reserve_pct, incentive_mgmt_fee_pct_of_gop), evals/golden-set/usali-rules.csv (MGMT_FEE_RANGE, INCENTIVE_MGMT_FEE_RANGE) -->
-Base management fee: a share of each year's total revenue, Year 1 included (never the T-12 dollars;
-an analyst's Year-1 fee override does win); platform default 3.0% of total revenue.
-FF&E reserve: platform default 4.0% of total revenue. Both accept 0–10%. The USALI check warns
+Base management fee and FF&E reserve: a share of each year's total revenue, Year 1 included (never
+the T-12 dollars; an analyst's Year-1 override wins as a fixed dollar amount); defaults 3.0% / 4.0%. Both accept 0–10%. The USALI check warns
 when the base fee is outside 2–6% of total revenue; it is a warning, not a correction, and applies
 to every operating model. Incentive fee: optional, 0–50% of gross operating profit after the base
 fee, computed each year as max(0, GOP − base fee) × rate; the USALI check notes an incentive fee
@@ -627,7 +626,11 @@ of each year's total revenue, Year 1 included. The T-12 management-fee dollars a
 never drive the projection (before 2026-11 they were carried into Year 1, which put the Angler's
 Year-1 fee at 4.8% and 3.9% of its renovation-displaced revenue). An analyst who enters a Year-1
 fee on the worksheet's Management Fees row, with a note, sets Year 1 to that figure (trace
-assumption `mgmt_fee`); an override equal to the resolved figure states nothing and is ignored. The
+assumption `mgmt_fee`); an override equal to the resolved figure states nothing and is ignored. That
+figure is a fixed dollar amount, not a % of revenue: it does not follow renovation displacement, and
+the worksheet row shows a "Fixed Year-1 $" chip while it is in force. The FF&E reserve follows the
+same rule (`ffe_reserve_pct` × revenue every year; review I-3, 2026-11: Year 1 used to carry the
+T-12 reserve dollars, 3.98% / 4.21% of the Angler's displaced revenue). The
 *Incentive fee* beside it on the Future P&L Assumptions panel (`incentive_mgmt_fee_pct_of_gop`) is
 opt-in and blank by default — blank means no incentive fee is modelled and every number is exactly
 what it was without it. When set, each year's incentive fee is `max(0, GOP − base fee) × rate`: a
@@ -730,8 +733,8 @@ beside that input removes it, so the portfolio P&L ratio or the platform default
 again, and re-runs. Precedence is otherwise unchanged. A Year-1 amount the T-12 states is still used
 as stated, and a departmental line the T-12 states runs on its T-12 cost ratio. The applied ratio
 drives what the T-12 does not state: a departmental line the T-12 leaves out (that ratio × the
-department's revenue, every year), the FF&E reserve in every year after Year 1, and the management
-fee in every year, Year 1 included, where each year is that year's total revenue × the ratio.
+department's revenue, every year), and the management fee and FF&E reserve in every year, Year 1
+included, where each year is that year's total revenue × the ratio.
 
 **The waterfall below Total Revenue** runs GOP → Management Fees (→ Incentive management fee, when
 one is modelled) → EBITDA → Fixed Charges (property taxes, insurance, equipment lease / rent, other)

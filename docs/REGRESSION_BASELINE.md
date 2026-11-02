@@ -235,3 +235,10 @@ fixture). Live T-12 deals move: a department's T-12 ratio now pairs one
 statement's expense and revenue, sits inside `DEPT_RATIO_BAND` or is flagged
 needs-review and falls back, and the dollar basis divides by undisplaced
 Year-1 revenue.
+
+### Round 2 (review I-3 / M-1): FF&E reserve is contractual in Year 1 too
+
+No golden move (the fixture has no T-12). Live T-12 deals move: Year-1 FF&E
+reserve becomes `ffe_reserve_pct` × (displaced) Year-1 revenue (Angler copy
+480,135 = 3.98% → 4%; orig 539,269 = 4.21% → 4%). An analyst Year-1 fee or
+reserve override is a fixed dollar figure, labelled as such.
