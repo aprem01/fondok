@@ -152,3 +152,91 @@ def test_departmental_trace_names_the_ratio() -> None:
     assert "fb_revenue" in (tr.formula or "")
     names = {i.name for i in tr.inputs}
     assert {"fb_revenue", "fb_dept_ratio"} <= names
+
+
+# ─── Round 2 (review C-1 / I-2) — plausibility band and undisplaced basis ───
+
+from fondok_schemas.reasons import ReasonCode  # noqa: E402
+
+from app.engines.expense import DEPT_RATIO_BAND  # noqa: E402
+
+
+def _displaced_revenue(fb_factor: float, rooms_factor: float = 1.0) -> FBRevenueOutput:
+    out = _revenue(
+        rooms=[ROOMS[0] * rooms_factor, *ROOMS[1:]],
+        fb=[FB[0] * fb_factor, *FB[1:]],
+        other=[OTHER[0] * rooms_factor, *OTHER[1:]],
+    )
+    y1 = out.years[0]
+    y1.fb_displacement_factor = fb_factor
+    y1.rooms_displacement_factor = rooms_factor
+    y1.other_displacement_factor = rooms_factor
+    return out
+
+
+def test_band_is_defined_once_and_holds_the_platform_ratios() -> None:
+    from app.engines.expense import HOTEL_TYPE_DEFAULTS
+
+    for d in HOTEL_TYPE_DEFAULTS.values():
+        for line, key in (
+            ("rooms_dept_expense", "rooms_dept_pct"),
+            ("fb_dept_expense", "fb_dept_pct"),
+            ("other_dept_expense", "other_dept_pct"),
+        ):
+            lo, hi = DEPT_RATIO_BAND[line]
+            assert lo < d[key] <= hi
+
+
+def test_absurd_paired_ratio_is_flagged_and_falls_back_to_the_dollars() -> None:
+    # The orig Angler shape: T-12 rooms expense 2,769,483 over a "rooms
+    # revenue" of 552.77 (a cost_of_services row) — 5,010×.
+    out = _run(
+        t12_actuals={"rooms_dept_expense": 2_769_483.0},
+        t12_dept_revenue={"rooms_revenue": 552.774},
+    )
+    ratio = 2_769_483.0 / ROOMS[0]
+    for i, y in enumerate(out.years):
+        assert y.dept_expenses.rooms == pytest.approx(ROOMS[i] * ratio)
+        tr = out.provenance[f"years[{i}].dept_expenses.rooms"]
+        assert tr.reason is ReasonCode.NEEDS_REVIEW
+        assert tr.state == "needs_review"
+        assert "552" in (tr.note or "")
+    assert out.years[4].noi > 0
+    lm = out.line_methods["rooms_dept_expense"]
+    assert lm.value == pytest.approx(ratio)
+    assert "review" in (lm.note or "").lower()
+
+
+def test_both_t12_bases_absurd_fall_back_to_the_platform_ratio() -> None:
+    out = _run(
+        t12_actuals={"fb_dept_expense": 50_000_000.0},
+        t12_dept_revenue={"fb_revenue": 10.0},
+    )
+    for i, y in enumerate(out.years):
+        assert y.dept_expenses.food_beverage == pytest.approx(FB[i] * 0.75)
+        assert out.provenance[f"years[{i}].dept_expenses.food_beverage"].reason is (
+            ReasonCode.NEEDS_REVIEW
+        )
+
+
+def test_in_band_ratio_carries_no_review_flag() -> None:
+    out = _run(
+        t12_actuals={"fb_dept_expense": 2_610_000.0},
+        t12_dept_revenue={"fb_revenue": 3_390_000.0},
+    )
+    for i in range(5):
+        assert out.provenance[f"years[{i}].dept_expenses.food_beverage"].reason is None
+
+
+def test_dollar_basis_divides_by_undisplaced_year_one_revenue() -> None:
+    # Review I-2: a 12.5% Year-1 displacement must not bake into the ratio.
+    out = _run(
+        revenue=_displaced_revenue(0.875),
+        t12_actuals={"fb_dept_expense": 1_500_000.0},
+    )
+    ratio = 1_500_000.0 / FB[0]  # 75% of the UNDISPLACED Year-1 F&B revenue
+    assert out.line_methods["fb_dept_expense"].value == pytest.approx(ratio)
+    y1 = out.years[0]
+    assert y1.dept_expenses.food_beverage == pytest.approx(1_500_000.0 * 0.875)
+    for i, y in enumerate(out.years[1:], start=1):
+        assert y.dept_expenses.food_beverage == pytest.approx(FB[i] * ratio)

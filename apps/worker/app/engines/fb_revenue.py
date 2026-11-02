@@ -42,6 +42,14 @@ class FBRevenueYear(BaseModel):
     resort_fees: Annotated[float, Field(ge=0)] = 0.0
     other_revenue: Annotated[float, Field(ge=0)]
     total_revenue: Annotated[float, Field(ge=0)]
+    # The renovation-displacement multiplier on each department's revenue this
+    # year (1.0 = not displaced): rooms and other revenue move with occupancy ×
+    # ADR; grounded F&B (occupied rooms × $ per occupied room) with occupancy
+    # only, ratio F&B (a share of rooms revenue) with occupancy × ADR. Read by
+    # the expense engine to price a cost ratio on undisplaced revenue.
+    rooms_displacement_factor: Annotated[float, Field(ge=0)] = 1.0
+    fb_displacement_factor: Annotated[float, Field(ge=0)] = 1.0
+    other_displacement_factor: Annotated[float, Field(ge=0)] = 1.0
 
 
 class FBRevenueOutput(BaseModel):
@@ -101,6 +109,7 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
             other_grounded = proj.other_revenue > 0
             other = proj.other_revenue if other_grounded else rooms * other_ratio
             total = rooms + fb + resort_fees + other
+            rooms_f = proj.occupancy_displacement_factor * proj.adr_displacement_factor
             years.append(
                 FBRevenueYear(
                     year=proj.year,
@@ -109,6 +118,11 @@ class FBRevenueEngine(BaseEngine[FBRevenueInput, FBRevenueOutput]):
                     resort_fees=resort_fees,
                     other_revenue=other,
                     total_revenue=total,
+                    rooms_displacement_factor=rooms_f,
+                    fb_displacement_factor=(
+                        proj.occupancy_displacement_factor if fb_grounded else rooms_f
+                    ),
+                    other_displacement_factor=rooms_f,
                 )
             )
 

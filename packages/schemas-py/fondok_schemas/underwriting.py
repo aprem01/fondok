@@ -812,6 +812,15 @@ class RevenueProjectionYear(BaseModel):
     gross_rooms_revenue: Annotated[float, Field(ge=0)] = 0.0
     # Aggregate channel cost = gross_rooms_revenue - rooms_revenue.
     channel_cost_total: Annotated[float, Field(ge=0)] = 0.0
+    # The renovation-displacement multipliers this year's occupancy and ADR
+    # ran with (1.0 = not displaced): the scalar Year-1 percentages, the
+    # structured PIP closure (Year-1 revenue factor / ADR drag, Year-2
+    # occupancy recovery) or the explicit displacement schedule. A post-PIP
+    # RevPAR-index UPLIFT is not displacement and is not included. The expense
+    # engine divides by them to price a departmental cost ratio on
+    # UNDISPLACED revenue (Sam finding 2, review I-2, 2026-11).
+    occupancy_displacement_factor: Annotated[float, Field(ge=0)] = 1.0
+    adr_displacement_factor: Annotated[float, Field(ge=0)] = 1.0
 
 
 class RevenueEngineOutput(BaseModel):

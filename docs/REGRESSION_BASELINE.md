@@ -225,3 +225,13 @@ Year-1 scalar in the last binary digit in Years 3–4), and
 (3.4856628639456746 → 3.485662863945674). An IO-stub deal's Returns, Cash Flow
 (the phantom "Refinance / Junior Debt Service" line for the IO-vs-amortizing
 gap disappears) and partnership figures move to the schedule's payments.
+
+### Round 2 (review C-1 / I-2): departmental ratio pairing, band and undisplaced basis
+
+No golden headline move (the fixture has no T-12). Added leaves:
+`revenue.years[*].occupancy_displacement_factor` / `adr_displacement_factor`
+and `fb.years[*].{rooms,fb,other}_displacement_factor` (all 1.0 on the
+fixture). Live T-12 deals move: a department's T-12 ratio now pairs one
+statement's expense and revenue, sits inside `DEPT_RATIO_BAND` or is flagged
+needs-review and falls back, and the dollar basis divides by undisplaced
+Year-1 revenue.

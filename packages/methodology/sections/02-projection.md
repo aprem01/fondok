@@ -367,10 +367,10 @@ total revenue; a method with no value keeps the line's own Year-1 ratio. Per occ
 available room need the key count; without it the line keeps its default and says why.
 
 <!-- source: apps/worker/app/engines/expense.py (_resolve_dept_ratio), apps/worker/app/services/engine_runner.py (t12_dept_revenue) -->
-Departmental default: ratio × that year's (displaced) department revenue, every year. Ratio = T-12
-expense ÷ T-12 department revenue (other = other + misc, less separately stated resort fees), else
-the ratio below; a T-12 expense with no T-12 department revenue keeps its Year-1 dollars and their
-ratio to projected Year-1 revenue.
+Departmental default: ratio × that year's (displaced) department revenue. Ratio = T-12 expense ÷ the
+same statement's department revenue (other = other + misc), else ÷ undisplaced projected Year-1
+revenue, else the ratio below. A T-12 ratio outside rooms 5–75%, F&B 20–150%, other 0–150% is
+rejected and flagged Needs review.
 
 <!-- source: apps/worker/app/services/engine_runner.py (ratio precedence: analyst_override > t12_actual > portfolio_pnl > seed), apps/worker/app/engines/expense.py (hotel-type ratio table) -->
 A line the statement does not carry runs on a ratio resolved in this order: analyst override, the
@@ -594,12 +594,18 @@ undistributed lines), **POR** (dollars per occupied room) and **PAR** (dollars p
 
 **Default for departmental lines.** With no method picked, Rooms, F&B and Other Operated expense
 are `% of revenue` of their own department at a ratio fixed in Year 1 (`expense.line_methods`
-reports it): T-12 departmental expense ÷ T-12 department revenue (`t12_dept_revenue`, the same T-12
-rows that ground the revenue anchors) when both exist, else the ratio override / applied benchmark /
-hotel-type ratio. A T-12 expense with no T-12 department revenue anchors Year 1 at the T-12 dollars
-and carries their ratio to projected Year-1 revenue. Every year, Year 1 included, is ratio × that
-year's projected department revenue, so a renovation-displaced year's departmental expense is
-displaced with its revenue (before 2026-11 the T-12 dollars sat against displaced revenue and later
+reports it). The ratio is always on undisplaced revenue, and the first basis inside
+`DEPT_RATIO_BAND` (rooms 5–75%, F&B 20–150%, other 0–150%, defined once in `engines/expense.py`)
+wins: (1) T-12 departmental expense ÷ the T-12 revenue of the same department from the same
+statement and period (`t12_dept_revenue`; the loader publishes a department only when the expense
+row and every revenue row share one `extraction_result_id` and scope, no row is a sub-period slice,
+the expense is not an analyst override, and rooms revenue is within 25% of the statement's occupancy
+× ADR × keys × 365); (2) the T-12 expense ÷ projected Year-1 department revenue with the Year-1
+displacement divided back out (`fb.years[0].*_displacement_factor`); (3) the ratio override /
+applied benchmark / hotel-type ratio. A T-12 basis the band rejects marks every year of the line
+`needs_review` (trace reason, with the rejected figure in the note and on `line_methods`). Every
+year, Year 1 included, is ratio × that year's projected department revenue, so a renovation-displaced
+year's departmental expense is displaced with its revenue (before 2026-11 the T-12 dollars sat against displaced revenue and later
 years grew the dollars at the expense growth, which put F&B expense at 130% of F&B revenue on the
 Kimpton Angler). Undistributed and fixed lines keep their dollar growth.
 

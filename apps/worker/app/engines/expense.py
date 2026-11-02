@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fondok_schemas.financial import DepartmentalExpenses, FixedCharges, UndistributedExpenses
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
+from fondok_schemas.reasons import ReasonCode
 
 from .base import BaseEngine
 from .fb_revenue import FBRevenueOutput
@@ -95,6 +96,25 @@ _DEPT_RATIO_KEY: dict[str, str] = {
     "rooms_dept_expense": "rooms_dept_pct",
     "fb_dept_expense": "fb_dept_pct",
     "other_dept_expense": "other_dept_pct",
+}
+#: The plausible band for a departmental cost ratio derived from the T-12
+#: (expense ÷ that department's revenue): ``low < ratio <= high``. ONE place
+#: (review C-1, 2026-11). A T-12-derived ratio outside it is not used: the line
+#: falls back (T-12 ratio → T-12 dollars ÷ undisplaced Year-1 revenue → the
+#: hotel-type / override ratio) and every year of the line is flagged
+#: ``needs_review`` with the rejected figure. Wide on purpose — it catches a
+#: mis-read denominator (a 5,010× rooms ratio), not an unusual hotel. Analyst
+#: ratio overrides and the hotel-type defaults are not tested against it.
+DEPT_RATIO_BAND: dict[str, tuple[float, float]] = {
+    "rooms_dept_expense": (0.05, 0.75),
+    "fb_dept_expense": (0.20, 1.50),
+    "other_dept_expense": (0.0, 1.50),
+}
+#: The per-department displacement factor field on ``FBRevenueYear``.
+_DEPT_DISPLACEMENT_FIELD: dict[str, str] = {
+    "rooms_dept_expense": "rooms_displacement_factor",
+    "fb_dept_expense": "fb_displacement_factor",
+    "other_dept_expense": "other_displacement_factor",
 }
 #: Where each line lands on ``ExpenseYear`` (provenance output path).
 _LINE_OUTPUT_PATH: dict[str, str] = {
@@ -532,33 +552,73 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         # Year-1 anchors used when growing opex independently of revenue.
         y1_dept_rooms = y1_dept_fb = y1_dept_other = 0.0
         # Departmental cost ratio per line, fixed in Year 1 and carried every
-        # year (Sam, Kimpton finding 2): line → (ratio or None, basis). basis is
-        # ``t12_ratio`` (T-12 expense ÷ T-12 department revenue), ``t12_dollars``
-        # (T-12 expense with no T-12 department revenue: Year 1 is the dollars,
-        # the ratio is them ÷ projected Year-1 department revenue) or
-        # ``default`` (hotel-type / applied benchmark ratio). A None ratio (a
-        # T-12 expense on a department with no Year-1 revenue) holds the Year-1
-        # dollars grown at ``expense_growth``.
-        dept_ratio: dict[str, tuple[float | None, str]] = {}
+        # year (Sam, Kimpton finding 2; review C-1 / I-2): line → (ratio,
+        # basis). The ratio is always on UNDISPLACED revenue, so a displaced
+        # year's expense is displaced with its revenue. basis, first that is
+        # inside ``DEPT_RATIO_BAND``:
+        #   ``t12_ratio``   T-12 expense ÷ T-12 revenue of the same statement
+        #                   and period (``t12_dept_revenue``; the runner pairs);
+        #   ``t12_dollars`` T-12 expense ÷ undisplaced projected Year-1
+        #                   department revenue (no paired T-12 revenue);
+        #   ``default``     the hotel-type / override / applied-benchmark ratio.
+        # A T-12 basis rejected by the band is recorded in ``dept_review`` and
+        # every year of the line carries ``needs_review``.
+        dept_ratio: dict[str, tuple[float, str]] = {}
+        dept_review: dict[str, str] = {}
         dept_y1_value: dict[str, float] = {}
 
-        def _resolve_dept_ratio(line: str, y1_revenue: float) -> float:
-            """Fix ``line``'s ratio from the Year-1 revenue; return Year 1."""
-            if line in actuals:
-                actual = float(actuals[line])
-                t12_rev = payload.t12_dept_revenue.get(_DEPT_REVENUE_FIELD[line])
-                if t12_rev is not None and t12_rev > 0:
-                    ratio = actual / float(t12_rev)
+        def _in_band(line: str, ratio: float) -> bool:
+            lo, hi = DEPT_RATIO_BAND[line]
+            return lo < ratio <= hi
+
+        def _resolve_dept_ratio(line: str, y1_revenue: float, y1_factor: float) -> float:
+            """Fix ``line``'s ratio from Year 1; return the Year-1 expense."""
+            ratio_d = float(defaults[_DEPT_RATIO_KEY[line]])
+            if line not in actuals:
+                dept_ratio[line] = (ratio_d, "default")
+                return y1_revenue * ratio_d
+            actual = float(actuals[line])
+            rev_field = _DEPT_REVENUE_FIELD[line]
+            lo, hi = DEPT_RATIO_BAND[line]
+            rejected: list[str] = []
+            t12_rev = payload.t12_dept_revenue.get(rev_field)
+            if t12_rev is not None and t12_rev > 0:
+                ratio = actual / float(t12_rev)
+                if _in_band(line, ratio):
                     dept_ratio[line] = (ratio, "t12_ratio")
                     return y1_revenue * ratio
-                dept_ratio[line] = (
-                    (actual / y1_revenue, "t12_dollars")
-                    if y1_revenue > 0
-                    else (None, "t12_dollars")
+                rejected.append(
+                    f"the T-12 ratio {actual:,.0f} ÷ {float(t12_rev):,.2f} = {ratio:.2%}"
                 )
-                return actual
-            ratio_d = float(defaults[_DEPT_RATIO_KEY[line]])
+            undisplaced = y1_revenue / y1_factor if y1_factor > 0 else 0.0
+            if undisplaced > 0:
+                ratio = actual / undisplaced
+                if _in_band(line, ratio):
+                    dept_ratio[line] = (ratio, "t12_dollars")
+                    if rejected:
+                        dept_review[line] = (
+                            f"Needs review: {rejected[0]} is outside the plausible "
+                            f"{lo:.0%}–{hi:.0%} band, so the T-12 expense is priced "
+                            f"on projected Year-1 {rev_field.replace('_', ' ')} "
+                            f"instead ({ratio:.2%})."
+                        )
+                    return y1_revenue * ratio
+                rejected.append(
+                    f"the T-12 expense ÷ projected Year-1 "
+                    f"{rev_field.replace('_', ' ')} = {ratio:.2%}"
+                )
+            else:
+                rejected.append(
+                    f"no Year-1 {rev_field.replace('_', ' ')} to price the T-12 "
+                    "expense against"
+                )
             dept_ratio[line] = (ratio_d, "default")
+            dept_review[line] = (
+                f"Needs review: {' and '.join(rejected)} — outside the plausible "
+                f"{lo:.0%}–{hi:.0%} band, so the line runs on the "
+                f"{'ratio override' if _DEPT_RATIO_KEY[line] in payload.overrides else 'hotel-type default'} "
+                f"{ratio_d:.2%} instead of the T-12 expense {actual:,.0f}."
+            )
             return y1_revenue * ratio_d
 
         def _dept_trace(
@@ -566,35 +626,13 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             idx: int,
             revenue: float,
             value: float,
-            ratio: float | None,
+            ratio: float,
             basis: str,
-        ) -> ValueTrace | None:
+        ) -> ValueTrace:
             """The trace of one departmental line in one year."""
             rev_field = _DEPT_REVENUE_FIELD[line]
             ratio_name = _DEPT_RATIO_KEY[line].replace("_pct", "_ratio")
             label = _LINE_DISPLAY[line]
-            if ratio is None:
-                return ValueTrace(
-                    value=value,
-                    formula=f"{line} = year1_t12_actual × (1 + expense_growth)^{idx}",
-                    inputs=[
-                        ValueInput(
-                            name=line,
-                            value=dept_y1_value[line],
-                            assumption_key=line,
-                        ),
-                        ValueInput(
-                            name="expense_growth",
-                            value=payload.expense_growth,
-                            assumption_key="expense_growth",
-                        ),
-                    ],
-                    note=(
-                        f"{label}: the T-12 states the expense but the department "
-                        "has no Year-1 revenue, so no cost ratio exists; the T-12 "
-                        "dollars grow at the expense growth."
-                    ),
-                )
             rev_input = ValueInput(
                 name=rev_field, value=revenue, traces_to=f"fb.years[{idx}].{rev_field}"
             )
@@ -633,9 +671,10 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                         ),
                     ],
                     note=(
-                        f"{label}: the T-12 states no {rev_field.replace('_', ' ')}, "
-                        "so Year 1 is the T-12 dollars and later years carry their "
-                        f"ratio to projected Year-1 revenue ({ratio:.2%})."
+                        f"{label}: the T-12 expense over projected, undisplaced "
+                        f"Year-1 {rev_field.replace('_', ' ')} ({ratio:.2%}; no "
+                        "T-12 revenue from the same statement to pair it with), "
+                        "applied to this year's revenue."
                     ),
                 )
             ratio_key = _DEPT_RATIO_KEY[line]
@@ -662,11 +701,8 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 ),
             )
 
-        def _dept_value(line: str, idx: int, revenue: float) -> float:
-            ratio, _basis = dept_ratio[line]
-            if ratio is None:
-                return dept_y1_value[line] * (1.0 + payload.expense_growth) ** idx
-            return revenue * ratio
+        def _dept_value(line: str, revenue: float) -> float:
+            return revenue * dept_ratio[line][0]
         y1_undist_lines: dict[str, float] = {}
         y1_fixed_lines: dict[str, float] = {}
         y1_undist_total = y1_fixed_total = 0.0
@@ -690,27 +726,36 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     ("fb_dept_expense", fb),
                     ("other_dept_expense", other),
                 ):
-                    dept_y1_value[_line] = _resolve_dept_ratio(_line, _rev)
+                    dept_y1_value[_line] = _resolve_dept_ratio(
+                        _line,
+                        _rev,
+                        float(getattr(rev_year, _DEPT_DISPLACEMENT_FIELD[_line])),
+                    )
                 dept_rooms = dept_y1_value["rooms_dept_expense"]
                 dept_fb = dept_y1_value["fb_dept_expense"]
                 dept_other = dept_y1_value["other_dept_expense"]
             else:
-                dept_rooms = _dept_value("rooms_dept_expense", idx, rooms)
-                dept_fb = _dept_value("fb_dept_expense", idx, fb)
-                dept_other = _dept_value("other_dept_expense", idx, other)
+                dept_rooms = _dept_value("rooms_dept_expense", rooms)
+                dept_fb = _dept_value("fb_dept_expense", fb)
+                dept_other = _dept_value("other_dept_expense", other)
             for _line, _rev, _val in (
                 ("rooms_dept_expense", rooms, dept_rooms),
                 ("fb_dept_expense", fb, dept_fb),
                 ("other_dept_expense", other, dept_other),
             ):
                 _ratio, _basis = dept_ratio[_line]
-                if _basis == "default" and is_y1:
+                _review = dept_review.get(_line)
+                if _basis == "default" and is_y1 and _review is None:
                     # The Year-1 seed / benchmark trace is published with the
                     # synthesized lines below.
                     continue
                 _trace = _dept_trace(_line, idx, _rev, _val, _ratio, _basis)
-                if _trace is not None:
-                    prov[f"years[{idx}].{_LINE_OUTPUT_PATH[_line]}"] = _trace
+                if _review is not None:
+                    # Review C-1 — the analyst notice: the value's badge reads
+                    # "Needs review" and the note names the rejected figure.
+                    _trace.reason = ReasonCode.NEEDS_REVIEW
+                    _trace.note = f"{_review} {_trace.note or ''}".strip()
+                prov[f"years[{idx}].{_LINE_OUTPUT_PATH[_line]}"] = _trace
 
             if payload.grow_opex_independently and idx > 0:
                 growth = (1.0 + payload.expense_growth) ** idx
@@ -1089,32 +1134,24 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 continue
             is_dept = line in _DEPARTMENTAL_LINES
             note = unresolved.get(line)
-            if is_dept and dept_ratio.get(line, (None, ""))[0] is not None:
+            if is_dept and line in dept_ratio:
                 d_ratio, d_basis = dept_ratio[line]
                 line_methods[line] = LineMethodInfo(
                     method="pct_revenue",
                     value=d_ratio,
                     source="default",
                     note=note
+                    or dept_review.get(line)
                     or {
                         "t12_ratio": "T-12 cost ratio (T-12 expense ÷ T-12 "
-                        "department revenue) × each year's department revenue.",
-                        "t12_dollars": "Year 1 is the T-12 expense (the T-12 states "
-                        "no revenue for the department); later years carry its "
-                        "ratio to projected Year-1 department revenue.",
+                        "department revenue, same statement) × each year's "
+                        "department revenue.",
+                        "t12_dollars": "T-12 expense ÷ projected, undisplaced "
+                        "Year-1 department revenue (no T-12 revenue from the same "
+                        "statement) × each year's department revenue.",
                         "default": "Ratio to the department's own revenue each year "
                         "(hotel-type default or applied benchmark).",
                     }[d_basis],
-                )
-                continue
-            if is_dept and line in dept_ratio:
-                line_methods[line] = LineMethodInfo(
-                    method="growth",
-                    value=payload.expense_growth,
-                    source="default",
-                    note=note
-                    or "T-12 expense on a department with no Year-1 revenue — "
-                    "the dollars grow at the model expense growth.",
                 )
                 continue
             if payload.grow_opex_independently:

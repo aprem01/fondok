@@ -1102,12 +1102,16 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     # under wing_by_wing.
                     occ = baseline_occ * y1_revenue_factor
                     adr = baseline_adr * y1_adr_drag
+                    occ_disp_f, adr_disp_f = y1_revenue_factor, y1_adr_drag
                 elif 1 in sched_by_year:
                     occ = baseline_occ * _sched_factor(1, "occupancy")
                     adr = baseline_adr * _sched_factor(1, "adr")
+                    occ_disp_f = _sched_factor(1, "occupancy")
+                    adr_disp_f = _sched_factor(1, "adr")
                 else:
                     occ = baseline_occ * (1.0 - y1_occ_disp)
                     adr = baseline_adr * (1.0 - y1_adr_disp)
+                    occ_disp_f, adr_disp_f = 1.0 - y1_occ_disp, 1.0 - y1_adr_disp
             else:
                 # Year 2+ compounds from the stabilized baseline,
                 # not from the displaced Y1, so PIP year doesn't
@@ -1145,9 +1149,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         adr_anchor[0],
                         [g for _, g in _steps(adr_growth, adr_anchor[1], y)],
                     )
+                occ_disp_f = adr_disp_f = 1.0
                 if pip_v2 is not None and y == 2:
                     occ = base_occ_y * y2_occ_recovery_factor
                     adr = base_adr_y * effective_revpar_index
+                    occ_disp_f = y2_occ_recovery_factor
                 elif pip_v2 is not None:
                     # Y3+ — full recovery, full uplift.
                     occ = base_occ_y
@@ -1158,6 +1164,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     # from is untouched, so later years recover in full.
                     occ = base_occ_y * _sched_factor(y, "occupancy")
                     adr = base_adr_y * _sched_factor(y, "adr")
+                    occ_disp_f = _sched_factor(y, "occupancy")
+                    adr_disp_f = _sched_factor(y, "adr")
                 else:
                     occ = base_occ_y
                     adr = base_adr_y
@@ -1682,6 +1690,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     segment_breakdown=segment_breakdown,
                     gross_rooms_revenue=gross_rooms_revenue,
                     channel_cost_total=channel_cost_total,
+                    occupancy_displacement_factor=occ_disp_f,
+                    adr_displacement_factor=adr_disp_f,
                 )
             )
 

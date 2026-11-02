@@ -1739,7 +1739,6 @@ async def _load_engine_inputs(
     else:
         other_pool = other_rev + misc_rev
 
-    t12_dept_revenue: dict[str, float] = {}
     starting_occupancy = base.get("starting_occupancy", 0.0)
     keys = base.get("keys", 0)
     occupied_room_nights = (
@@ -1778,25 +1777,25 @@ async def _load_engine_inputs(
             "other_revenue_pct_of_rooms",
             "other_revenue" if "other_revenue" in revenue_prov else "misc_revenue",
         )
-        t12_dept_revenue["other_revenue"] = float(other_pool)
 
-    # Sam finding 2c (2026-11) — the T-12 revenue of each operated department,
-    # the denominator of that department's T-12 cost ratio in the expense
-    # engine (T-12 departmental expense ÷ T-12 department revenue). Only the
-    # same full-period rows that ground the revenue anchors qualify: a
-    # monthly slice is never an annual denominator.
-    if (
-        rooms_rev
-        and rooms_rev > 0
-        and not _is_sub_period_source(revenue_prov.get("rooms_revenue"))
-    ):
-        t12_dept_revenue["rooms_revenue"] = float(rooms_rev)
-    if (
-        fb_rev
-        and fb_rev > 0
-        and not _is_sub_period_source(revenue_prov.get("fb_revenue"))
-    ):
-        t12_dept_revenue["fb_revenue"] = float(fb_rev)
+    # Sam finding 2c / review C-1 (2026-11) — the T-12 revenue of each operated
+    # department that is the denominator of that department's T-12 cost ratio
+    # in the expense engine. Published ONLY when it pairs with the T-12
+    # departmental expense: see ``_paired_t12_dept_revenue``.
+    t12_dept_revenue = _paired_t12_dept_revenue(
+        expense_actuals=expense_actuals,
+        expense_prov=expense_prov,
+        revenue_actuals=revenue_actuals,
+        revenue_prov=revenue_prov,
+        implied_rooms_revenue=(
+            float(revenue_actuals["occupancy"])
+            * float(revenue_actuals["adr"])
+            * float(keys)
+            * 365.0
+            if "occupancy" in revenue_actuals and "adr" in revenue_actuals and keys
+            else None
+        ),
+    )
     base["t12_dept_revenue"] = t12_dept_revenue
 
     # When the deal has an extracted OM, prefer the broker's published
@@ -2837,6 +2836,15 @@ async def _load_engine_inputs(
     # read by no engine). PR 3 passes it as ``policy`` to resolve_growth_by_year
     # / resolve_benchmark; until then it moves nothing.
     base[DATA_POLICY_KEY] = data_policy
+    # Review C-1 — an analyst-entered departmental expense is not the
+    # statement's figure, so it no longer pairs with the statement's revenue:
+    # the expense engine prices it on projected, undisplaced Year-1 revenue.
+    if base.get("t12_dept_revenue"):
+        base["t12_dept_revenue"] = {
+            rev: v
+            for rev, v in base["t12_dept_revenue"].items()
+            if _DEPT_EXPENSE_FOR_REVENUE[rev] not in analyst_override_paths
+        }
     # FON-89 — say what Year-1 displacement the model runs with and why,
     # AFTER the override loop (the explicit y1_* / pip_displacement.*
     # assumptions are analyst overrides, so only now is the answer final).
@@ -4528,6 +4536,88 @@ def _full_period_lines_first(fields: list[Any]) -> list[Any]:
         name = (f.get("field_name") or "") if isinstance(f, dict) else ""
         (sub if _is_sub_period_path(name) else full).append(f)
     return full + sub
+
+
+#: Department revenue field → the T-12 departmental expense it divides.
+_DEPT_EXPENSE_FOR_REVENUE: dict[str, str] = {
+    "rooms_revenue": "rooms_dept_expense",
+    "fb_revenue": "fb_dept_expense",
+    "other_revenue": "other_dept_expense",
+}
+#: The revenue canonicals that make up each department's T-12 revenue (other
+#: = other operated + miscellaneous; resort fees stated on their own line are
+#: a separate engine input and are not in the pool).
+_DEPT_REVENUE_PARTS: dict[str, tuple[str, ...]] = {
+    "rooms_revenue": ("rooms_revenue",),
+    "fb_revenue": ("fb_revenue",),
+    "other_revenue": ("other_revenue", "misc_revenue"),
+}
+#: Review C-1 — a T-12 rooms revenue more than this far (relative) from the
+#: T-12's own occupancy × ADR × keys × 365 is not a rooms revenue (the Angler
+#: orig deal read 552.77 off a cost-of-services row against ~$9.47M implied).
+T12_ROOMS_REVENUE_TOLERANCE = 0.25
+
+
+def _paired_t12_dept_revenue(
+    *,
+    expense_actuals: Mapping[str, float],
+    expense_prov: Mapping[str, Any],
+    revenue_actuals: Mapping[str, float],
+    revenue_prov: Mapping[str, Any],
+    implied_rooms_revenue: float | None,
+) -> dict[str, float]:
+    """The T-12 revenue of each department whose T-12 expense it can divide.
+
+    Review C-1 (2026-11): a cost ratio is only meaningful when its numerator
+    and denominator come off the SAME statement and period. A department's
+    revenue is published only when:
+
+    * the department's expense was extracted (``expense_actuals``), and every
+      revenue row in the department's pool and the expense row carry the same
+      ``extraction_result_id`` (one document's one extraction) and scope — a
+      corroborated median across documents has no single row and never pairs;
+    * no row is a sub-period slice (a month is never an annual denominator);
+    * for rooms, the figure lies within ``T12_ROOMS_REVENUE_TOLERANCE`` of the
+      statement's own occupancy × ADR × keys × 365 when those are stated.
+
+    Anything else is left out, and the expense engine prices that department's
+    T-12 expense on projected, undisplaced Year-1 revenue instead.
+    """
+    out: dict[str, float] = {}
+
+    def _identity(prov: Any) -> tuple[str, str | None] | None:
+        er = getattr(prov, "extraction_result_id", None)
+        if not er:
+            return None
+        return (str(er), getattr(getattr(prov, "resolution", None), "scope", None))
+
+    for rev_field, expense_line in _DEPT_EXPENSE_FOR_REVENUE.items():
+        if expense_line not in expense_actuals:
+            continue
+        exp_id = _identity(expense_prov.get(expense_line))
+        if exp_id is None or _is_sub_period_source(expense_prov.get(expense_line)):
+            continue
+        parts = [k for k in _DEPT_REVENUE_PARTS[rev_field] if k in revenue_actuals]
+        if not parts:
+            continue
+        if any(
+            _identity(revenue_prov.get(k)) != exp_id
+            or _is_sub_period_source(revenue_prov.get(k))
+            for k in parts
+        ):
+            continue
+        total = sum(float(revenue_actuals[k] or 0.0) for k in parts)
+        if total <= 0:
+            continue
+        if (
+            rev_field == "rooms_revenue"
+            and implied_rooms_revenue is not None
+            and implied_rooms_revenue > 0
+            and abs(total / implied_rooms_revenue - 1.0) > T12_ROOMS_REVENUE_TOLERANCE
+        ):
+            continue
+        out[rev_field] = total
+    return out
 
 
 def _is_sub_period_source(prov: Any) -> bool:

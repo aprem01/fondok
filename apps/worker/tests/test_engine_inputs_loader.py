@@ -1516,6 +1516,8 @@ async def test_t12_department_revenue_reaches_the_expense_engine() -> None:
             {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 100_000.0},
             {"field_name": "p_and_l_usali.operating_revenue.resort_fees", "value": 800_000.0},
             {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 4_235_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.rooms", "value": 4_500_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.other_operated", "value": 600_000.0},
         ],
     )
     base = await _base_for(deal_id)
@@ -1611,3 +1613,88 @@ async def test_analyst_year_one_fee_reaches_the_engine() -> None:
     base = await _base_for(deal_id)
     exp_in = await _expense_input_for(base, deal_id)
     assert exp_in.mgmt_fee_y1_override == pytest.approx(410_000.0)
+
+
+
+# ═══════ Review C-1 — a cost ratio pairs one statement's expense and revenue ═══════
+
+
+async def _insert_doc_rows(deal_id: UUID, rows: list[dict[str, object]]) -> None:
+    await _insert_t12_extraction(deal_id, fields=rows)
+
+
+_ANGLER_KPIS = [
+    {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.8326},
+    {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 236.09},
+]
+
+
+@pytest.mark.asyncio
+async def test_rooms_revenue_far_from_occupancy_times_adr_is_not_a_denominator() -> None:
+    # The orig Angler shape: rooms revenue read as 552.774 off a
+    # cost-of-services row; occupancy × ADR × 132 keys × 365 ≈ $9.47M.
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Angler orig shape", keys=132, purchase=36_400_000)
+    await _insert_doc_rows(
+        deal_id,
+        [
+            *_ANGLER_KPIS,
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 552.774},
+            {"field_name": "p_and_l_usali.departmental_expenses.rooms", "value": 2_769_483.0},
+        ],
+    )
+    base = await _base_for(deal_id)
+    assert "rooms_revenue" not in base["t12_dept_revenue"]
+    # The engine then prices the T-12 rooms expense on projected revenue: sane.
+    from app.engines.expense import ExpenseEngine
+    from app.engines.fb_revenue import FBRevenueEngine
+    from app.engines.revenue import RevenueEngine
+    from app.services.engine_runner import _build_input_for
+
+    acc: dict = {}
+    acc["revenue"] = RevenueEngine().run(_build_input_for("revenue", deal_id, base, acc))
+    acc["fb"] = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, acc))
+    out = ExpenseEngine().run(_build_input_for("expense", deal_id, base, acc))
+    ratio = out.line_methods["rooms_dept_expense"].value
+    assert 0.2 < ratio < 0.4
+    assert all(y.noi > -1e7 for y in out.years)
+
+
+@pytest.mark.asyncio
+async def test_expense_and_revenue_from_different_documents_do_not_pair() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="Two statements", keys=132, purchase=36_400_000)
+    await _insert_doc_rows(
+        deal_id,
+        [*_ANGLER_KPIS, {"field_name": "p_and_l_usali.operating_revenue.fb_revenue", "value": 2_019_520.0}],
+    )
+    await _insert_doc_rows(
+        deal_id,
+        [{"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 2_290_364.0}],
+    )
+    base = await _base_for(deal_id)
+    assert base["t12_expense_actuals"].get("fb_dept_expense") == pytest.approx(2_290_364.0)
+    assert "fb_revenue" not in base["t12_dept_revenue"]
+
+
+@pytest.mark.asyncio
+async def test_analyst_expense_override_unpairs_the_department() -> None:
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id,
+        name="Analyst F&B expense",
+        keys=132,
+        purchase=36_400_000,
+        field_overrides={"fb_dept_expense": {"value": 2_000_000.0, "note": "corrected"}},
+    )
+    await _insert_doc_rows(
+        deal_id,
+        [
+            *_ANGLER_KPIS,
+            {"field_name": "p_and_l_usali.operating_revenue.fb_revenue", "value": 3_390_000.0},
+            {"field_name": "p_and_l_usali.departmental_expenses.food_beverage", "value": 2_610_000.0},
+        ],
+    )
+    base = await _base_for(deal_id)
+    assert base["t12_expense_actuals"]["fb_dept_expense"] == pytest.approx(2_000_000.0)
+    assert "fb_revenue" not in base["t12_dept_revenue"]
