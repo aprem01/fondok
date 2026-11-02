@@ -1246,11 +1246,16 @@ class IndexMethodologyResponse(BaseModel):
     #: assumption), whichever method is selected; feeds the Index Analysis
     #: comp-set table's forecast columns.
     comp_set_by_year: list[IndexCompSetYearOut] = Field(default_factory=list)
+    #: FON-116 / FON-117 — what the model actually runs on since topline
+    #: methodology v2 (the same block ``GET /deals/{id}/assumption_sources``
+    #: serves). The legacy by-year grid above is display-only.
+    topline_status: dict[str, Any] | None = None
 
 
+#: Topline v2 — the legacy grid never drives the projection; the topline does.
 BY_YEAR_TOGGLE_OFF_REASON = (
-    'Targets by year do not feed the Future P&L yet: turn on "Use STR rates in the model" in '
-    "Market Overview. Until then every year stays on its current basis."
+    "This grid is the retired Index Analysis view. The Future P&L runs on the topline: the "
+    "benchmark × your penetration × the ramp, with market growth by year (see the topline status)."
 )
 
 
@@ -1328,8 +1333,8 @@ def index_methodology_response(
         by_year=rows_out,
         hold_years=by_year.hold_years if by_year is not None else 0,
         calendar_known=bool(by_year.calendar_known) if by_year is not None else False,
-        by_year_applies=bool(reading.toggle_on),
-        by_year_disabled_reason=None if reading.toggle_on else BY_YEAR_TOGGLE_OFF_REASON,
+        by_year_applies=False,
+        by_year_disabled_reason=BY_YEAR_TOGGLE_OFF_REASON,
         comp_set_by_year=comp_out,
     )
 
@@ -1406,4 +1411,11 @@ async def index_methodology(
     by_year = resolve_index_by_year(
         rows, overrides, hold_years=hold, calendar_years=calendar_years, service_hint=m.get("service")
     )
-    return index_methodology_response(deal_id, reading, by_year, engine_drivers=engine_drivers)
+    out = index_methodology_response(deal_id, reading, by_year, engine_drivers=engine_drivers)
+    # FON-116 / FON-117 — the topline block, from the same cached read the
+    # assumptions panel uses (one resolution, never re-derived here).
+    from .deals import get_assumption_sources
+
+    sources = await get_assumption_sources(deal_id, session, tenant_id)
+    out.topline_status = sources.topline_status
+    return out

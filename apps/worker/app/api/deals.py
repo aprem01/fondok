@@ -531,6 +531,13 @@ class AssumptionSourcesResponse(BaseModel):
     # Renovation row and the Future P&L Year-1 basis line print. ``None`` on a
     # worker whose loader does not emit it.
     displacement_status: dict[str, Any] | None = None
+    # FON-116 / FON-117 — topline methodology v2: the benchmark level, the
+    # per-year growth with its sources, penetration / ramp / stabilization,
+    # the T-12 reference, the labelled suggestions and the legacy flags, as the
+    # loader resolved them AFTER every override (``__topline_status__``; shape
+    # in ``services.topline._status``). ``None`` on a worker whose loader does
+    # not emit it.
+    topline_status: dict[str, Any] | None = None
 
 
 class RenovationBudgetCandidate(BaseModel):
@@ -843,9 +850,6 @@ def _coerce_float(value: Any) -> float | None:
 #: pin the two together.
 #:
 #: Each entry carries its evidence:
-#:   stabilization_year        display-only; selects which projection year the
-#:                             stabilized figures are read from and moves no
-#:                             return (test_stabilization_year.py).
 #:   property_overview.name    the Property Name — text, not a number.
 #:   debt.completion_guarantee the debt engine's own field comment:
 #:                             "qualitative; no numeric covenant math".
@@ -866,6 +870,17 @@ def _coerce_float(value: Any) -> float | None:
 #:                             DOES need a note) is also set.
 #:   index_market_segment      which chain-scale segment the market benchmark
 #:                             reads — the same kind of choice.
+#:   topline_benchmark_level   FON-116 — which benchmark level (auto / comp set /
+#:                             submarket / market) the topline is penetrated
+#:                             against; a METHOD choice, the analyst types no
+#:                             number.
+#:   stabilization_year        selects the stabilized year the stabilized
+#:                             figures are read from. KNOWN GAP since topline v2
+#:                             (FON-116): it also ends the default penetration
+#:                             ramp, so it moves Years 1..S−1 — it stays exempt
+#:                             only until the Future P&L's Topline card collects
+#:                             a note for it (topline web task); then drop it
+#:                             here and in the web mirror together.
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
         "stabilization_year",
@@ -876,6 +891,7 @@ _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
         "target_stabilized_yoc",
         "index_methodology",
         "index_market_segment",
+        "topline_benchmark_level",
     }
 )
 
@@ -2327,6 +2343,24 @@ async def update_deal(
                 problems = target_list_problems(v)
                 if problems:
                     out_of_range[k] = "; ".join(problems)
+            elif k in ("occupancy_growth_by_year", "adr_growth_by_year"):
+                # FON-116 — per-year growth: fraction or whole percent, −50%..+50%.
+                from ..services.topline_growth import coerce_growth_list
+
+                _vals, problems = coerce_growth_list(v)
+                if problems:
+                    out_of_range[k] = "; ".join(problems)
+            elif k == "penetration_ramp_by_year":
+                from ..services.topline import coerce_ramp_list
+
+                _vals, problems = coerce_ramp_list(v)
+                if problems:
+                    out_of_range[k] = "; ".join(problems)
+            elif k == "topline_benchmark_level":
+                from ..services.topline_benchmark import FORCED_LEVEL_VALUES
+
+                if not isinstance(v, str) or v.strip() not in FORCED_LEVEL_VALUES:
+                    out_of_range[k] = "must be one of " + ", ".join(sorted(FORCED_LEVEL_VALUES))
         # Sam, 2026-10-15 — the explicit renovation displacement schedule is
         # a list of periods; a malformed one (end before start, a share
         # outside 0–1, an unknown field) is refused here with the same
@@ -2365,8 +2399,9 @@ async def update_deal(
                     "problems": out_of_range,
                     "message": (
                         "A penetration target is index points 25–250 "
-                        "(100 = parity) or a ratio 0.25–2.5 (1.0 = parity). "
-                        "Nothing was saved."
+                        "(100 = parity) or a ratio 0.25–2.5 (1.0 = parity); "
+                        "a growth by year is −50% to +50%; a ramp is above 0 "
+                        "and at most 150%. Nothing was saved."
                     ),
                 },
             )
@@ -3462,6 +3497,7 @@ async def _compute_assumption_sources(
     raw_partnership = base.pop("__partnership_terms__", None)
     # FON-89 — the loader's Year-1 displacement verdict (dict or absent).
     raw_displacement = base.pop("__displacement_status__", None)
+    raw_topline = base.pop("__topline_status__", None)
     displacement_status: dict[str, Any] | None = (
         raw_displacement if isinstance(raw_displacement, dict) else None
     )
@@ -3538,6 +3574,7 @@ async def _compute_assumption_sources(
         reasons=assumption_reasons,
         reasons_also=reasons_also,
         displacement_status=displacement_status,
+        topline_status=raw_topline if isinstance(raw_topline, dict) else None,
     )
 
 

@@ -1,6 +1,5 @@
 {
   "sources": {
-    "adr_growth": "seed",
     "amortization_years": "seed",
     "closing_costs_pct": "seed",
     "contingency": "seed",
@@ -18,11 +17,10 @@
     "loan_costs_pct": "seed",
     "ltv": "seed",
     "mgmt_fee_pct": "seed",
-    "occupancy_growth": "seed",
     "other_ratio": "seed",
     "other_revenue_pct_of_rooms": "seed",
     "renovation_budget": "seed",
-    "revpar_growth": "seed",
+    "revpar_growth": "market_forecast_unavailable",
     "selling_costs_pct": "seed",
     "soft_costs": "seed",
     "starting_adr": "t12_actual",
@@ -34,7 +32,6 @@
     "y1_occupancy_displacement_pct": "seed"
   },
   "values": {
-    "adr_growth": 0.04,
     "amortization_years": 30,
     "closing_costs_pct": 0.02,
     "contingency": 0.0,
@@ -52,11 +49,10 @@
     "loan_costs_pct": 0.015,
     "ltv": 0.65,
     "mgmt_fee_pct": 0.03,
-    "occupancy_growth": 0.008,
     "other_ratio": 0.06,
     "other_revenue_pct_of_rooms": 0.065,
     "renovation_budget": 5280000,
-    "revpar_growth": 0.045,
+    "revpar_growth": 0.0,
     "selling_costs_pct": 0.02,
     "soft_costs": 0.0,
     "starting_adr": 372.4,

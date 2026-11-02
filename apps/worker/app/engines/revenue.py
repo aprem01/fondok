@@ -329,6 +329,12 @@ def _plan_topline(
                 plan.adr_drivers[y - 1] = driver
         if rec.mpi_target is not None and rec.ari_target is not None:
             rec.rgi_derived = rec.mpi_target * rec.ari_target / 100.0
+        if rec.occupancy_status != "driven" and rec.adr_status != "driven":
+            # Nothing was penetrated this year (no benchmark, or explicit
+            # values): the ramp did not apply, so the record does not claim it.
+            rec.ramp_pct = None
+            rec.ramp_state = None
+            ramp_note = None
         if ramp_note:
             notes.append(ramp_note)
         rec.reason = " ".join(notes) if notes else None

@@ -38,10 +38,6 @@ from sqlalchemy import text
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
 from app.services.index_methodology import (  # noqa: E402
-    BASE_ADR_BY_YEAR,
-    BASE_DRIVERS_BY_YEAR,
-    BASE_OCC_BY_YEAR,
-    KEY_ADR_GROWTH,
     KEY_ARI_TARGET,
     KEY_ARI_TARGET_BY_YEAR,
     KEY_MPI_TARGET,
@@ -49,19 +45,15 @@ from app.services.index_methodology import (  # noqa: E402
     KEY_OCC_GROWTH,
     METHOD_COSTAR_COMP_SET,
     METHOD_MARKET_BENCHMARK,
-    SOURCE_INDEX_ASSUMPTION,
-    build_index_drivers,
     coerce_target_list,
     read_targets_by_year,
     resolve_index_by_year,
-    wants_benchmark,
 )
 from app.services.market_fields import FieldRow  # noqa: E402
 
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach Submarket 2025.pdf"
 CBRE_DOC = "CBRE Hotel Horizons Miami Q3 2025.pdf"
-STR_BASIS = frozenset({"str_forecast", "str_subject_ttm", "str_comp_set"})
 
 
 def _row(name: str, value: Any, *, doc: str, doc_type: str, page: int | None = 2, period: str | None = None) -> FieldRow:
@@ -272,18 +264,9 @@ def test_scalar_target_drives_year_one_only_unless_the_analyst_asks_for_the_out_
     assert r_by.years[1].adr == pytest.approx(COMP_ADR * 1.031 * 1.02) and r_by.years[1].adr_status == "driven"
     assert r_by.years[1].ari_target.source == "by_year"
     assert r_by.years[2].adr_status == "scalar_year1_only"
-    # The seam: a scalar-only deal parks Year 1 and leaves Years 2+ to the
-    # model's own growth — exactly the pre-by-year numbers.
-    base = _base(**{KEY_MPI_TARGET: 115.0, KEY_ARI_TARGET: 100.0})
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    changed = build_index_drivers(
-        base, sources, {KEY_MPI_TARGET, KEY_ARI_TARGET},
-        rows=[*STR_ROWS, *MARKET_ROWS], str_basis_sources=STR_BASIS, hold_years=3, calendar_years=[],
-    )
-    assert set(changed) == {"starting_occupancy", "starting_adr"}
-    assert base[BASE_OCC_BY_YEAR] == [pytest.approx(COMP_OCC * 1.15), None, None]
-    assert base[BASE_ADR_BY_YEAR] == [pytest.approx(COMP_ADR), None, None]
-    assert [d["occupancy_status"] for d in base[BASE_DRIVERS_BY_YEAR]] == ["driven", "scalar_year1_only", "scalar_year1_only"]
+    # (The engine seam that once drove the model off this grid is retired —
+    # topline v2 runs every deal on ``services.topline``; the grid is the
+    # display-only Index Analysis view.)
 
 
 def test_no_growth_assumption_flags_the_out_years_unavailable_never_invents() -> None:
@@ -381,96 +364,6 @@ def test_an_impossible_occupancy_is_refused_per_year() -> None:
 
 
 # ─────────────────────────── runner seam ───────────────────────────
-
-
-def _base(**kw: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "starting_occupancy": 0.846, "starting_adr": 255.0,
-        "occupancy_growth": 0.008, "adr_growth": 0.04, "hold_years": 3,
-    }
-    base.update(kw)
-    return base
-
-
-def test_wants_benchmark_covers_the_by_year_lists() -> None:
-    assert wants_benchmark({KEY_MPI_TARGET_BY_YEAR: [None, 115]}, {KEY_MPI_TARGET_BY_YEAR}) is True
-    assert wants_benchmark({KEY_MPI_TARGET_BY_YEAR: [None, None]}, {KEY_MPI_TARGET_BY_YEAR}) is False
-    assert wants_benchmark({KEY_MPI_TARGET_BY_YEAR: [None, 115]}, set()) is False
-
-
-def test_seam_does_nothing_without_a_target() -> None:
-    base = _base()
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    before = dict(base)
-    assert build_index_drivers(base, sources, set(), rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=3, calendar_years=[]) == []
-    assert base == before and BASE_OCC_BY_YEAR not in base
-
-
-def test_seam_parks_the_lists_and_repoints_year_one_by_year_beating_scalar() -> None:
-    base = _base(**{
-        KEY_MPI_TARGET_BY_YEAR: [120.0, 115.0, None], KEY_MPI_TARGET: 110.0,
-        KEY_ARI_TARGET: 100.0, KEY_OCC_GROWTH: 0.012,
-    })
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    paths = {KEY_MPI_TARGET_BY_YEAR, KEY_MPI_TARGET, KEY_ARI_TARGET, KEY_OCC_GROWTH}
-    changed = build_index_drivers(base, sources, paths, rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=3, calendar_years=[])
-    assert set(changed) == {"starting_occupancy", "starting_adr"}
-    # Year 1: by-year 120 beats scalar 110.
-    assert base["starting_occupancy"] == pytest.approx(COMP_OCC * 1.20)
-    assert sources["starting_occupancy"] == SOURCE_INDEX_ASSUMPTION
-    assert base["starting_adr"] == pytest.approx(COMP_ADR)
-    occ = base[BASE_OCC_BY_YEAR]
-    assert occ[0] == pytest.approx(COMP_OCC * 1.20)
-    assert occ[1] == pytest.approx(COMP_OCC * 1.012 * 1.15)
-    # Year 3 falls back to the scalar 110 on the grown benchmark — driven because
-    # the analyst OVERRODE the market occupancy growth (the out-year gate).
-    assert occ[2] == pytest.approx(COMP_OCC * 1.012**2 * 1.10)
-    # ADR: scalar ARI with no ADR growth override → Year 1 only, flagged after.
-    assert base[BASE_ADR_BY_YEAR] == [pytest.approx(COMP_ADR), None, None]
-    drivers = base[BASE_DRIVERS_BY_YEAR]
-    assert [d["year"] for d in drivers] == [1, 2, 3]
-    assert drivers[1]["adr_status"] == "scalar_year1_only" and drivers[1]["occupancy_status"] == "driven"
-    assert "ADR: the all-years target drives Year 1 only" in drivers[1]["reason"]
-    assert drivers[1]["mpi_target_source"] == "by_year" and drivers[2]["mpi_target_source"] == "scalar"
-    assert drivers[1]["rgi_derived"] == pytest.approx(115.0)
-    assert drivers[0]["benchmark_doc"] == STR_DOC
-
-
-def test_seam_never_overwrites_an_explicit_analyst_rate() -> None:
-    base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0, 115.0], KEY_ARI_TARGET: 100.0})
-    sources = {"starting_occupancy": "analyst_override", "starting_adr": "str_subject_ttm"}
-    changed = build_index_drivers(
-        base, sources, {KEY_MPI_TARGET_BY_YEAR, KEY_ARI_TARGET, "starting_occupancy"},
-        rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=2, calendar_years=[],
-    )
-    assert changed == ["starting_adr"]
-    assert base["starting_occupancy"] == pytest.approx(0.846)
-    assert base[BASE_OCC_BY_YEAR] == [None, None]
-    assert base[BASE_DRIVERS_BY_YEAR][0]["occupancy_status"] == "no_target"
-    assert "explicit analyst value" in base[BASE_DRIVERS_BY_YEAR][0]["reason"]
-
-
-def test_seam_explicit_rate_reason_joins_the_other_metrics_reason() -> None:
-    # Occupancy is an explicit analyst value (not driven); ADR is on the STR
-    # basis with a scalar-only ARI target, so Year 2 carries the out-year gate
-    # reason for ADR. The explicit-value note must JOIN it, not replace it.
-    base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0, 115.0], KEY_ARI_TARGET: 100.0, KEY_OCC_GROWTH: 0.012})
-    sources = {"starting_occupancy": "analyst_override", "starting_adr": "str_subject_ttm"}
-    build_index_drivers(
-        base, sources, {KEY_MPI_TARGET_BY_YEAR, KEY_ARI_TARGET, KEY_OCC_GROWTH, "starting_occupancy"},
-        rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=2, calendar_years=[],
-    )
-    y2 = base[BASE_DRIVERS_BY_YEAR][1]
-    assert y2["occupancy_status"] == "no_target" and y2["adr_status"] == "scalar_year1_only"
-    assert "explicit analyst value" in y2["reason"]
-    assert "ADR: the all-years target drives Year 1 only" in y2["reason"]
-
-
-def test_seam_needs_the_str_basis_to_have_landed() -> None:
-    base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0]})
-    sources = {"starting_occupancy": "t12_actual", "starting_adr": "t12_actual"}
-    assert build_index_drivers(base, sources, {KEY_MPI_TARGET_BY_YEAR}, rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=1, calendar_years=[]) == []
-    assert BASE_OCC_BY_YEAR not in base
 
 
 # ─────────────────────────── revenue engine ───────────────────────────
@@ -585,59 +478,34 @@ _BY_YEAR_OVERRIDES = {
 
 
 @pytest.mark.asyncio
-async def test_by_year_targets_move_nothing_with_the_toggle_off() -> None:
-    from app.database import get_session_factory
-    from app.services.engine_runner import _build_input_for, _load_engine_inputs
-
-    async with get_session_factory()() as session:
-        plain_id, plain_t = await _str_deal(session, overrides={})
-        plain = await _load_engine_inputs(session, plain_id, tenant_id=plain_t)
-        deal_id, tenant_id = await _str_deal(session, overrides=dict(_BY_YEAR_OVERRIDES))
-        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-    for key in ("starting_occupancy", "starting_adr", "occupancy_growth", "adr_growth"):
-        assert base[key] == plain[key], key
-    assert BASE_OCC_BY_YEAR not in base and BASE_DRIVERS_BY_YEAR not in base
-    rev_in = _build_input_for("revenue", deal_id, base, {})
-    assert rev_in.occupancy_by_year_override is None and rev_in.index_drivers_by_year == []
-
-
-@pytest.mark.asyncio
-async def test_by_year_targets_drive_the_revenue_projection_with_the_toggle_on() -> None:
+async def test_by_year_targets_drive_the_topline_on_every_deal() -> None:
+    """FON-116 / FON-117 (topline v2): no toggle. A by-year MPI target is that
+    year's occupancy penetration (it beats the ramp); the scalar ARI is the
+    stabilized ADR penetration (Year 1 / 2 ramp at 85 / 95 %); the retired
+    market-growth key reads as all-years growth. No close date on this deal:
+    the comp set is Year 1 as reported, and later years grow it."""
     from app.database import get_session_factory
     from app.engines.revenue import RevenueEngine
     from app.services.engine_runner import _build_input_for, _load_engine_inputs
 
     async with get_session_factory()() as session:
-        deal_id, tenant_id = await _str_deal(
-            session, overrides={**_BY_YEAR_OVERRIDES, "revenue_seed_from_str_forecast": True}
-        )
+        deal_id, tenant_id = await _str_deal(session, overrides=dict(_BY_YEAR_OVERRIDES))
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
 
-    sources = base["__sources__"]
-    assert base["occupancy_growth"] == pytest.approx(0.012)
-    # Year 1: the scalar ARI (parity) re-points ADR; no MPI for Year 1 → the subject TTM occupancy stays.
-    assert base["starting_adr"] == pytest.approx(_COMP_ADR_DB) and sources["starting_adr"] == SOURCE_INDEX_ASSUMPTION
-    assert base["starting_occupancy"] == pytest.approx(0.785) and sources["starting_occupancy"] == "str_subject_ttm"
-    occ = base[BASE_OCC_BY_YEAR]
-    assert occ[0] is None and occ[1] == pytest.approx(_COMP_OCC_DB * 1.012 * 1.15) and occ[2:] == [None, None, None]
-    # Scalar ARI with no ADR growth override → ADR driven in Year 1 only, later years flagged.
-    assert base[BASE_ADR_BY_YEAR] == [pytest.approx(_COMP_ADR_DB), None, None, None, None]
-    drivers = base[BASE_DRIVERS_BY_YEAR]
-    assert drivers[1]["occupancy_status"] == "driven" and drivers[1]["adr_status"] == "scalar_year1_only"
-    assert "drives Year 1 only" in drivers[1]["reason"]
-
-    rev_in = _build_input_for("revenue", deal_id, base, {})
-    out = RevenueEngine().run(rev_in)
+    out = RevenueEngine().run(_build_input_for("revenue", deal_id, base, {}))
     years = out.years
-    # Year 2 occupancy = benchmark × MPI; Year 3 keeps the model's growth from Year 2 (the last driven year).
-    assert years[1].occupancy == pytest.approx(_COMP_OCC_DB * 1.012 * 1.15)
-    assert years[2].occupancy == pytest.approx(years[1].occupancy * 1.012)
-    # ADR: Year 1 at parity with the comp set, then the model's own ADR growth — nothing invented.
-    assert years[0].adr == pytest.approx(_COMP_ADR_DB)
-    assert years[1].adr == pytest.approx(_COMP_ADR_DB * (1 + base["adr_growth"]))
-    echoed = {d.year: d for d in out.index_drivers_by_year}
-    assert echoed[2].occupancy == pytest.approx(years[1].occupancy)
-    assert echoed[2].calendar_year is None  # no close date on this deal — never guessed
+    assert out.topline_methodology_version == 2
+    # Year 1: occupancy 100 × 0.85 ramp; ADR the scalar ARI 100 × 0.85.
+    assert years[0].occupancy == pytest.approx(_COMP_OCC_DB * 0.85, rel=1e-6)
+    assert years[0].adr == pytest.approx(_COMP_ADR_DB * 0.85, rel=1e-6)
+    # Year 2: the by-year MPI 115 beats the ramp; the benchmark grew 1.2%.
+    assert years[1].occupancy == pytest.approx(_COMP_OCC_DB * 1.012 * 1.15, rel=1e-6)
+    # ADR has no growth figure (only occupancy growth was set): held flat × 95% ramp.
+    assert years[1].adr == pytest.approx(_COMP_ADR_DB * 0.95, rel=1e-6)
+    recs = {r.year: r for r in out.topline_by_year}
+    assert recs[2].mpi_target_source == "by_year" and recs[2].mpi_target == pytest.approx(115.0)
+    assert recs[2].adr_growth_source == "unavailable"
+    assert recs[2].calendar_year is None  # no close date on this deal — never guessed
 
 
 @pytest.mark.asyncio
@@ -651,13 +519,11 @@ async def test_by_year_beats_scalar_in_the_loader() -> None:
             overrides={
                 KEY_MPI_TARGET_BY_YEAR: {"value": [120.0], "note": "Year 1 share"},
                 KEY_MPI_TARGET: {"value": 110.0, "note": "all years"},
-                "revenue_seed_from_str_forecast": True,
             },
         )
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-    assert base["starting_occupancy"] == pytest.approx(_COMP_OCC_DB * 1.20)
-    assert base["__sources__"]["starting_occupancy"] == SOURCE_INDEX_ASSUMPTION
-    assert base[BASE_OCC_BY_YEAR][0] == pytest.approx(_COMP_OCC_DB * 1.20)
+    assert base["starting_occupancy"] == pytest.approx(_COMP_OCC_DB * 1.20, rel=1e-6)
+    assert base["__sources__"]["starting_occupancy"] == "topline_benchmark"
 
 
 # ─────────────────────────── endpoint ───────────────────────────
@@ -684,7 +550,8 @@ async def test_endpoint_carries_the_by_year_grid_on_the_deal_calendar_and_is_ten
     payload = out.model_dump(mode="json")
     assert payload["hold_years"] == 3 and payload["calendar_known"] is True
     assert [r["calendar_year"] for r in payload["by_year"]] == [2025, 2026, 2027]
-    assert payload["by_year_applies"] is False and "Use STR rates" in payload["by_year_disabled_reason"]
+    assert payload["by_year_applies"] is False and "retired Index Analysis view" in payload["by_year_disabled_reason"]
+    assert payload["topline_status"]["methodology_version"] == 2
     y2 = payload["by_year"][1]
     assert y2["mpi_target"] == {"value": 115.0, "source": "by_year", "note": "Year-2 share gain after the PIP", "problem": None}
     assert y2["ari_target"]["source"] == "scalar" and y2["rgi_derived"] == pytest.approx(115.0)

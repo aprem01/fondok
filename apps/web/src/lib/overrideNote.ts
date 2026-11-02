@@ -58,9 +58,11 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // note. Added 2026-09-12 when the mirror test caught it missing here after
   // the Market slice extended the worker's list.
   'market.selected_comps',
-  // DISPLAY-ONLY in the model: it selects which projection year the stabilized
-  // figures are read from. It moves no return — pinned by the worker's
-  // `test_stabilization_year.py::test_stabilization_year_does_not_move_returns`.
+  // Selects which projection year the stabilized figures are read from.
+  // KNOWN GAP since topline v2 (FON-116): it also ends the default penetration
+  // ramp, so it moves occupancy / ADR in the ramp years. It stays exempt only
+  // until the Topline card collects a note for it; then drop it here and in the
+  // worker's `_NOTE_EXEMPT_KEYS` together.
   'stabilization_year',
   // The Property Name. Text, not a number; the worker reads it back as
   // `property_name` and keeps the extracted value for Restore.
@@ -89,6 +91,9 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // also set while "Use STR rates in the model" is on.
   'index_methodology',
   'index_market_segment',
+  // FON-116 / FON-117 — the topline benchmark LEVEL choice (auto / comp set /
+  // submarket / market). A method choice; the analyst types no number.
+  'topline_benchmark_level',
 ]);
 
 /**
@@ -109,8 +114,8 @@ const DEAL_COLUMN_KEYS: ReadonlySet<string> = new Set([
   'name',
   'keys',
   // FON-98 — the reopening / re-flag date. A deal column (never in
-  // `field_overrides`), and like `stabilization_year` it only re-anchors
-  // which projection year the stabilized figures are read from.
+  // `field_overrides`); it re-anchors the default stabilization year (and,
+  // since topline v2, where the default penetration ramp ends).
   'reopening_date',
 ]);
 

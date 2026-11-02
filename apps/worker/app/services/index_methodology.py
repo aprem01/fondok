@@ -26,18 +26,13 @@ Four editable assumptions (field overrides, engine input):
 * ``index_mpi_target`` / ``index_ari_target`` — the subject's occupancy / ADR
   penetration against the selected benchmark (index points, 100 = parity).
 
-They reach the revenue engine ONLY through the existing STR-basis path: when
-the analyst has turned on "Use STR rates in the model"
-(``revenue_seed_from_str_forecast``) AND that seed actually landed. Then
-
-    starting_occupancy = benchmark occupancy x MPI target / 100
-    starting_adr       = benchmark ADR       x ARI target / 100
-    occupancy_growth   = market occupancy growth
-    adr_growth         = market ADR growth
-
-each only when the analyst set that override, and never over an explicit
-analyst override of the target engine key. With the toggle off (the default,
-and every golden deal) nothing here touches engine input.
+Since topline methodology v2 (FON-116 / FON-117, 2 November 2026) this module
+is the Index Analysis PANEL's reader only. The model runs on
+``services.topline`` (benchmark × penetration × ramp, per-year growth), which
+reuses the comp-set / market / CoStar readers below; the penetration targets
+are its stabilized and per-year penetration, the market-growth keys are read
+once as legacy all-years growth, and the "Use STR rates" switch is retired.
+The by-year grid built here (``resolve_index_by_year``) is display-only.
 
 Defaults shown next to an un-overridden assumption come from the documents
 (field + document + page) or are computed from two document figures (inputs
@@ -798,84 +793,6 @@ def resolve_index_methodology(
     )
 
 
-# ───────────────────────────── engine seam ─────────────────────────────
-
-
-def wants_benchmark(base: Mapping[str, Any], analyst_override_paths: set[str]) -> bool:
-    """Does applying the analyst's assumptions need the benchmark rows read?"""
-    return any(
-        k in analyst_override_paths and _index_points(coerce_float(base.get(k))) is not None
-        for k in (KEY_MPI_TARGET, KEY_ARI_TARGET)
-    ) or any(
-        k in analyst_override_paths and any(v is not None for v in coerce_target_list(base.get(k)))
-        for k in BY_YEAR_TARGET_KEYS
-    )
-
-
-def apply_index_assumptions(
-    base: dict[str, Any],
-    sources: dict[str, str],
-    analyst_override_paths: set[str],
-    *,
-    rows: Sequence[FieldRow] | None,
-    str_basis_sources: frozenset[str],
-    derived_sources: frozenset[str] = frozenset(),
-) -> list[str]:
-    """Feed the analyst's Index Analysis assumptions into the revenue inputs.
-
-    Called from the engine runner's STR-basis block ONLY (toggle on). Applies
-    an assumption only when the analyst overrode it, and never over an
-    explicit analyst override of the engine key it moves. The penetration
-    targets apply only while the Year-1 rates sit on an STR basis — i.e. the
-    seed actually landed. Returns the engine keys it changed.
-    """
-    changed: list[str] = []
-
-    def analyst_set(key: str) -> float | None:
-        return coerce_float(base.get(key)) if key in analyst_override_paths else None
-
-    for assumption, engine_key in ((KEY_OCC_GROWTH, "occupancy_growth"), (KEY_ADR_GROWTH, "adr_growth")):
-        v = analyst_set(assumption)
-        if v is None or engine_key in analyst_override_paths:
-            continue
-        if sources.get(engine_key) in derived_sources:
-            continue
-        base[engine_key] = v
-        sources[engine_key] = SOURCE_INDEX_ASSUMPTION
-        changed.append(engine_key)
-
-    # Read through the same range check the writes use: a legacy stored target
-    # outside 25–250 points / 0.25–2.5 ratio is ignored, never applied
-    # (``stored_target_problem`` names it on the panel and the by-year grid).
-    mpi_t = _index_points(analyst_set(KEY_MPI_TARGET))
-    ari_t = _index_points(analyst_set(KEY_ARI_TARGET))
-    if (mpi_t is None and ari_t is None) or rows is None:
-        return changed
-    method, _ = selected_method({OVERRIDE_METHOD: base.get(OVERRIDE_METHOD)})
-    segment = base.get(OVERRIDE_SEGMENT)
-    if method == METHOD_STR_COMP_SET:
-        reading = read_str_comp_set(rows)[0]
-    elif method == METHOD_MARKET_BENCHMARK:
-        reading = read_market_benchmark(rows, segment=segment if isinstance(segment, str) else None)
-    else:
-        reading = read_costar_comp_set(rows)
-    for target, bench, engine_key, normalize in (
-        (mpi_t, reading.occupancy.value, "starting_occupancy", _valid_occupancy),
-        (ari_t, reading.adr.value, "starting_adr", _valid_adr),
-    ):
-        if target is None or bench is None or target <= 0:
-            continue
-        if sources.get(engine_key) not in str_basis_sources:
-            continue  # an explicit analyst value, or the seed did not land
-        value = normalize(bench * target / 100.0)  # target is index points
-        if value is None:
-            continue
-        base[engine_key] = value
-        sources[engine_key] = SOURCE_INDEX_ASSUMPTION
-        changed.append(engine_key)
-    return changed
-
-
 # ───────────────────────────── by-year targets (FON-95 part 2) ─────────────────────────────
 
 
@@ -1302,118 +1219,6 @@ def _doc_of(fig: Figure) -> tuple[str | None, int | None]:
     return None, None
 
 
-def driver_record(y: IndexYearReading, method: str) -> dict[str, Any]:
-    """One ``IndexDriverYear`` payload (the schema the revenue engine echoes)."""
-    doc, page = _doc_of(y.benchmark_occupancy)
-    if doc is None:
-        doc, page = _doc_of(y.benchmark_adr)
-    return {
-        "year": y.year,
-        "calendar_year": y.calendar_year,
-        "method": method,
-        "benchmark_occupancy": y.benchmark_occupancy.value,
-        "benchmark_adr": y.benchmark_adr.value,
-        "benchmark_occupancy_source": y.benchmark_occupancy.detail,
-        "benchmark_adr_source": y.benchmark_adr.detail,
-        "benchmark_doc": doc,
-        "benchmark_page": page,
-        "mpi_target": y.mpi_target.value,
-        "ari_target": y.ari_target.value,
-        "mpi_target_source": y.mpi_target.source,
-        "ari_target_source": y.ari_target.source,
-        "rgi_derived": y.rgi_derived,
-        "occupancy": y.occupancy,
-        "adr": y.adr,
-        "occupancy_status": y.occupancy_status,
-        "adr_status": y.adr_status,
-        "reason": y.reason,
-    }
-
-
-#: ``base`` keys the runner parks the drivers on for ``_build_input_for('revenue')``.
-BASE_OCC_BY_YEAR = "index_occupancy_by_year"
-BASE_ADR_BY_YEAR = "index_adr_by_year"
-BASE_DRIVERS_BY_YEAR = "index_drivers_by_year"
-
-
-def build_index_drivers(
-    base: dict[str, Any],
-    sources: dict[str, str],
-    analyst_override_paths: set[str],
-    *,
-    rows: Sequence[FieldRow] | None,
-    str_basis_sources: frozenset[str],
-    hold_years: int,
-    calendar_years: Sequence[int] | None,
-) -> list[str]:
-    """Turn the analyst's penetration targets into per-year revenue drivers.
-
-    Called from the runner's STR-basis block ONLY (toggle on), after
-    ``apply_index_assumptions``. Does nothing — and leaves ``base`` untouched —
-    unless the analyst set a target (by-year or scalar) AND the Year-1 rate for
-    that metric sits on an STR basis (the seed landed; an explicit analyst
-    ``starting_*`` override is never overwritten). Parks the per-year lists and
-    the driver records on ``base`` and re-points Year 1 (by-year beats scalar).
-    Returns the engine keys it changed.
-    """
-    overrides: dict[str, Any] = {}
-    for k in (OVERRIDE_METHOD, OVERRIDE_SEGMENT):
-        if base.get(k) is not None:
-            overrides[k] = base[k]
-    for k in (*ASSUMPTION_KEYS, *BY_YEAR_TARGET_KEYS):
-        if k in analyst_override_paths and base.get(k) is not None:
-            overrides[k] = base[k]
-    if not any(k in overrides for k in (KEY_MPI_TARGET, KEY_ARI_TARGET, *BY_YEAR_TARGET_KEYS)):
-        return []
-    if rows is None:
-        return []
-    drivable = str_basis_sources | {SOURCE_INDEX_ASSUMPTION}
-    occ_ok = sources.get("starting_occupancy") in drivable
-    adr_ok = sources.get("starting_adr") in drivable
-    reading = resolve_index_by_year(rows, overrides, hold_years=hold_years, calendar_years=calendar_years)
-    if not reading.any_target or not (occ_ok or adr_ok):
-        return []
-    occ_list: list[float | None] = [None] * reading.hold_years
-    adr_list: list[float | None] = [None] * reading.hold_years
-    records: list[dict[str, Any]] = []
-    changed: list[str] = []
-    for y in reading.years:
-        rec = driver_record(y, reading.method)
-        # Join, never overwrite: ``rec["reason"]`` already carries resolve()'s
-        # per-metric explanation for the OTHER metric (e.g. the ADR out-year
-        # gate), which the grid tooltip would otherwise lose.
-        extra: list[str] = []
-        if y.occupancy is not None and occ_ok:
-            occ_list[y.year - 1] = y.occupancy
-        elif y.occupancy is not None:
-            rec["occupancy"] = None
-            rec["occupancy_status"] = "no_target"
-            extra.append("Occupancy: Year-1 occupancy is an explicit analyst value, not the STR basis — the target is not applied.")
-        if y.adr is not None and adr_ok:
-            adr_list[y.year - 1] = y.adr
-        elif y.adr is not None:
-            rec["adr"] = None
-            rec["adr_status"] = "no_target"
-            extra.append("ADR: Year-1 ADR is an explicit analyst value, not the STR basis — the target is not applied.")
-        if extra:
-            rec["reason"] = "; ".join([*extra, *([rec["reason"]] if rec.get("reason") else [])])
-        records.append(rec)
-    if not any(v is not None for v in occ_list) and not any(v is not None for v in adr_list):
-        return []
-    if occ_list[0] is not None:
-        base["starting_occupancy"] = occ_list[0]
-        sources["starting_occupancy"] = SOURCE_INDEX_ASSUMPTION
-        changed.append("starting_occupancy")
-    if adr_list[0] is not None:
-        base["starting_adr"] = adr_list[0]
-        sources["starting_adr"] = SOURCE_INDEX_ASSUMPTION
-        changed.append("starting_adr")
-    base[BASE_OCC_BY_YEAR] = occ_list
-    base[BASE_ADR_BY_YEAR] = adr_list
-    base[BASE_DRIVERS_BY_YEAR] = records
-    return changed
-
-
 # ───────────────────────────── DB read ─────────────────────────────
 
 _INDEX_DOC_TYPES = ("STR", "STR_TREND", "MARKET_STUDY", "CBRE_HORIZONS", "COSTAR")
@@ -1475,9 +1280,6 @@ async def load_index_rows(
 
 __all__ = [
     "ASSUMPTION_KEYS",
-    "BASE_ADR_BY_YEAR",
-    "BASE_DRIVERS_BY_YEAR",
-    "BASE_OCC_BY_YEAR",
     "BY_YEAR_TARGET_KEYS",
     "DEFAULT_METHOD",
     "INDEX_POINTS_RANGE",
@@ -1492,9 +1294,7 @@ __all__ = [
     "KEY_OCC_GROWTH",
     "MAX_MODEL_YEARS",
     "TargetReading",
-    "build_index_drivers",
     "coerce_target_list",
-    "driver_record",
     "read_targets_by_year",
     "resolve_index_by_year",
     "target_list_problems",
@@ -1509,7 +1309,6 @@ __all__ = [
     "Figure",
     "IndexMethodologyReading",
     "MethodReading",
-    "apply_index_assumptions",
     "load_index_rows",
     "read_costar_comp_set",
     "read_growth_default",
@@ -1518,5 +1317,4 @@ __all__ = [
     "read_subject_ttm",
     "resolve_index_methodology",
     "rows_from_records",
-    "wants_benchmark",
 ]

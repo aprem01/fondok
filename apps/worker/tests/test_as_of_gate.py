@@ -182,75 +182,47 @@ async def _base_for(deal_id: UUID) -> dict:
 
 
 # ══════════════════════════ STR — refuse / flag / load ══════════════════
+#
+# FON-116 / FON-117 (topline v2): the STR report reaches the model as the
+# competitive-set BENCHMARK (subject TTM ÷ MPI / ARI). The as-of gate refuses
+# a report published after the underwriting date exactly as before — the comp
+# set is then not a benchmark level, and the topline says why.
+
+_STR_COMP_SET = [
+    *_STR_SUBJECT_TTM,
+    {"field_name": "ttm_performance.indices.mpi_occupancy_index", "value": 105.0},
+    {"field_name": "ttm_performance.indices.ari_adr_index", "value": 110.0},
+]
 
 
 @pytest.mark.asyncio
 async def test_str_report_after_the_as_of_is_refused_not_used() -> None:
-    """An STR report published after the underwriting date does not seed the
-    model; the flag key flips to ``str_forecast_unavailable`` and carries
-    ``not_knowable_as_of``."""
-    from fondok_schemas.reasons import ReasonCode
-
     deal_id = uuid4()
-    await _insert_deal(
-        deal_id,
-        overrides={
-            "underwriting_as_of": _AS_OF,
-            "revenue_seed_from_str_forecast": True,
-        },
-    )
+    await _insert_deal(deal_id, overrides={"underwriting_as_of": _AS_OF})
     await _insert_doc(
-        deal_id,
-        doc_type="STR_TREND",
-        fields=_STR_SUBJECT_TTM,
-        report_as_of="2025-03-31",
-        precision="day",
+        deal_id, doc_type="STR_TREND", fields=_STR_COMP_SET,
+        report_as_of="2025-03-31", precision="day",
     )
 
     base = await _base_for(deal_id)
-    sources = base["__sources__"]
-    reasons = base["__reasons__"]
-
-    assert sources["revenue_seed_from_str_forecast"] == "str_forecast_unavailable"
-    assert (
-        reasons["revenue_seed_from_str_forecast"]["code"]
-        is ReasonCode.NOT_KNOWABLE_AS_OF
-    )
-    # The value was NOT loaded — Year-1 stays off the STR rates.
-    assert sources["starting_adr"] not in ("str_forecast", "str_subject_ttm")
-    assert base["starting_adr"] != pytest.approx(412.0)
+    status = base["__topline_status__"]
+    assert status["benchmark_level"] == "none"
+    assert "underwriting as-of" in status["benchmark_fallback_reason"]
+    assert base["__sources__"]["starting_adr"] != "topline_benchmark"
 
 
 @pytest.mark.asyncio
-async def test_str_report_with_no_date_loads_and_flags_as_of_unknown() -> None:
-    """No ``report_as_of`` is a FLAG, never a refusal — Sam's number stays.
-
-    FON-61 (61.2): ``_STR_SUBJECT_TTM`` is the subject property's own trailing
-    twelve months, so the seed is tagged ``str_subject_ttm`` — an actual, not
-    the forward forecast. The VALUE (412.0 / 0.785) is what it always was.
-    """
-    from fondok_schemas.reasons import ReasonCode
-
+async def test_str_report_with_no_date_loads() -> None:
+    """No ``report_as_of`` is never a refusal — the comp set is the benchmark."""
     deal_id = uuid4()
-    await _insert_deal(
-        deal_id,
-        overrides={
-            "underwriting_as_of": _AS_OF,
-            "revenue_seed_from_str_forecast": True,
-        },
-    )
-    await _insert_doc(
-        deal_id, doc_type="STR_TREND", fields=_STR_SUBJECT_TTM, report_as_of=None
-    )
+    await _insert_deal(deal_id, overrides={"underwriting_as_of": _AS_OF})
+    await _insert_doc(deal_id, doc_type="STR_TREND", fields=_STR_COMP_SET, report_as_of=None)
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
-    assert base["starting_adr"] == pytest.approx(412.0)
-    assert base["starting_occupancy"] == pytest.approx(0.785)
-    assert (
-        base["__reasons__"]["revenue_seed_from_str_forecast"]["code"]
-        is ReasonCode.AS_OF_UNKNOWN
-    )
+    status = base["__topline_status__"]
+    assert status["benchmark_level"] == "comp_set"
+    assert status["benchmark"]["adr"] == pytest.approx(412.0 / 1.10)
+    assert base["__sources__"]["starting_adr"] == "topline_benchmark"
 
 
 @pytest.mark.asyncio
@@ -259,51 +231,29 @@ async def test_year_precision_report_in_the_as_of_year_is_admitted() -> None:
     Comparing raw dates would refuse a May-2025 report under a mid-2025
     as-of; comparing at the document's own precision admits it."""
     deal_id = uuid4()
-    await _insert_deal(
-        deal_id,
-        overrides={
-            "underwriting_as_of": "2025-05-01",
-            "revenue_seed_from_str_forecast": True,
-        },
-    )
+    await _insert_deal(deal_id, overrides={"underwriting_as_of": "2025-05-01"})
     await _insert_doc(
-        deal_id,
-        doc_type="STR_TREND",
-        fields=_STR_SUBJECT_TTM,
-        report_as_of="2025-12-31",
-        precision="year",
+        deal_id, doc_type="STR_TREND", fields=_STR_COMP_SET,
+        report_as_of="2025-12-31", precision="year",
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
-    assert base["starting_adr"] == pytest.approx(412.0)
+    assert base["__topline_status__"]["benchmark_level"] == "comp_set"
 
 
 @pytest.mark.asyncio
 async def test_acquisition_close_date_is_not_an_as_of_date() -> None:
     """The live QA deal shape: ``acquisition_close_date`` 2021 with 2025 STR
-    material. The close date must NOT gate anything — the 2025 report loads
-    and no reason is attached."""
+    material. The close date must NOT gate anything."""
     deal_id = uuid4()
-    await _insert_deal(
-        deal_id,
-        overrides={
-            "acquisition_close_date": "2021-06-01",
-            "revenue_seed_from_str_forecast": True,
-        },
-    )
+    await _insert_deal(deal_id, overrides={"acquisition_close_date": "2021-06-01"})
     await _insert_doc(
-        deal_id,
-        doc_type="STR_TREND",
-        fields=_STR_SUBJECT_TTM,
-        report_as_of="2025-12-31",
-        precision="year",
+        deal_id, doc_type="STR_TREND", fields=_STR_COMP_SET,
+        report_as_of="2025-12-31", precision="year",
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["revenue_seed_from_str_forecast"] == "str_subject_ttm"
-    assert base["starting_adr"] == pytest.approx(412.0)
-    assert base["__reasons__"].get("revenue_seed_from_str_forecast") is None
+    assert base["__topline_status__"]["benchmark_level"] == "comp_set"
 
 
 # ═════════════════════ OM comps + CBRE — the same rule ══════════════════
@@ -372,57 +322,59 @@ async def test_om_comps_before_the_as_of_load_and_name_their_row() -> None:
     assert "exit_cap_rate" not in base["__reasons__"]
 
 
+def _cbre_change_rows() -> list[dict]:
+    out: list[dict] = []
+    for year, (occ, adr) in {2026: (0.01, 0.03), 2027: (0.005, 0.025)}.items():
+        out += [
+            {"field_name": f"cbre_horizons.segment_all.{year}.occupancy_change_pct", "value": occ},
+            {"field_name": f"cbre_horizons.segment_all.{year}.adr_change_pct", "value": adr},
+            {"field_name": f"cbre_horizons.segment_all.{year}.period", "value": "forecast"},
+        ]
+    return out
+
+
 @pytest.mark.asyncio
 async def test_cbre_report_after_the_as_of_flips_growth_to_unavailable() -> None:
+    """Topline v2: a CBRE forecast published after the underwriting date is
+    not knowable — the year's growth is unavailable with that reason (held
+    flat), never the forecast and never a seed."""
     from fondok_schemas.reasons import ReasonCode
 
     deal_id = uuid4()
-    await _insert_deal(deal_id, overrides={"underwriting_as_of": _AS_OF})
+    await _insert_deal(
+        deal_id, overrides={"underwriting_as_of": _AS_OF, "acquisition_close_date": "2025-12-31"}
+    )
     await _insert_doc(
-        deal_id,
-        doc_type="CBRE_HORIZONS",
-        fields=[
-            {"field_name": "cbre_horizons.year_1.adr_usd", "value": 300.0},
-            {"field_name": "cbre_horizons.year_5.adr_usd", "value": 330.0},
-            {"field_name": "cbre_horizons.year_1.revpar_usd", "value": 200.0},
-            {"field_name": "cbre_horizons.year_5.revpar_usd", "value": 220.0},
-        ],
-        report_as_of="2025-09-30",
-        precision="day",
+        deal_id, doc_type="CBRE_HORIZONS", fields=_cbre_change_rows(),
+        report_as_of="2025-09-30", precision="day",
     )
 
     base = await _base_for(deal_id)
-    for key in ("adr_growth", "revpar_growth"):
-        assert base["__sources__"][key] == "cbre_horizons_unavailable"
-        assert (
-            base["__reasons__"][key]["code"] is ReasonCode.NOT_KNOWABLE_AS_OF
-        )
-    # Seeds untouched.
-    assert base["adr_growth"] == pytest.approx(0.04)
-    assert base["revpar_growth"] == pytest.approx(0.045)
+    year2 = base["__topline_status__"]["growth_by_year"][1]
+    assert year2["adr"]["source"] == "unavailable"
+    assert year2["adr"]["reason"] == ReasonCode.NOT_KNOWABLE_AS_OF.value
+    assert base["adr_growth_by_year"][1] is None
+    assert "adr_growth" not in base  # no seed
+    assert base["revpar_growth"] == 0.0
+    assert base["__sources__"]["revpar_growth"] == "market_forecast_unavailable"
 
 
 @pytest.mark.asyncio
 async def test_no_underwriting_as_of_means_nothing_changes() -> None:
     """The whole gate is inert without an explicit ``underwriting_as_of``:
-    a 2025 CBRE report still grounds growth on a deal with no as-of."""
+    a 2025 CBRE report still grounds the growth on a deal with no as-of."""
     deal_id = uuid4()
-    await _insert_deal(deal_id, overrides={})
+    await _insert_deal(deal_id, overrides={"acquisition_close_date": "2025-12-31"})
     await _insert_doc(
-        deal_id,
-        doc_type="CBRE_HORIZONS",
-        fields=[
-            {"field_name": "cbre_horizons.year_1.adr_usd", "value": 300.0},
-            {"field_name": "cbre_horizons.year_5.adr_usd", "value": 330.0},
-        ],
-        report_as_of="2025-09-30",
-        precision="day",
+        deal_id, doc_type="CBRE_HORIZONS", fields=_cbre_change_rows(),
+        report_as_of="2025-09-30", precision="day",
     )
 
     base = await _base_for(deal_id)
-    assert base["__sources__"]["adr_growth"] == "cbre_horizons"
-    assert base["adr_growth"] != pytest.approx(0.04)
-    assert "adr_growth" not in base["__reasons__"]
+    year2 = base["__topline_status__"]["growth_by_year"][1]
+    assert year2["adr"]["source"] == "cbre_horizons"
+    assert base["adr_growth_by_year"][1] == pytest.approx(0.025)
+    assert year2["adr"]["reason"] is None
 
 
 # ═════════════════ comp sales — the as-of is the engine's "today" ═══════

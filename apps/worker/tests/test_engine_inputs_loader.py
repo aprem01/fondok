@@ -649,7 +649,9 @@ async def test_load_engine_inputs_exposes_source_fields_and_reasons() -> None:
     # and no CBRE report.
     reasons = base["__reasons__"]
     assert reasons["exit_cap_rate"]["code"] is ReasonCode.NO_DOCUMENT
-    assert reasons["adr_growth"]["code"] is ReasonCode.NO_DOCUMENT
+    # Topline v2: no growth seed exists — with no market report the growth is
+    # unavailable (held flat), said with ``no_market_forecast``.
+    assert reasons["adr_growth"]["code"] is ReasonCode.NO_MARKET_FORECAST
     # The T-12 IS on the deal — the F&B anchor just did not resolve.
     assert reasons["fb_revenue_per_occupied_room"]["code"] is ReasonCode.NO_SOURCE
     # A key the T-12 grounded carries no SEED reason. It does carry a review

@@ -403,6 +403,8 @@ async def test_persisted_run_lineage_carries_the_rate_nodes_the_drawer_asks_for(
     # And the rate node itself walks to the assumption that grounds it.
     assert "assumption:starting_adr" in reachable("engine:revenue.years[1].adr")
     assert "assumption:starting_occupancy" in reachable("engine:revenue.years[1].occupancy")
-    assert "assumption:adr_growth" in reachable("engine:revenue.years[1].adr")
+    # Topline v2: the out-year grows by the RESOLVED per-year ADR growth (this
+    # deal has no market report, so the year is held flat and says so).
+    assert "assumption:adr_growth_by_year" in reachable("engine:revenue.years[1].adr")
     # No refusal names a rate node: each carries a formula and asserted links.
     assert not [r for r in record.unresolved if (r.concept or "").startswith("engine:revenue.years[1].adr")]

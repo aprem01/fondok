@@ -92,8 +92,11 @@ def kimpton_seed() -> dict[str, Any]:
         "purchase_price": KIMPTON_PURCHASE_PRICE,
         "starting_occupancy": 0.762,
         "starting_adr": 385.0,
-        "occupancy_growth": 0.008,
-        "adr_growth": 0.04,
+        # FON-116 / FON-117 (topline v2, 2026-11-01 re-baseline) — no growth
+        # seed: the production defaults carry none, so this no-document
+        # fixture runs the deterministic "no market forecast" state (every
+        # rate held flat, revpar_growth 0 for the exit year). The documents
+        # fixture (``kimpton_docs_fixture``) carries the market data.
         "fb_revenue_per_occupied_room": 88.0,
         "other_revenue_pct_of_rooms": 0.065,
         "hold_years": 5,
@@ -119,7 +122,6 @@ def kimpton_seed() -> dict[str, Any]:
         "term_years": 5,
         "interest_only_years": 0,
         "exit_cap_rate": 0.07,
-        "revpar_growth": 0.045,
         "selling_costs_pct": 0.02,
         # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
         "transfer_tax_pct": 0.0,

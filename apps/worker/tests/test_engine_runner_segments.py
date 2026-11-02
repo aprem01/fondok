@@ -252,8 +252,11 @@ async def test_str_segmentation_extraction_seeds_segments_with_provenance() -> N
     assert sources["segments.contract.adr"] == default
     for seg in ("transient_bar", "transient_ota", "corporate", "group", "contract"):
         assert sources[f"segments.{seg}.channel_cost_pct"] == default
-        # adr_growth is None (inherits the property's) → the property's label.
-        assert sources[f"segments.{seg}.adr_growth"] == sources["adr_growth"]
+        # adr_growth is None (inherits the property's) → the label of the
+        # property's resolved ADR growth (topline v2: no market report on this
+        # deal and no analyst growth → no market forecast).
+        assert sources[f"segments.{seg}.adr_growth"] == sources["adr_growth_by_year"]
+        assert sources[f"segments.{seg}.adr_growth"] == "market_forecast_unavailable"
     assert "str_segmentation_default" not in set(sources.values())
 
 

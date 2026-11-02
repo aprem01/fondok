@@ -242,8 +242,11 @@ _DEBT_STABILIZED_KEYS = ("stabilized_dscr", "stabilized_debt_yield", "provenance
 
 @pytest.mark.asyncio
 async def test_stabilization_year_does_not_move_returns() -> None:
-    """Setting or changing the Stabilization Year leaves the reconciliation
-    bit-identical. This is what protects FON-67."""
+    """On a deal with NO benchmark, setting or changing the Stabilization Year
+    leaves the reconciliation bit-identical (FON-67). Topline v2: on a deal
+    with a benchmark the year also ends the penetration ramp, so it moves the
+    ramp years — ``test_topline_loader.py::
+    test_stabilization_year_ends_the_ramp_on_a_benchmark_deal`` pins that."""
     baseline = await _run({})
     with_year_2 = await _run({"stabilization_year": 2})
     with_year_4 = await _run({"stabilization_year": 4})

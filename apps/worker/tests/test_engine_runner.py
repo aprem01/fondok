@@ -78,13 +78,22 @@ async def test_run_all_engines_kimpton() -> None:
     y1_noi = results["expense"]["outputs"]["years"][0]["noi"]
     assert 3_500_000 <= y1_noi <= 6_500_000, f"Y1 NOI out of band: {y1_noi}"
 
-    # Levered IRR from the returns engine on Kimpton lands ~20-30%.
+    # FON-116 / FON-117 (topline v2, re-checked 2026-11-02 — not loosened
+    # silently): the seed fixture carries no documents and, since the growth
+    # seeds were retired, no growth. Its rates are held flat for the hold (the
+    # "no market forecast" state) while undistributed and fixed costs still
+    # grow 3.5% a year, and the exit-year NOI is not grown. That is the point
+    # of the fixture now, so the bands describe a flat hotel: levered IRR
+    # 8.06% and multiple 1.38x on the 2026-11-02 baseline (they were 10–40% /
+    # 1.5–3.5x on the seeded 0.8% / 4.0% / 4.5% growth).
     irr = results["returns"]["outputs"]["levered_irr"]
-    assert 0.10 <= irr <= 0.40, f"levered IRR out of band: {irr}"
-
-    # Equity multiple sanity.
+    assert 0.05 <= irr <= 0.15, f"levered IRR out of band: {irr}"
     em = results["returns"]["outputs"]["equity_multiple"]
-    assert 1.5 <= em <= 3.5, f"equity multiple out of band: {em}"
+    assert 1.2 <= em <= 1.6, f"equity multiple out of band: {em}"
+    rev = results["revenue"]["outputs"]
+    assert rev["topline_methodology_version"] == 2
+    assert {y["occupancy"] for y in rev["years"]} == {0.762}
+    assert {y["adr"] for y in rev["years"]} == {385.0}
 
     # Sensitivity grid is 5x5.
     cells = results["sensitivity"]["outputs"]["cells"]
@@ -1234,111 +1243,27 @@ async def test_selected_comps_curation_never_reaches_engine_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subject_ttm_seed_is_tagged_as_an_actual_not_a_forecast() -> None:
-    """FON-61 (61.2) — Sam: clicking Base Year Occupancy said "STR forecast"
-    about the subject property's TTM ACTUAL. The seed branch that read
-    ``load_str_subject_ttm`` now stamps ``str_subject_ttm``; the seeded VALUE
-    is exactly what it was before the split."""
+async def test_retired_str_switch_moves_nothing_and_is_flagged() -> None:
+    """FON-116 / FON-117 (topline v2): the "Use STR rates" switch and its seed
+    are gone. The comp set is the benchmark on every deal; a stored switch
+    changes no number and is reported in ``topline_status.legacy_flags``."""
     from app.database import get_session_factory
-    from app.services.engine_runner import (
-        SOURCE_STR_SUBJECT_TTM,
-        STR_BASIS_SOURCES,
-        _load_engine_inputs,
-    )
+    from app.services.engine_runner import _load_engine_inputs
 
     factory = get_session_factory()
     async with factory() as session:
-        deal_id, tenant_id = await _str_deal(
-            session,
-            overrides={"revenue_seed_from_str_forecast": True},
-            fields=_SUBJECT_TTM_FIELDS,
+        deal_id, tenant_id = await _str_deal(session, overrides={}, fields=_INDEX_STR_FIELDS)
+        plain = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        deal_id2, tenant_id2 = await _str_deal(
+            session, overrides={"revenue_seed_from_str_forecast": True}, fields=_INDEX_STR_FIELDS
         )
-        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        flagged = await _load_engine_inputs(session, deal_id2, tenant_id=tenant_id2)
 
-    sources = base["__sources__"]
-    assert sources["starting_occupancy"] == SOURCE_STR_SUBJECT_TTM
-    assert sources["starting_adr"] == SOURCE_STR_SUBJECT_TTM
-    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_SUBJECT_TTM
-    # …and it still reads as an STR basis to everything that asks that question.
-    assert sources["starting_adr"] in STR_BASIS_SOURCES
-    # THE VALUE DID NOT MOVE — the split is labels and badges only.
-    assert base["starting_adr"] == pytest.approx(412.0)
-    assert base["starting_occupancy"] == pytest.approx(0.785)
-
-
-@pytest.mark.asyncio
-async def test_seed_that_cannot_populate_stays_unavailable() -> None:
-    """No subject TTM and no usable forward forecast → neither STR id is
-    stamped; the flag key says ``str_forecast_unavailable`` exactly as before.
-    The forward-forecast id is never stamped on a seed that did not load."""
-    from app.database import get_session_factory
-    from app.services.engine_runner import (
-        SOURCE_STR_UNAVAILABLE,
-        STR_BASIS_SOURCES,
-        _load_engine_inputs,
-    )
-
-    factory = get_session_factory()
-    async with factory() as session:
-        deal_id, tenant_id = await _str_deal(
-            session,
-            overrides={"revenue_seed_from_str_forecast": True},
-            # An STR_TREND extraction with no subject TTM and no monthly
-            # history: the TTM read returns nothing and the forecast loader
-            # has no history to build from.
-            fields=[{"field_name": "comp_set.size", "value": 5}],
-        )
-        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-
-    sources = base["__sources__"]
-    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_UNAVAILABLE
-    assert sources.get("starting_occupancy") not in STR_BASIS_SOURCES
-    assert sources.get("starting_adr") not in STR_BASIS_SOURCES
-
-
-@pytest.mark.asyncio
-async def test_market_tab_comp_set_rates_are_tagged_as_the_comp_set() -> None:
-    """The Market tab's "Use STR rates" writes the COMP SET's blended rates as
-    explicit overrides carrying ``STR_MARKET_OVERRIDE_NOTE``. Those are neither
-    the subject's actual nor the forward forecast, so they carry their own id —
-    and the value the analyst saw is the value the engines read."""
-    from app.database import get_session_factory
-    from app.services.engine_runner import (
-        SOURCE_STR_COMP_SET,
-        STR_BASIS_SOURCES,
-        STR_MARKET_OVERRIDE_NOTE,
-        _load_engine_inputs,
-    )
-
-    factory = get_session_factory()
-    async with factory() as session:
-        deal_id, tenant_id = await _str_deal(
-            session,
-            overrides={
-                "revenue_seed_from_str_forecast": {
-                    "value": True,
-                    "note": "STR market rates enabled from the Market tab",
-                },
-                "starting_occupancy": {
-                    "value": 0.692,
-                    "note": STR_MARKET_OVERRIDE_NOTE,
-                },
-                "starting_adr": {"value": 295, "note": STR_MARKET_OVERRIDE_NOTE},
-            },
-            # The subject TTM is extracted too — the explicit comp-set
-            # overrides must still win, and must not be re-badged as the
-            # subject's own performance.
-            fields=_SUBJECT_TTM_FIELDS,
-        )
-        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-
-    sources = base["__sources__"]
-    assert sources["starting_occupancy"] == SOURCE_STR_COMP_SET
-    assert sources["starting_adr"] == SOURCE_STR_COMP_SET
-    assert sources["revenue_seed_from_str_forecast"] == SOURCE_STR_COMP_SET
-    assert sources["starting_adr"] in STR_BASIS_SOURCES
-    assert base["starting_occupancy"] == pytest.approx(0.692)
-    assert base["starting_adr"] == pytest.approx(295)
+    for key in ("starting_occupancy", "starting_adr", "revpar_growth"):
+        assert flagged[key] == plain[key], key
+    assert plain["__sources__"]["starting_adr"] == "topline_benchmark"
+    flags = {f["key"]: f["treatment"] for f in flagged["__topline_status__"]["legacy_flags"]}
+    assert flags["revenue_seed_from_str_forecast"] == "ignored"
 
 
 # ─────────── FON-118 / FON-44 — deal_type hold default + exit-schedule forwarding ───────────
@@ -1581,57 +1506,31 @@ _INDEX_OVERRIDES = {
 
 
 @pytest.mark.asyncio
-async def test_index_assumptions_do_not_move_revenue_with_the_toggle_off() -> None:
-    """Default toggle OFF (every golden deal): the Index Analysis overrides are
-    saved but no engine key moves and nothing is badged ``index_assumption``."""
+async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
+    """Topline v2: no toggle. The MPI target is the stabilized occupancy
+    penetration (Year 1 ramps at 85% of it for a Year-3 stabilization); the
+    retired market-growth keys read as all-years growth with a legacy flag;
+    ADR (no ARI target) runs at the 100 default × the ramp."""
     from app.database import get_session_factory
     from app.services.engine_runner import _load_engine_inputs
-    from app.services.index_methodology import SOURCE_INDEX_ASSUMPTION
 
     factory = get_session_factory()
     async with factory() as session:
-        deal_id, tenant_id = await _str_deal(session, overrides={}, fields=_INDEX_STR_FIELDS)
-        plain = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-        deal_id2, tenant_id2 = await _str_deal(
-            session, overrides=dict(_INDEX_OVERRIDES), fields=_INDEX_STR_FIELDS
-        )
-        with_ov = await _load_engine_inputs(session, deal_id2, tenant_id=tenant_id2)
-
-    for key in ("starting_occupancy", "starting_adr", "occupancy_growth", "adr_growth"):
-        assert with_ov[key] == plain[key], key
-        assert with_ov["__sources__"].get(key) == plain["__sources__"].get(key), key
-        assert with_ov["__sources__"].get(key) != SOURCE_INDEX_ASSUMPTION
-
-
-@pytest.mark.asyncio
-async def test_index_assumptions_feed_revenue_with_the_toggle_on() -> None:
-    """Toggle ON + the STR seed landed: market growth replaces the growth
-    assumptions and the MPI target sets Year-1 occupancy = comp set x target.
-    The ADR seed (no ARI target) is the subject TTM, untouched."""
-    from app.database import get_session_factory
-    from app.services.engine_runner import SOURCE_STR_SUBJECT_TTM, _load_engine_inputs
-    from app.services.index_methodology import SOURCE_INDEX_ASSUMPTION
-
-    factory = get_session_factory()
-    async with factory() as session:
-        deal_id, tenant_id = await _str_deal(
-            session,
-            overrides={**_INDEX_OVERRIDES, "revenue_seed_from_str_forecast": True},
-            fields=_INDEX_STR_FIELDS,
-        )
+        deal_id, tenant_id = await _str_deal(session, overrides=dict(_INDEX_OVERRIDES), fields=_INDEX_STR_FIELDS)
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
 
-    sources = base["__sources__"]
-    assert base["occupancy_growth"] == pytest.approx(0.012)
-    assert base["adr_growth"] == pytest.approx(0.033)
-    assert sources["occupancy_growth"] == SOURCE_INDEX_ASSUMPTION
-    assert sources["adr_growth"] == SOURCE_INDEX_ASSUMPTION
-    # comp occupancy = 78.5% ÷ 1.032; x MPI target 110
-    assert base["starting_occupancy"] == pytest.approx(0.785 / 1.032 * 1.10, abs=1e-4)
-    assert sources["starting_occupancy"] == SOURCE_INDEX_ASSUMPTION
-    assert base["starting_adr"] == pytest.approx(412.0)
-    assert sources["starting_adr"] == SOURCE_STR_SUBJECT_TTM
-    # No stale document row is left pointing at the moved keys.
+    status = base["__topline_status__"]
+    # No close date: the comp set is Year 1 as reported.
+    assert base["starting_occupancy"] == pytest.approx(0.785 / 1.032 * 1.10 * 0.85, abs=1e-6)
+    assert base["starting_adr"] == pytest.approx(412.0 / 0.942 * 0.85, rel=1e-6)  # blend rounds to 4 dp
+    assert base["__sources__"]["starting_occupancy"] == "topline_benchmark"
+    assert status["penetration_occ"] == 110.0 and status["penetration_occ_source"] == "analyst_override"
+    assert status["penetration_adr_source"] == "default"
+    assert base["occupancy_growth_by_year"][1:] == [0.012] * 4
+    assert base["adr_growth_by_year"][1:] == [0.033] * 4
+    treatments = {f["key"]: f["treatment"] for f in status["legacy_flags"]}
+    assert treatments["index_market_occupancy_growth"] == "read_as_all_years_growth"
+    assert treatments["index_methodology"] == "read_as_comp_set_level"
     assert "starting_occupancy" not in base["__source_fields__"]
 
 
@@ -1646,7 +1545,6 @@ async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
             session,
             overrides={
                 **_INDEX_OVERRIDES,
-                "revenue_seed_from_str_forecast": True,
                 "occupancy_growth": {"value": 0.002, "note": "IC asked for flat occupancy"},
             },
             fields=_INDEX_STR_FIELDS,
@@ -1655,45 +1553,30 @@ async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
 
     assert base["occupancy_growth"] == pytest.approx(0.002)
     assert base["__sources__"]["occupancy_growth"] == "analyst_override"
+    # The analyst's all-years growth beats the legacy market-growth key.
+    assert base["occupancy_growth_by_year"][1:] == [0.002] * 4
 
 
-# ─────────── FON-116 / FON-117 (topline PR 2) — the loader's constant growth list ───────────
+# ─────────── FON-116 / FON-117 (topline v2) — the loader's revenue input ───────────
 
 
-def test_loader_feeds_the_scalar_growth_as_a_constant_per_year_list() -> None:
-    """The revenue input the loader builds carries today's scalar growth as a
-    per-year list (index y−1 = growth INTO year y; Year 1 has none) and no
-    ``topline`` yet — the resolvers are the next PR."""
-    from app.services.engine_runner import _build_input_for, _constant_growth_by_year
+@pytest.mark.asyncio
+async def test_loader_feeds_the_topline_and_the_resolved_growth_lists() -> None:
+    """The revenue input the loader builds carries the topline (methodology 2)
+    and the RESOLVED per-year growth — on the seed fixture (no documents, no
+    growth) every growth entry is ``None`` (held flat) and there is no
+    benchmark."""
+    from app.database import get_session_factory
+    from app.services.engine_runner import _build_input_for, _load_engine_inputs
 
-    base = kimpton_seed()
+    async with get_session_factory()() as session:
+        base = await _load_engine_inputs(
+            session, KIMPTON_FIXTURE_DEAL_ID, tenant_id=str(uuid4()), assumptions=kimpton_seed()
+        )
     revenue_input = _build_input_for("revenue", KIMPTON_FIXTURE_DEAL_ID, base, {})
-    assert revenue_input.topline is None
-    assert revenue_input.occupancy_growth_by_year == [None, 0.008, 0.008, 0.008, 0.008]
-    assert revenue_input.adr_growth_by_year == [None, 0.04, 0.04, 0.04, 0.04]
-    assert revenue_input.occupancy_growth == 0.008 and revenue_input.adr_growth == 0.04
-    assert _constant_growth_by_year(0.03, 1) == [None]
-    assert _constant_growth_by_year(0.03, 0) == []
-
-
-def test_constant_growth_list_feed_equals_the_scalar_path_exactly() -> None:
-    """Byte-identity: the engine run on the loader's input equals the run on
-    the same input with the lists removed — figures, records AND traces."""
-    from app.engines.revenue import RevenueEngine
-    from app.services.engine_runner import _build_input_for
-
-    listed = _build_input_for("revenue", KIMPTON_FIXTURE_DEAL_ID, kimpton_seed(), {})
-    scalar = listed.model_copy(
-        update={"occupancy_growth_by_year": None, "adr_growth_by_year": None}
-    )
-    assert scalar.occupancy_growth_by_year is None and listed.occupancy_growth_by_year is not None
-    out_listed = RevenueEngine().run(listed)
-    out_scalar = RevenueEngine().run(scalar)
-    assert out_listed.model_dump_json() == out_scalar.model_dump_json()
-    assert out_listed.topline_methodology_version == 1
-    # The traces still name the scalar assumption the list restates.
-    occ = out_listed.provenance["years[2].occupancy"]
-    assert occ.formula == (
-        "occupancy = min(0.95, starting_occupancy × (1 + occupancy_growth) ^ years_compounded)"
-    )
-    assert {i.name: i.assumption_key for i in occ.inputs}["occupancy_growth"] == "occupancy_growth"
+    assert revenue_input.topline is not None
+    assert revenue_input.topline.benchmark_level == "none"
+    assert revenue_input.occupancy_growth_by_year == [None] * 5
+    assert revenue_input.adr_growth_by_year == [None] * 5
+    assert revenue_input.occupancy_by_year_override is None
+    assert revenue_input.index_drivers_by_year == []
