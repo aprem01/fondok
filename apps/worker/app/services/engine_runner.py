@@ -7569,6 +7569,13 @@ def _build_input_for(
             catch_up=bool(base.get("partnership_catch_up") or False),
             period=period,
             cash_flows_monthly=monthly_flows,
+            # The refinance equity contribution as its own gross capital call
+            # (the streams carry it netted into its period) — so GP / LP
+            # contributions equal the amount charged, in either period mode.
+            capital_calls=list(getattr(returns_out, "equity_calls", None) or [])[1:],
+            capital_calls_monthly=list(
+                getattr(returns_out, "equity_calls_monthly", None) or []
+            ),
             close_date=(
                 str(base["acquisition_close_date"])
                 if base.get("acquisition_close_date") not in (None, "")

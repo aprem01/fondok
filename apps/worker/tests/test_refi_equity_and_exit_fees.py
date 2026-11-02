@@ -431,16 +431,31 @@ async def test_kimpton_cash_in_refi_flows_through_cash_flow_bridge_and_waterfall
     fin = next(leg for leg in bridge["legs"] if leg["key"] == "financing")
     comp = next(c for c in fin["components"] if c["label"].startswith("Refinance equity contribution"))
     assert comp["value"] == pytest.approx(-call, abs=0.01)
-    # Partnership: a mid-hold capital call by the GP/LP split.
+    # Partnership: the call is its own gross capital call by the GP/LP split —
+    # the contributions equal the amount the Debt tab says was charged.
+    _assert_partnership_call(rows, call)
+
+
+def _assert_partnership_call(rows: dict, call: float) -> None:
     part = rows["partnership"]["outputs"]
-    lev = ret["levered_monthly"]
-    refi_m = 36
-    net_call = -lev[refi_m]
-    assert net_call > 0
-    gp_pct = part.get("gp_equity_pct") or rows["partnership"]["inputs"]["gp_equity_pct"]
-    lp_pct = part.get("lp_equity_pct") or rows["partnership"]["inputs"]["lp_equity_pct"]
-    assert part["gp_additional_contributions"] == pytest.approx(net_call * gp_pct, rel=1e-9)
-    assert part["lp_additional_contributions"] == pytest.approx(net_call * lp_pct, rel=1e-9)
+    pin = rows["partnership"]["inputs"]
+    gp_pct, lp_pct = pin["gp_equity_pct"], pin["lp_equity_pct"]
+    assert part["gp_additional_contributions"] == pytest.approx(call * gp_pct, rel=1e-9)
+    assert part["lp_additional_contributions"] == pytest.approx(call * lp_pct, rel=1e-9)
+    assert part["total_contributions"] == pytest.approx(
+        pin["total_equity"] * (gp_pct + lp_pct) + call * (gp_pct + lp_pct), rel=1e-9
+    )
+
+
+@pytest.mark.asyncio
+async def test_kimpton_cash_in_refi_annual_waterfall_calls_the_same_amount() -> None:
+    rows = await _run_kimpton(
+        term_years=10,
+        debt_stack_overrides=dict(_KIMPTON_CASH_IN),
+        waterfall_period="annual",
+    )
+    assert rows["partnership"]["inputs"]["period"] == "annual"
+    _assert_partnership_call(rows, rows["debt"]["outputs"]["refi_equity_contribution"])
 
 
 @pytest.mark.asyncio

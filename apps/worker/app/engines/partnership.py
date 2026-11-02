@@ -102,6 +102,17 @@ class PartnershipInputExt(BaseModel):
     # off-cycle exit, or a refi), else annual — so existing deals are unchanged.
     period: Literal["annual", "monthly"] = "annual"
     cash_flows_monthly: list[float] = Field(default_factory=list)
+    # A GROSS capital call per period (≥ 0), aligned with ``cash_flows``
+    # (index 0 = Year 1) / ``cash_flows_monthly`` (index 0 = close): the
+    # refinance equity contribution. The period's cash flow above already nets
+    # it; the waterfall books the call as a pro-rata GP / LP contribution
+    # (accruing the preferred return) and distributes the period's operating
+    # cash on its own, so the contributions equal the amount charged. Empty →
+    # no calls (every other deal unchanged).
+    capital_calls: list[Annotated[float, Field(ge=0)]] = Field(default_factory=list)
+    capital_calls_monthly: list[Annotated[float, Field(ge=0)]] = Field(
+        default_factory=list
+    )
     # FON-66/67 — acquisition close date (ISO). The monthly waterfall accrues
     # the preferred return on an actual/365 fractional-year basis between the
     # real month-end dates — Begin*(1+pref)^(days/365)-Begin — matching an
@@ -412,6 +423,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         # Actual/365 day counts between the real month-end cash-flow dates.
         period_days = _monthly_period_days(payload.close_date, len(payload.cash_flows_monthly))
 
+        gp_dist_total = 0.0
+        lp_dist_total = 0.0
+        calls_m = payload.capital_calls_monthly
         for idx, cf in enumerate(payload.cash_flows_monthly):
             # Accrue the preferred return on an actual/365 fractional-year basis:
             # Begin*(1+hurdle)^(days/365) - Begin, matching an institutional model.
@@ -419,6 +433,23 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
             if frac > 0:
                 for i, t in enumerate(tiers):
                     lp_bal[i] *= (1.0 + t.hurdle_rate) ** frac
+
+            # A gross capital call (the refinance equity contribution): a
+            # pro-rata contribution in full; the period's operating cash (the
+            # flow with the call added back) then runs on its own.
+            call = calls_m[idx] if idx < len(calls_m) else 0.0
+            gp_call = lp_call = 0.0
+            if call > 1e-9:
+                lp_call = call * lp_pct
+                gp_call = call * gp_pct
+                for i in range(n):
+                    lp_bal[i] += lp_call
+                lp_contrib_total += lp_call
+                gp_contrib_total += gp_call
+                if idx > 0:
+                    gp_additional += gp_call
+                    lp_additional += lp_call
+                cf = cf + call
 
             gp_take = 0.0
             lp_take = 0.0
@@ -429,8 +460,8 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 gp_c = draw * gp_pct
                 for i in range(n):
                     lp_bal[i] += lp_c
-                gp_cf.append(-gp_c)
-                lp_cf.append(-lp_c)
+                gp_cf.append(-gp_c - gp_call)
+                lp_cf.append(-lp_c - lp_call)
                 lp_contrib_total += lp_c
                 gp_contrib_total += gp_c
                 if idx > 0:
@@ -471,8 +502,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 _slot = mono_alloc.setdefault(top.label, [0.0, 0.0])
                 _slot[0] += gs
                 _slot[1] += ls
-            gp_cf.append(gp_take)
-            lp_cf.append(lp_take)
+            gp_cf.append(gp_take - gp_call if gp_call else gp_take)
+            lp_cf.append(lp_take - lp_call if lp_call else lp_take)
+            gp_dist_total += gp_take
+            lp_dist_total += lp_take
 
         # Annualized IRRs via XIRR over the actual/365 elapsed time at each
         # month-end — the cumulative day count from `period_days`, matching the
@@ -487,8 +520,11 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         gp_irr = xirr(times, gp_cf)
         lp_irr = xirr(times, lp_cf)
 
-        gp_dist = sum(v for v in gp_cf if v > 0)
-        lp_dist = sum(v for v in lp_cf if v > 0)
+        # Distributions are what the waterfall paid out (a call is a
+        # contribution, never a negative distribution). Without calls this is
+        # exactly Σ positive partner flows, as before.
+        gp_dist = gp_dist_total
+        lp_dist = lp_dist_total
         gp_em = gp_dist / gp_contrib_total if gp_contrib_total else 0.0
         lp_em = lp_dist / lp_contrib_total if lp_contrib_total else 0.0
 
@@ -609,14 +645,35 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         # ``catch_up`` is set.
         _carry = next((t.gp_split for t in tiers_sorted if t.gp_split > 0.0), 0.0)
 
-        for cash in payload.cash_flows:
-            remaining = cash
+        gp_dist_total = 0.0
+        lp_dist_total = 0.0
+        for y_idx, cash in enumerate(payload.cash_flows):
             gp_take = 0.0
             lp_take = 0.0
 
             # Accrue preferred return on unreturned capital (annual compounding).
             gp_pref_accrued += gp_unreturned * payload.pref_rate
             lp_pref_accrued += lp_unreturned * payload.pref_rate
+
+            # A gross capital call (the refinance equity contribution) is a
+            # pro-rata contribution in full — added to unreturned capital like
+            # a deficit draw — and the year's operating cash (the flow with the
+            # call added back) runs through the waterfall on its own.
+            call = (
+                payload.capital_calls[y_idx]
+                if y_idx < len(payload.capital_calls)
+                else 0.0
+            )
+            gp_call = lp_call = 0.0
+            if call > 1e-9:
+                gp_call = call * payload.gp_equity_pct
+                lp_call = call * payload.lp_equity_pct
+                gp_unreturned += gp_call
+                lp_unreturned += lp_call
+                gp_additional += gp_call
+                lp_additional += lp_call
+                cash = cash + call
+            remaining = cash
 
             # FON-67 (D3) — a deficit year is an additional equity call, funded
             # pro-rata by ownership split exactly as ``_run_monthly`` funds a
@@ -635,9 +692,9 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 lp_unreturned += lp_c
                 gp_additional += gp_c
                 lp_additional += lp_c
-                gp_cf.append(-gp_c)
-                lp_cf.append(-lp_c)
-                lp_distributions.append(-lp_c)
+                gp_cf.append(-gp_c - gp_call)
+                lp_cf.append(-lp_c - lp_call)
+                lp_distributions.append(-lp_c - lp_call)
                 continue
 
             # Tier 0 — return of capital, pro-rata
@@ -700,7 +757,8 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 # — append working year LP take + slice to test
                 if len(projected_lp_dist) < len(payload.cash_flows):
                     # Pad the in-progress year
-                    in_progress = lp_take + lp_slice
+                    # (net of this year's capital call, which the LP funded)
+                    in_progress = lp_take + lp_slice - lp_call if lp_call else lp_take + lp_slice
                     projected_lp_dist.append(in_progress)
                 trial_irr = _lp_irr_to_date(lp_eq, projected_lp_dist)
 
@@ -731,9 +789,11 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                 _slot[0] += gp_share
                 _slot[1] += lp_share
 
-            gp_cf.append(gp_take)
-            lp_cf.append(lp_take)
-            lp_distributions.append(lp_take)
+            gp_cf.append(gp_take - gp_call if gp_call else gp_take)
+            lp_cf.append(lp_take - lp_call if lp_call else lp_take)
+            lp_distributions.append(lp_take - lp_call if lp_call else lp_take)
+            gp_dist_total += gp_take
+            lp_dist_total += lp_take
 
         # Final IRRs and multiples
         gp_flows = [-gp_eq] + gp_cf
@@ -746,8 +806,10 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
         # path). On an all-positive series this is exactly ``sum(gp_cf)`` —
         # adding 0.0 terms is exact in IEEE arithmetic — so existing deals
         # are byte-identical.
-        gp_distributions_total = sum(v for v in gp_cf if v > 0)
-        lp_distributions_total = sum(v for v in lp_cf if v > 0)
+        # A capital call is a contribution, so the totals are what the
+        # waterfall PAID (identical to Σ positive flows when there is none).
+        gp_distributions_total = gp_dist_total
+        lp_distributions_total = lp_dist_total
         gp_contributed = gp_eq + gp_additional
         lp_contributed = lp_eq + lp_additional
         gp_em = gp_distributions_total / gp_contributed if gp_contributed else 0.0

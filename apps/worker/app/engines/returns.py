@@ -703,6 +703,14 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
     # negative = equity draw, positive = distribution). Feeds the monthly
     # partnership waterfall. Empty when the monthly path didn't run.
     levered_monthly: list[float] = Field(default_factory=list)
+    # The refinance equity contribution the selected sale draws, as its own
+    # GROSS capital call (the streams above carry it netted into its period):
+    # aligned with ``levered_monthly`` / ``cash_flows`` respectively, the call
+    # at the refinance month / year and 0 elsewhere. The partnership books it
+    # as a pro-rata GP / LP contribution, so its contributions equal the
+    # amount charged. Empty when there is no call.
+    equity_calls_monthly: list[float] = Field(default_factory=list)
+    equity_calls: list[float] = Field(default_factory=list)
 
 
 def _project_noi_series(
@@ -1573,9 +1581,21 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         for i, c in enumerate(cases):
             row_provenance.update(_exit_row_provenance(i, c, payload=payload, ctx=ctx))
 
+        equity_calls_monthly: list[float] = []
+        equity_calls: list[float] = []
+        if selected_refi_call > 0 and ctx.refi_month is not None and payload.refi_year:
+            equity_calls_monthly = [0.0] * len(levered_monthly_out)
+            if ctx.refi_month < len(equity_calls_monthly):
+                equity_calls_monthly[ctx.refi_month] = selected_refi_call
+            equity_calls = [0.0] * len(levered_flows)
+            if payload.refi_year < len(equity_calls):
+                equity_calls[payload.refi_year] = selected_refi_call
+
         return ReturnsEngineOutputExt(
             deal_id=payload.deal_id,
             levered_irr=levered_irr,
+            equity_calls_monthly=equity_calls_monthly,
+            equity_calls=equity_calls,
             unlevered_irr=unlevered_irr,
             equity_multiple=equity_multiple,
             peak_equity=peak_equity_out,
