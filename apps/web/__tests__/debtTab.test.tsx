@@ -277,19 +277,19 @@ describe('DebtTab — fees (new BE fields)', () => {
   });
 
   it('states honestly where the exit fee IS and is not consumed', () => {
-    // FON-63 — the debt engine DOES add the exit fee to the final month's
-    // payment on the tranche schedule; what ignores it is Sources & Uses /
-    // Cash Flow / Returns. The old copy claimed the opposite.
+    // The exit fee is paid when the loan is repaid: deducted from the sale
+    // proceeds, or paid at the refinance that retires the loan.
     render(<DebtTab />);
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
-    expect(screen.getByText('Exit Fee')).toBeInTheDocument();
+    expect(screen.getByText('Senior Exit Fee')).toBeInTheDocument();
     expect(screen.getByText('0.50% · $115,000')).toBeInTheDocument();
+    // Exit fees are now deducted when the loan is repaid (sale or refinance).
     expect(
-      screen.getByText(/final month.s payment on the tranche schedule/i),
+      screen.getByText(/deducted from the sale proceeds/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/not carried into Sources & Uses, Cash Flow or Returns/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/not carried into Sources & Uses, Cash Flow or Returns/i),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/not modeled in the schedule/i),
     ).not.toBeInTheDocument();
@@ -776,6 +776,14 @@ describe('DebtTab — floating build-up (index + spread, floor / cap)', () => {
     expect(screen.getByTestId('edit-cap')).toHaveTextContent('None');
   });
 
+  it('pending floating terms: the all-in awaits a spread and says debt service runs at the rate on file', () => {
+    const PENDING = { ...FLOATING, spread: null, all_in_rate: null, terms_pending: true };
+    currentOutputs = makeOutputs({ interest_rate: 0.068, debt_stack: { tranches: [PENDING], total_debt: 23_000_000 } });
+    render(<DebtTab />);
+    expect(screen.getByText('Awaiting spread')).toBeInTheDocument();
+    expect(screen.getByText(/Floating terms pending — debt service runs at the 6\.80% rate on file until a spread is entered/)).toBeInTheDocument();
+  });
+
   it('editing the spread / index / floor writes fractions on the senior tranche keys', async () => {
     currentOutputs = makeOutputs({ interest_rate: 0.073, debt_stack: { tranches: [FLOATING], total_debt: 23_000_000 } });
     render(<DebtTab />);
@@ -815,21 +823,25 @@ describe('DebtTab — PACE tranche (index 1): missing inputs are inputs', () => 
 
   it('a funded PACE with no rate shows Enter rate with the pending consequence and no debt service', async () => {
     currentOutputs = makeOutputs({
-      loan_amount: 28_000_000,
+      loan_amount: 23_000_000,
       debt_stack: {
         tranches: [
           SENIOR_TRANCHE,
           { ...SENIOR_TRANCHE, kind: 'pace', label: 'PACE Loan', loan_amount: 5_000_000, all_in_rate: null,
             annual_debt_service: null, interest_only: true, terms_pending: true, amortization_years: null },
         ],
-        total_debt: 28_000_000, priced_debt: 23_000_000, total_annual_debt_service: 1_667_500,
-        warnings: ['PACE Loan: terms not specified — excluded from debt service.'],
+        total_debt: 23_000_000, priced_debt: 23_000_000, pending_debt: 5_000_000,
+        total_annual_debt_service: 1_667_500,
+        warnings: ['PACE Loan: terms not specified — excluded from debt service and not in leverage until a rate is entered.'],
       },
     });
     render(<DebtTab />);
-    // Debt Overview: Total Debt includes PACE; the row says why DSCR excludes it.
-    expect(screen.getByText('$28,000,000')).toBeInTheDocument();
-    expect(screen.getAllByText(/Terms pending — counts in Total Debt, LTV, LTC and debt yield; excluded from debt service and DSCR until a rate is entered/i).length).toBeGreaterThan(0);
+    // Debt Overview: one leverage rule — Total Debt is the senior only; the
+    // unpriced PACE principal is its own labelled line.
+    expect(screen.getAllByText('$23,000,000').length).toBeGreaterThan(0);
+    expect(screen.getByText('Pending PACE Principal')).toBeInTheDocument();
+    expect(screen.getByText(/not in Total Debt, LTV, LTC or debt yield until a rate is entered/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Terms pending — not in Total Debt, LTV, LTC, debt yield, Sources & Uses, debt service or the sale payoff until a rate is entered/i).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText('Loan Terms & Covenants'));
     expect(screen.getByText('PACE Loan · Tranche 2')).toBeInTheDocument();
@@ -1195,14 +1207,15 @@ describe('DebtTab — loan matures before the sale', () => {
   });
 });
 
-describe('DebtTab — refinance shortfall not modelled', () => {
-  const SENTENCE =
-    'The Year 3 refinance raises $30,000,000 against a $38,566,897 balance; the $8,566,897 shortfall (plus fees) that equity would fund is not modelled.';
+describe('DebtTab — refinance disclosures', () => {
+  const AT_SALE = 'The Year 5 refinance is at or after the Year 5 sale and is not modelled.';
+  const NOTE =
+    'The Year 3 refinance needs $8,566,897 of equity to retire the $38,566,897 balance (new loan $30,000,000, refinance costs $0); charged to equity in Year 3.';
 
   it('renders the engine refi_warning verbatim with the maturity warning', () => {
-    currentOutputs = makeOutputs({ refi_warning: SENTENCE, maturity_warning: 'Matures early.' });
+    currentOutputs = makeOutputs({ refi_warning: AT_SALE, maturity_warning: 'Matures early.' });
     render(<DebtTab />);
-    expect(screen.getByTestId('refi-warning-strip')).toHaveTextContent(SENTENCE);
+    expect(screen.getByTestId('refi-warning-strip')).toHaveTextContent(AT_SALE);
     expect(screen.getByTestId('maturity-warning-strip')).toHaveTextContent('Matures early.');
   });
 
@@ -1210,5 +1223,39 @@ describe('DebtTab — refinance shortfall not modelled', () => {
     currentOutputs = makeOutputs({ refi_warning: null });
     render(<DebtTab />);
     expect(screen.queryByTestId('refi-warning-strip')).toBeNull();
+    expect(screen.queryByTestId('refi-equity-note')).toBeNull();
+  });
+
+  it('states a charged cash-in refinance as a fact, not a warning', () => {
+    currentOutputs = makeOutputs({ refi_warning: null, refi_equity_note: NOTE });
+    render(<DebtTab />);
+    const note = screen.getByTestId('refi-equity-note');
+    expect(note).toHaveTextContent(NOTE);
+    expect(note).toHaveAttribute('role', 'note');
+    expect(screen.queryByTestId('refi-warning-strip')).toBeNull();
+  });
+
+  it('shows the equity contribution, not a cash-out, on the Refinance impact card', () => {
+    currentOutputs = makeOutputs({ refi_cash_out: 0, refi_equity_contribution: 8_566_897 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Refinance'));
+    expect(screen.getByText('Equity Contribution')).toBeInTheDocument();
+    expect(screen.getByText('$8,566,897')).toBeInTheDocument();
+    expect(screen.queryByText('Cash-Out to Equity')).toBeNull();
+  });
+
+  it('fee rows are the senior\'s; a priced PACE adds an all-tranche total on the same rule', () => {
+    currentOutputs = makeOutputs({ total_exit_fee_usd: 165_000, total_origination_fee_usd: 454_900 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Loan Terms & Covenants'));
+    expect(screen.getByText(/All carried tranches: \$165,000/)).toBeInTheDocument();
+  });
+
+  it('lists the retired loan\'s exit fee so the sized refinance foots', () => {
+    currentOutputs = makeOutputs({ refi_exit_fee_usd: 400_000 });
+    render(<DebtTab />);
+    fireEvent.click(screen.getByText('Refinance'));
+    expect(screen.getByText('Exit Fee on Retired Loan')).toBeInTheDocument();
+    expect(screen.getByText('$400,000')).toBeInTheDocument();
   });
 });

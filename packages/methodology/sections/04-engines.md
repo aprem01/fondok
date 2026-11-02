@@ -51,15 +51,23 @@ the tab names the negative years in one warning.
   interest-only period, and maturity. A floating rate prices off the index assumption plus spread,
   clamped to an optional floor and cap; until an index is entered the build-up shows Fondok's flat
   index assumption and says it is not market data.
-- **PACE loan.** Funding an amount adds it to total debt, LTV, LTC and debt yield immediately. Until a
-  rate is entered the tranche is *terms pending*: it stays out of debt service and DSCR rather than
-  running on an invented rate.
+- **PACE loan.** One rule: a loan counts in total debt, LTV, LTC and debt yield exactly when the cash
+  flows carry it. Once a rate is entered the PACE loan is a real loan everywhere: a source of funds at close (equity falls by its
+  principal), its debt service in every year — a refinance retires the senior only — and every sale
+  repays its balance plus its exit fee; it is in total debt, LTV, LTC and debt yield. Until a rate is
+  entered the tranche is *terms pending*: its principal shows on its own line, outside total debt,
+  LTV, LTC and debt yield, and it stays out of Sources & Uses, debt service and the sale payoff
+  rather than running on an invented rate.
 - **Covenants.** Maximum LTV and LTC and minimum DSCR and debt yield are thresholds you enter. There
   is no default package — a covenant without a threshold shows its live reading, an input, and no pass
   or fail verdict.
 - **Senior origination fee.** A platform default of 1.50% of the senior loan {{badge:seed}} until you
   change it. Financing is its only owner: Sources & Uses, total uses, required equity and LTC all move
   with it, and at zero the line disappears.
+- **Refinance and exit fees.** A refinance that raises less than the balance it retires plus its
+  costs is charged to equity at the refinance — a negative cash flow in IRR, counted as additional
+  equity in the multiple. A loan's exit fee is deducted when it is repaid, at the sale or the
+  refinance. Prepayment penalties, yield maintenance and defeasance are not modelled.
 - **Missing inputs are inputs.** Wherever a required assumption is absent, the tab renders the input
   to provide — “Enter rate”, “Enter spread”, “Enter threshold” — with the consequence stated, instead
   of an unexplained dash.
@@ -114,8 +122,10 @@ Senior loan platform defaults, each badged Seed until entered: LTV 65%, interest
 amortisation 30 years, term 5 years, no interest-only period, origination fee 1.50% of the loan.
 A floating rate prices at index + spread, clamped to the optional floor and cap; until an index is
 entered the build-up shows a flat 4.30% index assumption and says it is not market data. A PACE
-tranche with an amount but no rate is "terms pending": it counts in total debt, LTV, LTC and debt
-yield and stays out of debt service and DSCR. A year whose NOI is negative shows DSCR as not
+tranche with an amount but no rate is "terms pending": its principal is shown on its own line and
+stays out of total debt, LTV, LTC, debt yield, Sources & Uses, debt service and the sale payoff; with
+a rate it counts in all of them, funds the deal at close and is repaid at the sale. LTC is total debt
+÷ total uses everywhere (Financing, Overview, exports); capital also publishes the senior-only LTC. A year whose NOI is negative shows DSCR as not
 applicable and reports the uncovered debt service as that year's shortfall.
 
 :::
@@ -241,10 +251,30 @@ capitalised from it.
   begins, and maturity. Fixed prices off the entered coupon; Floating prices off the index assumption
   plus spread, clamped to an optional floor / cap. Switching basis asks for the term the new basis
   needs (a spread or a coupon) in the same save. Until an index is entered the floating build-up shows
-  Fondok's flat SOFR assumption and says so — it is not market data.
-- **PACE loan (tranche 2).** Funding an amount adds it to Total Debt, LTV, LTC and debt yield
-  immediately. Until a rate is entered the tranche is *terms pending*: it stays out of debt service
-  and DSCR rather than running on an invented rate, and the tab says so next to the input.
+  Fondok's flat SOFR assumption and says so — it is not market data. If floating is picked without a
+  spread, the floating terms are pending: the all-in rate shows "Awaiting spread", and the senior is
+  serviced at the rate on file meanwhile — the schedule, the headline DSCR and the capital stack carry
+  the same debt service, and the tab says so.
+- **PACE loan (tranche 2).** One leverage rule: a tranche counts in Total Debt, LTV, LTC and debt
+  yield exactly when the cash flows carry it — the senior always, the PACE loan once it is funded
+  **and** priced. Once a rate is entered the tranche is in every cash flow: its principal is a **source
+  of funds at close** (Sources & Uses shows it; equity = total uses − senior − PACE) and its
+  origination fee a use; its own monthly schedule (interest-only, or an IO stub then amortization)
+  sets its debt service in DSCR, Cash Flow and Returns in every year — a refinance retires the
+  **senior only**, so the PACE debt service continues after it — and every sale, the headline and
+  each exit-year row, repays its outstanding balance plus its exit fee (Balance at Exit includes it;
+  Cash Flow shows a **PACE Loan Proceeds** line at close). No PACE maturity is modelled within the
+  hold. Until a rate is entered the tranche is *terms pending*: its principal is shown on its own
+  **Pending PACE Principal** line, outside Total Debt, LTV, LTC and debt yield, and it stays out of
+  Sources & Uses, debt service, DSCR and the sale payoff rather than running on an invented rate (or
+  as free money); the tab says so next to the input. **LTC** is total debt ÷ total uses on the
+  Financing tab, Overview (labelled "LTC (all debt)") and the exports; Overview shows both **Senior
+  LTV** and **LTV (all debt)** (the Financing tab's LTV). The Financing tab's origination and exit fee
+  rows are the **senior's** (beside its percentage), with the total over every carried tranche noted
+  when a priced PACE adds to it — an unpriced PACE's fees are in neither; the capital engine also
+  publishes the senior-only LTC, and run-compare lists senior and junior debt as separate sources.
+  The exports keep one basis per block: **Senior Debt** (senior amount, LTV, LTC and terms) and
+  **All Debt** (total debt, LTV, LTC, any pending principal, debt service and coverage).
 - **Covenants.** Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no
   default package — a covenant without an entered threshold shows its live Current reading, an “Enter
   threshold” input, and no pass / fail verdict. Entered thresholds are tested against the modeled
@@ -262,11 +292,20 @@ capitalised from it.
   maturity year, the sale, the balance carried — asking you to model a refinance or set a term that
   covers the hold. A refinance that lands **after maturity** retires that carried maturity balance
   (never zero), and the Debt tab warns that the loan matures before the refinance.
-- **Refinance shortfall.** When the refinance raises less than the senior balance it retires (plus
-  its fee), the cash-out is zero and the paydown equity would fund is **not charged** in this
-  release. The Debt tab says so in one warning — the refinance year, the proceeds, the balance and
-  the shortfall — rather than modeling an equity contribution nobody has decided on. A refinance set
-  in or after the sale year never happens, so it is not modelled, and the Debt tab says so.
+- **Refinance that needs equity.** The refinance's net cash flow to equity is its proceeds less the
+  senior balance it retires and the refinance costs (the new loan's fee plus the retired loan's exit
+  fee). When that is positive it is the cash-out; when it is negative — the new loan raises less
+  than the balance plus costs — the difference is **charged to equity** as a contribution at the
+  refinance month (the refinance year-end, or the refinance month when one is set). It is a negative
+  equity cash flow in the levered IRR, the Cash Flow statement (**Refinance Equity Contribution**),
+  the Investment Bridge, every exit-year row after the refinance, the financing sensitivity grid and
+  the partnership waterfall, where the full amount is its own capital call by the GP / LP ownership
+  split (monthly or annual waterfall alike) and that period's operating cash is distributed on its
+  own — so the GP and LP contributions equal the amount charged. The **equity multiple** counts it as additional equity invested:
+  distributions ÷ (equity + the refinance contribution). The Debt tab states the amount, the
+  balance it retires and when it is charged. A sale set before the refinance draws neither a
+  cash-out nor a contribution. A refinance set in or after the sale year never happens, so it is not
+  modelled, and the Debt tab says so.
 - **Senior origination fee.** The senior loan's origination fee is a **Fondok seed of 1.50% of the
   senior loan** — a platform default, not a figure read from a term sheet or an OM, and it carries the
   Seed badge {{badge:seed}} until you change it. It is editable on Financing, and Financing is its
@@ -274,9 +313,15 @@ capitalised from it.
   Loan Origination Fee**, and Overview → Capitalization's **Financing Costs** reads that same number.
   Change it on Financing and Sources & Uses, Total Uses, required equity and LTC all move; set it to
   0% and the line disappears. One assumption, one number, three labels retired.
-- **Exit fee.** The exit fee is added to the final month's payment on the tranche schedule. It is
-  *not* carried into Sources & Uses, Cash Flow or Returns in this release, and the row says so — the
-  same treatment as the PACE “terms pending” row.
+- **Exit fee.** A tranche's exit fee is a percent of its **original principal** (the loan amount, as
+  the Debt tab shows it — not the balance repaid). It is paid when the loan is repaid: a sale deducts
+  the exit fee of every tranche still outstanding (the senior, or after a refinance only the junior
+  tranches) from the net sale proceeds — the headline and every exit-year row alike, shown as
+  **Lender Exit Fees** on the Cash Flow statement, in the Investment Bridge and in the Excel / IC
+  memo exit tables — while the senior loan a refinance retires pays its fee at the refinance, as a
+  refinance cost. The Excel Assumptions sheet and the IC memo state the refinance itself: year, new
+  loan, balance retired, costs and the cash-out or the equity contribution. Prepayment penalties, yield maintenance and defeasance are **not modelled**: the
+  payoff at sale is the loan balance plus any exit fee, without them.
 - **Missing inputs are inputs.** Wherever a required assumption is absent, the Financing tab renders
   the input to provide (“Enter rate”, “Enter spread”, “Enter threshold”) with the consequence stated,
   instead of an unexplained dash.

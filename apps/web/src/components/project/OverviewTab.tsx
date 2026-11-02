@@ -690,8 +690,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const wEquity = cap('equity_amount');
   const wDebtAmount = cap('debt_amount');
   const wLtv = cap('ltv');
+  // LTC on ALL debt the deal is funded with (senior + priced junior) — the
+  // same basis as the Debt tab's LTC.
   const wLtc = cap('ltc');
-  const wLoanAmount = dbt('loan_amount') ?? wDebtAmount;
+  // Any priced junior tranche (PACE) funded at close, its own row.
+  const wJuniorDebt = cap('junior_debt_amount');
+  // LTV on all debt — the debt stack's (the Debt tab's) figure.
+  const wLtvAll = dbt('debt_stack', 'ltv');
+  // The Acquisition Loan row is the SENIOR (capital's source line); the debt
+  // engine's loan_amount is the whole stack, so it is only a fallback.
+  const wLoanAmount = wDebtAmount ?? dbt('loan_amount');
   const wInterestRate = dbt('interest_rate');
   // FON-118 — every returns figure comes through the ONE reader
   // (`lib/engines/returns.ts`): the headline is the selected row of the exit
@@ -730,9 +738,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const totalCapital = wTotalCapital;
   const totalPerKey = has(totalCapital) && has(keys) ? totalCapital / keys : undefined;
   const loan = wLoanAmount;
-  const equity = wEquity ?? (has(totalCapital) && has(loan) ? totalCapital - loan : undefined);
+  const juniorDebt = has(wJuniorDebt) && wJuniorDebt > 0 ? wJuniorDebt : 0;
+  const equity = wEquity ?? (has(totalCapital) && has(loan) ? totalCapital - loan - juniorDebt : undefined);
   const ltv = wLtv ?? (has(loan) && has(purchase) && purchase > 0 ? loan / purchase : undefined);
-  const ltc = wLtc ?? (has(loan) && has(totalCapital) && totalCapital > 0 ? loan / totalCapital : undefined);
+  const ltc = wLtc ?? (has(loan) && has(totalCapital) && totalCapital > 0 ? (loan + juniorDebt) / totalCapital : undefined);
   // FON-63 / FON-59 — Financing Costs IS the senior loan origination fee: one
   // number owned by the Debt tab, charged by the capital engine as a Sources &
   // Uses line. Read the engine field first (the authoritative scalar), then the
@@ -963,8 +972,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
     const capitalizationRows = (): RowDef[] => [
       lnk('loan', isDev ? 'Construction Loan' : 'Acquisition Loan', money(loan), '→ Financing (senior loan)', 'debt'),
-      lnk('ltv', 'LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
-      cal('ltc', 'LTC', pctv(ltc, 1), { formula: 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
+      ...(juniorDebt > 0
+        ? [lnk('juniorLoan', 'PACE / Junior Loan', money(juniorDebt), '→ Financing (PACE loan)', 'debt')]
+        : []),
+      lnk('ltv', 'Senior LTV', pctv(ltv, 1), '→ Financing (capital structure)', 'debt', { reasonKey: 'ltv' }),
+      cal('ltvAll', 'LTV (all debt)', pctv(wLtvAll, 1), { formula: juniorDebt > 0 ? '(Senior Loan + PACE Loan) ÷ Purchase Price' : 'Loan ÷ Purchase Price', inputs: [{ name: 'Total Debt', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Purchase Price', from: 'Calculated', kind: 'calc' }] }),
+      cal('ltc', 'LTC (all debt)', pctv(ltc, 1), { formula: juniorDebt > 0 ? '(Senior Loan + PACE Loan) ÷ Total Uses' : 'Loan ÷ Total Uses', inputs: [{ name: 'Loan', from: TAB_LABEL.debt, kind: 'linked' }, { name: 'Total Uses', from: 'Calculated', kind: 'calc' }] }),
       lnk('bench', 'Benchmark', '—', '→ Financing (loan terms)', 'debt'),
       doc('spread', 'Spread over Benchmark', '—', 'Senior Loan Term Sheet', 'Pricing'),
       cal('allIn', 'All-In Rate', pctv(wInterestRate), { trace: { engine: 'debt', path: 'interest_rate' }, formula: 'Benchmark + Spread' }),

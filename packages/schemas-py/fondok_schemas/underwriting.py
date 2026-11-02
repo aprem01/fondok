@@ -929,10 +929,13 @@ class DebtEngineOutput(BaseModel):
     # it: the model carries the maturity balance to the sale and keeps the
     # same debt service, and this is the one sentence that discloses it.
     maturity_warning: str | None = None
-    # The refinance raises less than the senior balance it retires (+ fee):
-    # the paydown equity would fund is NOT charged by the model; this is the
-    # one sentence that discloses it.
+    # A refinance the model does NOT run: it falls in or after the sale year.
+    # The one sentence that discloses it.
     refi_warning: str | None = None
+    # A refinance whose proceeds fall short of the balance retired + costs:
+    # the shortfall IS charged to equity at the refinance month; this is the
+    # one factual sentence the Debt tab shows for it (not a warning).
+    refi_equity_note: str | None = None
     # FON-25 — per-value provenance sidecar (see provenance.py). Keyed by
     # dotted output path, e.g. "schedule[0].debt_service". Empty by default.
     provenance: dict[str, ValueTrace] = Field(default_factory=dict)
@@ -1067,6 +1070,10 @@ class ExitYearReturn(BaseModel):
     selling_costs: float | None = None
     transfer_tax: float | None = None
     loan_payoff: float | None = None
+    # Lender exit fees paid at this sale: every tranche still outstanding (a
+    # tranche the refinance retired paid its fee at the refinance). Part of
+    # the deduction from ``net_proceeds``.
+    loan_exit_fee: float | None = None
     refi_included: bool = False
     net_proceeds: float | None = None
     levered_irr: float | None = None

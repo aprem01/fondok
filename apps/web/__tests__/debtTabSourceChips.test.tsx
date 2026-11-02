@@ -270,11 +270,11 @@ describe('DebtTab — source chips (FON-63 / R-070)', () => {
 
   it('the origination fee chips as a seed until overridden (the worker tags it SOURCE_SEED)', () => {
     render(<DebtTab />);
-    expect(chipIn(row('Origination Fee'))).toHaveTextContent('Seed · institutional default');
+    expect(chipIn(row('Senior Origination Fee'))).toHaveTextContent('Seed · institutional default');
     cleanup();
     mockDeal.field_overrides = { 'debt_stack.tranches.0.upfront_fee_pct': { value: 1.0, note: 'Lender quote' } };
     render(<DebtTab />);
-    expect(chipIn(row('Origination Fee'))).toHaveTextContent('Your override');
+    expect(chipIn(row('Senior Origination Fee'))).toHaveTextContent('Your override');
   });
 
   it('linked and calculated rows carry no chip — their dot, note and → link already say', () => {

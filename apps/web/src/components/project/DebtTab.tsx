@@ -170,6 +170,8 @@ interface DebtStackTrancheLite {
 interface DebtStackLite {
   tranches?: DebtStackTrancheLite[];
   total_debt?: number;
+  // Funded junior principal whose terms are pending — outside total_debt.
+  pending_debt?: number;
   priced_debt?: number;
   total_annual_debt_service?: number;
   warnings?: string[];
@@ -471,6 +473,10 @@ export default function DebtTab() {
   const wOrigFeeUsd = getEngineField<number>(outputs, 'debt', 'origination_fee_usd');
   const wExitFeePct = getEngineField<number>(outputs, 'debt', 'exit_fee_pct');
   const wExitFeeUsd = getEngineField<number>(outputs, 'debt', 'exit_fee_usd');
+  // Fee dollars over every tranche the cash flows carry (senior + priced
+  // PACE — never an unpriced one); the rows above are the senior's.
+  const wTotalExitFeeUsd = getEngineField<number>(outputs, 'debt', 'total_exit_fee_usd');
+  const wTotalOrigFeeUsd = getEngineField<number>(outputs, 'debt', 'total_origination_fee_usd');
   const wCovenants = getEngineField<DebtCovenantStatus[]>(outputs, 'debt', 'covenants') ?? [];
   const wAnnual = getEngineField<DebtYearLite[]>(outputs, 'debt', 'schedule') ?? [];
   // FON-63 — negative NOI. `present` is false on runs that predate the fields,
@@ -491,9 +497,13 @@ export default function DebtTab() {
   // The loan matures before the sale and no refinance replaces it — the
   // engine's one sentence, rendered verbatim (absent on older runs).
   const wMaturityWarning = getEngineField<string | null>(outputs, 'debt', 'maturity_warning');
-  // The refinance raises less than the balance it retires; the paydown is
-  // not modelled — the engine's one sentence, rendered verbatim.
+  // A refinance the model does not run (set in or after the sale year) —
+  // the engine's one sentence, rendered verbatim.
   const wRefiWarning = getEngineField<string | null>(outputs, 'debt', 'refi_warning');
+  // A refinance that needs equity IS charged — stated as a fact (not a
+  // warning): the engine's one sentence, rendered verbatim.
+  const wRefiEquityNote = getEngineField<string | null>(outputs, 'debt', 'refi_equity_note');
+  const wRefiEquityContribution = getEngineField<number>(outputs, 'debt', 'refi_equity_contribution');
   const debtWarnings: { testId: string; text: string }[] = [
     { testId: 'maturity-warning-strip', text: wMaturityWarning },
     { testId: 'refi-warning-strip', text: wRefiWarning },
@@ -505,6 +515,8 @@ export default function DebtTab() {
   const wRefiPayoff = getEngineField<number>(outputs, 'debt', 'refi_existing_balance_repaid');
   const wRefiRate = getEngineField<number>(outputs, 'debt', 'refi_new_interest_rate');
   const wRefiCosts = getEngineField<number>(outputs, 'debt', 'refi_financing_costs');
+  // The retired senior's exit fee, paid at the refinance (a refinance cost).
+  const wRefiExitFee = getEngineField<number>(outputs, 'debt', 'refi_exit_fee_usd');
   // FON-63 (Sam, 2026-09-14) — the RESOLVED refinance sizing assumptions. The
   // Refinance section renders these beside the editors that change them, so the
   // seed the model silently fell back to is on screen instead of in the engine.
@@ -725,7 +737,7 @@ export default function DebtTab() {
   const paceStatusNote = !paceFunded
     ? 'Not funded — enter an amount to add a PACE tranche to the capital stack'
     : pacePending
-      ? 'Terms pending — counts in Total Debt, LTV, LTC and debt yield; excluded from debt service and DSCR until a rate is entered'
+      ? 'Terms pending — not in Total Debt, LTV, LTC, debt yield, Sources & Uses, debt service or the sale payoff until a rate is entered'
       : has(paceDebtService)
         ? `Priced — ${fmtCurrency(paceDebtService)} / yr of debt service is in DSCR, Cash Flow and Returns`
         : 'Priced — its debt service is in DSCR, Cash Flow and Returns';
@@ -784,14 +796,23 @@ export default function DebtTab() {
     { id: 'totalDebt', label: 'Total Debt', kind: 'calc', bold: true,
       state: tracedState('debt', 'loan_amount') ?? 'calculated',
       value: money(totalDebt ?? loanN),
-      note: paceFunded && pacePending ? 'Senior + PACE (PACE terms pending)' : undefined },
+      note: paceFunded && !pacePending ? 'Senior + PACE' : undefined },
+    // One leverage rule: an unpriced PACE principal is not debt the model
+    // carries, so it sits on its own line, outside Total Debt / LTV / LTC.
+    ...(paceFunded && pacePending
+      ? [{ id: 'pendingDebt', label: 'Pending PACE Principal', kind: 'calc' as const,
+          state: 'awaiting_data' as const,
+          value: money(wStack?.pending_debt ?? paceAmount),
+          note: 'Not in Total Debt, LTV, LTC or debt yield until a rate is entered' }]
+      : []),
     { id: 'ltv', label: 'LTV', kind: 'input',
       state: ltvOverridden ? 'assumption' : (tracedState('debt', 'ltv') ?? 'calculated'),
       value: ltvNode, overridden: ltvOverridden,
       source: srcLtv?.source, sourceField: srcLtv?.field,
       note: 'Total debt ÷ property value — editing resizes the senior loan' },
     { id: 'ltc', label: 'LTC', kind: 'calc',
-      state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1) },
+      state: tracedState('capital', 'ltc') ?? 'calculated', value: pctv(ltcN, 1),
+      note: 'Total debt ÷ total cost / basis' },
     { id: 'equity', label: 'Equity Requirement', kind: 'calc', bold: true, state: 'linked',
       value: money(wEquity), link: { label: '→ CAPEX', tab: 'investment', sub: 'sources-and-uses' } },
   ];
@@ -877,7 +898,11 @@ export default function DebtTab() {
             kind: seniorPending ? 'awaiting' as const : 'calc' as const,
             state: seniorPending ? 'awaiting_data' as const : 'calculated' as const,
             value: seniorPending ? 'Awaiting spread' : pctv(allInRate, 2), bold: !seniorPending,
-            note: 'Benchmark (clamped) + Spread' },
+            // Pending floating terms: the engine still services the senior at
+            // the rate on file (the stack carries that same debt service).
+            note: seniorPending
+              ? `Floating terms pending — debt service runs at the ${has(wRate) ? pctv(wRate, 2) : 'rate'} rate on file until a spread is entered`
+              : 'Benchmark (clamped) + Spread' },
         ]
       : [
           { id: 'rate', label: 'Fixed Interest Rate', kind: 'input' as const, state: 'assumption' as const,
@@ -945,14 +970,17 @@ export default function DebtTab() {
       note: seniorIsFullIo
         ? 'Set an amortization above to model an interest-only stub instead'
         : 'Interest-only stub before principal amortization begins' },
-    { id: 'orig', label: 'Origination Fee', kind: 'input',
+    { id: 'orig', label: 'Senior Origination Fee', kind: 'input',
       state: 'assumption', value: origFeeNode, overridden: feeOverridden,
       // The worker tags this key SOURCE_SEED until overridden (engine_runner
       // SENIOR_ORIGINATION_FEE_KEY) — the note below already says so.
       source: srcOrigFee?.source || (feeOverridden ? undefined : 'seed'),
-      note: feeOverridden
-        ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number'
-        : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.' },
+      note: (feeOverridden
+        ? 'Charged at close — the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs read this number.'
+        : 'Fondok seed of 1.50% of the senior loan — charged at close as the Sources & Uses "Senior Loan Origination Fee" line and Overview Financing Costs. Click to change.')
+        + (has(wTotalOrigFeeUsd) && has(wOrigFeeUsd) && wTotalOrigFeeUsd > wOrigFeeUsd
+          ? ` All carried tranches: ${fmtCurrency(wTotalOrigFeeUsd)}.`
+          : '') },
   ];
 
   // ─── PACE loan terms (index 1) — fixed-rate tranche ──────────────────
@@ -1020,9 +1048,12 @@ export default function DebtTab() {
   const cgOverridden = overridden('debt.completion_guarantee');
   const fullTerms: RowDef[] = [
     ...loanTerms,
-    { id: 'exit', label: 'Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
+    { id: 'exit', label: 'Senior Exit Fee', kind: 'calc', state: has(wExitFeePct) ? 'calculated' : 'awaiting_data',
       value: has(wExitFeePct) ? `${feePct(wExitFeePct)}${has(wExitFeeUsd) ? ` · ${fmtCurrency(wExitFeeUsd)}` : ''}` : '—',
-      note: 'Added to the final month\u2019s payment on the tranche schedule — not carried into Sources & Uses, Cash Flow or Returns in this release' },
+      note: 'Paid when the loan is repaid — deducted from the sale proceeds for every tranche outstanding at the sale, or paid at the refinance for the loan it retires'
+        + (has(wTotalExitFeeUsd) && has(wExitFeeUsd) && wTotalExitFeeUsd > wExitFeeUsd
+          ? `. All carried tranches: ${fmtCurrency(wTotalExitFeeUsd)}`
+          : '') },
     // Completion Guarantee — analyst-entered qualitative status (feeds the
     // Completion Guarantee covenant row in the Covenants card).
     { id: 'completionGuarantee', label: 'Completion Guarantee', kind: 'input',
@@ -1232,8 +1263,8 @@ export default function DebtTab() {
         {/* FON-63 — negative-NOI warning (a warning, not the failure banner). */}
         <NoiWarningStrip outputs={outputs} />
 
-        {/* Loan matures before the sale / refinance shortfall not modelled —
-            the engine's sentences, same warning strip style as the NOI one. */}
+        {/* Loan matures before the sale / refinance not modelled — the
+            engine's sentences, same warning strip style as the NOI one. */}
         {debtWarnings.map((w) => (
           <div
             key={w.testId}
@@ -1245,6 +1276,19 @@ export default function DebtTab() {
             <span>{w.text}</span>
           </div>
         ))}
+
+        {/* A refinance that needs equity is charged to equity — a fact the
+            model runs on, so neutral styling, not a warning. */}
+        {typeof wRefiEquityNote === 'string' && wRefiEquityNote.trim() && (
+          <div
+            role="note"
+            data-testid="refi-equity-note"
+            className="mb-3 rounded-md border px-3 py-2 text-[12px]"
+            style={{ borderColor: palette.border, color: palette.ink, background: '#fff' }}
+          >
+            {wRefiEquityNote.trim()}
+          </div>
+        )}
 
         {/* Manual-inputs banner (canonical) — honest about the current release:
             loan terms are entered manually, not extracted from financing docs. */}
@@ -1514,8 +1558,10 @@ export default function DebtTab() {
               >
                 {paceTerms.map((r) => <DebtRow key={r.id} row={r} />)}
                 <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
-                  Fixed-rate tranche. A funded PACE loan counts in Total Debt, LTV, LTC and debt yield at once;
-                  its debt service enters DSCR, Cash Flow and Returns once a rate is entered.
+                  Fixed-rate tranche. Once a rate is entered a funded PACE loan counts in Total Debt, LTV, LTC and
+                  debt yield, is a source of funds at close (equity falls), its debt service
+                  enters DSCR, Cash Flow and Returns (before and after a refinance, which retires the senior only),
+                  and every sale repays its balance plus its exit fee.
                 </div>
               </SectionCard>
             </div>
@@ -1529,6 +1575,7 @@ export default function DebtTab() {
               refiYear={wRefiYear}
               refiYearOverride={refiYearOverride}
               refiCashOut={wRefiCashOut}
+              refiEquityContribution={wRefiEquityContribution}
               balanceAtExit={wBalanceAtExit}
               leveredIrr={wLeveredIrr}
               refiValue={wRefiValue}
@@ -1537,6 +1584,7 @@ export default function DebtTab() {
               refiPayoff={wRefiPayoff}
               refiRate={wRefiRate}
               refiCosts={wRefiCosts}
+              refiExitFee={wRefiExitFee}
               refiFeePct={wRefiFeePct}
               refiDebtYieldMin={wRefiDyMin}
               refiDscrMin={wRefiDscrMin}
@@ -2054,8 +2102,8 @@ const REFI_KEYS = {
 } as const;
 
 function RefinanceView({
-  active, liveMode, refiYear, refiYearOverride, refiCashOut, balanceAtExit, leveredIrr,
-  refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts,
+  active, liveMode, refiYear, refiYearOverride, refiCashOut, refiEquityContribution, balanceAtExit, leveredIrr,
+  refiValue, refiLtv, refiProceeds, refiPayoff, refiRate, refiCosts, refiExitFee,
   refiFeePct, refiDebtYieldMin, refiDscrMin, refiSizingBasis, refiRateBasis,
   overrides, onSaveOverride, toast,
 }: {
@@ -2064,6 +2112,7 @@ function RefinanceView({
   refiYear?: number;
   refiYearOverride: number;
   refiCashOut?: number;
+  refiEquityContribution?: number;
   balanceAtExit?: number;
   leveredIrr?: number;
   refiValue?: number;
@@ -2072,6 +2121,7 @@ function RefinanceView({
   refiPayoff?: number;
   refiRate?: number;
   refiCosts?: number;
+  refiExitFee?: number;
   refiFeePct?: number;
   refiDebtYieldMin?: number;
   refiDscrMin?: number;
@@ -2252,12 +2302,20 @@ function RefinanceView({
       'The senior balance at the end of the refinance year.'),
     derived('refiCost', 'Financing Costs', has(refiCosts), money(refiCosts),
       'The loan fee above applied to the new proceeds.'),
+    ...(has(refiExitFee) && refiExitFee > 0
+      ? [derived('refiExitFee', 'Exit Fee on Retired Loan', true, money(refiExitFee),
+          'The retired senior loan\u2019s exit fee, paid at the refinance.')]
+      : []),
     derived('refiTiming', 'Refinance Timing', has(vYear), timingValue,
       'Month-precision timing is not editable in this release — the cash-out is placed at the end of the refinance year unless a month was set during reconciliation.'),
   ];
 
   const impact = [
-    { label: 'Cash-Out to Equity', value: money(refiCashOut), color: prov.green, sub: 'Net proceeds returned to equity', avail: has(refiCashOut) },
+    // A refinance short of the balance + costs calls equity instead of
+    // returning it — one card, whichever sign the engine computed.
+    has(refiEquityContribution) && refiEquityContribution > 0
+      ? { label: 'Equity Contribution', value: money(refiEquityContribution), color: prov.black, sub: 'Charged to equity at the refinance', avail: true }
+      : { label: 'Cash-Out to Equity', value: money(refiCashOut), color: prov.green, sub: 'Net proceeds returned to equity', avail: has(refiCashOut) },
     { label: 'Balance at Exit', value: money(balanceAtExit), color: prov.black, sub: 'Loan balance carried to sale', avail: has(balanceAtExit) },
     { label: 'Equity Returned', value: '—', color: prov.muted, sub: 'Awaiting the equity basis', avail: false },
     { label: 'Levered IRR', value: pctv(leveredIrr, 1), color: has(leveredIrr) ? prov.green : prov.muted, sub: 'Returns output', avail: has(leveredIrr) },

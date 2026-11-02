@@ -1218,6 +1218,7 @@ def _render_exit_schedule(ret: dict[str, Any] | None) -> str:
             f"<td class='num'>{_fmt_usd(row.get('terminal_noi_usd'), concept=f'{concept}.terminal_noi')}{basis_html}</td>"
             f"<td class='num'>{_fmt_usd(row.get('gross_sale_price_usd'), concept=f'{concept}.gross_sale_price')}</td>"
             f"<td class='num'>{_fmt_usd(row.get('loan_payoff_usd'), concept=f'{concept}.loan_payoff')}</td>"
+            f"<td class='num'>{_fmt_usd(row.get('loan_exit_fee_usd'), concept=f'{concept}.loan_exit_fee')}</td>"
             f"<td class='num'>{_fmt_usd(row.get('net_sale_proceeds_usd'), concept=f'{concept}.net_proceeds')}</td>"
             f"<td class='num'>{_fmt_pct(row.get('unlevered_irr'), concept=f'{concept}.unlevered_irr')}</td>"
             f"<td class='num'>{_fmt_pct(row.get('levered_irr'), concept=f'{concept}.levered_irr')}</td>"
@@ -1230,6 +1231,45 @@ def _render_exit_schedule(ret: dict[str, Any] | None) -> str:
         "operating cash, draws, debt service and refinance timing are held fixed; "
         "only the sale date and the loan payoff move. The selected row is the "
         "deal's own exit and equals the Returns Summary above.</p>"
+    )
+
+
+def _render_refinance(refi: dict[str, Any]) -> str:
+    """The refinance the model ran — year, new loan, balance retired, costs,
+    and the cash-out OR the equity contribution it needs (the other is not
+    applicable, never a $0). Without a refinance, one line says so."""
+    title = "<h2>Refinance</h2>"
+    if not refi:
+        return f"{title}<p class='cite'>No refinance modelled on the deal's canonical run.</p>"
+    rows = [
+        ("Refinance Year", _fmt_int(refi.get("refi_year"), concept="refi_year")),
+        ("New Loan Proceeds", _fmt_usd(refi.get("refi_proceeds_usd"), concept="refi_proceeds")),
+        (
+            "Balance Retired",
+            _fmt_usd(refi.get("existing_balance_repaid_usd"), concept="refi_existing_balance_repaid"),
+        ),
+        ("Refinance Costs", _fmt_usd(refi.get("refi_costs_usd"), concept="refi_financing_costs")),
+    ]
+    if refi.get("equity_contribution_usd") is not None:
+        rows.append(
+            (
+                "Refinance Equity Contribution",
+                _fmt_usd(refi.get("equity_contribution_usd"), concept="refi_equity_contribution"),
+            )
+        )
+    else:
+        rows.append(
+            ("Refinance Cash-Out", _fmt_usd(refi.get("cash_out_to_equity_usd"), concept="refi_cash_out"))
+        )
+    body = "".join(
+        f"<tr><td>{html.escape(label)}</td><td class='num'>{val}</td></tr>" for label, val in rows
+    )
+    note = refi.get("equity_note")
+    note_html = f"<p class='cite'>{html.escape(str(note))}</p>" if note else ""
+    return (
+        f"{title}<table class='mini'><thead><tr><th>Item</th>"
+        f"<th style='text-align:right'>Value</th></tr></thead><tbody>{body}</tbody></table>"
+        f"{note_html}"
     )
 
 
@@ -1405,6 +1445,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     debt_note_html = (
         f"<p class='cite'>{html.escape(str(benchmark_note))}</p>" if benchmark_note else ""
     )
+    refi_html = _render_refinance(model.get("refi_engine") or {})
 
     # Citations footer
     docs = appendix.get("documents_reviewed", [])
@@ -1511,6 +1552,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 </div>
 
 {exit_schedule_html}
+
+{refi_html}
 
 {capex_html}
 

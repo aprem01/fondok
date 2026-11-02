@@ -387,6 +387,14 @@ describe('Returns — the exit schedule card', () => {
     expect(within(selected).getByText('Forward 12-month NOI (Year 6)')).toBeInTheDocument();
   });
 
+  it('a row that paid a lender exit fee says so under its payoff', () => {
+    const rows = schedule().map((r) => (r.exit_year === 3 ? { ...r, loan_exit_fee: 240_000 } : r));
+    outputsRef.value = fullRun({ exit_schedule: rows });
+    render(<ReturnsTab />);
+    expect(rowByLabel('Year 3').textContent).toContain('exit fee');
+    expect(rowByLabel('Year 2').textContent).not.toContain('exit fee');
+  });
+
   it('rows keep the worker\'s array position for the trace key even when an entry before them is malformed', () => {
     const [y1, y2, y3, y4, y5] = schedule();
     outputsRef.value = fullRun({ exit_schedule: [y1, y2, 'garbage', y3, y4, y5] });

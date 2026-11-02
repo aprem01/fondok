@@ -86,7 +86,7 @@ def test_activated_pace_adds_debt_and_service() -> None:
     )
 
 
-def test_unpriced_pace_stays_pending_but_counts_in_leverage() -> None:
+def test_unpriced_pace_stays_pending_and_out_of_leverage() -> None:
     base = DebtEngine().run(_input())
     p = DebtEngine().run(
         _input(debt_stack_overrides={"tranches": {1: {"principal_usd": 5_000_000}}})
@@ -96,8 +96,10 @@ def test_unpriced_pace_stays_pending_but_counts_in_leverage() -> None:
     assert pace.terms_pending is True
     assert pace.all_in_rate is None
     assert p.annual_debt_service == pytest.approx(base.annual_debt_service)
-    # ...but still counts toward total debt / LTV / debt yield.
-    assert p.debt_stack.total_debt == pytest.approx(28_700_000)
+    # ...and out of total debt / LTV / debt yield (one rule with Sources &
+    # Uses): its principal is published on its own as pending.
+    assert p.debt_stack.total_debt == pytest.approx(23_700_000)
+    assert p.debt_stack.pending_debt == pytest.approx(5_000_000)
 
 
 def test_string_keyed_override_indexes_apply() -> None:
@@ -234,7 +236,7 @@ def test_floating_senior_without_spread_is_pending_and_schedule_falls_back() -> 
     sr = out.debt_stack.tranches[0]
     assert sr.terms_pending is True and sr.all_in_rate is None
     assert out.interest_rate == pytest.approx(0.068)
-    assert any("terms not specified" in w.lower() for w in out.debt_stack.warnings)
+    assert any("floating terms pending" in w.lower() for w in out.debt_stack.warnings)
 
 
 def test_pace_funded_with_rate_and_amortization_terms_echo() -> None:

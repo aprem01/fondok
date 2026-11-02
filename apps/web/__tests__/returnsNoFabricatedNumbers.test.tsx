@@ -316,6 +316,40 @@ describe('Return Bridge — net_proceeds absent leaves the exit leg "—", not $
   });
 });
 
+describe('Return Bridge — a refinance that needs equity is a negative leg', () => {
+  it('nets the equity contribution out of the bridge and names it', () => {
+    const run = fullRun() as unknown as { engines: Record<string, EngineRow> };
+    run.engines.debt.outputs = {
+      ...run.engines.debt.outputs,
+      refi_year: 3,
+      refi_cash_out: 0,
+      refi_equity_contribution: 2_000_000,
+    };
+    // The selected (Year-5) sale comes after the Year-3 refinance.
+    const ret = run.engines.returns.outputs as { exit_schedule: Array<Record<string, unknown>> };
+    ret.exit_schedule = ret.exit_schedule.map((r) => ({ ...r, refi_included: Number(r.exit_year) >= 3 }));
+    outputsRef.value = run as unknown as EngineOutputsResponse;
+    render(<ReturnsTab />);
+    expect(screen.getByText('Refinance equity contribution')).toBeInTheDocument();
+    expect(
+      screen.getByText(/\$9\.90M operating − \$2\.00M refinance equity \+ \$21\.00M exit = \$28\.90M returned on \$19\.00M equity at close, net of the \$2\.00M refinance equity contribution/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('Return Bridge — a sale before the refinance draws none of it', () => {
+  it('leaves the refinance out when the selected sale precedes it', () => {
+    const run = fullRun() as unknown as { engines: Record<string, EngineRow> };
+    run.engines.debt.outputs = { ...run.engines.debt.outputs, refi_year: 3, refi_cash_out: 0, refi_equity_contribution: 2_000_000 };
+    outputsRef.value = run as unknown as EngineOutputsResponse;
+    render(<ReturnsTab />);
+    const refi = Array.from(document.querySelectorAll('[data-awaiting="true"]')).find((el) =>
+      (el.textContent ?? '').startsWith('Refinance proceeds'),
+    );
+    expect(refi!.getAttribute('title')).toBe('The selected sale comes before the year-3 refinance');
+  });
+});
+
 describe('Live Assumptions sandbox — no client-side slider defaults', () => {
   it('complete assumptions: five sliders, each on the engine-recorded base', () => {
     render(<ReturnsTab />);

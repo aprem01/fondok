@@ -94,8 +94,11 @@ class MonthlyCashFlowInput:
     # instead of ``equity_at_close`` + the even deferred-capital spread. The
     # total equity is its sum, so the multiple stays timing-invariant.
     equity_draws: list[float] = field(default_factory=list)
-    # Mid-hold refinance. ``refi_net_cash_out`` = proceeds − senior payoff − fee,
-    # a levered-only inflow at ``refi_month``.
+    # Mid-hold refinance. ``refi_net_cash_out`` = proceeds − senior payoff −
+    # refinance costs, a levered-only flow at ``refi_month``: positive is a
+    # cash-out to equity, NEGATIVE is the equity the refinance needs (a
+    # contribution). The multiple counts a contribution as additional equity
+    # invested (denominator), not as a reduced distribution.
     refi_month: int | None = None
     refi_net_cash_out: float = 0.0
     # Reversion at exit (final month): net of selling costs, transfer tax and the
@@ -170,6 +173,14 @@ def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
     # net of any interim distributions) before capital starts coming back.
     cum_equity, peak_equity = eq0, eq0
     distributions = 0.0
+    # A refinance that needs equity, drawn when the refi month precedes the
+    # sale. It is equity IN for the multiple; the month's operating cash is
+    # still that month's distribution.
+    refi_call = (
+        max(0.0, -inp.refi_net_cash_out)
+        if inp.refi_month is not None and 1 <= inp.refi_month <= exit_month
+        else 0.0
+    )
 
     for m in range(1, exit_month + 1):
         t = m / 12.0
@@ -200,13 +211,16 @@ def build_monthly_cashflow(inp: MonthlyCashFlowInput) -> MonthlyCashFlowResult:
         # equity in); positive CF returns capital.
         cum_equity += -lev_cf if lev_cf < 0 else 0.0
         peak_equity = max(peak_equity, cum_equity)
-        if lev_cf > 0:
-            distributions += lev_cf
+        dist_cf = lev_cf + (refi_call if refi else 0.0)
+        if dist_cf > 0:
+            distributions += dist_cf
 
     # Equity multiple = total distributions ÷ total equity invested. Under an
     # explicit draw schedule the invested base is the sum of the draws; otherwise
     # it's the close equity plus any evenly-spread deferred capital.
-    total_equity_in = em_equity_base if use_draws else (inp.equity_at_close + inp.deferred_capital)
+    total_equity_in = (
+        em_equity_base if use_draws else (inp.equity_at_close + inp.deferred_capital)
+    ) + refi_call
     equity_multiple = (distributions / total_equity_in) if total_equity_in > 0 else 0.0
 
     return MonthlyCashFlowResult(

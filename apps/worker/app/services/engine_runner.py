@@ -105,7 +105,8 @@ from ..engines import (
     SensitivitySpec,
 )
 from ..engines.cash_flow import CashFlowStatementEngine, CashFlowStatementInput
-from ..engines.debt import returns_debt_inputs
+from ..engines.capital import JuniorDebtFunding
+from ..engines.debt import funded_junior_tranches, returns_debt_inputs
 from ..engines.partnership import (
     NO_PARTNERSHIP_TERMS_REASON,
     promote_tier_label,
@@ -7192,6 +7193,16 @@ def _build_input_for(
             # when the fee is changed where it is owned.
             loan_costs_pct=_resolved_senior_origination_fee_pct(base) / 100.0,
             senior_loan_amount=senior_loan_amount,
+            # Funded, priced junior tranches (the Debt tab's PACE loan) are
+            # sources at close — the same resolution the debt engine runs.
+            junior_debt=[
+                JuniorDebtFunding(
+                    label=t.label or t.kind,
+                    amount=t.loan_amount,
+                    origination_fee_pct=t.origination_fee_pct,
+                )
+                for t in funded_junior_tranches(base.get("debt_stack_overrides"))
+            ],
             ltv=base["ltv"],
             debt_basis="purchase",
             renovation_contingency_pct=renovation_contingency_pct,
@@ -7373,7 +7384,9 @@ def _build_input_for(
             noi_from_expense_engine=noi_from_expense_engine,
             exit_noi_basis=exit_noi_basis,
             stabilized_year=stabilized_year,
-            loan_amount=capital_out.debt_amount,
+            # Every loan funded at close — the senior plus any junior tranche.
+            loan_amount=capital_out.debt_amount
+            + float(getattr(capital_out, "junior_debt_amount", 0.0) or 0.0),
             **debt_returns_fields,
             refi_time_years=refi_time_years,
             # FON-67 — reconciliation overrides: pin the exit-year terminal NOI
@@ -7571,6 +7584,13 @@ def _build_input_for(
             catch_up=bool(base.get("partnership_catch_up") or False),
             period=period,
             cash_flows_monthly=monthly_flows,
+            # The refinance equity contribution as its own gross capital call
+            # (the streams carry it netted into its period) — so GP / LP
+            # contributions equal the amount charged, in either period mode.
+            capital_calls=list(getattr(returns_out, "equity_calls", None) or [])[1:],
+            capital_calls_monthly=list(
+                getattr(returns_out, "equity_calls_monthly", None) or []
+            ),
             close_date=(
                 str(base["acquisition_close_date"])
                 if base.get("acquisition_close_date") not in (None, "")

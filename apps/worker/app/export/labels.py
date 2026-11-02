@@ -80,6 +80,7 @@ EXIT_SCHEDULE_COLUMNS: tuple[str, ...] = (
     "Exit NOI",
     "Gross sale",
     "Loan payoff",
+    "Exit fees",
     "Net proceeds",
     "Unlevered IRR",
     "Levered IRR",

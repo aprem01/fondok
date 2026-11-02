@@ -462,8 +462,8 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     metrics = [
         ("Total Capital", inv.get("total_capital_usd"), USD_FMT, "total_capital",
          "no total capital on the deal's capital engine output"),
-        ("Loan Amount", debt.get("loan_amount_usd"), USD_FMT, "loan_amount",
-         "no loan amount on the deal's debt engine output"),
+        ("Senior Loan Amount", debt.get("loan_amount_usd"), USD_FMT, "loan_amount",
+         "no senior loan amount on the deal's debt engine output"),
         ("Loan Rate", debt.get("interest_rate_pct"), PCT_FMT, "interest_rate",
          "no interest rate on the deal's debt engine output"),
         ("Year 1 DSCR", debt.get("year1_dscr"), MULT_FMT, "dscr",
@@ -557,10 +557,29 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Interest Rate", debt, "interest_rate_pct", PCT_FMT, "", "interest_rate", "debt engine"),
                 item("Amortization (yrs)", debt, "amortization_years", INT_FMT, "", "amortization_years", "debt engine"),
                 item("Term (yrs)", debt, "term_years", INT_FMT, "", "term_years", "debt engine"),
+                item("IO Period (months)", debt, "interest_only_period_months", INT_FMT, "", "interest_only_months", "debt engine"),
+            ],
+        ),
+        (
+            # One basis per block: every loan the deal is funded with (the
+            # senior + any priced junior tranche, e.g. PACE). Debt service and
+            # the coverage ratios are stack-wide, so they live here.
+            "All Debt (senior + priced junior tranches)",
+            debt,
+            "no debt engine output on the deal's canonical run",
+            [
+                item("Total Debt", debt, "total_debt_usd", USD_FMT, "", "total_debt", "debt engine"),
+                item("LTV (value)", debt, "total_ltv", PCT_FMT, "", "ltv", "debt engine"),
+                item("LTC", debt, "total_ltc", PCT_FMT, "", "ltc", "debt engine"),
+                (
+                    "Pending Junior Principal", debt.get("pending_debt_usd"), USD_FMT,
+                    "Not in leverage or the cash flows until a rate is entered",
+                    "pending_debt",
+                    "none — every funded tranche is priced",
+                ),
                 item("Annual Debt Service", debt, "annual_debt_service_usd", USD_FMT, "", "annual_debt_service", "debt engine"),
                 item("Year 1 DSCR", debt, "year1_dscr", MULT_FMT, "", "dscr", "debt engine"),
                 item("Year 1 Debt Yield", debt, "year1_debt_yield", PCT_FMT, "", "debt_yield", "debt engine"),
-                item("IO Period (months)", debt, "interest_only_period_months", INT_FMT, "", "interest_only_months", "debt engine"),
             ],
         ),
         (
@@ -571,10 +590,31 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Refi Year", refi, "refi_year", INT_FMT, "", "refi_year", "debt engine"),
                 item("Refi LTV", refi, "refi_ltv", PCT_FMT, "", "refi_ltv", "debt engine"),
                 item("Refi Rate", refi, "refi_rate_pct", PCT_FMT, "", "refi_rate", "debt engine"),
-                item("Refi Term (yrs)", refi, "refi_term_years", INT_FMT, "", "refi_term_years", "debt engine"),
-                item("Refi Amort (yrs)", refi, "refi_amortization_years", INT_FMT, "", "refi_amortization_years", "debt engine"),
+                (
+                    "Refi Term (yrs)", refi.get("refi_term_years"), INT_FMT, "", "refi_term_years",
+                    "the refinance is modelled interest-only to the sale; no term is modelled",
+                ),
+                (
+                    "Refi Amort (yrs)", refi.get("refi_amortization_years"), INT_FMT, "",
+                    "refi_amortization_years",
+                    "the refinance is modelled interest-only; no amortization is modelled",
+                ),
                 item("Refi Proceeds", refi, "refi_proceeds_usd", USD_FMT, "", "refi_proceeds", "debt engine"),
-                item("Cash Out", refi, "cash_out_to_equity_usd", USD_FMT, "", "refi_cash_out", "debt engine"),
+                item("Balance Retired", refi, "existing_balance_repaid_usd", USD_FMT, "Senior balance repaid at the refinance", "refi_existing_balance_repaid", "debt engine"),
+                item("Refinance Costs", refi, "refi_costs_usd", USD_FMT, "Loan fee + retired loan's exit fee", "refi_financing_costs", "debt engine"),
+                (
+                    "Cash Out", refi.get("cash_out_to_equity_usd"), USD_FMT, "", "refi_cash_out",
+                    "not applicable — the refinance needs equity (see Equity Contribution)"
+                    if refi.get("equity_contribution_usd") is not None
+                    else "no cash out on the deal's debt engine output",
+                ),
+                (
+                    "Equity Contribution", refi.get("equity_contribution_usd"), USD_FMT,
+                    "Charged to equity at the refinance", "refi_equity_contribution",
+                    "not applicable — the refinance returns cash (see Cash Out)"
+                    if refi.get("cash_out_to_equity_usd") is not None
+                    else "no equity contribution on the deal's debt engine output",
+                ),
             ],
         ),
         (
@@ -922,10 +962,11 @@ def _build_returns(wb: Workbook, model: dict[str, Any]) -> None:
                 (2, "terminal_noi_usd", USD_FMT),
                 (3, "gross_sale_price_usd", USD_FMT),
                 (4, "loan_payoff_usd", USD_FMT),
-                (5, "net_sale_proceeds_usd", USD_FMT),
-                (6, "unlevered_irr", PCT_FMT),
-                (7, "levered_irr", PCT_FMT),
-                (8, "equity_multiple", MULT_FMT),
+                (5, "loan_exit_fee_usd", USD_FMT),
+                (6, "net_sale_proceeds_usd", USD_FMT),
+                (7, "unlevered_irr", PCT_FMT),
+                (8, "levered_irr", PCT_FMT),
+                (9, "equity_multiple", MULT_FMT),
             ):
                 _write_value(
                     ws, row, col, _as_float(r.get(key)), fmt,

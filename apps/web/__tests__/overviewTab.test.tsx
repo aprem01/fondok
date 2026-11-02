@@ -1822,3 +1822,32 @@ describe('OverviewTab — Sam 2026-10-15 positioning source chip', () => {
     expect(chip.getAttribute('title')).toContain('before Fondok recorded where positioning came from');
   });
 });
+
+describe('OverviewTab — Capitalization states each leverage basis (R2-I-1)', () => {
+  it('the loan row is the senior; LTC is on all debt and says so; the PACE loan is its own row', () => {
+    const cap = (OUTPUTS as unknown as { engines: { capital: { outputs: Record<string, unknown> } } })
+      .engines.capital.outputs;
+    outputsRef.value = withEngines({
+      capital: {
+        ...cap, debt_amount: 26_000_000, junior_debt_amount: 5_000_000,
+        equity_amount: 12_000_000, ltc: 31_000_000 / 43_000_000, senior_ltc: 26_000_000 / 43_000_000,
+      },
+      // The debt engine's loan_amount is the whole stack — never the senior row.
+      debt: { loan_amount: 31_000_000, interest_rate: 0.0725, debt_stack: { ltv: 31_000_000 / 34_000_000 } },
+    });
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Acquisition Loan')).toBe('$26,000,000');
+    expect(rowValue('PACE / Junior Loan')).toBe('$5,000,000');
+    expect(rowValue('LTC (all debt)')).toBe('72.1%');
+    // Each LTV names its basis: the senior alone, and all debt (= Debt tab).
+    expect(rowValue('Senior LTV')).toBe('76.5%');
+    expect(rowValue('LTV (all debt)')).toBe('91.2%');
+    expect(screen.queryByText('LTV')).toBeNull();
+  });
+
+  it('a senior-only deal shows no junior row', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(screen.queryByText('PACE / Junior Loan')).toBeNull();
+    expect(screen.getAllByText('LTC (all debt)').length).toBeGreaterThan(0);
+  });
+});

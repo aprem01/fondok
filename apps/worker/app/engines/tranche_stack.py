@@ -139,8 +139,12 @@ class DebtStackResult(BaseModel):
 
     deal_id: UUID | None = None
     tranches: list[TrancheResult] = Field(default_factory=list)
+    # Leverage basis: every tranche the cash flows carry — the senior always,
+    # a junior once it has a rate. ``pending_debt`` is junior principal whose
+    # terms are pending: published on its own, never inside the totals.
     total_debt: float = 0.0
     priced_debt: float = 0.0  # debt with a computable rate
+    pending_debt: float = 0.0
     total_annual_debt_service: float = 0.0
     weighted_avg_rate: float | None = None
     year_one_dscr: float | None = None
@@ -202,13 +206,16 @@ def compute_debt_stack(
 ) -> DebtStackResult:
     """Roll a list of tranches into consolidated leverage + coverage metrics.
 
-    Pending-terms tranches count toward total debt (and therefore LTV / debt
-    yield / LTC) but are left out of debt service and DSCR — with a warning —
-    rather than fabricating a rate.
+    One rule: a tranche counts in leverage (total debt, LTV, debt yield, LTC)
+    exactly when the cash flows carry it — the senior always (its schedule
+    runs on the rate on file), a junior once it is priced. A junior whose
+    terms are pending is out of debt service, DSCR AND leverage; its principal
+    is published as ``pending_debt`` with a warning, never a fabricated rate.
     """
     results: list[TrancheResult] = []
     warnings: list[str] = []
     total_debt = 0.0
+    pending_debt = 0.0
     priced_debt = 0.0
     total_ds = 0.0
     rate_weight = 0.0  # Σ (rate × amount) over priced tranches, for the blended rate.
@@ -216,9 +223,17 @@ def compute_debt_stack(
     for t in tranches:
         rate = t.effective_rate(default_index)
         label = t.label or t.kind.replace("_", " ").title()
-        total_debt += t.loan_amount
+        if rate is None and t.kind != "senior":
+            pending_debt += t.loan_amount
+        else:
+            total_debt += t.loan_amount
         if rate is None:
-            warnings.append(f"{label}: terms not specified — excluded from debt service.")
+            warnings.append(
+                f"{label}: floating terms pending — no rate can be priced from them."
+                if t.kind == "senior"
+                else f"{label}: terms not specified — excluded from debt service and "
+                "not in leverage until a rate is entered."
+            )
             results.append(TrancheResult(
                 kind=t.kind, label=label, loan_amount=t.loan_amount, all_in_rate=None,
                 rate_type=t.rate_type, annual_debt_service=None,
@@ -258,6 +273,7 @@ def compute_debt_stack(
         tranches=results,
         total_debt=total_debt,
         priced_debt=priced_debt,
+        pending_debt=pending_debt,
         total_annual_debt_service=total_ds,
         weighted_avg_rate=weighted_avg_rate,
         year_one_dscr=dscr,

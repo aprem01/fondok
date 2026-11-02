@@ -79,6 +79,10 @@ def kimpton_model() -> dict[str, Any]:
             "ltv_cost": 0.547,
             "ltv_value": 0.65,
             "ltc": 0.547,
+            # Senior-only deal: the all-debt basis equals the senior's.
+            "total_debt_usd": 23_683_922,
+            "total_ltv": 0.65,
+            "total_ltc": 0.547,
             "interest_rate_pct": 0.0680,
             "amortization_years": 30,
             "term_years": 5,
@@ -97,6 +101,9 @@ def kimpton_model() -> dict[str, Any]:
             "refi_term_years": 5,
             "refi_amortization_years": 30,
             "refi_proceeds_usd": 32_000_000,
+            # proceeds − balance retired − costs = cash-out (foots).
+            "existing_balance_repaid_usd": 22_180_000,
+            "refi_costs_usd": 320_000,
             "cash_out_to_equity_usd": 9_500_000,
         },
         "cash_flow_engine": {
@@ -137,7 +144,8 @@ def kimpton_model() -> dict[str, Any]:
                     "exit_noi_period_label": "Forward 12-month NOI (Year 2, projected)",
                     "terminal_noi_usd": 4_091_000, "gross_sale_price_usd": 58_442_857,
                     "selling_costs_usd": 1_168_857, "transfer_tax_usd": 0.0,
-                    "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 33_590_078,
+                    "loan_payoff_usd": 23_683_922, "loan_exit_fee_usd": 0.0,
+                    "net_sale_proceeds_usd": 33_590_078,
                     "unlevered_irr": 0.3665, "levered_irr": 0.664, "equity_multiple": 1.22,
                 },
                 {
@@ -147,7 +155,8 @@ def kimpton_model() -> dict[str, Any]:
                     "exit_noi_period_label": "Forward 12-month NOI (Year 3, projected)",
                     "terminal_noi_usd": 4_348_000, "gross_sale_price_usd": 62_114_286,
                     "selling_costs_usd": 1_242_286, "transfer_tax_usd": 0.0,
-                    "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 37_188_078,
+                    "loan_payoff_usd": 23_683_922, "loan_exit_fee_usd": 0.0,
+                    "net_sale_proceeds_usd": 37_188_078,
                     "unlevered_irr": 0.2402, "levered_irr": 0.3836, "equity_multiple": 1.43,
                 },
                 {
@@ -157,7 +166,8 @@ def kimpton_model() -> dict[str, Any]:
                     "exit_noi_period_label": "Forward 12-month NOI (Year 4, projected)",
                     "terminal_noi_usd": 4_622_000, "gross_sale_price_usd": 66_028_571,
                     "selling_costs_usd": 1_320_571, "transfer_tax_usd": 0.0,
-                    "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 41_024_078,
+                    "loan_payoff_usd": 23_683_922, "loan_exit_fee_usd": 0.0,
+                    "net_sale_proceeds_usd": 41_024_078,
                     "unlevered_irr": 0.2013, "levered_irr": 0.3018, "equity_multiple": 1.65,
                 },
                 {
@@ -167,7 +177,8 @@ def kimpton_model() -> dict[str, Any]:
                     "exit_noi_period_label": "Forward 12-month NOI (Year 5, projected)",
                     "terminal_noi_usd": 4_915_000, "gross_sale_price_usd": 70_214_286,
                     "selling_costs_usd": 1_404_286, "transfer_tax_usd": 0.0,
-                    "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 45_126_078,
+                    "loan_payoff_usd": 23_683_922, "loan_exit_fee_usd": 0.0,
+                    "net_sale_proceeds_usd": 45_126_078,
                     "unlevered_irr": 0.1824, "levered_irr": 0.2624, "equity_multiple": 1.9,
                 },
                 {
@@ -177,7 +188,8 @@ def kimpton_model() -> dict[str, Any]:
                     "exit_noi_period_label": "Forward 12-month NOI (Year 6)",
                     "terminal_noi_usd": 5_120_000, "gross_sale_price_usd": 73_142_000,
                     "selling_costs_usd": 1_462_840, "transfer_tax_usd": 0.0,
-                    "loan_payoff_usd": 23_683_922, "net_sale_proceeds_usd": 47_995_238,
+                    "loan_payoff_usd": 23_683_922, "loan_exit_fee_usd": 0.0,
+                    "net_sale_proceeds_usd": 47_995_238,
                     "unlevered_irr": 0.1684, "levered_irr": 0.2348, "equity_multiple": 2.12,
                 },
             ],

@@ -1204,6 +1204,15 @@ function ReturnBridgeCard({
   const noiByYear = getEngineField<number[]>(outputs, 'returns', 'noi_by_year');
   const refiCashOut = getEngineField<number>(outputs, 'debt', 'refi_cash_out');
   const refiYear = getEngineField<number>(outputs, 'debt', 'refi_year');
+  // A refinance short of the balance retired + costs calls equity instead of
+  // returning it (the returns stream carries it as a negative flow).
+  const refiCall = getEngineField<number>(outputs, 'debt', 'refi_equity_contribution');
+  // A selected sale before the refinance draws neither (Returns leaves it out).
+  const exitSchedule = getEngineField<Array<{ is_selected?: boolean; refi_included?: boolean }>>(
+    outputs, 'returns', 'exit_schedule',
+  );
+  const selectedExit = Array.isArray(exitSchedule) ? exitSchedule.find((r) => r?.is_selected) : undefined;
+  const refiDrawn = selectedExit == null || selectedExit.refi_included !== false;
   // The composed, reconciled levered statement — its Interest Expense +
   // Principal Amortization (+ any Refinance/Junior debt-service delta) rows are
   // the debt-service figure this bridge displays.
@@ -1243,7 +1252,15 @@ function ReturnBridgeCard({
   // come straight off the series.
   const netExit: number | null = typeof netProceeds === 'number' ? netProceeds : null;
   const NET_EXIT_MISSING = awaitingRun('returns.net_proceeds');
-  const refi = refiYear != null && refiCashOut != null && refiCashOut > 0 ? refiCashOut : 0;
+  // Signed: + cash-out, − the equity contribution.
+  const refi =
+    refiYear == null || !refiDrawn
+      ? 0
+      : refiCashOut != null && refiCashOut > 0
+        ? refiCashOut
+        : refiCall != null && refiCall > 0
+          ? -refiCall
+          : 0;
   // Net operating cash flow to equity (after debt, before refi/exit) — the leg
   // that operating + debt service must net to.
   const operatingNet: number | null = netExit != null ? totalToEquity - netExit - refi : null;
@@ -1306,14 +1323,16 @@ function ReturnBridgeCard({
             : 'Awaiting model run — neither the cash_flow levered statement nor returns.noi_by_year is on this run',
     },
     {
-      label: 'Refinance proceeds',
+      label: refi < 0 ? 'Refinance equity contribution' : 'Refinance proceeds',
       value: refi,
       awaiting:
-        refi > 0
+        refi !== 0
           ? undefined
           : refiYear == null
             ? 'No refinance modelled on this deal (debt.refi_year is not set)'
-            : `The year-${refiYear} refinance returns no cash out to equity`,
+            : !refiDrawn
+              ? `The selected sale comes before the year-${refiYear} refinance`
+              : `The year-${refiYear} refinance returns no cash out to equity`,
     },
     { label: 'Net exit proceeds', value: netExit, awaiting: netExit == null ? NET_EXIT_MISSING : undefined },
     { label: 'Total cash flow to equity', value: totalToEquity, bold: true },
@@ -1399,8 +1418,12 @@ function ReturnBridgeCard({
         {operatingNet != null && netExit != null ? (
           <>
             Deal-level returns · before GP/LP allocation. Reconciles to the Cash Flow series:{' '}
-            {mm(operatingNet)} operating {refi > 0 ? `+ ${mm(refi)} refinance ` : ''}+ {mm(netExit)} exit ={' '}
-            {mm(totalToEquity)} returned on {mm(equity)} invested.
+            {mm(operatingNet)} operating{' '}
+            {refi > 0 ? `+ ${mm(refi)} refinance ` : refi < 0 ? `\u2212 ${mm(-refi)} refinance equity ` : ''}+{' '}
+            {mm(netExit)} exit ={' '}
+            {refi < 0
+              ? `${mm(totalToEquity)} returned on ${mm(equity)} equity at close, net of the ${mm(-refi)} refinance equity contribution.`
+              : `${mm(totalToEquity)} returned on ${mm(equity)} invested.`}
           </>
         ) : (
           <span title={NET_EXIT_MISSING}>

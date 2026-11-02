@@ -334,10 +334,18 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
     out: dict[str, Any] = {}
     stack = debt.get("debt_stack") if isinstance(debt.get("debt_stack"), dict) else {}
 
+    # One basis per block. The SENIOR keys (``loan_amount_usd`` / ``ltv_value``
+    # / ``ltc``) describe the senior loan alone; the ALL-DEBT keys
+    # (``total_debt_usd`` / ``total_ltv`` / ``total_ltc``) every loan the deal
+    # is funded with (senior + priced junior tranches). Without a junior the
+    # two are the same numbers. An unpriced junior principal is
+    # ``pending_debt_usd`` — never inside either.
     loan = _num(debt.get("loan_amount"))
     if loan is None:
         loan = _num(stack.get("total_debt"))
-    _set(out, "loan_amount_usd", loan)
+    junior = _num(capital.get("junior_debt_amount")) or 0.0
+    senior = _num(capital.get("debt_amount")) if junior > 0 else loan
+    _set(out, "loan_amount_usd", senior)
 
     ltv_value = _num(stack.get("ltv"))
     if ltv_value is None:
@@ -345,12 +353,37 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
             if isinstance(cov, dict) and cov.get("name") == "ltv":
                 ltv_value = _num(cov.get("current"))
                 break
+    total_ltv = ltv_value
+    if junior > 0:
+        price = _num(capital.get("purchase_price"))
+        if price is None:
+            price = next(
+                (
+                    _num(u.get("amount"))
+                    for u in capital.get("uses") or []
+                    if isinstance(u, dict) and u.get("label") == "Purchase Price"
+                ),
+                None,
+            )
+        ltv_value = senior / price if senior is not None and price else None
     _set(out, "ltv_value", ltv_value)
 
-    ltc = _num(capital.get("ltc"))
+    ltc = _num(capital.get("senior_ltc"))
+    if ltc is None:
+        ltc = _num(capital.get("ltc"))
     if ltc is None:
         ltc = _num(stack.get("ltc"))
     _set(out, "ltc", ltc)
+
+    total_ltc = _num(capital.get("ltc"))
+    if total_ltc is None:
+        total_ltc = _num(stack.get("ltc"))
+    _set(out, "total_debt_usd", loan)
+    _set(out, "total_ltv", total_ltv)
+    _set(out, "total_ltc", total_ltc)
+    pending = _num(stack.get("pending_debt")) or 0.0
+    if pending > 0:
+        out["pending_debt_usd"] = pending
 
     _set(out, "interest_rate_pct", _num(debt.get("interest_rate")))
     _set(out, "amortization_years", _num(debt.get("amortization_years")))
@@ -384,6 +417,34 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
     note = _benchmark_default_note(stack)
     if note:
         out["benchmark_note"] = note
+    return out
+
+
+def _build_refi(debt: dict[str, Any]) -> dict[str, Any]:
+    """``refi_engine`` block — the refinance the debt engine ran, or ``{}``
+    when none is modelled (the exports then say so). Only one of
+    ``cash_out_to_equity_usd`` / ``equity_contribution_usd`` is present: the
+    other is not applicable, never a $0."""
+    if _int(debt.get("refi_year")) is None:
+        return {}
+    out: dict[str, Any] = {}
+    _set(out, "refi_year", _int(debt.get("refi_year")))
+    _set(out, "refi_ltv", _num(debt.get("refi_ltv")))
+    _set(out, "refi_rate_pct", _num(debt.get("refi_new_interest_rate")))
+    _set(out, "refi_proceeds_usd", _num(debt.get("refi_new_loan_proceeds")))
+    _set(out, "existing_balance_repaid_usd", _num(debt.get("refi_existing_balance_repaid")))
+    fee = _num(debt.get("refi_financing_costs"))
+    exit_fee = _num(debt.get("refi_exit_fee_usd"))
+    if fee is not None:
+        _set(out, "refi_costs_usd", fee + (exit_fee or 0.0))
+    call = _num(debt.get("refi_equity_contribution")) or 0.0
+    if call > 0:
+        out["equity_contribution_usd"] = call
+    else:
+        _set(out, "cash_out_to_equity_usd", _num(debt.get("refi_cash_out")))
+    note = debt.get("refi_equity_note")
+    if isinstance(note, str) and note.strip():
+        out["equity_note"] = note.strip()
     return out
 
 
@@ -446,6 +507,8 @@ def _build_returns(returns: dict[str, Any]) -> dict[str, Any]:
         _set(r, "selling_costs_usd", _num(row.get("selling_costs")))
         _set(r, "transfer_tax_usd", _num(row.get("transfer_tax")))
         _set(r, "loan_payoff_usd", _num(row.get("loan_payoff")))
+        # Lender exit fees this sale paid (already inside net sale proceeds).
+        _set(r, "loan_exit_fee_usd", _num(row.get("loan_exit_fee")))
         _set(r, "net_sale_proceeds_usd", _num(row.get("net_proceeds")))
         _set(r, "levered_irr", _num(row.get("levered_irr")))
         _set(r, "unlevered_irr", _num(row.get("unlevered_irr")))
@@ -1729,6 +1792,9 @@ async def _assemble_live_payload(
     debt_block = _build_debt(debt, capital)
     if debt_block:
         model["debt_engine"] = debt_block
+    refi_block = _build_refi(debt)
+    if refi_block:
+        model["refi_engine"] = refi_block
     returns_block = _build_returns(returns)
     if returns_block:
         model["returns_engine"] = returns_block
