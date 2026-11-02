@@ -108,9 +108,11 @@ def test_t12_actuals_override_y1_undistributed_lines() -> None:
 
 
 def test_t12_actuals_override_fixed_charges_and_fees() -> None:
-    """Insurance, property taxes, mgmt fee, FF&E reserve all take T-12
-    values when supplied. Sam's deal showed Insurance $457K (synth) vs
-    actual $1.16M — that's the gap this assertion pins shut.
+    """Insurance, property taxes and FF&E reserve take T-12 values when
+    supplied. Sam's deal showed Insurance $457K (synth) vs actual $1.16M —
+    that's the gap this assertion pins shut. The management fee is the
+    exception: it is contractual (% × revenue, Sam finding 4, 2026-11), so
+    the T-12 dollar fee never drives Year 1 and is not badged from T-12.
     """
     actuals = {
         "insurance": 1_160_000.0,
@@ -122,9 +124,9 @@ def test_t12_actuals_override_fixed_charges_and_fees() -> None:
     y1 = out.years[0]
     assert y1.fixed_charges.insurance == pytest.approx(1_160_000.0)
     assert y1.fixed_charges.property_taxes == pytest.approx(850_000.0)
-    assert y1.mgmt_fee == pytest.approx(410_000.0)
+    assert y1.mgmt_fee == pytest.approx(0.03 * y1.total_revenue)
     assert y1.ffe_reserve == pytest.approx(540_000.0)
-    assert set(out.sourced_from_t12) == set(actuals.keys())
+    assert set(out.sourced_from_t12) == set(actuals.keys()) - {"mgmt_fee"}
 
 
 def test_comprehensive_t12_folds_omitted_undist_line_not_synthesize() -> None:

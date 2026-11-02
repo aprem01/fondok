@@ -199,3 +199,10 @@ estimate (+26K / +51K / +75K / +98K). Also moves: revenue `years[1..4]`
 F&B and total revenue, every departmental and fee line Y2–Y5, GOP, both NOI
 bases, DSCR Y2–Y5 / stabilized / average, stabilized margin, and the
 partnership and cash-flow figures built on them.
+
+### Fix 2: Year-1 management fee is contractual (Sam finding 4)
+
+No golden move: the fixture has no T-12, so its Year 1 already ran at 3% ×
+revenue. Live deals with an extracted T-12 management fee move: Year-1 fee
+becomes `mgmt_fee_pct` × (displaced) Year-1 revenue, so Year-1 NOI and DSCR
+move (Angler orig: 619,834 = 4.84% of revenue → 3%; copy 467,917 = 3.87% → 3%).

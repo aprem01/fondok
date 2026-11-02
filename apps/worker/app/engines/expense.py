@@ -178,6 +178,14 @@ class ExpenseEngineInput(BaseModel):
     # return is modelled — the fee is a straight share of GOP after the base
     # fee.
     incentive_mgmt_fee_pct_of_gop: Annotated[float, Field(ge=0.0, le=0.5)] | None = None
+    # Sam finding 4 (2026-11) — the base management fee is contractual:
+    # ``mgmt_fee_pct`` × projected total revenue in EVERY year, Year 1 included.
+    # The T-12 ``mgmt_fee`` dollar line is historical and never drives the
+    # projection. The one Year-1 dollar figure that wins is an analyst's
+    # explicit override of the Year-1 fee (the runner passes it here only when
+    # the analyst's value differs from what the deal resolved to); None → the
+    # contractual % for Year 1 as for every other year.
+    mgmt_fee_y1_override: Annotated[float, Field(ge=0.0)] | None = None
     overrides: dict[str, float] = Field(default_factory=dict)
     grow_opex_independently: bool = Field(
         default=False,
@@ -203,7 +211,9 @@ class ExpenseEngineInput(BaseModel):
             "Recognized keys: rooms_dept_expense, fb_dept_expense, "
             "other_dept_expense, administrative_general, "
             "information_telecom, sales_marketing, property_operations, "
-            "utilities, insurance, property_taxes, mgmt_fee, ffe_reserve."
+            "utilities, insurance, property_taxes, ffe_reserve. A mgmt_fee "
+            "line is accepted but never drives the projection (the base fee "
+            "is contractual: mgmt_fee_pct × revenue)."
         ),
     )
     # The T-12 revenue of each operated department, keyed by the revenue
@@ -365,8 +375,10 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
 
         # Track which lines we sourced from the T-12 actuals so the UI
         # can show a per-line "from T-12" badge. We only mark Y1 — out-
-        # years are always grown forward from the chosen Y1 anchor.
-        sourced: list[str] = sorted(actuals.keys()) if actuals else []
+        # years are always grown forward from the chosen Y1 anchor. The
+        # management fee is contractual (% of revenue), so a T-12 fee line
+        # grounds nothing and is not listed.
+        sourced: list[str] = sorted(k for k in actuals if k != "mgmt_fee")
 
         # Undistributed canonical USALI bucket weights. Sales & Marketing
         # and Utilities used to share the same 0.24 multiplier, which
@@ -857,9 +869,12 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             )
 
             gop = total - dept_total - undist_total
+            # Sam finding 4 — contractual % × this year's (possibly displaced)
+            # total revenue; only an analyst's explicit Year-1 fee overrides it.
+            mgmt_from_override = is_y1 and payload.mgmt_fee_y1_override is not None
             mgmt_fee = (
-                actuals["mgmt_fee"]
-                if use_actuals and "mgmt_fee" in actuals
+                float(payload.mgmt_fee_y1_override)  # type: ignore[arg-type]
+                if mgmt_from_override
                 else total * payload.mgmt_fee_pct
             )
             ffe = (
@@ -897,9 +912,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                             name="management_fee",
                             value=mgmt_fee,
                             assumption_key=(
-                                "mgmt_fee"
-                                if use_actuals and "mgmt_fee" in actuals
-                                else "mgmt_fee_pct"
+                                "mgmt_fee" if mgmt_from_override else "mgmt_fee_pct"
                             ),
                         ),
                         ValueInput(
@@ -936,7 +949,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             # ``ExpenseEngineInput.revenue: FBRevenueOutput``), so the honest
             # cross-engine pointer is ``fb.*`` — the revenue engine's own
             # total_revenue is one hop further up, reached through fb's inputs.
-            mgmt_from_actual = use_actuals and "mgmt_fee" in actuals
+            mgmt_from_actual = mgmt_from_override
             ffe_from_actual = use_actuals and "ffe_reserve" in actuals
             prov[f"years[{idx}].gop"] = ValueTrace(
                 value=gop,
@@ -965,10 +978,11 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 formula="noi = gop − management_fee − ffe_reserve − fixed_charges",
                 inputs=[
                     ValueInput(name="gop", value=gop, traces_to=f"years[{idx}].gop"),
-                    # A Year-1 T-12 actual IS the ``mgmt_fee`` assumption; every
-                    # other year is revenue × the ``mgmt_fee_pct`` assumption.
-                    # Naming the right one is the whole point — the two ground
-                    # to different evidence.
+                    # An analyst's explicit Year-1 fee IS the ``mgmt_fee``
+                    # assumption; every other year (and Year 1 without one) is
+                    # revenue × the ``mgmt_fee_pct`` assumption. Naming the
+                    # right one is the whole point — the two ground to
+                    # different evidence.
                     ValueInput(
                         name="management_fee",
                         value=mgmt_fee,

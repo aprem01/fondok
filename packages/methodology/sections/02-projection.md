@@ -101,7 +101,8 @@ number: the management fee is yours to set, and the check against the usual two 
 revenue applies to every operating model.
 
 {testid=methodology-incentive-fee} **Base and incentive management fee.** The management fee is the base fee — a share of each year's
-total revenue. The incentive fee beside it is optional and blank by default. When set, each year's
+total revenue, Year 1 included; the management fee on the T-12 is history and does not set Year 1.
+A Year-1 fee you enter on the worksheet, with its note, does. The incentive fee beside it is optional and blank by default. When set, each year's
 incentive fee is a share of gross operating profit after the base fee, never negative, deducted
 before NOI, so it lowers NOI and everything downstream. It appears as its own row only when set, and
 travels through the Excel export.
@@ -407,7 +408,9 @@ hotel-type default 5.50% of total revenue (select)”).
 #### Management fee, incentive fee and the waterfall
 
 <!-- source: apps/worker/app/engines/expense.py (mgmt_fee_pct, ffe_reserve_pct, incentive_mgmt_fee_pct_of_gop), evals/golden-set/usali-rules.csv (MGMT_FEE_RANGE, INCENTIVE_MGMT_FEE_RANGE) -->
-Base management fee: a share of each year's total revenue; platform default 3.0% of total revenue.
+Base management fee: a share of each year's total revenue, Year 1 included; platform default 3.0%
+of total revenue. The T-12 management-fee dollars never set Year 1; an analyst's Year-1 fee override
+(different from the resolved figure, with its note) does.
 FF&E reserve: platform default 4.0% of total revenue. Both accept 0–10%. The USALI check warns
 when the base fee is outside 2–6% of total revenue; it is a warning, not a correction, and applies
 to every operating model. Incentive fee: optional, 0–50% of gross operating profit after the base
@@ -626,7 +629,11 @@ fee. It moves no number: the fee check is the general USALI 2–6% of total reve
 operating model, and nothing below changes the management fee assumption — the analyst sets it.
 
 {testid=methodology-incentive-fee} **Base vs incentive management fee.** The management fee (`mgmt_fee_pct`) is the *base* fee: a share
-of each year's total revenue (a Year-1 T-12 management fee, where extracted, is used as-is). The
+of each year's total revenue, Year 1 included. The T-12 management-fee dollars are history: they
+never drive the projection (before 2026-11 they were carried into Year 1, which put the Angler's
+Year-1 fee at 4.8% and 3.9% of its renovation-displaced revenue). An analyst who enters a Year-1
+fee on the worksheet's Management Fees row, with a note, sets Year 1 to that figure (trace
+assumption `mgmt_fee`); an override equal to the resolved figure states nothing and is ignored. The
 *Incentive fee* beside it on the Future P&L Assumptions panel (`incentive_mgmt_fee_pct_of_gop`) is
 opt-in and blank by default — blank means no incentive fee is modelled and every number is exactly
 what it was without it. When set, each year's incentive fee is `max(0, GOP − base fee) × rate`: a
@@ -727,9 +734,10 @@ reads as an analyst override, and the note travels with it like any other overri
 reversible: once an override exists on the management fee or the FF&E reserve, *Reset to source*
 beside that input removes it, so the portfolio P&L ratio or the platform default drives the model
 again, and re-runs. Precedence is otherwise unchanged. A Year-1 amount the T-12 states is still used
-as stated. The applied ratio drives what the T-12 does not state: a departmental line the T-12
-leaves out, and the management fee and FF&E reserve in every year after Year 1, where each year is
-that year's total revenue × the ratio.
+as stated, and a departmental line the T-12 states runs on its T-12 cost ratio. The applied ratio
+drives what the T-12 does not state: a departmental line the T-12 leaves out (that ratio × the
+department's revenue, every year), the FF&E reserve in every year after Year 1, and the management
+fee in every year, Year 1 included, where each year is that year's total revenue × the ratio.
 
 **The waterfall below Total Revenue** runs GOP → Management Fees (→ Incentive management fee, when
 one is modelled) → EBITDA → Fixed Charges (property taxes, insurance, equipment lease / rent, other)

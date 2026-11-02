@@ -1562,3 +1562,52 @@ async def test_monthly_rooms_line_is_never_a_department_revenue() -> None:
     assert "rooms_revenue" not in base["t12_dept_revenue"]
     # The other pool is only a department revenue when it grounded the ratio.
     assert "other_revenue" not in base["t12_dept_revenue"]
+
+
+# ═══════ Sam finding 4 — the Year-1 management fee is contractual ═══════
+
+
+async def _expense_input_for(base: dict, deal_id: UUID):
+    from app.engines.fb_revenue import FBRevenueEngine
+    from app.engines.revenue import RevenueEngine
+    from app.services.engine_runner import _build_input_for
+
+    acc: dict = {}
+    acc["revenue"] = RevenueEngine().run(_build_input_for("revenue", deal_id, base, acc))
+    acc["fb"] = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, acc))
+    return _build_input_for("expense", deal_id, base, acc)
+
+
+_T12_WITH_FEE = [
+    {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.80},
+    {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 300.0},
+    {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 10_000_000.0},
+    {"field_name": "p_and_l_usali.fees_and_reserves.mgmt_fee", "value": 619_834.0},
+]
+
+
+@pytest.mark.asyncio
+async def test_extracted_t12_fee_never_reaches_year_one() -> None:
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="T12 Fee", keys=120, purchase=40_000_000)
+    await _insert_t12_extraction(deal_id, fields=_T12_WITH_FEE)
+    base = await _base_for(deal_id)
+    assert base["t12_expense_actuals"].get("mgmt_fee") == pytest.approx(619_834.0)
+    exp_in = await _expense_input_for(base, deal_id)
+    assert exp_in.mgmt_fee_y1_override is None
+
+
+@pytest.mark.asyncio
+async def test_analyst_year_one_fee_reaches_the_engine() -> None:
+    deal_id = uuid4()
+    await _insert_deal(
+        deal_id,
+        name="Analyst Fee",
+        keys=120,
+        purchase=40_000_000,
+        field_overrides={"mgmt_fee": {"value": 410_000.0, "note": "HMA minimum fee"}},
+    )
+    await _insert_t12_extraction(deal_id, fields=_T12_WITH_FEE)
+    base = await _base_for(deal_id)
+    exp_in = await _expense_input_for(base, deal_id)
+    assert exp_in.mgmt_fee_y1_override == pytest.approx(410_000.0)

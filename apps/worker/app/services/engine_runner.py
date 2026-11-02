@@ -6990,6 +6990,33 @@ def _selected_exit_month(base: dict[str, Any]) -> int:
     return max(1, min(full_term, override)) if override is not None else full_term
 
 
+def _analyst_year_one_mgmt_fee(base: Mapping[str, Any]) -> float | None:
+    """The analyst's explicit Year-1 management-fee dollars, else ``None``.
+
+    Sam finding 4 (2026-11): the base management fee is contractual —
+    ``mgmt_fee_pct`` × projected total revenue in every year — so the T-12
+    ``mgmt_fee`` dollar line never drives Year 1. An analyst who overrides the
+    Year-1 fee (the worksheet's management-fee row, with its note) states a
+    figure; that one wins for Year 1. Only an override whose value differs
+    from what the deal resolved to counts (``sources`` reads
+    ``analyst_override``): re-saving the T-12 figure unchanged is not a fee
+    statement. A persisted override lands in ``t12_expense_actuals``; a
+    request-body override lands on ``base`` itself.
+    """
+    if (base.get("__sources__") or {}).get("mgmt_fee") != SOURCE_ANALYST_OVERRIDE:
+        return None
+    raw = (
+        base["mgmt_fee"]
+        if "mgmt_fee" in base
+        else (base.get("t12_expense_actuals") or {}).get("mgmt_fee")
+    )
+    try:
+        value = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+    return value if value is not None and value >= 0 else None
+
+
 def _build_input_for(
     engine_name: str,
     deal_id: str,
@@ -7163,6 +7190,10 @@ def _build_input_for(
             # departmental expense becomes a cost ratio priced against the
             # projected (displaced, where displaced) department revenue.
             t12_dept_revenue=base.get("t12_dept_revenue", {}) or {},
+            # Sam finding 4 — the base fee is contractual (mgmt_fee_pct ×
+            # revenue, Year 1 included). Only an analyst's explicit Year-1 fee
+            # reaches the engine; the extracted T-12 fee line never does.
+            mgmt_fee_y1_override=_analyst_year_one_mgmt_fee(base),
             # FON-41 / FON-59 #3 — the stabilized-year block. The expense engine
             # publishes it (it is the one engine holding revenue AND NOI on the
             # same year index); these are the inputs it cannot derive itself.

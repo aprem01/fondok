@@ -140,9 +140,10 @@ def test_zero_rate_emits_zero_fee_and_unchanged_noi() -> None:
 
 
 def test_gop_below_base_fee_earns_no_incentive() -> None:
-    # A Year-1 T-12 management fee larger than GOP: GOP − base fee < 0.
+    # An analyst's Year-1 management fee larger than GOP: GOP − base fee < 0.
+    # (A T-12 fee line no longer drives Year 1 — the fee is contractual.)
     out = ExpenseEngine().run(
-        _input(**{KEY: 0.20}, t12_actuals={"mgmt_fee": 50_000_000.0})
+        _input(**{KEY: 0.20}, mgmt_fee_y1_override=50_000_000.0)
     )
     y1 = out.years[0]
     assert y1.gop - y1.mgmt_fee < 0
