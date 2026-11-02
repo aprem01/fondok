@@ -462,8 +462,8 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     metrics = [
         ("Total Capital", inv.get("total_capital_usd"), USD_FMT, "total_capital",
          "no total capital on the deal's capital engine output"),
-        ("Loan Amount", debt.get("loan_amount_usd"), USD_FMT, "loan_amount",
-         "no loan amount on the deal's debt engine output"),
+        ("Senior Loan Amount", debt.get("loan_amount_usd"), USD_FMT, "loan_amount",
+         "no senior loan amount on the deal's debt engine output"),
         ("Loan Rate", debt.get("interest_rate_pct"), PCT_FMT, "interest_rate",
          "no interest rate on the deal's debt engine output"),
         ("Year 1 DSCR", debt.get("year1_dscr"), MULT_FMT, "dscr",
@@ -557,10 +557,29 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Interest Rate", debt, "interest_rate_pct", PCT_FMT, "", "interest_rate", "debt engine"),
                 item("Amortization (yrs)", debt, "amortization_years", INT_FMT, "", "amortization_years", "debt engine"),
                 item("Term (yrs)", debt, "term_years", INT_FMT, "", "term_years", "debt engine"),
+                item("IO Period (months)", debt, "interest_only_period_months", INT_FMT, "", "interest_only_months", "debt engine"),
+            ],
+        ),
+        (
+            # One basis per block: every loan the deal is funded with (the
+            # senior + any priced junior tranche, e.g. PACE). Debt service and
+            # the coverage ratios are stack-wide, so they live here.
+            "All Debt (senior + priced junior tranches)",
+            debt,
+            "no debt engine output on the deal's canonical run",
+            [
+                item("Total Debt", debt, "total_debt_usd", USD_FMT, "", "total_debt", "debt engine"),
+                item("LTV (value)", debt, "total_ltv", PCT_FMT, "", "ltv", "debt engine"),
+                item("LTC", debt, "total_ltc", PCT_FMT, "", "ltc", "debt engine"),
+                (
+                    "Pending Junior Principal", debt.get("pending_debt_usd"), USD_FMT,
+                    "Not in leverage or the cash flows until a rate is entered",
+                    "pending_debt",
+                    "none — every funded tranche is priced",
+                ),
                 item("Annual Debt Service", debt, "annual_debt_service_usd", USD_FMT, "", "annual_debt_service", "debt engine"),
                 item("Year 1 DSCR", debt, "year1_dscr", MULT_FMT, "", "dscr", "debt engine"),
                 item("Year 1 Debt Yield", debt, "year1_debt_yield", PCT_FMT, "", "debt_yield", "debt engine"),
-                item("IO Period (months)", debt, "interest_only_period_months", INT_FMT, "", "interest_only_months", "debt engine"),
             ],
         ),
         (

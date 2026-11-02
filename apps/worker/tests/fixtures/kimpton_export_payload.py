@@ -79,6 +79,10 @@ def kimpton_model() -> dict[str, Any]:
             "ltv_cost": 0.547,
             "ltv_value": 0.65,
             "ltc": 0.547,
+            # Senior-only deal: the all-debt basis equals the senior's.
+            "total_debt_usd": 23_683_922,
+            "total_ltv": 0.65,
+            "total_ltc": 0.547,
             "interest_rate_pct": 0.0680,
             "amortization_years": 30,
             "term_years": 5,

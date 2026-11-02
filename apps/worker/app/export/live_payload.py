@@ -334,10 +334,18 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
     out: dict[str, Any] = {}
     stack = debt.get("debt_stack") if isinstance(debt.get("debt_stack"), dict) else {}
 
+    # One basis per block. The SENIOR keys (``loan_amount_usd`` / ``ltv_value``
+    # / ``ltc``) describe the senior loan alone; the ALL-DEBT keys
+    # (``total_debt_usd`` / ``total_ltv`` / ``total_ltc``) every loan the deal
+    # is funded with (senior + priced junior tranches). Without a junior the
+    # two are the same numbers. An unpriced junior principal is
+    # ``pending_debt_usd`` — never inside either.
     loan = _num(debt.get("loan_amount"))
     if loan is None:
         loan = _num(stack.get("total_debt"))
-    _set(out, "loan_amount_usd", loan)
+    junior = _num(capital.get("junior_debt_amount")) or 0.0
+    senior = _num(capital.get("debt_amount")) if junior > 0 else loan
+    _set(out, "loan_amount_usd", senior)
 
     ltv_value = _num(stack.get("ltv"))
     if ltv_value is None:
@@ -345,12 +353,37 @@ def _build_debt(debt: dict[str, Any], capital: dict[str, Any]) -> dict[str, Any]
             if isinstance(cov, dict) and cov.get("name") == "ltv":
                 ltv_value = _num(cov.get("current"))
                 break
+    total_ltv = ltv_value
+    if junior > 0:
+        price = _num(capital.get("purchase_price"))
+        if price is None:
+            price = next(
+                (
+                    _num(u.get("amount"))
+                    for u in capital.get("uses") or []
+                    if isinstance(u, dict) and u.get("label") == "Purchase Price"
+                ),
+                None,
+            )
+        ltv_value = senior / price if senior is not None and price else None
     _set(out, "ltv_value", ltv_value)
 
-    ltc = _num(capital.get("ltc"))
+    ltc = _num(capital.get("senior_ltc"))
+    if ltc is None:
+        ltc = _num(capital.get("ltc"))
     if ltc is None:
         ltc = _num(stack.get("ltc"))
     _set(out, "ltc", ltc)
+
+    total_ltc = _num(capital.get("ltc"))
+    if total_ltc is None:
+        total_ltc = _num(stack.get("ltc"))
+    _set(out, "total_debt_usd", loan)
+    _set(out, "total_ltv", total_ltv)
+    _set(out, "total_ltc", total_ltc)
+    pending = _num(stack.get("pending_debt")) or 0.0
+    if pending > 0:
+        out["pending_debt_usd"] = pending
 
     _set(out, "interest_rate_pct", _num(debt.get("interest_rate")))
     _set(out, "amortization_years", _num(debt.get("amortization_years")))

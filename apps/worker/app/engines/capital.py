@@ -149,7 +149,11 @@ class CapitalEngineOutput(InvestmentEngineOutput):
     # Σ funded, priced junior tranches — also a source at close.
     junior_debt_amount: Annotated[float, Field(ge=0)] = 0.0
     equity_amount: Annotated[float, Field(ge=0)]
+    # LTC on ALL the debt the deal is funded with (senior + priced junior
+    # tranches) ÷ total uses — the Debt tab's stack LTC. ``senior_ltc`` is the
+    # senior alone; the two are equal without a junior tranche.
     ltc: Annotated[float, Field(ge=0.0, le=1.5)]
+    senior_ltc: Annotated[float, Field(ge=0.0, le=1.5)] | None = None
     # None when there is no renovation budget (so the UI shows '—' rather
     # than a fabricated $0 split).
     renovation_breakdown: RenovationBreakdown | None = None
@@ -611,13 +615,32 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
                 else []
             ),
         )
+        senior_ltc = debt / total_uses if total_uses else 0.0
+        ltc_all = (
+            (debt + junior_amount) / total_uses if total_uses else 0.0
+        ) if junior_amount > 0 else senior_ltc
         prov["ltc"] = ValueTrace(
-            value=debt / total_uses if total_uses else 0.0,
-            formula="ltc = debt_amount ÷ total_uses",
+            value=ltc_all,
+            formula=(
+                "ltc = (debt_amount + junior_debt_amount) ÷ total_uses"
+                if junior_amount > 0
+                else "ltc = debt_amount ÷ total_uses"
+            ),
             inputs=[
                 ValueInput(name="debt_amount", value=debt, traces_to="debt_amount"),
                 ValueInput(name="total_uses", value=total_uses, traces_to="total_capital"),
-            ],
+            ]
+            + (
+                [
+                    ValueInput(
+                        name="junior_debt_amount",
+                        value=junior_amount,
+                        traces_to="junior_debt_amount",
+                    )
+                ]
+                if junior_amount > 0
+                else []
+            ),
             note="Loan-to-cost on the fully-loaded capitalization.",
         )
         prov["total_capital"] = ValueTrace(
@@ -738,7 +761,8 @@ class CapitalEngine(BaseEngine[CapitalEngineInput, CapitalEngineOutput]):
             debt_amount=debt,
             junior_debt_amount=junior_amount,
             equity_amount=equity,
-            ltc=debt / total_uses if total_uses else 0.0,
+            ltc=ltc_all,
+            senior_ltc=senior_ltc,
             renovation_breakdown=reno_breakdown,
             renovation_base_usd=reno_base,
             renovation_contingency_pct=payload.renovation_contingency_pct,

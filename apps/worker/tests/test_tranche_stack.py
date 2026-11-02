@@ -42,22 +42,23 @@ def test_kimpton_reference_stack():
     senior = next(t for t in r.tranches if t.kind == "senior")
     assert abs(senior.all_in_rate - 0.08) < 1e-9
     assert abs(senior.annual_debt_service - 2_800_000) < 1.0
-    # PACE: pending → no rate, no debt service, but counts toward total debt.
+    # PACE: pending → no rate, no debt service, and out of leverage (its
+    # principal is published as pending_debt).
     pace = next(t for t in r.tranches if t.kind == "pace")
     assert pace.all_in_rate is None and pace.annual_debt_service is None
     assert pace.terms_pending
 
-    assert abs(r.total_debt - 65_000_000) < 1.0
+    assert abs(r.total_debt - 35_000_000) < 1.0
+    assert abs(r.pending_debt - 30_000_000) < 1.0
     assert abs(r.priced_debt - 35_000_000) < 1.0
     assert abs(r.total_annual_debt_service - 2_800_000) < 1.0
     assert abs(r.year_one_dscr - (5_133_454 / 2_800_000)) < 1e-6   # ≈1.83x
-    assert abs(r.ltv - (65_000_000 / 36_400_000)) < 1e-6           # ≈178%
-    assert abs(r.debt_yield - (5_133_454 / 65_000_000)) < 1e-6     # ≈7.9%
-    assert abs(r.ltc - (65_000_000 / 44_318_900)) < 1e-6          # ≈147%
-    # Honest warnings: PACE pending + LTC>100% + LTV breaches 65% covenant.
+    assert abs(r.ltv - (35_000_000 / 36_400_000)) < 1e-6           # ≈96%
+    assert abs(r.debt_yield - (5_133_454 / 35_000_000)) < 1e-6     # ≈14.7%
+    assert abs(r.ltc - (35_000_000 / 44_318_900)) < 1e-6          # ≈79%
+    # Honest warnings: PACE pending (not in leverage) + LTV breaches 65%.
     joined = " ".join(r.warnings).lower()
-    assert "terms not specified" in joined
-    assert "ltc" in joined
+    assert "terms not specified" in joined and "not in leverage" in joined
     assert "covenant" in joined
     print("\nKimpton stack:",
           f"total_debt=${r.total_debt/1e6:.0f}M dscr={r.year_one_dscr:.2f}x "

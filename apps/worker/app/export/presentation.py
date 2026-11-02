@@ -504,7 +504,9 @@ def _slide_sources_uses(prs: Presentation, model: dict[str, Any]) -> None:
     _add_filled_box(slide, 0.5, 6.2, 12.3, 0.9, AMBER_50, AMBER)
     _add_textbox(slide, 0.8, 6.35, 4, 0.3, "CAPITAL STACK", 9, True, AMBER)
     stack_line = (
-        f"LTC {_fmt_pct(debt.get('ltc'), 'ltc')}   ·   LTV {_fmt_pct(debt.get('ltv_value'), 'ltv')}"
+        # All-debt basis (senior + priced junior), the same as the Debt tab.
+        f"LTC {_fmt_pct(debt.get('total_ltc', debt.get('ltc')), 'ltc')}"
+        f"   ·   LTV {_fmt_pct(debt.get('total_ltv', debt.get('ltv_value')), 'ltv')} (all debt)"
         f"   ·   Rate {_fmt_pct(debt.get('interest_rate_pct'), 'interest_rate')}"
         f"   ·   DSCR Y1 {_fmt_mult(debt.get('year1_dscr'), 'dscr')}"
         f"   ·   Debt Yield Y1 {_fmt_pct(debt.get('year1_debt_yield'), 'debt_yield')}"
