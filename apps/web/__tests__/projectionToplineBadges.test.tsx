@@ -168,13 +168,14 @@ import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
 import { ToplineStatusContext } from '@/lib/hooks/useToplineStatus';
 import type { ToplineStatus } from '@/lib/api';
 import { toplineStatus, unavailableGrowth } from './fixtures/toplineStatus';
+import engineRun from './fixtures/engine/toplineRun.json';
 
 
-const TOPLINE_BY_YEAR = [
-  { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.75, adr: 300, benchmark_occupancy_source: 'STR comp set' },
-  { year: 2, mpi_target: 100, ari_target: 100, ramp_pct: 0.95, occupancy: 0.75, adr: 300 },
-  { year: 3, mpi_target: 100, ari_target: 100, ramp_pct: null, occupancy: 0.75, adr: 300 },
-];
+// The engine's own records (apps/worker run_all_engines on the Kimpton
+// documents fixture — see fixtures/engine/toplineRun.json): mpi_target already
+// includes the ramp; occupancy / adr are after the Year-1 displacement.
+const RUN = engineRun as unknown as { revenue: { topline_by_year: unknown[] }; topline_status: ToplineStatus };
+const TOPLINE_BY_YEAR = RUN.revenue.topline_by_year;
 
 function withRevenue(extra: Record<string, unknown>, top: Record<string, unknown> = {}): EngineOutputsResponse {
   const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
@@ -216,12 +217,15 @@ describe('Future P&L — the topline basis line and badges (plan §4.2)', () => 
     expect(screen.getByTestId('topline-clause-ramp')).toHaveTextContent('Ramp 85/95/100 (default)');
   });
 
-  it('every projected Occupancy / ADR column carries the benchmark year’s basis chip, titled with the chain', () => {
-    renderWith(toplineStatus());
+  it('every projected Occupancy / ADR column carries the benchmark year’s basis chip, titled with the engine chain (review I-1)', () => {
+    renderWith(RUN.topline_status);
     expect(screen.getByTestId('topline-basis-occupancy-0')).toHaveAttribute('data-basis', 'forecast');
-    expect(screen.getByTestId('topline-basis-occupancy-2')).toHaveAttribute('data-basis', 'assumption');
-    expect(screen.getByTestId('topline-chip-occupancy-0').getAttribute('title')).toContain('× MPI 100 ÷ 100 × ramp 85% = 75.0%');
-    expect(screen.getByTestId('topline-basis-adr-1')).toBeInTheDocument();
+    const t0 = screen.getByTestId('topline-chip-occupancy-0').getAttribute('title') ?? '';
+    // benchmark × stabilized penetration × ramp = pre-displacement, then displacement — the ramp once.
+    expect(t0).toContain('Benchmark 74.6% × penetration 100 × ramp 85% = 63.4% before displacement; Year-1 displacement → 57.1%');
+    expect(t0).not.toContain('MPI 85');
+    // Year 2 ADR ran on your 98 with no ramp.
+    expect(screen.getByTestId('topline-chip-adr-1').getAttribute('title')).toContain('penetration 98 (your Year 2 value — no ramp) = $308.18');
   });
 
   it('two reference rows: the benchmark per year and the T-12 with its period', () => {

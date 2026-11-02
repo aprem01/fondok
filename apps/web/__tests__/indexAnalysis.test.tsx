@@ -109,6 +109,7 @@ async function renderSettled(): Promise<void> {
 }
 import { buildReconciliation, type ReconciliationInput } from '@/components/project/pl/IndexMethodology';
 import { toplineStatus } from './fixtures/toplineStatus';
+import engineRun from './fixtures/engine/toplineRun.json';
 
 /** Revenue-engine years: a Base Year (TTM) + eight forecast years at a steady
  *  +4% ADR / flat occupancy, so every forecast-over-forecast growth cell is a
@@ -966,11 +967,8 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
 // the panel edits the same keys as the Future P&L's Topline card.
 // ─────────────────────────────────────────────────────────────────────────
 describe('Index Analysis — on the topline resolver', () => {
-  const toplineByYear = [
-    { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.64175, adr: 258.876 },
-    { year: 2, mpi_target: 100, ari_target: 98, ramp_pct: 0.95, occupancy: 0.71345, adr: 294.5 },
-    { year: 3, mpi_target: 100, ari_target: 100, ramp_pct: null, occupancy: 0.751, adr: 316.2 },
-  ];
+  // The engine's own records (fixtures/engine/toplineRun.json, a real run).
+  const toplineByYear = (engineRun as unknown as { revenue: { topline_by_year: unknown[] } }).revenue.topline_by_year;
   const withTopline = (extra: Record<string, unknown> = {}) => {
     const o = outputs(3) as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
     o.engines.revenue.outputs.topline_by_year = toplineByYear;
@@ -1021,7 +1019,7 @@ describe('Index Analysis — on the topline resolver', () => {
     });
     await waitFor(() => expect(updateDeal).toHaveBeenCalledTimes(1));
     const body = updateDeal.mock.calls[0][1] as { field_overrides: Record<string, unknown> };
-    expect(body.field_overrides.index_ari_target_by_year).toEqual({ value: [null, null, 99], note: 'Sam path' });
+    expect(body.field_overrides.index_ari_target_by_year).toEqual({ value: [null, null, 99, null, null], note: 'Sam path' });
     expect('index_mpi_target_by_year' in body.field_overrides).toBe(false);
     expect(body.field_overrides.exit_cap_rate).toEqual({ value: 0.07, note: 'Broker' });
   });

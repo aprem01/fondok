@@ -16,6 +16,9 @@ import {
   ToplineNotices,
 } from '@/components/project/pl/Topline';
 import { toplineStatus, unavailableGrowth, SUGGESTION_45 } from './fixtures/toplineStatus';
+import engineRun from './fixtures/engine/toplineRun.json';
+import type { ToplineStatus } from '@/lib/api';
+import type { ToplineYearRecord } from '@/lib/topline';
 
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
@@ -222,32 +225,62 @@ describe('GrowthByYearTable', () => {
   });
 });
 
-describe('PenetrationByYearGrid', () => {
-  it('prints benchmark (with basis chip), applied penetration, ramp and the result per year', async () => {
-    const onSave = ok();
+describe('PenetrationByYearGrid — the engine chain, from a real run (review I-1)', () => {
+  // apps/worker run_all_engines on the Kimpton documents fixture (defaults,
+  // Year-2 ARI 98, Year-1 displacement 10% / 6.67%) — the record shape the
+  // engine actually emits: mpi_target already includes the ramp; occupancy
+  // / adr are the figures that ran.
+  const run = engineRun as unknown as { revenue: { topline_by_year: ToplineYearRecord[] }; topline_status: ToplineStatus };
+
+  it('benchmark × stabilized penetration × ramp = before displacement, then displacement, then the figure that ran', () => {
     render(
-      <PenetrationByYearGrid
-        status={toplineStatus()}
-        toplineByYear={[
-          { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.64175, adr: 258.876 },
-          { year: 2, mpi_target: 100, ari_target: 100, ramp_pct: 0.95, occupancy: 0.71345, adr: 294.5 },
-        ]}
-        overrides={{}}
-        onSave={onSave}
-        running={false}
-      />,
+      <PenetrationByYearGrid status={run.topline_status} toplineByYear={run.revenue.topline_by_year} overrides={{}} onSave={ok()} running={false} />,
     );
     const r1 = screen.getByTestId('topline-penetration-row-1');
-    expect(r1).toHaveTextContent('75.5%');
-    expect(r1).toHaveTextContent('85.0%');
-    expect(r1).toHaveTextContent('64.2%');
+    expect(within(r1).getByTestId('topline-grid-mpi-1')).toHaveTextContent(/^100$/); // stabilized — never 85 × 85%
+    expect(within(r1).getByTestId('topline-grid-ramp-1')).toHaveTextContent('85.0%');
+    expect(within(r1).getByTestId('topline-grid-pre-1')).toHaveTextContent('63.4% · $269');
+    expect(within(r1).getByTestId('topline-grid-disp-1')).toHaveTextContent('−10.0% occ · −6.7% ADR');
+    expect(within(r1).getByTestId('topline-grid-final-occ-1')).toHaveTextContent('57.1%');
+    expect(within(r1).getByTestId('topline-grid-final-adr-1')).toHaveTextContent('$251');
     expect(within(r1).getByTestId('basis-chip-forecast')).toBeInTheDocument();
+  });
+
+  it('a per-year penetration is shown as yours, with the ramp noted for the other metric only', () => {
+    render(
+      <PenetrationByYearGrid status={run.topline_status} toplineByYear={run.revenue.topline_by_year} overrides={{}} onSave={ok()} running={false} />,
+    );
+    expect(screen.getByTestId('topline-grid-ari-2')).toHaveTextContent('98 (yours, no ramp)');
+    expect(screen.getByTestId('topline-grid-ramp-2')).toHaveTextContent('95.0% (occupancy only)');
+    expect(screen.getByTestId('topline-grid-disp-2')).toHaveTextContent('—');
+    expect(screen.getByTestId('topline-grid-ramp-3')).toHaveTextContent('—');
+  });
+
+  it('the footer states the order honestly', () => {
+    render(
+      <PenetrationByYearGrid status={run.topline_status} toplineByYear={run.revenue.topline_by_year} overrides={{}} onSave={ok()} running={false} />,
+    );
+    const foot = screen.getByTestId('topline-penetration-grid-footer');
+    expect(foot).toHaveTextContent('before displacement');
+    expect(foot).toHaveTextContent('A penetration you set for a single year runs with no ramp');
+    expect(foot).not.toHaveTextContent('are before any renovation displacement');
+  });
+
+  it('per-year edits write the lists with the note', async () => {
+    const onSave = ok();
+    render(
+      <PenetrationByYearGrid status={run.topline_status} toplineByYear={run.revenue.topline_by_year} overrides={{ index_ari_target_by_year: { value: [null, 98], note: 'x' } }} onSave={onSave} running={false} />,
+    );
     fireEvent.click(screen.getByTestId('topline-penetration-grid-edit'));
-    fireEvent.change(screen.getByLabelText('ARI Year 2'), { target: { value: '98' } });
+    expect((screen.getByLabelText('ARI Year 2') as HTMLInputElement).value).toBe('98');
+    fireEvent.change(screen.getByLabelText('ARI Year 3'), { target: { value: '99' } });
     fireEvent.change(screen.getByLabelText('Penetration by year — override justification'), { target: { value: 'Sam path' } });
     fireEvent.click(screen.getByTestId('topline-penetration-grid-save'));
     await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith({ index_mpi_target_by_year: null, index_ari_target_by_year: [null, 98, null] }, 'Sam path'),
+      expect(onSave).toHaveBeenCalledWith(
+        { index_mpi_target_by_year: null, index_ari_target_by_year: [null, 98, 99, null, null] },
+        'Sam path',
+      ),
     );
   });
 });

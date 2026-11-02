@@ -44,6 +44,7 @@ import {
   rampSummary,
   reextractNotice,
   toplineBasisClauses,
+  toplineYearChain,
   type ToplineYearRecord,
 } from '@/lib/topline';
 import CloseDateField from '../CloseDateField';
@@ -691,9 +692,11 @@ export function PenetrationByYearGrid({
             <th className="text-left font-medium py-1">Year</th>
             <th className="text-right font-medium py-1">Benchmark occ.</th>
             <th className="text-right font-medium py-1">Benchmark ADR</th>
-            <th className="text-right font-medium py-1">MPI</th>
-            <th className="text-right font-medium py-1">ARI</th>
+            <th className="text-right font-medium py-1" title="Penetration at stabilization, or your value for that year">MPI</th>
+            <th className="text-right font-medium py-1" title="Penetration at stabilization, or your value for that year">ARI</th>
             <th className="text-right font-medium py-1">Ramp</th>
+            <th className="text-right font-medium py-1">Before displacement</th>
+            <th className="text-right font-medium py-1">Displacement</th>
             <th className="text-right font-medium py-1">Occupancy</th>
             <th className="text-right font-medium py-1">ADR</th>
           </tr>
@@ -702,40 +705,64 @@ export function PenetrationByYearGrid({
           {Array.from({ length: n }, (_, i) => {
             const b = bench[i];
             const t = toplineByYear[i];
+            const y = i + 1;
+            // The engine's own chain (its mpi_target / ari_target already
+            // include the ramp; its occupancy / adr are after displacement).
+            const co = toplineYearChain(status, toplineByYear, i, 'occupancy');
+            const ca = toplineYearChain(status, toplineByYear, i, 'adr');
+            const penCell = (c: ReturnType<typeof toplineYearChain>, raw: number | null | undefined) =>
+              c == null ? pts(raw) : c.byYear ? `${pts(c.effectivePenetration)} (yours, no ramp)` : pts(c.stabilizedPenetration ?? c.effectivePenetration);
+            const rampOf = (c: ReturnType<typeof toplineYearChain>) => (c?.rampApplied ? c.ramp : null);
+            const ro = rampOf(co);
+            const ra = rampOf(ca);
+            const rampCell =
+              ro == null && ra == null
+                ? '—'
+                : ro != null && ra != null
+                  ? pct1(ro)
+                  : `${pct1(ro ?? ra)} (${ro != null ? 'occupancy' : 'ADR'} only)`;
+            const disp = (c: ReturnType<typeof toplineYearChain>, what: string) =>
+              c?.displaced && c.pre > 0 ? `${signedPct(c.final / c.pre - 1)} ${what}` : null;
+            const dispCell = [disp(co, 'occ'), disp(ca, 'ADR')].filter(Boolean).join(' · ') || '—';
+            const title = [co?.text, ca?.text].filter(Boolean).join('\n') || undefined;
             return (
-              <tr key={i} className="border-b border-border/40 align-top" data-testid={`topline-penetration-row-${i + 1}`}>
-                <td className="py-1 text-ink-600">Year {i + 1}{b?.calendar_year ? ` · ${b.calendar_year}` : ''}</td>
+              <tr key={i} className="border-b border-border/40 align-top" data-testid={`topline-penetration-row-${y}`} title={title}>
+                <td className="py-1 text-ink-600">Year {y}{b?.calendar_year ? ` · ${b.calendar_year}` : ''}</td>
                 <td className="py-1 text-right tabular-nums" title={b?.label}>
                   {pct1(b?.occupancy)} {b?.basis && b.occupancy != null && <BasisChip basis={b.basis} label={b.label} />}
                 </td>
                 <td className="py-1 text-right tabular-nums" title={b?.label}>{usd0(b?.adr)}</td>
-                <td className="py-1 text-right tabular-nums">
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-mpi-${y}`}>
                   {editing ? (
-                    <input aria-label={`MPI Year ${i + 1}`} value={mpi[i] ?? ''} placeholder={pts(t?.mpi_target)}
+                    <input aria-label={`MPI Year ${y}`} value={mpi[i] ?? ''} placeholder={penCell(co, t?.mpi_target)}
                       onChange={(e) => setMpi(mpi.map((x, j) => (j === i ? e.target.value : x)))}
                       className="w-[52px] text-right border border-border rounded px-1" />
-                  ) : pts(t?.mpi_target)}
+                  ) : penCell(co, t?.mpi_target)}
                 </td>
-                <td className="py-1 text-right tabular-nums">
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-ari-${y}`}>
                   {editing ? (
-                    <input aria-label={`ARI Year ${i + 1}`} value={ari[i] ?? ''} placeholder={pts(t?.ari_target)}
+                    <input aria-label={`ARI Year ${y}`} value={ari[i] ?? ''} placeholder={penCell(ca, t?.ari_target)}
                       onChange={(e) => setAri(ari.map((x, j) => (j === i ? e.target.value : x)))}
                       className="w-[52px] text-right border border-border rounded px-1" />
-                  ) : pts(t?.ari_target)}
+                  ) : penCell(ca, t?.ari_target)}
                 </td>
-                <td className="py-1 text-right tabular-nums">{t?.ramp_pct == null ? '—' : pct1(t.ramp_pct)}</td>
-                <td className="py-1 text-right tabular-nums" title={t?.capped_95 ? 'Capped at 95% occupancy' : undefined}>
-                  {pct1(t?.occupancy)}{t?.capped_95 ? ' (cap)' : ''}
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-ramp-${y}`}>{rampCell}</td>
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-pre-${y}`}>
+                  {co ? pct1(co.pre) : '—'}{co?.capped ? ' (cap)' : ''} · {ca ? usd0(ca.pre) : '—'}
                 </td>
-                <td className="py-1 text-right tabular-nums">{usd0(t?.adr)}</td>
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-disp-${y}`}>{dispCell}</td>
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-final-occ-${y}`}>{pct1(t?.occupancy)}</td>
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-final-adr-${y}`}>{usd0(t?.adr)}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <div className="text-[10.5px] text-ink-500">
-        Occupancy = benchmark × MPI ÷ 100 × ramp (capped at 95%); ADR = benchmark × ARI ÷ 100 × ramp. The Year-1 figures
-        are before any renovation displacement.
+      <div className="text-[10.5px] text-ink-500" data-testid="topline-penetration-grid-footer">
+        Occupancy before displacement = benchmark × MPI ÷ 100 × ramp (capped at 95%); ADR before displacement =
+        benchmark × ARI ÷ 100 × ramp. MPI / ARI are the penetration at stabilization; the ramp applies in the years before it. A penetration
+        you set for a single year runs with no ramp. Renovation displacement (the Year-1 assumptions or the
+        displacement schedule) then applies to give the occupancy and ADR the model ran on.
       </div>
       {editing && (
         <>

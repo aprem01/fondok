@@ -63,6 +63,9 @@ export interface ToplineYearRecord {
   t12_adr?: number | null;
   capped_95?: boolean;
   reason?: string | null;
+  /** `by_year` = your per-year penetration (no ramp); `scalar` = the stabilized penetration × ramp. */
+  mpi_target_source?: string | null;
+  ari_target_source?: string | null;
 }
 
 export type ClauseTone = 'ok' | 'warn';
@@ -383,12 +386,79 @@ const LEVEL_TEXT: Record<string, string> = {
   market: 'market',
 };
 
+export interface ToplineYearChain {
+  /** The benchmark level for the year (occupancy fraction or ADR $). */
+  benchmark: number;
+  /** The penetration the engine applied that year (`mpi_target` / `ari_target`) — it already includes the ramp. */
+  effectivePenetration: number;
+  /** The stabilized penetration before the ramp (effective ÷ ramp), when a ramp applied. */
+  stabilizedPenetration: number | null;
+  /** The ramp, only when it applied to this metric (never on a per-year penetration). */
+  rampApplied: boolean;
+  ramp: number | null;
+  /** Your per-year penetration for this year (`*_target_source === 'by_year'`). */
+  byYear: boolean;
+  /** benchmark × effective penetration ÷ 100 (occupancy capped at 95%) — before displacement. */
+  pre: number;
+  capped: boolean;
+  /** The figure that ran (`topline_by_year[i].occupancy` / `.adr`, after any displacement). */
+  final: number;
+  displaced: boolean;
+  text: string;
+}
+
+/**
+ * The engine's own chain for one year and metric, read from its record
+ * (`revenue.topline_by_year[i]`): benchmark × penetration × ramp = the
+ * pre-displacement rate, then displacement as its own step to the figure that
+ * ran. The engine's `mpi_target` / `ari_target` is the EFFECTIVE penetration
+ * (stabilized × ramp, or your per-year value with no ramp), so the ramp is
+ * shown once and never re-applied. Null where the topline did not set the
+ * figure (no benchmark for the metric, no record, an explicit Year-1 value).
+ */
+export function toplineYearChain(
+  s: ToplineStatus | null | undefined,
+  records: ToplineYearRecord[] | null | undefined,
+  index: number,
+  metric: 'occupancy' | 'adr',
+): ToplineYearChain | null {
+  if (!s || s.benchmark_level === 'none' || s.explicit_metrics?.includes(metric)) return null;
+  const r = records?.[index] as (ToplineYearRecord & { mpi_target_source?: string | null; ari_target_source?: string | null }) | undefined;
+  if (!r) return null;
+  const occ = metric === 'occupancy';
+  const benchmark = occ ? r.benchmark_occupancy : r.benchmark_adr;
+  const pen = occ ? r.mpi_target : r.ari_target;
+  const final = occ ? r.occupancy : r.adr;
+  if (benchmark == null || pen == null || final == null) return null;
+  const byYear = (occ ? r.mpi_target_source : r.ari_target_source) === 'by_year';
+  const rampApplied = !byYear && r.ramp_pct != null && r.ramp_pct > 0;
+  const ramp = rampApplied ? (r.ramp_pct as number) : null;
+  const stabilizedPenetration = ramp != null ? pen / ramp : null;
+  const raw = (benchmark * pen) / 100;
+  const capped = occ && raw > 0.95;
+  const pre = capped ? 0.95 : raw;
+  const displaced = Math.abs(final - pre) > Math.max(1e-9, Math.abs(pre) * 1e-9);
+  const fmt = (v: number) => (occ ? `${(v * 100).toFixed(1)}%` : `$${v.toFixed(2)}`);
+  const pts = (v: number) => String(Math.round(v * 10) / 10);
+  const penText = byYear
+    ? `penetration ${pts(pen)} (your Year ${r.year} value — no ramp)`
+    : ramp != null
+      ? `penetration ${pts(stabilizedPenetration as number)} × ramp ${fmtPctWhole(ramp)}%`
+      : `penetration ${pts(pen)}`;
+  const capText = capped ? ' (capped at 95%)' : '';
+  const text = displaced
+    ? `Benchmark ${fmt(benchmark)} × ${penText} = ${fmt(pre)}${capText} before displacement; Year-${r.year} displacement → ${fmt(final)}`
+    : `Benchmark ${fmt(benchmark)} × ${penText} = ${fmt(pre)}${capText}`;
+  return {
+    benchmark, effectivePenetration: pen, stabilizedPenetration, rampApplied, ramp, byYear,
+    pre, capped, final, displaced, text,
+  };
+}
+
 /**
  * The basis chip on one projected Occupancy / ADR column: the benchmark
  * year's own basis (actual / forecast / assumption), titled with the
- * engine's chain — benchmark × penetration ÷ 100 × ramp = the year's rate.
- * Null where the topline did not set the figure (an explicit analyst Year-1
- * value, no benchmark, or no record for the year).
+ * engine's chain (`toplineYearChain`) and the benchmark's label.
  */
 export function yearRateBadge(
   s: ToplineStatus | null | undefined,
@@ -396,24 +466,10 @@ export function yearRateBadge(
   index: number,
   metric: 'occupancy' | 'adr',
 ): { basis: 'actual' | 'forecast' | 'assumption'; title: string } | null {
-  if (!s || s.benchmark_level === 'none' || s.explicit_metrics?.includes(metric)) return null;
-  const b = s.benchmark_by_year?.[index];
-  const r = records?.[index];
-  if (!b || !b.basis || !r) return null;
-  const level = metric === 'occupancy' ? b.occupancy : b.adr;
-  const pen = metric === 'occupancy' ? r.mpi_target : r.ari_target;
-  const out = metric === 'occupancy' ? r.occupancy : r.adr;
-  if (level == null || pen == null || out == null) return null;
-  const fmt = (v: number) => (metric === 'occupancy' ? `${(v * 100).toFixed(1)}%` : `$${v.toFixed(2)}`);
-  const src = (metric === 'occupancy' ? r.benchmark_occupancy_source : r.benchmark_adr_source) ?? null;
-  const label = b.label || src || '';
-  const ramp = r.ramp_pct != null ? ` × ramp ${fmtPctWhole(r.ramp_pct)}%` : '';
-  const idx = metric === 'occupancy' ? 'MPI' : 'ARI';
-  const cap = metric === 'occupancy' && r.capped_95 ? ' (capped at 95%)' : '';
-  return {
-    basis: b.basis,
-    title: `Benchmark ${fmt(level)}${label ? ` (${label})` : ''} × ${idx} ${Math.round(pen * 10) / 10} ÷ 100${ramp} = ${fmt(out)}${cap}`,
-  };
+  const chain = toplineYearChain(s, records, index, metric);
+  const b = s?.benchmark_by_year?.[index];
+  if (!chain || !b || !b.basis) return null;
+  return { basis: b.basis, title: b.label ? `${chain.text}. Benchmark: ${b.label}` : chain.text };
 }
 
 export interface ReferenceRow {

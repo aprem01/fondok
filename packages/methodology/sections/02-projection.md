@@ -189,8 +189,9 @@ occupancy and ADR run on: the benchmark (level, report and period, and why a hig
 used), the market growth source with the hotel's class, the stabilized year and the ramp actually
 applied — "Ramp 85/95/100 (default)", your own ramp, or "the default ramp does not apply to this
 deal" with the ramp policy. Each projected Occupancy and ADR column carries a chip saying whether
-that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the benchmark ×
-penetration × ramp that produced the figure. Two reference rows sit under RevPAR: the benchmark for
+that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the model's chain:
+benchmark × penetration × ramp = the rate before displacement, then any renovation displacement as
+its own step to the figure in the column (a penetration you set for one year runs with no ramp). Two reference rows sit under RevPAR: the benchmark for
 each year, and the hotel's own T-12 repeated with its period — neither moves a number. When growth
 is missing the Future P&L says "No market forecast — set growth manually" (or that a CoStar forecast
 is withheld by the workspace's data policy, or that the forecast covers only some years) and offers

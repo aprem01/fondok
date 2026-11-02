@@ -817,9 +817,10 @@ P&L's Topline card: the benchmark level in use (automatic — the competitive se
 submarket for the hotel's class, else the market — or one you force), the penetration at
 stabilization for occupancy (MPI) and ADR (ARI), 100 by default with the hotel's current STR index
 beside it, and the ramp for each year before stabilization. Below it a year-by-year table shows the
-benchmark (with its Actual / Forecast / Assumption chip and label), the penetration the model
-applied, the ramp and the resulting occupancy and ADR; a penetration can be set for any single year
-there. Every change carries a justification and re-runs the model. Runs before 2 November 2026: a
+model's own chain: the benchmark (with its Actual / Forecast / Assumption chip and label) × the
+penetration at stabilization × that year's ramp = the rate before displacement, then any renovation
+displacement as its own step, then the occupancy and ADR the model ran on. A penetration can be set
+for any single year there; that year runs on it with no ramp. Every change carries a justification and re-runs the model. Runs before 2 November 2026: a
 rate set by the retired Index Analysis assumptions while the "Use STR rates" switch was on carried
 this badge; the old market-growth and method settings are now read as your all-years growth and a
 forced level, listed on the Future P&L as settings from retired controls. \
@@ -868,9 +869,10 @@ the Index Analysis tables carry the chip in their Source row and the full label 
 value with no source shows "—" and no chip. The labels are display only — the revenue engine's
 by-year drivers are unchanged. Penetration rows follow the benchmark the model runs on.
 With the STR comp set: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
-forecast columns the penetration the model applied that year (your per-year value, else the
-stabilized penetration, 100 by default; RGI derived as MPI × ARI ÷ 100) — always what the Subject
-rows run on; the hover text says which. With the submarket or market level, the index rows read
+forecast columns the penetration the model applied that year — your per-year value (which runs with
+no ramp), else the stabilized penetration (100 by default) × that year's ramp, so 85 / 95 / 100 under
+the default ramp; RGI derived as MPI × ARI ÷ 100 — always what the Subject rows run on; the hover
+text says which. With the submarket or market level, the index rows read
 "vs \<benchmark\>": the
 anchor column is the subject STR TTM ÷ that benchmark × 100 and each forecast column is the subject
 ÷ that year's benchmark (the same by-year benchmark the model indexes against), or the analyst's

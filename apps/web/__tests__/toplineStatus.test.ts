@@ -20,7 +20,11 @@ import {
   parseRampPercentList,
   yearRateBadge,
   toplineReferenceRows,
+  toplineYearChain,
+  type ToplineYearRecord,
 } from '@/lib/topline';
+import type { ToplineStatus } from '@/lib/api';
+import engineRun from './fixtures/engine/toplineRun.json';
 import { toplineStatus, unavailableGrowth, SUGGESTION_45 } from './fixtures/toplineStatus';
 
 describe('toplineBasisClauses — the one-line basis', () => {
@@ -264,20 +268,60 @@ describe('per-year list editors — percent text ⇄ the worker’s lists', () =
 });
 
 describe('yearRateBadge / reference rows — per-column basis on Occupancy / ADR / RevPAR', () => {
-  const rec = { year: 1, mpi_target: 100, ari_target: 100, ramp_pct: 0.85, occupancy: 0.64175, adr: 258.876, benchmark_occupancy_source: 'STR comp set TTM May 2025' };
-  it('the chip is the benchmark year’s basis; the title spells benchmark × penetration × ramp', () => {
-    const b = yearRateBadge(toplineStatus(), [rec], 0, 'occupancy');
-    expect(b).toEqual({
-      basis: 'forecast',
-      title: 'Benchmark 75.5% (STR comp set TTM May 2025 · 2026: -2.0% (CoStar forecast)) × MPI 100 ÷ 100 × ramp 85% = 64.2%',
-    });
-    expect(yearRateBadge(toplineStatus(), [rec], 0, 'adr')!.title).toContain('× ARI 100 ÷ 100 × ramp 85% = $258.88');
+  // A REAL engine run (apps/worker run_all_engines on the Kimpton documents
+  // fixture: defaults 100 × 85/95/100, a Year-2 ADR penetration of 98, a
+  // Year-1 displacement of 10% occupancy / 6.67% ADR) — never a hand-made
+  // record: the engine's mpi_target already INCLUDES the ramp, and its
+  // occupancy / ADR are the figures that ran, AFTER displacement.
+  const run = engineRun as unknown as {
+    revenue: { topline_by_year: ToplineYearRecord[] };
+    topline_status: ToplineStatus;
+  };
+  const recs = run.revenue.topline_by_year;
+  const st = run.topline_status;
+
+  it('Year 1: benchmark × stabilized penetration × ramp = the pre-displacement rate, then displacement as its own step', () => {
+    const c = toplineYearChain(st, recs, 0, 'occupancy')!;
+    // 74.59% × 100 × 85% = 63.40%; the 10% displacement → 57.06% (what ran).
+    expect(c.pre).toBeCloseTo(0.745899492 * 0.85, 9);
+    expect(c.final).toBeCloseTo(recs[0].occupancy!, 12);
+    expect(c.displaced).toBe(true);
+    expect(c.text).toBe(
+      'Benchmark 74.6% × penetration 100 × ramp 85% = 63.4% before displacement; Year-1 displacement → 57.1%',
+    );
+    // The ramp is applied ONCE: the engine's 85 effective MPI is not multiplied by 85% again.
+    expect(c.text).not.toContain('× MPI 85');
+    const adr = toplineYearChain(st, recs, 0, 'adr')!;
+    expect(adr.text).toBe(
+      'Benchmark $316.37 × penetration 100 × ramp 85% = $268.91 before displacement; Year-1 displacement → $250.98',
+    );
   });
+
+  it('a per-year penetration runs with NO ramp, and says it is your value', () => {
+    const c = toplineYearChain(st, recs, 1, 'adr')!;
+    expect(c.rampApplied).toBe(false);
+    expect(c.text).toBe('Benchmark $314.47 × penetration 98 (your Year 2 value — no ramp) = $308.18');
+    // …while occupancy in the same year still ramps.
+    expect(toplineYearChain(st, recs, 1, 'occupancy')!.text).toBe('Benchmark 74.6% × penetration 100 × ramp 95% = 70.9%');
+  });
+
+  it('a stabilized year has no ramp and no displacement step', () => {
+    expect(toplineYearChain(st, recs, 2, 'occupancy')!.text).toBe('Benchmark 73.7% × penetration 100 = 73.7%');
+  });
+
+  it('the column chip carries the benchmark year’s basis and the chain as its title', () => {
+    const b = yearRateBadge(st, recs, 0, 'occupancy')!;
+    expect(b.basis).toBe('forecast');
+    expect(b.title).toContain('= 63.4% before displacement; Year-1 displacement → 57.1%');
+    expect(yearRateBadge(st, recs, 4, 'occupancy')!.basis).toBe('assumption');
+  });
+
   it('no chip for an explicit Year-1 value, no benchmark, or a missing year', () => {
-    expect(yearRateBadge(toplineStatus({ explicit_metrics: ['occupancy'] }), [rec], 0, 'occupancy')).toBeNull();
-    expect(yearRateBadge(toplineStatus({ benchmark_level: 'none', benchmark_by_year: [] }), [rec], 0, 'occupancy')).toBeNull();
-    expect(yearRateBadge(toplineStatus(), [rec], 7, 'occupancy')).toBeNull();
+    expect(yearRateBadge({ ...st, explicit_metrics: ['occupancy'] }, recs, 0, 'occupancy')).toBeNull();
+    expect(yearRateBadge({ ...st, benchmark_level: 'none', benchmark_by_year: [] }, recs, 0, 'occupancy')).toBeNull();
+    expect(yearRateBadge(st, recs, 7, 'occupancy')).toBeNull();
   });
+
   it('the reference rows: benchmark per year (labelled with its level) and the T-12 repeated with its period', () => {
     const r = toplineReferenceRows(toplineStatus(), 3);
     expect(r.benchmark!.label).toBe('Benchmark (competitive set)');
