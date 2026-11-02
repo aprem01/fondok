@@ -799,9 +799,12 @@ export const DebtEngineOutput = z.object({
   // The loan matures before the sale (term < hold) and no refinance replaces
   // it: the model carries the maturity balance to the sale; this discloses it.
   maturity_warning: z.string().nullable().optional(),
-  // The refinance raises less than the senior balance it retires (+ fee): the
-  // paydown equity would fund is not modelled; this discloses it.
+  // A refinance the model does not run (in or after the sale year); this
+  // discloses it.
   refi_warning: z.string().nullable().optional(),
+  // A refinance short of the balance retired + costs: the shortfall is charged
+  // to equity at the refinance month; this states it (a fact, not a warning).
+  refi_equity_note: z.string().nullable().optional(),
   provenance: ProvenanceMap.default({}),
 });
 export type DebtEngineOutput = z.infer<typeof DebtEngineOutput>;
@@ -859,6 +862,8 @@ export const ExitYearReturn = z.object({
   selling_costs: z.number().nullable().default(null),
   transfer_tax: z.number().nullable().default(null),
   loan_payoff: z.number().nullable().default(null),
+  // Lender exit fees paid at this sale (tranches still outstanding).
+  loan_exit_fee: z.number().nullable().default(null),
   refi_included: z.boolean().default(false),
   net_proceeds: z.number().nullable().default(null),
   levered_irr: z.number().nullable().default(null),

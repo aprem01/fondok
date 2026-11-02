@@ -157,6 +157,8 @@ def _exit_value_provenance(
     terminal_noi_ref: str | None = None,
     basis: str = "forward_12m",
     basis_label: str | None = None,
+    loan_exit_fee: float = 0.0,
+    refi_equity_contribution: float = 0.0,
 ) -> dict[str, ValueTrace]:
     """Shared exit-value trace map for both returns construction paths.
 
@@ -218,7 +220,10 @@ def _exit_value_provenance(
         ),
         "net_proceeds": ValueTrace(
             value=net_proceeds,
-            formula="net_proceeds = gross_sale_price − selling_costs − loan_balance_at_exit",
+            formula=(
+                "net_proceeds = gross_sale_price − selling_costs − loan_balance_at_exit"
+                + (" − loan_exit_fee" if loan_exit_fee > 0 else "")
+            ),
             inputs=[
                 ValueInput(
                     name="gross_sale_price",
@@ -231,12 +236,30 @@ def _exit_value_provenance(
                     traces_to="selling_costs",
                 ),
                 ValueInput(name="loan_balance_at_exit", value=loan_balance_at_exit),
-            ],
-            note="Equity proceeds at sale, after debt payoff.",
+            ]
+            + (
+                [ValueInput(name="loan_exit_fee", value=loan_exit_fee)]
+                if loan_exit_fee > 0
+                else []
+            ),
+            note=(
+                "Equity proceeds at sale, after debt payoff."
+                + (
+                    " Lender exit fees of the tranches outstanding at the sale"
+                    " are deducted."
+                    if loan_exit_fee > 0
+                    else ""
+                )
+            ),
         ),
         "equity_multiple": ValueTrace(
             value=equity_multiple,
-            formula="equity_multiple = total_distributions ÷ equity",
+            formula=(
+                "equity_multiple = total_distributions ÷ "
+                "(equity + refi_equity_contribution)"
+                if refi_equity_contribution > 0
+                else "equity_multiple = total_distributions ÷ equity"
+            ),
             inputs=[
                 # total_distributions is a sum over every year's cash flow plus
                 # the exit — several upstream values, not one, so it carries no
@@ -245,10 +268,28 @@ def _exit_value_provenance(
                 ValueInput(
                     name="equity", value=equity, traces_to="capital.equity_amount"
                 ),
-            ],
+            ]
+            + (
+                [
+                    ValueInput(
+                        name="refi_equity_contribution",
+                        value=refi_equity_contribution,
+                        traces_to="debt.refi_equity_contribution",
+                    )
+                ]
+                if refi_equity_contribution > 0
+                else []
+            ),
             note=(
                 "total_distributions = Σ annual cash-flow-after-debt "
                 "+ net_proceeds at exit."
+                + (
+                    " The refinance equity contribution is additional equity"
+                    " invested: it is in the equity base and not netted from"
+                    " total_distributions."
+                    if refi_equity_contribution > 0
+                    else ""
+                )
             ),
         ),
     }
@@ -539,6 +580,12 @@ class ReturnsEngineInputExt(BaseModel):
     # phased senior→refi debt service and ``loan_balance_at_exit`` the refi
     # balance. Zero / None keeps the single-phase behavior byte-identical.
     refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
+    # The equity a refinance NEEDS (proceeds below the balance retired + costs)
+    # — charged as a negative equity flow at the refinance month (Sam,
+    # 2026-11), in the monthly IRR, the annual display stream, every exit row
+    # after the refinance, and (as additional equity invested) the multiple's
+    # denominator. 0 keeps every other deal byte-identical.
+    refi_equity_contribution: Annotated[float, Field(ge=0)] = 0.0
     refi_year: Annotated[int, Field(ge=1)] | None = None
     # FON-67 — actual time (years from acquisition) of the refi cash-out, for
     # date-based XIRR. A month-30 refi is 2.5. None places the cash-out at
@@ -606,6 +653,12 @@ class ReturnsEngineInputExt(BaseModel):
     # The post-refinance balance (interest-only → constant) once the refi month
     # has passed. None → the scalar ``loan_balance_at_exit`` stands in.
     refi_balance: Annotated[float, Field(ge=0)] | None = None
+    # Lender exit fees, deducted from a sale's net proceeds. ``loan_exit_fee``
+    # is every outstanding tranche's fee (a sale with no refinance before it);
+    # once the refinance precedes the sale it has retired the senior and paid
+    # ``refi_retired_exit_fee`` itself, so the sale owes the difference.
+    loan_exit_fee: Annotated[float, Field(ge=0)] = 0.0
+    refi_retired_exit_fee: Annotated[float, Field(ge=0)] = 0.0
     # Compute the per-year table. Grid callers (sensitivity, pricing, max-price,
     # price solver, asking-vs-bid) set False: they read one metric per run.
     exit_schedule: bool = True
@@ -693,14 +746,15 @@ class _ExitContext:
     # re-resolve it).
     row_stabilized_year: int | None
     # The month from which the sale repays the post-refinance balance. It is
-    # ``refi_month`` when the refinance returns cash. A refinance whose
-    # cash-out is 0 (``refi_active`` False) still replaces the senior, so the
-    # payoff switches at its month all the same. A cash-out of 0 covers both a
-    # refinance whose proceeds just cover the balance + fee AND one that raises
-    # LESS than the balance: the latter's paydown is not charged here (a
-    # modelling decision pending) and the debt engine's ``refi_warning``
-    # discloses it. None without a refinance.
+    # ``refi_month`` when the refinance moves cash (a cash-out or an equity
+    # contribution — ``refi_active``). A refinance whose net cash flow is
+    # exactly 0 (proceeds just cover the balance + costs) still replaces the
+    # senior, so the payoff switches at its month all the same. None without
+    # a refinance.
     refi_payoff_month: int | None = None
+    # The signed net refinance cash flow to equity: + cash-out, − the equity
+    # contribution the refinance needs.
+    refi_net: float = 0.0
 
 
 @dataclass
@@ -723,6 +777,7 @@ class _ExitCase:
     transfer_tax: float | None = None
     payoff: float | None = None
     payoff_source: str | None = None
+    exit_fee: float | None = None
     refi_included: bool = False
     net_proceeds: float | None = None
     # Row-facing IRRs: None when the monthly solver returned a sentinel.
@@ -805,6 +860,7 @@ def _exit_row(case: _ExitCase, *, is_peak: bool) -> ExitYearReturn:
         selling_costs=case.selling_costs,
         transfer_tax=case.transfer_tax,
         loan_payoff=case.payoff,
+        loan_exit_fee=case.exit_fee,
         refi_included=case.refi_included,
         net_proceeds=case.net_proceeds,
         levered_irr=case.levered_irr,
@@ -899,11 +955,14 @@ def _exit_row_provenance(
     if case.net_proceeds is None:
         out[f"{key}.net_proceeds"] = _refused("net_proceeds")
     else:
+        # The exit fee is named only when the sale pays one, so a deal with no
+        # lender exit fee keeps its trace unchanged.
+        _fee = case.exit_fee or 0.0
         out[f"{key}.net_proceeds"] = ValueTrace(
             value=case.net_proceeds,
             formula=(
                 "net_proceeds = gross_sale_price − selling_costs − transfer_tax"
-                " − loan_payoff"
+                " − loan_payoff" + (" − loan_exit_fee" if _fee > 0 else "")
             ),
             inputs=[
                 ValueInput(
@@ -914,7 +973,8 @@ def _exit_row_provenance(
                 ValueInput(name="selling_costs", value=case.selling_costs),
                 ValueInput(name="transfer_tax", value=case.transfer_tax),
                 ValueInput(name="loan_payoff", value=case.payoff),
-            ],
+            ]
+            + ([ValueInput(name="loan_exit_fee", value=_fee)] if _fee > 0 else []),
             note=(
                 f"Loan payoff read from {case.payoff_source}; the refinance is "
                 + ("included" if case.refi_included else "not yet drawn")
@@ -1123,28 +1183,43 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         # every interim row alike (a 10-year loan sold in Year 5 repays its
         # Year-5 balance, not its maturity balance).
         loan_balance_at_exit, payoff_source = _payoff_at(payload, m, refi_included)
+        # Lender exit fees of every tranche still outstanding at this sale; a
+        # tranche the refinance retired paid its fee there instead.
+        exit_fee = max(
+            0.0,
+            payload.loan_exit_fee
+            - (payload.refi_retired_exit_fee if refi_included else 0.0),
+        )
         net_proceeds_to_equity = gross_sale - selling_costs - transfer_tax - loan_balance_at_exit
+        if exit_fee > 0:
+            net_proceeds_to_equity -= exit_fee
 
-        # FON-67 — a mid-hold refi returns capital to equity. For the DISPLAY
-        # stream (Cash Flow tab + equity multiple) fold the cash-out into its
-        # year; it's levered-only, so the unlevered case is untouched. An
-        # interim row keeps the years through its exit year only.
+        # FON-67 — a mid-hold refi moves cash to (cash-out) or from (equity
+        # contribution) equity. For the DISPLAY stream (Cash Flow tab + equity
+        # multiple) fold the signed net into its year; it's levered-only, so
+        # the unlevered case is untouched. An interim row keeps the years
+        # through its exit year only.
+        # The contribution this sale draws — equity in for the multiple.
+        refi_call = 0.0
         if selected:
             cfad_series = list(ctx.op_cfad)
-            # Only a refinance that precedes the sale returns its cash-out: a
-            # sale set before the refi month never draws it (the monthly IRR
+            # Only a refinance that precedes the sale moves its cash: a sale
+            # set before the refi month never draws it (the monthly IRR
             # already excludes it; the annual display stream must too).
             if ctx.refi_active and refi_included:
-                cfad_series[payload.refi_year - 1] += payload.refi_cash_out
+                cfad_series[payload.refi_year - 1] += ctx.refi_net
+                refi_call = payload.refi_equity_contribution
         else:
-            # The cash-out enters an interim row's multiple on the SAME rule
+            # The refinance enters an interim row's multiple on the SAME rule
             # its payoff and IRR use — the refinance month precedes the sale
             # (``refi_included``) — never on the debt engine's year index,
             # which would credit a month-30 refi to a month-27 sale.
             k = exit_year or hold
             cfad_series = list(ctx.op_cfad[:k])
             if refi_included and payload.refi_year is not None:
-                cfad_series[min(payload.refi_year, k) - 1] += payload.refi_cash_out
+                cfad_series[min(payload.refi_year, k) - 1] += ctx.refi_net
+                if ctx.refi_active:
+                    refi_call = payload.refi_equity_contribution
 
         # FON-67 — compute the returns on a MONTHLY calendar (the accurate,
         # institutional method): operating cash accrues through the year, the
@@ -1177,7 +1252,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     else 12
                 ),
                 refi_month=ctx.refi_month,
-                refi_net_cash_out=payload.refi_cash_out if ctx.refi_active else 0.0,
+                refi_net_cash_out=ctx.refi_net if ctx.refi_active else 0.0,
                 exit_net_proceeds_levered=net_proceeds_to_equity,
                 exit_net_proceeds_unlevered=gross_sale - selling_costs - transfer_tax,
             )
@@ -1188,12 +1263,18 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         # selected exit uses the monthly model's multiple, which stops at the
         # real exit month; year-end rows (and a clean hold) use the annual
         # convention — the pre-existing headline convention, preserved.
+        # A refinance equity contribution is additional equity INVESTED: it
+        # is added back to the distributions (the stream carries it as −) and
+        # to the equity base. 0 on every other deal (byte-identical).
         total_distributions = sum(cfad_series) + net_proceeds_to_equity
+        if refi_call > 0:
+            total_distributions += refi_call
         if selected and payload.exit_month_override is not None:
             equity_multiple = monthly.equity_multiple
         else:
+            _em_equity = payload.equity + refi_call if refi_call > 0 else payload.equity
             equity_multiple = (
-                total_distributions / payload.equity if payload.equity else 0.0
+                total_distributions / _em_equity if payload.equity else 0.0
             )
 
         case.gross_sale = gross_sale
@@ -1201,6 +1282,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         case.transfer_tax = transfer_tax
         case.payoff = loan_balance_at_exit
         case.payoff_source = payoff_source
+        case.exit_fee = exit_fee
         case.refi_included = refi_included
         case.net_proceeds = net_proceeds_to_equity
         case.cfad_series = cfad_series
@@ -1254,8 +1336,11 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         # Operating cash flow after debt service, per year (the refi cash-out is
         # held out here so it can be timed correctly for the date-based IRR).
         op_cfad = [n - ds for n, ds in zip(noi_series, ds_series)]
+        # The signed net refinance cash flow: + cash-out, − the equity the
+        # refinance needs. Either sign makes the refinance an equity event.
+        refi_net = payload.refi_cash_out - payload.refi_equity_contribution
         refi_active = (
-            payload.refi_cash_out > 0
+            (payload.refi_cash_out > 0 or payload.refi_equity_contribution > 0)
             and payload.refi_year is not None
             and 1 <= payload.refi_year <= len(op_cfad)
         )
@@ -1297,8 +1382,8 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             row_stabilized_year = _idx + 1 if _idx is not None else None
 
         # The payoff switches to the refi balance from the refinance month —
-        # also for a refinance whose cash-out is 0 (``refi_active`` False; see
-        # ``_ExitContext.refi_payoff_month`` and the debt ``refi_warning``).
+        # also for a refinance whose net cash flow is exactly 0
+        # (``refi_active`` False; see ``_ExitContext.refi_payoff_month``).
         refi_payoff_month: int | None = refi_month
         if (
             refi_payoff_month is None
@@ -1325,6 +1410,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             total_capital=total_capital,
             row_stabilized_year=row_stabilized_year,
             refi_payoff_month=refi_payoff_month,
+            refi_net=refi_net,
         )
 
         # FON-118 — the deal's own exit. ``exit_month_override`` (FON-67) is
@@ -1381,6 +1467,13 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
         levered_monthly_out: list[float] = list(selected.monthly.levered_monthly)
         total_distributions = selected.total_distributions
         equity_multiple = selected.equity_multiple
+        # The refinance equity contribution the selected sale draws (0 when the
+        # sale precedes the refinance or there is none).
+        selected_refi_call = (
+            payload.refi_equity_contribution
+            if ctx.refi_active and selected.refi_included
+            else 0.0
+        )
 
         # PROVENANCE ONLY — the traced value the reversion NOI was grown from,
         # named only when it honestly IS one of the expense engine's projected
@@ -1515,6 +1608,8 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                     equity=payload.equity,
                     equity_multiple=equity_multiple,
                     terminal_noi_ref=terminal_noi_ref,
+                    loan_exit_fee=selected.exit_fee or 0.0,
+                    refi_equity_contribution=selected_refi_call,
                 ),
                 **_irr_provenance(
                     levered_irr=levered_irr,

@@ -158,10 +158,11 @@ def test_refi_deal_headline_still_pays_the_refi_balance() -> None:
 
 
 def test_cash_in_refi_sale_repays_the_refi_balance() -> None:
-    # A refinance that raises LESS than the senior balance (cash-out clamped
-    # to 0) still replaces the senior loan: the sale repays the refi balance.
-    # The paydown equity would fund is NOT modelled — the debt engine's
-    # ``refi_warning`` discloses it (see the debt tests below).
+    # A refinance that raises LESS than the senior balance (cash-out 0)
+    # still replaces the senior loan: the sale repays the refi balance. The
+    # paydown is charged to equity through ``refi_equity_contribution`` (see
+    # tests/test_refi_equity_and_exit_fees.py); this input carries none, so
+    # only the payoff rule is pinned here.
     debt = _debt(10)
     out = ReturnsEngine().run(
         _returns_input(
@@ -267,14 +268,15 @@ _CASH_IN_REFI = {"refi_test_year": 3, "refi_market_ltv_pct": 0.5, "refi_stabiliz
 _CASH_OUT_REFI = {"refi_test_year": 3, "refi_market_ltv_pct": 0.75, "refi_stabilized_value": 60e6}
 
 
-def test_refi_warning_discloses_a_shortfall_the_model_does_not_charge() -> None:
+def test_cash_in_refi_is_charged_not_warned() -> None:
+    # Sam (2026-11): the shortfall is charged to equity at the refinance (see
+    # tests/test_refi_equity_and_exit_fees.py) — no longer a "not modelled"
+    # warning.
     out = _debt(10, hold_years=5, debt_stack_overrides=dict(_CASH_IN_REFI))
     assert out.refi_year == 3 and out.refi_cash_out == 0.0
     assert round(out.schedule[2].ending_balance) == 38_566_897
-    assert out.refi_warning == (
-        "The Year 3 refinance raises $30,000,000 against a $38,566,897 balance; "
-        "the $8,566,897 shortfall (plus fees) that equity would fund is not modelled."
-    )
+    assert out.refi_warning is None
+    assert round(out.refi_equity_contribution) == 8_566_897
 
 
 def test_no_refi_warning_when_the_refi_covers_the_balance() -> None:

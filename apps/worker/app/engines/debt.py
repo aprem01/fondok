@@ -285,6 +285,12 @@ class DebtEngineOutputExt(DebtEngineOutput):
         default_factory=list
     )
     refi_cash_out: Annotated[float, Field(ge=0)] = 0.0
+    # The other sign of the same net refinance cash flow (proceeds − balance
+    # retired − refinance costs): when it is NEGATIVE the refinance needs
+    # equity, and this is that amount, charged to equity at the refinance
+    # month (Sam, 2026-11). Exactly one of ``refi_cash_out`` /
+    # ``refi_equity_contribution`` is positive; both 0 without a refinance.
+    refi_equity_contribution: Annotated[float, Field(ge=0)] = 0.0
     refi_year: Annotated[int, Field(ge=1)] | None = None
     balance_at_exit: Annotated[float, Field(ge=0)] | None = None
     # FON-72 — surface the senior tranche's financing fees so the Debt tab's
@@ -311,6 +317,10 @@ class DebtEngineOutputExt(DebtEngineOutput):
     refi_existing_balance_repaid: Annotated[float, Field(ge=0)] | None = None
     refi_new_interest_rate: Annotated[float, Field(ge=0)] | None = None
     refi_financing_costs: Annotated[float, Field(ge=0)] | None = None
+    # The exit fee of the senior loan the refinance retires — paid AT the
+    # refinance (a refinance cost alongside ``refi_financing_costs``), so the
+    # sale no longer owes it. None without a refinance.
+    refi_exit_fee_usd: Annotated[float, Field(ge=0)] | None = None
     # FON-63 (Sam's 2026-09-14 MVP blocker) — the refinance SIZING assumptions,
     # RESOLVED. The Refinance tab has to render the value the model actually
     # ran on (the analyst's override, or the ``_refi_params`` seed it silently
@@ -569,6 +579,7 @@ def _compute_refi(
     noi_by_year: list[float],
     horizon: int,
     senior_ds_by_year: list[float],
+    retired_exit_fee: float = 0.0,
 ) -> tuple[list[float], float, float, int, dict[str, Any]] | None:
     """Model a mid-hold refinance: size the new loan off the refi-year NOI
     (min of the debt-yield and DSCR limits), retire the senior balance, and
@@ -579,8 +590,13 @@ def _compute_refi(
     FON-72 follow-up — the fifth element is a read-only ``detail`` dict of the
     intermediate figures the refi model already computes (value at refinance,
     LTV, new-loan proceeds, existing balance repaid, new rate, financing costs)
-    so the Debt tab can render them. It changes NO existing return value: the
-    first four elements are byte-identical to before."""
+    so the Debt tab can render them.
+
+    The net refinance cash flow to equity is proceeds − senior balance retired
+    − refinance costs (the new loan's fee + ``retired_exit_fee``, the retired
+    senior's lender exit fee). Positive → ``refi_cash_out`` (the second
+    element); negative → ``detail["equity_contribution"]``, the equity the
+    refinance needs, charged at the refinance month."""
     k = int(refi["year"])
     if k < 1 or k >= horizon:  # refi must land strictly before the exit year
         return None
@@ -617,9 +633,12 @@ def _compute_refi(
         if k - 1 < len(schedule)
         else (schedule[-1].ending_balance if schedule else 0.0)
     )
-    # Net the refi loan fee out of the cash-out to equity (source: 1.00% fee).
+    # Net the refi loan fee and the retired senior's exit fee out of the cash
+    # flow to equity. Positive → cash-out; negative → an equity contribution.
     refi_fee = refi_proceeds * refi.get("fee_pct", 0.0)
-    refi_cash_out = max(0.0, refi_proceeds - senior_balance_at_k - refi_fee)
+    net_to_equity = refi_proceeds - senior_balance_at_k - refi_fee - retired_exit_fee
+    refi_cash_out = max(0.0, net_to_equity)
+    equity_contribution = max(0.0, -net_to_equity)
     refi_ds = refi_proceeds * rate  # interest-only refinance
     ds_by_year: list[float] = []
     for i in range(1, horizon + 1):
@@ -636,6 +655,8 @@ def _compute_refi(
         "existing_balance_repaid": senior_balance_at_k,
         "new_interest_rate": rate,
         "financing_costs": refi_fee,
+        "exit_fee_paid": retired_exit_fee,
+        "equity_contribution": equity_contribution,
         # FON-63 — the RESOLVED sizing assumptions, echoed for the Refinance
         # tab so it never prints a seed from its own head. Read-only additions;
         # none of the four values above depends on them.
@@ -747,26 +768,40 @@ def _maturity_before_refi_warning(
     )
 
 
-def _refi_shortfall_warning(detail: dict[str, Any], refi_year: int) -> str | None:
-    """The refinance raises less than the senior balance it retires (+ fee).
-    The model does NOT charge the paydown equity would fund (a modelling
-    decision pending) — it says so. None when the proceeds cover it."""
+def _refi_equity_note(
+    detail: dict[str, Any],
+    refi_year: int,
+    refi_month_override: int | None,
+    sale_first_label: str | None,
+) -> str | None:
+    """The refinance needs equity: the one factual sentence the Debt tab shows
+    (it is charged, not a warning). ``sale_first_label`` names a selected sale
+    that comes BEFORE the refinance, which therefore never draws it. None when
+    the refinance needs no equity."""
+    call = float(detail.get("equity_contribution") or 0.0)
+    if call <= 0:
+        return None
     proceeds = float(detail.get("new_loan_proceeds") or 0.0)
     balance = float(detail.get("existing_balance_repaid") or 0.0)
-    fee = float(detail.get("financing_costs") or 0.0)
-    if proceeds >= balance + fee:
-        return None
-    if proceeds < balance:
-        return (
-            f"The Year {refi_year} refinance raises {_usd(proceeds)} against a "
-            f"{_usd(balance)} balance; the {_usd(balance - proceeds)} shortfall "
-            "(plus fees) that equity would fund is not modelled."
-        )
-    return (
-        f"The Year {refi_year} refinance raises {_usd(proceeds)} against a "
-        f"{_usd(balance)} balance; the {_usd(balance + fee - proceeds)} of "
-        "refinance fees that equity would fund is not modelled."
+    costs = float(detail.get("financing_costs") or 0.0) + float(
+        detail.get("exit_fee_paid") or 0.0
     )
+    head = (
+        f"The Year {refi_year} refinance needs {_usd(call)} of equity to retire "
+        f"the {_usd(balance)} balance (new loan {_usd(proceeds)}, refinance "
+        f"costs {_usd(costs)}); "
+    )
+    if sale_first_label is not None:
+        return (
+            head + f"the {sale_first_label} comes first, so the selected exit "
+            "does not draw it (later exit-year rows do)."
+        )
+    when = (
+        f"at month {refi_month_override}"
+        if refi_month_override is not None
+        else f"in Year {refi_year}"
+    )
+    return head + f"charged to equity {when}."
 
 
 def returns_debt_inputs(debt_out: Any, *, fallback_loan: float) -> dict[str, Any]:
@@ -788,6 +823,9 @@ def returns_debt_inputs(debt_out: Any, *, fallback_loan: float) -> dict[str, Any
             balance_at_exit if balance_at_exit is not None else fallback_loan
         ),
         "refi_cash_out": getattr(debt_out, "refi_cash_out", 0.0) or 0.0,
+        "refi_equity_contribution": (
+            getattr(debt_out, "refi_equity_contribution", 0.0) or 0.0
+        ),
         "refi_year": refi_year,
         "loan_balance_by_month": [
             float(m.ending_balance)
@@ -800,6 +838,16 @@ def returns_debt_inputs(debt_out: Any, *, fallback_loan: float) -> dict[str, Any
             float(refi_balance)
             if refi_year is not None and refi_balance is not None
             else None
+        ),
+        # Lender exit fees. ``loan_exit_fee`` is every outstanding tranche's
+        # fee, paid by a sale with no refinance before it; a refinance retires
+        # the senior and pays ITS fee (``refi_retired_exit_fee``) at the
+        # refinance, so a later sale owes the difference.
+        "loan_exit_fee": float(getattr(debt_out, "exit_fee_usd", 0.0) or 0.0),
+        "refi_retired_exit_fee": (
+            float(getattr(debt_out, "refi_exit_fee_usd", 0.0) or 0.0)
+            if refi_year is not None
+            else 0.0
         ),
     }
 
@@ -1114,13 +1162,26 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             else balance_at_horizon(schedule, horizon)
         )
         balance_at_exit_out: float | None = senior_balance_at_sale
+        # The senior's lender exit fee (percent convention, on principal — the
+        # same figure ``exit_fee_usd`` publishes). A refinance retires the
+        # senior and pays it as a refinance cost.
+        senior_exit_fee = (
+            senior.loan_amount * (senior.exit_fee_pct / 100.0)
+            if senior.loan_amount > 0
+            else 0.0
+        )
         if refi is not None and horizon > 0:
             senior_ds_by_year = [
                 schedule[i].debt_service if i < len(schedule) else senior_annual_ds
                 for i in range(horizon)
             ]
             computed = _compute_refi(
-                refi, schedule, payload.noi_by_year, horizon, senior_ds_by_year
+                refi,
+                schedule,
+                payload.noi_by_year,
+                horizon,
+                senior_ds_by_year,
+                retired_exit_fee=senior_exit_fee,
             )
             if computed is not None:
                 (
@@ -1136,16 +1197,21 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         # payoff at: the ``refi_month`` override when set, else the refi
         # year-end.
         sale_before_refi = False
+        refi_month_override: int | None = None
         if refi_year_out is not None and sale_month is not None:
             _rm = (payload.debt_stack_overrides or {}).get("refi_month")
             try:
-                _refi_m = (
-                    round(float(_rm)) if _rm is not None and float(_rm) > 0
-                    else refi_year_out * 12
-                )
+                if _rm is not None and float(_rm) > 0:
+                    refi_month_override = max(
+                        1, min(horizon * 12, round(float(_rm)))
+                    )
             except (TypeError, ValueError):
-                _refi_m = refi_year_out * 12
-            _refi_m = max(1, min(horizon * 12, _refi_m))
+                refi_month_override = None
+            _refi_m = (
+                refi_month_override
+                if refi_month_override is not None
+                else max(1, min(horizon * 12, refi_year_out * 12))
+            )
             if sale_month < _refi_m:
                 sale_before_refi = True
                 balance_at_exit_out = senior_balance_at_sale
@@ -1159,6 +1225,9 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         maturity_year = len(schedule)
         maturity_warning: str | None = None
         refi_warning: str | None = None
+        # A refinance that needs equity is CHARGED (Sam, 2026-11): a fact on
+        # the Debt tab, not a warning.
+        refi_equity_note: str | None = None
         if refi_detail is None or refi_year_out is None or sale_before_refi:
             # No refinance — or the sale comes first, so the sale is the
             # event the matured loan is carried to.
@@ -1178,13 +1247,20 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
                     f"{_sale} and is not modelled."
                 )
             elif refi_detail is not None and refi_year_out is not None:
-                refi_warning = _refi_shortfall_warning(refi_detail, refi_year_out)
+                refi_equity_note = _refi_equity_note(
+                    refi_detail,
+                    refi_year_out,
+                    refi_month_override,
+                    _sale_label(sale_month) if sale_month is not None else None,
+                )
         else:
             if schedule and refi_year_out > maturity_year:
                 maturity_warning = _maturity_before_refi_warning(
                     maturity_year, refi_year_out, schedule[-1].ending_balance
                 )
-            refi_warning = _refi_shortfall_warning(refi_detail, refi_year_out)
+            refi_equity_note = _refi_equity_note(
+                refi_detail, refi_year_out, refi_month_override, None
+            )
 
         # FON-72 follow-up — surface the refi detail the model already computed.
         # refi_ltv prefers the input LTV (the sizing basis); when the loan was
@@ -1197,6 +1273,8 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
         refi_existing_balance_repaid: float | None = None
         refi_new_interest_rate: float | None = None
         refi_financing_costs: float | None = None
+        refi_exit_fee_usd: float | None = None
+        refi_equity_contribution = 0.0
         refi_fee_pct_out: float | None = None
         refi_debt_yield_min: float | None = None
         refi_dscr_min: float | None = None
@@ -1210,6 +1288,10 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_existing_balance_repaid = refi_detail.get("existing_balance_repaid")
             refi_new_interest_rate = refi_detail.get("new_interest_rate")
             refi_financing_costs = refi_detail.get("financing_costs")
+            refi_exit_fee_usd = float(refi_detail.get("exit_fee_paid") or 0.0)
+            refi_equity_contribution = float(
+                refi_detail.get("equity_contribution") or 0.0
+            )
             # FON-63 — the RESOLVED sizing assumptions (override or seed) the
             # Refinance tab renders beside their editors. Echoes, not new math.
             refi_fee_pct_out = refi_detail.get("fee_pct")
@@ -1374,6 +1456,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             debt_stack=debt_stack,
             debt_service_by_year=debt_service_by_year,
             refi_cash_out=refi_cash_out,
+            refi_equity_contribution=refi_equity_contribution,
             refi_year=refi_year_out,
             balance_at_exit=balance_at_exit_out,
             refi_value_at_refinance=refi_value_at_refinance,
@@ -1382,6 +1465,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             refi_existing_balance_repaid=refi_existing_balance_repaid,
             refi_new_interest_rate=refi_new_interest_rate,
             refi_financing_costs=refi_financing_costs,
+            refi_exit_fee_usd=refi_exit_fee_usd,
             refi_fee_pct=refi_fee_pct_out,
             refi_debt_yield_min=refi_debt_yield_min,
             refi_dscr_min=refi_dscr_min,
@@ -1400,6 +1484,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             noi_warning=noi_warning,
             maturity_warning=maturity_warning,
             refi_warning=refi_warning,
+            refi_equity_note=refi_equity_note,
             origination_fee_pct=origination_fee_pct,
             exit_fee_pct=exit_fee_pct,
             origination_fee_usd=origination_fee_usd,
