@@ -508,7 +508,9 @@ def resolve_growth_by_year(
         if hit is not None:
             return hit
         if c is None:
-            return _unavailable(metric, None, NO_CLOSE_DATE_DETAIL)
+            # Review I-3 — a stale extraction is the more useful reason: the
+            # report on file was never read for its forecast at all.
+            return _unavailable(metric, None, None if stale_extraction else NO_CLOSE_DATE_DETAIL)
         return doc_by_cal.get((metric, c)) or _unavailable(metric, c)
 
     by_year: dict[str, list[MetricGrowth]] = {"occupancy": [], "adr": []}

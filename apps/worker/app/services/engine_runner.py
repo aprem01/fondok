@@ -3024,7 +3024,11 @@ def _apply_topline(
     status = dict(build.status)
     status["data_policy"] = policy.as_dict()
     status["calendar_anchor"] = anchor.as_dict()
-    if anchor.assumed:
+    doc_sourced = any(
+        row[m]["source"] in ("cbre_horizons", "costar_submarket_forecast", "carried_forward")
+        for row in status["growth_by_year"] for m in ("occupancy", "adr")
+    )
+    if anchor.assumed and doc_sourced:
         status["notes"] = [*status.get("notes", []), anchor.label]
     base[_STATUS] = status
     # The per-year growth lists carry the source of their first projected
@@ -3075,10 +3079,18 @@ def _apply_topline(
         sources["revpar_growth"] = build.terminal_revpar_source
         source_fields.pop("revpar_growth", None)
         if build.terminal_revpar_source == "market_forecast_unavailable":
-            reasons["revpar_growth"] = _reason(
-                ReasonCode.NO_MARKET_FORECAST,
-                "No market forecast for the last projected year — the exit-year NOI is not grown "
-                "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
+            reasons["revpar_growth"] = (
+                _reason(
+                    ReasonCode.REEXTRACT_NEEDED,
+                    "; ".join(status["reextract_needed"])
+                    + " Until then the exit-year NOI is not grown (0%).",
+                )
+                if status.get("reextract_needed")
+                else _reason(
+                    ReasonCode.NO_MARKET_FORECAST,
+                    "No market forecast for the last projected year — the exit-year NOI is not grown "
+                    "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
+                )
             )
 
 

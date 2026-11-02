@@ -149,12 +149,30 @@ async def test_loader_reports_the_reextract_on_sams_qa_deal_shape() -> None:
             text("UPDATE extraction_results SET fields = :f, agent_version = :a WHERE id = :id"),
             {"f": json.dumps(fields), "a": "router:costar;dt:MARKET_STUDY;extractor;pv=v8", "id": row[0]},
         )
+        # The QA deal keys no growth of its own: drop the reference scenario's.
+        ov = json.loads((await s.execute(text("SELECT field_overrides FROM deals WHERE id = :d"), {"d": deal_id})).scalar())
+        for k in ("occupancy_growth_by_year", "adr_growth_by_year"):
+            ov.pop(k, None)
+        await s.execute(text("UPDATE deals SET field_overrides = :o WHERE id = :d"), {"o": json.dumps(ov), "d": deal_id})
         await s.commit()
         base = await _load_engine_inputs(s, deal_id, tenant_id=tenant_id)
     st = base["__topline_status__"]
     assert any(REEXTRACT in r for r in st["reextract_needed"])
     assert REEXTRACT in (st["bucket_note"] or "")
     assert "not in the report" not in json.dumps(st)
-    # 2027–2029 were CoStar-only years (2026 / 2030 carry the analyst's keys).
+    # No year has a usable forecast: every year says re-extract.
     g27 = st["growth_by_year"][1]["adr"]
     assert g27["value"] is None and g27["reason"] == "reextract_needed"
+    # The exit growth says why it is 0, too.
+    assert base["__reasons__"]["revpar_growth"]["code"] == "reextract_needed"
+
+
+def test_a_stale_report_on_a_deal_with_no_close_date_still_says_re_extract() -> None:
+    rows = _costar(pv="v8", keep_class=False, keep_trend=False)
+    g = resolve_growth_by_year(
+        rows, GrowthOverrides(), calendar_years=[], hold_years=5,
+        class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
+    )
+    hit = g.year(2, "adr")
+    assert hit.reason is ReasonCode.REEXTRACT_NEEDED
+    assert REEXTRACT in hit.label and "close date" not in hit.label
