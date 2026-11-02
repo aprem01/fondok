@@ -7251,6 +7251,32 @@ FIELD_EDIT_NOTE_REQUIRED = (
     "number replaces the statement's."
 )
 
+FIELD_EDIT_NOT_A_FIGURE = (
+    "This line is a figure: enter the full number as the statement states it "
+    "(for example 9,496,407.22), not an abbreviation such as $10M."
+)
+
+
+def _edited_figure(value: Any) -> float | None:
+    """W5 (2026-11) — the corrected value of a numeric field, as a number.
+
+    A number passes; so does a plain written figure (``"9,496,407.22"``,
+    ``"$1,234"``, ``"(1,234)"``). Anything with letters or a percent sign —
+    the Data Room's display strings ``"$10M"`` / ``"$1.24M"`` that its editor
+    used to send back — is not a figure: prod deal 7a9928e0 stored
+    ``rooms_revenue = "$10M"``, no reader could use it, and the loader fell
+    back to a prior-year line.
+    """
+    from ..extraction.numeric import coerce_cell_number
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if not isinstance(value, str) or re.search(r"[A-Za-z%]", value):
+        return None
+    return coerce_cell_number(value)
+
 
 @router.patch(
     "/{deal_id}/documents/{doc_id}/fields",
@@ -7350,7 +7376,16 @@ async def review_extraction_field(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=FIELD_EDIT_NOTE_REQUIRED,
             )
-        fields[idx]["value"] = body.value
+        new_value = body.value
+        if isinstance(before_value, int | float) and not isinstance(before_value, bool):
+            figure = _edited_figure(body.value)
+            if figure is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=FIELD_EDIT_NOT_A_FIGURE,
+                )
+            new_value = figure
+        fields[idx]["value"] = new_value
         fields[idx]["confidence"] = 1.0
         fields[idx]["reviewed"] = "edited"
         fields[idx]["review_note"] = review_note
@@ -10412,7 +10447,9 @@ async def _apply_pnl_quality_passes(
                 result.table.page_index if result.table else None,
                 ", ".join(
                     [
-                        f"{c.field_name} {c.old_value:,.0f}→{c.new_value:,.0f}"
+                        f"{c.field_name} "
+                        + (repr(c.old_value) if isinstance(c.old_value, str) else f"{c.old_value:,.0f}")
+                        + f"→{c.new_value:,.0f}"
                         for c in result.changes
                     ]
                     + [f"+{a.field_name}={a.value:,.0f}" for a in result.additions]

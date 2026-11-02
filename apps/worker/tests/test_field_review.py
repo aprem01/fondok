@@ -222,3 +222,43 @@ async def test_cross_tenant_deal_404s() -> None:
     with pytest.raises(HTTPException) as exc:
         await _call(uuid4(), doc_id, field_name="rooms_revenue", action="accept")
     assert exc.value.status_code == 404
+
+
+# ── W5 (2026-11): a numeric line is corrected with a figure, never a label ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["$10M", "$1.24M", "10m", "9.5 million", "12%", True])
+async def test_edit_of_a_figure_with_a_display_string_422s(value) -> None:
+    """Prod deal 7a9928e0: the Data Room editor sent back its display string
+    "$10M" and the worker stored it as rooms revenue."""
+    from fastapi import HTTPException
+
+    from app.api.documents import FIELD_EDIT_NOT_A_FIGURE
+
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    with pytest.raises(HTTPException) as exc:
+        await _call(
+            deal_id, doc_id, field_name="rooms_revenue", action="edit",
+            value=value, note="Per the Summary sheet",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == FIELD_EDIT_NOT_A_FIGURE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [("9,496,407.22", 9496407.22), ("$9,496,407.22", 9496407.22), (9496407.22, 9496407.22), ("(1,234)", -1234.0)],
+)
+async def test_edit_of_a_figure_stores_the_number(value, stored) -> None:
+    deal_id, doc_id = uuid4(), uuid4()
+    await _setup(deal_id, doc_id)
+    res = await _call(
+        deal_id, doc_id, field_name="rooms_revenue", action="edit",
+        value=value, note="Per the Summary sheet row 39",
+    )
+    rooms = next(f for f in res.fields if f.field_name == "rooms_revenue")
+    assert rooms.value == pytest.approx(stored)
+    assert isinstance(rooms.value, float)

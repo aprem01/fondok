@@ -59,7 +59,8 @@ trailing-twelve-month sheet is filed as a T-12 for the period that sheet ends on
 Every grounded figure, identifier and date is pulled into a typed list, each entry carrying the page
 it was read from and a confidence score. Anything not grounded in the source is dropped. A field
 below the review threshold is flagged in the Data Room and in the Historical P&L until you accept or
-correct it.
+correct it. A correction to a figure is a number — the editor starts from the extracted figure, and
+an abbreviation such as “$10M” is refused, because no calculation could read it.
 
 :::
 
@@ -211,7 +212,11 @@ sheet that differs from the Summary by more than 5% is replaced with the Summary
 reconciled with the original value and source kept beside it. A second per-deal check caps a
 statement's F&B, Rooms or Total revenue at 50% confidence when it is below a quarter of the deal's
 other full-period statements for the same line, so a single-outlet GL line can never pass as the
-department total unreviewed.
+department total unreviewed. A statement total that holds text instead of a figure (a “$10M”
+saved by the old Data Room editor, which started from the display string) is replaced from the
+Summary the same way, with the text kept as the original value. The review endpoint refuses a
+non-numeric correction of a numeric field (`_edited_figure`: a number or a plain written figure such
+as “9,496,407.22”; letters and percent signs are not a figure).
 
 A monthly financial package that also carries a dated T12 sheet — twelve consecutive month-end
 columns and a TOTAL, the month columns adding up to the TOTAL — is read as the trailing twelve

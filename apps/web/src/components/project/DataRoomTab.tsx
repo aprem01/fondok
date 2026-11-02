@@ -1580,7 +1580,12 @@ type ReviewField = {
   key: string;
   fieldName: string;
   label: string;
+  /** The display string ("$10M") — for reading, never for editing. */
   value: string;
+  /** The extracted value as stored — what the correction editor starts from.
+   *  W5: the editor used to start from ``value`` and an unchanged save stored
+   *  "$10M" as rooms revenue (prod deal 7a9928e0). */
+  rawValue: string;
   conf: number;
   reviewed: string | null;
   resolved: boolean;
@@ -1655,6 +1660,7 @@ function InlineDocumentReview({
         // R-045 — pipeline-stage paths keep their stage word in the label.
         label: humanizeReviewField(f.field_name),
         value: formatValue(f.value, f.unit, f.field_name),
+        rawValue: f.value === null || f.value === undefined ? '' : String(f.value),
         conf,
         reviewed,
         resolved,
@@ -2102,7 +2108,7 @@ function ReviewFieldRow({
   onReview: (action: 'accept' | 'edit' | 'reject', value?: string, note?: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(field.value);
+  const [draft, setDraft] = useState(field.rawValue);
   // FON-74 — why the corrected value replaces the extracted one (required).
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2305,7 +2311,7 @@ function ReviewFieldRow({
               disabled={busy}
               onClick={() => {
                 setEditing(false);
-                setDraft(field.value);
+                setDraft(field.rawValue);
               }}
               style={btnGhost}
             >
@@ -2343,7 +2349,7 @@ function ReviewFieldRow({
               type="button"
               disabled={busy}
               onClick={() => {
-                setDraft(field.value);
+                setDraft(field.rawValue);
                 setEditing(true);
               }}
               title="Edit"
@@ -2357,7 +2363,7 @@ function ReviewFieldRow({
             type="button"
             disabled={busy}
             onClick={() => {
-              setDraft(field.value);
+              setDraft(field.rawValue);
               setEditing(true);
             }}
             title="Edit"
