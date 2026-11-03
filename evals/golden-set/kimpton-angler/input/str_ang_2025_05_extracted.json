@@ -1,0 +1,561 @@
+{
+ "comment": "Deterministic STR template extraction (app.extraction.template_extractors.str_trend) of ANG-20250500-USD-E.xlsx, the May 2025 monthly STAR report in the deal's data room. Regenerate with scripts/build_str_fixture.py.",
+ "coverage_note": "variant=monthly_star_xlsx; monthly STAR report: subject TTM Occ/ADR/RevPAR, MPI/ARI/RGI (converted from 100-scale to 1.00=parity), comp-set roster + rollups and subject monthly series extracted; day-of-week and segmentation breakdowns left to future template versions",
+ "doc_type": "STR_TREND",
+ "document_id": "kimpton-angler-str-2025-05",
+ "fields": [
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.1.name",
+   "source_page": 22,
+   "unit": null,
+   "value": "Z Ocean Hotel, Classico A Sonesta Collection"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.1.keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 35
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.1.str_id",
+   "source_page": 22,
+   "unit": null,
+   "value": "53909"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.2.name",
+   "source_page": 22,
+   "unit": null,
+   "value": "Blue Moon Hotel"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.2.keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 75
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.2.str_id",
+   "source_page": 22,
+   "unit": null,
+   "value": "34401"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.3.name",
+   "source_page": 22,
+   "unit": null,
+   "value": "The Betsy South Beach"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.3.keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 129
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.3.str_id",
+   "source_page": 22,
+   "unit": null,
+   "value": "44117"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.4.name",
+   "source_page": 22,
+   "unit": null,
+   "value": "The Tony Hotel of South Beach"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.4.keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 73
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.4.str_id",
+   "source_page": 22,
+   "unit": null,
+   "value": "39070"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.5.name",
+   "source_page": 22,
+   "unit": null,
+   "value": "Dream South Beach"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.5.keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 107
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.compset.5.str_id",
+   "source_page": 22,
+   "unit": null,
+   "value": "33931"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "comp_set.comp_set_size",
+   "source_page": 22,
+   "unit": null,
+   "value": 5
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "comp_set.total_keys",
+   "source_page": 22,
+   "unit": "rooms",
+   "value": 419
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.occupancy_pct",
+   "source_page": 2,
+   "unit": "percent",
+   "value": 82.8892
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.adr_usd",
+   "source_page": 2,
+   "unit": "USD",
+   "value": 233.446
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.revpar_usd",
+   "source_page": 2,
+   "unit": "USD",
+   "value": 193.502
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.indices.mpi_occupancy_index",
+   "source_page": 2,
+   "unit": "ratio",
+   "value": 1.09793
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.indices.ari_adr_index",
+   "source_page": 2,
+   "unit": "ratio",
+   "value": 0.751173
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.indices.rgi_revpar_index",
+   "source_page": 2,
+   "unit": "ratio",
+   "value": 0.824732
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.name",
+   "source_page": 2,
+   "unit": null,
+   "value": "Kimpton Angler's Hotel"
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "str_trend.report_year",
+   "unit": null,
+   "value": 2025
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2023_12.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 84.1398
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_01.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 89.2962
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_02.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 92.9206
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_03.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 92.6931
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_04.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 93.2323
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_05.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 84.824
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_06.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 78.3333
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_07.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 73.7048
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_08.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 74.0469
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_09.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 66.2879
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_10.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 77.5415
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_11.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 88.7879
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_12.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 87.8299
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_01.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 90.6403
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_02.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 92.6948
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_03.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 91.3245
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_04.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 93.0303
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_05.occupancy_pct",
+   "source_page": 4,
+   "unit": "percent",
+   "value": 81.2317
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2023_12.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 331.894
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_01.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 287.564
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_02.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 351.082
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_03.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 312.217
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_04.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 258.447
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_05.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 223.861
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_06.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 171.174
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_07.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 179.427
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_08.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 158.695
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_09.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 160.402
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_10.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 192.317
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_11.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 197.741
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_12.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 278.767
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_01.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 280.593
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_02.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 341.186
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_03.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 296.993
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_04.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 266.566
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_05.adr_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 222.623
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2023_12.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 279.255
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_01.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 256.784
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_02.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 326.227
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_03.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 289.403
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_04.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 240.956
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_05.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 189.888
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_06.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 134.086
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_07.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 132.246
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_08.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 117.509
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_09.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 106.327
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_10.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 149.126
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_11.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 175.57
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2024_12.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 244.841
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_01.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 254.33
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_02.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 316.262
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_03.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 271.228
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_04.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 247.987
+  },
+  {
+   "confidence": 1.0,
+   "field_name": "ttm_performance.subject.monthly.2025_05.revpar_usd",
+   "source_page": 4,
+   "unit": "USD",
+   "value": 180.84
+  }
+ ],
+ "filename": "ANG-20250500-USD-E.xlsx"
+}

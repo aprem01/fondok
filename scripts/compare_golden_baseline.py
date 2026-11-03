@@ -5,7 +5,8 @@ Sam (2026-10-16): "preserve the current Kimpton model outputs so we can
 distinguish expected changes from unintended calculation discrepancies during
 regression testing."
 
-The fixture is the Kimpton Angler seed set in
+Two fixtures (FON-116 / FON-117, topline v2). The SEED fixture is the
+Kimpton Angler seed set in
 ``apps/worker/tests/fixtures/kimpton_seed.py`` (``kimpton_seed()``, deal id
 ``KIMPTON_FIXTURE_DEAL_ID``), injected explicitly through
 ``run_all_engines(..., assumptions=...)`` — nothing is read from a deal row or
@@ -13,7 +14,13 @@ a document — exactly as
 ``apps/worker/tests/test_engine_runner.py::test_run_all_engines_kimpton``
 does, against a throwaway SQLite database. (Until 2026-10-30 the same values
 were the production loader's defaults, reached through a non-UUID demo deal
-id; that fork is gone and the fixture is the only place they live.)
+id; that fork is gone and the fixture is the only place they live.) It has
+no documents, so under topline v2 it pins the "no market forecast" state. The
+DOCUMENTS fixture (``apps/worker/tests/fixtures/kimpton_docs_fixture.py``) is
+a database deal carrying the deal's own STR and CoStar extractions and the
+reference Index Analysis inputs, run like any production deal. A baseline
+carries both (``engines`` and ``docs_fixture.engines``); a baseline cut before
+the documents fixture existed reports it as "not in this baseline".
 
 Usage (from the repo root)::
 
@@ -24,6 +31,16 @@ Usage (from the repo root)::
         --baseline evals/baselines/kimpton-golden-2026-11-01-engfix.json
     apps/worker/.venv/bin/python scripts/compare_golden_baseline.py \\
         --write evals/baselines/kimpton-golden-<date>.json   # new baseline
+
+FON-116 staged rollout (TEMPORARY — goes with ``TOPLINE_BENCHMARK_ENABLED``):
+``--topline-mode growth_only`` (the default, what deploys) runs both fixtures
+with the switch OFF against :data:`DEFAULT_BASELINE`; ``--topline-mode
+benchmark`` runs them with the switch ON against :data:`BENCHMARK_BASELINE`.
+CI checks both (two ``check_golden_gate.py`` invocations). The mode is
+pinned in this process's environment before any ``app`` import and recorded
+in the baseline header; comparing across modes is reported loudly and
+counts as a move. Once FON-117 is on in production, drop the flag and keep
+one baseline.
 
 The headline section uses the same field list and differ as the live
 ``GET /deals/{id}/engines/compare`` endpoint
@@ -66,13 +83,22 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "apps" / "worker"
-DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-01-engfix.json"
+#: FON-116 staged rollout — the baseline per topline mode (``--topline-mode``).
+#: The default (growth-only) is what deploys.
+DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-growth-only.json"
+BENCHMARK_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-topline-v2-benchmark.json"
+TOPLINE_MODES = ("growth_only", "benchmark")
+BASELINE_FOR_MODE = {"growth_only": DEFAULT_BASELINE, "benchmark": BENCHMARK_BASELINE}
 
 # The fixture module is pure data (no ``app`` import), so it is safe to import
 # before ``_bootstrap`` pins DATABASE_URL; ``_bootstrap`` re-adds the same
 # paths idempotently for the ``app`` imports that follow.
 if str(WORKER) not in sys.path:
     sys.path.insert(0, str(WORKER))
+from tests.fixtures.kimpton_docs_fixture import (  # noqa: E402
+    KIMPTON_DOCS_FIXTURE_DEAL_ID,
+    seed_kimpton_docs_deal,
+)
 from tests.fixtures.kimpton_seed import (  # noqa: E402
     KIMPTON_FIXTURE_DEAL_ID,
     kimpton_seed,
@@ -84,6 +110,17 @@ FIXTURE_DESCRIPTION = (
     "injected via run_all_engines(assumptions=...); no deal row, no documents, "
     "no overrides), run through run_all_engines exactly as "
     "tests/test_engine_runner.py::test_run_all_engines_kimpton does."
+)
+#: FON-116 / FON-117 (topline v2) — the second fixture: a DATABASE deal with
+#: the deal's own STR and CoStar documents and the reference Index Analysis
+#: inputs as overrides (apps/worker/tests/fixtures/kimpton_docs_fixture.py).
+DOCS_FIXTURE_DEAL_ID = KIMPTON_DOCS_FIXTURE_DEAL_ID
+DOCS_FIXTURE_DESCRIPTION = (
+    "Kimpton Angler documents fixture (apps/worker/tests/fixtures/kimpton_docs_fixture.py): "
+    "a deal row (132 keys, $36.4M, upper-upscale) with the May 2025 STAR report, the "
+    "Miami Beach CoStar submarket report and the seller's T-12 to May 2025 as extraction "
+    "rows and the reference Index Analysis inputs as field_overrides, run through "
+    "run_all_engines like any deal."
 )
 
 
@@ -100,10 +137,14 @@ FIXTURE_DESCRIPTION = (
 _TMP: tempfile.TemporaryDirectory[str] | None = None
 
 
-def _bootstrap() -> Path:
-    """Pin the throwaway database + import path for THIS process. Returns
-    the database path so ``run_fixture`` can verify the binding."""
+def _bootstrap(topline_mode: str = "growth_only") -> Path:
+    """Pin the throwaway database + import path + topline rollout mode for
+    THIS process. Returns the database path so ``run_fixture`` can verify the
+    binding."""
     global _TMP
+    # FON-116 staged rollout — pinned explicitly (a developer shell's export
+    # must not decide which mode a baseline describes).
+    os.environ["TOPLINE_BENCHMARK_ENABLED"] = "1" if topline_mode == "benchmark" else "0"
     _TMP = tempfile.TemporaryDirectory(prefix="fondok-golden-")
     db = Path(_TMP.name) / "golden.db"
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db}"
@@ -121,13 +162,30 @@ def _cleanup() -> None:
         _TMP = None
 
 
-async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
-    """``{engine: {status, outputs}}`` for one fresh Kimpton chain run."""
+def _round_trip(results: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    # Round-trip through JSON so the comparison sees exactly what a baseline
+    # file holds (and what engine_outputs persists).
+    raw = {
+        name: {"status": r.get("status"), "outputs": r.get("outputs")}
+        for name, r in sorted(results.items())
+    }
+    return json.loads(json.dumps(raw, default=str))
+
+
+async def run_fixture(db: Path, mode: str = "growth_only") -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """``({engine: {status, outputs}}`` of the seed fixture, the same of the
+    documents fixture``)`` — one fresh chain run each."""
     from uuid import uuid4
 
     from app.database import dispose_engine, get_engine, get_session_factory
     from app.migrations import run_startup_migrations
     from app.services.engine_runner import run_all_engines
+    from app.services.topline import topline_mode
+
+    if topline_mode() != mode:
+        raise RuntimeError(
+            f"the worker runs the {topline_mode()!r} topline, not the {mode!r} this golden run pinned"
+        )
 
     bound = get_engine().url.database
     if bound != str(db):
@@ -138,23 +196,22 @@ async def run_fixture(db: Path) -> dict[str, dict[str, Any]]:
     try:
         await run_startup_migrations()
         async with get_session_factory()() as session:
-            results = await run_all_engines(
+            seed = await run_all_engines(
                 session,
                 deal_id=FIXTURE_DEAL_ID,
                 tenant_id=str(uuid4()),
                 run_id=str(uuid4()),
                 assumptions=kimpton_seed(),
             )
+        async with get_session_factory()() as session:
+            deal_id, tenant_id = await seed_kimpton_docs_deal(session)
+            docs = await run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
+            )
     finally:
         # Close the aiosqlite connections before the directory goes away.
         await dispose_engine()
-    # Round-trip through JSON so the comparison sees exactly what a baseline
-    # file holds (and what engine_outputs persists).
-    raw = {
-        name: {"status": r.get("status"), "outputs": r.get("outputs")}
-        for name, r in sorted(results.items())
-    }
-    return json.loads(json.dumps(raw, default=str))
+    return _round_trip(seed), _round_trip(docs)
 
 
 def _git_head() -> str | None:
@@ -199,6 +256,16 @@ def _topline_methodology(engines: dict[str, dict[str, Any]], header: Any) -> int
     return _LEGACY_TOPLINE_METHODOLOGY
 
 
+def _topline_mode_of(engines: dict[str, dict[str, Any]], header: Any) -> str | None:
+    """The topline rollout mode a fixture run used: the revenue output's
+    ``topline_mode``, else the baseline header's."""
+    outputs = (engines.get("revenue") or {}).get("outputs") or {}
+    v = outputs.get("topline_mode")
+    if isinstance(v, str):
+        return v
+    return header if isinstance(header, str) else None
+
+
 def _fmt(v: Any, unit: str = "") -> str:
     if v is None:
         return "—"
@@ -215,7 +282,16 @@ def _fmt(v: Any, unit: str = "") -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    ap.add_argument(
+        "--topline-mode",
+        choices=TOPLINE_MODES,
+        default="growth_only",
+        help=(
+            "FON-116 staged rollout: run with TOPLINE_BENCHMARK_ENABLED off (growth_only, "
+            "the default — what deploys) or on (benchmark); picks that mode's baseline"
+        ),
+    )
+    ap.add_argument("--baseline", type=Path, default=None, help="default: the --topline-mode's baseline")
     ap.add_argument("--all", action="store_true", help="also list unchanged headline fields")
     ap.add_argument("--full", action="store_true", help="also diff every raw numeric leaf")
     ap.add_argument("--write", type=Path, help="write a NEW baseline file instead of comparing")
@@ -228,9 +304,12 @@ def main() -> int:
         ),
     )
     args = ap.parse_args()
+    if args.baseline is None:
+        args.baseline = BASELINE_FOR_MODE[args.topline_mode]
 
-    db = _bootstrap()
-    head = asyncio.run(run_fixture(db))
+    db = _bootstrap(args.topline_mode)
+    print(f"Topline mode: {args.topline_mode} (TOPLINE_BENCHMARK_ENABLED={os.environ['TOPLINE_BENCHMARK_ENABLED']})")
+    head, head_docs = asyncio.run(run_fixture(db, args.topline_mode))
 
     if args.write:
         from datetime import date
@@ -246,23 +325,72 @@ def main() -> int:
             # (``revenue.topline_methodology_version``), recorded in the header
             # so a later compare can say loudly when the method moved.
             "topline_methodology": _topline_methodology(head, None),
+            # FON-116 staged rollout — the mode both fixtures ran in.
+            "topline_mode": args.topline_mode,
             "engines": head,
+            "docs_fixture": {
+                "fixture": DOCS_FIXTURE_DEAL_ID,
+                "fixture_description": DOCS_FIXTURE_DESCRIPTION,
+                "topline_methodology": _topline_methodology(head_docs, None),
+                "topline_mode": args.topline_mode,
+                "engines": head_docs,
+            },
         }
         args.write.parent.mkdir(parents=True, exist_ok=True)
         args.write.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n")
         print(f"wrote {args.write}")
         return 0
 
-    from app.services.run_compare import diff_fields, extract_headline_fields
-
     baseline = json.loads(args.baseline.read_text())
-    base_eng = baseline["engines"]
 
     print(f"Baseline : {args.baseline.relative_to(REPO) if args.baseline.is_relative_to(REPO) else args.baseline}")
     print(f"           generated from {baseline.get('generated_from_commit')} on {baseline.get('generated_on')}")
     print(f"Head     : working tree at {_git_head()}")
-    print(f"Fixture  : {FIXTURE_DEAL_ID}")
 
+    moved = 0
+    added_total = 0
+    base_mode = baseline.get("topline_mode")
+    if base_mode is not None and base_mode != args.topline_mode:
+        print(
+            f"TOPLINE MODE MISMATCH: baseline cut in {base_mode} mode, head ran in "
+            f"{args.topline_mode} mode — this compares two rollout modes, not drift."
+        )
+        moved += 1
+    for title, fixture_id, base_block, head_eng in (
+        ("Seed fixture (no documents)", FIXTURE_DEAL_ID, baseline, head),
+        ("Documents fixture", DOCS_FIXTURE_DEAL_ID, baseline.get("docs_fixture"), head_docs),
+    ):
+        print(f"\n==== {title} — {fixture_id}")
+        if not isinstance(base_block, dict):
+            print("Not in this baseline (cut a new baseline with --write to carry it).")
+            continue
+        n_moved, n_added = _compare(args, base_block, head_eng)
+        moved += n_moved
+        added_total += n_added
+
+    if not moved:
+        if added_total:
+            print(
+                f"\nNo headline differences: the Kimpton fixtures match the baseline "
+                f"({added_total} added field(s) have no baseline value — cut a new "
+                "baseline with --write to carry them)."
+            )
+        else:
+            print("\nNo headline differences: the Kimpton fixtures match the baseline.")
+        return 0
+    if args.exit_nonzero_on_headline_diff:
+        # Distinct from 2 ("could not run"): the comparison completed and
+        # found a fixture moved. ``scripts/check_golden_gate.py`` maps this
+        # to pass/fail by looking for the ``golden: expected`` trailer.
+        return 3
+    return 0
+
+
+def _compare(args: argparse.Namespace, base_block: dict[str, Any], head: dict[str, Any]) -> tuple[int, int]:
+    """Report one fixture; ``(headline changes + status moves, added fields)``."""
+    from app.services.run_compare import diff_fields, extract_headline_fields
+
+    base_eng = base_block["engines"]
     status_moves = [
         (n, base_eng.get(n, {}).get("status"), head.get(n, {}).get("status"))
         for n in sorted(set(base_eng) | set(head))
@@ -301,12 +429,19 @@ def main() -> int:
     # baseline cut before the field exists reads as the legacy method (1).
     # "0 headline changes" is never claimed across methods: the line below
     # is printed whenever the two differ.
-    base_method = _topline_methodology(base_eng, baseline.get("topline_methodology"))
+    base_method = _topline_methodology(base_eng, base_block.get("topline_methodology"))
     head_method = _topline_methodology(head, None)
+    base_mode = _topline_mode_of(base_eng, base_block.get("topline_mode"))
+    head_mode = _topline_mode_of(head, None)
+    if base_mode != head_mode:
+        print(
+            f"TOPLINE MODE CHANGED: baseline {base_mode} -> head {head_mode} "
+            "(revenue.topline_mode) — FON-116 staged rollout."
+        )
     if base_method != head_method:
         print(
             f"TOPLINE METHODOLOGY CHANGED: baseline v{base_method} -> head v{head_method} "
-            "(revenue.topline_methodology_version) — the headline diff below compares "
+            "(revenue.topline_methodology_version) — the headline diff above compares "
             "two methods, not one method's drift."
         )
 
@@ -342,22 +477,7 @@ def main() -> int:
                     print(f"  {eng}.{key}: {b!r} -> {h!r}")
         print(f"Raw leaves changed: {n_changed} (added: {n_added}, removed: {n_removed})")
 
-    if not changed and not status_moves:
-        if added:
-            print(
-                f"\nNo headline differences: the Kimpton fixture matches the baseline "
-                f"({len(added)} added field(s) have no baseline value — cut a new "
-                "baseline with --write to carry them)."
-            )
-        else:
-            print("\nNo headline differences: the Kimpton fixture matches the baseline.")
-        return 0
-    if args.exit_nonzero_on_headline_diff:
-        # Distinct from 2 ("could not run"): the comparison completed and
-        # found the fixture moved. ``scripts/check_golden_gate.py`` maps this
-        # to pass/fail by looking for the ``golden: expected`` trailer.
-        return 3
-    return 0
+    return len(changed) + len(status_moves), len(added)
 
 
 if __name__ == "__main__":

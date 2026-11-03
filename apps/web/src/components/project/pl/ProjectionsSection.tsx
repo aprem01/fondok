@@ -87,7 +87,28 @@ import { projCommentKey } from '@/lib/cellComments';
 import { Sourced } from '@/components/help/Sourced';
 import { useRefusal } from '@/components/help/Refused';
 import { useSource } from '@/lib/hooks/useDealProvenance';
-import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE, isStrMarketOverride, isStrBasisSource } from '@/lib/provenance';
+import { sourceKind, sourceLabel, sourceExplanation, KIND_TONE } from '@/lib/provenance';
+import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
+import {
+  revenueBasisRefusal,
+  toplineMigrationNotice,
+  toplineReferenceRows,
+  yearRateBadge,
+  type ReferenceRow,
+  type ToplineYearRecord,
+} from '@/lib/topline';
+import {
+  GrowthByYearTable,
+  RevenueBasisEntry,
+  ToplineBasisLine,
+  ToplineCard,
+  ToplineGrowthBanner,
+  ToplineNotices,
+  type ToplineSave,
+} from './Topline';
+import { BasisChip } from './IndexMethodology';
+import { closeDatePatch } from '../CloseDateField';
+import type { EngineFailure, ToplineStatus } from '@/lib/api';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -340,8 +361,10 @@ export function projectionColumnSubtitle(calendarYear?: number): string {
 
 // Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
 // Used as the display fallback when a key has no override and no resolved source.
+// FON-116 — `revpar_growth` is NOT here: since topline v2 the worker has no
+// seeded growth (the 4.5% is a labelled suggestion on `topline_status`), so the
+// field shows the analyst's value or the worker's resolved figure, else blank.
 const ASSUMPTION_DEFAULTS: Record<string, number> = {
-  revpar_growth: 0.045,
   expense_growth: 0.035,
   other_expense_growth: 0.03,
   resort_fee_per_night: 35,
@@ -516,42 +539,67 @@ export default function ProjectionsSection({
     [overrides, applyOverride, resetOverride, runStatus],
   );
 
-  // FON-61 (D4) — the Year-1 basis is read from the worker's source tags,
-  // never inferred from the flag alone. An STR basis tag on starting_occupancy
-  // / starting_adr (subject TTM, comp-set rates, or forward forecast — see
-  // ``isStrBasisSource``) means the Market / STR rates ARE the active basis;
-  // ``str_forecast_unavailable`` (the worker tags the flag key when the seed
-  // was requested but could not populate) means the model stayed on T-12.
-  const occSrc = useSource('starting_occupancy');
-  const adrSrc = useSource('starting_adr');
-  const strSeedSrc = useSource('revenue_seed_from_str_forecast');
   // FON-89 — the worker's Year-1 displacement verdict, one line under the
   // basis chips, printed verbatim (null until the provenance payload lands).
   const displacementLine = displacementStatusLine(useDisplacementStatus());
-  // FON-61 (61.2) — ONE helper, not a hand-rolled equality: the STR seed's
-  // source id was split three ways (forward forecast / subject TTM actual /
-  // comp-set rates) and every one of them is an STR basis.
-  const strBasisActive = isStrBasisSource(occSrc?.source) || isStrBasisSource(adrSrc?.source);
-  const strBasisUnavailable =
-    !strBasisActive &&
-    [strSeedSrc, occSrc, adrSrc].some((s) => s?.source === 'str_forecast_unavailable');
-  // Revert = the Market tab's revert: drop the flag + both STR-noted keys
-  // (an analyst's later explicit override on either key survives), re-run.
-  const revertStrBasis = useCallback(async () => {
-    const next = { ...overrides };
-    delete next['revenue_seed_from_str_forecast'];
-    for (const key of ['starting_occupancy', 'starting_adr'] as const) {
-      if (isStrMarketOverride(next[key])) delete next[key];
-    }
-    try {
-      await api.deals.update(dealId, { field_overrides: next });
-      refreshDeal();
-      await run();
-      toast('Reverted Year-1 to the T-12 actuals — re-modeled', { type: 'success' });
-    } catch {
-      toast('Could not revert the STR basis', { type: 'error' });
-    }
-  }, [overrides, dealId, refreshDeal, run, toast]);
+  // FON-116 / FON-117 — the topline the worker resolved (benchmark ×
+  // penetration × ramp, growth by year, every gap with its reason). It
+  // replaces the retired "Use STR rates" basis chip and its Revert: there is
+  // one method now, and the basis line below says what it ran on.
+  const toplineStatus = useToplineStatus();
+  // ONE save path for every topline input: the analyst's note on each
+  // number-moving key (review I-6), the deal PATCH, then the re-run.
+  const applyPatch = useCallback<ToplineSave>(
+    async (patch, note) => {
+      let next: Record<string, unknown>;
+      try {
+        next = applyOverridePatch(overrides, patch, note);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return false;
+      }
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        refreshDeal();
+        await run();
+        toast('Saved — re-modeled', { type: 'success' });
+        return true;
+      } catch {
+        toast('Could not save', { type: 'error' });
+        return false;
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  // R2-I1 — the close date places the market forecast; this is the same save
+  // path as the CAPEX tab's Acquisition Date (`closeDatePatch`).
+  const saveCloseDate = useCallback(
+    async (iso: string, note: string) => {
+      let next: Record<string, unknown>;
+      try {
+        next = closeDatePatch(overrides, iso, note);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : NOTE_REQUIRED_MESSAGE, { type: 'error' });
+        return;
+      }
+      try {
+        await api.deals.update(dealId, { field_overrides: next });
+        refreshDeal();
+        toast('Acquisition date saved — re-running the model…', { type: 'success' });
+        await run();
+      } catch {
+        toast('Could not save the acquisition date', { type: 'error' });
+      }
+    },
+    [overrides, dealId, refreshDeal, run, toast],
+  );
+  // Plan §6 — "Clear legacy keys": one audited PATCH; nulls are reverts (no note).
+  const clearLegacyKeys = useCallback(
+    (keys: string[]) => {
+      void applyPatch(Object.fromEntries(keys.map((k) => [k, null])), '');
+    },
+    [applyPatch],
+  );
 
   // FON-67 — the NOI reconciliation pin. While ``noi_override_by_year`` (a
   // per-year NOI list) is set, the worker pins the operating NOI path in the
@@ -620,10 +668,25 @@ export default function ProjectionsSection({
   const terminalNoi =
     getEngineField<number>(outputs, 'returns', 'terminal_noi_usd') ??
     getEngineField<number>(outputs, 'returns', 'terminal_noi');
-  const revparGrowthAssumption =
+  // The exit's forward-12-month growth: the Returns engine's own figure, else
+  // the analyst's, else the worker's resolved terminal growth — never a seed.
+  const revparGrowthSrc = useSource('revpar_growth');
+  const revparGrowthAssumption: number | null =
     getEngineField<number>(outputs, 'returns', 'revpar_growth') ??
     ovValue(overrides, 'revpar_growth') ??
-    ASSUMPTION_DEFAULTS.revpar_growth;
+    (typeof revparGrowthSrc?.value === 'number' ? revparGrowthSrc.value : null) ??
+    toplineStatus?.terminal_revpar_growth?.value ??
+    null;
+  // FON-116 — the revenue engine's per-year topline record and the method
+  // version of the run on screen (plan §6: a run that predates v2 says so).
+  const toplineByYear = getEngineField<ToplineYearRecord[]>(outputs, 'revenue', 'topline_by_year') ?? null;
+  const toplineVersion = getEngineField<number>(outputs, 'revenue', 'topline_methodology_version');
+  const migrationNotice = toplineMigrationNotice({
+    hasRevenueRun: Array.isArray(revenueYears) && revenueYears.length > 0,
+    version: toplineVersion,
+  });
+  // Review I-5 — no Year-1 basis: the worker's sentence + the entry.
+  const basisRefusal = revenueBasisRefusal(toplineStatus, (outputs?.failures ?? null) as EngineFailure[] | null);
   // FON-41 — the deal's hold, which IS the projection period. Override first
   // (analyst intent shows the moment it is saved, before the re-run lands),
   // then the returns engine's published value. `years.length` is the same
@@ -709,6 +772,28 @@ export default function ProjectionsSection({
   const exitCalendarYear =
     typeof lastCalendarYear === 'number' ? lastCalendarYear + 1 : undefined;
 
+  if (basisRefusal && (!years || years.length === 0)) {
+    return (
+      <Card className="p-6 space-y-3" data-testid="projections-no-revenue-basis">
+        <RevenueBasisEntry
+          message={basisRefusal.message}
+          missing={basisRefusal.missing}
+          onSave={applyPatch}
+          running={overrideCtx.running}
+          editable={!!deal}
+        />
+        <ToplineNotices
+          status={toplineStatus}
+          dealId={dealId}
+          migrationNotice={null}
+          onClearLegacy={clearLegacyKeys}
+          onRerun={() => void run()}
+          running={overrideCtx.running}
+        />
+      </Card>
+    );
+  }
+
   if (!years || years.length === 0) {
     return (
       <Card className="p-12 text-center">
@@ -746,37 +831,6 @@ export default function ProjectionsSection({
           </h3>
         </div>
         <div className="flex items-center gap-2">
-          {/* FON-61 (D4) — honest Year-1 basis. Active only when the worker
-              tagged the rates with an STR basis; "unavailable" when the seed was
-              requested but could not populate; nothing for analyst / seed. */}
-          {strBasisActive && (
-            <span
-              data-testid="str-basis-chip"
-              className="inline-flex items-center gap-1.5 rounded-md border border-success-500/30 bg-success-50 px-2 py-1 text-[11px] font-medium text-success-700"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-success-500" aria-hidden="true" />
-              Active basis: Market / STR
-              <span className="text-success-700/50" aria-hidden="true">·</span>
-              <button
-                type="button"
-                onClick={revertStrBasis}
-                disabled={overrideCtx.running}
-                className="font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80 disabled:opacity-50"
-              >
-                Revert
-              </button>
-            </span>
-          )}
-          {strBasisUnavailable && (
-            <span
-              data-testid="str-basis-unavailable"
-              className="inline-flex items-center gap-1.5 rounded-md border border-warn-500/30 bg-warn-50 px-2 py-1 text-[11px] font-medium text-warn-700"
-              title="STR rates were requested but could not populate (no STR Trend extraction or coverage too low). The model is on the T-12 base."
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-warn-500" aria-hidden="true" />
-              STR rates unavailable — using T-12 base
-            </span>
-          )}
           {/* FON-67 — NOI pin notice. Shown ONLY when the deal carries the
               per-year NOI override; explains why operating edits don't move
               NOI and offers the one-click clear. */}
@@ -818,6 +872,31 @@ export default function ProjectionsSection({
           />
         </div>
       </div>
+
+      {/* FON-116 / FON-117 — the topline basis, the growth state and the
+          notices (re-extract, calendar anchor, legacy keys, run predates v2). */}
+      {(toplineStatus || migrationNotice) && (
+        <div className="px-5 pt-3 pb-1 space-y-2" data-testid="topline-header">
+          <ToplineBasisLine status={toplineStatus} />
+          <ToplineGrowthBanner
+            dealId={dealId}
+            status={toplineStatus}
+            closeDateIso={closeDateIso}
+            closeDateEditable={!!deal}
+            onSaveCloseDate={saveCloseDate}
+            onSave={applyPatch}
+            running={overrideCtx.running}
+          />
+          <ToplineNotices
+            status={toplineStatus}
+            dealId={dealId}
+            migrationNotice={migrationNotice}
+            onClearLegacy={clearLegacyKeys}
+            onRerun={() => void run()}
+            running={overrideCtx.running}
+          />
+        </div>
+      )}
 
       {/* FON-89 — one line under the Year-1 basis: the worker's displacement
           verdict, verbatim. Sam (2026-10-15): no renovation budget — analyst,
@@ -882,6 +961,8 @@ export default function ProjectionsSection({
         modelYears={years.length}
         calendarYears={calendarYears ?? null}
         operatingModel={deal?.operating_model ?? null}
+        toplineStatus={toplineStatus}
+        onSavePatch={applyPatch}
       />
 
       <AssumptionOverrideContext.Provider value={overrideCtx}>
@@ -910,11 +991,13 @@ export default function ProjectionsSection({
                     exitNoiPeriodLabel: returnsHead.exitNoiPeriodLabel,
                   }),
                   // The formula the Exit Year column shows for its one figure.
-                  formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + RevPAR growth ${(revparGrowthAssumption * 100).toFixed(1)}%)`,
+                  formula: `Forward 12-Month Cash NOI = Year ${years.length} Cash NOI × (1 + exit-year RevPAR growth ${revparGrowthAssumption == null ? '—' : `${(revparGrowthAssumption * 100).toFixed(1)}%`})`,
                 }
               : null
           }
           stabilizedYearIndex={stabilization?.stabilized_year_index}
+          topline={toplineStatus}
+          toplineByYear={toplineByYear}
         />
         </MethodChipContext.Provider>
         </DealIdContext.Provider>
@@ -1190,7 +1273,7 @@ function SectionBand({ label, span }: { label: string; span: number }) {
 
 function ProjectionsTable({
   years, exitCapRate, closeDateIso, exitColumn, stabilizedYearIndex, showPct, basePeriodLabel,
-  benchmark = null,
+  benchmark = null, topline = null, toplineByYear = null,
 }: {
   years: ProjYear[];
   /** The Returns engine's exit cap rate; null when it has none. */
@@ -1206,7 +1289,13 @@ function ProjectionsTable({
   /** FON-97 — the deal's P&L benchmark to show as a Base-year sub-column;
    *  null (no benchmark, or the switch is off) = the column does not exist. */
   benchmark?: BenchmarkBlock | null;
+  /** FON-116 — the worker's topline status (per-column basis + reference rows). */
+  topline?: ToplineStatus | null;
+  /** FON-116 — `revenue.topline_by_year` of the run on screen. */
+  toplineByYear?: ToplineYearRecord[] | null;
 }) {
+  // FON-116 — the reference rows under Occupancy / Average Rate / RevPAR.
+  const refRows = toplineReferenceRows(topline, years.length);
   // Hotel Delivery — the deal's acquisition close date, or a dash. It used to
   // be `'9/30/' + years[0].year`, which printed "9/30/1" because `year` is an
   // ordinal: a fabricated date under the no-invented-numbers rule (FON-41 #2).
@@ -1485,6 +1574,8 @@ function ProjectionsTable({
             traceEngine="revenue"
             tracePath={(i) => `years[${i}].occupancy`}
             columnHeading={columnHeading}
+            badge={(i) => yearRateBadge(topline, toplineByYear, i, 'occupancy')}
+            badgeTestId="occupancy"
           />
 
           {/* Average Rate (ADR) — base-year driver grounded in the T-12/detailed
@@ -1503,6 +1594,8 @@ function ProjectionsTable({
             traceEngine="revenue"
             tracePath={(i) => `years[${i}].adr`}
             columnHeading={columnHeading}
+            badge={(i) => yearRateBadge(topline, toplineByYear, i, 'adr')}
+            badgeTestId="adr"
           />
 
           {/* RevPAR — derived, not sourced: Occupancy × ADR. To the cent. */}
@@ -1518,6 +1611,20 @@ function ProjectionsTable({
             tracePath={(i) => `years[${i}].revpar`}
             columnHeading={columnHeading}
           />
+
+          {/* FON-116 / FON-117 (plan §2.4) — two reference rows: the
+              benchmark the topline runs on, per year, and the subject's own
+              T-12 repeated with its period. Neither moves a number. */}
+          {[refRows.benchmark, refRows.t12].map((r, k) =>
+            r ? (
+              <ReferenceRateRow
+                key={k === 0 ? 'bench' : 't12'}
+                row={r}
+                testId={k === 0 ? 'topline-ref-benchmark' : 'topline-ref-t12'}
+                fmtUsd={(v) => fmtAmount(v, { decimals: 2, prefix: '$' })}
+              />
+            ) : null,
+          )}
 
           {/* Annual RevPAR Growth */}
           <tr className="border-b border-border/60">
@@ -2069,6 +2176,38 @@ function SubHeaderGroup({ dim, showPct, benchmark = false }: { dim: boolean; sho
   );
 }
 
+/**
+ * FON-116 — one reference row (benchmark per year, or the T-12 repeated):
+ * "occ · ADR · RevPAR" in each column, muted, never editable or traced.
+ */
+function ReferenceRateRow({ row, testId, fmtUsd }: { row: ReferenceRow; testId: string; fmtUsd: (v: number) => string }) {
+  const { spanFor } = useContext(ColumnLayoutContext);
+  const n = row.occupancy.length;
+  return (
+    <tr className="border-b border-border/40 bg-bg/20" data-testid={testId}>
+      <td className="px-3 py-1.5 text-[10.5px] text-ink-500 italic border-r border-border bg-bg/30" title={row.title}>
+        {row.label}
+      </td>
+      <td className="px-3 py-1.5 text-[10.5px] text-ink-400 border-r border-border bg-bg/30">ref.</td>
+      {Array.from({ length: n }, (_, i) => {
+        const o = row.occupancy[i];
+        const a = row.adr[i];
+        const r = row.revpar[i];
+        return (
+          <td
+            key={`ref-${i}`}
+            colSpan={spanFor(i)}
+            className={cn('px-2 py-1.5 text-center text-[10.5px] text-ink-500 tabular-nums', yearGroupClass(i, true))}
+          >
+            {o == null ? '—' : `${(o * 100).toFixed(1)}%`} · {a == null ? '—' : fmtUsd(a)} · {r == null ? '—' : fmtUsd(r)}
+          </td>
+        );
+      })}
+      <ExitCells />
+    </tr>
+  );
+}
+
 // Simple single-cell row (Days, Rooms, Occupancy, ADR, etc.) — value
 // is rendered once per year, spanning all sub-columns.
 // FON-27: shared context so the deep-nested driver cells can persist an
@@ -2344,7 +2483,13 @@ function SimpleRow({
   traceEngine,
   tracePath,
   columnHeading,
+  badge,
+  badgeTestId,
 }: {
+  /** FON-116 — the per-column basis chip (benchmark year's basis, titled
+   *  with benchmark × penetration × ramp); null = no chip for that column. */
+  badge?: (i: number) => { basis: 'actual' | 'forecast' | 'assumption'; title: string } | null;
+  badgeTestId?: string;
   label: string;
   indexLabel: string;
   unit: string;
@@ -2418,6 +2563,7 @@ function SimpleRow({
           ) : (
             lineageWrap(shown)
           );
+        const chip = raw != null ? badge?.(i) ?? null : null;
         return (
           <td
             key={`sr-${i}`}
@@ -2425,6 +2571,11 @@ function SimpleRow({
             className={cn('px-2 py-2 text-center text-[11px] text-ink-900 tabular-nums', yearGroupClass(i, true))}
           >
             {cell}
+            {chip && (
+              <span className="ml-1" title={chip.title} data-testid={`topline-chip-${badgeTestId}-${i}`}>
+                <BasisChip basis={chip.basis} label={chip.title} testId={`topline-basis-${badgeTestId}-${i}`} />
+              </span>
+            )}
           </td>
         );
       })}
@@ -3088,8 +3239,10 @@ function AssumptionField({
  * nothing — the badge keeps reading "Fondok-derived", which is what the worker
  * publishes on ``stabilization.source`` for a value equal to its own signal.
  *
- * The year is DISPLAY-ONLY in the model: it selects which projection year the
- * stabilized figures are read from. It moves no return.
+ * It selects which projection year the stabilized figures are read from and,
+ * since topline v2, where the penetration ramp ends (Years 1–(S−1) run on the
+ * ramp). It therefore moves numbers, so a change needs the analyst's note
+ * (review I-6 — the worker answers 422 `override_note_required` without one).
  */
 function StabilizationYearField({
   stabilization, modelYears, calendarYears, disabled, onCommit,
@@ -3098,7 +3251,7 @@ function StabilizationYearField({
   modelYears: number;
   calendarYears: number[] | null;
   disabled?: boolean;
-  onCommit: (year: number) => void | Promise<void>;
+  onCommit: (year: number, note: string) => void | Promise<void>;
 }) {
   const current = stabilization?.stabilized_year ?? null;
   const parse = (draft: string): number | null => {
@@ -3116,6 +3269,7 @@ function StabilizationYearField({
     onSave: onCommit,
     toDraft: (v) => String(v),
     invalidMessage: `Enter a projection year between 1 and ${modelYears}.`,
+    requireNote: requiresNote('stabilization_year'),
   });
 
   const calendarYear =
@@ -3162,7 +3316,15 @@ function StabilizationYearField({
               onKeyDown={ed.onKeyDown}
               style={{ ...inlineEditInputStyle, width: 64 }}
             />
-            <InlineEditControls onSave={() => void ed.submit()} onCancel={ed.cancel} saving={ed.saving} />
+            <InlineEditControls
+              onSave={() => void ed.submit()}
+              onCancel={ed.cancel}
+              saving={ed.saving}
+              note={ed.requireNote ? ed.note : undefined}
+              onNote={ed.requireNote ? ed.setNote : undefined}
+              noteTestId="stabilization-year-note"
+              noteLabel="Stabilization Year — override justification"
+            />
           </span>
         )}
       </div>
@@ -3200,8 +3362,13 @@ function StabilizationYearField({
 // is Investment-owned, so it is shown here linked / read-only.
 function AssumptionsPanel({
   dealId, overrides, onApply, onReset, running, stabilization, modelYears, calendarYears, operatingModel,
+  toplineStatus = null, onSavePatch,
 }: {
   dealId: string;
+  /** FON-116 — the topline status (Topline card + growth by year); null on an older worker. */
+  toplineStatus?: ToplineStatus | null;
+  /** FON-116 — the one topline save path (patch + note → PATCH + re-run). */
+  onSavePatch?: ToplineSave;
   /** R-025 — the deal's intended operating model (descriptive; no engine reads it). */
   operatingModel?: string | null;
   overrides: Record<string, unknown>;
@@ -3222,6 +3389,13 @@ function AssumptionsPanel({
     (typeof exitCapSrc?.value === 'number' ? exitCapSrc.value : ovValue(overrides, 'exit_cap_rate'))
     ?? ASSUMPTION_DEFAULTS.exit_cap_rate;
   const cur = (key: string) => ovValue(overrides, key) ?? ASSUMPTION_DEFAULTS[key];
+  // FON-116 / final review I-2 — the "drives ADR" field is the analyst's
+  // all-years RevPAR growth and nothing else. When none is set the loader
+  // still writes ``revpar_growth`` = the exit-year growth (0.0 with no
+  // forecast, else a long-run / last-year figure); that is not a growth that
+  // drives ADR, so it is never shown here — it has its own labelled line
+  // ("Exit-year growth", Growth by year). Blank = not set.
+  const revparGrowth: number | null = ovValue(overrides, 'revpar_growth');
   // FF&E reserve: the analyst's override, else the value the loader is on
   // (its provenance payload, else the benchmark suggestion's "in use"), else
   // blank — never a number the browser made up.
@@ -3252,16 +3426,48 @@ function AssumptionsPanel({
           <div style={rowsWrap}>
             {/* FON-69 — a RevPAR-growth override derives adr_growth in the worker
                 (occupancy path held) so operating NOI moves; the label says so. */}
-            <AssumptionField label="RevPAR growth (drives ADR; occupancy path held)" unit="pct" suffix="%/yr" overrideKey="revpar_growth" value={cur('revpar_growth')} disabled={running} onCommit={(v, note) => onApply('revpar_growth', v, note)} />
+            <AssumptionField label="RevPAR growth (drives ADR; occupancy path held)" unit="pct" suffix="%/yr" overrideKey="revpar_growth" value={revparGrowth} disabled={running} onCommit={(v, note) => onApply('revpar_growth', v, note)}
+              overridden={'revpar_growth' in overrides} onReset={() => void onReset('revpar_growth')} />
             <AssumptionField label="Dept. expense inflation" unit="pct" suffix="%/yr" overrideKey="expense_growth" value={cur('expense_growth')} disabled={running} onCommit={(v, note) => onApply('expense_growth', v, note)} />
             <AssumptionField label="Other expense inflation" unit="pct" suffix="%/yr" overrideKey="other_expense_growth" value={cur('other_expense_growth')} disabled={running} onCommit={(v, note) => onApply('other_expense_growth', v, note)} />
+            {/* FON-116 — market growth INTO each year, resolved by the
+                worker (override → CBRE → CoStar → carried forward → none),
+                editable per year; the RevPAR field above is the all-years
+                shorthand. */}
+            {toplineStatus && onSavePatch && (
+              <GrowthByYearTable status={toplineStatus} overrides={overrides} onSave={onSavePatch} running={running} />
+            )}
           </div>
         </div>
-        {/* Stabilization Year — FON-41 / FON-59 #3. The analyst owns it; the
-            worker seeds it from the occupancy / NOI-plateau signal and says so
-            until it is confirmed. Overview's Stabilized Occupancy / ADR /
-            Revenue / NOI / Margin and the STABILIZED column badge all read the
-            year selected here. */}
+        {/* FON-116 / FON-117 — the Topline card: benchmark level, the
+            stabilized year (FON-41 / FON-59 #3 — it now also ends the ramp),
+            penetration at stabilization and the ramp. With an older worker
+            (no topline status) the Stabilization card stands alone as before. */}
+        {toplineStatus && onSavePatch ? (
+          <ToplineCard
+            className="flex-1 min-w-[260px] border border-[#e2e1dc] rounded-lg px-3.5 py-3 bg-[#fbfbf9]"
+            status={toplineStatus}
+            overrides={overrides}
+            onSave={onSavePatch}
+            running={running}
+            stabilizationSlot={
+              <StabilizationYearField
+                stabilization={stabilization}
+                modelYears={modelYears}
+                calendarYears={calendarYears}
+                disabled={running}
+                // Review I-6 — the stabilized year ends the topline ramp, so it
+                // moves numbers and carries the analyst's justification.
+                onCommit={(year, note) => onApply('stabilization_year', year, note).then(() => undefined)}
+              />
+            }
+          />
+        ) : (
+        // Stabilization Year — FON-41 / FON-59 #3. The analyst owns it; the
+        // worker seeds it from the occupancy / NOI-plateau signal and says so
+        // until it is confirmed. Overview's Stabilized Occupancy / ADR /
+        // Revenue / NOI / Margin and the STABILIZED column badge all read the
+        // year selected here.
         <div style={cardStyle}>
           <div style={cardTitle}>Stabilization</div>
           <div style={rowsWrap}>
@@ -3270,14 +3476,13 @@ function AssumptionsPanel({
               modelYears={modelYears}
               calendarYears={calendarYears}
               disabled={running}
-              // FON-74 — display-only in the model (it selects which projection
-              // year the stabilized figures are read from and moves no return),
-              // so it carries no justification. The software-authored one it
-              // used to write is gone: a blank note, never an invented one.
-              onCommit={(year) => onApply('stabilization_year', year, '').then(() => undefined)}
+              // Review I-6 — the stabilized year ends the topline ramp, so it
+              // moves numbers and carries the analyst's justification.
+              onCommit={(year, note) => onApply('stabilization_year', year, note).then(() => undefined)}
             />
           </div>
         </div>
+        )}
         {/* Resort fee revenue */}
         <div style={cardStyle}>
           <div style={cardTitle}>Resort fee revenue</div>

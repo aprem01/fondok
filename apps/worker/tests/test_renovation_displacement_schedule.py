@@ -44,6 +44,7 @@ from fondok_schemas.underwriting import (  # noqa: E402
     RenovationDisplacementPeriod,
     RevenueEngineInput,
 )
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TENANT = "00000000-0000-0000-0000-00000000d15c"
 KEYS = 200
@@ -263,7 +264,7 @@ async def _insert_deal(deal_id: UUID, *, field_overrides: dict | None = None) ->
                 "purchase_price, field_overrides, created_at, updated_at) VALUES "
                 "(:id, :tenant, 'Schedule deal', 'In Progress', 0.0, 132, 36400000, :fo, :ts, :ts)"
             ),
-            {"id": str(deal_id), "tenant": _TENANT, "fo": json.dumps(field_overrides or {}),
+            {"id": str(deal_id), "tenant": _TENANT, "fo": json.dumps(with_year1_rates(field_overrides)),
              "ts": datetime.now(UTC)},
         )
         await session.commit()

@@ -92,7 +92,9 @@ const fx = vi.hoisted(() => {
     ],
   };
   // Per-test knobs: a deferred compare (resolved by the test) and the "fresh deal" runs.
-  const knobs: { deferCompare: null | (() => void); fresh: boolean } = { deferCompare: null, fresh: false };
+  const knobs: { deferCompare: null | (() => void); fresh: boolean; methodChange: boolean } = {
+    deferCompare: null, fresh: false, methodChange: false,
+  };
   return { runsSpy, compareSpy, xlsxSpy, RUNS, FRESH_RUNS, COMPARE, knobs };
 });
 
@@ -127,6 +129,14 @@ vi.mock('@/lib/api', async () => {
               });
             });
           }
+          if (fx.knobs.methodChange) {
+            return {
+              ...fx.COMPARE,
+              base: { ...fx.COMPARE.base, run_id: base, topline_methodology_version: 1 },
+              head: { ...fx.COMPARE.head, topline_methodology_version: 2 },
+              topline_methodology_changed: true,
+            };
+          }
           return { ...fx.COMPARE, base: { ...fx.COMPARE.base, run_id: base } };
         },
         downloadCompareXlsx: async (...args: unknown[]) => {
@@ -147,8 +157,23 @@ describe('RunComparePanel', () => {
     fx.xlsxSpy.mockClear();
     fx.knobs.deferCompare = null;
     fx.knobs.fresh = false;
+    fx.knobs.methodChange = false;
   });
   afterEach(() => cleanup());
+
+  // Plan §6 / PR 7 — a comparison across topline methods is labelled.
+  it('labels a topline method change (v1 → v2) above the field list', async () => {
+    fx.knobs.methodChange = true;
+    render(<RunComparePanel dealId="deal-1" />);
+    const label = await screen.findByTestId('run-compare-method-change');
+    expect(label).toHaveTextContent('Topline methodology v1 → v2');
+  });
+
+  it('no label when both runs used the same method', async () => {
+    render(<RunComparePanel dealId="deal-1" />);
+    await screen.findByTestId('run-compare-table');
+    expect(screen.queryByTestId('run-compare-method-change')).toBeNull();
+  });
 
   // A duplicated deal (Sam's QA copy) or any deal created after the deploy the
   // default date names: the worker finds no run before the cutoff. The panel

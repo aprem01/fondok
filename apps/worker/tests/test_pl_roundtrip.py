@@ -262,7 +262,9 @@ def _assumption_rows() -> list[dict]:
     return [
         {"key": a.key, "label": a.label, "value": vals.get(a.key), "unit": a.unit,
          "source": "seed", "method": a.method,
-         "note_required": a.key != "stabilization_year", "current_note": None}
+         # Review I-6 — every assumption on the sheet moves a number, the
+         # stabilization year included (it ends the default penetration ramp).
+         "note_required": True, "current_note": None}
         for a in ASSUMPTIONS
     ]
 
@@ -290,8 +292,16 @@ def _parse(data: bytes, values: dict):
     cur = {r["key"]: r["value"] for r in _assumption_rows()}
     return parse_projections_import(
         data, deal_id="deal-1", current_values=values, current_assumptions=cur,
-        needs_note=lambda k: k != "stabilization_year",
+        needs_note=_real_note_rule,
     )
+
+
+def _real_note_rule(key: str) -> bool:
+    """The API's own rule (``pl_roundtrip._needs_note``) — since review I-6
+    the stabilization year needs a note like every other sheet assumption."""
+    from app.api.pl_roundtrip import _needs_note
+
+    return _needs_note(key)
 
 
 def test_projection_export_lists_every_assumption_with_key_and_source() -> None:
@@ -325,7 +335,7 @@ def test_projection_import_note_rule_and_computed_cells() -> None:
     wa.cell(row=keys["revpar_growth"], column=3).value = 0.05
     wa.cell(row=keys["revpar_growth"], column=9).value = "Broker comp set supports 5%"
     wa.cell(row=keys["expense_growth"], column=3).value = 0.04            # no note → rejected
-    wa.cell(row=keys["stabilization_year"], column=3).value = 4           # exempt → no note ok
+    wa.cell(row=keys["stabilization_year"], column=3).value = 4           # no note → rejected (I-6)
     wa.cell(row=keys["hold_years"], column=3).value = 5.5                 # not a whole number
     wa.cell(row=keys["mgmt_fee_pct"], column=3).value = "3%"              # non-numeric
     r = wa.max_row + 1
@@ -340,10 +350,12 @@ def test_projection_import_note_rule_and_computed_cells() -> None:
 
     p = _parse(buf.getvalue(), values)
     assert [(c["key"], c["old_value"], c["new_value"]) for c in p["changes"]] == [
-        ("revpar_growth", 0.045, 0.05), ("stabilization_year", 3, 4),
+        ("revpar_growth", 0.045, 0.05),
     ]
     assert p["changes"][0]["note"] == "Broker comp set supports 5%"
-    assert [(x["key"], x["reason"]) for x in p["rejected"]] == [("expense_growth", "note_required")]
+    assert sorted((x["key"], x["reason"]) for x in p["rejected"]) == [
+        ("expense_growth", "note_required"), ("stabilization_year", "note_required"),
+    ]
     assert sorted(x["key"] for x in p["non_numeric"]) == ["hold_years", "mgmt_fee_pct"]
     assert [x["reason"] for x in p["mapping_errors"]] == ["unknown_key"]
     assert len(p["computed_edits"]) == 1
@@ -361,7 +373,7 @@ async def test_projection_apply_writes_field_overrides_through_update_deal() -> 
     body = ProjApplyBody(changes=[
         {"key": "revpar_growth", "new_value": 0.0512, "note": "STR forecast"},
         {"key": "expense_growth", "new_value": 0.05, "note": ""},     # note required → skipped
-        {"key": "stabilization_year", "new_value": 2, "note": ""},    # exempt
+        {"key": "stabilization_year", "new_value": 2, "note": "IC: Year 2"},  # note required (I-6)
         {"key": "made_up", "new_value": 1, "note": "x"},
     ])
     async with get_session_factory()() as s:
@@ -381,7 +393,7 @@ async def test_projection_apply_writes_field_overrides_through_update_deal() -> 
         )).fetchall()
     fo = json.loads(row[0])
     assert fo["revpar_growth"] == {"value": 0.0512, "note": "STR forecast"}
-    assert fo["stabilization_year"] == 2
+    assert fo["stabilization_year"] == {"value": 2, "note": "IC: Year 2"}
     assert fo["exit_cap_rate"] == {"value": 0.08, "note": "kept"}  # untouched
     assert "expense_growth" not in fo
     assert ("override.set",) in [tuple(a) for a in audits]
@@ -865,3 +877,124 @@ async def test_historical_apply_skips_a_change_without_a_justification() -> None
         )).first()
     fields = {f["field_name"]: f for f in json.loads(row[0])}
     assert "reviewed" not in fields["rooms_revenue"]
+
+
+# ─────────────────── FON-116 / FON-117 — the topline round-trip (plan PR 6) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_growth_only_export_says_the_benchmark_rows_are_not_applied() -> None:
+    """FON-116 staged rollout (default mode): growth-by-year rows as usual, no
+    ramp rows, and the penetration / level rows name that the benchmark
+    method is not switched on (a stored value still round-trips)."""
+    from app.api.pl_roundtrip import GROWTH_ONLY_SOURCE_NOTE, export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "hold_years": 4,
+        "index_ari_target": {"value": 97, "note": "Reference path"},
+    })
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wa = _sheet(resp.body, "Assumptions")
+    rows = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    assert all(f"adr_growth_by_year.{y}" in rows for y in (1, 2, 3, 4))
+    assert not [k for k in rows if str(k).startswith("penetration_ramp_by_year.")]
+    for key in ("index_mpi_target", "index_ari_target", "topline_benchmark_level"):
+        assert wa.cell(row=rows[key], column=5).value == GROWTH_ONLY_SOURCE_NOTE, key
+    assert wa.cell(row=rows["index_ari_target"], column=3).value == 97
+
+
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
+@pytest.mark.asyncio
+async def test_projection_export_carries_the_topline_rows() -> None:
+    """Growth by year (occupancy, ADR) for every model year, the ramp for
+    Years 1..S−1 at the ramp the worker APPLIED, the stabilized penetration and
+    the benchmark level — each with its key, unit and note rule."""
+    from app.api.pl_roundtrip import export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "hold_years": 4,
+        "adr_growth_by_year": {"value": [None, 0.03], "note": "Broker view"},
+    })
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wa = _sheet(resp.body, "Assumptions")
+    rows = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    for y in (1, 2, 3, 4):
+        assert f"occupancy_growth_by_year.{y}" in rows
+        assert f"adr_growth_by_year.{y}" in rows
+    assert "adr_growth_by_year.5" not in rows
+    r = rows["adr_growth_by_year.2"]
+    assert wa.cell(row=r, column=3).value == 0.03
+    assert wa.cell(row=r, column=5).value == "analyst_override"
+    assert wa.cell(row=r, column=7).value == "Yes"
+    assert wa.cell(row=r, column=8).value == "Broker view"
+    assert "fraction" in wa.cell(row=r, column=4).value
+    # Default stabilization (Year 3) → ramp rows for Years 1–2 at the APPLIED ramp.
+    assert [k for k in rows if k.startswith("penetration_ramp_by_year.")] == [
+        "penetration_ramp_by_year.1", "penetration_ramp_by_year.2",
+    ]
+    assert wa.cell(row=rows["penetration_ramp_by_year.1"], column=3).value == pytest.approx(0.85)
+    assert wa.cell(row=rows["penetration_ramp_by_year.2"], column=3).value == pytest.approx(0.95)
+    assert wa.cell(row=rows["penetration_ramp_by_year.1"], column=5).value == "default"
+    for key in ("index_mpi_target", "index_ari_target", "topline_benchmark_level"):
+        assert key in rows
+        assert wa.cell(row=rows[key], column=7).value == "Yes"
+    # M-6 — the RevPAR row no longer teaches a 4.5% figure.
+    assert "0.045" not in str(wa.cell(row=rows["revpar_growth"], column=4).value)
+
+
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
+@pytest.mark.asyncio
+async def test_projection_apply_folds_growth_and_ramp_rows_into_their_lists() -> None:
+    from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={"hold_years": 4})
+    body = ProjApplyBody(changes=[
+        {"key": "occupancy_growth_by_year.2", "new_value": 0.01, "note": "Demand recovery"},
+        {"key": "adr_growth_by_year.3", "new_value": 0.8, "note": "typo"},          # out of range
+        {"key": "penetration_ramp_by_year.1", "new_value": 0.9, "note": "Soft open"},
+        {"key": "penetration_ramp_by_year.2", "new_value": 0, "note": "zero"},      # out of range
+        {"key": "topline_benchmark_level", "new_value": "market", "note": "Comp set too thin"},
+        {"key": "index_mpi_target", "new_value": 105, "note": ""},                  # note required
+    ])
+    async with get_session_factory()() as s:
+        res = await apply_projections_import(deal_id=deal_id, body=body, session=s, auth=_auth())
+    assert sorted(a["key"] for a in res["applied"]) == [
+        "occupancy_growth_by_year.2", "penetration_ramp_by_year.1", "topline_benchmark_level",
+    ]
+    skipped = {x["key"]: x["reason"] for x in res["skipped"]}
+    assert skipped == {
+        "adr_growth_by_year.3": "out_of_range",
+        "penetration_ramp_by_year.2": "out_of_range",
+        "index_mpi_target": "note_required",
+    }
+    async with get_session_factory()() as s:
+        row = (await s.execute(
+            text("SELECT field_overrides FROM deals WHERE id = :id AND tenant_id = :t"),
+            {"id": str(deal_id), "t": _TENANT},
+        )).first()
+    fo = json.loads(row[0])
+    assert fo["occupancy_growth_by_year"] == {"value": [None, 0.01], "note": "Y2: Demand recovery"}
+    # A ramp edit starts from the ramp the model ran on: untouched Year 2 keeps 95%.
+    assert fo["penetration_ramp_by_year"] == {"value": [0.9, 0.95], "note": "Y1: Soft open"}
+    assert fo["topline_benchmark_level"] == {"value": "market", "note": "Comp set too thin"}
+    assert "adr_growth_by_year" not in fo
+    assert not any("." in k and k.split(".")[-1].isdigit() for k in fo)
+
+
+def test_projection_import_previews_the_topline_rows() -> None:
+    """The preview reads the new keys (growth fraction, ramp, level choice) and
+    enforces the note rule like every other row."""
+    from app.export.pl_workbooks import assumption_spec
+
+    g = assumption_spec("adr_growth_by_year.3")
+    assert g is not None and "fraction" in g.unit
+    r = assumption_spec("penetration_ramp_by_year.2")
+    assert r is not None
+    lvl = assumption_spec("topline_benchmark_level")
+    assert lvl is not None and set(lvl.choices) == {"auto", "comp_set", "submarket", "market"}
+    assert assumption_spec("adr_growth_by_year.21") is None

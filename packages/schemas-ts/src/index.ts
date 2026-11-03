@@ -331,6 +331,13 @@ export const ReasonCode = z.enum([
   "under_construction",      // sale inside the stated construction window
   "capital_deploying",       // equity draws / deferred capital land after the sale
   "no_sale_value",           // exit NOI at that sale date is not positive
+  "no_market_forecast",
+  "no_benchmark",
+  "license_withheld",
+  "legacy_key_translated",
+  "no_revenue_basis",
+  "reextract_needed",
+  "calendar_unknown",
 ]);
 export type ReasonCode = z.infer<typeof ReasonCode>;
 
@@ -480,6 +487,48 @@ export const REASON_META: Record<ReasonCode, ReasonMeta> = {
     explanation:
       "The exit NOI at this sale date is not positive, so a direct-cap sale value does not exist.",
   },
+  no_market_forecast: {
+    label: "No market forecast",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "No market forecast covers this year for this metric, so the model holds it flat (growth 0 is the absence of growth, not a rate) — set growth manually.",
+  },
+  no_benchmark: {
+    label: "No benchmark",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "No competitive-set, submarket or market occupancy / ADR is on the deal, so the subject is projected from its own starting figures.",
+  },
+  license_withheld: {
+    label: "Withheld by data policy",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A CoStar-derived figure is on file but this workspace's data policy withholds it from the model — set the figure manually.",
+  },
+  legacy_key_translated: {
+    label: "Legacy setting translated",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A setting written by a retired control is read under the current method (or ignored), and the status says how.",
+  },
+  no_revenue_basis: {
+    label: "No Year-1 occupancy / ADR",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The deal has no Year-1 occupancy / ADR basis — no T-12, no analyst value and (when the benchmark topline is on) no STR or market benchmark — so the revenue model does not run; the model never substitutes a placeholder rate.",
+  },
+  reextract_needed: {
+    label: "Re-extract needed",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series.",
+  },
+  calendar_unknown: {
+    label: "Close date needed",
+    ui: REFUSAL_GLYPH,
+    explanation:
+      "A market forecast is on file but the deal has no acquisition close date (and no underwriting as-of date), so the forecast cannot be placed on the model's years — set the acquisition close date to place it; the model never guesses a calendar.",
+  },
 };
 
 /** A typed "no value" — mirror of fondok_schemas.reasons.Refusal. */
@@ -544,6 +593,7 @@ export const GrowthSource = z.enum([
   'cbre_horizons',
   'costar_submarket_forecast',
   'carried_forward',
+  'held_at_stabilization',
   'withheld_by_policy',
   'unavailable',
 ]);
@@ -645,6 +695,7 @@ export const ToplineDrivers = z.object({
   penetration_adr_source: PenetrationSource.default('default'),
   // null = the engine's default ramp for S; a list = the analyst's ramp.
   ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
+  ramp_policy_note: z.string().nullable().optional(),
   penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),
   penetration_adr_by_year: z.array(PenetrationPoints.nullable()).default([]),
   t12_reference: ToplineReference.nullable().optional(),
@@ -705,6 +756,10 @@ export const RevenueEngineInput = z.object({
   occupancy_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
   adr_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
   topline: ToplineDrivers.nullable().optional(),
+  // FON-116 staged rollout (temporary): growth_only = no topline, the growth
+  // lists described per year by growth_provenance; benchmark = topline drives.
+  topline_mode: z.enum(['growth_only', 'benchmark']).nullable().optional(),
+  growth_provenance: z.array(GrowthYear).default([]),
 });
 export type RevenueEngineInput = z.infer<typeof RevenueEngineInput>;
 
@@ -762,6 +817,8 @@ export const RevenueEngineOutput = z.object({
   // run used (2 = benchmark × penetration × ramp; 1 = legacy scalar / driver).
   topline_by_year: z.array(IndexDriverYear).default([]),
   topline_methodology_version: z.number().int().min(1).default(1),
+  // FON-116 staged rollout (temporary): the topline mode that ran.
+  topline_mode: z.enum(['growth_only', 'benchmark']).nullable().optional(),
 });
 export type RevenueEngineOutput = z.infer<typeof RevenueEngineOutput>;
 

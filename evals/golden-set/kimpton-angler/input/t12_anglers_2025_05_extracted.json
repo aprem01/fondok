@@ -1,0 +1,56 @@
+{
+ "comment": "The Anglers Hotel T-12 to May 2025 \u2014 the subject's own trailing-twelve occupancy / ADR / RevPAR rows (and the rooms available / sold they come from) from the REAL extraction of the seller's T-12 workbook (apps/worker/tests/fixtures/real_payloads/anglers_t12_real.json). Revenue-basis rows only, so the fixture stays a TOPLINE fixture (the expense side keeps its default ratios): FON-116 \u2014 the Year-1 basis of the growth-only topline and the T-12 reference row of the benchmark topline.",
+ "document_id": "0c8fd0e5-c4bd-40ff-8213-037f06fb4471",
+ "filename": "Anglers T12 May 2025.xlsx",
+ "agent_version": "router:extractor;extractor",
+ "fields": [
+  {
+   "field_name": "p_and_l_usali.period_ending",
+   "value": "2025-05-31",
+   "unit": "date",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "T12 STATEMENT OF INCOME\nFOR THE PERIOD ENDING MAY 31, 2025"
+  },
+  {
+   "field_name": "p_and_l_usali.available_rooms.total",
+   "value": 48180,
+   "unit": "rooms",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "Available Rooms\t3960\t4092\t4092\t3960\t4092\t3960\t4092\t4092\t3696\t4092\t3960\t4092\t48180"
+  },
+  {
+   "field_name": "p_and_l_usali.rooms_sold.total",
+   "value": 39936,
+   "unit": "rooms",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "Total Rooms Sold\t3102\t3016\t3030\t2625\t3173\t3516\t3594\t3709\t3426\t3737\t3684\t3324\t39936"
+  },
+  {
+   "field_name": "ttm_summary_per_om.occupancy_pct",
+   "value": 0.828892,
+   "unit": "pct",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "Occupancy\t0.783333\t0.737048\t0.740469\t0.662879\t0.775415\t0.887879\t0.878299\t0.906403\t0.926948\t0.913245\t0.930303\t0.812317\t0.828892"
+  },
+  {
+   "field_name": "ttm_summary_per_om.adr_usd",
+   "value": 233.446,
+   "unit": "USD",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "Average Daily Rate\t171.174\t179.427\t158.695\t160.402\t192.317\t197.742\t278.767\t280.593\t341.186\t296.993\t266.566\t222.623\t233.446"
+  },
+  {
+   "field_name": "ttm_summary_per_om.revpar_usd",
+   "value": 193.502,
+   "unit": "USD",
+   "source_page": 4,
+   "confidence": 0.99,
+   "raw_text": "Revenue per Available Room\t134.086\t132.246\t117.509\t106.327\t149.126\t175.571\t244.841\t254.33\t316.262\t271.228\t247.987\t180.84\t193.502"
+  }
+ ]
+}

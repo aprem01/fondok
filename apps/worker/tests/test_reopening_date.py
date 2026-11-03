@@ -33,6 +33,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-reopening-date.db"
 if _TMP_DB.exists():
@@ -96,7 +97,9 @@ async def test_create_read_list_update_round_trip() -> None:
         listed = {d["id"]: d for d in (await client.get("/deals")).json()}
         assert listed[deal_id]["reopening_date"] == "2027-03-15"
 
-        r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": "2027-09-01"})
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"reopening_date": "2027-09-01", "reopening_date_note": "Moved re-flag"}
+        )
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] == "2027-09-01"
 
@@ -119,13 +122,20 @@ async def test_optional_and_must_be_a_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_patch_of_the_date_needs_no_justification_note() -> None:
-    """It is a deal COLUMN, never a ``field_overrides`` key — the FON-74 gate
-    does not see it, and it is reporting-only in the model anyway."""
+async def test_a_patch_of_the_date_needs_a_justification_note() -> None:
+    """Review I-6 — a deal COLUMN, never a ``field_overrides`` key, but since
+    topline v2 it moves where the default penetration ramp ends: a change on an
+    underwritten deal carries ``reopening_date_note`` (contract pinned in
+    ``test_topline_override_notes.py``)."""
     async with _client() as client:
         r = await client.post("/deals", json={"name": "Column, not override"})
         deal_id = r.json()["id"]
         r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": "2027-03-15"})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["keys"] == ["reopening_date"]
+        r = await client.patch(
+            f"/deals/{deal_id}", json={"reopening_date": "2027-03-15", "reopening_date_note": "Re-flag"}
+        )
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] == "2027-03-15"
 
@@ -331,7 +341,7 @@ async def _deal(
             "id": deal_id,
             "tenant": tenant_id,
             "name": "Re-flag Hotel",
-            "ov": json.dumps(overrides),
+            "ov": json.dumps(with_year1_rates(overrides)),
             "reopening": reopening_date,
             "now": datetime.now(UTC),
         },
@@ -419,6 +429,13 @@ async def test_full_run_anchors_on_the_reopening_and_debt_follows() -> None:
         after = _comparable(reflag[engine]["outputs"])
         before.pop("stabilization", None)
         after.pop("stabilization", None)
+        if engine == "revenue":
+            # Decision 1b (2026-11-03) — the later stabilization changes which
+            # years say "held after stabilization" (no growth figure here, so
+            # no number moves); the provenance records differ, the figures not.
+            for side in (before, after):
+                side.pop("topline_by_year", None)
+                side.pop("provenance", None)
         assert before == after, engine
 
 
@@ -454,10 +471,11 @@ async def test_the_runner_still_reads_the_deal_row_on_a_schema_without_the_colum
                     INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price,
                                        field_overrides, created_at, updated_at)
                     VALUES (:id, :tenant, 'Old schema', 'Draft', 150, 41000000,
-                            '{}', :now, :now)
+                            :fo, :now, :now)
                     """
                 ),
-                {"id": deal_id, "tenant": tenant_id, "now": datetime.now(UTC)},
+                {"id": deal_id, "tenant": tenant_id, "fo": json.dumps(with_year1_rates()),
+                 "now": datetime.now(UTC)},
             )
             await session.commit()
             results = await run_all_engines(

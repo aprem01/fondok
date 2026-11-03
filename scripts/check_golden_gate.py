@@ -112,8 +112,12 @@ def has_expected_trailer(repo: str, base: str) -> bool:
     return any(TRAILER_RE.search(msg) for msg in body.split("\x00") if msg.strip())
 
 
-def default_compare_cmd() -> list[str]:
-    return [sys.executable, str(COMPARE_SCRIPT), GATE_FLAG]
+def default_compare_cmd(topline_mode: str | None = None) -> list[str]:
+    cmd = [sys.executable, str(COMPARE_SCRIPT), GATE_FLAG]
+    if topline_mode:
+        # FON-116 staged rollout — the mode (and so the baseline) to check.
+        cmd += ["--topline-mode", topline_mode]
+    return cmd
 
 
 def run_compare(cmd: Sequence[str], repo: str) -> int:
@@ -155,7 +159,7 @@ def gate(repo: str, compare_cmd: Sequence[str], explicit_base: str | None) -> tu
             "  fix the calculation. If it was, re-baseline:",
             "",
             "      apps/worker/.venv/bin/python scripts/compare_golden_baseline.py \\",
-            "          --write evals/baselines/kimpton-golden-<date>.json",
+            "          [--topline-mode benchmark] --write evals/baselines/kimpton-golden-<date>.json",
             "",
             "  point DEFAULT_BASELINE at the new file, and put this trailer on its own",
             "  line at the end of the commit message:",
@@ -185,8 +189,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"running scripts/compare_golden_baseline.py {GATE_FLAG}"
         ),
     )
+    parser.add_argument(
+        "--topline-mode",
+        choices=("growth_only", "benchmark"),
+        default=None,
+        help=(
+            "FON-116 staged rollout: passed to the compare script (default there: "
+            "growth_only, the deployed mode); CI runs both"
+        ),
+    )
     args = parser.parse_args(argv)
-    cmd = shlex.split(args.compare_cmd) if args.compare_cmd else default_compare_cmd()
+    cmd = shlex.split(args.compare_cmd) if args.compare_cmd else default_compare_cmd(args.topline_mode)
     code, verdict = gate(args.repo, cmd, args.base)
     print(verdict, file=sys.stderr if code else sys.stdout, flush=True)
     return code

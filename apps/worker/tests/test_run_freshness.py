@@ -33,6 +33,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Per-test SQLite database BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-run-freshness.db"
@@ -160,7 +161,7 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
         # B5 — the deal carries partnership terms so every engine completes.
         {
             "id": deal_id, "tenant": tenant_id, "name": "Freshness Test",
-            "fo": json.dumps(kimpton_partnership_field_overrides()),
+            "fo": json.dumps(with_year1_rates(kimpton_partnership_field_overrides())),
         },
     )
     await session.commit()

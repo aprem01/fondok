@@ -46,7 +46,7 @@ export const NOTE_PLACEHOLDER = 'Why this number? (required)';
  * Keys that reach the deal's `field_overrides` but are NOT a number an engine
  * runs on. Each entry states the evidence; nothing lands here for convenience.
  */
-const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
+const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set<string>([
   // The worker's own `_OVERRIDE_NON_ENGINE_KEYS` — the Grounded Worksheet's
   // per-deal row layout (relabel / split / reorder / memo). Presentation only;
   // the worksheet's numbers come from the engines regardless of row order.
@@ -58,10 +58,6 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // note. Added 2026-09-12 when the mirror test caught it missing here after
   // the Market slice extended the worker's list.
   'market.selected_comps',
-  // DISPLAY-ONLY in the model: it selects which projection year the stabilized
-  // figures are read from. It moves no return — pinned by the worker's
-  // `test_stabilization_year.py::test_stabilization_year_does_not_move_returns`.
-  'stabilization_year',
   // The Property Name. Text, not a number; the worker reads it back as
   // `property_name` and keeps the extracted value for Restore.
   'property_overview.name',
@@ -82,14 +78,21 @@ const NOTE_EXEMPT_KEYS: ReadonlySet<string> = new Set([
   // it, and the Overview only compares the derived stabilized yield on cost
   // against it. Nothing sourced is being overridden, so nothing to justify.
   'target_stabilized_yoc',
-  // FON-61 / E-028 — the Index Analysis METHOD choice (STR comp set / market
-  // benchmark / CoStar comp set) and which chain-scale segment the market
-  // benchmark reads. Choices, not numbers: the analyst types nothing, and they
-  // move no figure unless a penetration target — which DOES need a note — is
-  // also set while "Use STR rates in the model" is on.
-  'index_methodology',
+  // FON-61 / E-028 — which chain-scale segment the retired Index Analysis
+  // market method read. Since topline v2 it moves no figure (the worker keeps
+  // it in `_NOTE_EXEMPT_KEYS`). The method key itself (`index_methodology`),
+  // the topline benchmark level, `stabilization_year` and the reopening date
+  // all move Year 1 or the ramp now, so they need a note (review I-6) and are
+  // deliberately absent from this list.
   'index_market_segment',
 ]);
+
+/**
+ * The exempt `field_overrides` keys, published for the both-directions mirror
+ * test (R2-I2, `__tests__/overrideNote.test.ts` reads the worker's
+ * `_OVERRIDE_NON_ENGINE_KEYS` ∪ `_NOTE_EXEMPT_KEYS` and asserts equality).
+ */
+export const NOTE_EXEMPT_OVERRIDE_KEYS: readonly string[] = [...NOTE_EXEMPT_KEYS];
 
 /**
  * Deal COLUMNS. They never enter `field_overrides` at all, so the API gate
@@ -108,10 +111,6 @@ const DEAL_COLUMN_KEYS: ReadonlySet<string> = new Set([
   'target_moic',
   'name',
   'keys',
-  // FON-98 — the reopening / re-flag date. A deal column (never in
-  // `field_overrides`), and like `stabilization_year` it only re-anchors
-  // which projection year the stabilized figures are read from.
-  'reopening_date',
 ]);
 
 /** Pattern-shaped exemptions (indexed or namespaced keys). */
@@ -123,6 +122,9 @@ const NOTE_EXEMPT_PATTERNS: readonly RegExp[] = [
   // A removed promote tier's tombstone — again the waterfall's shape.
   /^partnership\.waterfall\.\d+\.removed$/,
 ];
+
+/** The pattern exemptions' sources, for the same mirror test. */
+export const NOTE_EXEMPT_PATTERN_SOURCES: readonly string[] = NOTE_EXEMPT_PATTERNS.map((re) => re.source);
 
 /**
  * Does overriding `key` require an analyst justification?

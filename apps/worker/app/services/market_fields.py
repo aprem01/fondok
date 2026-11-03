@@ -14,6 +14,7 @@ Pure helpers — no DB, no I/O.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -47,6 +48,10 @@ class FieldRow:
     created_at: str | None = None
     report_as_of: str | None = None
     report_as_of_precision: str | None = None
+    #: The extraction pipeline version the row was extracted under (the
+    #: ``;pv=vN`` suffix of ``extraction_results.agent_version``); None for a
+    #: legacy / mock / fixture stamp that carries none.
+    pipeline_version: int | None = None
 
     @property
     def lname(self) -> str:
@@ -129,6 +134,19 @@ def pct_points(v: Any) -> float | None:
     return f * 100.0 if abs(f) <= 1.0 else f
 
 
+_PV_RE = re.compile(r"(?:^|;)\s*pv=v?(?P<n>\d+)\s*(?:;|$)")
+
+
+def pipeline_version_number(agent_version: str | None) -> int | None:
+    """The ``pv=vN`` number of an ``extraction_results.agent_version`` stamp
+    (``router:{route};dt:{doc_type};extractor;ps=…;reg=…;pv=vN``), or None
+    when the stamp carries none (legacy, mock and fixture rows)."""
+    if not agent_version:
+        return None
+    m = _PV_RE.search(str(agent_version))
+    return int(m.group("n")) if m else None
+
+
 def doc_type_from_agent_version(agent_version: str | None) -> str | None:
     """The ``dt:<doc_type>`` segment of an ``extraction_results.agent_version``.
 
@@ -209,6 +227,7 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
         created_at = _iso_text(rec.get("created_at"))
         report_as_of = _iso_text(rec.get("report_as_of"))
         precision = rec.get("report_as_of_precision")
+        pv = pipeline_version_number(rec.get("agent_version"))
         for f in raw:
             if not isinstance(f, dict):
                 continue
@@ -233,6 +252,7 @@ def parse_extraction_records(records: Iterable[Mapping[str, Any]]) -> list[Field
                     report_as_of_precision=(
                         str(precision).strip().lower() if isinstance(precision, str) and precision.strip() else None
                     ),
+                    pipeline_version=pv,
                 )
             )
     return out
@@ -256,6 +276,7 @@ __all__ = [
     "coerce_int",
     "coerce_page",
     "doc_type_from_agent_version",
+    "pipeline_version_number",
     "extraction_lane",
     "parse_extraction_records",
     "pct_points",

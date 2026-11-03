@@ -36,6 +36,7 @@ from tests.fixtures.kimpton_seed import (
     KIMPTON_PURCHASE_PRICE,
     kimpton_seed,
 )
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-identity-inputs.db"
 if _TMP_DB.exists():
@@ -158,7 +159,9 @@ async def test_engines_that_do_not_need_a_missing_input_still_run() -> None:
 
     tenant_id = str(uuid4())
     async with get_session_factory()() as session:
-        deal_id = await _insert_deal(session, tenant_id=tenant_id, keys=150)
+        deal_id = await _insert_deal(
+            session, tenant_id=tenant_id, keys=150, field_overrides=json.dumps(with_year1_rates())
+        )
         results = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4())
         )
@@ -166,8 +169,8 @@ async def test_engines_that_do_not_need_a_missing_input_still_run() -> None:
     for name in ("revenue", "fb", "expense"):
         assert results[name]["status"] == "complete", results[name]
     # The operating chain ran on the deal's OWN key count, not the seed's 132:
-    # Year-1 rooms revenue = keys x 365 x occupancy x ADR (occupancy / ADR are
-    # the labelled defaults, so the ratio to the seed run is exactly 150/132).
+    # Year-1 rooms revenue = keys x 365 x occupancy x ADR (the test deal's own
+    # Year-1 rates, so the ratio to the seed run is exactly 150/132).
     seed = kimpton_seed()
     y1_rooms = results["revenue"]["outputs"]["years"][0]["rooms_revenue"]
     assert y1_rooms == pytest.approx(
@@ -707,7 +710,14 @@ def test_kimpton_fixture_defaults_match_production_defaults() -> None:
     for key in KIMPTON_PARTNERSHIP_TERMS:
         assert key in fixture
         assert key not in _default_assumptions()
-    deal_keys = set(IDENTITY_INPUT_KEYS) | set(KIMPTON_PARTNERSHIP_TERMS)
+    # Review I-5 — the Year-1 rates are the FIXTURE's own figures (the deal's
+    # revenue basis), never a production default.
+    from app.services.engine_runner import REVENUE_BASIS_KEYS
+
+    for key in REVENUE_BASIS_KEYS:
+        assert key in fixture
+        assert key not in _default_assumptions()
+    deal_keys = set(IDENTITY_INPUT_KEYS) | set(KIMPTON_PARTNERSHIP_TERMS) | set(REVENUE_BASIS_KEYS)
     assert {k: v for k, v in fixture.items() if k not in deal_keys} == (
         _default_assumptions()
     )
@@ -808,7 +818,7 @@ async def test_an_analyst_price_override_alone_runs_the_capital_stack() -> None:
 
     tenant_id = str(uuid4())
     fo = json.dumps(
-        {"purchase_price": {"value": 36_400_000, "note": "Sam's model price (FON-67)"}}
+        with_year1_rates({"purchase_price": {"value": 36_400_000, "note": "Sam's model price (FON-67)"}})
     )
     async with get_session_factory()() as session:
         deal_id = await _insert_deal(

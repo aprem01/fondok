@@ -19,7 +19,7 @@ export type ImpactBasis = 'noi' | 'revenue' | 'expense' | 'other';
 
 export type ConceptId = "occupancy" | "adr" | "revpar" | "revpar_prior_ttm" | "revpar_yoy_growth" | "monthly_revpar" | "rooms_sold" | "available_rooms" | "rooms_revenue" | "fb_revenue" | "other_revenue" | "misc_revenue" | "resort_fees" | "total_revenue" | "parking_revenue" | "spa_revenue" | "meeting_space_revenue" | "rooms_dept_expense" | "fb_dept_expense" | "other_dept_expense" | "dept_expenses" | "dept_expenses_by_line" | "dept_profit" | "rooms_dept_profit" | "fb_dept_profit" | "administrative_general" | "information_telecom" | "sales_marketing" | "property_operations" | "utilities" | "undistributed_expenses" | "mgmt_fee" | "incentive_mgmt_fee" | "ffe_reserve" | "franchise_royalty_fee" | "franchise_marketing_fee" | "property_taxes" | "insurance" | "rent_expense" | "nonop_income" | "other_nonop_expense" | "fixed_charges" | "gop" | "income_before_nonop" | "ebitda" | "noi" | "noi_per_key" | "total_labor" | "labor_cost_per_occupied_room" | "period_ending" | "period_start" | "period_type" | "period_label" | "keys" | "property_name" | "brand" | "year_built" | "year_renovated" | "address" | "gba_sf" | "meeting_space_sf" | "parking_spaces" | "fb_outlets" | "property_type" | "submarket" | "property_value" | "purchase_price" | "price_per_key" | "renovation_budget" | "pip_estimate" | "renovation_hard_costs" | "entry_cap_rate" | "exit_cap_rate" | "total_capital" | "closing_costs" | "working_capital" | "stabilized_noi" | "loan_amount" | "interest_rate" | "amortization_years" | "term_years" | "ltv" | "maturity_date" | "annual_debt_service" | "levered_irr" | "equity_multiple" | "str_report_year" | "compset_adr" | "compset_revpar" | "compset_occupancy" | "mpi" | "ari" | "rgi" | "comp_set_size" | "comp_set_total_keys" | "comp_sale_price" | "comp_cap_rate" | "comp_price_per_key" | "adr_growth_vs_market" | "revpar_growth_vs_market" | "broker_noi_yoy_growth_with_flat_opex_ratio" | "coastal_insurance_yoy_increase" | "debt_yield_growth_with_dscr_shrinkage" | "labor_yoy_growth_vs_market_wage_growth" | "q1_q3_revpar_swing_in_seasonal_market" | "revenue_growth_in_flat_demand_market" | "fb_margin_on_select_service_property" | "year_one_noi_dip_during_pip";
 
-export type SourceId = "seed" | "deal_row" | "t12_actual" | "cbre_horizons" | "pnl_benchmark" | "portfolio_pnl" | "om_comps" | "om_broker" | "analyst_override" | "str_segmentation" | "platform_default_segmentation" | "str_segmentation_default" | "platform_default_renovation_split" | "pip_om" | "pip_user" | "capex_ffe_default" | "deal_type_default" | "roi_user" | "str_forecast" | "str_subject_ttm" | "str_comp_set" | "str_forecast_unavailable" | "cbre_horizons_unavailable" | "om_comps_unavailable" | "derived_from_revpar_growth" | "partnership_doc" | "index_assumption" | "pip_document" | "management_agreement";
+export type SourceId = "seed" | "deal_row" | "t12_actual" | "cbre_horizons" | "pnl_benchmark" | "portfolio_pnl" | "om_comps" | "om_broker" | "analyst_override" | "str_segmentation" | "platform_default_segmentation" | "str_segmentation_default" | "platform_default_renovation_split" | "pip_om" | "pip_user" | "capex_ffe_default" | "deal_type_default" | "roi_user" | "str_forecast" | "str_subject_ttm" | "str_comp_set" | "str_forecast_unavailable" | "cbre_horizons_unavailable" | "om_comps_unavailable" | "derived_from_revpar_growth" | "partnership_doc" | "index_assumption" | "topline_benchmark" | "costar_comp_set" | "costar_submarket" | "costar_market" | "market_benchmark" | "costar_submarket_forecast" | "growth_carried_forward" | "occupancy_held_at_stabilization" | "market_forecast_unavailable" | "costar_withheld_by_policy" | "penetration_default" | "pip_document" | "management_agreement";
 
 export type DocType = "OM" | "T12" | "PNL" | "PNL_MONTHLY" | "PNL_YTD" | "STR" | "STR_TREND" | "STR_SEGMENTATION" | "CBRE_HORIZONS" | "PNL_BENCHMARK" | "PORTFOLIO_PNL" | "PARTNERSHIP" | "RENT_ROLL" | "ROOM_MIX" | "MARKET_STUDY" | "CONTRACT" | "INSURANCE" | "PROPERTY_TAX" | "CAPEX" | "PROPERTY_INFO" | "LEASES" | "SURVEYS" | "DEBT" | "OTHER";
 
@@ -8493,6 +8493,109 @@ export const SOURCES: Record<SourceId, SourceDef> = {
     "kind": "override",
     "doc_types": [],
     "explanation": "Set by the analyst's Index Analysis assumptions — market occupancy / ADR growth, or an MPI / ARI penetration target applied to the selected benchmark — while \"Use STR rates in the model\" is on.",
+    "reason": null
+  },
+  "topline_benchmark": {
+    "label": "Benchmark × penetration",
+    "badge": "Benchmark",
+    "kind": "calculated",
+    "doc_types": [],
+    "explanation": "The year's rate is the benchmark (competitive set, else submarket, else market) × the penetration index ÷ 100, with the pre-stabilization ramp — the projection basis since topline methodology v2.",
+    "reason": null
+  },
+  "costar_comp_set": {
+    "label": "CoStar comp set",
+    "badge": "CoStar Comp Set",
+    "kind": "grounded",
+    "doc_types": [
+      "MARKET_STUDY"
+    ],
+    "explanation": "A CoStar Property Analytics competitive set uploaded to the deal — the benchmark the subject is penetrated against when no STR comp set is on file.",
+    "reason": null
+  },
+  "costar_submarket": {
+    "label": "CoStar submarket",
+    "badge": "CoStar Submarket",
+    "kind": "grounded",
+    "doc_types": [
+      "MARKET_STUDY"
+    ],
+    "explanation": "The latest actual year of the deal's CoStar submarket report for the hotel's class (else the whole submarket, labelled) — the benchmark when no competitive set is on file.",
+    "reason": null
+  },
+  "costar_market": {
+    "label": "CoStar market",
+    "badge": "CoStar Market",
+    "kind": "grounded",
+    "doc_types": [
+      "MARKET_STUDY"
+    ],
+    "explanation": "Market-wide occupancy / ADR from the deal's CoStar market report — the benchmark when neither a competitive set nor a submarket series is on file.",
+    "reason": null
+  },
+  "market_benchmark": {
+    "label": "Market benchmark",
+    "badge": "Market",
+    "kind": "grounded",
+    "doc_types": [
+      "STR",
+      "STR_TREND",
+      "MARKET_STUDY",
+      "PNL_BENCHMARK"
+    ],
+    "explanation": "Market-wide occupancy / ADR from an uploaded market report — the benchmark when neither a competitive set nor a submarket series is on file.",
+    "reason": null
+  },
+  "costar_submarket_forecast": {
+    "label": "CoStar submarket forecast",
+    "badge": "CoStar forecast",
+    "kind": "grounded",
+    "doc_types": [
+      "MARKET_STUDY"
+    ],
+    "explanation": "The year's occupancy / ADR change from the deal's CoStar submarket report, for the hotel's class (named on the badge, with the report and page) — a market forecast, not the subject's own.",
+    "reason": null
+  },
+  "growth_carried_forward": {
+    "label": "Past the forecast",
+    "badge": "Past the forecast",
+    "kind": "assumption",
+    "doc_types": [],
+    "explanation": "The year is past the last year of the market forecast. ADR grows at the average of that forecast's years (named on the label, e.g. 2025–2029) and occupancy holds at its last forecast level — an assumption, labelled with the report it extends.",
+    "reason": null
+  },
+  "occupancy_held_at_stabilization": {
+    "label": "Held after stabilization",
+    "badge": "Held after stabilization",
+    "kind": "assumption",
+    "doc_types": [],
+    "explanation": "Occupancy is flat after the stabilization year — it holds at its stabilization-year level while ADR keeps growing. Only your own occupancy growth for a specific year moves it.",
+    "reason": null
+  },
+  "market_forecast_unavailable": {
+    "label": "No market forecast",
+    "badge": "No forecast",
+    "kind": "refusal",
+    "doc_types": [],
+    "explanation": "No market forecast and no analyst figure covers the year, so the model holds the rate flat (growth 0 is the absence of growth, not a rate) — set growth manually.",
+    "reason": "no_market_forecast"
+  },
+  "costar_withheld_by_policy": {
+    "label": "Withheld by data policy",
+    "badge": "Withheld",
+    "kind": "refusal",
+    "doc_types": [
+      "MARKET_STUDY"
+    ],
+    "explanation": "A CoStar forecast or benchmark is on file but this workspace's data policy withholds CoStar-derived defaults — set the figure manually.",
+    "reason": "license_withheld"
+  },
+  "penetration_default": {
+    "label": "Penetration default",
+    "badge": "Default 100",
+    "kind": "assumption",
+    "doc_types": [],
+    "explanation": "Parity with the benchmark (index 100) at stabilization, with an 85% / 95% ramp in Years 1–2 for a Year-3 stabilization — a labelled suggestion; the current STR index is shown beside it.",
     "reason": null
   },
   "pip_document": {

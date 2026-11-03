@@ -14,12 +14,15 @@ full worker.
 
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Per-test SQLite database BEFORE app modules import.
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-returns-preview.db"
@@ -56,12 +59,13 @@ async def _seed_deal(tenant_id: str, deal_id: str) -> None:
         await session.execute(
             text(
                 "INSERT INTO deals (id, tenant_id, name, city, keys, purchase_price, "
-                "service, status, deal_stage, risk, ai_confidence, created_at, updated_at) "
+                "service, status, deal_stage, risk, ai_confidence, field_overrides, "
+                "created_at, updated_at) "
                 "VALUES (:id, :tenant, 'Test', 'NYC', 200, 40000000, "
-                "'Full Service', 'Draft', 'Teaser', 'Medium', 0.8, "
+                "'Full Service', 'Draft', 'Teaser', 'Medium', 0.8, :fo, "
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
-            {"id": deal_id, "tenant": tenant_id},
+            {"id": deal_id, "tenant": tenant_id, "fo": json.dumps(with_year1_rates())},
         )
         await session.commit()
 

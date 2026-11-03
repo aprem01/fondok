@@ -229,6 +229,17 @@ class Settings(BaseSettings):
     # or testing legacy behavior).
     LAZY_ENGINE_NARRATIVES_ENABLED: bool = Field(default=True)
 
+    # FON-116 / FON-117 staged rollout (W5, 2026-11-03) — TEMPORARY. OFF
+    # (default, what deploys first): the topline is "growth only" (FON-116) —
+    # Year 1 occupancy / ADR from the subject's own basis (analyst value, else
+    # the T-12, else the STR / CBRE Year-1 rules as before) and every year's
+    # growth from the per-year market growth resolver. ON: the full FON-117
+    # engine (benchmark × penetration × ramp). Read ONLY through
+    # ``app.services.topline.topline_mode()``; surfaced on ``/health`` and
+    # ``topline_status.topline_mode``. Remove this setting (and the
+    # growth-only branch) once FON-117 is on in production — DEPLOY.md.
+    TOPLINE_BENCHMARK_ENABLED: bool = Field(default=False)
+
     # Wave 5 (2026-07): per-document chunk-concurrency knob. Raising it
     # from 2→4 lets each document's ~5-page chunks process 4-wide instead
     # of 2-wide (~40% less wall-time, ~10% less cost from fewer retries).

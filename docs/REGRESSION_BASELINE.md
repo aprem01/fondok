@@ -115,6 +115,9 @@ are in `tests/test_engine_runner.py`, so that is the path used here.
 ```bash
 # from the repo root: re-run the fixture and diff the headline fields
 apps/worker/.venv/bin/python scripts/compare_golden_baseline.py
+#   --topline-mode benchmark   FON-116 staged rollout: run with the FON-117
+#                              topline switched on, against its own baseline
+#                              (default growth_only = what deploys)
 #   --all     also list unchanged headline fields
 #   --full    also list every other raw numeric output that moved
 #   --baseline <file>   compare against another baseline file
@@ -265,3 +268,255 @@ headline set is identical to round 1. Added leaves:
 move: a $76,000 "Management fee in lieu" line every year (flat — the HMA
 states no escalation), so NOI before and after the reserve falls by $76,000
 a year.
+
+## 2026-11-02 re-baseline: topline methodology v2 (`kimpton-golden-2026-11-02-topline-v2.json`)
+
+Prem approved the topline re-baseline (FON-116 / FON-117, plan
+`docs/plans/go-live-2026-10-30/topline-growth-plan.md`; decisions from Sam,
+2026-11-01). The moving commits carry `golden: expected`. The file now holds
+**two fixtures** (`scripts/compare_golden_baseline.py` runs and diffs both):
+
+* `engines` — the **seed fixture** (`tests/fixtures/kimpton_seed.py`, no
+  documents). It mirrors the production defaults, which no longer carry a
+  growth seed, so it pins the deterministic "no market forecast" state:
+  every rate held flat, no benchmark, `revpar_growth` 0 for the exit year.
+* `docs_fixture.engines` — the **documents fixture**
+  (`tests/fixtures/kimpton_docs_fixture.py`): a database deal (132 keys,
+  $36.4M, upper-upscale) carrying the May 2025 STAR report
+  (`ANG-20250500-USD-E.xlsx` through the STR template extractor) and the
+  Miami Beach CoStar submarket report, with the reference Index Analysis
+  inputs as overrides and a 2025-12-31 close (Year 1 = 2026). It is new, so
+  it has no "before".
+
+Both runs record `topline_methodology_version` 2 (the header field
+`topline_methodology`); the compare prints "TOPLINE METHODOLOGY CHANGED v1 ->
+v2" against any earlier file. Values below are the seed fixture against
+`kimpton-golden-2026-11-01-engfix.json` (kept for history): **105 headline
+fields moved, 86 unchanged; Year 1 does not move** (the seed's 76.2% /
+$385.00 Year 1 is unchanged — only growth is gone).
+
+### Why each field moved
+
+One cause: the 0.8% occupancy / 4.0% ADR / 4.5% RevPAR growth seeds are
+retired. They were applied to every deal as if they were the market's; growth
+now comes from the analyst or a market forecast and is otherwise unavailable
+(held flat, with the 4.5% offered as a labelled suggestion that is never
+applied for you). On the seed fixture that means:
+
+| Headline field | Before | After | Why |
+| --- | --- | --- | --- |
+| Occupancy Y2 / Y3 / Y4 / Y5 | 76.81% / 77.42% / 78.04% / 78.67% | 76.20% every year | no occupancy growth |
+| ADR Y2 / Y3 / Y4 / Y5 | $400.40 / $416.42 / $433.07 / $450.40 | $385.00 every year | no ADR growth |
+| RevPAR Y2 / Y5 | $307.55 / $354.32 | $293.37 | the two above |
+| Rooms revenue Y2 / Y5 | 14,817,548.86 / 17,070,961.47 | 14,134,566.60 | the two above |
+| Total revenue Y2 / Y3 / Y4 / Y5 | 19,167,557.84 / 20,093,734.24 / 21,064,663.48 / 22,082,508.02 | 18,284,071.51 every year | rooms revenue; F&B price follows the (absent) ADR growth |
+| Dept. Rooms / F&B / Other Y5 | 5,121,288.44 / 2,926,450.54 / 554,806.25 | 4,240,369.98 / 2,423,068.56 / 459,373.41 | departmental ratio × flat department revenue |
+| Management fee / FF&E reserve Y5 | 662,475.24 / 883,300.32 | 548,522.15 / 731,362.86 | % of flat revenue |
+| GOP Y2 / Y5 | 6,780,327.97 / 8,024,800.71 | 6,241,015.91 / 5,706,097.48 | flat revenue, undistributed costs still grow 3.5% |
+| Cash NOI Y2 / Y3 / Y4 / Y5 | 4,113,917.94 / 4,395,884.85 / 4,694,387.79 / 5,010,327.67 | 3,636,449.92 / 3,417,877.56 / 3,191,655.17 / 2,957,514.99 | the same |
+| NOI before reserve Y5 | 5,893,627.99 | 3,688,877.85 | the same |
+| Stabilized occupancy / ADR / revenue | 77.42% / $416.42 / 20,093,734.24 | 76.20% / $385.00 / 18,284,071.51 | Year 3 of the flat path |
+| Stabilized NOI / Cash NOI / margin | 5,199,634.22 / 4,395,884.85 / 25.88% | 4,149,240.42 / 3,417,877.56 / 22.69% | the same |
+| DSCR Y2 / Y3 / Y4 / Y5, stabilized / average | 2.22x / 2.37x / 2.54x / 2.71x, 2.37x / 2.38x | 1.96x / 1.85x / 1.72x / 1.60x, 1.85x / 1.84x | Cash NOI over unchanged debt service |
+| Exit NOI | 5,235,792.42 | 2,957,514.99 | Year-5 Cash NOI not grown: `revpar_growth` 0 (`market_forecast_unavailable`) instead of the 4.5% seed |
+| Exit value / net sale proceeds | 74,797,034.51 / 51,077,826.32 | 42,250,214.15 / 19,181,942.37 | exit NOI ÷ 7.0% |
+| Levered / unlevered IRR | 31.2852% / 20.1489% | 8.0602% / 7.4866% | flat operations and the lower sale |
+| Equity multiple | 3.2590x | 1.3762x | the same |
+| Exit-year rows 1–4 (levered IRR) | 88.22% / 51.22% / 40.35% / 35.07% | 52.75% / 22.37% / 13.05% / 8.11% | each row's forward NOI is flat |
+| LP / GP IRR, GP promote | 28.3142% / 42.4455%, 3,675,179.31 | 7.7555% / 7.7555%, 0.00 | below the first hurdle, no promote |
+
+Also moved (same cause): the per-year departmental / undistributed /
+fixed-charge leaves, cash-flow statement rows, sensitivity grid cells and the
+partnership distributions built on them. Unchanged: Year 1 everywhere, the
+capital stack, debt sizing and debt service. New leaves: `revenue.topline_by_year`
+records carry the topline fields (`benchmark_level` "none", growth source
+"unavailable", `flat_no_growth`).
+
+### The documents fixture (new) and the reference path
+
+Year by year (2026–2030) the documents fixture projects occupancy 75.4959% /
+75.4959% / 74.5899% / 76.8276% / 77.2118% and ADR $295.42 / $296.68 /
+$311.09 / $323.03 / $329.50 — the reference Index Analysis tab's subject rows
+(75.5% / 75.5% / 74.594% / 76.832% / 77.216%, $295.43 / $296.68 / $311.10 /
+$323.04 / $329.50) to within the reference's own rounding of its keyed
+comp-set level (75.496% → 75.5%, $310.776 → $310.78; every year differs by
+exactly those two ratios — `tests/test_topline_kimpton_reference.py`). From the
+keyed level itself the path matches to 1e-9. Headlines: levered IRR 8.4911%,
+unlevered 7.7223%, equity multiple 1.4467x, exit value 46,224,062.47, exit NOI
+3,235,684.37 (the expense side is still the seed's ratios — the fixture carries
+no T-12, so it is a topline fixture, not the reference model's P&L).
+
+### Also in this change
+
+* `evals/golden-set/kimpton-angler/expected/model.json` (the 0.5%-tolerance
+  eval, `evals/run.py`) does **not** move: it drives the engines directly with
+  explicit inputs and never reaches the loader, so the plan's premise for
+  retiring it (that it fails under v2) does not hold. It is kept; it does not
+  exercise the topline.
+* `tests/test_assumption_sources_snapshot.py` regenerated with the recorded
+  reason (growth keys leave `sources` / `values`; `revpar_growth` 0.0
+  `market_forecast_unavailable`).
+* `tests/test_exit_schedule_runner.py` and `test_run_all_engines_kimpton`
+  re-pinned / re-banded with the reason in each docstring.
+
+### Re-cut 2026-11-02 (topline review fix I-2: the exit-growth convention)
+
+The same file was re-cut in the commit that changed the exit-growth
+convention (trailer `golden: expected`). The seed fixture does not move (0
+leaves: it has no growth and no long-run figure, so its exit growth stays 0).
+The documents fixture moves in the exit only, 16 headline fields / 414 raw
+leaves, all from one cause.
+
+Cause: Returns' exit-year growth (when the analyst set no RevPAR growth) was
+the last projected year's `(1 + occupancy growth) × (1 + ADR growth) − 1`. On
+CoStar data that is a single forecast year — on the defaults path 2029, a
+recovery year (+3.0% occupancy, +2.8% ADR, 5.884%) — compounded for ever, and
+mostly from occupancy. The convention is now the source's long-run average
+(CBRE Hotel Horizons long-run RevPAR change, else its ADR change) when one is
+on file, else the last projected year's ADR growth with occupancy held at its
+stabilized level. The documents fixture carries no CBRE report, and its Year 5
+(2030) is the reference tab's own 0.5% occupancy / 2.0% ADR, so exit growth
+goes from 2.51% to 2.0%.
+
+| Headline field (documents fixture) | Before | After | Why |
+| --- | --- | --- | --- |
+| Exit NOI | 3,235,684.37 | 3,219,586.44 | Year-5 Cash NOI × 1.020 instead of × 1.0251 |
+| Exit value (gross sale price) / net sale proceeds | 46,224,062.47 / 23,076,313.72 | 45,994,092.01 / 22,850,942.67 | exit NOI ÷ 7.0%, less costs and payoff |
+| Levered / unlevered IRR | 8.4911% / 7.7223% | 8.3050% / 7.6321% | the lower sale |
+| Equity multiple | 1.4467x | 1.4352x | the same |
+| Exit Year 5 (selected) row | 8.4911% / 7.7223% / 1.4467x / 23,076,313.72 | 8.3050% / 7.6321% / 1.4352x / 22,850,942.67 | the same |
+| LP / GP IRR, equity multiple | 8.3012%, 1.4467x | 8.1185%, 1.4352x | the same (below the first hurdle) |
+| LP / GP distributions | 25,523,359.44 / 2,835,928.83 | 25,320,525.50 / 2,813,391.72 | the same |
+
+Also moved (same cause): the exit-year cash-flow rows, the partnership tier
+allocation, and the sensitivity grids whose RevPAR-growth axis is centred on
+the exit growth (columns 0.51%…4.51% → 0%…4%). Unchanged: every operating
+year, the capital stack, debt, exit years 1–4.
+
+Same commit series, no golden move: occupancy no longer repeats its last
+forecast growth after a series ends (it holds; ADR carries) — the documents
+fixture keys 2030 itself, so nothing is carried there.
+
+## 2026-11-03 re-baseline: FON-116 staged rollout + decisions 1a / 1b (two dated files)
+
+Prem approved the Kimpton re-baseline (wave 5). The domain lead (Sam) asked
+for FON-116 (market growth by year) to deploy before FON-117 (benchmark ×
+penetration × ramp) and decided how occupancy and ADR behave after
+stabilization and after a forecast ends. The moving commits carry
+`golden: expected`. While the rollout switch `TOPLINE_BENCHMARK_ENABLED`
+exists (DEPLOY.md, "Topline rollout switch" — temporary) there are **two**
+baselines, each with both fixtures, and CI checks both:
+
+| File | Mode | CI step |
+| --- | --- | --- |
+| `evals/baselines/kimpton-golden-2026-11-03-growth-only.json` | `growth_only` (switch off — **what deploys**; `DEFAULT_BASELINE`) | `scripts/check_golden_gate.py` |
+| `evals/baselines/kimpton-golden-2026-11-03-topline-v2-benchmark.json` | `benchmark` (switch on; `BENCHMARK_BASELINE`) | `scripts/check_golden_gate.py --topline-mode benchmark` |
+
+The header records `topline_mode`; comparing a head run against the other
+mode's file prints `TOPLINE MODE MISMATCH` and counts as a move. Every revenue
+output records `topline_mode` beside `topline_methodology_version` (2 in both
+modes). `kimpton-golden-2026-11-02-topline-v2.json` is kept for history (it
+was never deployed).
+
+### What changed and why
+
+1. **Decision 1a — ADR after a forecast ends** grows at the arithmetic
+   average of the series' forecast-tagged ADR years (CoStar Miami Beach
+   Luxury & Upper Upscale 2025–2029: +4.4 / +1.8 / −0.6 / +3.8 / +2.8 →
+   +2.44%), not the last year's +2.8%. The exit growth past the series uses
+   the same figure. Neither fixture is moved by it: the seed fixture has no
+   forecast, and the documents fixture keys 2030 itself (the reference tab's
+   +2.0%). It is pinned in `tests/test_topline_decisions.py` and on the
+   defaults path of `tests/test_topline_kimpton_reference.py`.
+2. **Decision 1b — occupancy flat after stabilization**: growth into every
+   year after the stabilization year is 0 (`held_at_stabilization`) unless
+   the analyst set that year's own occupancy growth. On the documents
+   fixture (stabilization Year 3 = 2028) CoStar's 2029 +3.0% occupancy is
+   held; 2030's +0.5% is the reference tab's own per-year figure and still
+   applies.
+3. **The documents fixture carries the subject's T-12** (the occupancy / ADR
+   / RevPAR rows of the real Anglers T-12 to May 2025, 82.8892% / $233.446:
+   `evals/golden-set/kimpton-angler/input/t12_anglers_2025_05_extracted.json`).
+   Without it the growth-only topline has no Year-1 basis on this fixture
+   and refuses (`no_revenue_basis`). Revenue-basis rows only, so the expense
+   side keeps its default ratios (it stays a topline fixture). In benchmark
+   mode the T-12 is the reference row only and moves no number.
+4. **Growth-only mode** (the deployed default): Year 1 is the subject's own
+   basis, not benchmark × penetration × ramp; growth applies into Years
+   2..hold.
+
+### Seed fixture (no documents) — both modes
+
+Identical in both modes and to `kimpton-golden-2026-11-02-topline-v2.json`:
+**0 headline fields moved** (6 raw leaves in benchmark mode, 31 in
+growth-only: per-year `topline_by_year` provenance — Years 4–5 now say
+"occupancy held at its Year 3 stabilized level" instead of "no figure", and
+the growth-only records carry no benchmark method/level). Against main's
+current `kimpton-golden-2026-11-01-engfix.json` the seed fixture moves
+exactly the **105 headline fields** of the 2026-11-02 entry above, for the
+same reason (the 0.8% / 4.0% / 4.5% growth seeds are retired): occupancy
+76.2000% and ADR $385.00 every year, Cash NOI Y2–Y5 3,636,449.92 /
+3,417,877.56 / 3,191,655.17 / 2,957,514.99, levered / unlevered IRR 31.2852%
+/ 20.1489% → 8.0602% / 7.4866%, equity multiple 3.2590x → 1.3762x, exit value
+74,797,034.51 → 42,250,214.15, LP / GP IRR 28.3142% / 42.4455% → 7.7555% /
+7.7555%, GP promote 3,675,179.31 → 0.00 (full table in the 2026-11-02 entry).
+Year 1, the capital stack, debt sizing and debt service do not move.
+
+### Documents fixture — growth-only (the deployed mode)
+
+New in this mode (main's engfix file has no documents fixture). Year 1 =
+the T-12 as reported; Years 2–5 grow by CoStar 2027–2029 (ADR −0.6% / +3.8%
+/ +2.8%, occupancy 0.0% / −1.2% / held) and the tab's own 2030 figures
+(+0.5% / +2.0%):
+
+| Year | Occupancy | ADR | RevPAR | Total revenue | Cash NOI |
+| --- | --- | --- | --- | --- | --- |
+| 1 (2026) | 82.8892% | $233.45 | $193.50 | 13,443,261.50 | 2,330,314.45 |
+| 2 (2027) | 82.8892% | $232.05 | $192.34 | 13,362,601.93 | 2,134,445.23 |
+| 3 (2028) | 81.8945% | $240.86 | $197.25 | 13,703,936.23 | 2,145,549.85 |
+| 4 (2029) | 81.8945% | $247.61 | $202.78 | 14,087,646.44 | 2,172,359.49 |
+| 5 (2030) | 82.3040% | $252.56 | $207.87 | 14,441,246.37 | 2,178,191.78 |
+
+Levered IRR −12.3984%, unlevered −0.6419%, equity multiple 0.5401x, exit
+value 31,739,365.99, exit NOI 2,221,755.62, stabilized DSCR 1.1592x. (The
+fixture's $36.4M price and default expense ratios against the subject's own
+T-12 rates — the reference model prices the comp-set path, which is the
+benchmark mode below.) Against the 2026-11-02 benchmark file the documents
+fixture moves 158 headline fields, all from the mode (Year 1 T-12 82.89% /
+$233.45 instead of comp set 75.50% / $295.42) plus 1b.
+
+### Documents fixture — benchmark mode, against `kimpton-golden-2026-11-02-topline-v2.json`
+
+**55 headline fields moved** (387 raw leaves), one cause: decision 1b holds
+2029's +3.0% occupancy (Years 1–3 do not move, ADR does not move any year;
+the T-12 reference row adds `t12_occupancy` / `t12_adr` leaves only).
+
+| Headline field | Before | After | Why |
+| --- | --- | --- | --- |
+| Occupancy Y4 / Y5 | 76.8276% / 77.2118% | 74.5899% / 74.9629% | 2029 held at the 2028 level (÷ 1.03); 2030 +0.5% still applies |
+| RevPAR Y4 / Y5 | $248.18 / $254.41 | $240.95 / $247.00 | the same |
+| Total revenue Y4 / Y5 | 16,189,509.56 / 16,595,866.25 | 15,717,970.45 / 16,112,491.51 | −2.9126% |
+| Dept. expenses total Y4 / Y5 | 6,567,032.98 / 6,731,865.50 | 6,375,760.17 / 6,535,791.75 | ratio × revenue |
+| GOP Y4 / Y5 | 5,400,791.53 / 5,494,556.71 | 5,120,525.22 / 5,207,255.72 | undistributed costs do not fall |
+| Management fee / FF&E reserve Y5 | 497,875.99 / 663,834.65 | 483,374.75 / 644,499.66 | % of revenue |
+| Cash NOI Y4 / Y5 | 3,130,918.34 / 3,156,457.29 | 2,883,659.77 / 2,902,992.53 | the same |
+| DSCR Y4 / Y5, average | 1.6915x / 1.7053x, 1.5708x | 1.5579x / 1.5684x, 1.5167x | NOI over unchanged debt service |
+| Exit NOI / exit value | 3,219,586.44 / 45,994,092.01 | 2,961,052.38 / 42,300,748.35 | Year-5 NOI × 1.02, ÷ 7.0% |
+| Net sale proceeds | 22,850,942.67 | 19,231,465.89 | the same |
+| Levered / unlevered IRR | 8.3050% / 7.6321% | 4.6180% / 5.9100% | lower Years 4–5 and sale |
+| Equity multiple | 1.4352x | 1.2250x | the same |
+| Exit Year 3 / 4 rows (levered IRR) | 6.9168% / 7.5189% | 1.0980% / 2.9718% | their forward NOI is a held year |
+| LP / GP IRR, equity multiple | 8.1185%, 1.4352x | 4.5156%, 1.2250x | below the first hurdle |
+| LP / GP distributions | 25,320,525.50 / 2,813,391.72 | 21,612,345.40 / 2,401,371.71 | the same |
+
+Unchanged: Years 1–3, every ADR, the capital stack, debt sizing.
+
+### Reference tab (Sam's Index Analysis) under the decisions
+
+`tests/test_topline_kimpton_reference.py`: with the default Year-3
+stabilization the ADR path matches the tab to 1e-9 every year and
+occupancy matches through 2028; from 2029 occupancy is the tab's ÷ 1.03
+(2029 74.5940% vs 76.8318%, 2030–2032 77.2160% → 74.9670%). With
+stabilization in Year 4 (2029, where her ADR penetration reaches 100) the
+whole tab still reproduces to 1e-9.
+

@@ -32,6 +32,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
 # Settings/engine pick up the right DSN.
@@ -910,7 +911,7 @@ async def test_wizard_entered_inputs_terminate_explicitly_and_no_root_is_refused
                 "n": "Wizard-only deal",
                 "k": 132,
                 "p": 36_400_000,
-                "fo": json.dumps(overrides),
+                "fo": json.dumps(with_year1_rates(overrides)),
             },
         )
         await session.commit()

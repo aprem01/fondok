@@ -95,6 +95,20 @@ from .market_fields import FieldRef, FieldRow, coerce_float, coerce_int, pct_poi
 REASON_NO_DOCUMENT = "no_document"
 REASON_NO_SOURCE = "no_source"
 
+#: Review I-3 — the extraction pipeline version that started reading the
+#: CoStar class-bucket performance / forecast tables (``market_study.class.*``,
+#: ``api.documents.EXTRACTION_PIPELINE_VERSION`` v9). A MARKET_STUDY extraction
+#: stamped earlier carries none of them even when the PDF prints the tables.
+CLASS_SERIES_PIPELINE_VERSION = 9
+REEXTRACT_PHRASE = "extracted before class forecasts were read — re-extract"
+
+
+def reextract_detail(doc_name: str | None, label: str | None = None) -> str:
+    """"Report on file but extracted before class forecasts were read —
+    re-extract" (plan §6), naming the file and the series it would read."""
+    what = f" to read the {label} series" if label else ""
+    return f"CoStar report on file ({doc_name or 'market study'}) but {REEXTRACT_PHRASE} it{what}."
+
 # Namespaces read INSIDE a MARKET_STUDY document for growth figures.
 GROWTH_PREFIXES = ("market_study.", "cbre_horizons.", "pnl_benchmark.market.", "property_overview.")
 # Kept for callers that import the older name.
@@ -1116,6 +1130,10 @@ class ClassForecastReading:
     last_forecast_year: int | None = None
     reason: str | None = None
     detail: str | None = None
+    #: Review I-3 — the report read was extracted under a pipeline older than
+    #: :data:`CLASS_SERIES_PIPELINE_VERSION` and carries no class table: a
+    #: bucket it lacks is "not read yet", never "not in the report".
+    predates_class_series: bool = False
 
     def series(self, bucket: str | None) -> ClassSeries:
         """The requested bucket's years; the overall series, flagged, when the
@@ -1125,6 +1143,15 @@ class ClassForecastReading:
         label = CLASS_BUCKET_LABELS.get(wanted, wanted.replace("_", " "))
         if wanted in self.buckets:
             return ClassSeries(requested_bucket=wanted, bucket=wanted, label=label, years=self.buckets[wanted])
+        if self.predates_class_series and wanted != "all":
+            # The table may well be in the PDF; the old extraction never read
+            # it. Serving the overall series under a "not in the report" label
+            # would state a falsehood — the bucket's growth waits for the
+            # re-extract.
+            return ClassSeries(
+                requested_bucket=wanted, bucket=wanted, label=label, years=(),
+                fallback_reason=reextract_detail(self.doc_name, label),
+            )
         if "all" in self.buckets and wanted != "all":
             return ClassSeries(
                 requested_bucket=wanted,
@@ -1196,6 +1223,13 @@ def _class_level(attr: str, row: FieldRow) -> float | int | None:
     if attr in {"supply_rooms", "demand_room_nights"}:
         return coerce_int(row.value)
     return v
+
+
+def change_fraction(row: FieldRow) -> float | None:
+    """A ``*_change_pct`` cell as a FRACTION (``-0.012`` for -1.2%) under the
+    growth readers' unit guard — shared with the topline growth resolver,
+    which reads CBRE Horizons change rows the same way."""
+    return _class_change(row)
 
 
 def _class_change(row: FieldRow) -> float | None:
@@ -1292,6 +1326,18 @@ def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
     market_any = _first_text(scope, "market_study.market")
     if not ranked:
         names = sorted({r.doc_name for r in scope if r.doc_name})
+        versions = {r.pipeline_version for r in scope}
+        if versions and None not in versions and max(versions) < CLASS_SERIES_PIPELINE_VERSION:
+            return ClassForecastReading(
+                buckets={},
+                doc_name=names[0] if len(names) == 1 else None,
+                submarket=submarket_any,
+                market=market_any,
+                report_date=_first_text(scope, "market_study.report_date"),
+                reason=REASON_NO_SOURCE,
+                detail=reextract_detail(", ".join(names) if names else None),
+                predates_class_series=True,
+            )
         return ClassForecastReading(
             buckets={},
             doc_name=names[0] if len(names) == 1 else None,
@@ -1348,6 +1394,12 @@ def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
             detail="The market study's performance series carries no readable figure.",
         )
     anchor = next(iter(next(iter(buckets.values()))))
+    chosen_pv = next((r.pipeline_version for r in chosen if r.pipeline_version is not None), None)
+    predates = (
+        chosen_pv is not None
+        and chosen_pv < CLASS_SERIES_PIPELINE_VERSION
+        and not any(b != "all" for b in buckets)
+    )
     return ClassForecastReading(
         buckets=buckets,
         doc_name=anchor.doc_name,
@@ -1360,6 +1412,7 @@ def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
         ),
         first_forecast_year=first_forecast if first_forecast is not None else (min(tagged_forecast) if tagged_forecast else None),
         last_forecast_year=last_forecast if last_forecast is not None else (max(tagged_forecast) if tagged_forecast else None),
+        predates_class_series=predates,
     )
 
 
@@ -1373,10 +1426,14 @@ __all__ = [
     "RATE_PERCENT_MAX",
     "REASON_NO_DOCUMENT",
     "REASON_NO_SOURCE",
+    "CLASS_SERIES_PIPELINE_VERSION",
+    "REEXTRACT_PHRASE",
+    "reextract_detail",
     "ClassBucket",
     "ClassForecastReading",
     "ClassSeries",
     "ClassYear",
+    "change_fraction",
     "GrowthReading",
     "PipelineFilter",
     "PipelineHotel",

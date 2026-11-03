@@ -23,7 +23,6 @@ import {
   strTtmBasisLabel,
   type StrTrendAPI,
 } from '@/components/project/pl/indexAnalysisModel';
-import { byYearBasisNote } from '@/components/project/pl/IndexMethodology';
 
 const STR_DOC = 'STR Trend May 2025.xlsx';
 const STR: StrTrendAPI = {
@@ -110,24 +109,3 @@ describe('the tables label each benchmark column', () => {
   });
 });
 
-describe('byYearBasisNote', () => {
-  const row = (year: number, occ: IndexFigure) => ({ year, benchmark_occupancy: occ, benchmark_adr: fig(null) });
-  it('names the Year-1 actual and the Year-2+ forecast with the CBRE report date', () => {
-    const note = byYearBasisNote({
-      by_year: [
-        row(1, fig(0.7, { basis: 'actual', basis_label: `Actual · STR TTM May 2025 · ${STR_DOC}` })),
-        row(2, fig(0.72, { basis: 'forecast', basis_label: 'Forecast · CBRE Horizons 2026 · H.pdf p.4' })),
-      ],
-      subject_period_end: '2025-05',
-      cbre_report_date: 'September 2025',
-    } as never);
-    expect(note).toBe(
-      `Year 1 benchmark: Actual · STR TTM May 2025 · ${STR_DOC} — reported historical data. ` +
-        'Year 2 onward: CBRE Horizons forecast (report dated September 2025) — a projected benchmark, not history.',
-    );
-  });
-  it('null with no labelled figure (older worker / no values)', () => {
-    expect(byYearBasisNote({ by_year: [row(1, fig(0.7))] } as never)).toBeNull();
-    expect(byYearBasisNote({ by_year: [] } as never)).toBeNull();
-  });
-});

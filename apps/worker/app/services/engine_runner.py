@@ -27,7 +27,7 @@ import math
 import re
 import statistics
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -130,11 +130,13 @@ from ..engines.timeline import RENOVATION_START_OFFSET_MONTHS
 from ..tenants import TenantDataPolicies, load_tenant_data_policy
 from .deal_type import development_hold_default, is_development_like
 from fondok_schemas.underwriting import (
-    IndexDriverYear,
     PIPDisplacement,
     RenovationDisplacementPeriod,
     RevenueEngineInput,
     RevenueSegment,
+    GrowthYear,
+    ToplineDrivers,
+    ToplineReference,
 )
 
 logger = logging.getLogger(__name__)
@@ -511,6 +513,13 @@ IDENTITY_INPUT_KEYS: tuple[str, ...] = ("keys", "purchase_price")
 #: gate). Metadata like ``__sources__``: filtered by every serializer, read by
 #: no engine. The topline resolvers (topline PR 3) take it as ``policy``.
 DATA_POLICY_KEY = "__data_policy__"
+#: FON-116 / FON-117 — the loader-level ``topline_status`` block (served by
+#: ``GET /deals/{id}/assumption_sources``; ``services.topline``).
+TOPLINE_STATUS_KEY = "__topline_status__"
+#: FON-116 staged rollout (temporary) — the topline mode the loader ran and
+#: the growth-only per-year growth record, for the revenue input builder.
+TOPLINE_MODE_KEY = "__topline_mode__"
+GROWTH_PROVENANCE_KEY = "__topline_growth_provenance__"
 
 #: Which identity inputs each engine reads DIRECTLY off ``base`` (the
 #: ``base["keys"]`` / ``base["purchase_price"]`` reads in ``_build_input_for``).
@@ -537,6 +546,57 @@ def missing_identity_inputs(base: Mapping[str, Any]) -> tuple[str, ...]:
     """The identity inputs ``base`` does not carry, in declaration order."""
     return tuple(
         key for key in IDENTITY_INPUT_KEYS if base.get(key) in (None, "")
+    )
+
+
+#: Review I-5 — the Year-1 occupancy / ADR basis of the revenue engine. Like
+#: the identity inputs they have NO default: they come from the analyst, the
+#: topline (benchmark × penetration × ramp) or the T-12, or the revenue engine
+#: and every engine consuming its output refuse (``no_revenue_basis``).
+REVENUE_BASIS_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
+
+#: The sentence every ``no_revenue_basis`` surface prints, by topline mode.
+#: With the benchmark switch off (FON-116 growth-only) an STR report does not
+#: set Year 1, so the guidance must not send the analyst to upload one.
+REVENUE_BASIS_GUIDANCE_BENCHMARK = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
+REVENUE_BASIS_GUIDANCE_GROWTH_ONLY = "Upload a T-12, or enter Year-1 occupancy and ADR"
+
+
+def revenue_basis_guidance() -> str:
+    """The guidance sentence for the topline mode in force."""
+    from .topline import topline_mode
+
+    if topline_mode() == "benchmark":
+        return REVENUE_BASIS_GUIDANCE_BENCHMARK
+    return REVENUE_BASIS_GUIDANCE_GROWTH_ONLY
+
+
+def revenue_basis_needed(engine_name: str) -> bool:
+    """Does ``engine_name`` need the Year-1 occupancy / ADR basis — the revenue
+    engine itself, or any engine whose input chain runs through it?"""
+    if engine_name == "revenue":
+        return True
+    return any(revenue_basis_needed(dep) for dep in ENGINE_DEPS.get(engine_name, ()))
+
+
+def missing_revenue_basis(base: Mapping[str, Any]) -> tuple[str, ...]:
+    """The basis keys ``base`` does not carry, sorted (the failure's ``missing``)."""
+    return tuple(sorted(key for key in REVENUE_BASIS_KEYS if base.get(key) in (None, "")))
+
+
+def _missing_revenue_basis_message(missing: Sequence[str]) -> str:
+    names = {"starting_occupancy": "Year-1 occupancy", "starting_adr": "Year-1 ADR"}
+    what = " or ".join(names.get(k, k) for k in sorted(missing, reverse=True))
+    from .topline import topline_mode
+
+    sources = (
+        "no T-12, no STR or market benchmark and no analyst value sets it"
+        if topline_mode() == "benchmark"
+        else "no T-12 and no analyst value sets it"
+    )
+    return (
+        f"The deal has no {what} basis — {sources}. {revenue_basis_guidance()} on the "
+        "Future P&L, and run the model again — the model never substitutes a placeholder rate."
     )
 
 
@@ -580,6 +640,21 @@ class EngineFailure(BaseModel):
 STATUS_NOT_APPLICABLE = "not_applicable"
 
 
+def _revenue_basis_failure(engine_name: str, base: Mapping[str, Any]) -> EngineFailure | None:
+    """The typed ``no_revenue_basis`` failure for ``engine_name``, or None."""
+    if not revenue_basis_needed(engine_name):
+        return None
+    missing = missing_revenue_basis(base)
+    if not missing:
+        return None
+    return EngineFailure(
+        engine=engine_name,
+        reason=ReasonCode.NO_REVENUE_BASIS,
+        message=_missing_revenue_basis_message(missing),
+        missing=list(missing),
+    )
+
+
 class EngineNotApplicable(BaseModel):
     """Why an engine row landed ``status='not_applicable'`` — typed, persisted
     (in the ``failure`` column, read back as ``not_applicable``).
@@ -619,9 +694,24 @@ class MissingIdentityInputsError(LookupError):
     deal lacks an identity input; the persisting runners record an
     :class:`EngineFailure` row instead of raising."""
 
+    #: The typed reason the app-level handler answers with (422).
+    reason: ReasonCode = ReasonCode.MISSING_IDENTITY_INPUTS
+
     def __init__(self, missing: tuple[str, ...]) -> None:
         self.missing = list(missing)
         super().__init__(_missing_identity_message(missing))
+
+
+class MissingRevenueBasisError(MissingIdentityInputsError):
+    """Review I-5 — the revenue chain has no Year-1 occupancy / ADR basis.
+    A subclass so every in-memory path that already answers the identity
+    refusal (422) answers this one too, with its own reason and message."""
+
+    reason = ReasonCode.NO_REVENUE_BASIS
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        self.missing = list(missing)
+        LookupError.__init__(self, _missing_revenue_basis_message(missing))
 
 
 #: Where the analyst enters each identity input, in the words the refusal
@@ -662,10 +752,17 @@ def _default_assumptions() -> dict[str, Any]:
     an analyst who carries them enters the amounts explicitly).
     """
     return {
-        "starting_occupancy": 0.762,
-        "starting_adr": 385.0,
-        "occupancy_growth": 0.008,
-        "adr_growth": 0.04,
+        # Review I-5 (W5 topline fix) — NO Year-1 occupancy / ADR seed. The
+        # 76.2% / $385 that used to sit here were the Kimpton demo's rates: a
+        # deal with no T-12, no STR / market benchmark and no analyst value ran
+        # as a Kimpton-priced hotel. ``REVENUE_BASIS_KEYS`` have no default;
+        # without a basis the revenue engine (and everything on it) refuses
+        # with ``no_revenue_basis``.
+        # FON-116 / FON-117 (topline v2) — NO growth seed. The 0.8% / 4.0% /
+        # 4.5% occupancy / ADR / RevPAR growth that used to sit here was applied
+        # to every deal as if it were the market's; growth now comes from the
+        # analyst or a market forecast (``services.topline_growth``) and is
+        # otherwise unavailable (held flat, with a labelled 4.5% suggestion).
         "fb_revenue_per_occupied_room": 88.0,
         "other_revenue_pct_of_rooms": 0.065,
         "hold_years": 5,
@@ -697,7 +794,6 @@ def _default_assumptions() -> dict[str, Any]:
         "term_years": 5,
         "interest_only_years": 0,
         "exit_cap_rate": 0.07,
-        "revpar_growth": 0.045,
         "selling_costs_pct": 0.02,
         # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
         "transfer_tax_pct": 0.0,
@@ -819,6 +915,10 @@ _STR_SEEDED_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
 #     adr_growth = (1 + revpar_growth) / (1 + occupancy_growth) - 1
 # and tags it with this label ("derived from RevPAR growth").
 SOURCE_DERIVED_FROM_REVPAR_GROWTH = "derived_from_revpar_growth"
+# FON-116 / FON-117 — a Year-1 rate set by the topline (benchmark × penetration
+# × ramp, ``services.topline``). The benchmark's own source (STR comp set,
+# CoStar submarket, …) and its rows travel on ``topline_status.benchmark``.
+SOURCE_TOPLINE_BENCHMARK = "topline_benchmark"
 # FON-66 Slice B — partnership/JV terms extracted from an uploaded
 # PARTNERSHIP-classified document (ownership split, preferred return, promote
 # waterfall). An analyst override wins over it. B5 — there is no seed beneath
@@ -1525,17 +1625,37 @@ async def _load_engine_inputs(
         # The explicit-assumptions seam: the caller supplied the complete set,
         # so no database read happens. Request-body overrides layer on top
         # exactly as they do on the database path.
+        seam_paths: set[str] = set()
         if overrides:
             base.update(overrides)
             for k in overrides:
                 sources[k] = SOURCE_ANALYST_OVERRIDE
+            seam_paths = set(overrides)
             # FON-69 — a request-body RevPAR-growth override derives
             # adr_growth here too (no-op without one).
             _derive_adr_growth_from_revpar_override(base, sources)
+        # FON-116 / FON-117 — the same topline step as the database path, with
+        # no document rows (nothing is read on this seam): no benchmark, and
+        # growth only where the caller's overrides set it.
+        seam_reasons: dict[str, dict[str, Any]] = {}
+        _apply_topline(
+            base,
+            sources,
+            {},
+            seam_reasons,
+            seam_paths,
+            rows=[],
+            as_of=None,
+            positioning=None,
+            policy=TenantDataPolicies(),
+            str_noted_keys=frozenset(),
+            t12=None,
+        )
+        _apply_revenue_basis(base, sources, {}, seam_reasons)
         _resolve_senior_origination_fee(base, sources)
         base["__sources__"] = sources
         base["__source_fields__"] = {}
-        base["__reasons__"] = {}
+        base["__reasons__"] = seam_reasons
         base[PARTNERSHIP_TERMS_VIEW_KEY] = _partnership_terms_view(base, sources)
         # No registry read on this path either: a complete, explicit
         # assumption set carries the default policy by construction.
@@ -1616,6 +1736,9 @@ async def _load_engine_inputs(
     # entry with empty ``chain_scales_covered`` (tenant didn't tag) can
     # still contribute.
     subject_chain_scale: str | None = None
+    # FON-116 — the deal's positioning picks the CoStar class bucket the
+    # topline growth / submarket benchmark read (``class_bucket_from_positioning``).
+    deal_positioning: Any = None
     if row is not None:
         mapping = row._mapping
         if mapping.get("keys"):
@@ -1632,6 +1755,7 @@ async def _load_engine_inputs(
         subject_chain_scale = chain_scale_from_positioning(
             mapping.get("positioning")
         )
+        deal_positioning = mapping.get("positioning")
         # FON-98 — the reopening / re-flag date anchors the stabilization
         # default (Year 3 from the first full operating year after it). A
         # deal row value, so it is badged ``deal_row``; absent → the close
@@ -1963,10 +2087,13 @@ async def _load_engine_inputs(
         if (prov.resolution.doc_type or "OM").upper() == "OM":
             sources[key] = SOURCE_OM_BROKER
 
-    # External market reports (May 7 scope): when CBRE Horizons has
-    # been extracted, derive ADR + RevPAR growth from its 5-year
-    # forecast and use that as the revenue engine's growth rate. (A P&L
-    # benchmark is NOT applied here — see the FON-109 note below.)
+    # CBRE Hotel Horizons — the LONG-RUN averages only (the broker-vs-market
+    # variance flags read them). FON-116 / FON-117 (topline v2): the report's
+    # per-year occupancy / ADR change rows reach the model through the topline
+    # growth resolver (``services.topline_growth``, placed by calendar year),
+    # and its levels through the benchmark resolver's market level. The old
+    # forecast-window CAGR written onto ``adr_growth`` / ``revpar_growth`` and
+    # the ``cbre_year_1_*`` Year-1 anchors are gone — one mechanism per concern.
     cbre_overrides, cbre_prov, cbre_reason = await _load_cbre_horizons_overrides(
         session,
         deal_id=deal_id,
@@ -1974,55 +2101,37 @@ async def _load_engine_inputs(
         with_provenance=True,
         as_of=underwriting_as_of,
     )
+    # FON-116 staged rollout (TEMPORARY — goes with the growth-only mode): under
+    # the growth-only topline Year 1 keeps the rules it had before topline v2.
+    # With no T-12 ADR, CBRE Hotel Horizons' first forecast year's ADR is the
+    # Year-1 ADR (an analyst value set below still wins). The RevPAR ÷
+    # occupancy back-out is NOT restored: it divided by the retired 76.2%
+    # seed occupancy.
+    from .topline import topline_mode as _topline_mode
+
+    if (
+        _topline_mode() == "growth_only"
+        and "adr" not in revenue_actuals
+        and "cbre_year_1_adr" in cbre_overrides
+    ):
+        base["starting_adr"] = cbre_overrides["cbre_year_1_adr"]
+        sources["starting_adr"] = SOURCE_CBRE_HORIZONS
+        if "cbre_year_1_adr" in cbre_prov:
+            source_fields["starting_adr"] = cbre_prov["cbre_year_1_adr"]
     for key, value in cbre_overrides.items():
+        if not key.startswith("long_run_avg_"):
+            continue
         base[key] = value
         sources[key] = SOURCE_CBRE_HORIZONS
         if key in cbre_prov:
             source_fields[key] = cbre_prov[key]
-    if cbre_reason is ReasonCode.NOT_KNOWABLE_AS_OF:
-        # The report exists but post-dates the underwriting date. Keep the
-        # value the deal already has (a seed) and say why the market view
-        # is missing — never silently fall back.
-        for key in ("adr_growth", "revpar_growth"):
-            if sources.get(key) == SOURCE_SEED:
-                sources[key] = SOURCE_CBRE_HORIZONS_UNAVAILABLE
-                reasons[key] = _reason(
-                    ReasonCode.NOT_KNOWABLE_AS_OF,
-                    f"CBRE Horizons report is dated after the underwriting "
-                    f"as-of date ({underwriting_as_of}).",
-                )
-    elif cbre_reason is ReasonCode.AS_OF_UNKNOWN:
-        for key in cbre_overrides:
+        if cbre_reason is ReasonCode.AS_OF_UNKNOWN:
             reasons[key] = _reason(
                 ReasonCode.AS_OF_UNKNOWN,
                 "The CBRE Horizons report carries no reporting date, so it "
                 "cannot be placed against the underwriting as-of date. The "
                 "value is used.",
             )
-    # Wire CBRE Year-1 ADR/RevPAR as the Year-1 anchor when the deal
-    # has no T-12 actual on those metrics. Previously cbre_year_1_adr
-    # was written to base but never read (Eshan's QA #5: the engine
-    # ignored CBRE forecasts even with a CBRE Horizons doc uploaded).
-    # T-12 actuals still win — they're analyst-trusted observed values
-    # — but in their absence the CBRE forecast is more grounded than
-    # the Kimpton seed.
-    if "adr" not in revenue_actuals and "cbre_year_1_adr" in cbre_overrides:
-        base["starting_adr"] = cbre_overrides["cbre_year_1_adr"]
-        sources["starting_adr"] = SOURCE_CBRE_HORIZONS
-    if (
-        "occupancy" not in revenue_actuals
-        and "adr" not in revenue_actuals
-        and "cbre_year_1_revpar" in cbre_overrides
-        and base.get("starting_occupancy", 0) > 0
-    ):
-        # Back out a Y1 ADR from CBRE RevPAR + current occupancy
-        # baseline when ADR itself isn't surfaced separately.
-        starting_occ = base["starting_occupancy"]
-        if starting_occ > 0:
-            base["starting_adr"] = (
-                cbre_overrides["cbre_year_1_revpar"] / starting_occ
-            )
-            sources["starting_adr"] = SOURCE_CBRE_HORIZONS
 
     # FON-109 (Sam, 2026-10-15) — a P&L benchmark report (CBRE Benchmarker /
     # HotStats, ``PNL_BENCHMARK``) is a SUGGESTION, never engine input. Its
@@ -2222,9 +2331,18 @@ async def _load_engine_inputs(
             if parsed:
                 seg_name, field = parsed
                 pre_load_seg_overrides.setdefault(seg_name, {})[field] = float(value)
-        # Property-overall ADR (post any T-12 / CBRE / OM override that
-        # already landed on ``base["starting_adr"]``).
-        overall_adr = float(base.get("starting_adr") or 0.0)
+        # Property-overall ADR: the analyst's Year-1 ADR when set, else the
+        # T-12 actual that already landed on ``base["starting_adr"]``. Review
+        # I-5 — there is no seeded ADR any more, so a deal with neither seeds
+        # no segments (the revenue engine refuses without a basis anyway).
+        _analyst_adr = pre_load_seg_overrides_raw.get("starting_adr")
+        if isinstance(_analyst_adr, dict):
+            _analyst_adr = _analyst_adr.get("value")
+        overall_adr = (
+            float(_analyst_adr)
+            if isinstance(_analyst_adr, (int, float)) and not isinstance(_analyst_adr, bool) and _analyst_adr > 0
+            else float(base.get("starting_adr") or 0.0)
+        )
         if overall_adr > 0:
             seeded_segments, seg_sources = _build_segments_from_str(
                 payload=str_seg_payload,
@@ -2674,185 +2792,43 @@ async def _load_engine_inputs(
     # body) derives adr_growth so operating NOI moves; no-op without one.
     _derive_adr_growth_from_revpar_override(base, sources, analyst_override_paths)
 
-    # Wave 3 W3.3 — optional STR forward-forecast seed. When the analyst
-    # has flipped ``revenue_seed_from_str_forecast`` to True (default is
-    # False so existing deals are unaffected), seed the revenue engine's
-    # ``starting_occupancy`` + ``starting_adr`` from the BASE scenario's
-    # Month-12 forecast point. The flag is False / absent by default (no
-    # regression). FON-61 (D4): when the flag is ON the outcome is NEVER
-    # silent — the flag key is tagged with the STR basis the seed actually
-    # took (one of ``STR_BASIS_SOURCES``) when the seed landed, and
-    # ``SOURCE_STR_UNAVAILABLE`` when it could not populate (STR Trend
-    # extraction missing / below coverage / loader failure), so the UI can
-    # never claim the seed is active without the tag.
-    if base.get("revenue_seed_from_str_forecast") is True:
-        if len(str_noted_keys) == len(_STR_SEEDED_KEYS):
-            # The explicit overrides ARE the STR seed (exactly what the Market
-            # card shows) — the loader must not overwrite them with a
-            # differently-derived point. They are the COMP SET's rates, and
-            # the flag says so too (FON-61 61.2).
-            sources["revenue_seed_from_str_forecast"] = SOURCE_STR_COMP_SET
-        else:
-            # Sam QA 8/25: prefer the STR SUBJECT TTM (the current performance
-            # the Market tab displays) over the forecast Month-12 point, which
-            # could land far below the subject actual and tank the deal (a
-            # −19% IRR foot-gun). Fall back to the forecast only when the
-            # subject TTM isn't extracted.
-            from .str_forecast_loader import load_str_subject_ttm
-
-            str_prov: SourceField | None = None
-            str_reason: ReasonCode | None = None
-            # FON-61 (61.2) — which STR basis the seed came from. Set on the
-            # branch that produced the value, so the source tag is a record of
-            # what happened rather than a re-derivation after the fact.
-            seed_source: str = SOURCE_STR_FORECAST
-            try:
-                # As-of gate. The subject-TTM read lives in
-                # ``str_forecast_loader`` (which owns the STR field read), so
-                # the gate is applied HERE — otherwise the TTM path, which
-                # usually wins, would slip past it. Inert when the deal has
-                # no ``underwriting_as_of``.
-                str_docs = (
-                    await _str_documents(
-                        session, deal_id=deal_id, tenant_id=effective_tenant
-                    )
-                    if underwriting_as_of is not None
-                    else []
-                )
-                if str_docs and all(
-                    _is_after_as_of(
-                        d.get("report_as_of"),
-                        d.get("report_as_of_precision"),
-                        underwriting_as_of,
-                    )
-                    for d in str_docs
-                ):
-                    seed = None
-                    str_reason = ReasonCode.NOT_KNOWABLE_AS_OF
-                else:
-                    seed = await load_str_subject_ttm(
-                        session, deal_id=deal_id, tenant_id=effective_tenant
-                    )
-                    if seed is not None:
-                        # The subject property's own trailing twelve months —
-                        # an ACTUAL. Never the forward forecast (FON-61 61.2).
-                        seed_source = SOURCE_STR_SUBJECT_TTM
-                    if seed is not None and str_docs and not any(
-                        _as_of_date(d.get("report_as_of")) for d in str_docs
-                    ):
-                        str_reason = ReasonCode.AS_OF_UNKNOWN
-                    if seed is None:
-                        seed_source = SOURCE_STR_FORECAST
-                        (
-                            seed,
-                            str_prov,
-                            str_reason,
-                        ) = await _load_str_forecast_for_seed(
-                            session,
-                            deal_id=deal_id,
-                            tenant_id=effective_tenant,
-                            with_provenance=True,
-                            as_of=underwriting_as_of,
-                        )
-            except Exception:
-                logger.exception(
-                    "str seed: loader failed for deal %s — tagging unavailable",
-                    deal_id,
-                )
-                seed = None
-                str_prov = None
-                str_reason = None
-            if seed is not None:
-                seed_occ, seed_adr = seed
-                base["starting_occupancy"] = seed_occ
-                base["starting_adr"] = seed_adr
-                # FON-61 (61.2) — the VALUE is whatever the branch above
-                # produced and is identical to what it was before the split;
-                # only the label distinguishes the subject's TTM actual from
-                # the forward forecast's Month-12 projection.
-                sources["starting_occupancy"] = seed_source
-                sources["starting_adr"] = seed_source
-                sources["revenue_seed_from_str_forecast"] = seed_source
-                if str_prov is not None:
-                    source_fields["starting_occupancy"] = str_prov
-                    source_fields["starting_adr"] = str_prov
-                else:
-                    # The subject-TTM path owns the read; it does not carry
-                    # row identity, so drop any stale T-12 attribution
-                    # rather than pointing at a row that is no longer used.
-                    source_fields.pop("starting_occupancy", None)
-                    source_fields.pop("starting_adr", None)
-                if str_reason is ReasonCode.AS_OF_UNKNOWN:
-                    reasons["revenue_seed_from_str_forecast"] = _reason(
-                        ReasonCode.AS_OF_UNKNOWN,
-                        "The STR report carries no reporting date, so it "
-                        "cannot be placed against the underwriting as-of "
-                        "date. The seed is used.",
-                    )
-            else:
-                sources["revenue_seed_from_str_forecast"] = SOURCE_STR_UNAVAILABLE
-                source_fields.pop("revenue_seed_from_str_forecast", None)
-                reasons["revenue_seed_from_str_forecast"] = _reason(
-                    str_reason or ReasonCode.STR_UNAVAILABLE,
-                    (
-                        f"The STR report is dated after the underwriting "
-                        f"as-of date ({underwriting_as_of})."
-                        if str_reason is ReasonCode.NOT_KNOWABLE_AS_OF
-                        else "STR rates were requested but could not "
-                        "populate; the model stays on the T-12 base."
-                    ),
-                )
-        # FON-61 / FON-41 E-028 — the Index Analysis assumptions (market
-        # growth, MPI / ARI penetration targets against the selected index
-        # methodology) ride THIS path and no other: the toggle is on. Each
-        # applies only when the analyst overrode it; the penetration targets
-        # only while the Year-1 rates sit on an STR basis (the seed landed).
-        # No override → no read, no change (every golden deal).
-        from .index_methodology import (
-            apply_index_assumptions,
-            build_index_drivers,
-            load_index_rows,
-            wants_benchmark,
+    # FON-116 staged rollout (TEMPORARY — goes with the growth-only mode): the
+    # retired "Use STR rates" switch keeps its pre-v2 effect under the
+    # growth-only topline — see ``_apply_growth_only_str_seed``.
+    if _topline_mode() == "growth_only" and base.get("revenue_seed_from_str_forecast") is True:
+        await _apply_growth_only_str_seed(
+            session,
+            base,
+            sources,
+            source_fields,
+            reasons,
+            deal_id=deal_id,
+            tenant_id=effective_tenant,
+            underwriting_as_of=underwriting_as_of,
+            str_noted_keys=frozenset(str_noted_keys),
         )
 
-        index_rows = None
-        if wants_benchmark(base, analyst_override_paths):
-            # A benchmark read failure propagates (``load_error``) rather than
-            # silently dropping the analyst's penetration targets.
-            index_rows = await load_index_rows(
-                session, deal_id=deal_id, tenant_id=effective_tenant
-            )
-        for key in apply_index_assumptions(
-            base,
-            sources,
-            analyst_override_paths,
-            rows=index_rows,
-            str_basis_sources=STR_BASIS_SOURCES,
-            derived_sources=frozenset({SOURCE_DERIVED_FROM_REVPAR_GROWTH}),
-        ):
-            source_fields.pop(key, None)
-        # FON-95 part 2 — penetration targets BY YEAR drive each model year's
-        # occupancy / ADR (benchmark for that year × target), by-year beating
-        # the scalar; the lists land on ``base`` for the revenue input. No
-        # target → no change (every golden deal).
-        from ..engines.revenue import projection_calendar_years as _cal_years
+    # FON-116 / FON-117 — topline methodology v2: ONE unconditional step sets
+    # every model year's occupancy / ADR basis (benchmark × penetration × ramp)
+    # and per-year growth. The retired "Use STR rates" switch
+    # (``revenue_seed_from_str_forecast``) is ignored and reported as a legacy
+    # flag; a read failure of the market rows propagates (``load_error``).
+    from .index_methodology import load_index_rows
 
-        try:
-            _hold = int(base.get("hold_years") or 5)
-        except (TypeError, ValueError):
-            _hold = 5
-        for key in build_index_drivers(
-            base,
-            sources,
-            analyst_override_paths,
-            rows=index_rows,
-            str_basis_sources=STR_BASIS_SOURCES,
-            hold_years=_hold,
-            calendar_years=_cal_years(
-                _iso_date_or_none(base.get("acquisition_close_date")), _hold
-            ),
-        ):
-            source_fields.pop(key, None)
+    index_rows = await load_index_rows(session, deal_id=deal_id, tenant_id=effective_tenant)
+    _apply_topline(
+        base,
+        sources,
+        source_fields,
+        reasons,
+        analyst_override_paths,
+        rows=index_rows,
+        as_of=underwriting_as_of,
+        positioning=deal_positioning,
+        policy=data_policy,
+        str_noted_keys=frozenset(str_noted_keys),
+        t12=_t12_reference(revenue_actuals, revenue_prov),
+    )
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
     # An analyst override, a deals-row entry or a derived value does not come
@@ -2909,6 +2885,7 @@ async def _load_engine_inputs(
             ReasonCode.MISSING_IDENTITY_INPUTS,
             _missing_identity_message((key,)),
         )
+    _apply_revenue_basis(base, sources, source_fields, reasons)
 
     _resolve_senior_origination_fee(base, sources)
     # A9 — a segment's un-overridden ``adr_growth`` is ``None`` (it inherits
@@ -2917,7 +2894,7 @@ async def _load_engine_inputs(
     for seg_name in _SEGMENT_NAMES:
         seg_key = f"segments.{seg_name}.adr_growth"
         if seg_key in sources and sources[seg_key] != SOURCE_ANALYST_OVERRIDE:
-            sources[seg_key] = sources.get("adr_growth", SOURCE_SEED)
+            sources[seg_key] = sources.get("adr_growth") or _topline_adr_growth_source(base)
     base["__sources__"] = sources
     # C3 — the partnership terms view (the terms the deal carries) the
     # Partnership tab reads off assumption_sources.
@@ -2953,6 +2930,421 @@ async def _load_engine_inputs(
         analyst_override_paths=analyst_override_paths,
     )
     return base
+
+
+async def _apply_growth_only_str_seed(
+    session: AsyncSession,
+    base: dict[str, Any],
+    sources: dict[str, str],
+    source_fields: dict[str, SourceField],
+    reasons: dict[str, dict[str, Any]],
+    *,
+    deal_id: str,
+    tenant_id: str,
+    underwriting_as_of: date | None,
+    str_noted_keys: frozenset[str],
+) -> None:
+    """FON-116 staged rollout (TEMPORARY — removed with the growth-only mode):
+    a deal whose retired "Use STR rates" switch (``revenue_seed_from_str_forecast``)
+    is on keeps the Year-1 rates it had before topline v2.
+
+    * Both Year-1 rates written by the Market tab's button (STR-noted
+      overrides) → they ARE the seed; the switch is tagged ``str_comp_set``.
+    * Else the STR SUBJECT TTM (the subject's own trailing twelve months, an
+      actual — as-of gated) replaces ``starting_occupancy`` / ``starting_adr``,
+      badged ``str_subject_ttm`` (Sam QA 8/25, FON-61 61.2).
+    * Deliberate difference from before v2: with no subject TTM the old path
+      fell back to the 24-month STR scenario engine's Month-12 point (a
+      synthetic +2.5% CAGR forecast). That fallback is not restored — the
+      switch is tagged ``str_forecast_unavailable`` with the reason and Year 1
+      stays on the basis it has (T-12 / analyst), or refuses with
+      ``no_revenue_basis``.
+    """
+    if len(str_noted_keys & set(_STR_SEEDED_KEYS)) == len(_STR_SEEDED_KEYS):
+        sources["revenue_seed_from_str_forecast"] = SOURCE_STR_COMP_SET
+        return
+    from .str_forecast_loader import load_str_subject_ttm
+
+    reason: ReasonCode | None = None
+    seed: tuple[float, float] | None = None
+    try:
+        str_docs = (
+            await _str_documents(session, deal_id=deal_id, tenant_id=tenant_id)
+            if underwriting_as_of is not None
+            else []
+        )
+        if str_docs and all(
+            _is_after_as_of(d.get("report_as_of"), d.get("report_as_of_precision"), underwriting_as_of)
+            for d in str_docs
+        ):
+            reason = ReasonCode.NOT_KNOWABLE_AS_OF
+        else:
+            seed = await load_str_subject_ttm(session, deal_id=deal_id, tenant_id=tenant_id)
+            if seed is not None and str_docs and not any(_as_of_date(d.get("report_as_of")) for d in str_docs):
+                reason = ReasonCode.AS_OF_UNKNOWN
+    except Exception:  # noqa: BLE001 — degrade to "unavailable", never silently
+        logger.exception("str seed (growth-only): loader failed for deal %s — tagging unavailable", deal_id)
+        seed, reason = None, None
+    if seed is not None:
+        occ, adr = seed
+        base["starting_occupancy"] = occ
+        base["starting_adr"] = adr
+        for key in _STR_SEEDED_KEYS:
+            sources[key] = SOURCE_STR_SUBJECT_TTM
+            # The subject-TTM read carries no row identity: drop any stale
+            # T-12 attribution rather than point at a row no longer used.
+            source_fields.pop(key, None)
+        sources["revenue_seed_from_str_forecast"] = SOURCE_STR_SUBJECT_TTM
+        if reason is ReasonCode.AS_OF_UNKNOWN:
+            reasons["revenue_seed_from_str_forecast"] = _reason(
+                ReasonCode.AS_OF_UNKNOWN,
+                "The STR report carries no reporting date, so it cannot be placed against the "
+                "underwriting as-of date. The seed is used.",
+            )
+        return
+    sources["revenue_seed_from_str_forecast"] = SOURCE_STR_UNAVAILABLE
+    source_fields.pop("revenue_seed_from_str_forecast", None)
+    reasons["revenue_seed_from_str_forecast"] = _reason(
+        reason or ReasonCode.STR_UNAVAILABLE,
+        (
+            f"The STR report is dated after the underwriting as-of date ({underwriting_as_of})."
+            if reason is ReasonCode.NOT_KNOWABLE_AS_OF
+            else "STR rates were requested but the subject's STR TTM is not on file; the model "
+            "stays on the T-12 base."
+        ),
+    )
+
+
+async def _str_documents(session: AsyncSession, *, deal_id: str, tenant_id: str) -> list[Any]:
+    """The deal's STR / STR_TREND extraction rows, newest first (identity +
+    ``report_as_of`` only; ``str_forecast_loader`` owns the field read).
+    ``[]`` on any failure. FON-116 staged rollout — used by the growth-only
+    STR seed only."""
+    as_of_expr = await _report_as_of_expr(session)
+    try:
+        rows = await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                f"""
+                SELECT er.id AS extraction_result_id, er.document_id,
+                       {as_of_expr}
+                  FROM extraction_results er
+                  JOIN documents d ON d.id = er.document_id
+                 WHERE er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                   AND d.tenant_id = :tenant
+                   AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
+                 ORDER BY er.created_at DESC
+                """  # as_of_expr is a fixed column literal, never user input
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+        return [r._mapping for r in rows.fetchall()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _t12_reference(
+    revenue_actuals: Mapping[str, float], revenue_prov: Mapping[str, SourceField]
+) -> ToplineReference | None:
+    """The subject's own T-12 occupancy / ADR / RevPAR as the topline's
+    REFERENCE row (it moves no number). ``None`` without a T-12 actual."""
+    occ = revenue_actuals.get("occupancy")
+    adr = revenue_actuals.get("adr")
+    if occ is None and adr is None:
+        return None
+    revpar = revenue_actuals.get("revpar")
+    if revpar is None and occ is not None and adr is not None:
+        revpar = occ * adr
+    prov = revenue_prov.get("occupancy") or revenue_prov.get("adr")
+    period = prov.as_of if prov is not None else None
+    try:
+        return ToplineReference(
+            occupancy=occ if occ is not None and 0 <= occ <= 1 else None,
+            adr=adr if adr is not None and adr > 0 else None,
+            revpar=revpar if revpar is not None and revpar >= 0 else None,
+            period_label=f"T-12 to {period}" if period else "T-12",
+            doc_name=None,
+        )
+    except ValidationError:
+        return None
+
+
+def _topline_adr_growth_source(base: Mapping[str, Any]) -> str:
+    """The source id of the first out-year's resolved ADR growth (what a
+    segment without its own ``adr_growth`` inherits)."""
+    status = base.get(TOPLINE_STATUS_KEY) or {}
+    for row in status.get("growth_by_year") or []:
+        if row.get("year", 0) >= 2:
+            return str((row.get("adr") or {}).get("source_id") or "market_forecast_unavailable")
+    return "market_forecast_unavailable"
+
+
+#: FON-116 staged rollout — the keys only the benchmark topline reads
+#: (stored and validated in both modes; the growth-only status names them as
+#: kept but not applied).
+_TOPLINE_BENCHMARK_ONLY_KEYS: frozenset[str] = frozenset(
+    {
+        "index_mpi_target",
+        "index_ari_target",
+        "index_mpi_target_by_year",
+        "index_ari_target_by_year",
+        "penetration_ramp_by_year",
+        "topline_benchmark_level",
+    }
+)
+
+#: The growth scalars the topline replaces when the analyst did not set them.
+_TOPLINE_GROWTH_SCALARS: tuple[str, ...] = ("occupancy_growth", "adr_growth")
+
+
+def _apply_topline(
+    base: dict[str, Any],
+    sources: dict[str, str],
+    source_fields: dict[str, SourceField],
+    reasons: dict[str, dict[str, Any]],
+    analyst_override_paths: set[str],
+    *,
+    rows: Sequence[Any],
+    as_of: date | None,
+    positioning: Any,
+    policy: TenantDataPolicies,
+    str_noted_keys: frozenset[str],
+    t12: ToplineReference | None,
+) -> None:
+    """FON-116 / FON-117 — resolve the topline and park it on ``base``.
+
+    Review I-4 / R2-I1 — the model calendar: the acquisition close date; with
+    none, and a document forecast on file, a calendar ASSUMED from the
+    underwriting as-of date; with neither, no calendar — the forecast stays
+    unplaced with reason ``calendar_unknown`` (never the run date).
+    ``topline_status.calendar_anchor`` names the anchor.
+
+    Writes ``base["topline"]`` (the ``ToplineDrivers`` payload), the per-year
+    growth lists, ``base[TOPLINE_STATUS_KEY]`` (the ``topline_status`` block),
+    the Year-1 ``starting_*`` the topline sets (badged ``topline_benchmark``;
+    an explicit analyst value is never overwritten) and ``revpar_growth`` for
+    Returns when the analyst set none (the last projected year's resolved
+    RevPAR growth — 0.0 badged ``market_forecast_unavailable`` when no figure
+    exists). A growth scalar the analyst did not set is REMOVED from ``base``:
+    no seeded rate is ever shown as the deal's growth.
+    """
+    from ..engines.revenue import projection_calendar_years as _cal_years
+    from .topline import (
+        TOPLINE_STATUS_KEY as _STATUS,
+        build_topline,
+        read_topline_inputs,
+    )
+    from ..engines.timeline import parse_iso_date
+    from .topline import NO_CALENDAR_ANCHOR, build_growth_only, calendar_anchor, topline_mode
+    from .topline_benchmark import resolve_benchmark
+    from .topline_growth import (
+        CALENDAR_UNKNOWN_DETAIL,
+        class_bucket_from_positioning,
+        document_growth_on_file,
+        resolve_growth_by_year,
+    )
+
+    try:
+        hold = int(base.get("hold_years") or 5)
+    except (TypeError, ValueError):
+        hold = 5
+    hold = max(1, min(hold, 20))
+    knowable = [
+        r for r in rows
+        if not _is_after_as_of(getattr(r, "report_as_of", None), getattr(r, "report_as_of_precision", None), as_of)
+    ]
+    # Review M-1 — identity, not equality: ``r not in knowable`` compared
+    # frozen dataclasses field by field, quadratic on a deal with thousands
+    # of extracted rows.
+    knowable_ids = {id(r) for r in knowable}
+    gated = sorted({(r.doc_type or "").upper() for r in rows if id(r) not in knowable_ids})
+    # FON-116 staged rollout (temporary): ``growth_only`` (the default) runs
+    # the growth half only — Year 1 stays on the subject's own basis set
+    # above, no benchmark is resolved; ``benchmark`` runs FON-117 in full.
+    mode = topline_mode()
+    growth_only = mode == "growth_only"
+    inputs = read_topline_inputs(
+        base, sources, analyst_override_paths, str_noted_keys=str_noted_keys,
+        derived_adr_source=SOURCE_DERIVED_FROM_REVPAR_GROWTH, mode=mode,
+    )
+    bucket = class_bucket_from_positioning(positioning)
+    bench = None if growth_only else resolve_benchmark(
+        knowable, class_bucket=bucket, forced_level=inputs.forced_level, policy=policy, gated_doc_types=gated
+    )
+    close = parse_iso_date(_iso_date_or_none(base.get("acquisition_close_date")))
+    if close is not None or document_growth_on_file(knowable):
+        anchor = calendar_anchor(close, underwriting_as_of=as_of)
+    else:
+        anchor = NO_CALENDAR_ANCHOR
+    growth = resolve_growth_by_year(
+        knowable,
+        inputs.growth,
+        calendar_years=_cal_years(anchor.date.isoformat(), hold) if anchor.date is not None else [],
+        hold_years=hold,
+        class_bucket=bucket,
+        policy=policy,
+        first_calendar_year=(
+            (bench.base_calendar_year + 1) if bench is not None and bench.base_calendar_year is not None else None
+        ),
+        gated_doc_types=gated,
+        # Decision 1b — occupancy flat after the stabilization year.
+        stabilization_year=inputs.stabilization_year,
+    )
+    if bench is None:
+        build = build_growth_only(
+            growth, inputs, hold_years=hold, t12=t12, long_run=_long_run_growth(base, sources),
+            stored_benchmark_keys=sorted(analyst_override_paths & _TOPLINE_BENCHMARK_ONLY_KEYS),
+        )
+    else:
+        build = build_topline(
+            bench, growth, inputs, hold_years=hold, t12=t12, long_run=_long_run_growth(base, sources)
+        )
+    # Metadata (``__`` prefix: never an assumption value) — read by the
+    # revenue input builder only.
+    base[TOPLINE_MODE_KEY] = mode
+    if build.drivers is not None:
+        base["topline"] = build.drivers.model_dump(mode="json")
+    else:
+        base.pop("topline", None)
+    base[GROWTH_PROVENANCE_KEY] = [g.model_dump(mode="json") for g in build.growth_provenance]
+    base["occupancy_growth_by_year"] = build.occupancy_growth_by_year
+    base["adr_growth_by_year"] = build.adr_growth_by_year
+    status = dict(build.status)
+    status["data_policy"] = policy.as_dict()
+    status["calendar_anchor"] = anchor.as_dict()
+    doc_sourced = any(
+        row[m]["source"] in ("cbre_horizons", "costar_submarket_forecast", "carried_forward")
+        for row in status["growth_by_year"] for m in ("occupancy", "adr")
+    )
+    if anchor.assumed and doc_sourced:
+        status["notes"] = [*status.get("notes", []), anchor.label]
+    base[_STATUS] = status
+    # The per-year growth lists carry the source of their first projected
+    # out-year (the per-year sources travel on ``topline_status``) — the
+    # lineage walk names them, never a "seed".
+    for list_key, metric in (("occupancy_growth_by_year", "occupancy"), ("adr_growth_by_year", "adr")):
+        if list_key in analyst_override_paths:
+            sources[list_key] = SOURCE_ANALYST_OVERRIDE
+            continue
+        first = next((r for r in status["growth_by_year"] if r["year"] >= 2), None)
+        sources[list_key] = (
+            first[metric]["source_id"] if first is not None else "market_forecast_unavailable"
+        )
+
+    for key, value in (("starting_occupancy", build.year1_occupancy), ("starting_adr", build.year1_adr)):
+        if value is None:
+            continue
+        base[key] = value
+        sources[key] = SOURCE_TOPLINE_BENCHMARK
+        source_fields.pop(key, None)
+
+    state = status["growth_state"]
+    calendar_unknown = bool(status.get("calendar_unknown"))
+    growth_reason = (
+        ReasonCode.LICENSE_WITHHELD if state == "withheld"
+        # R2-I1 — a forecast on file that no calendar places: the close date
+        # is the fix, ranked above the labelled 4.5% suggestion.
+        else ReasonCode.CALENDAR_UNKNOWN
+        if state in ("unavailable", "partially_sourced") and calendar_unknown
+        # Review I-3 — a CoStar report extracted before the class series
+        # existed is "re-extract", never "no market forecast".
+        else ReasonCode.REEXTRACT_NEEDED
+        if state in ("unavailable", "partially_sourced") and status.get("reextract_needed")
+        else ReasonCode.NO_MARKET_FORECAST if state in ("unavailable", "partially_sourced")
+        else None
+    )
+    for key in _TOPLINE_GROWTH_SCALARS:
+        if key in analyst_override_paths or sources.get(key) == SOURCE_DERIVED_FROM_REVPAR_GROWTH:
+            continue
+        base.pop(key, None)
+        sources.pop(key, None)
+        source_fields.pop(key, None)
+        if growth_reason is not None:
+            reasons[key] = _reason(
+                growth_reason,
+                "Growth is resolved per year (topline_status.growth_by_year); "
+                + ("a CoStar forecast is withheld by the workspace's data policy." if state == "withheld"
+                   else f"{CALENDAR_UNKNOWN_DETAIL}." if growth_reason is ReasonCode.CALENDAR_UNKNOWN
+                   else "; ".join(status["reextract_needed"]) if growth_reason is ReasonCode.REEXTRACT_NEEDED
+                   else "no market forecast covers every projected year."),
+            )
+    if "revpar_growth" not in analyst_override_paths:
+        base["revpar_growth"] = build.terminal_revpar_growth
+        sources["revpar_growth"] = build.terminal_revpar_source
+        source_fields.pop("revpar_growth", None)
+        if build.terminal_revpar_source == "market_forecast_unavailable":
+            reasons["revpar_growth"] = (
+                _reason(
+                    ReasonCode.CALENDAR_UNKNOWN,
+                    f"{CALENDAR_UNKNOWN_DETAIL} — until then the exit-year NOI is not grown (0%).",
+                )
+                if calendar_unknown
+                else _reason(
+                    ReasonCode.REEXTRACT_NEEDED,
+                    "; ".join(status["reextract_needed"])
+                    + " Until then the exit-year NOI is not grown (0%).",
+                )
+                if status.get("reextract_needed")
+                else _reason(
+                    ReasonCode.NO_MARKET_FORECAST,
+                    "No market forecast for the last projected year — the exit-year NOI is not grown "
+                    "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
+                )
+            )
+
+
+def _long_run_growth(base: Mapping[str, Any], sources: Mapping[str, str]) -> Any:
+    """Review I-2 — the source's long-run growth for the exit year: CBRE Hotel
+    Horizons' long-run average RevPAR change, else its long-run ADR change
+    (both loaded as-of gated by ``_load_cbre_horizons_overrides``). None when
+    neither is on file."""
+    from .topline import LongRunGrowth
+
+    for key, what in (
+        ("long_run_avg_revpar_growth", "RevPAR change"),
+        ("long_run_avg_adr_change", "ADR change"),
+    ):
+        value = base.get(key)
+        if sources.get(key) != SOURCE_CBRE_HORIZONS or not isinstance(value, (int, float)):
+            continue
+        return LongRunGrowth(
+            value=float(value),
+            source_id=SOURCE_CBRE_HORIZONS,
+            label=f"CBRE Hotel Horizons long-run average {what} {float(value) * 100:+.1f}%",
+        )
+    return None
+
+
+def _apply_revenue_basis(
+    base: dict[str, Any],
+    sources: dict[str, str],
+    source_fields: dict[str, SourceField],
+    reasons: dict[str, dict[str, Any]],
+) -> None:
+    """Review I-5 — after every source had its say (analyst value, topline
+    Year 1, T-12 actual), a Year-1 occupancy / ADR still missing stays ABSENT
+    from ``base`` with a ``no_revenue_basis`` reason, and ``topline_status``
+    says so (``revenue_basis``). The runners turn it into the typed failure."""
+    missing = missing_revenue_basis(base)
+    for key in missing:
+        base.pop(key, None)
+        sources.pop(key, None)
+        source_fields.pop(key, None)
+        reasons[key] = _reason(ReasonCode.NO_REVENUE_BASIS, _missing_revenue_basis_message(missing))
+    status = base.get(TOPLINE_STATUS_KEY)
+    if isinstance(status, dict):
+        status["revenue_basis"] = {
+            "state": "missing" if missing else "present",
+            "missing": list(missing),
+            "message": _missing_revenue_basis_message(missing) if missing else None,
+        }
+        # FON-116 — which source set each Year-1 rate (the growth-only basis
+        # line names it; the benchmark topline badges ``topline_benchmark``).
+        status["year1_sources"] = {
+            "occupancy": sources.get("starting_occupancy"),
+            "adr": sources.get("starting_adr"),
+        }
 
 
 def _reason(code: ReasonCode, detail: str | None = None) -> dict[str, Any]:
@@ -3617,33 +4009,12 @@ _OVERRIDE_CAPEX_LIST_KEYS: frozenset[str] = frozenset({
 _OVERRIDE_INDEX_BY_YEAR_KEYS: frozenset[str] = frozenset({
     "index_mpi_target_by_year",
     "index_ari_target_by_year",
+    # FON-116 / FON-117 — topline v2 per-year lists (``services.topline``).
+    "occupancy_growth_by_year",
+    "adr_growth_by_year",
+    "penetration_ramp_by_year",
 })
 
-
-def _constant_growth_by_year(growth: float, hold_years: int) -> list[float | None]:
-    """The scalar growth assumption as the revenue engine's per-year list:
-    index ``y − 1`` is the growth applied INTO model year ``y``, so entry 0
-    (Year 1 — nothing is grown into Year 1) is ``None`` and every later year
-    carries the same figure. FON-116 / FON-117 topline PR 2; the growth
-    resolver (next PR) replaces this with the per-year resolution."""
-    n = max(0, int(hold_years))
-    if n == 0:
-        return []
-    return [None] + [float(growth)] * (n - 1)
-
-
-def _coerce_driver_list(raw: Any) -> list[float | None] | None:
-    """``base["index_*_by_year"]`` → the revenue input's per-year override list,
-    or ``None`` when nothing is driven (so the engine runs its legacy path)."""
-    if not isinstance(raw, list) or not any(v is not None for v in raw):
-        return None
-    out: list[float | None] = []
-    for v in raw:
-        try:
-            out.append(float(v) if v is not None else None)
-        except (TypeError, ValueError):
-            out.append(None)
-    return out
 
 def _parse_segment_override_path(path: str) -> tuple[str, str] | None:
     """Split ``segments.<name>.<field>`` into ``(name, field)``.
@@ -7217,8 +7588,14 @@ async def _load_cbre_horizons_overrides(
     dict[str, float]
     | tuple[dict[str, float], dict[str, SourceField], ReasonCode | None]
 ):
-    """Translate the deal's extracted CBRE Horizons report into engine
-    growth-rate overrides.
+    """Read the deal's extracted CBRE Horizons report: the forecast-window
+    ADR / RevPAR CAGRs, the ``cbre_year_1_*`` points and the long-run averages.
+
+    FON-116 / FON-117 (topline v2): the LOADER takes only the ``long_run_avg_*``
+    keys from here; the per-year growth and the market level reach the model
+    through ``services.topline_growth`` / ``services.topline_benchmark``. The
+    CAGRs remain for the broker-vs-market variance flags
+    (``api.analysis``), a comparison display that never feeds an engine.
 
     Reads BOTH field-path conventions emitted by the extractor:
 
@@ -8289,161 +8666,6 @@ async def _load_per_deal_portfolio_pnl_overrides(
     return out
 
 
-async def _str_documents(
-    session: AsyncSession, *, deal_id: str, tenant_id: str
-) -> list[Any]:
-    """The deal's STR / STR_TREND extraction rows, newest first.
-
-    Identity + ``report_as_of`` only — the field payloads stay with
-    ``str_forecast_loader``, which owns the STR read. Returns ``[]`` on any
-    failure so the STR path degrades exactly as it does today.
-    """
-    as_of_expr = await _report_as_of_expr(session)
-    try:
-        rows = await session.execute(
-            text(
-                # tenant-scope predicate required by tenant_middleware
-                f"""
-                SELECT er.id AS extraction_result_id, er.document_id,
-                       {as_of_expr}
-                  FROM extraction_results er
-                  JOIN documents d ON d.id = er.document_id
-                 WHERE er.deal_id = :deal
-                   AND er.tenant_id = :tenant
-                   AND d.tenant_id = :tenant
-                   AND UPPER(COALESCE(d.doc_type, '')) IN ('STR', 'STR_TREND')
-                 ORDER BY er.created_at DESC
-                """  # as_of_expr is a fixed column literal, never user input
-            ),
-            {"deal": deal_id, "tenant": tenant_id},
-        )
-        return [r._mapping for r in rows.fetchall()]
-    except Exception:  # noqa: BLE001
-        return []
-
-
-async def _load_str_forecast_for_seed(
-    session: AsyncSession,
-    *,
-    deal_id: str,
-    tenant_id: str,
-    with_provenance: bool = False,
-    as_of: date | None = None,
-) -> (
-    tuple[float, float]
-    | None
-    | tuple[tuple[float, float] | None, SourceField | None, ReasonCode | None]
-):
-    """Seed (starting_occupancy, starting_adr) from the BASE STR forecast.
-
-    Wave 3 W3.3 — when the analyst opts in
-    (``base["revenue_seed_from_str_forecast"] is True``), the loader
-    pulls the deal's STR Trend monthly history, runs the forecast
-    engine with default scenarios, and returns the BASE scenario's
-    Month-12 ``(occupancy, ADR)`` so the revenue engine can ground Y1
-    on the forecast rather than the T-12 / Kimpton seed.
-
-    Returns ``None`` when the deal has no STR_TREND extraction, when
-    coverage is ``"low"`` (< 12 historical months → forecast disabled),
-    or when the base forecast list is empty for any reason. Caller
-    leaves the prior ``starting_occupancy`` / ``starting_adr`` (and
-    their source badges) untouched in those cases.
-
-    Phase 2.1
-    ---------
-    ``with_provenance=True`` returns ``(seed, SourceField | None, reason)``.
-    The seed is a forecast POINT computed over the whole STR history, so
-    the source field names the STR document, never a single row.
-
-    ``as_of`` refuses the seed when EVERY STR extraction on the deal is
-    dated after the underwriting date (``not_knowable_as_of``). The gate is
-    document-SET level rather than per-document because
-    ``str_forecast_loader.load_str_history_for_deal`` owns the STR field
-    read; a mixed set (some reports knowable, some not) still loads, and
-    that limitation is deliberate — the alternative is a silent partial
-    history, which would move a number.
-    """
-    # Only pay for the identity query when someone actually needs it — the
-    # plain call keeps exactly the SQL it had.
-    docs = (
-        await _str_documents(session, deal_id=deal_id, tenant_id=tenant_id)
-        if (with_provenance or as_of is not None)
-        else []
-    )
-    ident = docs[0] if docs else None
-
-    def _wrap(
-        seed: tuple[float, float] | None, reason: ReasonCode | None
-    ) -> Any:
-        if not with_provenance:
-            return seed
-        prov = (
-            _derived_provenance(
-                concept="str_forecast_seed",
-                value=list(seed) if seed else None,
-                doc_type="STR_TREND",
-                basis="market",
-                document_id=ident.get("document_id") if ident else None,
-                extraction_result_id=(
-                    ident.get("extraction_result_id") if ident else None
-                ),
-                as_of=ident.get("report_as_of") if ident else None,
-            )
-            if seed is not None
-            else None
-        )
-        return seed, prov, reason
-
-
-    if as_of is not None and docs and all(
-        _is_after_as_of(d.get("report_as_of"), d.get("report_as_of_precision"), as_of) for d in docs
-    ):
-        return _wrap(None, ReasonCode.NOT_KNOWABLE_AS_OF)
-
-    from ..engines.str_forecast import build_str_forecast
-    from .str_forecast_loader import load_str_history_for_deal
-
-    # tenant-scope predicate required by tenant_middleware — pass through
-    history = await load_str_history_for_deal(
-        session, deal_id=deal_id, tenant_id=tenant_id
-    )
-    if not history:
-        return _wrap(
-            None,
-            ReasonCode.NO_DOCUMENT if not docs else ReasonCode.STR_UNAVAILABLE,
-        )
-    forecast = build_str_forecast(deal_id=deal_id, historical_months=history)
-    if forecast.coverage_quality == "low":
-        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
-    base_months = forecast.forecast_months.get("base") or []
-    if len(base_months) < 12:
-        return _wrap(None, ReasonCode.STR_UNAVAILABLE)
-    month12 = base_months[11]
-    unknown = (
-        ReasonCode.AS_OF_UNKNOWN
-        if (
-            as_of is not None
-            and docs
-            and not any(_as_of_date(d.get("report_as_of")) for d in docs)
-        )
-        else None
-    )
-    return _wrap((month12.occupancy, month12.adr), unknown)
-
-
-# ─────────────────────────── Per-engine input ─────────────────────────
-
-
-# ── Financials Projections assumption keys (opt-in) ────────────────────
-# These three keys are edited on the Financials Projections panel and
-# persisted in ``field_overrides``. The override-routing loop above drops
-# each into ``base`` via its generic scalar branch; the coercers below
-# turn the raw JSONB primitive (which may arrive as a str) into the typed,
-# range-safe engine input. Every coercer returns ``None`` for an unset /
-# malformed value so the engines fall back to their existing behavior —
-# the feature is strictly opt-in and no-ops when the key is absent.
-
-
 def _coerce_resort_fee_per_night(value: Any) -> float | None:
     """Dollars/occupied-night for the resort-fee build-up, else ``None``.
 
@@ -8612,6 +8834,8 @@ def _build_input_for(
     )
     if needed:
         raise MissingIdentityInputsError(tuple(sorted(needed)))
+    if engine_name == "revenue" and (basis_missing := missing_revenue_basis(base)):
+        raise MissingRevenueBasisError(basis_missing)
     deal_uuid = _coerce_uuid(deal_id)
 
     if engine_name == "revenue":
@@ -8639,24 +8863,40 @@ def _build_input_for(
                     if field in _SEGMENT_FIELDS:
                         s[field] = value
         segments = [RevenueSegment(**s) for s in seg_dicts]
+        # Review M-4 — the engine compounds the RESOLVED per-year lists; a
+        # revenue input built without them (the topline step did not run)
+        # would silently compound the 0.0 scalar fallback below. Fail loud.
+        if not isinstance(base.get("occupancy_growth_by_year"), list) or not isinstance(
+            base.get("adr_growth_by_year"), list
+        ):
+            raise ValueError(
+                "revenue input needs the resolved per-year growth lists "
+                "(occupancy_growth_by_year / adr_growth_by_year from _apply_topline)"
+            )
         return RevenueEngineInput(
             deal_id=deal_uuid,
             keys=base["keys"],
             starting_occupancy=base["starting_occupancy"],
             starting_adr=base["starting_adr"],
-            occupancy_growth=base["occupancy_growth"],
-            adr_growth=base["adr_growth"],
-            # FON-116 / FON-117 (topline PR 2) — the engine compounds by ONE
-            # growth step per year. Until the growth resolver lands (next PR)
-            # the loader restates today's scalar growth as a constant per-year
-            # list, which the engine evaluates as the same ``× (1 + g) ^ n``
-            # — every golden figure and trace is byte-identical.
-            occupancy_growth_by_year=_constant_growth_by_year(
-                base["occupancy_growth"], base["hold_years"]
+            # FON-116 / FON-117 (topline v2) — the scalars are the analyst's
+            # all-years shorthand only; the engine compounds the RESOLVED
+            # per-year lists (``None`` = held flat) and drives each year off
+            # ``topline`` (benchmark × penetration × ramp).
+            occupancy_growth=_optional_rate(base.get("occupancy_growth")) or 0.0,
+            adr_growth=_optional_rate(base.get("adr_growth")) or 0.0,
+            occupancy_growth_by_year=base.get("occupancy_growth_by_year"),
+            adr_growth_by_year=base.get("adr_growth_by_year"),
+            topline=(
+                ToplineDrivers.model_validate(base["topline"])
+                if base.get("topline") is not None
+                else None
             ),
-            adr_growth_by_year=_constant_growth_by_year(
-                base["adr_growth"], base["hold_years"]
-            ),
+            # FON-116 staged rollout (temporary) — which topline mode the
+            # loader ran, and the growth-only per-year growth record.
+            topline_mode=base.get(TOPLINE_MODE_KEY),
+            growth_provenance=[
+                GrowthYear.model_validate(g) for g in (base.get(GROWTH_PROVENANCE_KEY) or [])
+            ],
             fb_revenue_per_occupied_room=base["fb_revenue_per_occupied_room"],
             other_revenue_pct_of_rooms=base["other_revenue_pct_of_rooms"],
             # Sam QA #11: when the deal has an extracted T-12 with a
@@ -8710,18 +8950,6 @@ def _build_input_for(
                 if base.get("acquisition_close_date") not in (None, "")
                 else None
             ),
-            # FON-95 part 2 — per-year Index Analysis drivers parked by
-            # ``index_methodology.build_index_drivers`` (STR basis on + a
-            # penetration target). Absent → None / [] → legacy compounding.
-            occupancy_by_year_override=_coerce_driver_list(
-                base.get("index_occupancy_by_year")
-            ),
-            adr_by_year_override=_coerce_driver_list(base.get("index_adr_by_year")),
-            index_drivers_by_year=[
-                IndexDriverYear(**d)
-                for d in (base.get("index_drivers_by_year") or [])
-                if isinstance(d, dict)
-            ],
         )
 
     if engine_name == "fb":
@@ -9642,6 +9870,11 @@ async def run_single_engine(
                 missing=sorted(needed),
             ),
         )
+    if (basis_failure := _revenue_basis_failure(engine_name, base_inputs)) is not None:
+        return await _persist_failure_row(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            failure=basis_failure,
+        )
 
     # B5 — the waterfall runs only on terms the deal carries. Without them the
     # engine is not applicable: a typed refusal row, never a run on defaults.
@@ -9850,6 +10083,14 @@ async def run_all_engines(
                 )
             )
             continue
+        if (basis_failure := _revenue_basis_failure(name, base_inputs)) is not None:
+            _record(
+                await _persist_failure_row(
+                    session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                    failure=basis_failure,
+                )
+            )
+            continue
 
         deps = ENGINE_DEPS[name]
         missing = [
@@ -10012,6 +10253,8 @@ async def run_returns_preview(
     missing = missing_identity_inputs(base)
     if missing:
         raise MissingIdentityInputsError(missing)
+    if basis_missing := missing_revenue_basis(base):
+        raise MissingRevenueBasisError(basis_missing)
     # Did the sandbox actually MOVE the LTV lever? The Returns tab posts all five
     # keys on every drag, so "ltv is present" is not the question — only a value
     # that differs from the canonical one may release the pinned senior
@@ -10457,6 +10700,10 @@ __all__ = [
     "EngineFailure",
     "EngineInputsLoadError",
     "MissingIdentityInputsError",
+    "MissingRevenueBasisError",
+    "REVENUE_BASIS_KEYS",
+    "missing_revenue_basis",
+    "revenue_basis_needed",
     "failures_of",
     "identity_inputs_needed",
     "missing_identity_inputs",

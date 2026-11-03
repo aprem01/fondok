@@ -26,6 +26,8 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import KIMPTON_YEAR1_RATES  # Review I-5: test deals state their Year-1 rates
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-run-compare.db"
 if _TMP_DB.exists():
@@ -54,9 +56,9 @@ async def _seed_deal(session, *, deal_id: str, tenant_id: str) -> None:
     await session.execute(
         text(
             "INSERT INTO deals (id, tenant_id, name, keys, purchase_price, field_overrides) "
-            "VALUES (:id, :tenant, :name, 132, 36400000, '{}')"
+            "VALUES (:id, :tenant, :name, 132, 36400000, :fo)"
         ),
-        {"id": deal_id, "tenant": tenant_id, "name": "Compare Test"},
+        {"id": deal_id, "tenant": tenant_id, "name": "Compare Test", "fo": "{}"},
     )
     await session.commit()
 
@@ -246,12 +248,15 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
     base_run, head_run = str(uuid4()), str(uuid4())
     async with get_session_factory()() as session:
         await _seed_deal(session, deal_id=deal_id, tenant_id=tenant)
+        # The test deal's Year-1 rates ride on the run requests (review I-5:
+        # no seeded rate; a persisted override would beat the head's 0.70).
         base = await run_all_engines(
-            session, deal_id=deal_id, tenant_id=tenant, run_id=base_run
+            session, deal_id=deal_id, tenant_id=tenant, run_id=base_run,
+            overrides=dict(KIMPTON_YEAR1_RATES),
         )
         head = await run_all_engines(
             session, deal_id=deal_id, tenant_id=tenant, run_id=head_run,
-            overrides={"starting_occupancy": 0.70},
+            overrides={**KIMPTON_YEAR1_RATES, "starting_occupancy": 0.70},
         )
 
     async with _client() as c:
@@ -283,6 +288,13 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
         assert cmp["base"]["run_id"] == base_run
         assert cmp["head"]["run_id"] == head_run
         assert cmp["fields_changed"] == len(cmp["fields"]) > 0
+        # Plan §6 / PR 7 — each side names the topline method its run used,
+        # so a comparison across methods is labelled, never silent.
+        assert cmp["base"]["topline_methodology_version"] == 2
+        assert cmp["head"]["topline_methodology_version"] == 2
+        assert cmp["topline_methodology_changed"] is False
+        # FON-116 staged rollout — and the topline mode (the deployed default).
+        assert cmp["base"]["topline_mode"] == cmp["head"]["topline_mode"] == "growth_only"
         assert all(f["status"] != "unchanged" for f in cmp["fields"])
         rows = {f["key"]: f for f in cmp["fields"]}
         occ = rows["revenue.years[0].occupancy"]
@@ -746,3 +758,48 @@ def test_run_status_folds_over_canonical_rows_only() -> None:
     # No canonical rows at all (a lone view re-run): fold over what exists.
     assert _run_status([("cash_flow", "failed", done)], canon) == "failed"
     assert _run_status([("cash_flow", "complete", done)], canon) == "complete"
+
+
+def test_topline_methodology_version_reads_the_revenue_run() -> None:
+    """A run that predates topline v2 (no version on the revenue output) is
+    method 1; a run with no revenue output names none."""
+    from app.services.run_compare import topline_methodology_version
+
+    assert topline_methodology_version({"revenue": {"status": "complete", "outputs": {"years": []}}}) == 1
+    assert topline_methodology_version(
+        {"revenue": {"status": "complete", "outputs": {"topline_methodology_version": 2}}}
+    ) == 2
+    assert topline_methodology_version({"revenue": {"status": "failed", "outputs": None}}) is None
+    assert topline_methodology_version({}) is None
+
+
+def test_topline_mode_reads_the_revenue_run() -> None:
+    """FON-116 staged rollout — the mode a run's revenue engine ran; None
+    before the field or without a revenue output."""
+    from app.services.run_compare import topline_mode
+
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"topline_mode": "growth_only"}}}) == "growth_only"
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"topline_mode": "benchmark"}}}) == "benchmark"
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"years": []}}}) is None
+    assert topline_mode({}) is None
+
+
+def test_a_growth_only_to_benchmark_switch_is_a_method_change() -> None:
+    from app.services.run_compare import build_compare_workbook
+
+    result = {
+        "deal_id": "d",
+        "base": {"run_id": "a", "topline_methodology_version": 2, "topline_mode": "growth_only"},
+        "head": {"run_id": "b", "topline_methodology_version": 2, "topline_mode": "benchmark"},
+        "topline_methodology_changed": True,
+        "fields": [],
+    }
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(BytesIO(build_compare_workbook(result)))["Summary"]
+    cells = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)}
+    assert cells["Topline method (baseline → head)"] == (
+        "v2 → v2 (growth_only → benchmark) — the method changed; topline fields moved by it"
+    )

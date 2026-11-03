@@ -61,7 +61,9 @@ def test_block_is_capped_and_never_crowds_out_reasons_and_lineage(pkg) -> None:
     assert {"reasons", "lineage"} <= set(sel.section_ids)
     assert "projection" in sel.section_ids
     # A tiny budget keeps the always-included sections and drops the rest.
-    tiny = build_selection(q, pkg, max_chars=9000)
+    # (9,500: the reasons section grows with the registry — 9,076 characters
+    # for reasons + lineage once ``calendar_unknown`` joined, R2-I1.)
+    tiny = build_selection(q, pkg, max_chars=9500)
     assert tiny.section_ids == ["reasons", "lineage"]
     assert "projection" in tiny.skipped
 

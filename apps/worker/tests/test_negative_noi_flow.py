@@ -39,6 +39,7 @@ from fondok_schemas.financial import ModelAssumptions  # noqa: E402
 
 from app.engines.debt import DebtEngine, DebtEngineInputExt  # noqa: E402
 from app.engines.returns import ReturnsEngine, ReturnsEngineInputExt  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Year 1 NOI from the second tester's deal; positive from Year 2 on.
 NEGATIVE_Y1_NOI = [-69_982.0, 2_400_000.0, 3_100_000.0, 3_300_000.0, 3_400_000.0]
@@ -193,7 +194,7 @@ async def _deal(session, overrides: dict) -> tuple[str, str]:
         ),
         {
             "id": deal_id, "tenant": tenant_id, "name": "Negative NOI Hotel",
-            "ov": json.dumps(overrides), "now": datetime.now(UTC),
+            "ov": json.dumps(with_year1_rates(overrides)), "now": datetime.now(UTC),
         },
     )
     await session.commit()

@@ -313,6 +313,13 @@ class UpdateDealBody(BaseModel):
     # FON-98 — the reopening / re-flag date; null clears it (the
     # stabilization default returns to Year 3 after acquisition close).
     reopening_date: date | None = None
+    # Review I-6 (topline fix) — the analyst's justification for a CHANGED
+    # reopening date on an underwritten (non-draft) deal: since topline v2 the
+    # date moves where the default penetration ramp ends, so it is a
+    # number-moving input like a ``field_overrides`` key. Not a column; it is
+    # recorded on the ``deal.updated`` audit row. A clear (null) or the same
+    # date again needs none.
+    reopening_date_note: str | None = Field(default=None, max_length=2000)
     # Sam #6 — STR market / submarket; null clears. Changing ``market``
     # without sending ``str_market_id`` clears the id (a typed market has
     # none), so a stale STR id can never sit under a different market name.
@@ -531,6 +538,13 @@ class AssumptionSourcesResponse(BaseModel):
     # Renovation row and the Future P&L Year-1 basis line print. ``None`` on a
     # worker whose loader does not emit it.
     displacement_status: dict[str, Any] | None = None
+    # FON-116 / FON-117 — topline methodology v2: the benchmark level, the
+    # per-year growth with its sources, penetration / ramp / stabilization,
+    # the T-12 reference, the labelled suggestions and the legacy flags, as the
+    # loader resolved them AFTER every override (``__topline_status__``; shape
+    # in ``services.topline._status``). ``None`` on a worker whose loader does
+    # not emit it.
+    topline_status: dict[str, Any] | None = None
 
 
 class RenovationBudgetCandidate(BaseModel):
@@ -843,9 +857,6 @@ def _coerce_float(value: Any) -> float | None:
 #: pin the two together.
 #:
 #: Each entry carries its evidence:
-#:   stabilization_year        display-only; selects which projection year the
-#:                             stabilized figures are read from and moves no
-#:                             return (test_stabilization_year.py).
 #:   property_overview.name    the Property Name — text, not a number.
 #:   debt.completion_guarantee the debt engine's own field comment:
 #:                             "qualitative; no numeric covenant math".
@@ -859,22 +870,25 @@ def _coerce_float(value: Any) -> float | None:
 #:                             stabilized yield on cost), like the target_irr /
 #:                             target_moic deal columns. No engine reads it; the
 #:                             Overview compares the derived actual against it.
-#:   index_methodology         FON-61 / E-028 — a METHOD choice (STR comp set /
-#:                             market benchmark / CoStar comp set) for Index
-#:                             Analysis; the analyst types no number, and it
-#:                             moves nothing unless a penetration target (which
-#:                             DOES need a note) is also set.
 #:   index_market_segment      which chain-scale segment the market benchmark
-#:                             reads — the same kind of choice.
+#:                             reads — a method choice; since topline v2 the
+#:                             market level always reads the market-wide
+#:                             figures, so it moves no number at all.
+#:
+#: NOT exempt (review I-6, topline fix): ``stabilization_year`` (it ends the
+#: default penetration ramp, so it moves Years 1..S−1),
+#: ``topline_benchmark_level`` (the level Year 1 is penetrated against) and the
+#: retired ``index_methodology`` (read as a forced benchmark level). They move
+#: numbers, so they carry a note like every other engine input. The deal
+#: column ``reopening_date`` follows the same rule through
+#: ``reopening_date_note`` (``update_deal``).
 _NOTE_EXEMPT_KEYS: frozenset[str] = frozenset(
     {
-        "stabilization_year",
         "property_overview.name",
         "debt.completion_guarantee",
         "partnership.waterfall.tier_count",
         "exit_noi_basis",
         "target_stabilized_yoc",
-        "index_methodology",
         "index_market_segment",
     }
 )
@@ -2158,6 +2172,31 @@ async def update_deal(
             # FON-98 — carry the ISO string through the diff / audit trail;
             # the SET loop below re-binds it for the live dialect.
             changes["reopening_date"] = changes["reopening_date"].isoformat()
+    # Review I-6 — a changed reopening date on an underwritten deal carries a
+    # note (same 422 contract as a field_overrides key). The note is not a
+    # column: popped here, recorded on the audit row below.
+    reopening_note_raw = changes.pop("reopening_date_note", None)
+    reopening_note = (
+        reopening_note_raw.strip()
+        if isinstance(reopening_note_raw, str) and reopening_note_raw.strip()
+        else None
+    )
+    if "reopening_date" in changes and changes["reopening_date"] is not None and existing_lifecycle != "draft":
+        prior_reopening = _coerce_date_optional(existing._mapping.get("reopening_date"))
+        moved = (prior_reopening.isoformat() if prior_reopening else None) != changes["reopening_date"]
+        if moved and reopening_note is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "override_note_required",
+                    "keys": ["reopening_date"],
+                    "message": (
+                        "The reopening date moves where the default penetration ramp ends, so a "
+                        "change carries an analyst justification. Send it as "
+                        '"reopening_date_note": "why" beside "reopening_date".'
+                    ),
+                },
+            )
     # Sam #6 / FON-96 — market / submarket and their taxonomy keys.
     market_fields_touched = any(col in changes for col in _MARKET_COLUMNS)
     if "market" in changes and "str_market_id" not in changes:
@@ -2327,6 +2366,24 @@ async def update_deal(
                 problems = target_list_problems(v)
                 if problems:
                     out_of_range[k] = "; ".join(problems)
+            elif k in ("occupancy_growth_by_year", "adr_growth_by_year"):
+                # FON-116 — per-year growth: fraction or whole percent, −50%..+50%.
+                from ..services.topline_growth import coerce_growth_list
+
+                _vals, problems = coerce_growth_list(v)
+                if problems:
+                    out_of_range[k] = "; ".join(problems)
+            elif k == "penetration_ramp_by_year":
+                from ..services.topline import coerce_ramp_list
+
+                _vals, problems = coerce_ramp_list(v)
+                if problems:
+                    out_of_range[k] = "; ".join(problems)
+            elif k == "topline_benchmark_level":
+                from ..services.topline_benchmark import FORCED_LEVEL_VALUES
+
+                if not isinstance(v, str) or v.strip() not in FORCED_LEVEL_VALUES:
+                    out_of_range[k] = "must be one of " + ", ".join(sorted(FORCED_LEVEL_VALUES))
         # Sam, 2026-10-15 — the explicit renovation displacement schedule is
         # a list of periods; a malformed one (end before start, a share
         # outside 0–1, an unknown field) is refused here with the same
@@ -2365,8 +2422,9 @@ async def update_deal(
                     "problems": out_of_range,
                     "message": (
                         "A penetration target is index points 25–250 "
-                        "(100 = parity) or a ratio 0.25–2.5 (1.0 = parity). "
-                        "Nothing was saved."
+                        "(100 = parity) or a ratio 0.25–2.5 (1.0 = parity); "
+                        "a growth by year is −50% to +50%; a ramp is above 0 "
+                        "and at most 150%. Nothing was saved."
                     ),
                 },
             )
@@ -2465,7 +2523,10 @@ async def update_deal(
             deal_id=str(deal_id),
             actor_id="system",
             action="deal.updated",
-            payload={"changes": list(changes.keys())},
+            payload={
+                "changes": list(changes.keys()),
+                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+            },
         )
     else:
         await _write_audit(
@@ -2474,7 +2535,10 @@ async def update_deal(
             deal_id=str(deal_id),
             actor_id="system",
             action="deal.updated",
-            payload={"changes": _changes_for_audit(changes)},
+            payload={
+                "changes": _changes_for_audit(changes),
+                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+            },
         )
     await session.commit()
     # Wave 3 W3.5 — pipeline-view cache invalidation. A draft is not in the
@@ -3462,6 +3526,7 @@ async def _compute_assumption_sources(
     raw_partnership = base.pop("__partnership_terms__", None)
     # FON-89 — the loader's Year-1 displacement verdict (dict or absent).
     raw_displacement = base.pop("__displacement_status__", None)
+    raw_topline = base.pop("__topline_status__", None)
     displacement_status: dict[str, Any] | None = (
         raw_displacement if isinstance(raw_displacement, dict) else None
     )
@@ -3538,6 +3603,7 @@ async def _compute_assumption_sources(
         reasons=assumption_reasons,
         reasons_also=reasons_also,
         displacement_status=displacement_status,
+        topline_status=raw_topline if isinstance(raw_topline, dict) else None,
     )
 
 

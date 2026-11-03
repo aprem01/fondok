@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.fixtures.kimpton_seed import kimpton_partnership_field_overrides
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-partnership-terms-b5.db"
 if _TMP_DB.exists():
@@ -41,7 +42,7 @@ async def _deal(session, overrides: dict) -> tuple[str, str]:
                     :ov, :now, :now)
             """
         ),
-        {"id": deal_id, "tenant": tenant_id, "ov": json.dumps(overrides),
+        {"id": deal_id, "tenant": tenant_id, "ov": json.dumps(with_year1_rates(overrides)),
          "now": datetime.now(UTC)},
     )
     await session.commit()

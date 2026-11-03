@@ -27,6 +27,8 @@ import {
   noteOf,
   overrideNoteFor,
   NOTE_REQUIRED_MESSAGE,
+  NOTE_EXEMPT_OVERRIDE_KEYS,
+  NOTE_EXEMPT_PATTERN_SOURCES,
 } from '@/lib/overrideNote';
 
 const WORKER = path.resolve(__dirname, '../../worker');
@@ -82,6 +84,29 @@ describe('the mirror of the worker — read from the Python, not restated', () =
   });
 });
 
+describe('R2-I2 — the browser and the API agree in BOTH directions', () => {
+  // The two `it`s above only check worker-exempt ⊆ browser-exempt. A key the
+  // browser exempts but the worker does not is the worse divergence: the
+  // browser saves with no note and the API answers 422 (the topline review's
+  // I-6 blocker was exactly that). So the sets must be EQUAL.
+  it('the browser’s exempt field-override keys equal the worker’s, key for key', () => {
+    const worker = new Set([
+      ...frozensetLiteral(readWorker('app/services/engine_runner.py'), '_OVERRIDE_NON_ENGINE_KEYS'),
+      ...frozensetLiteral(readWorker('app/api/deals.py'), '_NOTE_EXEMPT_KEYS'),
+    ]);
+    const browser = new Set(NOTE_EXEMPT_OVERRIDE_KEYS);
+    expect([...browser].filter((k) => !worker.has(k)), 'exempt in the browser, note-required by the API').toEqual([]);
+    expect([...worker].filter((k) => !browser.has(k)), 'exempt in the API, note-required by the browser').toEqual([]);
+  });
+
+  it('the pattern exemptions are the same patterns', () => {
+    const deals = readWorker('app/api/deals.py');
+    const block = deals.slice(deals.indexOf('_NOTE_EXEMPT_PATTERNS'), deals.indexOf('def _override_note'));
+    const worker = [...block.matchAll(/re\.compile\(r"([^"]+)"\)/g)].map((m) => m[1]).sort();
+    expect([...NOTE_EXEMPT_PATTERN_SOURCES].sort()).toEqual(worker);
+  });
+});
+
 describe('requiresNote — a note is required iff the key routes into engine input', () => {
   const engineInputs = [
     'starting_occupancy',
@@ -113,6 +138,19 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'index_market_adr_growth',
     'index_mpi_target',
     'index_ari_target',
+    // Topline v2 (review I-6) — the worker refuses these without a note
+    // (422 override_note_required): each moves Year 1 or the out-years.
+    // The stabilized year ends the penetration ramp.
+    'stabilization_year',
+    // The benchmark LEVEL (auto / comp set / submarket / market) and the
+    // retired Index Analysis method key it replaced (read as a forced level).
+    'topline_benchmark_level',
+    'index_methodology',
+    'occupancy_growth_by_year',
+    'adr_growth_by_year',
+    'penetration_ramp_by_year',
+    'index_mpi_target_by_year',
+    'index_ari_target_by_year',
   ];
   it.each(engineInputs)('%s needs a justification', (key) => {
     expect(requiresNote(key)).toBe(true);
@@ -122,9 +160,6 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     // The worksheet's row layout — presentation only. Without this exemption
     // every drag-to-reorder would be refused.
     'worksheet_layout',
-    // Display-only: it selects the projection year the stabilized figures are
-    // read from and moves no return.
-    'stabilization_year',
     // A name, not a number.
     'property_overview.name',
     // "qualitative; no numeric covenant math" — the debt engine's own words.
@@ -153,8 +188,8 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     'memo_thesis_run_id',
     'memo_highlights_run_id',
     'memo_risks_run_id',
-    // FON-61 / E-028 — method choices, not numbers.
-    'index_methodology',
+    // FON-61 / E-028 — which chain-scale segment the retired market method
+    // read. Moves nothing since topline v2 (the worker keeps it exempt).
     'index_market_segment',
   ];
   it.each(exempt)('%s does not', (key) => {
@@ -169,6 +204,14 @@ describe('requiresNote — a note is required iff the key routes into engine inp
     expect(requiresNote('target_moic')).toBe(false);
     expect(requiresNote('name')).toBe(false);
     expect(requiresNote('keys')).toBe(false);
+  });
+
+  it('the reopening date is the one deal column that needs a justification (review I-6)', () => {
+    // It re-anchors the default stabilization year, which ends the topline
+    // ramp — a number moves. The worker reads the note from
+    // `reopening_date_note` beside the column and 422s a CHANGED date on a
+    // non-draft deal without it.
+    expect(requiresNote('reopening_date')).toBe(true);
   });
 });
 
@@ -190,7 +233,7 @@ describe('overrideEnvelope — trims, refuses, and never invents', () => {
     expect(overrideEnvelope('property_overview.name', 'The Angler’s', '')).toEqual({
       value: 'The Angler’s',
     });
-    expect(overrideEnvelope('stabilization_year', 3, '')).toEqual({ value: 3 });
+    expect(overrideEnvelope('exit_noi_basis', 'forward_12m', '')).toEqual({ value: 'forward_12m' });
   });
 });
 

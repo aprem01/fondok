@@ -30,7 +30,7 @@ import {
   SOURCE_BADGE_FROM_REGISTRY,
 } from '@/lib/ontology/adapters';
 import { SUBORDINATE_NAMESPACES } from '@/lib/ontology/concepts.generated';
-import { SOURCE_LABEL, sourceLabel, sourceExplanation, sourceKind, isStrBasisSource } from '@/lib/provenance';
+import { SOURCE_LABEL, sourceLabel, sourceExplanation, sourceKind } from '@/lib/provenance';
 import { WORKSHEET_ROWS } from '@/components/project/pl/GroundedWorksheet';
 import { histValue } from '@/lib/reviewState';
 import type { HistYear } from '@/components/project/pl/HistoricalsSection';
@@ -272,18 +272,6 @@ describe('ontology adapters — provenance labels', () => {
     for (const c of copy) expect(c).not.toBe(p.source_explanation.seed);
   });
 
-  it('isStrBasisSource covers exactly the three STR basis ids (+ the Index Analysis penetration step on them)', () => {
-    // FON-61 / E-028 — ``index_assumption`` is stamped on the Year-1 rates only
-    // while the STR seed has landed (a penetration target applied to it).
-    for (const id of ['str_forecast', 'str_subject_ttm', 'str_comp_set', 'index_assumption']) {
-      expect(isStrBasisSource(id), id).toBe(true);
-    }
-    for (const id of ['str_forecast_unavailable', 't12_actual', 'analyst_override', '']) {
-      expect(isStrBasisSource(id), id).toBe(false);
-    }
-    expect(isStrBasisSource(undefined)).toBe(false);
-    expect(isStrBasisSource(null)).toBe(false);
-  });
 
   it('every pinned source still classifies to the same colour kind', () => {
     for (const [id, kind] of Object.entries(p.source_kind)) {

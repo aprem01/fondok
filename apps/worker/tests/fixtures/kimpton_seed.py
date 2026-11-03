@@ -85,15 +85,36 @@ def kimpton_partnership_field_overrides() -> dict[str, Any]:
     return out
 
 
+#: Review I-5 (W5 topline fix) — the fixture deal's OWN Year-1 occupancy /
+#: ADR. Production carries no default for them (``REVENUE_BASIS_KEYS``): a
+#: test deal with no T-12 / STR states its rates explicitly, the way an
+#: analyst does — an override with a note.
+KIMPTON_YEAR1_RATES: dict[str, float] = {"starting_occupancy": 0.762, "starting_adr": 385.0}
+YEAR1_RATE_NOTE = "Test deal's own Year-1 rate (fixture input, no T-12 / STR on the deal)"
+
+
+def year1_rate_overrides() -> dict[str, Any]:
+    """``field_overrides`` entries carrying the fixture's Year-1 rates."""
+    return {k: {"value": v, "note": YEAR1_RATE_NOTE} for k, v in KIMPTON_YEAR1_RATES.items()}
+
+
+def with_year1_rates(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """``overrides`` plus the fixture's Year-1 rates (the caller's own
+    ``starting_*`` win)."""
+    return {**year1_rate_overrides(), **(overrides or {})}
+
+
 def kimpton_seed() -> dict[str, Any]:
     """A fresh copy of the complete Kimpton assumption set."""
     return {
         "keys": KIMPTON_KEYS,
         "purchase_price": KIMPTON_PURCHASE_PRICE,
-        "starting_occupancy": 0.762,
-        "starting_adr": 385.0,
-        "occupancy_growth": 0.008,
-        "adr_growth": 0.04,
+        **KIMPTON_YEAR1_RATES,
+        # FON-116 / FON-117 (topline v2, 2026-11-01 re-baseline) — no growth
+        # seed: the production defaults carry none, so this no-document
+        # fixture runs the deterministic "no market forecast" state (every
+        # rate held flat, revpar_growth 0 for the exit year). The documents
+        # fixture (``kimpton_docs_fixture``) carries the market data.
         "fb_revenue_per_occupied_room": 88.0,
         "other_revenue_pct_of_rooms": 0.065,
         "hold_years": 5,
@@ -119,7 +140,6 @@ def kimpton_seed() -> dict[str, Any]:
         "term_years": 5,
         "interest_only_years": 0,
         "exit_cap_rate": 0.07,
-        "revpar_growth": 0.045,
         "selling_costs_pct": 0.02,
         # FON-67 — transfer/recordation tax on exit (0 unless the analyst sets it).
         "transfer_tax_pct": 0.0,

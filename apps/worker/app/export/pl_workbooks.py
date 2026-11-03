@@ -228,8 +228,10 @@ ASSUMPTIONS: tuple[AssumptionSpec, ...] = (
         "Year-1 starting point; later years grow from it",
     ),
     AssumptionSpec(
-        "revpar_growth", "RevPAR growth", "fraction per year (0.045 = 4.5%)",
-        "Compounds annually; drives ADR growth with the occupancy path held",
+        "revpar_growth", "RevPAR growth — all years", "fraction per year (0.03 = 3%)",
+        "All-years shorthand: drives ADR growth with the occupancy path held, and grows the "
+        "exit-year NOI; blank = the market growth the topline resolved (the growth-by-year "
+        "rows below), never a platform figure",
     ),
     AssumptionSpec(
         "expense_growth", "Dept. expense inflation", "fraction per year",
@@ -271,8 +273,26 @@ ASSUMPTIONS: tuple[AssumptionSpec, ...] = (
     ),
     AssumptionSpec(
         "stabilization_year", "Stabilization year", "model year (1-based)",
-        "Selects which projection year the stabilized figures are read from; moves no return",
+        "Selects which projection year the stabilized figures are read from and ends the "
+        "penetration ramp (Years 1 to S−1 run on the ramp) — it moves Year 1 onward",
         integer=True,
+    ),
+    # FON-116 / FON-117 — the topline: benchmark level × penetration × ramp.
+    AssumptionSpec(
+        "topline_benchmark_level", "Topline benchmark level", "auto | comp_set | submarket | market",
+        "Which benchmark the topline runs on: auto = the competitive set, else the submarket, "
+        "else the market; a forced level that is not on file falls back with the reason",
+        choices=("auto", "comp_set", "submarket", "market"),
+    ),
+    AssumptionSpec(
+        "index_mpi_target", "Occupancy penetration (MPI) at stabilization",
+        "index points 25–250 (100 = parity with the benchmark)",
+        "Occupancy = benchmark occupancy × MPI ÷ 100 × the year's ramp (capped at 95%)",
+    ),
+    AssumptionSpec(
+        "index_ari_target", "ADR penetration (ARI) at stabilization",
+        "index points 25–250 (100 = parity with the benchmark)",
+        "ADR = benchmark ADR × ARI ÷ 100 × the year's ramp",
     ),
 )
 ASSUMPTION_BY_KEY: dict[str, AssumptionSpec] = {a.key: a for a in ASSUMPTIONS}
@@ -433,6 +453,83 @@ _SCHEDULE_KEY_RE = re.compile(
 )
 
 
+#: FON-116 / FON-117 — the topline's per-year lists, one sheet row per model
+#: year (``adr_growth_by_year.3`` = ADR growth INTO Year 3). The import folds
+#: the rows back into the JSON list override the loader reads (index y−1 =
+#: model year y), exactly like the penetration-target rows above.
+TOPLINE_LISTS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "occupancy_growth_by_year", "Occupancy growth",
+        "fraction per year (0.02 = 2%), −0.50 to +0.50",
+        "Occupancy growth INTO {year}; blank = the market forecast for that year (CBRE Hotel "
+        "Horizons, else the CoStar submarket forecast, else carried forward), else held flat — "
+        "the Source column names it",
+    ),
+    (
+        "adr_growth_by_year", "ADR growth",
+        "fraction per year (0.03 = 3%), −0.50 to +0.50",
+        "ADR growth INTO {year}; blank = the market forecast for that year, else held flat — "
+        "the Source column names it",
+    ),
+    (
+        "penetration_ramp_by_year", "Ramp to stabilization",
+        "fraction of the stabilized penetration (0.85 = 85%), above 0 up to 1.5",
+        "{year} penetration = stabilized MPI / ARI × this ramp; the value shown is the ramp the "
+        "model applied (Source: default or your override); one row per year before the "
+        "stabilization year",
+    ),
+)
+TOPLINE_LIST_KEYS: tuple[str, ...] = tuple(k for k, *_ in TOPLINE_LISTS)
+_TOPLINE_LIST_KEY_RE = re.compile(
+    r"^(?P<list>occupancy_growth_by_year|adr_growth_by_year|penetration_ramp_by_year)\.(?P<year>[1-9]\d?)$"
+)
+
+
+def topline_list_key(list_key: str, year: int) -> str:
+    return f"{list_key}.{year}"
+
+
+def split_topline_list_key(key: str) -> tuple[str, int] | None:
+    """``adr_growth_by_year.3`` → ``("adr_growth_by_year", 3)``; ``None`` otherwise."""
+    m = _TOPLINE_LIST_KEY_RE.match(key or "")
+    if not m:
+        return None
+    year = int(m.group("year"))
+    if not 1 <= year <= BY_YEAR_TARGET_MAX_YEARS:
+        return None
+    return m.group("list"), year
+
+
+def topline_list_spec(list_key: str, year: int) -> AssumptionSpec:
+    label, unit, method = next(
+        ((lbl, u, mth) for k, lbl, u, mth in TOPLINE_LISTS if k == list_key), (list_key, "", "")
+    )
+    year_label = "Base year (Year 1)" if year == 1 else f"Year {year}"
+    return AssumptionSpec(
+        topline_list_key(list_key, year), f"{label} — {year_label}", unit,
+        method.format(year=year_label),
+    )
+
+
+def topline_list_assumptions(hold_years: int, ramp_years: int) -> tuple[AssumptionSpec, ...]:
+    """Growth rows for every model year; ramp rows for Years 1..S−1."""
+    hold = max(1, min(int(hold_years or 1), BY_YEAR_TARGET_MAX_YEARS))
+    ramp = max(0, min(int(ramp_years or 0), hold))
+    out: list[AssumptionSpec] = []
+    for list_key in ("occupancy_growth_by_year", "adr_growth_by_year"):
+        out += [topline_list_spec(list_key, y) for y in range(1, hold + 1)]
+    out += [topline_list_spec("penetration_ramp_by_year", y) for y in range(1, ramp + 1)]
+    return tuple(out)
+
+
+def topline_list_problem(list_key: str, value: float) -> str | None:
+    """Why ``value`` cannot enter ``list_key`` — the worker PATCH's own bands
+    (growth −50%..+50%; ramp above 0 up to 150%) — or None."""
+    if list_key == "penetration_ramp_by_year":
+        return None if 0 < value <= 1.5 else "A ramp is a fraction above 0 up to 1.5 (0.85 = 85%)."
+    return None if -0.5 <= value <= 0.5 else "Growth is a fraction from −0.50 to +0.50 (0.02 = 2%)."
+
+
 def schedule_period_key(period: int, field: str) -> str:
     return f"{SCHEDULE_KEY}.{period}.{field}"
 
@@ -485,6 +582,9 @@ def assumption_spec(key: str) -> AssumptionSpec | None:
     by = split_by_year_target_key(key)
     if by is not None:
         return by_year_target_spec(*by)
+    tl = split_topline_list_key(key)
+    if tl is not None:
+        return topline_list_spec(*tl)
     sp = split_schedule_period_key(key)
     return schedule_period_spec(*sp) if sp is not None else None
 
@@ -1341,7 +1441,7 @@ def build_projections_workbook(
             "Only the Assumptions sheet is importable: edit the Value column, add a Note for every "
             "row whose 'Note required' is Yes, save as .xlsx, then use Import on the Future P&L.",
             "Key is the stable field_overrides key — do not edit it.",
-            "Values use the units in the Unit column (fractions, not percents: 0.045 = 4.5%).",
+            "Values use the units in the Unit column (fractions, not percents: 0.03 = 3%).",
             "Future P&L cells are computed by the engines; a change there is reported as "
             "'computed — edit the assumption instead' and is never applied.",
             "Each model year is four columns: Amount, % Rev (share of Total Revenue; a "
@@ -1610,6 +1710,10 @@ __all__ = [
     "by_year_target_assumptions",
     "by_year_target_key",
     "split_by_year_target_key",
+    "split_topline_list_key",
+    "TOPLINE_LIST_KEYS",
+    "topline_list_assumptions",
+    "topline_list_problem",
     "HIST_FORMAT",
     "HIST_LINES",
     "PROJ_FORMAT",

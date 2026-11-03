@@ -238,7 +238,9 @@ async def test_override_audit_row_carries_the_analyst_note() -> None:
             json={
                 "field_overrides": {
                     "exit_cap_rate": {"value": 0.075, "note": "Comp set, Q3 trades"},
-                    "stabilization_year": {"value": 3},
+                    # An exempt key with no note (review I-6: stabilization_year
+                    # now needs one, so the exempt example is the property name).
+                    "property_overview.name": {"value": "The Angler's"},
                 }
             },
         )
@@ -262,5 +264,5 @@ async def test_override_audit_row_carries_the_analyst_note() -> None:
     assert notes == {"exit_cap_rate": "Comp set, Q3 trades"}
     assert sorted(payload["metadata"]["changed_keys"]) == [
         "exit_cap_rate",
-        "stabilization_year",
+        "property_overview.name",
     ]

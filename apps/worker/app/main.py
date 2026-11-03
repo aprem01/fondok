@@ -258,7 +258,7 @@ async def _missing_identity_inputs_response(
         status_code=422,
         content={
             "detail": {
-                "reason": "missing_identity_inputs",
+                "reason": exc.reason.value,
                 "missing": exc.missing,
                 "message": str(exc),
             }

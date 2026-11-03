@@ -43,6 +43,13 @@ EXPECTED_CODES = [
     "under_construction",
     "capital_deploying",
     "no_sale_value",
+    "no_market_forecast",
+    "no_benchmark",
+    "license_withheld",
+    "legacy_key_translated",
+    "no_revenue_basis",
+    "reextract_needed",
+    "calendar_unknown",
 ]
 
 
@@ -54,7 +61,7 @@ def test_exported_from_package_root() -> None:
 
 def test_enum_is_exactly_the_shared_codes_in_order() -> None:
     assert [c.value for c in ReasonCode] == EXPECTED_CODES
-    assert len(ReasonCode) == 22
+    assert len(ReasonCode) == 29
 
 
 def test_enum_is_a_str_so_it_serialises_as_its_value() -> None:

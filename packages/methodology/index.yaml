@@ -89,10 +89,30 @@ atlas:
   # one statement per period (footing, same-period fill, two-year fill limit,
   # review notes) in `sources`; with that copy the sources section's detailed
   # level needs 35,062 characters next to the always-included sections.
-  # 42000 (≈10.5k tokens), was 36000: FON-22 documents the one statement
+  # 40000 (≈10k tokens), was 36000: topline methodology v2 (2026-11-02)
+  # documents the benchmark × penetration × ramp chain and the per-year growth
+  # precedence in `projection`; its detailed level next to the always-included
+  # sections now needs 39,029 characters ("What exit cap rate does the model
+  # use?" — tests/test_researcher_methodology.py).
+  # 42000 (≈10.5k tokens), was 40000: the topline review fixes (2026-11-02)
+  # document the Year-1 basis refusal, the re-extract rule, the exit-growth
+  # convention, the model calendar and the ramp policy in `projection`; that
+  # question now needs 41,210 characters.
+  # 46000 (≈11.5k tokens), was 42000: the topline web task (2026-11-02)
+  # documents the Future P&L's topline basis line, banner, reference rows,
+  # Topline card, Excel rows and the no-Year-1-rates entry in `projection`
+  # (conceptual) plus the calendar_unknown rule; that question now needs
+  # 45,108 characters.
+  # 50000 (≈12.5k tokens), was 46000: the FON-116 staged rollout (2026-11-03)
+  # documents the growth-only topline that is live (its Year-1 chain and the
+  # two-step switch) beside the benchmark method, and decisions 1a / 1b
+  # (forecast-average ADR, occupancy flat after stabilization) in
+  # `projection`; that question now needs 48,681 characters.
+  # (FON-22, parallel branch) 42000, was 36000: FON-22 documents the one statement
   # choice every surface reads (badge, Historical P&L, links, variance) and the
   # same-period fill in `sources`; at 36000 `sources` sat 54 characters under
   # the cap. tests/test_researcher_methodology.py now asserts 1,000 characters
   # of headroom for every single-section selection, so the next near-miss
   # fails loudly — raise the cap here (or split the section), never trim copy.
-  max_chars: 42000
+  # 50000 kept at the merge (main's FON-116 raise covers FON-22's sources copy).
+  max_chars: 50000

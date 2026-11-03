@@ -23,27 +23,20 @@ from uuid import uuid4
 import pytest
 
 from app.services.index_methodology import (
-    BASE_OCC_BY_YEAR,
     KEY_ADR_GROWTH,
     KEY_ARI_TARGET,
     KEY_MPI_TARGET,
     KEY_MPI_TARGET_BY_YEAR,
-    KEY_OCC_GROWTH,
     METHOD_MARKET_BENCHMARK,
-    SOURCE_INDEX_ASSUMPTION,
-    apply_index_assumptions,
-    build_index_drivers,
     read_targets_by_year,
     resolve_index_by_year,
     resolve_index_methodology,
     stored_target_problem,
-    wants_benchmark,
 )
 from app.services.market_fields import FieldRow
 
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach Submarket 2025.pdf"
-STR_BASIS = frozenset({"str_forecast", "str_subject_ttm", "str_comp_set"})
 
 
 def _row(name: str, value: Any, *, doc: str, doc_type: str, page: int | None = 2) -> FieldRow:
@@ -70,15 +63,6 @@ MARKET_ROWS = [
 ]
 
 
-def _base(**kw: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "starting_occupancy": 0.846, "starting_adr": 255.0,
-        "occupancy_growth": 0.008, "adr_growth": 0.04, "hold_years": 3,
-    }
-    base.update(kw)
-    return base
-
-
 # ─────────────────────────── (a) legacy out-of-range targets ───────────────────────────
 
 
@@ -91,21 +75,6 @@ def test_stored_target_problem_names_the_value_the_band_and_the_fix() -> None:
     assert stored_target_problem(1.1, KEY_MPI_TARGET) is None
     assert stored_target_problem(None, KEY_MPI_TARGET) is None
     assert "Year-2" in (stored_target_problem(1000, KEY_MPI_TARGET_BY_YEAR, year=2) or "")
-
-
-@pytest.mark.parametrize("legacy", [5, 12, 0.1, 1000, "300"])
-def test_engine_seam_ignores_a_legacy_out_of_range_scalar(legacy: Any) -> None:
-    base = _base(**{KEY_MPI_TARGET: legacy, KEY_ARI_TARGET: legacy})
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    paths = {KEY_MPI_TARGET, KEY_ARI_TARGET}
-    assert wants_benchmark(base, paths) is False
-    before = dict(base)
-    assert apply_index_assumptions(base, sources, paths, rows=STR_ROWS, str_basis_sources=STR_BASIS) == []
-    assert build_index_drivers(
-        base, sources, paths, rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=3, calendar_years=[]
-    ) == []
-    assert base == before
-    assert sources["starting_occupancy"] == "str_subject_ttm"
 
 
 def test_panel_shows_no_value_and_the_reason_for_a_legacy_scalar() -> None:
@@ -158,24 +127,11 @@ def test_a_ratio_scalar_reads_as_index_points_in_panel_grid_and_engine() -> None
     by_year = resolve_index_by_year(STR_ROWS, overrides, hold_years=1, calendar_years=[2025])
     assert by_year.years[0].mpi_target.value == pytest.approx(110.0)
     assert by_year.years[0].occupancy == pytest.approx(COMP_OCC * 1.10)
-    base = _base(**{KEY_MPI_TARGET: 1.10})
-    sources = {"starting_occupancy": "str_subject_ttm"}
-    assert apply_index_assumptions(base, sources, {KEY_MPI_TARGET}, rows=STR_ROWS, str_basis_sources=STR_BASIS) == [
-        "starting_occupancy"
-    ]
-    assert base["starting_occupancy"] == pytest.approx(COMP_OCC * 1.10)
-    assert sources["starting_occupancy"] == SOURCE_INDEX_ASSUMPTION
+    # The topline reads the same value the same way (topline v2).
+    from app.services.topline import read_topline_inputs
 
-
-def test_valid_targets_still_drive_exactly_as_before() -> None:
-    base = _base(**{KEY_MPI_TARGET_BY_YEAR: [120.0, None, None], KEY_MPI_TARGET: 110.0, KEY_OCC_GROWTH: 0.012})
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    build_index_drivers(
-        base, sources, {KEY_MPI_TARGET_BY_YEAR, KEY_MPI_TARGET, KEY_OCC_GROWTH},
-        rows=STR_ROWS, str_basis_sources=STR_BASIS, hold_years=3, calendar_years=[],
-    )
-    assert base[BASE_OCC_BY_YEAR][0] == pytest.approx(COMP_OCC * 1.20)
-    assert base[BASE_OCC_BY_YEAR][1] == pytest.approx(COMP_OCC * 1.012 * 1.10)
+    inputs = read_topline_inputs({KEY_MPI_TARGET: 1.10}, {}, {KEY_MPI_TARGET})
+    assert inputs.penetration_occ == pytest.approx(110.0)
 
 
 # ─────────────────────────── (c) comp set by year ───────────────────────────
@@ -218,3 +174,14 @@ def test_no_str_report_means_no_comp_set_series_with_the_reason() -> None:
     r = resolve_index_by_year(MARKET_ROWS, {}, hold_years=2, calendar_years=[])
     assert all(f.value is None for f in r.comp_set_occupancy)
     assert "No STR Trend report" in (r.comp_set_occupancy[0].detail or "")
+
+
+def test_topline_ignores_a_legacy_out_of_range_target_and_says_why() -> None:
+    """Topline v2 — a stored MPI of 5 (written before the range gate) is not
+    a penetration: the default 100 applies and ``problems`` names the value."""
+    from app.services.topline import read_topline_inputs
+
+    inputs = read_topline_inputs({KEY_MPI_TARGET: 5}, {}, {KEY_MPI_TARGET})
+    assert inputs.penetration_occ is None
+    assert any("index_mpi_target 5" in p and "ignored" in p for p in inputs.problems)
+

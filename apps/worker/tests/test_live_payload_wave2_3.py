@@ -40,6 +40,7 @@ if _TMP_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
 from app.export.labels import OP_RATIO_ALL_SEED_NOTE  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 # Strings that only exist in the Kimpton fixture — none may leak into a real
 # deal's export payload.
@@ -112,7 +113,7 @@ async def _seed_deal(
             "name": name,
             "city": city,
             "keys": keys,
-            "fo": "{}",
+            "fo": json.dumps(with_year1_rates()),
             "irr": target_irr,
             "moic": target_moic,
         },

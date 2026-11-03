@@ -201,6 +201,8 @@ def _ramp_for_year(
                 f"Years 3–{s - 1} is undefined, so the year runs at 100 % of the "
                 f"stabilized penetration. Enter the ramp for Years 3–{s - 1}."
             )
+        elif topline.ramp_policy_note:
+            state, note = "no_ramp", f"Year {year}: {topline.ramp_policy_note}"
         else:
             state, note = "no_ramp", (
                 f"Year {year}: no ramp entered for the year — it runs at 100 % of the "
@@ -280,6 +282,13 @@ def _plan_topline(
             ("adr", "ari_target", "ari_target_source"),
         ):
             b_value = getattr(bench, metric) if bench is not None else None
+            if metric in topline.explicit_year1:
+                setattr(rec, f"{metric}_status", "explicit_value")
+                notes.append(
+                    f"Year-1 {metric_label[metric]} is your explicit value; out-years grow it at "
+                    "the year's growth — penetration and ramp are not applied to it."
+                )
+                continue
             if b_value is None:
                 setattr(rec, f"{metric}_status", "benchmark_unavailable")
                 if topline.benchmark_level != "none":
@@ -322,6 +331,12 @@ def _plan_topline(
                 plan.adr_drivers[y - 1] = driver
         if rec.mpi_target is not None and rec.ari_target is not None:
             rec.rgi_derived = rec.mpi_target * rec.ari_target / 100.0
+        if rec.occupancy_status != "driven" and rec.adr_status != "driven":
+            # Nothing was penetrated this year (no benchmark, or explicit
+            # values): the ramp did not apply, so the record does not claim it.
+            rec.ramp_pct = None
+            rec.ramp_state = None
+            ramp_note = None
         if ramp_note:
             notes.append(ramp_note)
         rec.reason = " ".join(notes) if notes else None
@@ -979,6 +994,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         drivers_by_year = (
             topline_plan.records if topline_plan is not None else legacy_drivers_by_year
         )
+        # FON-116 — the per-year growth provenance (benchmark mode: the
+        # topline's; growth-only rollout: ``growth_provenance``). It moves no
+        # number: it labels each year's record and trace.
+        growth_prov = {
+            g.year: g
+            for g in (
+                payload.topline.growth_by_year
+                if payload.topline is not None
+                else payload.growth_provenance
+            )
+        }
+        #: Decision 1b — the years whose occupancy is held after stabilization.
+        held_occ_years = {
+            y for y, g in growth_prov.items() if g.occupancy_source == "held_at_stabilization"
+        }
         # FON-116 — growth INTO each year per metric (scalar, or the per-year
         # list; ``None`` = held flat). Index ``y − 1`` = model year ``y``.
         occ_growth = [
@@ -1389,9 +1419,17 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             # metric carries the growth step that moved it (``None`` = held
             # flat → ``flat_no_growth``; Year 1 has no step).
             drv_out = drivers_by_year.get(y)
+            gp = growth_prov.get(y)
             rec_out = drv_out if drv_out is not None else IndexDriverYear(
                 year=y,
-                calendar_year=calendar_years[y - 1] if y - 1 < len(calendar_years) else None,
+                calendar_year=(
+                    calendar_years[y - 1]
+                    if y - 1 < len(calendar_years)
+                    else (gp.calendar_year if gp is not None else None)
+                ),
+                growth_label=gp.label if gp is not None else None,
+                occupancy_growth_source=gp.occupancy_source if gp is not None else None,
+                adr_growth_source=gp.adr_source if gp is not None else None,
             )
             rec_out.occupancy = occ
             rec_out.adr = adr
@@ -1412,7 +1450,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                         # signals then survive on the record.
                         if getattr(rec_out, f"{metric}_growth_source") is None:
                             setattr(rec_out, f"{metric}_growth_source", "unavailable")
-                        if getattr(rec_out, f"{metric}_status") != "benchmark_unavailable":
+                        if getattr(rec_out, f"{metric}_status") not in (
+                            "benchmark_unavailable",
+                            "explicit_value",
+                        ):
                             setattr(rec_out, f"{metric}_status", "flat_no_growth")
             topline_records[y] = rec_out
             prov[f"years[{idx}].rooms_revenue"] = rooms_trace
@@ -1602,6 +1643,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 schedule_factor=_sched_trace(y, "occupancy"),
                 schedule=schedule,
             )
+            held_steps = sorted(
+                k for k, _ in _steps(occ_growth, occ_anchor_from[1], y) if k in held_occ_years
+            ) if _driver(occ_drivers, y) is None else []
+            if held_steps:
+                # Decision 1b (2026-11-03) — say so on the trace.
+                tr = prov[f"years[{idx}].occupancy"]
+                s_year = min(held_steps) - 1
+                held_note = (
+                    f"Occupancy is flat after stabilization: Year(s) "
+                    + ", ".join(str(k) for k in held_steps)
+                    + f" hold the Year-{s_year} level (growth 0 by rule, not a forecast)."
+                )
+                prov[f"years[{idx}].occupancy"] = tr.model_copy(
+                    update={"note": f"{tr.note} {held_note}" if tr.note else held_note}
+                )
             prov[f"years[{idx}].adr"] = _rate_trace(
                 metric="adr",
                 year=y,
@@ -1720,9 +1776,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             ],
             # FON-116 — one record per model year, and the method that ran.
             topline_by_year=[topline_records[k] for k in sorted(topline_records)],
+            topline_mode=payload.topline_mode or ("benchmark" if topline_plan is not None else None),
             topline_methodology_version=(
                 TOPLINE_METHODOLOGY_VERSION
-                if topline_plan is not None
+                if topline_plan is not None or payload.topline_mode == "growth_only"
                 else LEGACY_TOPLINE_METHODOLOGY_VERSION
             ),
             renovation_displacement_by_year=[

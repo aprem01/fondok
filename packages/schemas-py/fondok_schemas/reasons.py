@@ -56,6 +56,15 @@ class ReasonCode(str, Enum):
     UNDER_CONSTRUCTION = "under_construction"  # sale inside the stated construction window
     CAPITAL_DEPLOYING = "capital_deploying"    # equity draws / deferred capital land after the sale
     NO_SALE_VALUE = "no_sale_value"            # exit NOI at that sale date is not positive
+    # FON-116 / FON-117 (topline v2) — growth / benchmark refusals and the
+    # legacy-key translation note.
+    NO_MARKET_FORECAST = "no_market_forecast"
+    NO_BENCHMARK = "no_benchmark"
+    LICENSE_WITHHELD = "license_withheld"
+    LEGACY_KEY_TRANSLATED = "legacy_key_translated"
+    NO_REVENUE_BASIS = "no_revenue_basis"
+    REEXTRACT_NEEDED = "reextract_needed"
+    CALENDAR_UNKNOWN = "calendar_unknown"
 
 
 class Refusal(BaseModel):
@@ -276,6 +285,55 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "explanation": (
             "The exit NOI at this sale date is not positive, so a direct-cap sale "
             "value does not exist."
+        ),
+    },
+    ReasonCode.NO_MARKET_FORECAST: {
+        "label": "No market forecast",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "No market forecast covers this year for this metric, so the model holds it flat (growth 0 is the absence of growth, not a rate) — set growth manually."
+        ),
+    },
+    ReasonCode.NO_BENCHMARK: {
+        "label": "No benchmark",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "No competitive-set, submarket or market occupancy / ADR is on the deal, so the subject is projected from its own starting figures."
+        ),
+    },
+    ReasonCode.LICENSE_WITHHELD: {
+        "label": "Withheld by data policy",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "A CoStar-derived figure is on file but this workspace's data policy withholds it from the model — set the figure manually."
+        ),
+    },
+    ReasonCode.LEGACY_KEY_TRANSLATED: {
+        "label": "Legacy setting translated",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "A setting written by a retired control is read under the current method (or ignored), and the status says how."
+        ),
+    },
+    ReasonCode.NO_REVENUE_BASIS: {
+        "label": "No Year-1 occupancy / ADR",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The deal has no Year-1 occupancy / ADR basis — no T-12, no analyst value and (when the benchmark topline is on) no STR or market benchmark — so the revenue model does not run; the model never substitutes a placeholder rate."
+        ),
+    },
+    ReasonCode.REEXTRACT_NEEDED: {
+        "label": "Re-extract needed",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "The report is on file but was extracted before this figure was read (an older extraction pipeline) — re-extract it; the model does not substitute another series."
+        ),
+    },
+    ReasonCode.CALENDAR_UNKNOWN: {
+        "label": "Close date needed",
+        "ui": REFUSAL_GLYPH,
+        "explanation": (
+            "A market forecast is on file but the deal has no acquisition close date (and no underwriting as-of date), so the forecast cannot be placed on the model's years — set the acquisition close date to place it; the model never guesses a calendar."
         ),
     },
 }

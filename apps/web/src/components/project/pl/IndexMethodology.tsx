@@ -23,30 +23,19 @@
  *   relationship — "the same", or the transformation when a future change
  *   ever makes them differ again. No silent difference.
  *
- * E-028 (P2) — choose the index methodology and edit the market growth /
- * penetration assumptions before they feed Projections. ``IndexMethodologyPanel``
- * reads ``GET /market/{id}/index-methodology``; every value shows its document
- * + page, the documents a computed value used, or "Your override".
+ * E-028 (P2) — the retired methodology selector and its market-growth rows are
+ * gone (FON-116 / FON-117): the Index Analysis tab edits the topline the model
+ * runs on (`Topline.tsx` — benchmark level, penetration, ramp, per-year
+ * penetration), read from `topline_status`. What stays here is the basis chip,
+ * the reconciliation and the shared figure formatters.
  */
 
-import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
-import { useToast } from '@/components/ui/Toast';
-import {
-  api,
-  isWorkerConnected,
-  type IndexFigure,
-  type IndexMethodId,
-  type IndexMethodologyResponse,
-  type IndexYearRow,
-} from '@/lib/api';
-import { applyOverridePatch, NOTE_PLACEHOLDER, NOTE_REQUIRED_MESSAGE, requiresNote } from '@/lib/overrideNote';
+import type { IndexFigure } from '@/lib/api';
 import { INDEX_POINTS_RANGE, INDEX_RATIO_RANGE, toIndexPoints, validateIndexTarget } from '@/lib/indexTarget';
 import { sourceLabel } from '@/lib/provenance';
-import { useEngineRun } from '@/lib/hooks/useEngineRun';
-import { useDeal } from '@/lib/hooks/useDeal';
 import { PL_SUB_LABEL } from '@/lib/projectTabs';
-import { BASIS_CHIP_TEXT, figureBasis, periodEndText, type BenchmarkBasis } from './indexAnalysisModel';
+import { BASIS_CHIP_TEXT, figureBasis, type BenchmarkBasis } from './indexAnalysisModel';
 
 // ─────────────────────────── shared formatting ───────────────────────────
 
@@ -100,26 +89,6 @@ export function BasisLine({ fig, testId }: { fig: IndexFigure | null | undefined
       <span className="max-w-[200px] truncate">{b.label}</span>
     </div>
   );
-}
-
-/** The one line above the by-year grid naming each band's source and period. */
-export function byYearBasisNote(data: Pick<IndexMethodologyResponse, 'by_year' | 'subject_period_end' | 'cbre_report_date'>): string | null {
-  const rows = data.by_year ?? [];
-  if (!rows.length) return null;
-  const y1 = figureBasis(rows[0]?.benchmark_occupancy) ?? figureBasis(rows[0]?.benchmark_adr);
-  const later = rows.slice(1).map((r) => figureBasis(r.benchmark_occupancy) ?? figureBasis(r.benchmark_adr)).filter(Boolean);
-  if (!y1 && !later.length) return null;
-  const parts: string[] = [];
-  if (y1) parts.push(`Year 1 benchmark: ${y1.label}${y1.basis === 'actual' ? ' — reported historical data' : ''}.`);
-  if (later.some((b) => b!.basis === 'forecast')) {
-    const date = data.cbre_report_date ? ` (report dated ${data.cbre_report_date})` : '';
-    parts.push(`Year 2 onward: CBRE Horizons forecast${date} — a projected benchmark, not history.`);
-  } else if (later.some((b) => b!.basis === 'assumption')) {
-    parts.push('Year 2 onward: the Year-1 level grown at the market growth assumption — an assumption, not a published forecast.');
-  }
-  const endText = periodEndText(data.subject_period_end);
-  if (endText && !(y1?.label ?? '').includes(endText)) parts.push(`STR TTM period ends ${endText}.`);
-  return parts.join(' ');
 }
 
 // ─────────────────────────── E-027 — reconciliation ───────────────────────────
@@ -207,8 +176,8 @@ export function buildReconciliation(i: ReconciliationInput): Reconciliation | nu
   if (i.startingOccupancy != null || i.startingAdr != null) {
     steps.push(`Stabilized baseline ${pair(i.startingOccupancy, i.startingAdr)} — ${projectionsSource}`);
   }
-  if (i.occSource?.source === 'index_assumption' || i.adrSource?.source === 'index_assumption') {
-    steps.push('Index Analysis penetration target applied to the selected benchmark (STR basis on)');
+  if (i.occSource?.source === 'topline_benchmark' || i.adrSource?.source === 'topline_benchmark') {
+    steps.push('Topline: the benchmark × your penetration × the ramp sets the Year-1 rate');
   }
   const dOcc = i.y1OccDisplacement ?? 0;
   const dAdr = i.y1AdrDisplacement ?? 0;
@@ -249,7 +218,7 @@ export function buildReconciliation(i: ReconciliationInput): Reconciliation | nu
     ? `Index Analysis shows the same ${pair(i.iaOccupancy, i.iaAdr)} in its ${i.iaColumnYear} column`
     : `Index Analysis's ${i.iaColumnYear} column shows ${pair(i.iaOccupancy, i.iaAdr)}, which is ${iaWhat}`;
   const str = strLabel
-    ? `; the STR subject ${i.strPeriodLabel ?? 'TTM'} ${pair(i.strOccupancy, i.strAdr)} is a different source and period — it sets the comp set and the MPI / ARI indices, not the model, unless "Use STR rates in the model" is on`
+    ? `; the STR subject ${i.strPeriodLabel ?? 'TTM'} ${pair(i.strOccupancy, i.strAdr)} is a different source and period — it sets the comp set and the MPI / ARI indices; the model runs on the benchmark × penetration × ramp`
     : '';
   const line = `${base}; ${ia}${str}.`;
   return { projectionsLabel, projectionsSource, steps, iaLabel, iaWhat, strLabel, line, matches };
@@ -284,15 +253,7 @@ export function ProjectionsReconciliation({ rec }: { rec: Reconciliation | null 
   );
 }
 
-// ─────────────────────────── E-028 — methodology + assumptions ───────────────────────────
-
-export const INDEX_METHOD_KEY = 'index_methodology';
-export const INDEX_ASSUMPTIONS: { key: string; label: string; unit: 'growth' | 'index' }[] = [
-  { key: 'index_market_occupancy_growth', label: 'Market occupancy growth', unit: 'growth' },
-  { key: 'index_market_adr_growth', label: 'Market ADR growth', unit: 'growth' },
-  { key: 'index_mpi_target', label: 'Occupancy penetration target (MPI)', unit: 'index' },
-  { key: 'index_ari_target', label: 'ADR penetration target (ARI)', unit: 'index' },
-];
+// ─────────────────────────── shared figure helpers ───────────────────────────
 
 /**
  * "Doc.pdf, p.6" for a document figure; the inputs for a computed one. The
@@ -354,19 +315,6 @@ export function plainIndexDetail(detail: string): string {
   return unique.join(' — ').replace(/\.{2,}$/, '.').replace(/([^.])$/, '$1.');
 }
 
-/** Distinct, cleaned reasons across the by-year rows whose benchmark is missing. */
-export function byYearMissingBenchmarkNotes(rows: IndexYearRow[]): string[] {
-  const seen: string[] = [];
-  for (const r of rows) {
-    for (const fig of [r.benchmark_occupancy, r.benchmark_adr]) {
-      if (fig.value != null || !fig.detail) continue;
-      const text = plainIndexDetail(fig.detail);
-      if (!seen.includes(text)) seen.push(text);
-    }
-  }
-  return seen;
-}
-
 /** The accepted target units, for the refusal message. */
 export const INDEX_TARGET_UNITS = `index points ${INDEX_POINTS_RANGE[0]}–${INDEX_POINTS_RANGE[1]} (100 = parity with the benchmark) or a ratio ${INDEX_RATIO_RANGE[0]}–${INDEX_RATIO_RANGE[1]}`;
 
@@ -379,129 +327,6 @@ export function fmtAssumption(v: number | null | undefined, unit: 'growth' | 'in
   return pts == null ? '—' : pts.toFixed(1);
 }
 
-function AssumptionRow({
-  label,
-  unit,
-  figure,
-  overrideKey,
-  overridden,
-  disabled,
-  onSave,
-  onReset,
-}: {
-  label: string;
-  unit: 'growth' | 'index';
-  figure: IndexFigure | undefined;
-  overrideKey: string;
-  overridden: boolean;
-  disabled: boolean;
-  onSave: (key: string, value: number, note: string) => void;
-  onReset: (key: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const needNote = requiresNote(overrideKey);
-  const start = () => {
-    const v = figure?.value;
-    const shown = unit === 'growth' ? (typeof v === 'number' ? (v * 100).toFixed(2) : '') : fmtAssumption(v, unit);
-    setDraft(shown === '—' ? '' : shown);
-    setNote('');
-    setError(null);
-    setEditing(true);
-  };
-  const save = () => {
-    if (draft.trim() === '') return;
-    if (needNote && !note.trim()) return;
-    let value: number;
-    if (unit === 'growth') {
-      const n = Number(draft.replace(/[%\s,]/g, ''));
-      if (!Number.isFinite(n)) return;
-      value = n / 100;
-    } else {
-      // Same reading as the by-year grid: a ratio (1.10) is 110 index points,
-      // so the panel, the grid and the model never disagree on the unit.
-      const pts = parseIndexPoints(draft.replace(/%/g, ''));
-      if (pts == null) {
-        setError(`Enter ${INDEX_TARGET_UNITS}.`);
-        return;
-      }
-      value = pts;
-    }
-    onSave(overrideKey, value, note.trim());
-    setEditing(false);
-  };
-  return (
-    <tr className="border-b border-border/40 align-top" data-testid={`index-assumption-${overrideKey}`}>
-      <td className="py-1.5 pr-3 text-ink-900 font-medium whitespace-nowrap">{label}</td>
-      <td className="py-1.5 pr-3 tabular-nums text-right">
-        <span className={figure?.source === 'override' ? 'text-brand-700' : 'text-ink-900'}>
-          {fmtAssumption(figure?.value, unit)}
-        </span>
-      </td>
-      <td className="py-1.5 pr-3 text-ink-500" data-testid={`index-assumption-source-${overrideKey}`} title={figureSourceTitle(figure)}>
-        {figureSourceText(figure)}
-      </td>
-      <td className="py-1.5 whitespace-nowrap">
-        {editing ? (
-          <div className="flex flex-col gap-1 items-end">
-            <input
-              aria-label={`${label} value`}
-              className="w-20 border border-border rounded px-1 text-right"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-            <input
-              aria-label={`${label} note`}
-              className="w-56 border border-border rounded px-1"
-              placeholder={NOTE_PLACEHOLDER}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-            {needNote && !note.trim() && <span className="text-[10.5px] text-ink-400">{NOTE_REQUIRED_MESSAGE}</span>}
-            {error && (
-              <span className="text-[10.5px] text-danger-700" data-testid={`index-assumption-error-${overrideKey}`}>
-                {error}
-              </span>
-            )}
-            <div className="flex gap-2">
-              <button type="button" className="text-brand-700 font-semibold" onClick={save} disabled={disabled}>
-                Save
-              </button>
-              <button type="button" className="text-ink-500" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex gap-2 justify-end">
-            <button type="button" className="text-brand-700 font-semibold" onClick={start} disabled={disabled}>
-              Edit
-            </button>
-            {overridden && (
-              <button type="button" className="text-ink-500" onClick={() => onReset(overrideKey)} disabled={disabled}>
-                Reset
-              </button>
-            )}
-          </div>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-// ─────────────────────────── FON-95 part 2 — targets by year ───────────────────────────
-
-export const INDEX_MPI_BY_YEAR_KEY = 'index_mpi_target_by_year';
-export const INDEX_ARI_BY_YEAR_KEY = 'index_ari_target_by_year';
-export const RGI_DERIVED_NOTE = 'RGI is derived — MPI × ARI ÷ 100 — not an input.';
-
-const fmtIdx = (v: number | null | undefined): string => {
-  const pts = toIndexPoints(v ?? null);
-  return pts == null ? '—' : pts.toFixed(1);
-};
-
 /** Parse one grid cell: '' → null (not set), else index points read exactly as
  *  the worker reads them (``@/lib/indexTarget``): a ratio 0.25–2.5 (1.10 → 110)
  *  or points 25–250; anything else (5, 12, 300) → undefined (refused). */
@@ -510,454 +335,4 @@ export function parseIndexPoints(raw: string): number | null | undefined {
   if (!t) return null;
   const { points } = validateIndexTarget(t);
   return points == null ? undefined : points;
-}
-
-/** The two by-year lists a Save writes (index y−1 = model year y); null = clear the key. */
-export function byYearPatch(
-  drafts: { mpi: string[]; ari: string[] },
-): { patch: Record<string, unknown>; invalid: boolean } {
-  let invalid = false;
-  const toList = (xs: string[]): (number | null)[] | null => {
-    const out = xs.map((s) => {
-      const v = parseIndexPoints(s);
-      if (v === undefined) invalid = true;
-      return v ?? null;
-    });
-    return out.some((v) => v != null) ? out : null;
-  };
-  const mpi = toList(drafts.mpi);
-  const ari = toList(drafts.ari);
-  return { patch: { [INDEX_MPI_BY_YEAR_KEY]: mpi, [INDEX_ARI_BY_YEAR_KEY]: ari }, invalid };
-}
-
-function statusText(r: IndexYearRow, metric: 'occupancy' | 'adr'): string {
-  const s = metric === 'occupancy' ? r.occupancy_status : r.adr_status;
-  if (s === 'driven') return 'indexed';
-  if (s === 'benchmark_unavailable') return 'benchmark unavailable';
-  if (s === 'scalar_year1_only') return 'all-years target: Year 1 only';
-  return 'model growth';
-}
-
-function IndexByYearGrid({
-  data,
-  overrides,
-  disabled,
-  onSave,
-  onReset,
-}: {
-  data: IndexMethodologyResponse;
-  overrides: Record<string, unknown>;
-  disabled: boolean;
-  onSave: (patch: Record<string, unknown>, note: string) => void;
-  onReset: () => void;
-}) {
-  const rows = data.by_year ?? [];
-  const applies = !!data.by_year_applies;
-  const [editing, setEditing] = useState(false);
-  const [drafts, setDrafts] = useState<{ mpi: string[]; ari: string[] }>({ mpi: [], ari: [] });
-  const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const needNote = requiresNote(INDEX_MPI_BY_YEAR_KEY) || requiresNote(INDEX_ARI_BY_YEAR_KEY);
-  const overridden = INDEX_MPI_BY_YEAR_KEY in overrides || INDEX_ARI_BY_YEAR_KEY in overrides;
-  if (!rows.length) return null;
-  // Stored targets the worker IGNORED (out of range — legacy values written
-  // before the range gate): named once each, never applied.
-  const targetProblems = Array.from(
-    new Set(rows.flatMap((r) => [r.mpi_target.problem, r.ari_target.problem]).filter((p): p is string => !!p)),
-  );
-
-  const start = () => {
-    // Only the by-year entries are editable here; an all-years scalar shows as
-    // the placeholder so the analyst sees what applies when a cell is blank.
-    setDrafts({
-      mpi: rows.map((r) => (r.mpi_target.source === 'by_year' && r.mpi_target.value != null ? r.mpi_target.value.toFixed(1) : '')),
-      ari: rows.map((r) => (r.ari_target.source === 'by_year' && r.ari_target.value != null ? r.ari_target.value.toFixed(1) : '')),
-    });
-    setNote('');
-    setError(null);
-    setEditing(true);
-  };
-  const save = () => {
-    const { patch, invalid } = byYearPatch(drafts);
-    if (invalid) {
-      setError(`Each target is ${INDEX_TARGET_UNITS}; leave a year blank to use the all-years target.`);
-      return;
-    }
-    const writesValue = Object.values(patch).some((v) => v != null);
-    if (writesValue && needNote && !note.trim()) {
-      setError(NOTE_REQUIRED_MESSAGE);
-      return;
-    }
-    onSave(patch, note.trim());
-    setEditing(false);
-  };
-  const setDraft = (metric: 'mpi' | 'ari', k: number, value: string) =>
-    setDrafts((d) => {
-      const next = { mpi: [...d.mpi], ari: [...d.ari] };
-      next[metric][k] = value;
-      return next;
-    });
-  const draftRgi = (k: number): string => {
-    const m = parseIndexPoints(drafts.mpi[k] ?? '') ?? (rows[k].mpi_target.source === 'scalar' ? rows[k].mpi_target.value : null);
-    const a = parseIndexPoints(drafts.ari[k] ?? '') ?? (rows[k].ari_target.source === 'scalar' ? rows[k].ari_target.value : null);
-    return m != null && a != null ? ((m * a) / 100).toFixed(1) : '—';
-  };
-  const yearLabel = (r: IndexYearRow) =>
-    `${r.year === 1 ? 'Base year (Year 1)' : `Year ${r.year}`}${r.calendar_year != null ? ` · ${r.calendar_year}` : ''}`;
-  const targetCell = (t: IndexYearRow['mpi_target']) =>
-    t.value == null ? (
-      t.problem ? (
-        <span className="text-warning-700" title={t.problem} data-testid="index-by-year-target-problem">
-          — ignored
-        </span>
-      ) : (
-        <span className="text-ink-400">—</span>
-      )
-    ) : (
-      <span className={t.source === 'by_year' ? 'text-brand-700 font-medium' : 'text-ink-900'} title={t.note ?? undefined}>
-        {fmtIdx(t.value)}
-        <span className="ml-1 text-[9.5px] uppercase tracking-wide text-ink-400">{t.source === 'by_year' ? 'yr' : 'all'}</span>
-      </span>
-    );
-
-  return (
-    <div className="space-y-2" data-testid="index-by-year-grid">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Penetration targets by year</div>
-          <div className="text-[11px] text-ink-500 mt-0.5">
-            Each model year&apos;s occupancy = that year&apos;s benchmark occupancy × MPI ÷ 100 and ADR = benchmark ADR × ARI ÷ 100.
-            A by-year target beats the all-years target above; a blank year uses the all-years target where set, else the
-            model&apos;s own growth. {RGI_DERIVED_NOTE}
-          </div>
-        </div>
-        {!editing ? (
-          <div className="flex gap-2 whitespace-nowrap">
-            <button
-              type="button"
-              className="text-brand-700 font-semibold disabled:text-ink-400 disabled:cursor-not-allowed"
-              onClick={start}
-              disabled={disabled || !applies}
-              title={applies ? undefined : data.by_year_disabled_reason ?? undefined}
-              data-testid="index-by-year-edit"
-            >
-              Edit targets
-            </button>
-            {overridden && (
-              <button type="button" className="text-ink-500" onClick={onReset} disabled={disabled} data-testid="index-by-year-reset">
-                Reset targets
-              </button>
-            )}
-          </div>
-        ) : null}
-      </div>
-      {targetProblems.length > 0 && (
-        <div className="text-[11px] text-warning-700" data-testid="index-by-year-problems">
-          {targetProblems.map((p) => (
-            <div key={p}>{p}</div>
-          ))}
-        </div>
-      )}
-      {byYearBasisNote(data) && (
-        <div className="text-[11px] text-ink-600" data-testid="index-by-year-basis-note">
-          {byYearBasisNote(data)}
-        </div>
-      )}
-      {!applies && (
-        <div className="text-[11px] text-warning-700" data-testid="index-by-year-disabled">
-          {data.by_year_disabled_reason ?? `Targets by year do not feed the ${PL_SUB_LABEL.projections} yet.`}
-        </div>
-      )}
-      {byYearMissingBenchmarkNotes(rows).length > 0 && (
-        <div className="text-[11px] text-ink-600" data-testid="index-by-year-missing-benchmark">
-          {byYearMissingBenchmarkNotes(rows).map((t) => (
-            <div key={t}>{t}</div>
-          ))}
-        </div>
-      )}
-      <div className="overflow-x-auto">
-        <table className="w-full text-[12px]" data-testid="index-by-year-table">
-          <thead>
-            <tr className="text-ink-500 text-[10.5px] border-b border-border">
-              <th className="text-left font-medium py-1 pr-3">Model year</th>
-              <th className="text-right font-medium py-1 pr-3">Benchmark occ.</th>
-              <th className="text-right font-medium py-1 pr-3">Benchmark ADR</th>
-              <th className="text-right font-medium py-1 pr-3">MPI target</th>
-              <th className="text-right font-medium py-1 pr-3">ARI target</th>
-              <th className="text-right font-medium py-1 pr-3" title={RGI_DERIVED_NOTE}>
-                RGI (derived)
-              </th>
-              <th className="text-right font-medium py-1 pr-3">Model occ.</th>
-              <th className="text-right font-medium py-1 pr-3">Model ADR</th>
-              <th className="text-left font-medium py-1">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, k) => (
-              <tr key={r.year} className="border-b border-border/40 align-top" data-testid={`index-by-year-row-${r.year}`}>
-                <td className="py-1.5 pr-3 whitespace-nowrap text-ink-900 font-medium">{yearLabel(r)}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceTitle(r.benchmark_occupancy)}>
-                  <div>{fmtOcc(r.benchmark_occupancy.value)}</div>
-                  <div className="text-[10px] text-ink-400 max-w-[200px] truncate" data-testid={`index-by-year-bench-occ-src-${r.year}`}>
-                    {r.benchmark_occupancy.value == null ? '—' : figureSourceText(r.benchmark_occupancy)}
-                  </div>
-                  <BasisLine fig={r.benchmark_occupancy} testId={`index-by-year-bench-occ-basis-${r.year}`} />
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={figureSourceTitle(r.benchmark_adr)}>
-                  <div>{fmtAdr(r.benchmark_adr.value)}</div>
-                  <div className="text-[10px] text-ink-400 max-w-[200px] truncate">
-                    {r.benchmark_adr.value == null ? '—' : figureSourceText(r.benchmark_adr)}
-                  </div>
-                  <BasisLine fig={r.benchmark_adr} testId={`index-by-year-bench-adr-basis-${r.year}`} />
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">
-                  {editing ? (
-                    <input
-                      aria-label={`Year ${r.year} MPI target`}
-                      className="w-16 border border-border rounded px-1 text-right"
-                      placeholder={r.mpi_target.source === 'scalar' && r.mpi_target.value != null ? `all ${fmtIdx(r.mpi_target.value)}` : '—'}
-                      value={drafts.mpi[k] ?? ''}
-                      onChange={(e) => setDraft('mpi', k, e.target.value)}
-                    />
-                  ) : (
-                    targetCell(r.mpi_target)
-                  )}
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">
-                  {editing ? (
-                    <input
-                      aria-label={`Year ${r.year} ARI target`}
-                      className="w-16 border border-border rounded px-1 text-right"
-                      placeholder={r.ari_target.source === 'scalar' && r.ari_target.value != null ? `all ${fmtIdx(r.ari_target.value)}` : '—'}
-                      value={drafts.ari[k] ?? ''}
-                      onChange={(e) => setDraft('ari', k, e.target.value)}
-                    />
-                  ) : (
-                    targetCell(r.ari_target)
-                  )}
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600" title={RGI_DERIVED_NOTE} data-testid={`index-by-year-rgi-${r.year}`}>
-                  {editing ? draftRgi(k) : fmtIdx(r.rgi_derived)}
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={r.engine_occupancy != null ? `Last run: ${fmtOcc(r.engine_occupancy)} (after Year-1 displacement)` : undefined}>
-                  {fmtOcc(r.occupancy)}
-                </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums" title={r.engine_adr != null ? `Last run: ${fmtAdr(r.engine_adr)}` : undefined}>
-                  {fmtAdr(r.adr)}
-                </td>
-                <td className="py-1.5 text-[11px] text-ink-500" title={r.reason ?? undefined} data-testid={`index-by-year-status-${r.year}`}>
-                  occ {statusText(r, 'occupancy')} · ADR {statusText(r, 'adr')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {editing && (
-        <div className="flex flex-col gap-1 items-end">
-          <input
-            aria-label="Targets by year note"
-            className="w-72 border border-border rounded px-1"
-            placeholder={NOTE_PLACEHOLDER}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-          {error && (
-            <span className="text-[10.5px] text-danger-700" data-testid="index-by-year-error">
-              {error}
-            </span>
-          )}
-          <div className="flex gap-2">
-            <button type="button" className="text-brand-700 font-semibold" onClick={save} disabled={disabled} data-testid="index-by-year-save">
-              Save targets
-            </button>
-            <button type="button" className="text-ink-500" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function IndexMethodologyPanel({ dealId }: { dealId: string }) {
-  const { toast } = useToast();
-  const { deal, refresh: refreshDeal } = useDeal(dealId);
-  const { run, status } = useEngineRun(dealId, 'returns', { runMode: 'all' });
-  const [data, setData] = useState<IndexMethodologyResponse | null>(null);
-  const [saving, setSaving] = useState(false);
-  const liveMode = isWorkerConnected() && !!dealId && !/^\d+$/.test(dealId);
-
-  const load = useCallback(
-    (signal?: AbortSignal) => {
-      if (!liveMode) return;
-      api.market
-        .indexMethodology(dealId, signal)
-        .then((r) => {
-          if (r) setData(r);
-        })
-        .catch(() => {});
-    },
-    [dealId, liveMode],
-  );
-  useEffect(() => {
-    const ctrl = new AbortController();
-    load(ctrl.signal);
-    return () => ctrl.abort();
-  }, [load]);
-
-  const overrides = (deal?.field_overrides ?? {}) as Record<string, unknown>;
-  const write = async (patch: Record<string, unknown>, note: string, rerun: boolean, msg: string) => {
-    // The PATCH sends the whole blob — never write before the deal row loaded.
-    if (!deal) {
-      toast('Still loading this deal — try again in a moment', { type: 'error' });
-      return;
-    }
-    setSaving(true);
-    try {
-      const next = applyOverridePatch(overrides, patch, note);
-      await api.deals.update(dealId, { field_overrides: next });
-      refreshDeal();
-      load();
-      if (rerun) await run();
-      toast(msg, { type: 'success' });
-    } catch (e) {
-      toast(e instanceof Error && e.message === NOTE_REQUIRED_MESSAGE ? e.message : 'Could not save', { type: 'error' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!data) return null;
-  const busy = saving || status === 'running' || status === 'queued';
-  const selected = data.methods.find((m) => m.method === data.selected) ?? null;
-  const feeds = data.toggle_on;
-  const hasTargets = INDEX_ASSUMPTIONS.some((a) => data.assumptions[a.key]?.source === 'override');
-
-  const selectMethod = (id: IndexMethodId) => {
-    if (id === data.selected) return;
-    void write(
-      { [INDEX_METHOD_KEY]: id },
-      '',
-      feeds && hasTargets,
-      `Index methodology: ${data.methods.find((m) => m.method === id)?.label ?? id}`,
-    );
-  };
-
-  return (
-    <Card className="p-4 space-y-3" data-testid="index-methodology-panel">
-      <div>
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Index methodology</div>
-        <div className="text-[11.5px] text-ink-500 mt-0.5">
-          The benchmark the subject is indexed against, and the market growth and penetration assumptions that ride on it.
-        </div>
-      </div>
-      <div role="radiogroup" aria-label="Index methodology" className="flex flex-wrap gap-2">
-        {data.methods.map((m) => {
-          const active = m.method === data.selected;
-          return (
-            <button
-              key={m.method}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              disabled={!m.available || busy}
-              title={m.available ? undefined : m.disabled_reason ?? undefined}
-              data-testid={`index-method-${m.method}`}
-              onClick={() => selectMethod(m.method)}
-              className={
-                'px-3 py-1.5 rounded border text-[12px] ' +
-                (active
-                  ? 'border-brand-700 bg-brand-50 text-brand-700 font-semibold'
-                  : m.available
-                    ? 'border-border text-ink-900'
-                    : 'border-border text-ink-400 cursor-not-allowed')
-              }
-            >
-              {m.label}
-            </button>
-          );
-        })}
-      </div>
-      {data.methods
-        .filter((m) => !m.available && m.disabled_reason)
-        .map((m) => (
-          <div key={m.method} className="text-[11px] text-ink-500" data-testid={`index-method-reason-${m.method}`}>
-            <span className="font-medium">{m.label} unavailable:</span> {m.disabled_reason}
-          </div>
-        ))}
-      {selected && (
-        <div className="text-[11.5px]" data-testid="index-method-sources">
-          <div className="font-semibold text-ink-700">
-            {selected.label}
-            {selected.segment ? ` — ${selected.segment.replace(/_/g, ' ')} segment` : ''}
-            {data.selected_source === 'default' ? ' (default)' : ''}
-          </div>
-          <div className="text-ink-600 mt-0.5">
-            Occupancy {fmtOcc(selected.occupancy.value)} — {figureSourceText(selected.occupancy)}
-            {figureBasis(selected.occupancy) && (
-              <span className="ml-1">
-                <BasisChip basis={figureBasis(selected.occupancy)!.basis} label={figureBasis(selected.occupancy)!.label} />{' '}
-                <span className="text-ink-500">{figureBasis(selected.occupancy)!.label}</span>
-              </span>
-            )}
-          </div>
-          <div className="text-ink-600">
-            ADR {fmtAdr(selected.adr.value)} — {figureSourceText(selected.adr)}
-            {figureBasis(selected.adr) && (
-              <span className="ml-1">
-                <BasisChip basis={figureBasis(selected.adr)!.basis} label={figureBasis(selected.adr)!.label} />{' '}
-                <span className="text-ink-500">{figureBasis(selected.adr)!.label}</span>
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-ink-500 text-[10.5px] border-b border-border">
-            <th className="text-left font-medium py-1">Assumption</th>
-            <th className="text-right font-medium py-1 pr-3">Value</th>
-            <th className="text-left font-medium py-1">Source</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {INDEX_ASSUMPTIONS.map((a) => (
-            <AssumptionRow
-              key={a.key}
-              label={a.label}
-              unit={a.unit}
-              overrideKey={a.key}
-              figure={data.assumptions[a.key]}
-              overridden={a.key in overrides}
-              disabled={busy}
-              onSave={(key, value, note) => void write({ [key]: value }, note, feeds, `${a.label} saved`)}
-              onReset={(key) => void write({ [key]: null }, '', feeds, `${a.label} reset to source`)}
-            />
-          ))}
-        </tbody>
-      </table>
-      <div className="text-[11px] text-ink-500" data-testid="index-feeds-note">
-        {feeds
-          ? `These assumptions feed the ${PL_SUB_LABEL.projections} now: "Use STR rates in the model" is on, so your overrides set each year’s occupancy / ADR (benchmark × penetration target) and the growth rates.`
-          : `These assumptions do not feed the ${PL_SUB_LABEL.projections} yet: turn on "Use STR rates in the model" in Market Overview to apply your overrides. Until then the ${PL_SUB_LABEL.projections} stays on its current basis.`}
-      </div>
-      <IndexByYearGrid
-        data={data}
-        overrides={overrides}
-        disabled={busy}
-        onSave={(patch, note) => void write(patch, note, feeds, 'Penetration targets by year saved')}
-        onReset={() =>
-          void write(
-            { [INDEX_MPI_BY_YEAR_KEY]: null, [INDEX_ARI_BY_YEAR_KEY]: null },
-            '',
-            feeds,
-            'Penetration targets by year cleared',
-          )
-        }
-      />
-    </Card>
-  );
 }

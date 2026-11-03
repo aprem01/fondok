@@ -142,6 +142,19 @@ const TONE = {
 type SourceStyle = { tone: string; Icon: typeof Database; tooltip?: string };
 
 const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
+  // FON-116 / FON-117 (topline v2) — badge text and tooltip come from the
+  // registry; the topline web task may hand-author copy later.
+  topline_benchmark: { tone: TONE.brand, Icon: BarChart3 },
+  costar_comp_set: { tone: TONE.grounded, Icon: Map },
+  costar_submarket: { tone: TONE.grounded, Icon: Map },
+  costar_market: { tone: TONE.grounded, Icon: Map },
+  market_benchmark: { tone: TONE.grounded, Icon: Map },
+  costar_submarket_forecast: { tone: TONE.brand, Icon: Map },
+  growth_carried_forward: { tone: TONE.neutral, Icon: Sparkles },
+  occupancy_held_at_stabilization: { tone: TONE.neutral, Icon: Sparkles },
+  market_forecast_unavailable: { tone: TONE.warn, Icon: Sparkles },
+  costar_withheld_by_policy: { tone: TONE.warn, Icon: Sparkles },
+  penetration_default: { tone: TONE.neutral, Icon: Sparkles },
   // Wave 3 (A9 / B8) — badge text and tooltip come from the registry.
   // The renovation budget's 75/15/10 hard / soft / fee split, a platform default.
   platform_default_renovation_split: { tone: TONE.neutral, Icon: Sparkles },
@@ -204,29 +217,27 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
       'Analyst override set via the Overview inline editor. Wins over every other source.',
     Icon: Pencil,
   },
-  // Wave 3 W3.3 — STR forward-forecast seed. When the analyst opts in
-  // (revenue_seed_from_str_forecast=True), starting_occupancy and
-  // starting_adr are pulled from the BASE scenario's Month-12 forecast
-  // point so the revenue engine inherits the forecast's bottom-up math.
-  // FON-61 (61.2) — three provenances used to share this one badge, so a Base
-  // Year that was the subject's own TTM ACTUAL was labelled a forecast. Each
-  // now has its own tooltip; the revert path is identical for all three.
+  // FON-116 / FON-117 — the STR seed and its "Use STR rates" switch are
+  // retired (topline v2); these three ids remain on runs saved before
+  // 2 November 2026 and on a legacy Year-1 rate a deal with no benchmark
+  // still runs on. The tooltips name that and point at "Clear legacy keys";
+  // they no longer promise a Revert or seed defaults that no longer exist.
   str_forecast: {
     tone: TONE.brand,
     tooltip:
-      'Seeded from the BASE STR forward-forecast scenario (the Month-12 point) — a projection of the subject, not an actual. Revert from the Market Comps tab or P&L → Future P&L to fall back to T-12 / CBRE / seed defaults.',
+      'Seeded from the BASE STR forward-forecast scenario (the Month-12 point) — a projection of the subject, not an actual. A retired basis: runs before 2 November 2026 only; the model now runs on the benchmark × penetration × ramp.',
     Icon: BarChart3,
   },
   str_subject_ttm: {
     tone: TONE.grounded,
     tooltip:
-      'The subject property’s OWN trailing-twelve-month Occupancy / ADR as reported by STR — an actual, not a forecast and not the comp set. This is what the model seeds Year-1 from when the STR basis is on. Revert from the Market Comps tab or P&L → Future P&L to fall back to T-12 / CBRE / seed defaults.',
+      'The subject property’s OWN trailing-twelve-month Occupancy / ADR as reported by STR — an actual, not a forecast and not the comp set. Runs before 2 November 2026 could seed Year 1 from it; it is now the reference the current STR index is computed from.',
     Icon: BarChart3,
   },
   str_comp_set: {
     tone: TONE.brand,
     tooltip:
-      'The STR comp-set blended rates shown on the Market Comps tab, applied as the Year-1 input by “Use STR rates in the model” — the competitive set’s performance, not the subject’s own. Revert from the Market Comps tab or P&L → Future P&L to fall back to T-12 / CBRE / seed defaults.',
+      'The STR comp-set blended rates shown on the Market Comps tab — the competitive set’s performance, not the subject’s own. Written as a Year-1 rate by the retired “Use STR rates” button; the Future P&L lists such a rate under settings from retired controls, where “Clear legacy keys” removes it.',
     Icon: BarChart3,
   },
   // FON-61 (D4) — the STR seed is never silent. The analyst asked for STR

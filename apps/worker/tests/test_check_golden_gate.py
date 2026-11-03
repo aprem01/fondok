@@ -198,7 +198,9 @@ def test_real_compare_flag_exits_3_only_when_the_fixture_moved(tmp_path: Path) -
 
     report = _run_compare("--baseline", str(moved))
     assert report.returncode == 0, (report.stdout[-800:], report.stderr[-800:])
-    assert "Headline fields changed: 0" not in report.stdout
+    # Two fixtures since topline v2 (2026-11-02): the documents fixture still
+    # reports 0 changed, the altered seed fixture 1.
+    assert "Headline fields changed: 1" in report.stdout
 
     gated = _run_compare("--baseline", str(moved), "--exit-nonzero-on-headline-diff")
     assert gated.returncode == 3, (gated.stdout[-800:], gated.stderr[-800:])

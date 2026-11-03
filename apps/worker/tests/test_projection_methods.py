@@ -30,6 +30,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
 from app.engines.expense import ExpenseEngine, ExpenseEngineInput  # noqa: E402
 from app.engines.fb_revenue import FBRevenueOutput, FBRevenueYear  # noqa: E402
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 KEYS = 120
 OCC = [0.70, 0.72, 0.74, 0.75, 0.75]
@@ -313,7 +314,7 @@ async def _run_deal(overrides: dict) -> dict:
             ),
             {
                 "id": deal_id, "tenant": tenant_id, "name": "Method Hotel",
-                "ov": json.dumps(overrides), "now": datetime.now(UTC),
+                "ov": json.dumps(with_year1_rates(overrides)), "now": datetime.now(UTC),
             },
         )
         await session.commit()

@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from tests.fixtures.kimpton_seed import with_year1_rates  # Review I-5: test deals state their Year-1 rates
 
 
 # Force a per-test SQLite DB BEFORE app modules import so the cached
@@ -81,7 +82,11 @@ async def _create_deal_via_api(client, *, name: str = "Scenario Hotel", **kw) ->
     body.update(kw)
     r = await client.post("/deals", json=body)
     assert r.status_code == 201, r.text
-    return r.json()["id"]
+    deal_id = r.json()["id"]
+    # Review I-5 — the test deal states its Year-1 rates (no seeded rate).
+    r = await client.patch(f"/deals/{deal_id}", json={"field_overrides": with_year1_rates()})
+    assert r.status_code == 200, r.text
+    return deal_id
 
 
 # ─────────────────────────── tests ───────────────────────────
@@ -124,14 +129,15 @@ async def test_base_scenario_unique_per_deal() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, :name, 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
                 "name": "Unique Base",
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -395,13 +401,14 @@ async def test_run_scenario_without_overrides_matches_base() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Base Match', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Base Match', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -592,13 +599,14 @@ async def test_pip_displacement_override_routes_correctly() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'PIP Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -672,13 +680,14 @@ async def test_segment_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Seg Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -732,13 +741,14 @@ async def test_capex_override_in_scenario() -> None:
         await session.execute(
             text(
                 """
-                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, created_at, updated_at)
-                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', 132, 36400000, :now, :now)
+                INSERT INTO deals (id, tenant_id, name, status, keys, purchase_price, field_overrides, created_at, updated_at)
+                VALUES (:id, :tenant, 'Capex Hotel', 'Draft', 132, 36400000, :fo, :now, :now)
                 """
             ),
             {
                 "id": deal_id,
                 "tenant": tenant_id,
+                "fo": json.dumps(with_year1_rates()),
                 "now": datetime.now(UTC),
             },
         )
@@ -948,8 +958,10 @@ def _noi_series(engines: dict) -> list[float]:
 
 @pytest.mark.asyncio
 async def test_revpar_growth_override_moves_stabilized_noi() -> None:
-    """(1) A scenario ``revpar_growth`` override (4.5% → 2.5%) lowers every
-    post-Y1 NOI year because adr_growth is derived from it."""
+    """(1) A scenario ``revpar_growth`` override moves every post-Y1 NOI year
+    because ADR growth is derived from it. Topline v2: the deal has no market
+    report, so the base case holds its rates flat (no growth seed); the 2.5%
+    override grows revenue, so the scenario's NOI rises above it."""
     from httpx import ASGITransport, AsyncClient
 
     from app.database import get_session_factory
@@ -975,7 +987,7 @@ async def test_revpar_growth_override_moves_stabilized_noi() -> None:
     assert scen_noi[0] == pytest.approx(base_noi[0])
     # Stabilized (Y3+) NOI MUST move — this is the inert-override bug.
     for y in range(2, len(base_noi)):
-        assert scen_noi[y] < base_noi[y], (
+        assert scen_noi[y] > base_noi[y], (
             f"Y{y + 1} NOI did not move: {scen_noi[y]} vs {base_noi[y]}"
         )
 
@@ -984,30 +996,30 @@ async def test_revpar_growth_override_moves_stabilized_noi() -> None:
         base = await _load_engine_inputs(
             session, deal_id, scenario_id=sid, tenant_id=_DEFAULT_TENANT
         )
-    occ_g = base["occupancy_growth"]
+    assert "occupancy_growth" not in base  # no seed: occupancy held flat (0)
     assert base["revpar_growth"] == 0.025
     assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
-    assert base["adr_growth"] == pytest.approx((1.025 / (1.0 + occ_g)) - 1.0)
+    assert base["adr_growth"] == pytest.approx(0.025)
     assert base["__sources__"]["adr_growth"] == SOURCE_DERIVED_FROM_REVPAR_GROWTH
+    # The engine compounds the per-year ADR growth derived from it.
+    assert base["adr_growth_by_year"][1:] == pytest.approx([0.025] * (len(base_noi) - 1))
 
 
 @pytest.mark.asyncio
 async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
     """(2) When the analyst overrides BOTH revpar_growth and adr_growth the
-    explicit adr_growth wins verbatim — no double-apply. With adr_growth pinned
-    at the seed value the operating NOI is identical to the base."""
+    explicit adr_growth wins verbatim — no double-apply: the engine compounds
+    the analyst's ADR growth, not one derived from RevPAR."""
     from httpx import ASGITransport, AsyncClient
 
     from app.database import get_session_factory
     from app.main import app
     from app.services.engine_runner import (
         SOURCE_ANALYST_OVERRIDE,
-        SOURCE_SEED,
-        _default_assumptions,
         _load_engine_inputs,
     )
 
-    seed_adr_growth = _default_assumptions()["adr_growth"]
+    explicit_adr_growth = 0.04
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -1017,42 +1029,35 @@ async def test_revpar_and_adr_both_overridden_no_derivation() -> None:
             deal_id,
             [
                 {"field_path": "revpar_growth", "value": 0.025},
-                {"field_path": "adr_growth", "value": seed_adr_growth},
+                {"field_path": "adr_growth", "value": explicit_adr_growth},
             ],
         )
 
-    # Operating NOI identical: adr_growth was NOT re-derived from RevPAR.
-    assert _noi_series(scen_run) == pytest.approx(_noi_series(base_run), rel=1e-12)
+    assert len(_noi_series(scen_run)) == len(_noi_series(base_run))
 
     factory = get_session_factory()
     async with factory() as session:
         base = await _load_engine_inputs(
             session, deal_id, scenario_id=sid, tenant_id=_DEFAULT_TENANT
         )
-    assert base["adr_growth"] == seed_adr_growth
-    # FON-63 / FON-65 — ``adr_growth`` was overridden to the value it already
-    # had, so it is a SHADOW override: it still suppresses the RevPAR
-    # derivation (the NOI identity above is what proves it), but the badge
-    # reports the source the value really came from rather than claiming the
-    # analyst changed something. ``revpar_growth`` did move, so it keeps the
-    # analyst_override tag.
-    assert base["__sources__"]["adr_growth"] == SOURCE_SEED
+    assert base["adr_growth"] == explicit_adr_growth
+    assert base["__sources__"]["adr_growth"] == SOURCE_ANALYST_OVERRIDE
     assert base["__sources__"]["revpar_growth"] == SOURCE_ANALYST_OVERRIDE
+    # ADR growth was NOT re-derived from RevPAR: the analyst's 4% every year.
+    assert base["adr_growth_by_year"][1:] == pytest.approx([explicit_adr_growth] * 4)
 
 
 @pytest.mark.asyncio
 async def test_no_growth_override_is_byte_identical() -> None:
-    """(3) No override → adr_growth stays the seed, nothing is tagged derived,
-    and the base scenario's revenue / NOI series equal a no-scenario run
-    exactly."""
+    """(3) No override → no growth (topline v2: no seed — growth is
+    unavailable, held flat), nothing is tagged derived, and the base
+    scenario's revenue / NOI series equal a no-scenario run exactly."""
     from httpx import ASGITransport, AsyncClient
 
     from app.database import get_session_factory
     from app.main import app
     from app.services.engine_runner import (
         SOURCE_DERIVED_FROM_REVPAR_GROWTH,
-        SOURCE_SEED,
-        _default_assumptions,
         _load_engine_inputs,
         run_all_engines,
     )
@@ -1074,9 +1079,9 @@ async def test_no_growth_override_is_byte_identical() -> None:
         ).first()
         tenant_id = str(row[0])
         base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
-        assert base["adr_growth"] == _default_assumptions()["adr_growth"]
-        assert base["__sources__"]["adr_growth"] == SOURCE_SEED
-        assert base["__sources__"]["revpar_growth"] == SOURCE_SEED
+        assert "adr_growth" not in base
+        assert base["__sources__"]["revpar_growth"] == "market_forecast_unavailable"
+        assert base["revpar_growth"] == 0.0
         assert SOURCE_DERIVED_FROM_REVPAR_GROWTH not in base["__sources__"].values()
 
     async with factory() as s1:

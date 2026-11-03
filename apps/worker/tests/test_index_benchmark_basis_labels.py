@@ -43,11 +43,9 @@ from app.api.market import index_methodology_response  # noqa: E402
 from app.services.index_methodology import (  # noqa: E402
     ASSUMPTION_GROWN_LABEL,
     KEY_ADR_GROWTH,
-    KEY_MPI_TARGET_BY_YEAR,
     KEY_OCC_GROWTH,
     METHOD_MARKET_BENCHMARK,
     OVERRIDE_METHOD,
-    driver_record,
     period_end_text,
     resolve_index_by_year,
     resolve_index_methodology,
@@ -163,19 +161,6 @@ def test_api_carries_ttm_period_end_cbre_report_date_and_per_figure_labels() -> 
     assert rows[1]["benchmark_occupancy"]["report_date"] == "March 2026"
     comp = out["comp_set_by_year"]
     assert comp[0]["occupancy"]["basis_label"] == f"Actual · STR TTM May 2025 · {STR_DOC}"
-
-
-def test_labels_are_display_only_engine_driver_records_unchanged() -> None:
-    overrides = {
-        KEY_MPI_TARGET_BY_YEAR: {"value": [110, 112, 114], "note": "ramp"},
-        KEY_OCC_GROWTH: {"value": 0.01, "note": "x"},
-        KEY_ADR_GROWTH: {"value": 0.03, "note": "x"},
-    }
-    r = resolve_index_by_year(ROWS, overrides, hold_years=3, calendar_years=CAL)
-    rec = driver_record(r.years[1], r.method)
-    # The record the revenue engine echoes names no basis / label fields.
-    assert not any(k.startswith("basis") or k in ("period_end", "report_date") for k in rec)
-    assert rec["benchmark_occupancy_source"] == r.years[1].benchmark_occupancy.detail
 
 
 def _str_extraction(fields: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:

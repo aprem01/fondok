@@ -15,6 +15,21 @@ that changed spelling all fail.
 Regenerate ONLY with a recorded reason:
 
     FONDOK_WRITE_SNAPSHOT=1 pytest -q tests/test_assumption_sources_snapshot.py
+
+Regenerations:
+
+* 2026-11-02 — FON-116 / FON-117 topline methodology v2 (approved re-baseline,
+  docs/REGRESSION_BASELINE.md). The growth seeds are retired: ``sources`` /
+  ``values`` lose ``occupancy_growth`` / ``adr_growth`` (no analyst figure,
+  no market report on this corpus → no growth, reason ``no_market_forecast``),
+  ``revpar_growth`` becomes 0.0 badged ``market_forecast_unavailable`` (it
+  was the 4.5% seed). Nothing else moved. Sam's live QA reads these two blocks —
+  communicate before deploy (plan §8 item 9).
+
+Not a regeneration: under the FON-116 staged rollout (2026-11-03) the default
+growth-only topline serves the same ``sources`` / ``values`` on this corpus
+(Year 1 is the T-12 in either mode; no market report, no growth); the topline
+mode travels on ``__`` metadata keys, never on ``values``.
 """
 
 from __future__ import annotations
@@ -261,8 +276,12 @@ async def test_endpoint_serves_the_same_two_blocks_plus_the_new_ones() -> None:
     for key, code in body["reasons"].items():
         assert isinstance(code, str), (key, code)
         assert code in {c.value for c in ReasonCode}, (key, code)
-    # This fixture has no CBRE report, so growth is a seed with a reason.
-    assert body["reasons"]["adr_growth"] == "no_document"
+    # This fixture has no market report and no analyst growth: topline v2
+    # has no growth seed, so growth is unavailable with that reason.
+    assert body["reasons"]["adr_growth"] == "no_market_forecast"
+    assert body["values"]["revpar_growth"] == 0.0
+    assert body["sources"]["revpar_growth"] == "market_forecast_unavailable"
+    assert body["topline_status"]["growth_state"] == "unavailable"
     # 2026-10-30 — the identity inputs have no default: Sam's corpus carries
     # no key count and no price (its OM has no asking-price row), so neither
     # is in ``sources`` / ``values`` (the golden pins their absence) and each
@@ -349,15 +368,11 @@ async def _add_str_trend_subject_ttm(deal_id: UUID) -> None:
 
 
 @pytest.mark.asyncio
-async def test_subject_ttm_seed_appears_in_the_sources_block_as_its_own_id() -> None:
-    """Sam (FON-61): "Clicking Base Year Occupancy = 71.6% shows `STR forecast
-    — From the STR / comp-set forecast`. 71.6% is the subject property's
-    TTM/Base Year occupancy."
-
-    The payload the hover reads now carries ``str_subject_ttm`` on the two rate
-    keys, and the id is one the ontology registry can label — an id the web
-    does not know renders as its own underscore-stripped name.
-    """
+async def test_growth_only_subject_ttm_seed_appears_in_the_sources_block_as_its_own_id() -> None:
+    """FON-116 staged rollout (the deployed growth-only topline): the retired
+    "Use STR rates" switch keeps its pre-v2 effect — Sam (FON-61): the Base
+    Year hover reads ``str_subject_ttm`` on the two rate keys, the subject's
+    own TTM, unrounded (restored from main's test)."""
     from app.ontology.registry import get_registry
 
     deal_id = uuid4()
@@ -366,14 +381,31 @@ async def test_subject_ttm_seed_appears_in_the_sources_block_as_its_own_id() -> 
 
     payload = await _sources_and_values(deal_id)
     sources = payload["sources"]
-
     assert sources["starting_occupancy"] == "str_subject_ttm"
     assert sources["starting_adr"] == "str_subject_ttm"
     assert sources["revenue_seed_from_str_forecast"] == "str_subject_ttm"
-    # The value the hover is explaining is the subject's own TTM, unrounded.
     assert payload["values"]["starting_occupancy"] == pytest.approx(0.716)
     assert payload["values"]["starting_adr"] == pytest.approx(288.0)
     assert "str_subject_ttm" in get_registry().sources
+
+
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
+@pytest.mark.asyncio
+async def test_retired_str_seed_switch_moves_nothing_and_is_flagged() -> None:
+    """Topline v2: the "Use STR rates" switch and its subject-TTM seed are
+    retired. A subject TTM with no penetration indices is not a comp set, so
+    the deal has no benchmark; the stored switch changes no value and is
+    reported as a legacy flag."""
+    deal_id = uuid4()
+    await _seed_fon54a_deal(deal_id)
+    plain = await _sources_and_values(deal_id)
+    await _add_str_trend_subject_ttm(deal_id)
+
+    payload = await _sources_and_values(deal_id)
+    for key in ("starting_occupancy", "starting_adr"):
+        assert payload["sources"][key] == plain["sources"][key]
+        assert payload["values"][key] == plain["values"][key]
+    assert "str_subject_ttm" not in set(payload["sources"].values())
 
 
 @pytest.mark.asyncio

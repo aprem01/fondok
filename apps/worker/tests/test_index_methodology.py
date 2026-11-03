@@ -12,12 +12,9 @@ Pinned here (pure — no DB, no LLM):
   such extraction exists — never filled from another source;
 * each assumption shows its document source, a computed basis, or "your
   override" (with the analyst's note) — and ``None`` with a reason otherwise;
-* ``apply_index_assumptions`` moves an engine key only when the analyst set the
-  assumption, never over an explicit analyst override of that key, and the
-  penetration targets only while the Year-1 rates sit on an STR basis.
-
-The engine-runner integration (toggle off = unchanged; toggle on = feeds
-revenue) is in ``test_engine_runner.py``.
+* (topline v2, 2026-11-02) this module is the Index Analysis PANEL's reader;
+  the model runs on ``services.topline`` — see ``test_topline_resolvers.py``,
+  ``test_topline_loader.py`` and ``test_engine_runner.py``.
 """
 
 from __future__ import annotations
@@ -36,7 +33,6 @@ from app.services.index_methodology import (
     METHOD_MARKET_BENCHMARK,
     METHOD_STR_COMP_SET,
     SOURCE_INDEX_ASSUMPTION,
-    apply_index_assumptions,
     read_costar_comp_set,
     read_market_benchmark,
     resolve_index_methodology,
@@ -47,7 +43,6 @@ from app.services.market_fields import FieldRow
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach-Hospitality-Submarket-2025-12-10.pdf"
 COSTAR_DOC = "CoStar Property Analytics Comp Set.xlsx"
-STR_BASIS = frozenset({"str_forecast", "str_subject_ttm", "str_comp_set"})
 
 
 def _row(name: str, value: Any, *, doc: str, doc_type: str, page: int | None = 2, period: str | None = None) -> FieldRow:
@@ -256,91 +251,6 @@ def test_lane_tagging_routes_an_str_tagged_market_study_to_the_market_lane() -> 
 # ─────────────────────────── the engine seam ───────────────────────────
 
 
-def _base(**kw: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "starting_occupancy": 0.846, "starting_adr": 255.0,
-        "occupancy_growth": 0.008, "adr_growth": 0.04,
-    }
-    base.update(kw)
-    return base
-
-
-def test_seam_does_nothing_without_analyst_overrides() -> None:
-    base = _base(**{KEY_MPI_TARGET: 120.0})  # present on base, but not analyst-set
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    before = dict(base)
-    changed = apply_index_assumptions(base, sources, set(), rows=STR_ROWS, str_basis_sources=STR_BASIS)
-    assert changed == [] and base == before
-
-
-def test_seam_applies_growth_and_penetration_on_the_str_basis() -> None:
-    base = _base(**{KEY_OCC_GROWTH: 0.012, KEY_ADR_GROWTH: 0.035, KEY_MPI_TARGET: 115.0, KEY_ARI_TARGET: 100.0})
-    sources = {"starting_occupancy": "str_subject_ttm", "starting_adr": "str_subject_ttm"}
-    paths = {KEY_OCC_GROWTH, KEY_ADR_GROWTH, KEY_MPI_TARGET, KEY_ARI_TARGET}
-    changed = apply_index_assumptions(base, sources, paths, rows=STR_ROWS, str_basis_sources=STR_BASIS)
-    assert set(changed) == {"occupancy_growth", "adr_growth", "starting_occupancy", "starting_adr"}
-    assert base["occupancy_growth"] == pytest.approx(0.012)
-    assert base["adr_growth"] == pytest.approx(0.035)
-    # comp occupancy (0.846 / 1.10) x 115 / 100
-    assert base["starting_occupancy"] == pytest.approx(0.846 / 1.10 * 1.15, abs=1e-4)
-    # comp ADR (255 / 1.02) at parity
-    assert base["starting_adr"] == pytest.approx(255.0 / 1.02, abs=1e-3)
-    assert all(sources[k] == SOURCE_INDEX_ASSUMPTION for k in changed)
-
-
-def test_seam_never_overwrites_an_explicit_analyst_value() -> None:
-    base = _base(**{KEY_OCC_GROWTH: 0.012, KEY_MPI_TARGET: 115.0})
-    sources = {"starting_occupancy": "analyst_override", "occupancy_growth": "analyst_override"}
-    paths = {KEY_OCC_GROWTH, KEY_MPI_TARGET, "occupancy_growth", "starting_occupancy"}
-    changed = apply_index_assumptions(base, sources, paths, rows=STR_ROWS, str_basis_sources=STR_BASIS)
-    assert changed == []
-    assert base["starting_occupancy"] == pytest.approx(0.846)
-    assert base["occupancy_growth"] == pytest.approx(0.008)
-
-
-def test_seam_leaves_a_derived_adr_growth_alone() -> None:
-    base = _base(**{KEY_ADR_GROWTH: 0.02})
-    sources = {"adr_growth": "derived_from_revpar_growth"}
-    changed = apply_index_assumptions(
-        base, sources, {KEY_ADR_GROWTH}, rows=None, str_basis_sources=STR_BASIS,
-        derived_sources=frozenset({"derived_from_revpar_growth"}),
-    )
-    assert changed == [] and base["adr_growth"] == pytest.approx(0.04)
-
-
-def test_seam_penetration_needs_the_str_basis_to_have_landed() -> None:
-    base = _base(**{KEY_MPI_TARGET: 115.0})
-    sources = {"starting_occupancy": "t12_actual"}
-    changed = apply_index_assumptions(base, sources, {KEY_MPI_TARGET}, rows=STR_ROWS, str_basis_sources=STR_BASIS)
-    assert changed == [] and base["starting_occupancy"] == pytest.approx(0.846)
-
-
-def test_seam_uses_the_selected_market_benchmark() -> None:
-    base = _base(**{KEY_MPI_TARGET: 110.0, "index_methodology": METHOD_MARKET_BENCHMARK})
-    sources = {"starting_occupancy": "str_comp_set"}
-    changed = apply_index_assumptions(
-        base, sources, {KEY_MPI_TARGET}, rows=[*STR_ROWS, *MARKET_ROWS], str_basis_sources=STR_BASIS
-    )
-    assert changed == ["starting_occupancy"]
-    assert base["starting_occupancy"] == pytest.approx(0.712 * 1.10)
-
-
-def test_seam_with_a_disabled_method_changes_nothing() -> None:
-    base = _base(**{KEY_MPI_TARGET: 110.0, "index_methodology": METHOD_COSTAR_COMP_SET})
-    sources = {"starting_occupancy": "str_comp_set"}
-    changed = apply_index_assumptions(
-        base, sources, {KEY_MPI_TARGET}, rows=[*STR_ROWS, *MARKET_ROWS], str_basis_sources=STR_BASIS
-    )
-    assert changed == [] and base["starting_occupancy"] == pytest.approx(0.846)
-
-
-def test_seam_refuses_an_impossible_occupancy() -> None:
-    base = _base(**{KEY_MPI_TARGET: 200.0})
-    sources = {"starting_occupancy": "str_subject_ttm"}
-    changed = apply_index_assumptions(base, sources, {KEY_MPI_TARGET}, rows=STR_ROWS, str_basis_sources=STR_BASIS)
-    assert changed == [] and base["starting_occupancy"] == pytest.approx(0.846)
-
-
 # ─────────────────────────── endpoint shape ───────────────────────────
 
 
@@ -370,7 +280,10 @@ def test_index_assumption_source_is_in_the_ontology_registry() -> None:
 def test_method_choice_keys_are_note_exempt_and_values_are_not() -> None:
     from app.api.deals import _NOTE_EXEMPT_KEYS, _override_needs_note
 
-    assert "index_methodology" in _NOTE_EXEMPT_KEYS
+    # Review I-6 — the retired method key is read as a forced benchmark level
+    # (it moves numbers): it needs a note. The segment choice moves nothing.
+    assert "index_methodology" not in _NOTE_EXEMPT_KEYS
+    assert _override_needs_note("index_methodology", frozenset()) is True
     assert "index_market_segment" in _NOTE_EXEMPT_KEYS
     for key in (KEY_OCC_GROWTH, KEY_ADR_GROWTH, KEY_MPI_TARGET, KEY_ARI_TARGET):
         assert _override_needs_note(key, frozenset()) is True
