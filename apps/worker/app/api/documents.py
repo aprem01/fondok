@@ -10863,6 +10863,34 @@ def _pre_registry_critic_reach(lname: str, critic_key: str) -> bool:
     return len(parts) > 1 and parts[-2] in parents and tail in tails
 
 
+#: Critic keys that are revenue lines; every other money key is an expense /
+#: profit line. Ratios (occupancy / ADR / RevPAR) and profit lines carry no
+#: section rule.
+_CRITIC_REVENUE_KEYS: frozenset[str] = frozenset(
+    {"rooms_revenue", "fb_revenue", "other_revenue", "total_revenue", "resort_fees"}
+)
+_CRITIC_EXPENSE_KEYS: frozenset[str] = frozenset(
+    {
+        "departmental_expenses", "departmental_fb", "departmental_rooms", "ffe_reserve",
+        "fixed_charges", "insurance", "mgmt_fee", "property_taxes", "undistributed_expenses",
+    }
+)
+
+
+def _crosses_section(path: str, key: str) -> bool:
+    """True when ``path`` reads ``key`` out of the opposite P&L section — the
+    engine loader's rule (``engine_runner._is_cost_section`` /
+    ``_is_revenue_section`` over the path's parent segments)."""
+    from ..services.engine_runner import _is_cost_section, _is_revenue_section
+
+    parents = path.split(".")[:-1]
+    if key in _CRITIC_REVENUE_KEYS:
+        return any(_is_cost_section(seg) for seg in parents)
+    if key in _CRITIC_EXPENSE_KEYS:
+        return any(_is_revenue_section(seg) for seg in parents)
+    return False
+
+
 async def _load_critic_inputs(
     session: AsyncSession,
     *,
@@ -11040,6 +11068,11 @@ async def _load_critic_inputs(
             if basis == "broker":
                 side = "broker"  # an explicit broker claim, wherever it sits
             elif is_basis:
+                # The loader's section rule: a revenue line is never read out
+                # of a cost section, nor an expense line out of a revenue one
+                # (b67bfdee: ``cost_of_services.rooms_revenue_usd`` $552.77).
+                if _crosses_section(lname, key):
+                    continue
                 side = "actual"
             elif doc_type in _CRITIC_ACTUAL_DOC_TYPES:
                 continue  # another statement: never blended into the actuals

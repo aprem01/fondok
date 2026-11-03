@@ -413,6 +413,12 @@ async def _insert_variance_deal(deal_id: UUID) -> tuple[UUID, UUID]:
     fy24 = await _insert_statement(
         deal_id, doc_type="PNL", filename=_DETAILED_PNL, extracted_period_year=2024, ts=base,
         fields=[
+            # The real Detailed P&L lists a cost-of-services sub-line named
+            # like rooms revenue ($552.77) before its operating-revenue line.
+            {
+                "field_name": "p_and_l_usali.minor_operated_departments.cost_of_services.rooms_revenue_usd",
+                "value": 552.774,
+            },
             *detailed_pnl_fields(detail_lines=50),
             {"field_name": "p_and_l_usali.net_operating_income.ebitda", "value": 2_500_000.0},
         ],
@@ -446,7 +452,8 @@ async def test_broker_comparison_noi_is_the_year_one_basis_statements() -> None:
 @pytest.mark.asyncio
 async def test_critic_actuals_come_from_the_year_one_basis_statement_only() -> None:
     """No line is blended in from another statement: the 2019 P&L's rooms
-    revenue and utilities never reach the actual side."""
+    revenue and utilities never reach the actual side. And, as in the loader,
+    a revenue line is never read out of a cost section."""
     from app.api.documents import _load_critic_inputs
     from app.database import get_session_factory
 
