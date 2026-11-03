@@ -490,7 +490,9 @@ def resolve_growth_by_year(
         start = min(cal[0], first_calendar_year) if first_calendar_year is not None else cal[0]
         for metric in METRICS:
             prev: MetricGrowth | None = None
-            for c in range(start, cal[-1] + 1):
+            # The chain runs one year past the hold: the exit NOI is the
+            # forward year (hold + 1), which needs its own growth figure.
+            for c in range(start, cal[-1] + 2):
                 hit = _doc(metric, c)
                 if hit is None and prev is not None and prev.value is not None and (
                     prev.series_last_year is not None and c > prev.series_last_year
@@ -617,6 +619,12 @@ def resolve_growth_by_year(
         if c is not None:
             by_cal[("occupancy", c)] = occ
             by_cal[("adr", c)] = adr
+    if cal:
+        # The forward (exit-NOI) year — read by the exit growth convention.
+        fwd = cal[-1] + 1
+        occ_f = _resolve("occupancy", None, fwd, None)
+        by_cal[("occupancy", fwd)] = occ_f
+        by_cal[("adr", fwd)] = _resolve("adr", None, fwd, occ_f.value)
     if cal and first_calendar_year is not None:
         for c in range(first_calendar_year, cal[0]):
             occ = _resolve("occupancy", None, c, None)

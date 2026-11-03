@@ -486,11 +486,13 @@ Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year)
 <!-- source: apps/worker/app/services/engine_runner.py (_apply_topline: revpar_growth, _long_run_growth), services/topline.py (_terminal_growth), services/topline_growth.py (carried_forward) -->
 Returns grows the exit-year NOI at your RevPAR growth when you set one. Otherwise it uses the
 source's long-run average (CBRE Hotel Horizons long-run RevPAR change, else its long-run ADR change)
-when one is on file, else the last projected year's ADR growth with occupancy held at its stabilized
-level — a single forecast year's occupancy gain (a recovery year) is never compounded in
-perpetuity — and 0% (badged No forecast) when there is no figure. The status names the convention
-used. After a forecast series ends, ADR grows at the series' forecast average (labelled
-assumption) and occupancy holds at its last level, so an exit year past the series uses that
+when one is on file, else the ADR growth of the year the exit NOI covers — the year after the hold
+(a 5-year hold closing 2025-09-30 sells on 2030's NOI) — with occupancy held at its stabilized
+level; a single forecast year's occupancy gain (a recovery year) is never compounded in perpetuity.
+Your own ADR growth for the hold's last year carries to the exit when you set no figure for the
+year after. 0% (badged No forecast) when there is no figure. The status names the year and the
+convention used. After a forecast series ends, ADR grows at the series' forecast average (labelled
+assumption) and occupancy holds at its last level, so an exit NOI year past the series uses that
 average; the 95% occupancy cap still applies.
 
 <!-- source: apps/worker/app/services/engine_runner.py (REVENUE_BASIS_KEYS, _apply_revenue_basis, _revenue_basis_failure) -->

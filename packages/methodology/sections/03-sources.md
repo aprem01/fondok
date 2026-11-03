@@ -788,8 +788,8 @@ topline modes. Excluded from `growth_state`.
 
 ::: badge {source=market_forecast_unavailable name="No Market Forecast"}
 No growth figure for the year (`growth = None`): the engine holds the metric flat and the year is
-`flat_no_growth`; `revpar_growth` for Returns is 0.0 with this badge when the last projected year has
-no figure. Reason {{reason:no_market_forecast}}; `topline_status.suggestions` offers the labelled
+`flat_no_growth`; `revpar_growth` for Returns is 0.0 with this badge when the exit-NOI year (the year after the
+hold) has no figure. Reason {{reason:no_market_forecast}}; `topline_status.suggestions` offers the labelled
 4.5% RevPAR suggestion, never applied by the loader.
 
 :::

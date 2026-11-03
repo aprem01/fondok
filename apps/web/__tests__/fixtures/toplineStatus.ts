@@ -58,7 +58,7 @@ export function toplineStatus(over: Partial<ToplineStatus> = {}): ToplineStatus 
     ramp_state: 'defined',
     explicit_metrics: [],
     t12_reference: { occupancy: 0.833, adr: 236.09, revpar: 196.66, period_label: 'T-12 Mar 2025', doc_name: 'T12.xlsx' },
-    terminal_revpar_growth: { value: 0.02, source_id: 'costar_submarket_forecast', basis: 'last_year_adr_growth', label: 'Year-3 ADR growth 2.0%' },
+    terminal_revpar_growth: { value: 0.02, source_id: 'costar_submarket_forecast', basis: 'exit_year_adr_growth', label: 'Year-3 ADR growth 2.0%' },
     suggestions: [],
     legacy_flags: [],
     problems: [],
