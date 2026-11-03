@@ -5764,6 +5764,34 @@ async def statement_roles(
     return statement_roles_from_shims(shims)
 
 
+class YearOneBasis(NamedTuple):
+    """The statement the model grounds Year-1 on: its document and the exact
+    extraction row the loader reads."""
+
+    document_id: str | None
+    extraction_result_id: str | None
+    doc_type: str
+
+
+async def year_one_basis_statement(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> YearOneBasis | None:
+    """The Year-1 basis period's chosen statement (FON-22) — the same rows,
+    ranking and per-period choice as the Year-1 loaders. ``None`` when the
+    deal has no statement. A read failure propagates."""
+    shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+    choices = choose_statements_by_period(_rank_pnl_shims(shims))
+    if not choices:
+        return None
+    shim = choices[0].chosen.shim
+    doc, er = shim.get("document_id"), shim.get("extraction_result_id")
+    return YearOneBasis(
+        str(doc) if doc else None,
+        str(er) if er else None,
+        (shim.get("doc_type") or "").upper(),
+    )
+
+
 def _year_one_lines(
     shims: list[dict[str, Any]],
     aliases: Mapping[str, str],

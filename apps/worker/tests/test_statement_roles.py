@@ -396,3 +396,82 @@ async def test_badge_falls_back_to_the_shared_key_when_rows_cannot_be_read(monke
     records = await _list(deal_id)
     assert len(_badged(records)) == 1
     assert all(r.statement_role is None for r in records)
+
+
+# ── Round 2 / I2 — variance, IC memo and dossier actuals use the Year-1 basis ──
+#
+# Live (read-only, 2026-11-03): on 2e1db521 the broker-vs-actual NOI read the
+# 2019 P&L's before-reserve NOI, on 76d10a64 the 2023 P&L's — while the model
+# grounds Year-1 on the FY2024 Detailed P&L. The actuals side is the engine's
+# Year-1 basis statement and nothing else.
+
+
+async def _insert_variance_deal(deal_id: UUID) -> tuple[UUID, UUID]:
+    """FY2024 Detailed P&L (Year-1 basis, uploaded first) and a 2019 P&L
+    uploaded later; both state rooms revenue and a before-reserve NOI."""
+    base = datetime(2026, 8, 1, tzinfo=UTC)
+    fy24 = await _insert_statement(
+        deal_id, doc_type="PNL", filename=_DETAILED_PNL, extracted_period_year=2024, ts=base,
+        fields=[
+            *detailed_pnl_fields(detail_lines=50),
+            {"field_name": "p_and_l_usali.net_operating_income.ebitda", "value": 2_500_000.0},
+        ],
+    )
+    fy19 = await _insert_statement(
+        deal_id, doc_type="PNL", filename="Copy of Angler_s 2019 P&L.xlsx", extracted_period_year=2019,
+        ts=base + timedelta(days=10),
+        fields=[
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 7_000_000.0},
+            {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 9_000_000.0},
+            {"field_name": "p_and_l_usali.net_operating_income.ebitda", "value": 1_166_000.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 250_000.0},
+        ],
+    )
+    return fy24, fy19
+
+
+@pytest.mark.asyncio
+async def test_broker_comparison_noi_is_the_year_one_basis_statements() -> None:
+    from app.api.analysis import load_actuals_before_reserve_noi
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_variance_deal(deal_id)
+    async with get_session_factory()() as session:
+        noi = await load_actuals_before_reserve_noi(session, deal_id=deal_id, tenant_id=_TENANT)
+    assert noi == 2_500_000.0
+
+
+@pytest.mark.asyncio
+async def test_critic_actuals_come_from_the_year_one_basis_statement_only() -> None:
+    """No line is blended in from another statement: the 2019 P&L's rooms
+    revenue and utilities never reach the actual side."""
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_variance_deal(deal_id)
+    async with get_session_factory()() as session:
+        _broker, actuals, _ctx, _keys = await _load_critic_inputs(
+            session, deal_id=str(deal_id), tenant_id=_TENANT
+        )
+    assert actuals is not None
+    assert actuals.rooms_revenue == pytest.approx(9_496_407.22)
+    assert actuals.total_revenue == pytest.approx(13_481_730.29)
+    assert actuals.undistributed.utilities in (None, 0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_no_actuals_side_without_a_statement() -> None:
+    from app.api.analysis import load_actuals_before_reserve_noi
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    async with get_session_factory()() as session:
+        assert await load_actuals_before_reserve_noi(session, deal_id=deal_id, tenant_id=_TENANT) is None
+        _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert actuals is None

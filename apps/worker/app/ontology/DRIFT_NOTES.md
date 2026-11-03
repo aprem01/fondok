@@ -440,8 +440,8 @@ rest); the period-slice test → `subordinate_namespaces` (via
 `registry._subordinate_scope`); the OM basis rules → the resolved `basis`
 (`om_history` and `market` feed neither side, `broker` is the broker's claim
 wherever it sits); the occupancy → fraction step → the concept's `unit`. The
-loader keeps only the two rules that are its own: the T-12 outranks a P&L, and
-`_build`'s composition.
+loader keeps only the two rules that are its own: the actuals side (FON-22, see
+§7c), and `_build`'s composition.
 
 Output parity is pinned by
 `tests/fixtures/ontology/critic_inputs_pre_registry.json` and checked by
@@ -571,6 +571,24 @@ Recorded because they will bite a document the corpora do not contain:
    `unit: ratio | pct`, so all five spellings normalise. Not present in the
    corpora. When `variance.py` becomes registry-driven, `_RATIO_CONCEPTS`
    should be derived from `unit` and this hand-off deleted.
+
+### 7c. FON-22 — the actuals side is the Year-1 basis statement (deliberate move)
+
+Before FON-22 the actual side ranked on its own rule — a T-12 row over a P&L
+row, then the newest extraction — and blended **line by line** across every
+T-12 and P&L on the deal, so one comparison could pair a T-12 rooms line with a
+2019 P&L total. Live (2026-11-03, read-only): the broker-vs-actual NOI read the
+2019 P&L on 2e1db521 and the 2023 P&L on 76d10a64 while the model grounds
+Year-1 on the FY2024 Detailed P&L. Now the actual side is ONE extraction row:
+`engine_runner.year_one_basis_statement` (the loader's own per-period choice),
+and `analysis.load_actuals_before_reserve_noi` reads the same row. Another
+statement's row feeds neither side.
+
+Pin regenerated for one scenario only, `fon41_live_capture` (four statements):
+`actuals.total_revenue` 8,385,990 → 12,548,720 and `actuals.opex_ratio`
+0.786 → 0.857. The old total came from another statement than the T-12 whose
+lines it was compared with; the T-12 (the Year-1 basis there) states no total,
+so `_build` sums its own legs. The five other scenarios are byte-identical.
 
 ## 8. Phase 1.3b parity exceptions (usali_scorer adapter)
 

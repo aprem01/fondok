@@ -496,54 +496,54 @@ async def load_actuals_before_reserve_noi(
     payload, the dossier and the due-diligence summary all read it from here,
     so no surface compares a different pair from another.
 
-    The T-12 is the reference document and a P&L the fallback (the same
-    preference ``_load_critic_inputs`` applies). ``None`` when no actuals
-    document states one: the figure is never reconstructed.
+    The actuals document is the statement the model grounds Year-1 on
+    (FON-22: ``engine_runner.year_one_basis_statement`` — the loader's own
+    per-period choice), the same row ``_load_critic_inputs`` reads. ``None``
+    when the deal has no statement or it states no before-reserve NOI: the
+    figure is never reconstructed, nor read off another statement.
     """
-    from ..agents.variance import ACTUALS_DOC_TYPES, before_reserve_noi
+    from ..agents.variance import before_reserve_noi
+    from ..services.engine_runner import year_one_basis_statement
 
-    rows = await session.execute(
-        text(
-            # tenant-scope predicate required by tenant_middleware
-            """
-            SELECT er.fields, d.doc_type
-              FROM extraction_results er
-              JOIN documents d ON d.id = er.document_id
-             WHERE er.deal_id = :deal
-               AND er.tenant_id = :tenant
-               AND d.tenant_id = :tenant
-             ORDER BY er.created_at DESC
-            """
-        ),
-        {"deal": str(deal_id), "tenant": str(tenant_id)},
+    basis = await year_one_basis_statement(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
     )
-    best: float | None = None
-    best_rank = 99
-    for r in rows.fetchall():
-        m = r._mapping
-        doc_type = (m.get("doc_type") or "").upper() or None
-        if doc_type not in ACTUALS_DOC_TYPES:
-            continue
-        rank = 0 if doc_type == "T12" else 1
-        if rank >= best_rank:
-            continue
-        raw = m["fields"]
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-        if not isinstance(raw, list):
-            continue
-        # The resolver normalises raw extraction dicts itself, so this reader
-        # stays tolerant of partially-populated rows (an older extraction
-        # without ``source_page`` / ``confidence`` still states its EBITDA).
-        stated = before_reserve_noi(
-            [f for f in raw if isinstance(f, dict)], doc_type=doc_type
+    if basis is None or basis.extraction_result_id is None:
+        return None
+    row = (
+        await session.execute(
+            text(
+                # tenant-scope predicate required by tenant_middleware
+                """
+                SELECT er.fields, er.catalog_version
+                  FROM extraction_results er
+                 WHERE er.id = :er
+                   AND er.deal_id = :deal
+                   AND er.tenant_id = :tenant
+                """
+            ),
+            {"er": basis.extraction_result_id, "deal": str(deal_id), "tenant": str(tenant_id)},
         )
-        if stated is not None:
-            best, best_rank = stated, rank
-    return best
+    ).first()
+    if row is None:
+        return None
+    raw = row._mapping["fields"]
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, list):
+        return None
+    from ..extraction.terse_schema import read_extraction_fields
+
+    raw = read_extraction_fields(raw, row._mapping.get("catalog_version"))
+    # The resolver normalises raw extraction dicts itself, so this reader
+    # stays tolerant of partially-populated rows (an older extraction
+    # without ``source_page`` / ``confidence`` still states its EBITDA).
+    return before_reserve_noi(
+        [f for f in raw if isinstance(f, dict)], doc_type=basis.doc_type or None
+    )
 
 
 @router.get("/{deal_id}/variance", response_model=VarianceReportResponse)

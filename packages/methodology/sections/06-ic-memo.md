@@ -74,9 +74,10 @@ the Assumptions sheet is applied.
   dollars. A value whose unit cannot be established is not compared, and a percentage claim is never
   read against a dollar line — Fondok does not reconstruct dollars from a percent whose denominator is
   itself an unverified broker figure.
-- **Annual against annual.** The actual side is the document's annual or trailing-twelve-month line,
-  never a monthly or quarterly slice, and the T-12 is preferred over a supporting P&L. Fondok never
-  compares a month against a year.
+- **Annual against annual, on the model's own statement.** The actual side is the statement the model
+  grounds Year 1 on (the Data Room's Primary source) — its annual or trailing-twelve-month lines, never
+  a monthly or quarterly slice, and never a line from another statement. Fondok never compares a month
+  against a year.
 - **Plausibility guard.** A pair of figures more than three hundred percent apart is reported as
   “Basis mismatch — needs review” with both figures and no severity: two numbers that far apart are on
   different bases, not evidence of an overstatement.
@@ -154,7 +155,9 @@ inference.
   unverified broker figure.
 - **Annual against annual.** The T-12 side is the document's annual / trailing-twelve-month line
   (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly
-  slice, and the T-12 is preferred over a supporting P&L. If no annual actual exists for a concept
+  slice, read off ONE extraction row — the Year-1 basis statement the loader chooses
+  (`engine_runner.year_one_basis_statement`; `_load_critic_inputs` and
+  `load_actuals_before_reserve_noi` share it), never blended across statements. If no annual actual exists for a concept
   there is no flag — Fondok never compares a month against a year, and the report names the concept it
   could not compare with {{reason:period_mismatch}} or {{reason:no_source}}.
 - **Plausibility guard.** As a last line of defence, a pair of figures more than 300% apart is

@@ -10774,11 +10774,12 @@ async def _persist_critic_report(
 # (``app/ontology/concepts.yaml``): ``concept_for_path`` gives the concept,
 # ``bindings.critic_key`` the bucket, ``scope`` says whether the line is a
 # period total and ``basis`` says whose number it is. What stays here are the
-# two rules the loader owns — the T-12 outranks a P&L, and a ratio line is
-# normalised to a fraction before the schema sees it.
+# two rules the loader owns — the actuals are the Year-1 basis statement only
+# (FON-22, the engine's own choice), and a ratio line is normalised to a
+# fraction before the schema sees it.
 
-#: Documents whose extraction is the subject's ACTUALS, best first: the T-12
-#: is the reference statement, a P&L is the fallback.
+#: Statement document types: a row of one that is NOT the Year-1 basis
+#: statement never feeds either side.
 _CRITIC_ACTUAL_DOC_TYPES: tuple[str, ...] = ("T12", "PNL")
 #: Documents whose extraction is broker material.
 _CRITIC_BROKER_DOC_TYPES: tuple[str, ...] = ("OM",)
@@ -10925,7 +10926,7 @@ async def _load_critic_inputs(
             # tenant-scope predicate required by tenant_middleware
             # (both er and d carry tenant_id — scope both, belt & braces)
             """
-            SELECT er.fields, d.doc_type
+            SELECT er.id AS extraction_result_id, er.fields, d.doc_type
               FROM extraction_results er
               JOIN documents d ON d.id = er.document_id
              WHERE er.deal_id = :deal
@@ -10950,8 +10951,10 @@ async def _load_critic_inputs(
     #     registry's ``subordinate_namespaces``) never feed either side;
     #   * rows map to a CANONICAL key — the registry's concept for the path
     #     (``bindings.critic_key``) rather than a bare last segment;
-    #   * actuals prefer the T-12 document over a P&L, and a line the registry
-    #     scopes annual / TTM over a generically-scoped one; broker rows come
+    #   * actuals come from ONE statement — the one the model grounds Year-1
+    #     on (FON-22: ``engine_runner.year_one_basis_statement``, the loader's
+    #     own per-period choice), never blended across statements; a line the
+    #     registry scopes annual / TTM wins over a generically-scoped one; broker rows come
     #     only from the OM's own claim (registry basis ``broker``, never
     #     ``om_history`` or ``market``);
     #   * a ratio line (registry ``unit``) is normalised to a fraction before
@@ -10993,6 +10996,11 @@ async def _load_critic_inputs(
         if cur is None or rank < cur[0]:
             bucket[key] = (rank, value)
 
+    from ..services.engine_runner import year_one_basis_statement
+
+    basis = await year_one_basis_statement(session, deal_id=deal_id, tenant_id=tenant_id)
+    basis_row = basis.extraction_result_id if basis is not None else None
+
     for r in rows.fetchall():
         m = r._mapping
         raw_fields = m["fields"]
@@ -11004,8 +11012,9 @@ async def _load_critic_inputs(
         if not isinstance(raw_fields, list):
             continue
         doc_type = (m.get("doc_type") or "").upper()
-        # Actuals: the T-12 is the reference document; a P&L is the fallback.
-        actual_doc_rank = 0 if doc_type == _CRITIC_ACTUAL_DOC_TYPES[0] else 1
+        # Actuals: the Year-1 basis statement's own row, and no other.
+        is_basis = basis_row is not None and str(m.get("extraction_result_id")) == basis_row
+        actual_doc_rank = 0
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -11030,8 +11039,10 @@ async def _load_critic_inputs(
                 continue  # a comp-set stat / the OM's history is not the broker's claim
             if basis == "broker":
                 side = "broker"  # an explicit broker claim, wherever it sits
-            elif doc_type in _CRITIC_ACTUAL_DOC_TYPES:
+            elif is_basis:
                 side = "actual"
+            elif doc_type in _CRITIC_ACTUAL_DOC_TYPES:
+                continue  # another statement: never blended into the actuals
             elif doc_type in _CRITIC_BROKER_DOC_TYPES:
                 side = "broker"
             else:

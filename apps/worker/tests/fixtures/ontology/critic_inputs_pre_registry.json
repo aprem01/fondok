@@ -1277,7 +1277,7 @@
           "fb_revenue": 3216620.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 8385990.0,
+          "total_revenue": 12548720.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -1306,7 +1306,7 @@
           },
           "gop": 4970460.0,
           "noi": 1794100.0,
-          "opex_ratio": 0.7860598450510912,
+          "opex_ratio": 0.8570292428231724,
           "occupancy": null,
           "adr": null,
           "revpar": null,
