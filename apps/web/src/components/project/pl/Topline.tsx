@@ -66,7 +66,8 @@ const SOURCE_SHORT: Record<string, string> = {
   analyst_override: 'Your override',
   cbre_horizons: 'CBRE',
   costar_submarket_forecast: 'CoStar',
-  carried_forward: 'Carried forward',
+  carried_forward: 'Past the forecast',
+  held_at_stabilization: 'Held after stabilization',
   withheld_by_policy: 'Withheld',
   unavailable: 'No figure',
 };

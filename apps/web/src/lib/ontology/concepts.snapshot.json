@@ -8332,11 +8332,19 @@
       "reason": null
     },
     "growth_carried_forward": {
-      "label": "Carried forward",
-      "badge": "Carried forward",
+      "label": "Past the forecast",
+      "badge": "Past the forecast",
       "kind": "assumption",
       "doc_types": [],
-      "explanation": "The year is past the last year of the market forecast, so the last forecast year's growth is reused — an assumption, labelled with the report and year it carries.",
+      "explanation": "The year is past the last year of the market forecast. ADR grows at the average of that forecast's years (named on the label, e.g. 2025–2029) and occupancy holds at its last forecast level — an assumption, labelled with the report it extends.",
+      "reason": null
+    },
+    "occupancy_held_at_stabilization": {
+      "label": "Held after stabilization",
+      "badge": "Held after stabilization",
+      "kind": "assumption",
+      "doc_types": [],
+      "explanation": "Occupancy is flat after the stabilization year — it holds at its stabilization-year level while ADR keeps growing. Only your own occupancy growth for a specific year moves it.",
       "reason": null
     },
     "market_forecast_unavailable": {

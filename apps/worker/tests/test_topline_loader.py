@@ -105,10 +105,14 @@ async def test_defaults_on_the_documents_deal_ramp_and_carry_the_forecast() -> N
     assert status["ramp_by_year"] == [0.85, 0.95]
     assert base["starting_occupancy"] == pytest.approx(0.754959 * 0.988 * 0.85, rel=1e-5)
     assert [r["adr"]["source"] for r in status["growth_by_year"]] == ["costar_submarket_forecast"] * 4 + ["carried_forward"]
-    # Terminal growth = 2030 ADR, carried forward from CoStar 2029 (+2.8%); the
-    # recovery year's +3.0% occupancy is held, not compounded (review I-2).
-    assert base["revpar_growth"] == pytest.approx(0.028)
-    assert [r["occupancy"]["value"] for r in status["growth_by_year"]][4] == 0.0
+    # Terminal growth = 2030 ADR past the CoStar series: the 2025–2029
+    # forecast average (+2.44%, decision 1a), not 2029's +2.8%. Occupancy is
+    # flat after the Year-3 stabilization (decision 1b): the 2029 +3.0% and
+    # 2030 are held.
+    assert base["revpar_growth"] == pytest.approx(0.0244)
+    occ = [r["occupancy"] for r in status["growth_by_year"]]
+    assert [g["source"] for g in occ][3:] == ["held_at_stabilization"] * 2
+    assert [g["value"] for g in occ][3:] == [0.0, 0.0]
     assert base["__sources__"]["revpar_growth"] == "growth_carried_forward"
 
 
@@ -145,7 +149,10 @@ async def test_no_documents_no_growth_seed_flat_with_the_labelled_suggestion() -
     status = base["__topline_status__"]
     assert status["benchmark_level"] == "none"
     assert status["growth_state"] == "unavailable"
-    assert base["occupancy_growth_by_year"] == [None] * 5
+    # Years 2–3 have no figure (held flat, unavailable); Years 4–5 are past
+    # the Year-3 stabilization: occupancy held by rule (decision 1b).
+    assert base["occupancy_growth_by_year"] == [None, None, None, 0.0, 0.0]
+    assert base["adr_growth_by_year"] == [None] * 5
     assert base["revpar_growth"] == 0.0
     assert base["__sources__"]["revpar_growth"] == "market_forecast_unavailable"
     assert base["__reasons__"]["revpar_growth"]["code"].value == "no_market_forecast"
@@ -164,7 +171,9 @@ async def test_analyst_scalar_growth_still_applies_on_the_seam() -> None:
             s, KIMPTON_FIXTURE_DEAL_ID, {"occupancy_growth": 0.008, "adr_growth": 0.04},
             tenant_id=str(uuid4()), assumptions=kimpton_seed(),
         )
-    assert base["occupancy_growth_by_year"] == [None, 0.008, 0.008, 0.008, 0.008]
+    # The all-years occupancy figure applies through the Year-3 stabilization,
+    # then occupancy is flat (decision 1b); ADR keeps its growth.
+    assert base["occupancy_growth_by_year"] == [None, 0.008, 0.008, 0.0, 0.0]
     assert base["adr_growth_by_year"] == [None, 0.04, 0.04, 0.04, 0.04]
     assert base["__topline_status__"]["growth_state"] == "override"
     # Exit growth = the last year's ADR growth; occupancy held (review I-2).

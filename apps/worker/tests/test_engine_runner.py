@@ -1527,7 +1527,8 @@ async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
     assert base["__sources__"]["starting_occupancy"] == "topline_benchmark"
     assert status["penetration_occ"] == 110.0 and status["penetration_occ_source"] == "analyst_override"
     assert status["penetration_adr_source"] == "default"
-    assert base["occupancy_growth_by_year"][1:] == [0.012] * 4
+    # Through the Year-3 stabilization; occupancy flat after it (decision 1b).
+    assert base["occupancy_growth_by_year"][1:] == [0.012, 0.012, 0.0, 0.0]
     assert base["adr_growth_by_year"][1:] == [0.033] * 4
     treatments = {f["key"]: f["treatment"] for f in status["legacy_flags"]}
     assert treatments["index_market_occupancy_growth"] == "read_as_all_years_growth"
@@ -1554,8 +1555,9 @@ async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
 
     assert base["occupancy_growth"] == pytest.approx(0.002)
     assert base["__sources__"]["occupancy_growth"] == "analyst_override"
-    # The analyst's all-years growth beats the legacy market-growth key.
-    assert base["occupancy_growth_by_year"][1:] == [0.002] * 4
+    # The analyst's all-years growth beats the legacy market-growth key (and,
+    # like any all-years figure, stops at the Year-3 stabilization — 1b).
+    assert base["occupancy_growth_by_year"][1:] == [0.002, 0.002, 0.0, 0.0]
 
 
 # ─────────── FON-116 / FON-117 (topline v2) — the loader's revenue input ───────────
@@ -1577,7 +1579,8 @@ async def test_loader_feeds_the_topline_and_the_resolved_growth_lists() -> None:
     revenue_input = _build_input_for("revenue", KIMPTON_FIXTURE_DEAL_ID, base, {})
     assert revenue_input.topline is not None
     assert revenue_input.topline.benchmark_level == "none"
-    assert revenue_input.occupancy_growth_by_year == [None] * 5
+    # Years 4–5 are past the Year-3 stabilization: occupancy held (1b).
+    assert revenue_input.occupancy_growth_by_year == [None, None, None, 0.0, 0.0]
     assert revenue_input.adr_growth_by_year == [None] * 5
     assert revenue_input.occupancy_by_year_override is None
     assert revenue_input.index_drivers_by_year == []

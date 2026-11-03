@@ -513,7 +513,8 @@ def _step_summary(steps: Sequence[MetricGrowth]) -> str:
                 "analyst_override": "your override",
                 "cbre_horizons": "CBRE forecast",
                 "costar_submarket_forecast": "CoStar forecast",
-                "carried_forward": "carried forward",
+                "carried_forward": "past the forecast",
+                "held_at_stabilization": "held after stabilization",
             }.get(g.source, g.source)
             parts.append(f"{c}: {g.value * 100:+.1f}% ({kind})")
     return "; ".join(parts)
@@ -846,6 +847,7 @@ __all__ = [
     "LEGACY_STR_SEED_FLAG",
     "PLATFORM_REVPAR_SUGGESTION",
     "TOPLINE_LIST_KEYS",
+    "TOPLINE_MODES",
     "TOPLINE_STATUS_KEY",
     "ToplineBuild",
     "ToplineInputs",

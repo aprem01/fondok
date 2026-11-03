@@ -243,11 +243,15 @@ _DEBT_STABILIZED_KEYS = ("stabilized_dscr", "stabilized_debt_yield", "provenance
 
 @pytest.mark.asyncio
 async def test_stabilization_year_does_not_move_returns() -> None:
-    """On a deal with NO benchmark, setting or changing the Stabilization Year
-    leaves the reconciliation bit-identical (FON-67). Topline v2: on a deal
-    with a benchmark the year also ends the penetration ramp, so it moves the
-    ramp years — ``test_topline_loader.py::
-    test_stabilization_year_ends_the_ramp_on_a_benchmark_deal`` pins that."""
+    """On a deal with NO benchmark and NO growth figure, setting or changing
+    the Stabilization Year leaves every NUMBER bit-identical (FON-67). Topline
+    v2: on a deal with a benchmark the year also ends the penetration ramp
+    (``test_topline_loader.py::test_stabilization_year_ends_the_ramp_on_a_
+    benchmark_deal``), and since decision 1b (2026-11-03) occupancy is flat
+    after it — on a deal WITH occupancy growth the year moves the out-years
+    (``test_topline_decisions.py``). Here the only non-numeric change is the
+    per-year growth provenance: a year after S says "held after
+    stabilization" instead of "no figure"."""
     baseline = await _run({})
     with_year_2 = await _run({"stabilization_year": 2})
     with_year_4 = await _run({"stabilization_year": 4})
@@ -266,6 +270,15 @@ async def test_stabilization_year_does_not_move_returns() -> None:
         after = _comparable(with_year_4[engine]["outputs"])
         before.pop("stabilization", None)
         after.pop("stabilization", None)
+        if engine == "revenue":
+            # Decision 1b — the per-year growth PROVENANCE names the rule
+            # (held after stabilization vs. no figure); the figures do not move.
+            for side in (before, after):
+                side.pop("topline_by_year", None)
+                side.pop("provenance", None)
+            assert [y["occupancy"] for y in baseline[engine]["outputs"]["years"]] == [
+                y["occupancy"] for y in with_year_4[engine]["outputs"]["years"]
+            ]
         if engine == "debt":
             # Debt's stabilized metrics follow the analyst year (R-057);
             # everything else on Debt stays put.

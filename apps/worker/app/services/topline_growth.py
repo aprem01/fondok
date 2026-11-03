@@ -18,14 +18,26 @@ ONE mechanism decides the occupancy / ADR growth applied INTO each model year
    overall series, labelled. A bucket series that lacks a year inside its own
    range is NOT patched from another bucket.
 4. ``carried_forward`` — a calendar year past the last year of the document
-   series the previous year was read from: ADR reuses the previous year's
-   growth; OCCUPANCY HOLDS at its last level (growth 0) — a forecast's
-   recovery-year occupancy gain cannot repeat every year (review I-2; the
-   95 % cap still applies). Both are assumptions, labelled with the report
-   and year they carry.
+   series the previous year was read from: ADR grows at the ARITHMETIC
+   AVERAGE of that series' forecast-tagged ADR growth years (domain lead
+   2026-11-03, decision 1a — "use the forecast average rather than last
+   year's"; the label names the years, e.g. "CoStar … 2025–2029 forecast
+   average (+2.4%)"); OCCUPANCY HOLDS at its last level (growth 0) — a
+   forecast's recovery-year occupancy gain cannot repeat every year (review
+   I-2; the 95 % cap still applies). Both are assumptions, labelled with the
+   report they extend. A series with no forecast-tagged ADR year has no
+   average: the year is ``unavailable``.
 5. ``unavailable`` — nothing at all: the figure is ``None`` and the engine
    holds the metric flat (``flat_no_growth``). Growth 0 is the absence of
    growth, never a seeded rate.
+
+Occupancy is FLAT after stabilization (domain lead 2026-11-03, decision 1b):
+with ``stabilization_year`` = S, the occupancy growth INTO every model year
+after S is 0 with source ``held_at_stabilization`` — whatever a document, a
+carry-forward or the analyst's all-years figure says — so occupancy holds at
+its Year-S level. Only the analyst's PER-YEAR occupancy figure for that year
+still applies (labelled as theirs). ADR is untouched. The held years are not
+counted as a sourced figure in the growth state.
 
 A CoStar-derived candidate under a ``withhold`` data policy is
 ``withheld_by_policy`` (reason ``license_withheld``) — never applied, never
@@ -67,6 +79,7 @@ GROWTH_SOURCE_IDS: dict[str, str] = {
     "cbre_horizons": "cbre_horizons",
     "costar_submarket_forecast": "costar_submarket_forecast",
     "carried_forward": "growth_carried_forward",
+    "held_at_stabilization": "occupancy_held_at_stabilization",
     "withheld_by_policy": "costar_withheld_by_policy",
     "unavailable": "market_forecast_unavailable",
 }
@@ -181,6 +194,10 @@ class MetricGrowth:
     #: "CBRE Horizons" / "CoStar <submarket> submarket" — for a carried label.
     report: str | None = None
     calendar_year: int | None = None
+    #: Decision 1a — the arithmetic average of the series' forecast-tagged
+    #: growth years for this metric, and the first / last such year.
+    forecast_average: float | None = None
+    forecast_span: tuple[int, int] | None = None
 
     @property
     def source_id(self) -> str:
@@ -234,7 +251,13 @@ class GrowthResolution:
 
     def state(self, years: Sequence[int]) -> GrowthState:
         """Overall growth state over the model ``years`` that are APPLIED."""
-        picks = [self.year(y, m) for y in years for m in METRICS if 1 <= y <= self.hold_years]
+        picks = [
+            p
+            for p in (self.year(y, m) for y in years for m in METRICS if 1 <= y <= self.hold_years)
+            # Decision 1b — a year held flat after stabilization is a rule,
+            # not a market figure the deal has (or lacks).
+            if p.source != "held_at_stabilization"
+        ]
         if not picks:
             return "unavailable"
         have = [p for p in picks if p.value is not None]
@@ -333,11 +356,13 @@ def resolve_growth_by_year(
     policy: TenantDataPolicies,
     first_calendar_year: int | None = None,
     gated_doc_types: Sequence[str] = (),
+    stabilization_year: int | None = None,
 ) -> GrowthResolution:
     """Resolve the growth INTO every model year ``1..hold_years`` (and every
     calendar year from ``first_calendar_year`` — the benchmark's first growth
     step — up to the last model year). See the module docstring."""
     hold = max(1, int(hold_years))
+    s_year = int(stabilization_year) if stabilization_year is not None and int(stabilization_year) >= 1 else None
     cal = [int(c) for c in calendar_years][:hold]
     if len(cal) < hold:
         cal = []  # a partial calendar is no calendar
@@ -371,6 +396,21 @@ def resolve_growth_by_year(
                     value=v, period=cy.period, doc_name=cy.doc_name, page=cy.page,
                     report_date=costar_reading.report_date,
                 )
+    def _forecast_average(series_by_year: dict[int, _DocYear]) -> tuple[float | None, tuple[int, int] | None]:
+        """Decision 1a — mean of the forecast-tagged years (``period`` not
+        actual / historical; an untagged year reads as forecast, as its
+        label does)."""
+        fc = sorted(y for y, d in series_by_year.items() if not _is_actual(d.period))
+        if not fc:
+            return None, None
+        return sum(series_by_year[y].value for y in fc) / len(fc), (fc[0], fc[-1])
+
+    averages: dict[tuple[str, str], tuple[float | None, tuple[int, int] | None]] = {
+        (src, metric): _forecast_average(series_by_year)
+        for src, by_metric in (("cbre", cbre), ("costar", costar))
+        for metric, series_by_year in by_metric.items()
+    }
+
     reextract: list[str] = []
     if stale_extraction:
         reextract.append(series.fallback_reason or costar_reading.detail or "")
@@ -384,10 +424,12 @@ def resolve_growth_by_year(
             label = f"{kind} · CBRE Hotel Horizons {c} · All Hotels"
             if hit.doc_name:
                 label += f" · {hit.doc_name}" + (f" p.{hit.page}" if hit.page else "")
+            avg, span = averages[("cbre", metric)]
             return MetricGrowth(
                 value=hit.value, source="cbre_horizons", label=label, doc_name=hit.doc_name,
                 page=hit.page, report_date=hit.report_date or cbre_date,
                 series_last_year=max(cbre[metric]), report="CBRE Hotel Horizons", calendar_year=c,
+                forecast_average=avg, forecast_span=span,
             )
         hit = costar[metric].get(c)
         if hit is not None:
@@ -405,11 +447,13 @@ def resolve_growth_by_year(
             label = f"{kind} · {costar_report} {c} · {bucket_label}"
             if hit.doc_name:
                 label += f" · {hit.doc_name}" + (f" p.{hit.page}" if hit.page else "")
+            avg, span = averages[("costar", metric)]
             return MetricGrowth(
                 value=hit.value, source="costar_submarket_forecast", label=label,
                 doc_name=hit.doc_name, page=hit.page, report_date=hit.report_date,
                 bucket=series.bucket, series_last_year=max(costar[metric]),
                 report=f"{costar_report} ({bucket_label})", calendar_year=c,
+                forecast_average=avg, forecast_span=span,
             )
         return None
 
@@ -452,19 +496,41 @@ def resolve_growth_by_year(
                     prev.series_last_year is not None and c > prev.series_last_year
                 ):
                     held = metric == "occupancy"
-                    hit = MetricGrowth(
-                        value=0.0 if held else prev.value, source="carried_forward",
-                        label=(
+                    if held:
+                        value: float | None = 0.0
+                        label = (
                             f"Assumption · occupancy held at its {prev.series_last_year} level — "
                             f"the {prev.report} forecast ends {prev.series_last_year}"
-                            if held
-                            else f"Assumption · carried forward from {prev.report} {prev.series_last_year}"
-                            f" ({_fmt(prev.value)})"
-                        ),
-                        doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
-                        bucket=prev.bucket, series_last_year=prev.series_last_year,
-                        report=prev.report, calendar_year=c,
-                    )
+                        )
+                    elif prev.forecast_average is not None and prev.forecast_span is not None:
+                        # Decision 1a — the series' forecast average, never
+                        # the last year's figure carried on.
+                        value = prev.forecast_average
+                        first, last = prev.forecast_span
+                        span = f"{first}–{last}" if first != last else f"{first}"
+                        label = (
+                            f"Assumption · {prev.report} {span} forecast average ({_fmt(value)}) — "
+                            f"the forecast ends {prev.series_last_year}"
+                        )
+                    else:
+                        value = None
+                    if value is not None:
+                        hit = MetricGrowth(
+                            value=value, source="carried_forward", label=label,
+                            doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
+                            bucket=prev.bucket, series_last_year=prev.series_last_year,
+                            report=prev.report, calendar_year=c,
+                            forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
+                        )
+                    else:
+                        hit = MetricGrowth(
+                            value=None, source="unavailable",
+                            label=(
+                                f"No ADR growth for {c}: the {prev.report} series ends "
+                                f"{prev.series_last_year} and has no forecast years to average — set growth manually"
+                            ),
+                            reason=ReasonCode.NO_MARKET_FORECAST, calendar_year=c,
+                        )
                 if hit is None:
                     hit = _unavailable(metric, c)
                 doc_by_cal[(metric, c)] = hit
@@ -511,6 +577,17 @@ def resolve_growth_by_year(
             return MetricGrowth(
                 value=v, source="analyst_override",
                 label=f"Analyst override · Year {y} {METRIC_NOUN[metric]} growth {_fmt(v)}",
+                calendar_year=c,
+            )
+        if metric == "occupancy" and y is not None and s_year is not None and y > s_year:
+            # Decision 1b — occupancy is flat after stabilization.
+            where = f"Year {s_year} ({cal[s_year - 1]})" if cal else f"Year {s_year}"
+            return MetricGrowth(
+                value=0.0, source="held_at_stabilization",
+                label=(
+                    f"Assumption · occupancy held at its {where} stabilized level — occupancy is "
+                    "flat after stabilization; ADR keeps growing"
+                ),
                 calendar_year=c,
             )
         hit = _scalar(metric, c, occ_value)

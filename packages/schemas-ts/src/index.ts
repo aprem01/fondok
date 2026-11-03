@@ -585,6 +585,7 @@ export const GrowthSource = z.enum([
   'cbre_horizons',
   'costar_submarket_forecast',
   'carried_forward',
+  'held_at_stabilization',
   'withheld_by_policy',
   'unavailable',
 ]);

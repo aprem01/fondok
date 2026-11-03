@@ -406,6 +406,10 @@ GrowthSource = Literal[
     "cbre_horizons",
     "costar_submarket_forecast",
     "carried_forward",
+    # Domain lead 2026-11-03 (decision 1b): occupancy is flat after
+    # stabilization — growth 0 into every year after the stabilization year
+    # unless the analyst typed that year's own occupancy growth.
+    "held_at_stabilization",
     "withheld_by_policy",
     "unavailable",
 ]

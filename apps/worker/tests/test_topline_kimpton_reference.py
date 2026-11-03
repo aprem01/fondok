@@ -10,11 +10,25 @@ year: 2026 at the analyst's own 0.0% / −2.0%, 2027–2029 at the CoStar Miami
 Beach Luxury & Upper Upscale forecast (p.26), 2030–2032 at the analyst's own
 figures; occupancy penetration 100 every year, ADR 97 / 98 / 99 / 100.
 
-Three cases:
+Domain-lead decisions 2026-11-03 (``test_topline_decisions.py``): occupancy is
+FLAT after stabilization (1b) and ADR past a forecast grows at the forecast's
+average (1a). The reference tab keeps moving occupancy after stabilization
+(CoStar's 2029 +3.0%), so 1b DELIBERATELY differs from it: with the default
+Year-3 stabilization (2028) the ADR path and occupancy through 2028 match
+the tab exactly; occupancy from 2029 on is the tab's ÷ 1.03 (the held 2029
+step), pinned below. 1a never meets the tab (her 2030–2032 ADR growth is
+her own per-year figure); it is pinned on the defaults path.
 
-* ``exact`` — the reference's own keyed comp-set level → every year's
-  occupancy / ADR / RevPAR, the comp-set row and the growth rows match to
-  1e-9 (the arithmetic is identical).
+Cases:
+
+* ``exact`` — the reference's own keyed comp-set level → the ADR path every
+  year, occupancy / RevPAR through stabilization and the growth rows match
+  to 1e-9 (the arithmetic is identical); 2029–2032 occupancy differs by
+  exactly the held +3.0% step (decision 1b).
+* ``exact_s4`` — the same inputs with stabilization in Year 4 (2029, the year
+  her ADR penetration reaches 100): 2029 is the stabilization year itself, so
+  its growth applies, and her 2030 +0.5% is her own per-year figure (it still
+  wins) — the whole tab reproduces to 1e-9.
 * ``documents`` — the same scenario read end to end from the deal's
   documents (the May 2025 STAR report through the STR template extractor,
   the CoStar submarket extraction). The only difference from the reference is
@@ -106,6 +120,8 @@ def _run(
         rows, inputs.growth, calendar_years=years, hold_years=hold,
         class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
         first_calendar_year=(bench.base_calendar_year + 1) if bench.base_calendar_year else None,
+        # As the loader does: occupancy flat after the stabilization year (1b).
+        stabilization_year=inputs.stabilization_year,
     )
     build = build_topline(bench, growth, inputs, hold_years=hold, t12=None)
     out = RevenueEngine().run(
@@ -138,28 +154,74 @@ def _keyed_comp_set() -> BenchmarkResolution:
     )
 
 
+#: Decision 1b against the tab, default Year-3 stabilization (2028): the
+#: tab's 2029 +3.0% occupancy step is held, so occupancy from 2029 on is the
+#: tab's ÷ 1.03 (2030's +0.5% is her own per-year figure and still applies).
+HELD_2029_STEP = 1.03
+HELD_FROM = 2029
+
+
 def test_exact_reference_path_from_the_keyed_comp_set() -> None:
     build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows())
     subj, comp = REFERENCE["SUBJECT PROPERTY"], REFERENCE["COMPETITIVE SET"]
     assert out.topline_methodology_version == 2
     assert out.projection_calendar_years == YEARS
+    assert build.status["stabilization_year"] == 3
     for i, cal in enumerate(YEARS):
         y = out.years[i]
         k = str(cal)
+        held = HELD_2029_STEP if cal >= HELD_FROM else 1.0
+        # ADR: the tab exactly, every year.
+        assert y.adr == pytest.approx(subj["ADR"][k], rel=1e-9, abs=0), cal
+        # Occupancy: the tab exactly through stabilization; after it, the
+        # tab without the held 2029 step (decision 1b).
+        assert y.occupancy == pytest.approx(subj["Occupancy"][k] / held, rel=1e-9, abs=0), cal
+        assert y.revpar == pytest.approx(subj["RevPAR"][k] / held, rel=1e-9, abs=0), cal
+        b = build.drivers.benchmark_by_year[i]
+        assert b.occupancy == pytest.approx(comp["Occupancy"][k] / held, rel=1e-9, abs=0), cal
+        assert b.adr == pytest.approx(comp["ADR"][k], rel=1e-9, abs=0), cal
+        g = build.status["growth_by_year"][i]
+        expected_occ_g = 0.0 if cal == HELD_FROM else comp["Occupancy Growth"][k]
+        assert g["occupancy"]["value"] == pytest.approx(expected_occ_g, abs=1e-12), cal
+        assert g["adr"]["value"] == pytest.approx(comp["ADR Growth"][k], abs=1e-12), cal
+    srcs = [(g["occupancy"]["source"], g["adr"]["source"]) for g in build.status["growth_by_year"]]
+    assert srcs[0] == ("analyst_override", "analyst_override")
+    # 2027–2028 are the CoStar forecast the reference also used; 2029's ADR
+    # too, while its occupancy is held after the Year-3 stabilization.
+    assert srcs[1:3] == [("costar_submarket_forecast", "costar_submarket_forecast")] * 2
+    assert srcs[3] == ("held_at_stabilization", "costar_submarket_forecast")
+    # 2030: her own per-year +0.5% still wins over the rule.
+    assert srcs[4] == ("analyst_override", "analyst_override")
+    assert build.status["growth_state"] == "sourced"
+
+
+def test_reference_differences_under_decision_1b_are_the_held_2029_step() -> None:
+    """The exact per-year gap to the tab (reported to the domain lead)."""
+    _build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows())
+    subj = REFERENCE["SUBJECT PROPERTY"]
+    gaps = {
+        cal: out.years[i].occupancy - subj["Occupancy"][str(cal)] for i, cal in enumerate(YEARS)
+    }
+    assert all(gaps[c] == pytest.approx(0.0, abs=1e-12) for c in (2026, 2027, 2028))
+    for c in (2029, 2030, 2031, 2032):
+        assert gaps[c] == pytest.approx(subj["Occupancy"][str(c)] * (1 / 1.03 - 1), rel=1e-9)
+    # 2029: 76.8318% in the tab vs 74.5940% (the 2028 level held).
+    assert out.years[3].occupancy == pytest.approx(0.755 * 0.988, rel=1e-12)
+    assert subj["Occupancy"]["2029"] == pytest.approx(0.7683182, abs=1e-7)
+
+
+def test_exact_reference_path_with_stabilization_in_year_4_is_the_whole_tab() -> None:
+    build, out = _run(_keyed_comp_set(), {**SCENARIO, "stabilization_year": 4}, costar_rows())
+    subj = REFERENCE["SUBJECT PROPERTY"]
+    assert build.status["stabilization_year"] == 4
+    for i, cal in enumerate(YEARS):
+        y, k = out.years[i], str(cal)
         assert y.occupancy == pytest.approx(subj["Occupancy"][k], rel=1e-9, abs=0), cal
         assert y.adr == pytest.approx(subj["ADR"][k], rel=1e-9, abs=0), cal
         assert y.revpar == pytest.approx(subj["RevPAR"][k], rel=1e-9, abs=0), cal
-        b = build.drivers.benchmark_by_year[i]
-        assert b.occupancy == pytest.approx(comp["Occupancy"][k], rel=1e-9, abs=0), cal
-        assert b.adr == pytest.approx(comp["ADR"][k], rel=1e-9, abs=0), cal
-        g = build.status["growth_by_year"][i]
-        assert g["occupancy"]["value"] == pytest.approx(comp["Occupancy Growth"][k], abs=1e-12), cal
-        assert g["adr"]["value"] == pytest.approx(comp["ADR Growth"][k], abs=1e-12), cal
-    # 2027–2029 are the CoStar forecast the reference also used.
-    srcs = [(g["occupancy"]["source"], g["adr"]["source"]) for g in build.status["growth_by_year"]]
-    assert srcs[1:4] == [("costar_submarket_forecast", "costar_submarket_forecast")] * 3
-    assert srcs[0] == ("analyst_override", "analyst_override")
-    assert build.status["growth_state"] == "sourced"
+    occ_sources = [g["occupancy"]["source"] for g in build.status["growth_by_year"]]
+    # 2031–2032 are her own 0.0% per-year figures (they win over the rule).
+    assert occ_sources[4:] == ["analyst_override"] * 3
 
 
 def test_costar_growth_equals_the_reference_submarket_row() -> None:
@@ -177,9 +239,10 @@ def test_costar_growth_equals_the_reference_submarket_row() -> None:
         assert occ.page == 26
         assert occ.value == pytest.approx(sub["Occupancy Growth"][str(cal)], abs=1e-12)
         assert adr.value == pytest.approx(sub["ADR Growth"][str(cal)], abs=1e-12)
-    # Past the report's last forecast year (2029) the growth is carried forward.
+    # Past the report's last forecast year (2029): ADR at the 2025–2029
+    # forecast average (decision 1a, 2026-11-03), not 2029's +2.8%.
     assert growth.year(5, "adr").source == "carried_forward"
-    assert growth.year(5, "adr").value == pytest.approx(0.028)
+    assert growth.year(5, "adr").value == pytest.approx(0.0244)
 
 
 def test_documents_path_differs_only_by_the_reference_rounding_of_the_comp_set() -> None:
@@ -201,9 +264,10 @@ def test_documents_path_differs_only_by_the_reference_rounding_of_the_comp_set()
     assert abs(occ_ratio - 1) < 6e-5 and abs(adr_ratio - 1) < 2e-5
     for i, cal in enumerate(YEARS):
         y, k = out.years[i], str(cal)
-        assert y.occupancy == pytest.approx(subj["Occupancy"][k] * occ_ratio, rel=1e-9), cal
+        held = HELD_2029_STEP if cal >= HELD_FROM else 1.0  # decision 1b, see the exact case
+        assert y.occupancy == pytest.approx(subj["Occupancy"][k] * occ_ratio / held, rel=1e-9), cal
         assert y.adr == pytest.approx(subj["ADR"][k] * adr_ratio, rel=1e-9), cal
-        assert y.revpar == pytest.approx(subj["RevPAR"][k] * occ_ratio * adr_ratio, rel=1e-9), cal
+        assert y.revpar == pytest.approx(subj["RevPAR"][k] * occ_ratio * adr_ratio / held, rel=1e-9), cal
 
 
 def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
@@ -226,6 +290,14 @@ def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
     sources = [g["adr"]["source"] for g in status["growth_by_year"]]
     assert sources == ["costar_submarket_forecast"] * 4 + ["carried_forward"] * 3
     assert status["suggestions"] == []
+    # Decision 1b: occupancy flat after the Year-3 stabilization (2028 level).
+    occ_src = [g["occupancy"]["source"] for g in status["growth_by_year"]]
+    assert occ_src[3:] == ["held_at_stabilization"] * 4
+    assert all(out.years[i].occupancy == pytest.approx(out.years[2].occupancy, rel=1e-12) for i in range(3, 7))
+    # Decision 1a: ADR 2030–2032 at the CoStar 2025–2029 forecast average.
+    for i in (4, 5, 6):
+        assert status["growth_by_year"][i]["adr"]["value"] == pytest.approx(0.0244, abs=1e-15)
+        assert out.years[i].adr == pytest.approx(out.years[i - 1].adr * 1.0244, rel=1e-12)
     # Pinned default path (the comp set grown at CoStar L&UU growth).
     expected_occ = [0.754959 * 0.988 * 0.85, 0.754959 * 0.988 * 0.95]
     assert out.years[0].occupancy == pytest.approx(expected_occ[0], rel=1e-6)
@@ -249,6 +321,9 @@ SCENARIO_REAL_CLOSE: dict[str, object] = {
     "index_ari_target": 100,
     "index_mpi_target_by_year": [100, 100, 100, 100, 100],
     "index_ari_target_by_year": [None, 97, 98, 99, 100],
+    # The default Year-3 stabilization of the 2026-based keying (2028) sits
+    # one model year later too.
+    "stabilization_year": 4,
 }
 
 
@@ -260,12 +335,14 @@ def test_reference_path_on_the_real_close_date_is_the_tab_one_model_year_later()
     assert build.status["growth_by_year"][0]["applied"] is False
     assert out.years[0].occupancy == pytest.approx(0.755, rel=1e-12)
     assert out.years[0].adr == pytest.approx(310.78 * 0.85, rel=1e-12)
-    # Years 2–8 = her 2026–2032 columns, exactly.
+    # Years 2–8 = her 2026–2032 columns: ADR exactly; occupancy exactly
+    # through the 2028 stabilization, then without the held 2029 step (1b).
     for i, cal in enumerate(REAL_CLOSE_YEARS[1:], start=1):
         y, k = out.years[i], str(cal)
-        assert y.occupancy == pytest.approx(subj["Occupancy"][k], rel=1e-9, abs=0), cal
+        held = HELD_2029_STEP if cal >= HELD_FROM else 1.0
+        assert y.occupancy == pytest.approx(subj["Occupancy"][k] / held, rel=1e-9, abs=0), cal
         assert y.adr == pytest.approx(subj["ADR"][k], rel=1e-9, abs=0), cal
-        assert y.revpar == pytest.approx(subj["RevPAR"][k], rel=1e-9, abs=0), cal
+        assert y.revpar == pytest.approx(subj["RevPAR"][k] / held, rel=1e-9, abs=0), cal
 
 
 def test_unshifted_keys_on_the_real_close_date_do_not_reproduce_the_tab() -> None:

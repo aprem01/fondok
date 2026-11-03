@@ -2999,6 +2999,8 @@ def _apply_topline(
         policy=policy,
         first_calendar_year=(bench.base_calendar_year + 1) if bench.base_calendar_year is not None else None,
         gated_doc_types=gated,
+        # Decision 1b — occupancy flat after the stabilization year.
+        stabilization_year=inputs.stabilization_year,
     )
     build = build_topline(
         bench, growth, inputs, hold_years=hold, t12=t12, long_run=_long_run_growth(base, sources)

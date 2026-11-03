@@ -61,13 +61,14 @@ def test_precedence_override_then_cbre_then_costar_then_carried() -> None:
     # 2027 occupancy: CBRE's series ended in 2026, but CoStar prints 2027 — a
     # document forecast wins over carrying CBRE forward.
     assert g.year(2, "occupancy").source == "costar_submarket_forecast"
-    # 2030: past CoStar's last forecast year (2029) → ADR carried forward from
-    # 2029, occupancy HELD at its 2029 level (review I-2).
+    # 2030: past CoStar's last forecast year (2029) → ADR at the series'
+    # 2025–2029 forecast average (decision 1a), occupancy HELD at its 2029
+    # level (review I-2).
     occ30, adr30 = g.year(5, "occupancy"), g.year(5, "adr")
     assert occ30.source == "carried_forward" and occ30.value == 0.0
     assert "held at its 2029 level" in occ30.label and "CoStar Miami Beach submarket" in occ30.label
-    assert adr30.source == "carried_forward" and adr30.value == pytest.approx(0.028)
-    assert "carried forward from CoStar Miami Beach submarket" in adr30.label
+    assert adr30.source == "carried_forward" and adr30.value == pytest.approx(0.0244)
+    assert "CoStar Miami Beach submarket (Luxury & Upper Upscale) 2025–2029 forecast average" in adr30.label
 
 
 def test_all_years_scalar_beats_documents_and_legacy_key_reads_as_scalar() -> None:

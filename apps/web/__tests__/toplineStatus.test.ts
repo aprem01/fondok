@@ -33,7 +33,7 @@ describe('toplineBasisClauses — the one-line basis', () => {
     expect(c.map((x) => x.id)).toEqual(['benchmark', 'growth', 'stabilization', 'ramp']);
     expect(c[0].text).toBe('Benchmark: STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx');
     expect(c[0].tone).toBe('ok');
-    expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · carried forward');
+    expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · past the forecast (forecast average for ADR; occupancy held)');
     expect(c[1].tone).toBe('ok');
     expect(c[2].text).toBe('Stabilized Year 3 (default)');
     expect(c[3].text).toBe('Ramp 85/95/100 (default)');

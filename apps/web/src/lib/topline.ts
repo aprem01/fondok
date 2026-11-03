@@ -82,7 +82,8 @@ const GROWTH_SOURCE_TEXT: Record<string, string> = {
   analyst_override: 'your override',
   cbre_horizons: 'CBRE Hotel Horizons forecast',
   costar_submarket_forecast: 'CoStar submarket forecast',
-  carried_forward: 'carried forward',
+  carried_forward: 'past the forecast (forecast average for ADR; occupancy held)',
+  held_at_stabilization: 'occupancy flat after stabilization',
 };
 
 /** The growth rows the projection actually applies (Year 1 only when the benchmark is grown into it). */

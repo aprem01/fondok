@@ -151,6 +151,7 @@ const SOURCE_STYLE: Record<AssumptionSource, SourceStyle> = {
   market_benchmark: { tone: TONE.grounded, Icon: Map },
   costar_submarket_forecast: { tone: TONE.brand, Icon: Map },
   growth_carried_forward: { tone: TONE.neutral, Icon: Sparkles },
+  occupancy_held_at_stabilization: { tone: TONE.neutral, Icon: Sparkles },
   market_forecast_unavailable: { tone: TONE.warn, Icon: Sparkles },
   costar_withheld_by_policy: { tone: TONE.warn, Icon: Sparkles },
   penetration_default: { tone: TONE.neutral, Icon: Sparkles },

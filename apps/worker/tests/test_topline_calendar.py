@@ -146,6 +146,10 @@ async def test_no_close_and_no_as_of_is_calendar_unknown_not_the_run_date() -> N
         assert row["calendar_year"] is None
         for metric in ("occupancy", "adr"):
             g = row[metric]
+            if metric == "occupancy" and row["year"] > st["stabilization_year"]:
+                # Decision 1b — flat after stabilization, by rule.
+                assert g["source"] == "held_at_stabilization" and g["value"] == 0.0
+                continue
             assert g["value"] is None
             assert g["reason"] == "calendar_unknown"
             assert g["label"] == "Set the acquisition close date to place the market forecast"

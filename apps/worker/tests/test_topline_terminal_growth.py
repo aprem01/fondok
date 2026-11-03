@@ -51,16 +51,17 @@ def _growth(overrides: GrowthOverrides = GrowthOverrides(), *, cal=CAL):
     )
 
 
-def test_after_the_forecast_ends_adr_carries_and_occupancy_holds() -> None:
+def test_after_the_forecast_ends_adr_averages_and_occupancy_holds() -> None:
     g = _growth()
     # 2029 is CoStar's last forecast year (+3.0% occupancy, +2.8% ADR).
     assert g.year(4, "occupancy").value == pytest.approx(0.03)
     for y in (5, 6, 7):  # 2030–2032
         occ, adr = g.year(y, "occupancy"), g.year(y, "adr")
-        assert adr.source == "carried_forward" and adr.value == pytest.approx(0.028)
+        # Decision 1a (2026-11-03): the 2025–2029 forecast average, not 2029's +2.8%.
+        assert adr.source == "carried_forward" and adr.value == pytest.approx(0.0244)
         assert occ.source == "carried_forward" and occ.value == 0.0
         assert "held at its 2029 level" in occ.label
-        assert "carried forward" in adr.label
+        assert "2025–2029 forecast average (+2.4%)" in adr.label
 
 
 def test_terminal_growth_is_the_last_years_adr_growth_without_occupancy() -> None:
