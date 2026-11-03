@@ -168,3 +168,49 @@ def test_ask_citation_carries_the_section() -> None:
     c = AskCitation(document_id=METHODOLOGY_DOCUMENT_ID, methodology_section="lineage")
     assert c.model_dump()["methodology_section"] == "lineage"
     assert AskCitation(document_id="doc-1", page=2).methodology_section is None
+
+
+#: Room every single-section selection must keep below ``atlas.max_chars`` so
+#: the next copy edit fails HERE, loudly, instead of silently dropping a
+#: section's detailed level (FON-22 round 2: `sources` sat 54 characters under
+#: the cap).
+_ATLAS_HEADROOM = 1_000
+
+
+def test_every_single_section_selection_keeps_headroom_under_the_cap(pkg) -> None:
+    """For every section, the selection a question matching only it would
+    build — header, the always-included sections and that section at its
+    detailed level — stays at least ``_ATLAS_HEADROOM`` characters under the
+    cap. Raise ``atlas.max_chars`` (packages/methodology/index.yaml, with a
+    comment) or split the section; do not trim copy to fit."""
+    from app.methodology.select import section_text
+
+    header = 300  # the selection header, generously
+    always = sum(
+        len(section_text(pkg.by_id[sid], levels=("conceptual",))) + 2
+        for sid in pkg.atlas_always_include
+        if sid in pkg.by_id
+    )
+    over = {}
+    for s in pkg.sections:
+        if s.id in pkg.atlas_always_include:
+            continue
+        need = header + always + len(section_text(s, levels=("conceptual", "detailed"))) + 2
+        if need > pkg.atlas_max_chars - _ATLAS_HEADROOM:
+            over[s.id] = need
+    assert not over, (pkg.atlas_max_chars, over)
+
+
+@pytest.mark.parametrize(
+    "q",
+    [
+        "What exit cap rate does the model use?",
+        "Which STR report feeds the comp set?",
+        "How is the levered IRR calculated?",
+        "Which statement is the Year-1 basis?",
+    ],
+)
+def test_real_questions_keep_headroom_under_the_cap(pkg, q: str) -> None:
+    sel = build_selection(q, pkg)
+    assert not sel.dropped_detailed, (q, sel.dropped_detailed)
+    assert len(sel.text) <= pkg.atlas_max_chars - _ATLAS_HEADROOM, (q, len(sel.text), pkg.atlas_max_chars)

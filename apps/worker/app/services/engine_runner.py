@@ -4692,7 +4692,7 @@ async def _load_source_documents(
             text(
                 # tenant-scope predicate required by tenant_middleware
                 """
-                SELECT er.document_id, er.fields, d.doc_type, er.created_at
+                SELECT er.document_id, d.doc_type, er.created_at
                   FROM extraction_results er
                   JOIN documents d ON d.id = er.document_id
                  WHERE er.deal_id = :deal
@@ -4718,7 +4718,7 @@ async def _load_source_documents(
                 text(
                     # tenant-scope predicate required by tenant_middleware
                     f"""
-                    SELECT er.document_id, er.fields, d.doc_type, er.created_at
+                    SELECT er.document_id, d.doc_type, er.created_at
                       FROM extraction_results er
                       JOIN documents d ON d.id = er.document_id
                      WHERE er.deal_id = :deal
@@ -4755,6 +4755,10 @@ async def _load_source_documents(
             doc = choices[0].chosen.shim.get("document_id") if choices else None
             primary = str(doc) if doc else None
         except Exception:
+            logger.warning(
+                "_load_source_documents: statement choice unavailable for deal=%s",
+                deal_id, exc_info=True,
+            )
             primary = None
         if primary:
             for dt in pnl_types:
@@ -5242,6 +5246,10 @@ def _statement_period(
     )
     if is_full:
         if stated:
+            # A Dec 31 year end IS the fiscal year it closes — the same words
+            # as a statement dated only by that fiscal year (FON-22 M5).
+            if stated % 10_000 == 1231:
+                return ("full", stated), f"FY{stated // 10_000}"
             return ("full", stated), f"the year ending {_iso_sortkey(stated)}"
         year = year_sortkey(shim.get("extracted_period_year")) or year_sortkey(
             shim.get("fiscal_year")

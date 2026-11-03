@@ -3850,10 +3850,20 @@ async def list_documents(
     # per-period choice; the shared key on the documents columns is only the
     # fallback when the statement rows cannot be read.
     from ..services import engine_runner
+    from ..services.read_cache import cached_deal_read
 
     try:
-        roles = await engine_runner.statement_roles(
-            session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+        # The list is polled every 2 s while documents process; the roles only
+        # change with the deal's extraction rows / documents, which the
+        # deal-state fingerprint covers.
+        roles = await cached_deal_read(
+            session,
+            name="statement_roles",
+            deal_id=deal_id,
+            tenant_id=tenant_id,
+            compute=lambda: engine_runner.statement_roles(
+                session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+            ),
         )
     except Exception:  # noqa: BLE001 — the list must still render
         logger.warning("list_documents: statement roles unavailable for deal=%s", deal_id, exc_info=True)

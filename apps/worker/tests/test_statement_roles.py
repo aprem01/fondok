@@ -482,3 +482,56 @@ async def test_no_actuals_side_without_a_statement() -> None:
         assert await load_actuals_before_reserve_noi(session, deal_id=deal_id, tenant_id=_TENANT) is None
         _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
     assert actuals is None
+
+
+def test_period_words_name_a_december_year_end_as_its_fiscal_year() -> None:
+    """M5: a full year stated to end Dec 31 reads "FY2023" — the same words as
+    one dated only by its fiscal year — while any other year end is spelled
+    out (never an invented FY)."""
+    from app.services.engine_runner import statement_roles_from_shims
+
+    rooms = {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_000_000.0}
+    shims = [
+        {"document_id": "dec", "doc_type": "PNL", "filename": "dec.xlsx",
+         "fields": [rooms, {"field_name": "p_and_l_usali.period_ending", "value": "2023-12-31"}]},
+        {"document_id": "jun", "doc_type": "T12", "filename": "jun.xlsx",
+         "fields": [rooms, {"field_name": "p_and_l_usali.period_ending", "value": "2025-06-30"}]},
+        {"document_id": "fy", "doc_type": "PNL", "filename": "fy.xlsx", "fields": [rooms], "fiscal_year": 2019},
+    ]
+    roles = statement_roles_from_shims(shims)
+    assert roles["dec"].period_words == "FY2023"
+    assert roles["jun"].period_words == "the year ending 2025-06-30"
+    assert roles["fy"].period_words == "FY2019"
+
+
+@pytest.mark.asyncio
+async def test_list_endpoint_reads_the_statement_rows_once_while_the_deal_is_unchanged(monkeypatch) -> None:
+    """M2: the Data Room polls the list every 2 s while documents process; the
+    statement roles are served from the deal-state cache until an extraction,
+    document or override changes — and a new statement re-ranks at once."""
+    import app.services.engine_runner as er
+    from app.services.read_cache import reset_read_cache
+
+    reset_read_cache()
+    calls = {"n": 0}
+    real = er._read_pnl_shims
+
+    async def _counting(*a, **k):
+        calls["n"] += 1
+        return await real(*a, **k)
+
+    monkeypatch.setattr(er, "_read_pnl_shims", _counting)
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    _detailed, summary = await _insert_b67bfdee(deal_id)
+    await _list(deal_id)
+    await _list(deal_id)
+    assert calls["n"] == 1
+    # A newer, more complete FY2024 statement: the badge moves on the next list.
+    newer = await _insert_statement(
+        deal_id, doc_type="PNL", filename="FY2024 restated.xlsx", extracted_period_year=2024,
+        ts=datetime(2026, 10, 30, tzinfo=UTC), fields=detailed_pnl_fields(detail_lines=1_500),
+    )
+    records = await _list(deal_id)
+    assert calls["n"] == 2
+    assert _badged(records) == [str(newer)]

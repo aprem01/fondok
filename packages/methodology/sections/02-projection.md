@@ -127,7 +127,8 @@ anchored on, exactly as the Historical P&L heads that column.
 P&L, say), the Historical P&L shows one column, built from the primary statement, and names the
 other as supplemental on that column. The column's statement is the one the model chooses for that
 period — for the Year-1 year, the statement the Data Room marks “Primary source”: a full-year
-statement ahead of a partial one, then the statement with more line items, then the newer upload.
+statement ahead of a partial one, then the statement with more line items, then the newer upload,
+unless the footing check below passes the top-ranked one over.
 Re-tag a statement's year in the Data Room to change which is primary. When the column's statement
 states no occupancy, ADR or RevPAR, the figure is read from the other statement of the same period,
 and the cell names it; never from another period. The other statement is never averaged into Year 1. When the primary lacks a full-year rooms

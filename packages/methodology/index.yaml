@@ -89,4 +89,10 @@ atlas:
   # one statement per period (footing, same-period fill, two-year fill limit,
   # review notes) in `sources`; with that copy the sources section's detailed
   # level needs 35,062 characters next to the always-included sections.
-  max_chars: 36000
+  # 42000 (≈10.5k tokens), was 36000: FON-22 documents the one statement
+  # choice every surface reads (badge, Historical P&L, links, variance) and the
+  # same-period fill in `sources`; at 36000 `sources` sat 54 characters under
+  # the cap. tests/test_researcher_methodology.py now asserts 1,000 characters
+  # of headroom for every single-section selection, so the next near-miss
+  # fails loudly — raise the cap here (or split the section), never trim copy.
+  max_chars: 42000
