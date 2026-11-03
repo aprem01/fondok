@@ -397,6 +397,45 @@ Same commit series, no golden move: occupancy no longer repeats its last
 forecast growth after a series ends (it holds; ADR carries) — the documents
 fixture keys 2030 itself, so nothing is carried there.
 
+## 2026-11-03 re-baseline: FON-121 deal years + the published forecast average (two dated files)
+
+Domain lead (Sam; Eshan confirmed): model years run twelve months from the
+acquisition close; a deal year's market growth blends the calendar years it
+spans by their months; past a forecast, ADR grows at the report's PUBLISHED
+forecast average (CoStar p.4, +2.5%), else the computed one; every growth
+figure shows its page. The commit carries `golden: expected`.
+
+| File | Mode | CI step |
+| --- | --- | --- |
+| `evals/baselines/kimpton-golden-2026-11-03-fon121-growth-only.json` | `growth_only` (**what deploys**; `DEFAULT_BASELINE`) | `scripts/check_golden_gate.py` |
+| `evals/baselines/kimpton-golden-2026-11-03-fon121-benchmark.json` | `benchmark` (`BENCHMARK_BASELINE`) | `scripts/check_golden_gate.py --topline-mode benchmark` |
+
+**Headline fields moved: none, in either fixture or either mode** (compared
+against the 2026-11-03 FON-116 files with `--full`). Why nothing moves:
+
+* Both fixtures close on **2025-12-31**, so every deal year is a calendar year
+  (Jan–Dec 2026 … Jan–Dec 2030; the exit-NOI year Jan–Dec 2031). A single-
+  calendar-year deal year is not blended: the growth figures and labels are
+  the calendar year's own.
+* The seed fixture has no documents (no forecast to blend or average).
+* The documents fixture carries Sam's reference keys: her own per-year
+  growth for Years 5–7, so the post-forecast average is never reached in the
+  hold, and her Year-5 ADR growth carries to the exit year.
+
+What did change (raw outputs, not headline): `revenue.projection_start_year`
+and `revenue.projection_calendar_years` are replaced by
+`revenue.projection_deal_years` (span, start, end, label, calendar months,
+days) and `revenue.exit_noi_deal_year`; every `topline_by_year[i]` carries
+`deal_year` instead of `calendar_year`; the held-occupancy label reads
+"Year 3 (Jan–Dec 2028)"; `topline_methodology_version` 2 → 3 (the compare
+prints `TOPLINE METHODOLOGY CHANGED`). The CoStar fixture gained the report's
+three published forecast-average rows (p.4).
+
+Where the rule DOES move numbers — Sam's real close, 2025-09-30 — is pinned in
+`tests/test_topline_kimpton_reference.py` (deal-year path vs her tab) and
+`tests/test_topline_deal_years.py`; the QA deal's read-only result is in the
+FON-121 report.
+
 ## 2026-11-03 re-baseline: FON-116 staged rollout + decisions 1a / 1b (two dated files)
 
 Prem approved the Kimpton re-baseline (wave 5). The domain lead (Sam) asked

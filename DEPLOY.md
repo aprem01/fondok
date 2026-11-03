@@ -72,9 +72,9 @@ staged-rollout switch, not a second product path, and it is read in one place
   compare labels the mode change: "growth only → benchmark × penetration ×
   ramp"). The web needs no change — it reads `topline_status.topline_mode`.
 * CI checks both modes: `scripts/check_golden_gate.py` (default,
-  `evals/baselines/kimpton-golden-2026-11-03-growth-only.json`) and
+  `evals/baselines/kimpton-golden-2026-11-03-fon121-growth-only.json`) and
   `scripts/check_golden_gate.py --topline-mode benchmark`
-  (`kimpton-golden-2026-11-03-topline-v2-benchmark.json`).
+  (`kimpton-golden-2026-11-03-fon121-benchmark.json`).
 * **Removal (once FON-117 is on in production):** delete the setting
   (`app/config.py`), `topline_mode()` and every `growth_only` branch
   (`services/topline.py::build_growth_only` / `_growth_only_status`,

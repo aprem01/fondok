@@ -85,8 +85,8 @@ REPO = Path(__file__).resolve().parents[1]
 WORKER = REPO / "apps" / "worker"
 #: FON-116 staged rollout — the baseline per topline mode (``--topline-mode``).
 #: The default (growth-only) is what deploys.
-DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-growth-only.json"
-BENCHMARK_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-topline-v2-benchmark.json"
+DEFAULT_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-fon121-growth-only.json"
+BENCHMARK_BASELINE = REPO / "evals" / "baselines" / "kimpton-golden-2026-11-03-fon121-benchmark.json"
 TOPLINE_MODES = ("growth_only", "benchmark")
 BASELINE_FOR_MODE = {"growth_only": DEFAULT_BASELINE, "benchmark": BENCHMARK_BASELINE}
 
