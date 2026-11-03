@@ -5607,6 +5607,7 @@
      "selected_exit_year": 5,
      "selling_costs": 846014.9670404978,
      "terminal_noi": 2961052.384641743,
+     "timing_note": null,
      "unlevered_irr": 0.05909953881466523,
      "year_one_coc": 0.04909852079303613
     },
@@ -20988,6 +20989,7 @@
     "selected_exit_year": 5,
     "selling_costs": 845004.2829501664,
     "terminal_noi": 2957514.990325582,
+    "timing_note": null,
     "unlevered_irr": 0.07486588152182339,
     "year_one_coc": 0.10185661084136464
    },
@@ -30551,7 +30553,7 @@
  },
  "fixture": "d849e90a-9581-519c-a796-5e09277b7260",
  "fixture_description": "Kimpton Angler seed set (apps/worker/tests/fixtures/kimpton_seed.py, injected via run_all_engines(assumptions=...); no deal row, no documents, no overrides), run through run_all_engines exactly as tests/test_engine_runner.py::test_run_all_engines_kimpton does.",
- "generated_from_commit": "668b191b629e2666aa27ff2f9272bc573337def2",
+ "generated_from_commit": "c7d10864c4ee1e357cef3b678203181f2b4700db",
  "generated_on": "2026-11-03",
  "regenerate": "python scripts/compare_golden_baseline.py --write evals/baselines/<name>.json",
  "schema": "fondok.golden-baseline/1",

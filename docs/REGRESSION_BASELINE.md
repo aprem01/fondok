@@ -431,6 +431,10 @@ days) and `revenue.exit_noi_deal_year`; every `topline_by_year[i]` carries
 prints `TOPLINE METHODOLOGY CHANGED`). The CoStar fixture gained the report's
 three published forecast-average rows (p.4).
 
+Re-cut again in review round 2 (same files): `returns.timing_note` (null on
+both fixtures — neither stores an acquisition month offset) is a new output
+field. Still no headline move.
+
 Where the rule DOES move numbers — Sam's real close, 2025-09-30 — is pinned in
 `tests/test_topline_kimpton_reference.py` (deal-year path vs her tab) and
 `tests/test_topline_deal_years.py`; the QA deal's read-only result is in the
