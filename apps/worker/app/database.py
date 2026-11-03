@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Depends
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
@@ -192,6 +193,21 @@ def is_sqlite_session(session: Any) -> bool:
     return session_dialect(session) == "sqlite"
 
 
+async def advisory_xact_lock(session: Any, key: str) -> None:
+    """Serialize writers of one logical resource for the rest of the current
+    transaction (Postgres ``pg_advisory_xact_lock``; released at commit or
+    rollback). A no-op on SQLite, whose single writer already serializes.
+
+    For read-modify-write replacements (``DELETE`` the set, ``INSERT`` the
+    new one) that two runs can perform at once: under READ COMMITTED the
+    second run's DELETE cannot see rows the first inserted but has not
+    committed, so both sets survive. Taking this lock first makes the
+    second run start after the first commits."""
+    if is_sqlite_session(session):
+        return
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
+
+
 def json_column_bind(key: str, session: Any) -> str:
     """SQL fragment binding the JSON string ``:key`` to a JSON column:
     ``CAST(:key AS JSONB)`` on Postgres, the bare parameter on SQLite (a TEXT
@@ -264,6 +280,28 @@ def tenant_guc_hook_registered() -> bool:
     return event.contains(TenantSession, "after_begin", _tenant_guc_after_begin)
 
 
+async def end_transaction_before_external_call(session: AsyncSession) -> None:
+    """End ``session``'s open transaction before a long external call.
+
+    Incident 2026-11-03: the extraction pipeline read the document row on its
+    session — which autobegan a transaction holding an ACCESS SHARE lock on
+    ``documents`` — and kept it open (``idle in transaction``, one pooled
+    connection checked out) through a 15-60 minute LLM call. A deploy's boot
+    DDL on ``documents`` waited for that lock, Postgres queued every later
+    query on the table behind the DDL, and the worker's pool ran dry.
+
+    The rule: no transaction (and so no checked-out connection) is held
+    across an LLM / extractor / embedding / webhook / object-store call. Call
+    this right before one. Whatever the transaction did is committed — the
+    callers end READ transactions here (their writes commit at their own
+    commit points); a session with no open transaction is left alone. The
+    session stays usable: its next statement autobegins a fresh, short
+    transaction (and the RLS ``after_begin`` hook re-publishes the tenant).
+    """
+    if session.in_transaction():
+        await session.commit()
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding an ``AsyncSession`` with rollback-on-error.
 
@@ -279,6 +317,36 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def release_request_transaction(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AsyncIterator[None]:
+    """App-level dependency (``scope="function"``, registered on the FastAPI
+    app in ``app.main``): end the request session's transaction when the path
+    operation returns — BEFORE the response is sent, its BackgroundTasks run
+    or its StreamingResponse body streams.
+
+    FastAPI exits a request-scoped ``yield`` dependency (``get_session``)
+    only after all of that, so a transaction a handler left open — a read it
+    never committed, e.g. the upload's duplicate check when the last file is
+    a duplicate — stayed open (one pooled connection, ACCESS SHARE locks) for
+    the whole 15-60 min background parse/extract, or a whole memo SSE
+    stream (incident 2026-11-03, round 2). Being function-scoped, this runs
+    on the way out of every route, after response serialization; it resolves
+    to the SAME cached ``get_session`` instance the route uses.
+
+    It ROLLS BACK: whatever a handler did not commit is exactly what
+    ``get_session``'s close discarded before, only now it is discarded
+    before the response phase instead of after it. The session stays
+    usable — a stream or task that touches it autobegins a fresh, short
+    transaction — and ``get_session`` still closes it at the very end.
+    An exception from the route propagates untouched (``get_session``
+    rolls back on it as before).
+    """
+    yield
+    if session.in_transaction():
+        await session.rollback()
 
 
 async def dispose_engine() -> None:

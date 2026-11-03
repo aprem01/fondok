@@ -216,6 +216,13 @@ async def generate_due_diligence(
         session, deal_id=str(deal_id), tenant_id=str(tenant_id)
     )
 
+    # End the reads' transaction BEFORE the LLM call (incident 2026-11-03:
+    # no lock / pooled connection held across it). A rollback, not a commit:
+    # the input builders are read-only, and one that swallowed an error may
+    # have left the transaction aborted (InFailedSQLTransactionError, Sam QA
+    # 2026-05-13) — a rollback clears that too. The writes below autobegin a
+    # fresh, short transaction.
+    await session.rollback()
     out = await run_due_diligence(payload)
     if not out.success:
         return DueDiligenceGenerateResponse(
@@ -223,16 +230,6 @@ async def generate_due_diligence(
             generated=0,
             error=out.error or "due diligence agent failed",
         )
-
-    # Defensive rollback before mutating — a previous _summarize_*
-    # helper that swallowed an error could have left the asyncpg
-    # transaction in InFailedSQLTransactionError state; rolling back
-    # clears that and the DELETE+INSERT chain runs cleanly. Read-only
-    # helpers don't have prior writes to lose. (Sam QA 2026-05-13.)
-    try:
-        await session.rollback()
-    except Exception:  # noqa: BLE001
-        pass
 
     # Replace prior questions with the fresh set.
     try:

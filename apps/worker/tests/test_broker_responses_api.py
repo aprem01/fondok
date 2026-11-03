@@ -400,3 +400,43 @@ async def test_budget_exhausted_returns_402(
         )
         assert r.status_code == 402, r.text
         assert "budget" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_resolver_llm_call_runs_with_no_transaction_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Incident 2026-11-03 — the request's read transaction (question row,
+    engine inputs) is ended before the resolver's LLM call: no pooled
+    connection is checked out while it runs."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.agents import qa_resolver as qr
+    from app.database import get_engine
+    from app.main import app
+
+    _stub_resolver(monkeypatch, verdict="resolved")
+    inner = qr.run_qa_resolver
+    held: list[int] = []
+
+    async def _probe(payload: Any):
+        held.append(get_engine().pool.checkedout())
+        return await inner(payload)
+
+    monkeypatch.setattr(qr, "run_qa_resolver", _probe)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deals", json={"name": "QA Txn Hotel"}, headers={"X-Tenant-Id": TENANT_A}
+        )
+        deal_id = r.json()["id"]
+        qid = await _seed_broker_question(deal_id=deal_id, tenant_id=TENANT_A, state="sent")
+        r = await client.post(
+            f"/analysis/{deal_id}/broker_responses",
+            json={"broker_question_id": qid, "broker_response": "Contract reset."},
+            headers={"X-Tenant-Id": TENANT_A},
+        )
+    assert r.status_code == 201, r.text
+    assert held == [0], f"connections held during the resolver LLM call: {held}"

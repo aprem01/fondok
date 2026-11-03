@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.context import current_tenant_id
 from ..config import get_settings
-from ..database import get_session_factory
+from ..database import end_transaction_before_external_call, get_session_factory
 from .pipeline_digest import (
     build_digest_payload,
     compute_next_run_at,
@@ -216,7 +216,12 @@ async def _tick_with_session(session: AsyncSession, *, now: datetime) -> int:
                 schedule=schedule,
                 now=now,
             )
-            dispatch_digest(schedule, payload)
+            # Slack / email webhooks are external calls (5 s / 8 s timeouts):
+            # no transaction is held across them (incident 2026-11-03).
+            await end_transaction_before_external_call(session)
+            # Synchronous urllib calls: off the event loop, so a slow
+            # webhook does not stall every other request in the worker.
+            await asyncio.to_thread(dispatch_digest, schedule, payload)
         except Exception as ex:  # noqa: BLE001 — never crash the loop
             logger.exception(
                 "digest_scheduler: dispatch failed for %s: %s",

@@ -31,7 +31,7 @@ from ..audit import log_audit
 from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..costs import build_cost_report
-from ..database import get_session, json_column_bind
+from ..database import end_transaction_before_external_call, get_session, json_column_bind
 from ..memo_edits import list_edits, record_edit
 from fondok_schemas import (
     DEAL_STATUSES,
@@ -4930,6 +4930,9 @@ async def trigger_memo_generation(
         from ..agents.analyst_batch import run_analyst_batch
 
         try:
+            # The batch submit is an Anthropic API call: no transaction
+            # across it (incident 2026-11-03).
+            await end_transaction_before_external_call(session)
             result = await run_analyst_batch(payload)
         except Exception as exc:  # noqa: BLE001 - fall back on submit failure
             logger.exception(

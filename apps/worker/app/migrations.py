@@ -18,14 +18,18 @@ flow works locally without Postgres provisioning.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import contextvars
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
-
 from fondok_schemas import DEAL_STATUSES, DealStatus
+from sqlalchemy import text
 
 from .config import get_settings
 from .database import get_migrations_engine
@@ -52,6 +56,52 @@ async def _sqlite_column_exists(conn, table: str, column: str) -> bool:
         if row[1] == column:
             return True
     return False
+
+
+#: Postgres form of an entry the runner may skip from the catalog: exactly one
+#: ``ALTER TABLE <t> ADD COLUMN IF NOT EXISTS <c> …`` clause.
+_PG_ADD_COLUMN_IF_NOT_EXISTS_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+(?P<table>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(?P<column>[A-Za-z_][A-Za-z0-9_]*)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _add_column_target(sql: str, *, is_sqlite: bool) -> tuple[str, str] | None:
+    """``(table, column)`` when ``sql`` is a single-column ADD COLUMN entry
+    the runner skips once the column exists, else ``None``.
+
+    SQLite: the missing ``ADD COLUMN IF NOT EXISTS`` semantics. Postgres
+    (incident 2026-11-03): ``ALTER TABLE … ADD COLUMN IF NOT EXISTS`` takes
+    ACCESS EXCLUSIVE on the table BEFORE it finds the column already there,
+    so every boot queued behind any open transaction on the table — the
+    deploy that took the worker down waited on ``documents`` for a column
+    that existed. A catalog read takes no table lock. (``CREATE TABLE`` /
+    ``CREATE INDEX IF NOT EXISTS`` on an existing relation do not wait —
+    verified on Postgres 16 — so they run as written.) A statement with more
+    than one ADD clause always runs as written.
+    """
+    pattern = _SQLITE_ADD_COLUMN_RE if is_sqlite else _PG_ADD_COLUMN_IF_NOT_EXISTS_RE
+    match = pattern.match(sql)
+    if match is None or len(re.findall(r"\bADD\b", sql, re.IGNORECASE)) != 1:
+        return None
+    return match.group("table"), match.group("column")
+
+
+async def _column_exists(conn: Any, table: str, column: str, *, is_sqlite: bool) -> bool:
+    """``column`` exists on ``table`` — PRAGMA on SQLite, the catalog on
+    Postgres (``current_schema()``, where the startup DDL creates tables)."""
+    if is_sqlite:
+        return await _sqlite_column_exists(conn, table, column)
+    result = await conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() "
+            "AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    )
+    return result.first() is not None
 
 
 # ─────────────── Wave 5 — the seven-status deal lifecycle ───────────────
@@ -2689,6 +2739,243 @@ def _database_unavailable(exc: BaseException) -> bool:
     return False
 
 
+#: SQLSTATE ``lock_not_available`` — what Postgres raises when a statement
+#: waited longer than ``lock_timeout`` for a lock.
+_LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
+
+#: ``lock_timeout`` (milliseconds) for every startup-migration transaction on
+#: Postgres. Incident 2026-11-03: a boot ``ALTER TABLE documents`` waited for
+#: the ACCESS SHARE lock a long extraction transaction held; Postgres queues
+#: every later lock request on the table BEHIND the waiting ACCESS EXCLUSIVE
+#: request, so every query on ``documents`` stalled, the serving pool (10+10)
+#: ran dry and ``/health`` timed out for ~20 minutes. With the timeout a
+#: migration that cannot get its lock within 5 s gives up — blocking other
+#: traffic for at most that long — and is DEFERRED: logged, boot continues
+#: degraded, retried on the next boot (see :func:`_migration_deferred_reason`).
+#: Worst case one boot spends 5 s per entry on a busy table (24 entries touch
+#: ``documents``). A migration that legitimately needs longer than 5 s for its
+#: lock is not a startup migration.
+MIGRATION_LOCK_TIMEOUT_MS = 5000
+#: ``lock_timeout`` for the in-process RETRY of deferred migrations: the
+#: worker is serving then, so a retry that meets a busy table should stall
+#: that table's traffic for at most 1 s before it backs off again.
+MIGRATION_RETRY_LOCK_TIMEOUT_MS = 1000
+_LOCK_TIMEOUT_MS: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "migration_lock_timeout_ms", default=MIGRATION_LOCK_TIMEOUT_MS
+)
+
+
+@asynccontextmanager
+async def _migration_transaction(engine: Any, *, is_sqlite: bool) -> AsyncIterator[Any]:
+    """``engine.begin()`` with :data:`MIGRATION_LOCK_TIMEOUT_MS` applied via
+    ``SET LOCAL`` (this transaction only — the setting never leaks onto the
+    pooled connection). SQLite has no lock_timeout; it gets a plain begin."""
+    async with engine.begin() as conn:
+        if not is_sqlite:
+            await conn.execute(
+                text(f"SET LOCAL lock_timeout = '{int(_LOCK_TIMEOUT_MS.get())}ms'")
+            )
+        yield conn
+
+
+def _lock_wait_timed_out(exc: BaseException) -> bool:
+    """True when ``exc`` is Postgres giving up on a lock wait (55P03)."""
+    return any(
+        getattr(e, "sqlstate", None) == _LOCK_NOT_AVAILABLE_SQLSTATE
+        for e in _exception_chain(exc)
+    )
+
+
+def _migration_deferred_reason(exc: BaseException) -> str | None:
+    """Why a failed migration is deferred to the next boot rather than being
+    the SQL's fault, or ``None`` when the database answered and refused it.
+
+    * ``"database unavailable"`` — :func:`_database_unavailable`;
+    * ``"lock wait timed out"`` — another transaction holds a lock on the
+      entry's table for longer than :data:`MIGRATION_LOCK_TIMEOUT_MS`. Not
+      the SQL's fault either, so it is deferred even for a
+      :data:`FATAL_MIGRATIONS` entry: refusing to boot over a busy table
+      would turn a long-running job into a failed deploy.
+    """
+    if _database_unavailable(exc):
+        return "database unavailable"
+    if _lock_wait_timed_out(exc):
+        return "lock wait timed out"
+    return None
+
+
+#: Entries a boot (or a later retry) could not apply for a reason that is
+#: not the SQL's fault (:func:`_migration_deferred_reason`), name → reason.
+#: The worker serves degraded while this is non-empty: ``/health`` reports
+#: ``migrations_deferred`` and :func:`start_deferred_migration_retry`
+#: re-applies them in the running worker.
+_DEFERRED: dict[str, str] = {}
+#: Entries a RETRY found refused by the database (the SQL's fault) whose
+#: failure would have stopped a boot (FATAL_MIGRATIONS / the Python
+#: backfills), name → error. A running worker cannot refuse to boot, so it
+#: stays listed (``/health``: ``migrations_failed``) until a fixed deploy.
+_FAILED: dict[str, str] = {}
+#: Entries the database refused during a run in which something was
+#: DEFERRED — typically dependents of a deferred entry (an index on a column
+#: whose ADD COLUMN was deferred), name → error. They re-run with the whole
+#: set on retry; ``/health`` stays degraded until they apply. A run with
+#: nothing deferred clears this: a failure that happens without any deferral
+#: is not caused by one (a normal boot treats it the same way).
+_DEPENDENT_FAILED: dict[str, str] = {}
+
+#: Python data migrations, run after the DDL, in order. Looked up by name at
+#: call time (tests replace them). Both are fatal when the database refuses.
+_PYTHON_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("deals.ai_confidence_backfill", "backfill_deal_ai_confidence"),
+    ("extraction_results.display_string_repair", "repair_display_string_edits"),
+)
+
+
+def deferred_migrations() -> dict[str, str]:
+    """Snapshot of the deferred entries (name → reason)."""
+    return dict(_DEFERRED)
+
+
+def failed_migrations() -> dict[str, str]:
+    """Snapshot of the entries a retry found refused (name → error)."""
+    return dict(_FAILED)
+
+
+def dependent_failed_migrations() -> dict[str, str]:
+    """Snapshot of the entries that failed alongside a deferral (name → error)."""
+    return dict(_DEPENDENT_FAILED)
+
+
+def migrations_pending() -> bool:
+    """True while anything is deferred or failed alongside a deferral — the
+    worker serves degraded and the retry loop keeps running."""
+    return bool(_DEFERRED or _DEPENDENT_FAILED)
+
+
+#: ``ALTER TABLE <t> ALTER COLUMN <c> SET DEFAULT '<literal>'`` — the one
+#: shape of per-boot lock taker left after the ADD COLUMN skip
+#: (``deals.status_default_in_progress``): ACCESS EXCLUSIVE on every boot,
+#: even when the default is already the one it sets.
+_PG_SET_DEFAULT_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+(?P<table>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"ALTER\s+COLUMN\s+(?P<column>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"SET\s+DEFAULT\s+'(?P<literal>[^']*)'\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _default_already_set(conn: Any, sql: str) -> bool:
+    """Postgres: True when ``sql`` is a string-literal SET DEFAULT whose
+    default the catalog already shows (``'<literal>'::<type>``) — a catalog
+    read, no table lock."""
+    m = _PG_SET_DEFAULT_RE.match(sql)
+    if m is None:
+        return False
+    current = (
+        await conn.execute(
+            text(
+                "SELECT column_default FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = :t AND column_name = :c"
+            ),
+            {"t": m.group("table"), "c": m.group("column")},
+        )
+    ).scalar()
+    return isinstance(current, str) and current.startswith(f"'{m.group('literal')}'::")
+
+
+async def _apply_ddl_entry(engine: Any, name: str, sql: str, *, is_sqlite: bool) -> None:
+    async with _migration_transaction(engine, is_sqlite=is_sqlite) as conn:
+        if not is_sqlite and await _default_already_set(conn, sql):
+            logger.debug("migration skipped (default already set): %s", name)
+            return
+        target = _add_column_target(sql, is_sqlite=is_sqlite)
+        if target is not None:
+            table, column = target
+            if await _column_exists(conn, table, column, is_sqlite=is_sqlite):
+                logger.debug(
+                    "migration skipped (column exists): %s (%s.%s)", name, table, column
+                )
+                return
+        await conn.execute(text(sql))
+        logger.info("migration applied: %s", name)
+
+
+async def _run_migration_set(*, retry: bool) -> None:
+    """Apply the DDL entries, then the Python data migrations — the WHOLE
+    set, at boot and on every retry. It is idempotent: entries already
+    applied skip from the catalog with no table lock (or are IF NOT EXISTS
+    no-ops), so a retry costs a few catalog reads, and entries that FAILED
+    at boot because an earlier one was deferred (an index on a column not
+    yet added) apply in the same pass as the entry they depend on.
+
+    Each entry runs in its OWN transaction (with ``lock_timeout``) so one
+    failure cannot poison the rest. A failure that is not the SQL's fault is
+    recorded in :data:`_DEFERRED` and the run carries on. A failure the
+    database reports is logged; for a FATAL_MIGRATIONS entry or a Python
+    data migration it raises :class:`FatalMigrationError` at boot, and on a
+    retry (the worker already serves) it is recorded in :data:`_FAILED`.
+    """
+    settings = get_settings()
+    ddl_url = settings.async_migrations_database_url or settings.async_database_url
+    is_sqlite = ddl_url.startswith("sqlite")
+    entries = SQLITE_MIGRATIONS if is_sqlite else MIGRATIONS
+    engine = get_migrations_engine()
+
+    _DEFERRED.clear()
+    _DEPENDENT_FAILED.clear()
+    refused_this_run: dict[str, str] = {}
+
+    def _refused(name: str, exc: Exception, *, fatal: bool) -> None:
+        logger.exception("migration failed: %s — %s", name, exc)
+        if not fatal:
+            refused_this_run[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            return
+        if retry:
+            _FAILED[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            logger.critical(
+                "migration %s was refused by the database on retry — the worker "
+                "keeps serving degraded until a fixed deploy",
+                name,
+            )
+            return
+        raise FatalMigrationError(
+            f"migration {name} failed and the worker will not start: {exc}"
+        ) from exc
+
+    for name, sql in entries:
+        try:
+            await _apply_ddl_entry(engine, name, sql, is_sqlite=is_sqlite)
+            _FAILED.pop(name, None)
+        except Exception as exc:
+            reason = _migration_deferred_reason(exc)
+            if reason is not None:
+                # Not the SQL's fault: log, carry on, serve degraded; the
+                # entry (a fatal one included) is retried.
+                logger.error("migration not applied (%s): %s — %s", reason, name, exc)
+                _DEFERRED[name] = reason
+                continue
+            _refused(name, exc, fatal=name in FATAL_MIGRATIONS)
+
+    # Wave 5 (Sam #5) — the AI-confidence rollup backfill, then (W5 review
+    # I3) the display-string repair: data migrations in Python, after the DDL.
+    for name, fn_name in _PYTHON_MIGRATIONS:
+        try:
+            await globals()[fn_name](engine, is_sqlite=is_sqlite)
+            _FAILED.pop(name, None)
+        except Exception as exc:
+            reason = _migration_deferred_reason(exc)
+            if reason is not None:
+                logger.error("migration not applied (%s): %s — %s", reason, name, exc)
+                _DEFERRED[name] = reason
+                continue
+            # The database answered and refused: the worker must not serve
+            # half-migrated data (a boot stops; a retry records it).
+            _refused(name, exc, fatal=True)
+
+    if _DEFERRED:
+        _DEPENDENT_FAILED.update(refused_this_run)
+
 async def run_startup_migrations() -> None:
     """Apply every entry in ``MIGRATIONS`` against the live DB.
 
@@ -2703,97 +2990,104 @@ async def run_startup_migrations() -> None:
     behaviour), else a dedicated owner-DSN engine so the serving role can
     be the non-owner ``fondok_app``. The caller (``app.main.lifespan``)
     disposes the dedicated engine right after this returns.
+
+    Entries that could not be applied for a reason that is not the SQL's
+    fault are left in :func:`deferred_migrations`; ``app.main.lifespan``
+    then starts :func:`start_deferred_migration_retry`.
     """
     settings = get_settings()
     ddl_url = settings.async_migrations_database_url or settings.async_database_url
-    is_sqlite = ddl_url.startswith("sqlite")
-    entries = SQLITE_MIGRATIONS if is_sqlite else MIGRATIONS
-
-    if is_sqlite:
+    if ddl_url.startswith("sqlite"):
         logger.info(
             "migrations: sqlite detected — applying lite schema "
             "(deals/documents/extraction_results)"
         )
     logger.info("migrations: ddl engine=%s", settings.migrations_dsn_kind)
+    _FAILED.clear()
+    await _run_migration_set(retry=False)
+    if _DEFERRED:
+        logger.error(
+            "migrations: %d entr%s DEFERRED (database unavailable or a table "
+            "busy past lock_timeout=%dms) — the worker serves degraded and "
+            "retries them in the background: %s",
+            len(_DEFERRED),
+            "y" if len(_DEFERRED) == 1 else "ies",
+            MIGRATION_LOCK_TIMEOUT_MS,
+            ", ".join(_DEFERRED),
+        )
 
-    engine = get_migrations_engine()
-    # NOTE: each migration runs in its OWN transaction so a single
-    # failure (e.g. an idempotent ALTER on a fresh DB) cannot poison
-    # the rest of the batch. SQLite gets an extra guard: we parse
-    # `ALTER TABLE … ADD COLUMN` and skip silently when the column is
-    # already present (PRAGMA table_info), which is the missing
-    # `ADD COLUMN IF NOT EXISTS` semantics on SQLite.
-    for name, sql in entries:
+
+async def retry_deferred_migrations() -> dict[str, str]:
+    """Re-run the WHOLE migration set once (see :func:`_run_migration_set`:
+    applied entries skip, so the deferred ones and the dependents that
+    failed with them apply in order) with the shorter
+    :data:`MIGRATION_RETRY_LOCK_TIMEOUT_MS`; returns what is still deferred
+    or dependent-failed. The dedicated owner engine
+    (``DATABASE_URL_MIGRATIONS``) exists only for the attempt: it is
+    disposed afterwards so no owner connection stays pooled."""
+    from .database import dispose_migrations_engine
+
+    if not migrations_pending():
+        return {}
+    token = _LOCK_TIMEOUT_MS.set(MIGRATION_RETRY_LOCK_TIMEOUT_MS)
+    try:
+        await _run_migration_set(retry=True)
+    finally:
+        _LOCK_TIMEOUT_MS.reset(token)
+        await dispose_migrations_engine()
+    pending = {**_DEPENDENT_FAILED, **_DEFERRED}
+    if pending:
+        logger.warning(
+            "migrations retry: still pending: %s",
+            ", ".join(f"{n} ({r})" for n, r in pending.items()),
+        )
+    else:
+        logger.warning("migrations retry: every deferred entry is now applied")
+    return pending
+
+
+#: Backoff for the in-process retry of deferred migrations: first retry
+#: after 30 s, doubling, capped at 5 min; it runs until nothing is deferred.
+MIGRATION_RETRY_INITIAL_SECONDS = 30.0
+MIGRATION_RETRY_MAX_SECONDS = 300.0
+
+_RETRY_TASK: asyncio.Task[Any] | None = None
+
+
+async def _retry_loop(initial: float, cap: float) -> None:
+    delay = initial
+    while migrations_pending():
+        await asyncio.sleep(delay)
         try:
-            async with engine.begin() as conn:
-                if is_sqlite:
-                    match = _SQLITE_ADD_COLUMN_RE.match(sql)
-                    if match:
-                        table = match.group("table")
-                        column = match.group("column")
-                        if await _sqlite_column_exists(conn, table, column):
-                            logger.debug(
-                                "migration skipped (column exists): %s "
-                                "(%s.%s)",
-                                name,
-                                table,
-                                column,
-                            )
-                            continue
-                await conn.execute(text(sql))
-                logger.info("migration applied: %s", name)
-        except Exception as exc:
-            if _database_unavailable(exc):
-                # Not the SQL's fault: log, carry on, boot degraded; every
-                # entry (fatal ones included) runs again on the next boot.
-                logger.error(
-                    "migration not applied (database unavailable): %s — %s", name, exc
-                )
-                continue
-            logger.exception("migration failed: %s — %s", name, exc)
-            if name in FATAL_MIGRATIONS:
-                raise FatalMigrationError(
-                    f"migration {name} failed and the worker will not start: {exc}"
-                ) from exc
+            await retry_deferred_migrations()
+        except Exception as exc:  # never let the loop die on one attempt
+            logger.exception("migrations retry: attempt failed: %s", exc)
+        delay = min(delay * 2, cap)
 
-    # Wave 5 (Sam #5) — a data migration, in Python so it applies the SAME
-    # rollup the app writes (services.deal_confidence). Runs after the DDL.
-    try:
-        await backfill_deal_ai_confidence(engine, is_sqlite=is_sqlite)
-    except Exception as exc:
-        if _database_unavailable(exc):
-            # Same rule as the DDL loop: unreachable is not the data's fault;
-            # boot degraded and the one-time backfill runs on the next boot.
-            logger.error(
-                "migration not applied (database unavailable): "
-                "deals.ai_confidence_backfill — %s",
-                exc,
-            )
-        else:
-            # The database answered and refused: like a FATAL_MIGRATIONS entry,
-            # the worker must not serve half-migrated confidence values.
-            logger.exception("migration failed: deals.ai_confidence_backfill — %s", exc)
-            raise FatalMigrationError(
-                "migration deals.ai_confidence_backfill failed and the worker "
-                f"will not start: {exc}"
-            ) from exc
 
-    # W5 review I3 — display strings an old editor saved as field values.
-    try:
-        await repair_display_string_edits(engine, is_sqlite=is_sqlite)
-    except Exception as exc:
-        if _database_unavailable(exc):
-            logger.error(
-                "migration not applied (database unavailable): "
-                "extraction_results.display_string_repair — %s",
-                exc,
-            )
-        else:
-            logger.exception("migration failed: extraction_results.display_string_repair — %s", exc)
-            raise FatalMigrationError(
-                "migration extraction_results.display_string_repair failed and the worker "
-                f"will not start: {exc}"
-            ) from exc
+def start_deferred_migration_retry(
+    *,
+    initial_seconds: float = MIGRATION_RETRY_INITIAL_SECONDS,
+    max_seconds: float = MIGRATION_RETRY_MAX_SECONDS,
+) -> bool:
+    """Start the background retry when something is deferred (idempotent).
+    Returns True when a loop was started."""
+    global _RETRY_TASK
+    if not migrations_pending() or (_RETRY_TASK is not None and not _RETRY_TASK.done()):
+        return False
+    _RETRY_TASK = asyncio.get_running_loop().create_task(
+        _retry_loop(initial_seconds, max_seconds), name="deferred-migration-retry"
+    )
+    return True
+
+
+async def stop_deferred_migration_retry() -> None:
+    global _RETRY_TASK
+    task, _RETRY_TASK = _RETRY_TASK, None
+    if task is not None and not task.done():
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 # ─────────────────────── deals.ai_confidence backfill ───────────────────────
@@ -2840,7 +3134,7 @@ async def backfill_deal_ai_confidence(engine, *, is_sqlite: bool) -> dict[str, i
     """
     from .services.deal_confidence import compute_deal_ai_confidence
 
-    async with engine.begin() as conn:
+    async with _migration_transaction(engine, is_sqlite=is_sqlite) as conn:
         forced: list[str] = []
         if not is_sqlite:
             marker = (
@@ -2965,7 +3259,7 @@ async def repair_display_string_edits(engine, *, is_sqlite: bool) -> dict[str, i
 
     jsonb = (lambda k: f":{k}") if is_sqlite else (lambda k: f"CAST(:{k} AS JSONB)")
     restored = cleared = rows_changed = 0
-    async with engine.begin() as conn:
+    async with _migration_transaction(engine, is_sqlite=is_sqlite) as conn:
         forced: list[str] = []
         if not is_sqlite:
             marker = (
@@ -3116,6 +3410,13 @@ __all__ = [
     "DisplayStringRepairError",
     "FatalMigrationError",
     "backfill_deal_ai_confidence",
+    "deferred_migrations",
+    "dependent_failed_migrations",
+    "failed_migrations",
+    "migrations_pending",
     "repair_display_string_edits",
+    "retry_deferred_migrations",
     "run_startup_migrations",
+    "start_deferred_migration_retry",
+    "stop_deferred_migration_retry",
 ]

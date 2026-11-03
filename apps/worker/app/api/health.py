@@ -131,6 +131,15 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
     # bucket and region is operator detail served by ``/admin/health``.
     if _raw_store_snapshot()["kind"].startswith("error:"):
         degraded_reasons.append("raw_store_init_failed")
+    # Incident 2026-11-03 — a startup migration that could not be applied
+    # (database unavailable / table busy past lock_timeout) is retried in the
+    # background; until it applies the code may name a column that is not
+    # there. One the database refused on retry stays until a fixed deploy.
+    migrations = _migration_state()
+    if migrations["deferred"] or migrations["dependent_failed"]:
+        degraded_reasons.append("migrations_deferred")
+    if migrations["failed"]:
+        degraded_reasons.append("migrations_failed")
 
     return {
         "status": "ok" if not degraded_reasons else "degraded",
@@ -308,4 +317,22 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
         "auth": auth_posture(),
         "reference": reference,
         "llm_provider": llm_provider,
+        # Incident 2026-11-03 — which startup migrations are deferred (and
+        # why) or were refused on retry; the public /health only says
+        # ``migrations_deferred`` / ``migrations_failed``.
+        "migrations": _migration_state(),
+    }
+
+
+def _migration_state() -> dict[str, dict[str, str]]:
+    from ..migrations import (
+        deferred_migrations,
+        dependent_failed_migrations,
+        failed_migrations,
+    )
+
+    return {
+        "deferred": deferred_migrations(),
+        "dependent_failed": dependent_failed_migrations(),
+        "failed": failed_migrations(),
     }

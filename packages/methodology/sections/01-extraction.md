@@ -110,6 +110,10 @@ time elapsed, and the Data Room offers Retry. Nothing is wrong with the file —
 again from the start. A retry on a document that is still moving is refused, so two runs never work
 on one file at once.
 
+If a job that was timed out finishes after all, its result stands: the document shows Extracted
+and the timeout note is cleared, and the activity log records that the run completed after it was
+timed out.
+
 :::
 
 ::: card
@@ -293,6 +297,12 @@ Retry on a document that is still moving and younger than the threshold is refus
 never run on one file; once the threshold has passed, Retry (or a forced re-extraction) is accepted
 and audited. Nothing is wrong with the file in either case — the same bytes run again from the
 start.
+
+A job that completes after the watchdog failed it wins: the row is set Extracted, every failure field
+(`error_kind`, `error_message`, `error_raw`, `failed_from_status`, `failed_job_id`) is removed from
+`extraction_data`, and an audit entry (`document.extraction_completed_after_failure`, before = the
+superseded failure) records it. A successful retry clears an earlier attempt's failure fields the
+same way, so a completed document never also reads as failed.
 
 :::
 

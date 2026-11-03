@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database import advisory_xact_lock, end_transaction_before_external_call
 from . import embeddings
 from .chunking import Chunk, chunk_pages
 from .models import ParsedDocument
@@ -116,14 +117,13 @@ async def index_parsed_document(
     if not chunks:
         return 0
 
-    # Wipe-and-rewrite for idempotent reprocessing.
-    await session.execute(
-        text(
-            "DELETE FROM document_chunks WHERE deal_id = :deal "
-            "AND document_id = :doc AND tenant_id = :tenant"
-        ),
-        {"deal": deal_id, "doc": document_id, "tenant": tenant_id},
-    )
+    # The embedding API call below is external (batches + retries): end the
+    # table probe's transaction first, and do NOT open the wipe-and-rewrite
+    # transaction until the vectors are in hand — a DELETE held open across
+    # the embedding calls kept row locks and a pooled connection for their
+    # whole duration (incident 2026-11-03,
+    # ``database.end_transaction_before_external_call``).
+    await end_transaction_before_external_call(session)
 
     # Try to embed, batch by batch. A failed batch leaves only its own
     # chunks NULL — still searchable via FTS, and the embedding repair job
@@ -140,6 +140,18 @@ async def index_parsed_document(
                 document_id,
                 exc,
             )
+
+    # Wipe-and-rewrite for idempotent reprocessing — one short transaction
+    # with the inserts below, serialized per document so two concurrent
+    # indexings cannot both DELETE first and then both INSERT (duplicates).
+    await advisory_xact_lock(session, f"document_chunks:{document_id}")
+    await session.execute(
+        text(
+            "DELETE FROM document_chunks WHERE deal_id = :deal "
+            "AND document_id = :doc AND tenant_id = :tenant"
+        ),
+        {"deal": deal_id, "doc": document_id, "tenant": tenant_id},
+    )
 
     # Bulk insert. Use parameter binding for chunk_text (long, may
     # contain special chars) but format the vector literal inline
@@ -277,6 +289,9 @@ async def search_chunks(
     # different space and would score as noise).
     vec_scores: dict[str, float] = {}
     if embeddings.is_enabled():
+        # The query embedding is an API call: end the FTS read's
+        # transaction first (incident 2026-11-03).
+        await end_transaction_before_external_call(session)
         try:
             q_vec = (await embeddings.embed_batch([q], input_type="query"))[0]
             vec_literal = _to_vector_literal(q_vec)

@@ -50,7 +50,7 @@ async def test_env_var_cannot_switch_the_production_backend(monkeypatch) -> None
     monkeypatch.setattr(documents, "_sibling_reuse_allowed", lambda _dt: False)
     fields, _conf, version, doc_type = await backend.extract(
         documents.ExtractionRequest(
-            session=None,  # type: ignore[arg-type] — never touched on this path
+            session_factory=None,  # never touched on this path
             deal_id="d",
             tenant_id="t",
             doc_id="doc-1",
