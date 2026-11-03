@@ -79,7 +79,8 @@ export default function PLTab() {
         }
       }
     }
-    const fin = documents.find((d) => {
+    // FON-22 — the statement the model uses, then any financial statement.
+    const fin = documents.find((d) => d.primary_financial_source) ?? documents.find((d) => {
       const t = (d.doc_type ?? '').toUpperCase();
       return t.includes('T12') || t.includes('PNL') || t.includes('P&L') || t.includes('PROFIT');
     });
@@ -99,8 +100,9 @@ export default function PLTab() {
       : 'Actual operating history, normalized and traceable to the source statement';
   // FON-41 E-014 — the primary financial statement's period ("T12 Mar 2025")
   // for the Future P&L's base-year column. The worker flags ONE document as
-  // the primary financial source (``_mark_primary_financial``, the Data
-  // Room's "Primary source" badge); its extraction states the period exactly
+  // the primary financial source — the loader's own chosen statement of the
+  // Year-1 basis period (FON-22 ``statement_roles``, the Data Room's "Primary
+  // source" badge); its extraction states the period exactly
   // the way the Historical P&L column heads it (``derivePeriodBasis``). Null
   // when nothing is flagged or the period is not stated — never a guess.
   const basePeriodLabel = useMemo<string | null>(() => {

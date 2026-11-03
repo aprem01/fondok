@@ -32,6 +32,7 @@ import {
   derivePeriodBasis,
   deriveYearLabel,
   emptyFiveYearSkeleton,
+  fillSamePeriodStats,
   labelOrdinal,
   uniqueYearLabel,
   type HistData,
@@ -49,6 +50,18 @@ export const isHistoricalSourceDoc = (d: WorkerDocument): boolean =>
   d.status === 'EXTRACTED' && (isPnlDoc(d) || isOmDoc(d));
 
 const isAnnualLabel = (label: string) => /^\d{4}$/.test(baseYearLabel(label));
+
+/** One statement's built column, before the per-period choice. */
+interface ColumnEntry {
+  doc: WorkerDocument;
+  base: string;
+  built: HistYear;
+  /** The full extraction (``fillSamePeriodStats`` applies ``actualsOnly``). */
+  fields: ExtractionResult['fields'];
+}
+
+const rankOf = (e: ColumnEntry): number =>
+  typeof e.doc.statement_period_rank === 'number' ? e.doc.statement_period_rank : Number.POSITIVE_INFINITY;
 const isT12Label = (label: string) => baseYearLabel(label) === 'T-12';
 
 /**
@@ -70,6 +83,7 @@ export function buildHistoricalYears(
 
   const byLabel = new Map<string, HistYear>();
   const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
+  const entries: ColumnEntry[] = [];
   for (const doc of sorted) {
     const ext = extractions[doc.id];
     if (!ext?.fields) continue;
@@ -89,37 +103,78 @@ export function buildHistoricalYears(
     // stamp the unique column label.
     const built = buildHistYear(fields, keys, base, doc.id, period);
     if (!built) continue;
-    // FON-22 (Sam QA 2026-10-20/28) — two statements on one fiscal year used
-    // to render as "2024" and "2024 (2)", each fully populated from its own
-    // file, with nothing saying which drove the model. Now one column per
-    // fiscal year: the primary statement wins and the others are listed on
-    // the column as supplemental. Ranking mirrors the worker's primary
-    // source badge — the flagged primary, else the fuller extraction, else
-    // the newer upload (``sorted`` is upload order, so the challenger is
-    // newer). T-12 columns keep their own labels: two trailing periods can
-    // legitimately differ.
-    if (isAnnualLabel(base) && byLabel.has(base)) {
-      const incumbent = byLabel.get(base)!;
-      const incumbentDoc = pnlDocs.find((d) => d.id === incumbent.docId);
-      const incumbentFields = incumbentDoc ? (extractions[incumbentDoc.id]?.fields?.length ?? 0) : 0;
-      const challengerFields = fields.length;
-      const incumbentPrimary = incumbentDoc?.primary_financial_source ?? false;
-      const challengerPrimary = doc.primary_financial_source ?? false;
-      const challengerWins = challengerPrimary !== incumbentPrimary
-        ? challengerPrimary
-        : challengerFields >= incumbentFields;
-      const winner = challengerWins ? built : incumbent;
-      const loserEntry = challengerWins
-        ? { docId: incumbent.docId ?? incumbentDoc?.id ?? '', filename: incumbentDoc?.filename ?? 'statement', fields: incumbentFields }
-        : { docId: doc.id, filename: doc.filename ?? 'statement', fields: challengerFields };
-      winner.year = base;
-      winner.supplementalDocs = [...(incumbent.supplementalDocs ?? []), loserEntry];
-      byLabel.set(base, winner);
-      continue;
+    entries.push({ doc, base, built, fields: ext.fields });
+  }
+
+  // FON-22 — one statement per period, and it is the WORKER's choice: the
+  // engine loader's per-period pick (shared ranking + footing / outlier
+  // override), surfaced on every document as ``statement_role`` /
+  // ``statement_period`` / ``statement_period_rank``. Statements the worker
+  // puts in one period give ONE column — its chosen statement — and the rest
+  // are listed on it as supplemental; the column never re-ranks them.
+  // Without roles (an older worker, or the rows could not be read) the
+  // legacy collision rule below stands.
+  if (entries.some((e) => e.doc.statement_role != null)) {
+    const groups = new Map<string, ColumnEntry[]>();
+    for (const e of entries) {
+      const key = e.doc.statement_period ? `period:${e.doc.statement_period}` : `doc:${e.doc.id}`;
+      const g = groups.get(key);
+      if (g) g.push(e);
+      else groups.set(key, [e]);
     }
-    const label = uniqueYearLabel(base, new Set(byLabel.keys()));
-    built.year = label;
-    byLabel.set(label, built);
+    for (const members of groups.values()) {
+      // The worker's order within the period; a member without a rank (no
+      // role yet) sorts last, in upload order.
+      const ordered = members
+        .map((e, i) => ({ e, i }))
+        .sort((a, b) => (rankOf(a.e) - rankOf(b.e)) || (a.i - b.i))
+        .map((x) => x.e);
+      const [chosen, ...siblings] = ordered;
+      let col = chosen.built;
+      if (siblings.length) {
+        col = fillSamePeriodStats(
+          col,
+          siblings.map((s) => ({ docId: s.doc.id, filename: s.doc.filename ?? 'statement', fields: s.fields })),
+          chosen.doc.filename ?? 'the statement used',
+          chosen.doc.statement_period_words ?? null,
+        );
+        col.supplementalDocs = siblings.map((s) => ({
+          docId: s.doc.id, filename: s.doc.filename ?? 'statement', fields: s.fields.length,
+        }));
+      }
+      const label = uniqueYearLabel(chosen.base, new Set(byLabel.keys()));
+      col.year = label;
+      byLabel.set(label, col);
+    }
+  } else {
+    for (const { doc, base, built, fields } of entries) {
+      // Legacy (no worker roles): two statements on one fiscal year give one
+      // column — the flagged primary, else the fuller extraction, else the
+      // newer upload (``entries`` is upload order, so the challenger is
+      // newer). T-12 columns keep their own labels.
+      if (isAnnualLabel(base) && byLabel.has(base)) {
+        const incumbent = byLabel.get(base)!;
+        const incumbentDoc = pnlDocs.find((d) => d.id === incumbent.docId);
+        const incumbentFields = incumbentDoc ? (extractions[incumbentDoc.id]?.fields?.length ?? 0) : 0;
+        const challengerFields = actualsOnly(fields).length;
+        const incumbentPrimary = incumbentDoc?.primary_financial_source ?? false;
+        const challengerPrimary = doc.primary_financial_source ?? false;
+        const challengerWins = challengerPrimary !== incumbentPrimary
+          ? challengerPrimary
+          : challengerFields >= incumbentFields;
+        const winner = challengerWins ? built : incumbent;
+        const loserEntry = challengerWins
+          ? { docId: incumbent.docId ?? incumbentDoc?.id ?? '', filename: incumbentDoc?.filename ?? 'statement', fields: incumbentFields }
+          : { docId: doc.id, filename: doc.filename ?? 'statement', fields: challengerFields };
+        winner.year = base;
+        winner.supplementalDocs = [...(incumbent.supplementalDocs ?? []), loserEntry];
+        byLabel.set(base, winner);
+        continue;
+      }
+      const label = uniqueYearLabel(base, new Set(byLabel.keys()));
+      built.year = label;
+      byLabel.set(label, built);
+    }
   }
   // OM-embedded prior years fill gaps a standalone statement doesn't cover
   // (e.g. an OM's own 2021-2023 P&L). Actual statements always win on a

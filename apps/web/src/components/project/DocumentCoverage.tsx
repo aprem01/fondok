@@ -61,8 +61,14 @@ export interface CoverageFile {
   /** 0-100 overall extraction confidence. */
   confidence: number;
   /** FON-22 — this statement drives the model's Year-1 actuals (the worker's
-   *  `primary_financial_source`, ranked the way the engine loaders rank). */
+   *  `primary_financial_source`: the loader's own chosen statement of the
+   *  Year-1 basis period). */
   primaryFinancialSource?: boolean;
+  /** FON-22 — the worker's `statement_role`; a `period_primary` is the
+   *  statement the Historical P&L uses for another period. */
+  statementRole?: string | null;
+  /** That period in words ("FY2023"). */
+  statementPeriodWords?: string | null;
   /** Count of fields still needing review (<85%, not yet accepted). */
   toReview: number;
   /** FON-41 testers (E-002 / R-041): the one-line, data-derived reason the
@@ -1148,6 +1154,15 @@ function CoverageFileRow({
             className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold border border-brand-100 bg-brand-50 text-brand-700"
           >
             Primary source
+          </span>
+        )}
+        {!file.primaryFinancialSource && file.statementRole === 'period_primary' && file.statementPeriodWords && (
+          <span
+            data-testid="period-primary-badge"
+            title={`The Historical P&L uses this statement for ${file.statementPeriodWords}. It does not drive Year-1.`}
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium border border-border bg-surface-2 text-ink-700"
+          >
+            Primary for {file.statementPeriodWords}
           </span>
         )}
         {file.confidence > 0 && (

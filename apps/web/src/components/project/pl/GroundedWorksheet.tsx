@@ -358,6 +358,9 @@ interface InspectTarget {
   /** Wave 5 — the extracted lines a summed historical cell adds up (Other
    *  Revenue = Other Operated + Misc. Income). A correction edits ONE line. */
   parts?: { field: string; value: number; confidence: number }[];
+  /** FON-22 — the column's statement does not state this figure; it was read
+   *  from another statement of the same period. The sentence says which. */
+  fillNote?: string | null;
 }
 
 /** E-012 — a "correct at source" save awaiting its refreshed column. */
@@ -1458,6 +1461,9 @@ function WorksheetCell({
   // extraction, so it clears the moment the value is accepted/edited. histMeta
   // only supplies the source document for in-confidence (green) cells.
   const histMeta = historical && row.metaKey ? histYear?.meta?.[row.metaKey] : undefined;
+  // FON-22 — an operating statistic read from a same-period statement: the
+  // cell opens THAT statement and says so.
+  const histFill = historical && row.metaKey ? histYear?.filled?.[row.metaKey] : undefined;
   const effReview = review;
 
   // FON-90 — a historical Total Revenue cell is the statement's OWN stated
@@ -1496,7 +1502,7 @@ function WorksheetCell({
     // Historical cells carry their source doc via histMeta (extracted) — both
     // green (in-confidence) and red (flagged) cells open the SOURCE panel at
     // that document; only flagged cells get the review Accept/Edit flow.
-    const histDocId = historical ? histMeta?.docId : undefined;
+    const histDocId = historical ? (histMeta?.docId ?? histFill?.docId) : undefined;
     const docIds = historical
       ? (histDocId ? [histDocId] : [])
       : (resolved?.docId ? [resolved.docId] : []);
@@ -1506,7 +1512,7 @@ function WorksheetCell({
       kind,
       value,
       overrideKey: !historical ? row.overrideKey : undefined,
-      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? histMeta?.field),
+      reviewKey: !historical ? (row.overrideKey ?? row.reviewKey) : (effReview?.field ?? histMeta?.field ?? histFill?.field),
       docIds: effReview ? [effReview.docId, ...docIds.filter((id) => id !== effReview.docId)] : docIds,
       formula: kind === 'computed' ? formulaFor(row.id) : undefined,
       review: effReview,
@@ -1514,6 +1520,7 @@ function WorksheetCell({
       rowId: row.id,
       year: historical ? histYear?.year : undefined,
       parts: historical ? histMeta?.parts : undefined,
+      fillNote: historical ? histFill?.note ?? null : undefined,
       statedTotalRevenue: historical
         ? (typeof histYear?.total_revenue_stated === 'number' && Number.isFinite(histYear.total_revenue_stated)
           ? histYear.total_revenue_stated : null)
@@ -1540,9 +1547,10 @@ function WorksheetCell({
   // Custom source tooltip (canonical Financials design): a dark navy bubble
   // that NAMES the actual source document on hover. Supplements — never
   // replaces — the existing click-to-source (openInspect).
-  const sourceDocId = historical ? histMeta?.docId : resolved?.docId;
+  const sourceDocId = historical ? (histMeta?.docId ?? histFill?.docId) : resolved?.docId;
   const sourceDoc =
     overridden ? 'Entered by you'
+    : histFill ? histFill.note
     : kind === 'computed' ? 'Calculated total — sum of the lines above'
     : sourceDocId ? `Extracted from ${docNameById(sourceDocId) ?? 'the source document'}`
     : kind === 'grounded' ? 'Extracted from the source document'
@@ -2106,6 +2114,12 @@ function SourcePanel({
             <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5">
               <div className="text-[10.5px] uppercase tracking-wide text-violet-700 font-semibold mb-1">Your note</div>
               <div className="text-[12px] text-ink-700">{overrideNote}</div>
+            </div>
+          )}
+
+          {target.fillNote && (
+            <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-[11.5px] text-ink-700" data-testid="same-period-fill">
+              {target.fillNote}
             </div>
           )}
 

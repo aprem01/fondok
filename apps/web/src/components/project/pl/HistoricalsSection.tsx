@@ -146,6 +146,23 @@ export interface HistYear {
    *  so any low-confidence historical cell can flag and open the SOURCE panel
    *  at its own document. */
   meta?: Record<string, HistLineMeta>;
+  /** FON-22 — operating statistics (``occ`` / ``adr`` / ``revpar``, keyed
+   *  like ``meta``) the column's statement does not state, read from another
+   *  statement of the SAME period (``fillSamePeriodStats``). Absent when
+   *  nothing was filled. */
+  filled?: Record<string, HistFill>;
+}
+
+/** One operating statistic read from a same-period statement (FON-22). */
+export interface HistFill {
+  filledFrom: 'same_period';
+  /** The statement it was read from. */
+  docId: string;
+  filename: string;
+  /** The extracted field it was read from. */
+  field: string;
+  /** "Occupancy is not on <chosen>; read from <sibling> (the same period, FY2024)." */
+  note: string;
 }
 
 export interface HistLineMeta {
@@ -902,4 +919,94 @@ export function emptyFiveYearSkeleton(): HistData {
     });
   }
   return { keys: 0, years };
+}
+
+// ───────────── FON-22 — same-period fill of the operating statistics ─────────────
+//
+// The column is ONE statement: the worker's chosen statement of its period.
+// When that statement states no occupancy / ADR / RevPAR, the figure is read
+// from another statement of the SAME period (the worker's ``statement_period``
+// — the loader's exact-period rule), in the worker's sibling order, and only
+// from its full-period lines (``actualsOnly`` drops monthly / quarterly / YTD
+// slices). Never from another period, an STR or an OM; with no same-period
+// source the cell stays "—". Mirrors the loader's same-period line fill.
+
+const FILL_WORDS: Record<'occ' | 'adr' | 'revpar', string> = {
+  occ: 'Occupancy',
+  adr: 'ADR',
+  revpar: 'RevPAR',
+};
+
+/** A same-period statement offered to :func:`fillSamePeriodStats`. */
+export interface SamePeriodSibling {
+  docId: string;
+  filename: string;
+  fields: ExtractionField[];
+}
+
+/**
+ * Fill the column's missing occupancy / ADR / RevPAR from same-period
+ * siblings (already in the worker's order). Returns the column unchanged when
+ * nothing is missing or no sibling states the figure. RevPAR is derived from
+ * occupancy × ADR only when both come from the same statement.
+ */
+export function fillSamePeriodStats(
+  col: HistYear,
+  siblings: SamePeriodSibling[],
+  chosenName: string,
+  periodWords: string | null,
+): HistYear {
+  const missing = (['occ', 'adr', 'revpar'] as const).filter((k) =>
+    k === 'occ' ? col.occupancyPct == null : k === 'adr' ? col.adr == null : col.revpar == null,
+  );
+  if (!missing.length || !siblings.length) return col;
+  const out: HistYear = { ...col, meta: { ...(col.meta ?? {}) }, filled: { ...(col.filled ?? {}) } };
+  const where = periodWords ? `the same period, ${periodWords}` : 'the same period';
+  const fromDoc: Partial<Record<'occ' | 'adr' | 'revpar', string | undefined>> = {
+    occ: col.occupancyPct != null ? col.docId : undefined,
+    adr: col.adr != null ? col.docId : undefined,
+  };
+  for (const key of missing) {
+    for (const sib of siblings) {
+      const field = findField(actualsOnly(sib.fields), HISTORICALS_ALIASES[key] ?? []);
+      const raw = num(field);
+      if (!field || raw == null) continue;
+      const value = key === 'occ' && raw > 1.5 ? raw / 100 : raw;
+      if (key === 'occ') out.occupancyPct = value;
+      else if (key === 'adr') out.adr = value;
+      else out.revpar = value;
+      fromDoc[key] = sib.docId;
+      out.filled![key] = {
+        filledFrom: 'same_period',
+        docId: sib.docId,
+        filename: sib.filename,
+        field: field.field_name,
+        note: `${FILL_WORDS[key]} is not on ${chosenName}; read from ${sib.filename} (${where}).`,
+      };
+      if (typeof field.confidence === 'number') {
+        out.meta![key] = { confidence: field.confidence, field: field.field_name, docId: sib.docId };
+      } else {
+        delete out.meta![key];
+      }
+      break;
+    }
+  }
+  if (
+    out.revpar == null && out.occupancyPct != null && out.adr != null
+    && fromDoc.occ != null && fromDoc.occ === fromDoc.adr
+  ) {
+    out.revpar = out.adr * out.occupancyPct;
+    const sib = siblings.find((x) => x.docId === fromDoc.occ);
+    if (sib && sib.docId !== col.docId) {
+      out.filled!.revpar = {
+        filledFrom: 'same_period',
+        docId: sib.docId,
+        filename: sib.filename,
+        field: out.filled!.occ?.field ?? out.filled!.adr?.field ?? '',
+        note: `RevPAR is not on ${chosenName}; occupancy × ADR as read from ${sib.filename} (${where}).`,
+      };
+    }
+  }
+  if (!Object.keys(out.filled!).length) delete out.filled;
+  return out;
 }

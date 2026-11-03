@@ -883,6 +883,9 @@ export interface StrMarketRecord {
   label?: string;
 }
 
+/** FON-22 — a document's part in the worker's statement choice. */
+export type StatementRole = 'year_one_primary' | 'period_primary' | 'supplemental' | 'not_a_statement';
+
 export interface WorkerDocument {
   id: string;
   deal_id: string;
@@ -900,11 +903,26 @@ export interface WorkerDocument {
   error_kind: string | null;
   /** Friendly explanation the UI surfaces for FAILED docs. */
   error_message: string | null;
-  /** FON-22 — true on the single financial statement the engines treat as
-   *  the primary source of truth for historical modeling (full-year >
-   *  partial period, then most recent, then most detailed). Derived
+  /** FON-22 — true on the single financial statement the model grounds
+   *  Year-1 on: the chosen statement of the Year-1 basis period in the
+   *  worker loader's own per-period choice (``statement_roles``). Derived
    *  server-side on every list; the DataRoom badges it "Primary source". */
   primary_financial_source?: boolean;
+  /** FON-22 — this document's part in that same choice (P&L-family docs with
+   *  an extraction): ``year_one_primary`` | ``period_primary`` (the chosen
+   *  statement of another period) | ``supplemental`` (another statement of a
+   *  period, never blended in) | ``not_a_statement``. Absent / null on other
+   *  documents, older workers, or when the worker could not read the rows. */
+  statement_role?: StatementRole | null;
+  /** The worker loader's exact-period identity — opaque; two documents share
+   *  it only when the model treats them as one period. */
+  statement_period?: string | null;
+  /** That period in words ("FY2024"). */
+  statement_period_words?: string | null;
+  /** 0 = the period's chosen statement, then its siblings in fill order. */
+  statement_period_rank?: number | null;
+  /** The chosen statement of this document's period. */
+  period_primary_document_id?: string | null;
   /** USALI compliance score (0-100). NULL → inconclusive (< 5 applicable
    *  rules) or "no P&L data on this doc" — UI surfaces them differently. */
   usali_score?: number | null;
