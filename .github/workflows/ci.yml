@@ -139,6 +139,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uv run --project apps/worker python scripts/check_golden_gate.py
 
+      # FON-116 staged rollout (TEMPORARY — remove with TOPLINE_BENCHMARK_ENABLED
+      # once FON-117 is on in production, DEPLOY.md "Topline rollout switch").
+      # The step above checks the deployed default (growth-only topline); this
+      # one runs the same fixtures with the benchmark × penetration × ramp
+      # topline switched on against its own baseline.
+      - name: Kimpton golden gate (benchmark topline)
+        working-directory: ${{ github.workspace }}
+        run: uv run --project apps/worker python scripts/check_golden_gate.py --topline-mode benchmark
+
   # FON-88 — extractor changes must bump EXTRACTION_PIPELINE_VERSION.
   # ``scripts/check_pipeline_version.py`` diffs the merge-base with
   # origin/main (HEAD^ on a push to main): a change under
