@@ -16,6 +16,18 @@
  */
 
 import type { EngineFailure, ToplineGrowthRow, ToplineStatus, ToplineSuggestion } from '@/lib/api';
+import { SOURCE_LABEL_FROM_REGISTRY } from '@/lib/ontology/adapters';
+
+/**
+ * FON-116 staged rollout (temporary — removed once FON-117 is on in
+ * production): the worker runs the growth-only topline — Year 1 is the
+ * subject's own rates and only the market growth by year applies; benchmark,
+ * penetration and ramp are not in use. An older worker (no field) is the
+ * benchmark topline.
+ */
+export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
+  return s?.topline_mode === 'growth_only';
+}
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
 export const TOPLINE_METHODOLOGY_VERSION = 2;
@@ -71,7 +83,7 @@ export interface ToplineYearRecord {
 export type ClauseTone = 'ok' | 'warn';
 
 export interface ToplineClause {
-  id: 'benchmark' | 'growth' | 'stabilization' | 'ramp';
+  id: 'benchmark' | 'year1' | 'growth' | 'stabilization' | 'ramp';
   text: string;
   tone: ClauseTone;
   /** Hover text — the worker's full labels. */
@@ -151,7 +163,9 @@ function fmtPctWhole(fraction: number): string {
 export function toplineBasisClauses(s: ToplineStatus | null | undefined): ToplineClause[] {
   if (!s) return [];
   const out: ToplineClause[] = [];
-  if (s.benchmark_level === 'none') {
+  if (isGrowthOnly(s)) {
+    out.push(year1Clause(s));
+  } else if (s.benchmark_level === 'none') {
     out.push({
       id: 'benchmark',
       tone: 'warn',
@@ -192,9 +206,31 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
       : s.stabilization_source === 'default_year_3_reopening'
         ? 'default — Year 3 after reopening'
         : 'default';
-  out.push({ id: 'stabilization', tone: 'ok', text: `Stabilized Year ${s.stabilization_year} (${stabWho})` });
-  out.push({ id: 'ramp', ...rampSummary(s) });
+  // Decision 1b (2026-11-03): occupancy holds at its stabilized level; ADR keeps growing.
+  out.push({
+    id: 'stabilization',
+    tone: 'ok',
+    text: `Stabilized Year ${s.stabilization_year} (${stabWho}) — occupancy flat after it`,
+  });
+  if (!isGrowthOnly(s)) out.push({ id: 'ramp', ...rampSummary(s) });
   return out;
+}
+
+/** Growth-only topline — which source set each Year-1 rate (registry labels, never composed here). */
+function year1Clause(s: ToplineStatus): ToplineClause {
+  const occ = s.year1_sources?.occupancy ?? null;
+  const adr = s.year1_sources?.adr ?? null;
+  const label = (id: string | null) => (id ? SOURCE_LABEL_FROM_REGISTRY[id] ?? id.replace(/_/g, ' ') : '—');
+  if (!occ && !adr) {
+    return { id: 'year1', tone: 'warn', text: 'Year 1: no rates — enter Year-1 occupancy and ADR' };
+  }
+  const text = occ === adr ? `Year 1: ${label(occ)}` : `Year 1: occupancy ${label(occ)} · ADR ${label(adr)}`;
+  return {
+    id: 'year1',
+    tone: occ && adr ? 'ok' : 'warn',
+    text,
+    title: 'Growth-only topline: Year 1 is the subject’s own rates, grown by the market growth by year. The benchmark × penetration × ramp method is not switched on in this workspace.',
+  };
 }
 
 export interface GrowthBanner {
@@ -512,6 +548,8 @@ export function toplineReferenceRows(
   years: number,
 ): { benchmark: ReferenceRow | null; t12: ReferenceRow | null } {
   if (!s) return { benchmark: null, t12: null };
+  // Growth-only topline: the T-12 IS Year 1's basis (no "reference" row), and no benchmark is in use.
+  if (isGrowthOnly(s)) return { benchmark: null, t12: null };
   const by = s.benchmark_by_year ?? [];
   const benchmark: ReferenceRow | null =
     s.benchmark_level !== 'none' && by.length

@@ -447,6 +447,17 @@ export interface ToplineRevenueBasis {
 
 export interface ToplineStatus {
   methodology_version: number;
+  /**
+   * FON-116 staged rollout (temporary — removed once FON-117 is on in
+   * production): `growth_only` = Year 1 is the subject's own rates (T-12 /
+   * your values) and only the market growth by year applies; the benchmark,
+   * penetration and ramp keys are published empty and not in use.
+   * `benchmark` = benchmark × penetration × ramp. Absent on an older worker
+   * (read as `benchmark`).
+   */
+  topline_mode?: 'growth_only' | 'benchmark';
+  /** Which source set each Year-1 rate (`sources.starting_*`). */
+  year1_sources?: { occupancy?: string | null; adr?: string | null } | null;
   benchmark?: Record<string, unknown> | null;
   benchmark_level: ToplineBenchmarkLevel;
   benchmark_label: string;
@@ -463,8 +474,9 @@ export interface ToplineStatus {
   growth_by_year: ToplineGrowthRow[];
   stabilization_year: number;
   stabilization_source: string;
-  penetration_occ: number;
-  penetration_adr: number;
+  /** `null` under the growth-only topline (not in use). */
+  penetration_occ: number | null;
+  penetration_adr: number | null;
   penetration_occ_source: 'default' | 'analyst_override' | string;
   penetration_adr_source: 'default' | 'analyst_override' | string;
   penetration_occ_by_year: (number | null)[];
@@ -1509,6 +1521,8 @@ export interface RunCompareSide {
   /** Plan §6 — the topline method the run's revenue engine used (1 = before
    *  topline v2); null with no revenue output; absent on an older worker. */
   topline_methodology_version?: number | null;
+  /** FON-116 staged rollout — `growth_only` / `benchmark`; null before the field. */
+  topline_mode?: 'growth_only' | 'benchmark' | null;
 }
 
 export interface RunCompareResponse {

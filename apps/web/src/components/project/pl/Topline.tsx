@@ -37,6 +37,7 @@ import {
   calendarAnchorNote,
   growthBanner,
   growthPercentList,
+  isGrowthOnly,
   legacyKeysToClear,
   overrideList,
   parseGrowthPercentList,
@@ -523,6 +524,23 @@ export function ToplineCard({
   className?: string;
 }) {
   if (!status) return null;
+  if (isGrowthOnly(status)) {
+    // FON-116 staged rollout — only the growth half is switched on: the
+    // stabilized year (occupancy is flat after it) is the one topline input.
+    return (
+      <div className={className} data-testid="topline-card" data-mode="growth_only">
+        <div className="text-[11px] font-bold text-ink-900 mb-2.5">Topline</div>
+        <div className="flex flex-col gap-2.5">
+          {stabilizationSlot}
+          <div className="text-[11px] text-ink-500" data-testid="topline-growth-only-note">
+            Year 1 is the subject&apos;s own rates (T-12 or your values), grown by the market growth by year;
+            occupancy is flat after the stabilized year, ADR keeps growing. Benchmark, penetration and ramp are not
+            switched on in this workspace.
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={className} data-testid="topline-card">
       <div className="text-[11px] font-bold text-ink-900 mb-2.5">Topline</div>
@@ -651,6 +669,7 @@ export function GrowthByYearTable({
 
 // ─────────────────────────── per-year penetration (Index Analysis) ───────────────────────────
 
+/** Index Analysis grid — benchmark × penetration × ramp by year (benchmark topline only). */
 export function PenetrationByYearGrid({
   status, toplineByYear, overrides, onSave, running,
 }: {

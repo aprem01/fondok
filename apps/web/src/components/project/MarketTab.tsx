@@ -39,6 +39,7 @@ import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { useSource } from '@/lib/hooks/useDealProvenance';
 import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
+import { isGrowthOnly } from '@/lib/topline';
 import { Refused, asReasonCode } from '@/components/help/Refused';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -796,6 +797,7 @@ function SubjectVsCompSet({
   baseYearOccPct,
   baseYearAdr,
   toplineLabel,
+  growthOnly = false,
   dealId,
   subjectState,
 }: {
@@ -815,6 +817,8 @@ function SubjectVsCompSet({
   /** FON-116 — the benchmark the topline resolved (`topline_status.benchmark_label`),
    *  or null on an older worker / before the payload lands. */
   toplineLabel: string | null;
+  /** FON-116 staged rollout — the worker runs the growth-only topline (no benchmark in use). */
+  growthOnly?: boolean;
   dealId: string;
   subjectState: ValueState;
 }) {
@@ -976,8 +980,18 @@ function SubjectVsCompSet({
             Model benchmark
           </span>
           <span style={{ fontSize: 12.5, color: palette.ink }}>
-            The comp set is the model&apos;s benchmark by default.{' '}
-            {toplineLabel ? <>In use: <b>{toplineLabel}</b>. </> : null}
+            {growthOnly ? (
+              <span data-testid="str-card-growth-only">
+                The model&apos;s Year 1 is the subject&apos;s own rates (T-12 or your values), grown by the market
+                growth by year — the comp set is shown here for reference; the benchmark × penetration method is not
+                switched on in this workspace.{' '}
+              </span>
+            ) : (
+              <>
+                The comp set is the model&apos;s benchmark by default.{' '}
+                {toplineLabel ? <>In use: <b>{toplineLabel}</b>. </> : null}
+              </>
+            )}
             {benchmarkClause} {baseYearClause}
           </span>
           <span style={{ display: 'flex', gap: 8, marginLeft: 'auto', alignItems: 'center' }}>
@@ -1844,6 +1858,7 @@ export default function MarketTab({ projectId }: { projectId: number | string })
               toplineLabel={
                 toplineStatus && toplineStatus.benchmark_level !== 'none' ? toplineStatus.benchmark_label : null
               }
+              growthOnly={isGrowthOnly(toplineStatus)}
               dealId={dealId}
               subjectState={stateOf('revenue', 'year1_occupancy', 'document_sourced')}
             />

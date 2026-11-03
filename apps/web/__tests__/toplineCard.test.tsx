@@ -321,3 +321,42 @@ describe('RevenueBasisEntry — no Year-1 basis (review I-5)', () => {
     expect(screen.getByLabelText('Year-1 ADR ($)')).toBeInTheDocument();
   });
 });
+
+describe('FON-116 staged rollout — growth-only topline', () => {
+  it('the Topline card shows the stabilized year only — no level, penetration or ramp controls', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    render(
+      <ToplineCard
+        status={growthOnlyStatus()}
+        overrides={{}}
+        onSave={ok()}
+        running={false}
+        stabilizationSlot={<div data-testid="stab-slot">Stabilization year</div>}
+      />,
+    );
+    const card = screen.getByTestId('topline-card');
+    expect(card).toHaveAttribute('data-mode', 'growth_only');
+    expect(screen.getByTestId('stab-slot')).toBeInTheDocument();
+    expect(screen.getByTestId('topline-growth-only-note')).toHaveTextContent('occupancy is flat after the stabilized year');
+    expect(screen.queryByTestId('topline-level')).toBeNull();
+    expect(screen.queryByTestId('topline-penetration-occ')).toBeNull();
+    expect(screen.queryByTestId('topline-penetration-adr')).toBeNull();
+    expect(screen.queryByTestId('topline-ramp')).toBeNull();
+  });
+
+  it('the benchmark topline keeps every control', () => {
+    render(<ToplineCard status={toplineStatus()} overrides={{}} onSave={ok()} running={false} />);
+    expect(screen.getByTestId('topline-level')).toBeInTheDocument();
+    expect(screen.getByTestId('topline-penetration-occ')).toBeInTheDocument();
+    expect(screen.getByTestId('topline-ramp')).toBeInTheDocument();
+    expect(screen.getByTestId('topline-card')).not.toHaveAttribute('data-mode');
+  });
+
+  it('the growth table and the basis line render in growth-only mode', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    render(<ToplineBasisLine status={growthOnlyStatus()} />);
+    expect(screen.getByTestId('topline-clause-year1')).toHaveTextContent('Year 1: T-12 actual');
+    expect(screen.queryByTestId('topline-clause-ramp')).toBeNull();
+    expect(screen.queryByTestId('topline-clause-benchmark')).toBeNull();
+  });
+});

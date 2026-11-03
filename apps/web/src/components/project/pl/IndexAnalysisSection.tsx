@@ -39,7 +39,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useToplineStatus } from '@/lib/hooks/useToplineStatus';
 import { applyOverridePatch, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
-import type { ToplineYearRecord } from '@/lib/topline';
+import { isGrowthOnly, type ToplineYearRecord } from '@/lib/topline';
 import { PenetrationByYearGrid, ToplineBasisLine, ToplineCard, ToplineNotices, type ToplineSave } from './Topline';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { toIndexPoints } from '@/lib/indexTarget';
@@ -891,8 +891,9 @@ function ToplineIndexPanel({
       <div>
         <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">Topline — what the model runs on</div>
         <div className="text-[11.5px] text-ink-500 mt-0.5">
-          The benchmark the subject is indexed against, the penetration it reaches at stabilization and the ramp
-          to it — the same inputs as the Topline card on the Future P&amp;L.
+          {isGrowthOnly(topline)
+            ? 'Year 1 is the subject’s own rates, grown by the market growth by year — the benchmark × penetration × ramp method is not switched on in this workspace, so the indices below are reference figures.'
+            : 'The benchmark the subject is indexed against, the penetration it reaches at stabilization and the ramp to it — the same inputs as the Topline card on the Future P&L.'}
         </div>
       </div>
       <ToplineBasisLine status={topline} />
@@ -905,13 +906,15 @@ function ToplineIndexPanel({
         running={running}
       />
       <ToplineCard status={topline} overrides={overrides} onSave={onSave} running={running} />
-      <PenetrationByYearGrid
-        status={topline}
-        toplineByYear={toplineByYear}
-        overrides={overrides}
-        onSave={onSave}
-        running={running}
-      />
+      {!isGrowthOnly(topline) && (
+        <PenetrationByYearGrid
+          status={topline}
+          toplineByYear={toplineByYear}
+          overrides={overrides}
+          onSave={onSave}
+          running={running}
+        />
+      )}
     </Card>
   );
 }

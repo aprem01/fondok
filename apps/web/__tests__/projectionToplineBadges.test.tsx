@@ -251,6 +251,32 @@ describe('Future P&L — the topline basis line and badges (plan §4.2)', () => 
   });
 });
 
+describe('Future P&L — FON-116 staged rollout: the growth-only topline (a real run)', () => {
+  it('names the Year-1 source and the growth, with no benchmark chips, reference rows or penetration / ramp controls', async () => {
+    const go = (await import('./fixtures/engine/toplineRunGrowthOnly.json')).default as unknown as {
+      revenue: { topline_by_year: unknown[]; topline_mode: string };
+      topline_status: ToplineStatus;
+    };
+    OUTPUTS_OVERRIDE = withRevenue({
+      topline_by_year: go.revenue.topline_by_year, topline_methodology_version: 2, topline_mode: 'growth_only',
+    });
+    renderWith(go.topline_status);
+    expect(screen.getByTestId('topline-clause-year1')).toHaveTextContent('Year 1: T-12 actual');
+    expect(screen.queryByTestId('topline-clause-ramp')).toBeNull();
+    expect(screen.queryByTestId('topline-basis-occupancy-0')).toBeNull();
+    expect(screen.queryByTestId('topline-ref-benchmark')).toBeNull();
+    expect(screen.queryByTestId('topline-ref-t12')).toBeNull();
+    const card = screen.getByTestId('topline-card');
+    expect(card).toHaveAttribute('data-mode', 'growth_only');
+    expect(within(card).getByText('Stabilization Year')).toBeInTheDocument();
+    expect(within(card).queryByLabelText('Benchmark level')).toBeNull();
+    expect(screen.queryByTestId('topline-ramp')).toBeNull();
+    // The growth table is there in both modes.
+    expect(screen.getByTestId('topline-growth-by-year')).toBeInTheDocument();
+    expect(screen.queryByTestId('topline-migration-notice')).toBeNull();
+  });
+});
+
 describe('Future P&L — growth unavailable and the labelled suggestion', () => {
   it('shows the banner; applying the suggestion PATCHes revpar_growth with the prefilled note and re-runs', async () => {
     renderWith(toplineStatus(unavailableGrowth()));

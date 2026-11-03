@@ -35,7 +35,7 @@ describe('toplineBasisClauses — the one-line basis', () => {
     expect(c[0].tone).toBe('ok');
     expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · past the forecast (forecast average for ADR; occupancy held)');
     expect(c[1].tone).toBe('ok');
-    expect(c[2].text).toBe('Stabilized Year 3 (default)');
+    expect(c[2].text).toBe('Stabilized Year 3 (default) — occupancy flat after it');
     expect(c[3].text).toBe('Ramp 85/95/100 (default)');
   });
 
@@ -74,7 +74,7 @@ describe('toplineBasisClauses — the one-line basis', () => {
     const c = toplineBasisClauses(
       toplineStatus({ stabilization_year: 4, stabilization_source: 'analyst_override', ramp_by_year: [0.8, 0.9, 0.95], ramp_source: 'analyst_override' }),
     );
-    expect(c[2].text).toBe('Stabilized Year 4 (your override)');
+    expect(c[2].text).toBe('Stabilized Year 4 (your override) — occupancy flat after it');
     expect(c[3].text).toBe('Ramp 80/90/95/100 (your ramp)');
   });
 
@@ -360,5 +360,67 @@ describe('final review minors', () => {
     const r = toplineReferenceRows(toplineStatus({ t12_reference: { occupancy: 0.8, adr: 240, revpar: 192, period_label: 'T-12', doc_name: null } }), 2);
     expect(r.t12!.label).toBe('T-12 actual (reference)');
     expect(r.t12!.title).toBe("The subject's own T-12 — shown for reference; it sets no projected year.");
+  });
+});
+
+describe('FON-116 staged rollout — the growth-only topline', () => {
+  it('the basis line names the Year-1 source and the growth, never a benchmark or a ramp', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    const s = growthOnlyStatus();
+    const c = toplineBasisClauses(s);
+    expect(c.map((x) => x.id)).toEqual(['year1', 'growth', 'stabilization']);
+    expect(c[0].text).toBe('Year 1: T-12 actual');
+    expect(c[0].tone).toBe('ok');
+    expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · occupancy flat after stabilization');
+    expect(c[2].text).toBe('Stabilized Year 3 (default) — occupancy flat after it');
+    expect(JSON.stringify(c)).not.toMatch(/Benchmark:|Ramp|penetration 100/);
+  });
+
+  it('mixed Year-1 sources are named per metric; none at all asks for the rates', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    const mixed = toplineBasisClauses(growthOnlyStatus({ year1_sources: { occupancy: 'analyst_override', adr: 'cbre_horizons' } }));
+    expect(mixed[0].text).toMatch(/^Year 1: occupancy .+ · ADR .+$/);
+    const none = toplineBasisClauses(growthOnlyStatus({ year1_sources: { occupancy: null, adr: null } }));
+    expect(none[0]).toMatchObject({ tone: 'warn', text: 'Year 1: no rates — enter Year-1 occupancy and ADR' });
+  });
+
+  it('no per-year benchmark chain and no reference rows (the T-12 is the basis, not a reference)', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    const s = growthOnlyStatus();
+    expect(toplineReferenceRows(s, 5)).toEqual({ benchmark: null, t12: null });
+    expect(yearRateBadge(s, [], 0, 'occupancy')).toBeNull();
+    expect(toplineYearChain(s, [], 0, 'adr')).toBeNull();
+  });
+
+  it('the growth banner and the migration notice work as in the benchmark topline', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    expect(growthBanner(growthOnlyStatus())).toBeNull();
+    expect(growthBanner(growthOnlyStatus({ growth_state: 'unavailable', suggestions: [SUGGESTION_45] }))?.suggestion).toEqual(SUGGESTION_45);
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 2 })).toBeNull();
+  });
+});
+
+describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/engine/toplineRunGrowthOnly.json)', () => {
+  it('the worker’s own growth-only status reads as growth-only', async () => {
+    const run = (await import('./fixtures/engine/toplineRunGrowthOnly.json')).default as unknown as {
+      revenue: { topline_mode: string; topline_methodology_version: number; topline_by_year: ToplineYearRecord[] };
+      topline_status: ToplineStatus;
+    };
+    const s = run.topline_status;
+    expect(run.revenue.topline_mode).toBe('growth_only');
+    expect(run.revenue.topline_methodology_version).toBe(2);
+    const c = toplineBasisClauses(s);
+    expect(c.map((x) => x.id)).toEqual(['year1', 'growth', 'stabilization']);
+    expect(c[0].text).toBe('Year 1: T-12 actual');
+    expect(c[1].text).toContain('occupancy flat after stabilization');
+    expect(c[1].text).toContain('past the forecast');
+    // No benchmark chain on any column, no reference rows.
+    for (let i = 0; i < run.revenue.topline_by_year.length; i++) {
+      expect(yearRateBadge(s, run.revenue.topline_by_year, i, 'occupancy')).toBeNull();
+    }
+    expect(toplineReferenceRows(s, 5)).toEqual({ benchmark: null, t12: null });
+    const y5 = s.growth_by_year.find((r) => r.year === 5)!;
+    expect(y5.adr.label).toContain('forecast average (+2.4%)');
+    expect(y5.occupancy.source).toBe('held_at_stabilization');
   });
 });

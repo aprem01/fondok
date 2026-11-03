@@ -89,3 +89,38 @@ export const unavailableGrowth = (): Partial<ToplineStatus> => ({
   })),
   suggestions: [SUGGESTION_45],
 });
+
+/**
+ * FON-116 staged rollout — the GROWTH-ONLY `topline_status`
+ * (`services/topline.py::_growth_only_status`): Year 1 is the T-12, the
+ * benchmark / penetration / ramp keys are published empty and not in use.
+ */
+export function growthOnlyStatus(over: Partial<ToplineStatus> = {}): ToplineStatus {
+  return toplineStatus({
+    topline_mode: 'growth_only',
+    benchmark: null,
+    benchmark_level: 'none',
+    benchmark_label:
+      "Not in use — growth-only topline: Year 1 is the subject's own rates; the benchmark × penetration × ramp method is not switched on in this workspace",
+    benchmark_fallback_reason: null,
+    benchmark_by_year: [],
+    growth_by_year: [
+      { year: 1, calendar_year: 2026, applied: false, occupancy: g(-0.012, 'costar_submarket_forecast', '2026: -1.2% (CoStar forecast)'), adr: g(0.018, 'costar_submarket_forecast', '2026: +1.8% (CoStar forecast)') },
+      { year: 2, calendar_year: 2027, applied: true, occupancy: g(0, 'costar_submarket_forecast', '2027: 0.0% (CoStar forecast)'), adr: g(-0.006, 'costar_submarket_forecast', '2027: -0.6% (CoStar forecast)') },
+      { year: 3, calendar_year: 2028, applied: true, occupancy: g(-0.012, 'costar_submarket_forecast', '2028: -1.2% (CoStar forecast)'), adr: g(0.038, 'costar_submarket_forecast', '2028: +3.8% (CoStar forecast)') },
+      { year: 4, calendar_year: 2029, applied: true, occupancy: g(0, 'held_at_stabilization', 'Assumption · occupancy held at its Year 3 (2028) stabilized level — occupancy is flat after stabilization; ADR keeps growing'), adr: g(0.028, 'costar_submarket_forecast', '2029: +2.8% (CoStar forecast)') },
+    ],
+    penetration_occ: null,
+    penetration_adr: null,
+    penetration_occ_source: 'not_applied_growth_only',
+    penetration_adr_source: 'not_applied_growth_only',
+    current_mpi: { value: null, label: 'Not in use', basis: null },
+    current_ari: { value: null, label: 'Not in use', basis: null },
+    ramp_by_year: [],
+    ramp_source: 'not_applied_growth_only',
+    ramp_policy: null,
+    ramp_state: 'not_applied_growth_only',
+    year1_sources: { occupancy: 't12_actual', adr: 't12_actual' },
+    ...over,
+  });
+}

@@ -47,6 +47,11 @@ function errText(err: unknown): string {
   return userMessage(err);
 }
 
+/** FON-116 staged rollout — the topline mode, worded. */
+function modeText(mode: string | null | undefined): string {
+  return mode === 'growth_only' ? 'growth only' : mode === 'benchmark' ? 'benchmark × penetration × ramp' : 'before topline v2';
+}
+
 export default function RunComparePanel({ dealId }: Props) {
   const [cutoff, setCutoff] = useState(DEFAULT_BASELINE_CUTOFF);
   const [runs, setRuns] = useState<EngineRunListResponse | null>(null);
@@ -260,6 +265,9 @@ export default function RunComparePanel({ dealId }: Props) {
               data-testid="run-compare-method-change"
             >
               Topline methodology v{result.base.topline_methodology_version} → v{result.head.topline_methodology_version}
+              {(result.base.topline_mode || result.head.topline_mode) && (
+                <> ({modeText(result.base.topline_mode)} → {modeText(result.head.topline_mode)})</>
+              )}
               {' '}— the occupancy / ADR method changed between these runs (benchmark × penetration × ramp, growth by
               year), so topline fields moved by the method change as well as by any input.
             </p>
