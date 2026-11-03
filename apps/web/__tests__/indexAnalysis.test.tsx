@@ -110,6 +110,7 @@ async function renderSettled(): Promise<void> {
 import { buildReconciliation, type ReconciliationInput } from '@/components/project/pl/IndexMethodology';
 import { toplineStatus } from './fixtures/toplineStatus';
 import engineRun from './fixtures/engine/toplineRun.json';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 /** Revenue-engine years: a Base Year (TTM) + eight forecast years at a steady
  *  +4% ADR / flat occupancy, so every forecast-over-forecast growth cell is a
@@ -133,7 +134,7 @@ function outputs(count = 9, startYear: number | null = 2025): EngineOutputsRespo
       revenue: {
         outputs: {
           years,
-          ...(startYear != null ? { projection_calendar_years: years.map((_, i) => startYear + i) } : {}),
+          ...(startYear != null ? { projection_deal_years: calDealYears(years.map((_, i) => startYear + i))} : {}),
         },
       },
     },
@@ -222,7 +223,8 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     expect(yearHeaders(table)).toEqual([
       '2019', '2020', '2021', '2022', '2023', '2024',
-      '2025', '2026', '2027', '2028', '2029', '2030', '2031', '2032', '2033',
+      // FON-121 — the forecast columns are deal years (here a 31 Dec close: Jan–Dec).
+      ...[2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033].map((c) => `Jan–Dec ${c}`),
     ]);
     // The first forecast column IS model Year 1 — what Projections heads "Base year (Year 1)".
     expect(within(table).getAllByText('Year 1').length).toBeGreaterThan(0);
@@ -236,8 +238,8 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
     await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     const headers = yearHeaders(table);
-    expect(headers[headers.length - 1]).toBe('2029');
-    expect(headers).not.toContain('2030');
+    expect(headers[headers.length - 1]).toBe('Jan–Dec 2029');
+    expect(headers).not.toContain('Jan–Dec 2030');
     expect(headers).toHaveLength(11);
     // Year 5 (2029) is revenue.years[4]: 288 × 1.04⁴ = $336.9 → "$337".
     expect(rowCells('ADR', table)[10]).toHaveTextContent('$337');
@@ -250,7 +252,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
     await renderSettled();
     const table = (await screen.findByText('Subject Property')).closest('table') as HTMLElement;
     const headers = yearHeaders(table);
-    expect(headers.slice(0, 7)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', '2026']);
+    expect(headers.slice(0, 7)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', 'Jan–Dec 2026']);
     expect(rowCells('ADR', table)[6]).toHaveTextContent('$288'); // years[0]
     expect(rowCells('ADR', table)[7]).toHaveTextContent('$300'); // years[1] = 288 × 1.04
   });
@@ -265,7 +267,7 @@ describe('Index Analysis — year columns follow the close calendar (FON-94)', (
     expect(headers.slice(3)).toEqual(['Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6', 'Year 7', 'Year 8', 'Year 9']);
     expect(headers.some((h) => /^20(2[5-9]|3\d)$/.test(h))).toBe(false); // no guessed year
     expect(screen.getByTestId('index-no-close-date-note')).toHaveTextContent(
-      'Set the acquisition date on CAPEX to map years to calendar years',
+      'Set the acquisition date on CAPEX to place the model years on the calendar',
     );
   });
 });
@@ -575,7 +577,7 @@ function testerOutputs(): EngineOutputsResponse {
     deal_id: DEAL,
     engines: {
       revenue: {
-        outputs: { years, projection_calendar_years: years.map((_, i) => 2025 + i) },
+        outputs: { years, projection_deal_years: calDealYears(years.map((_, i) => 2025 + i))},
       },
     },
   } as unknown as EngineOutputsResponse;
@@ -606,7 +608,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
     const line = await screen.findByTestId('index-reconciliation-line');
     const text = line.textContent ?? '';
     // Projections' own Base Year, its calendar year and its source document.
-    expect(text).toMatch(/Future P&L uses 2025 Base year \(Year 1\) 83\.9% \/ \$245\.00/);
+    expect(text).toMatch(/Future P&L uses Jan–Dec 2025 Base year \(Year 1\) 83\.9% \/ \$245\.00/);
     expect(text).toMatch(/T-12 actual to 2025-03 — T12 Mar 2025\.xlsx, p\.1/);
     // FON-94: Index Analysis shows the same figure in the same calendar column.
     expect(text).toMatch(/Index Analysis shows the same 83\.9% \/ \$245\.00 in its 2025 column/);
@@ -641,7 +643,7 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
   it('says "the same" when the Index Analysis column IS the Base Year', () => {
     const input: ReconciliationInput = {
       baseYear: { occupancy: 0.83, adr: 232.77 },
-      baseCalendarYear: 2024,
+      baseDealYear: 'Jan–Dec 2024',
       startingOccupancy: 0.83,
       startingAdr: 232.77,
       occSource: { source: 't12_actual', filename: 'T12.xlsx', page: 2 },

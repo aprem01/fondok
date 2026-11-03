@@ -18,7 +18,7 @@
  *    are shifted, so index 1 heads "Year 2". No engine value moved: the labels
  *    were wrong, not the math.
  *  • ``RevenueProjectionYear.year`` is an ORDINAL (1..hold_years), never a
- *    calendar year. The calendar comes from ``revenue.projection_calendar_years``
+ *    calendar year. The calendar comes from ``revenue.projection_deal_years`` (FON-121: twelve months from the close)
  *    (anchored on the acquisition close date). FON-41 E-014: every column
  *    header carries its calendar year inline — "Year 2 · 2026" — and the base
  *    column names the primary statement's period on its basis line ("T12 Mar
@@ -109,6 +109,7 @@ import {
 import { BasisChip } from './IndexMethodology';
 import { closeDatePatch } from '../CloseDateField';
 import type { EngineFailure, ToplineStatus } from '@/lib/api';
+import { asDealYears, type DealYearSpan } from '@/lib/dealYears';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { displacementStatusLine, useDisplacementStatus } from '@/lib/hooks/useDisplacementStatus';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -221,9 +222,9 @@ interface ExpenseYearWorker {
 interface ProjYear {
   /** The engine's ORDINAL (1..hold_years), not a calendar year. */
   year: number;
-  /** Calendar year from ``revenue.projection_calendar_years``; absent with no
-   *  acquisition close date on the deal. */
-  calendarYear?: number;
+  /** FON-121 — the deal year's span ("Oct 2025–Sep 2026") from
+   *  ``revenue.projection_deal_years``; absent with no acquisition close date. */
+  dealYear?: string;
   // Available Rooms = keys × days (a flat 365 — see DAYS_PER_PROJECTION_YEAR).
   days: number;
   rooms: number;
@@ -299,26 +300,24 @@ export function projectionColumnLabel(i: number): string {
 }
 
 /**
- * The FULL column header (FON-41 E-014): the label with its calendar year
- * inline — "Year 2 · 2026", "Base year (Year 1) · 2025" — or the bare label
- * when the deal carries no acquisition close date. The calendar year is the
- * revenue engine's ``projection_calendar_years[i]``; nothing here derives one.
+ * The FULL column header (FON-41 E-014, FON-121): the label with its deal-year
+ * span inline — "Year 2 · Oct 2026–Sep 2027", "Base year (Year 1) · Oct
+ * 2025–Sep 2026" — or the bare label when the deal carries no acquisition
+ * close date. The span is the revenue engine's ``projection_deal_years[i]``;
+ * nothing here derives one.
  */
-export function projectionColumnHeading(i: number, calendarYear?: number): string {
+export function projectionColumnHeading(i: number, dealYear?: string | null): string {
   const label = projectionColumnLabel(i);
-  return calendarYear != null && Number.isFinite(calendarYear)
-    ? `${label} · ${calendarYear}`
-    : label;
+  return dealYear ? `${label} · ${dealYear}` : label;
 }
 
 /** The Exit Year column's header — display-only, never a modelled year. */
 export const EXIT_COLUMN_LABEL = 'Exit Year';
 
-/** The Exit Year heading with its calendar year inline, when there is one. */
-export function exitColumnHeading(calendarYear?: number): string {
-  return calendarYear != null && Number.isFinite(calendarYear)
-    ? `${EXIT_COLUMN_LABEL} · ${calendarYear}`
-    : EXIT_COLUMN_LABEL;
+/** The Exit Year heading with its deal-year span inline (the year after the
+ *  hold, ``revenue.exit_noi_deal_year``), when there is one. */
+export function exitColumnHeading(dealYear?: string | null): string {
+  return dealYear ? `${EXIT_COLUMN_LABEL} · ${dealYear}` : EXIT_COLUMN_LABEL;
 }
 
 /**
@@ -339,10 +338,10 @@ export const EXIT_COLUMN_BASIS = 'display-only';
 
 /** The one-line note shown when the deal has no acquisition close date. */
 export const NO_CLOSE_DATE_NOTE =
-  'Set the acquisition date on CAPEX to map years to calendar years';
+  'Set the acquisition date on CAPEX to place the model years on the calendar';
 /** The help line under the controls — why the columns carry the years they do. */
 export const CALENDAR_MAPPING_HELP =
-  'The acquisition close date sets the year mapping: Year 1 is the calendar year of the first operating month after close, and each later year is that year plus one.';
+  'The acquisition close date sets the year mapping: each model year is the twelve months from the close — Year 1 starts with the first operating month after close (a 30 Sep 2025 close: Oct 2025–Sep 2026). Market forecasts are by calendar year, so a year’s market growth blends the calendar years it spans.';
 /** What the lineage drawer says for a cell the record does not cover. */
 export const NO_TRACE_MESSAGE = 'No trace available for this cell.';
 
@@ -350,13 +349,11 @@ export const NO_TRACE_MESSAGE = 'No trace available for this cell.';
 export const FORWARD_NOI_LABEL = 'Forward 12-Month Cash NOI (after FF&E reserve)';
 
 /**
- * A column subtitle: the calendar year, or an em dash. NEVER the ordinal —
+ * A column subtitle: the deal-year span, or an em dash. NEVER the ordinal —
  * printing ``years[i].year`` here is what produced "Base Year 1 / Year 1 2".
  */
-export function projectionColumnSubtitle(calendarYear?: number): string {
-  return calendarYear != null && Number.isFinite(calendarYear)
-    ? String(calendarYear)
-    : '—';
+export function projectionColumnSubtitle(dealYear?: string | null): string {
+  return dealYear ? dealYear : '—';
 }
 
 // Engine-default assumptions (mirror apps/worker services/engine_runner.py base).
@@ -661,7 +658,10 @@ export default function ProjectionsSection({
   // FON-41 #2 — the projection calendar, anchored on the acquisition close
   // date by the revenue engine. Empty when the deal has no close date; the
   // statement then shows column labels with no year underneath them.
-  const calendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  // FON-121 — the deal-year spans (twelve months from the close).
+  const dealYears = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
+  const calendarYears = dealYears.length ? dealYears.map((d) => d.label) : null;
+  const exitDealYear = getEngineField<DealYearSpan>(outputs, 'revenue', 'exit_noi_deal_year');
   // The exit is valued on the FORWARD 12-month Cash NOI — year hold+1, which
   // is never run through the expense waterfall (returns.py extrapolates the
   // last hold year at the RevPAR growth rate). Display-only here.
@@ -704,7 +704,8 @@ export default function ProjectionsSection({
       return buildFromWorker(revenueYears!, fbYears ?? null, expenseYears!, keys, calendarYears);
     }
     return null;
-  }, [hasWorker, revenueYears, fbYears, expenseYears, keys, calendarYears]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasWorker, revenueYears, fbYears, expenseYears, keys, calendarYears?.join('|')]);
 
   // FON-41 / FON-59 #3 — the published stabilized year. The STABILIZED badge
   // sits on that column; the editable Stabilization Year lives in the
@@ -763,14 +764,10 @@ export default function ProjectionsSection({
   // ``'9/30/' + baseYear`` off the ORDINAL and rendered a literal "9/30/1" —
   // a fabricated date. With no close date the row is a dash.
   const closeDateIso = overrideDate(overrides, 'acquisition_close_date');
-  // The Exit Year is the year after the last modelled year — calendar only,
-  // and only when the projection actually carries a calendar.
-  const lastCalendarYear =
-    Array.isArray(calendarYears) && calendarYears.length > 0
-      ? calendarYears[calendarYears.length - 1]
-      : undefined;
+  // The Exit Year is the deal year after the last modelled year — the
+  // revenue engine's ``exit_noi_deal_year``, only with a calendar.
   const exitCalendarYear =
-    typeof lastCalendarYear === 'number' ? lastCalendarYear + 1 : undefined;
+    calendarYears && typeof exitDealYear?.label === 'string' ? exitDealYear.label : undefined;
 
   if (basisRefusal && (!years || years.length === 0)) {
     return (
@@ -982,7 +979,7 @@ export default function ProjectionsSection({
             // move because fewer operating columns are on screen.
             shownForecast === forecastCount
               ? {
-                  calendarYear: exitCalendarYear,
+                  dealYear: exitCalendarYear,
                   terminalNoi,
                   sale: exitSaleCell({
                     grossSalePrice: returnsHead.grossSalePrice,
@@ -1021,7 +1018,7 @@ function buildFromWorker(
   fbYears: FBYearWorker[] | null,
   expenseYears: ExpenseYearWorker[],
   keys: number,
-  calendarYears?: number[] | null,
+  dealYearLabels?: string[] | null,
 ): ProjYear[] {
   // FON-41 #2 — every modelled year, not a hard-coded 6. The horizon is the
   // deal's hold period; the Exit Year column is appended by the table on top
@@ -1062,9 +1059,9 @@ function buildFromWorker(
           : undefined;
     out.push({
       year: r.year,
-      calendarYear:
-        Array.isArray(calendarYears) && typeof calendarYears[i] === 'number'
-          ? calendarYears[i]
+      dealYear:
+        Array.isArray(dealYearLabels) && typeof dealYearLabels[i] === 'string'
+          ? dealYearLabels[i]
           : undefined,
       days,
       rooms: keys,
@@ -1111,7 +1108,8 @@ function buildFromWorker(
 // ────────────────────────────────────────────────────────────────────
 
 interface ExitColumnSpec {
-  calendarYear?: number;
+  /** FON-121 — the exit-NOI deal year's span. */
+  dealYear?: string;
   /** ``returns.terminal_noi`` — the forward 12-month Cash NOI. */
   terminalNoi?: number;
   /** Wave 5 — the Returns engine's gross sale price (or why there is none). */
@@ -1373,7 +1371,7 @@ function ProjectionsTable({
     return '';
   };
 
-  const columnHeading = (i: number) => projectionColumnHeading(i, years[i]?.calendarYear);
+  const columnHeading = (i: number) => projectionColumnHeading(i, years[i]?.dealYear);
   const rowShared = { fmtAmount, pctRev, par, por, columnHeading };
 
   return (
@@ -1405,13 +1403,13 @@ function ProjectionsTable({
                 title={
                   i === 0
                     ? `Base year (Year 1) is the model's first operating year — revenue.years[0]. ${
-                        y.calendarYear != null
-                          ? `Calendar ${y.calendarYear}, from the acquisition close date.`
-                          : 'No acquisition close date on this deal, so it carries no calendar year.'
+                        y.dealYear != null
+                          ? `${y.dealYear} — the twelve months from the acquisition close date.`
+                          : 'No acquisition close date on this deal, so it carries no calendar span.'
                       }`
-                    : y.calendarYear != null
-                      ? `Operating Year ${i + 1} — calendar ${y.calendarYear}, from the acquisition close date.`
-                      : `Operating Year ${i + 1}. No acquisition close date on this deal, so it carries no calendar year.`
+                    : y.dealYear != null
+                      ? `Operating Year ${i + 1} — ${y.dealYear}, twelve months counted from the acquisition close date.`
+                      : `Operating Year ${i + 1}. No acquisition close date on this deal, so it carries no calendar span.`
                 }
                 className={cn(
                   'text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 border-l-2 border-ink-300/70',
@@ -1439,7 +1437,7 @@ function ProjectionsTable({
                 title="Display-only. Year hold+1 is not run through the expense waterfall — it is the forward NOI the reversion is valued on."
                 className="text-center text-[10.5px] font-semibold uppercase tracking-wider px-2 pt-2 pb-0 bg-ink-300/10 text-ink-700 border-l-2 border-ink-300/70"
               >
-                {exitColumnHeading(exitColumn?.calendarYear)}
+                {exitColumnHeading(exitColumn?.dealYear)}
               </th>
             )}
           </tr>
@@ -2799,10 +2797,10 @@ function SubCells({
  * control.
  *
  *  • BASE YEAR — DERIVED. There is no ``base_year`` assumption anywhere in the
- *    model: ``revenue.projection_start_year`` is computed from the acquisition
- *    close date alone (``engines/revenue.py::projection_start_year`` — Year 1
- *    is the calendar year of the FIRST OPERATING MONTH, close + 1 month, so a
- *    December close starts Year 1 in the following year). A year-only editor
+ *    model: ``revenue.projection_deal_years`` is computed from the acquisition
+ *    close date alone (``engines/deal_years.py`` — Year 1 is the twelve months
+ *    from the FIRST OPERATING MONTH, close + 1 month, so a 30 Sep close makes
+ *    Year 1 Oct–Sep and a December close starts it in January). A year-only editor
  *    here would have to invent a month and a day to write that key back, and
  *    the timeline engine anchors on the very same date. So the white boxed
  *    chip — 1px border, 6px radius, white ground, i.e. this file's own text
@@ -2957,7 +2955,7 @@ function ProjectionsControls({
   // The FIRST column's calendar year, derived by the revenue engine from the
   // acquisition close date. `years[0].year` is the ordinal 1 — showing it here
   // printed a literal "1" in the Base year chip.
-  const baseYear = years[0]?.calendarYear;
+  const baseYear = years[0]?.dealYear;
   const ctrlLabel: CSSProperties = { fontSize: 11, color: '#6b6f76', fontWeight: 600 };
   const group: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6 };
   const ownerLink: CSSProperties = {
@@ -2968,7 +2966,7 @@ function ProjectionsControls({
     borderRadius: 6, cursor: 'pointer', fontSize: 14, color: '#3a3f47', lineHeight: 1,
   };
   const baseYearTitle = baseYear != null
-    ? `Base year (Year 1) is calendar ${baseYear} — derived from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the CAPEX tab.`
+    ? `Base year (Year 1) is ${baseYear} — the twelve months from the acquisition close date${closeDateIso ? ` (${fmtIsoDate(closeDateIso)})` : ''}, whose first operating month starts the projection. It is not an input here; edit the Acquisition Date on the CAPEX tab.`
     : 'No acquisition close date on this deal, so the projection has no calendar year. The base year is derived from that date — set the Acquisition Date on the CAPEX tab.';
   return (
     <div
@@ -3249,7 +3247,8 @@ function StabilizationYearField({
 }: {
   stabilization: StabilizedYearBlock | null;
   modelYears: number;
-  calendarYears: number[] | null;
+  /** FON-121 — the deal-year span labels, index = model year − 1. */
+  calendarYears: string[] | null;
   disabled?: boolean;
   onCommit: (year: number, note: string) => void | Promise<void>;
 }) {
@@ -3304,7 +3303,7 @@ function StabilizationYearField({
             {current == null
               ? '—'
               : calendarYear != null
-                ? `Year ${current} — ${calendarYear}`
+                ? `Year ${current} (${calendarYear})`
                 : `Year ${current}`}
           </button>
         ) : (
@@ -3381,7 +3380,8 @@ function AssumptionsPanel({
   stabilization: StabilizedYearBlock | null;
   /** How many modelled years the projection has — the editor's upper bound. */
   modelYears: number;
-  calendarYears: number[] | null;
+  /** FON-121 — the deal-year span labels, index = model year − 1. */
+  calendarYears: string[] | null;
 }) {
   // Exit cap rate is owned by Investment — resolve its live value (never edited here).
   const exitCapSrc = useSource('exit_cap_rate');

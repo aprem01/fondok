@@ -91,6 +91,7 @@ import { EXIT_SCHEDULE_MISSING, EXIT_SCHEDULE_TITLE, headlineReturns } from '@/l
 import { ExitScheduleTable } from '@/components/project/ExitScheduleCard';
 import { scenarioReturnsIssue, SCENARIO_ISSUE_LABEL, SCENARIO_NEEDS_RERUN } from '@/lib/scenarioGuards';
 import { useEngineOutputs, getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { asDealYears } from '@/lib/dealYears';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useVariance } from '@/lib/hooks/useVariance';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
@@ -696,7 +697,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
   // FON-118 — the compact returns-by-exit-year table under the Returns group.
   // Same rows the Returns section prints; the headline above is unchanged.
   const returnsHead = useMemo(() => headlineReturns(getEngineField<unknown>(outputs, 'returns')), [outputs]);
-  const projectionCalendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  const projectionDealYears = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
   const rec = useMemo(() => buildRecommendation(metrics), [metrics]);
 
   // ── Export deliverables (FON-54; PDF/PPTX re-gated FON-54b) — render the LIVE deal via the worker's
@@ -1635,7 +1636,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
                   {EXIT_SCHEDULE_TITLE}
                 </div>
                 {returnsHead.hasExitSchedule ? (
-                  <ExitScheduleTable rows={returnsHead.exitSchedule} calendarYears={projectionCalendarYears} compact traced={false} />
+                  <ExitScheduleTable rows={returnsHead.exitSchedule} dealYears={projectionDealYears} compact traced={false} />
                 ) : (
                   <div title={EXIT_SCHEDULE_MISSING} data-unavailable="true" style={{ fontSize: 12, color: palette.textMuted, lineHeight: 1.5 }}>
                     <span style={{ color: palette.textFaint, marginRight: 6 }}>—</span>

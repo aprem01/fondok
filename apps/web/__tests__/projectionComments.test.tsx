@@ -26,7 +26,7 @@ const stub = { deal_id: 'deal-uuid-1', status: 'complete', summary: '', inputs: 
 const OUTPUTS = {
   deal_id: 'deal-uuid-1',
   engines: {
-    revenue: { ...stub, engine: 'revenue', outputs: { years: Array.from({ length: YEARS }, (_, i) => revYear(i)), projection_calendar_years: [2025, 2026, 2027] } },
+    revenue: { ...stub, engine: 'revenue', outputs: { years: Array.from({ length: YEARS }, (_, i) => revYear(i)), projection_deal_years: calDealYears([2025, 2026, 2027])} },
     fb: { ...stub, engine: 'fb', outputs: { years: Array.from({ length: YEARS }, (_, i) => fbYear(i)) } },
     expense: { ...stub, engine: 'expense', outputs: { years: Array.from({ length: YEARS }, (_, i) => expYear(i)) } },
     returns: { ...stub, engine: 'returns', outputs: { hold_years: YEARS, terminal_noi: 2_000_000, exit_cap_rate: 0.07, revpar_growth: 0.045 } },
@@ -71,6 +71,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => cleanup());
 

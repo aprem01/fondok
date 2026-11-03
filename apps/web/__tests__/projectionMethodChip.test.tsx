@@ -66,8 +66,7 @@ function buildOutputs(calendar: number[] | undefined): EngineOutputsResponse {
         ...stub, engine: 'revenue',
         outputs: {
           years: Array.from({ length: HOLD_YEARS }, (_, i) => revYear(i)),
-          projection_start_year: calendar ? calendar[0] : null,
-          projection_calendar_years: calendar ?? [],
+          projection_deal_years: calDealYears(calendar ?? []), exit_noi_deal_year: calExitYear(calendar ?? []),
         },
       },
       fb: { ...stub, engine: 'fb', outputs: { years: Array.from({ length: HOLD_YEARS }, (_, i) => fbYear(i)) } },
@@ -145,6 +144,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();

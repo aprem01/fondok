@@ -19,6 +19,7 @@
  * a percentage.
  */
 
+import { dealYearLabel, type DealYearSpan } from '@/lib/dealYears';
 import type { ExitNoiBasis, ReturnsExitScheduleRow } from '@/lib/api';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 
@@ -188,17 +189,17 @@ export function exitRowLabel(row: Pick<ReturnsExitScheduleRow, 'exit_year' | 'ex
 export const OFF_CYCLE_EXIT_NOTE = 'off-cycle disposition — not a projection year-end';
 
 /**
- * The calendar year a year-end row closes in, from the revenue engine's
- * `projection_calendar_years` (set only when the deal carries an acquisition
- * close date). Undefined otherwise — never a guessed year.
+ * FON-121 — the sale year's span (the deal year a year-end row closes:
+ * "Oct 2027–Sep 2028"), from the revenue engine's `projection_deal_years`
+ * (set only when the deal carries an acquisition close date). Undefined
+ * otherwise — never a guessed year.
  */
-export function exitRowCalendarYear(
+export function exitRowDealYear(
   row: Pick<ReturnsExitScheduleRow, 'exit_year'>,
-  calendarYears: readonly number[] | null | undefined,
-): number | undefined {
-  if (row.exit_year == null || !Array.isArray(calendarYears)) return undefined;
-  const y = calendarYears[row.exit_year - 1];
-  return isInt(y) ? y : undefined;
+  dealYears: readonly DealYearSpan[] | null | undefined,
+): string | undefined {
+  if (row.exit_year == null || !Array.isArray(dealYears)) return undefined;
+  return dealYearLabel(dealYears, row.exit_year) ?? undefined;
 }
 
 /** The reason's label from the registry, or the raw code when this bundle's

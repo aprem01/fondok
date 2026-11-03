@@ -59,8 +59,7 @@ function buildOutputs(): EngineOutputsResponse {
         ...stub, engine: 'revenue',
         outputs: {
           years: Array.from({ length: HOLD_YEARS }, (_, i) => revYear(i)),
-          projection_start_year: CALENDAR[0],
-          projection_calendar_years: CALENDAR,
+          projection_deal_years: calDealYears(CALENDAR), exit_noi_deal_year: calExitYear(CALENDAR),
         },
       },
       fb: { ...stub, engine: 'fb', outputs: { years: Array.from({ length: HOLD_YEARS }, (_, i) => fbYear(i)) } },
@@ -158,6 +157,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
 import { BENCHMARK_TOGGLE_STORAGE_KEY } from '@/components/project/pl/BenchmarkColumn';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();

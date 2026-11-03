@@ -6,8 +6,9 @@
  *  1. THE CALENDAR. `revenue.years[].year` is an ORDINAL (1..hold_years). The
  *     statement used to print it under its own column header, producing
  *     *"Base Year 1, Year 1 2, Year 2 3"*. The calendar now comes from
- *     `revenue.projection_calendar_years`, anchored on the acquisition close
- *     date — and with NO close date the column prints its label alone, never a
+ *     `revenue.projection_deal_years` (FON-121: twelve months from the
+ *     acquisition close — a 30 Sep 2025 close makes Year 1 Oct 2025–Sep 2026)
+ *     — and with NO close date the column prints its label alone, never a
  *     guessed year.
  *  2. THE OFF-BY-ONE. `revenue.years[0]` IS model Year 1: the Cash Flow tab
  *     labels the same NOI "Year 1" while Financials called it "Base Year" and
@@ -94,6 +95,15 @@ const CASH_FLOW_OUTPUT = {
   provenance: {},
 };
 
+/** The Oct (c)–Sep (c+1) deal year (a 30 Sep close). */
+function octSpan(c: number, year: number) {
+  return {
+    year, start: `${c}-10-01`, end: `${c + 1}-09-30`, label: `Oct ${c}–Sep ${c + 1}`,
+    calendar_months: [{ calendar_year: c, months: 3 }, { calendar_year: c + 1, months: 9 }],
+    days: (c + 1) % 4 === 0 ? 366 : 365,
+  };
+}
+
 /** Built per test so the calendar (and the close date behind it) can vary. */
 function buildOutputs(calendar: number[] | undefined): EngineOutputsResponse {
   return {
@@ -104,8 +114,9 @@ function buildOutputs(calendar: number[] | undefined): EngineOutputsResponse {
         outputs: {
           years: NOI_BEFORE.map((_, i) => revYear(i)),
           total_revenue_cagr: 0.03,
-          projection_start_year: calendar ? calendar[0] : null,
-          projection_calendar_years: calendar ?? [],
+          // FON-121 — Oct–Sep deal years for the 30 Sep close.
+          projection_deal_years: (calendar ?? []).map((c, i) => octSpan(c, i + 1)),
+          exit_noi_deal_year: calendar ? octSpan(calendar[calendar.length - 1] + 1, calendar.length + 1) : null,
         },
         inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'r1',
       },
@@ -245,17 +256,17 @@ function headerRows(): { labels: string[]; subtitles: string[] } {
 
 // ── 1. the calendar ──────────────────────────────────────────────────
 describe('Projections — the column calendar', () => {
-  it('every heading reads "Year N · <calendar year>", with Base year named as Year 1 (E-014)', () => {
+  it('every heading reads "Year N · <deal-year span>", with Base year named as Year 1 (E-014, FON-121)', () => {
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const { labels, subtitles } = headerRows();
 
-    expect(labels[0]).toContain('Base year (Year 1) · 2025');
-    expect(labels[1]).toBe('Year 2 · 2026');
-    expect(labels[2]).toBe('Year 3 · 2027');
-    expect(labels[3]).toBe('Year 4 · 2028');
-    expect(labels[4]).toBe('Year 5 · 2029');
-    // The Exit Year is the year AFTER the last modelled year.
-    expect(labels[5]).toBe('Exit Year · 2030');
+    expect(labels[0]).toContain('Base year (Year 1) · Oct 2025–Sep 2026');
+    expect(labels[1]).toBe('Year 2 · Oct 2026–Sep 2027');
+    expect(labels[2]).toBe('Year 3 · Oct 2027–Sep 2028');
+    expect(labels[3]).toBe('Year 4 · Oct 2028–Sep 2029');
+    expect(labels[4]).toBe('Year 5 · Oct 2029–Sep 2030');
+    // The Exit Year is the deal year AFTER the last modelled year.
+    expect(labels[5]).toBe('Exit Year · Oct 2030–Sep 2031');
 
     // The basis line: the base column names the primary statement's period
     // (none in this fixture → a dash), projected columns say so, the exit
@@ -274,11 +285,11 @@ describe('Projections — the column calendar', () => {
       expect(sub).not.toMatch(/^\d{1,3}$/); // 1, 2, 3… — an ordinal, not a year
       expect(['—', PROJECTED_COLUMN_BASIS, EXIT_COLUMN_BASIS]).toContain(sub);
     }
-    // A heading's trailing number is always a 4-digit calendar year.
+    // A heading's trailing span is always a deal year (FON-121), never an ordinal.
     for (const label of labels) {
-      const m = /· (\S+)/.exec(label);
+      const m = /· (.+)$/.exec(label);
       expect(m, label).not.toBeNull();
-      expect(m![1]).toMatch(/^\d{4}$/);
+      expect(m![1]).toMatch(/^[A-Z][a-z]{2} \d{4}–[A-Z][a-z]{2} \d{4}$/);
     }
   });
 
@@ -302,15 +313,15 @@ describe('Projections — the column calendar', () => {
   });
 
   it('the heading helpers never print an ordinal', () => {
-    expect(projectionColumnSubtitle(2026)).toBe('2026');
+    expect(projectionColumnSubtitle('Oct 2026–Sep 2027')).toBe('Oct 2026–Sep 2027');
     expect(projectionColumnSubtitle(undefined)).toBe('—');
     expect(projectionColumnLabel(0)).toBe('Base year (Year 1)');
     expect(projectionColumnLabel(1)).toBe('Year 2');
     expect(projectionColumnLabel(4)).toBe('Year 5');
-    expect(projectionColumnHeading(0, 2025)).toBe('Base year (Year 1) · 2025');
-    expect(projectionColumnHeading(1, 2026)).toBe('Year 2 · 2026');
+    expect(projectionColumnHeading(0, 'Oct 2025–Sep 2026')).toBe('Base year (Year 1) · Oct 2025–Sep 2026');
+    expect(projectionColumnHeading(1, 'Oct 2026–Sep 2027')).toBe('Year 2 · Oct 2026–Sep 2027');
     expect(projectionColumnHeading(1)).toBe('Year 2');
-    expect(exitColumnHeading(2030)).toBe('Exit Year · 2030');
+    expect(exitColumnHeading('Oct 2030–Sep 2031')).toBe('Exit Year · Oct 2030–Sep 2031');
     expect(exitColumnHeading(undefined)).toBe('Exit Year');
     expect(baseYearBasisLabel('T12 Mar 2025')).toBe('T12 Mar 2025');
     expect(baseYearBasisLabel(null)).toBe('—');
@@ -344,7 +355,7 @@ describe('Projections — the horizon is derived from the hold, not capped at 6'
     expect(labels).toHaveLength(HOLD_YEARS + 1);
     // The Exit Year heading carries its calendar year inline like every other
     // column (E-014): the year AFTER the last modelled year.
-    expect(labels[labels.length - 1]).toBe(exitColumnHeading(2030));
+    expect(labels[labels.length - 1]).toBe(exitColumnHeading('Oct 2030–Sep 2031'));
     expect(labels[labels.length - 1].startsWith(EXIT_COLUMN_LABEL)).toBe(true);
   });
 
@@ -397,8 +408,8 @@ describe('Projections — Base Year IS Year 1, and Cash Flow agrees', () => {
     //     heading from the same calendar — see export_projections).
     render(<ProjectionsSection dealId="deal-uuid-1" />);
     const headers = Array.from(document.querySelectorAll('table thead th')).map((th) => (th.textContent ?? '').trim());
-    expect(headers.some((h) => h.startsWith('Base year (Year 1)') && h.includes('2025'))).toBe(true);
-    expect(headers.some((h) => h.startsWith('Year 2') && h.includes('2026'))).toBe(true);
+    expect(headers.some((h) => h.startsWith('Base year (Year 1)') && h.includes('Oct 2025–Sep 2026'))).toBe(true);
+    expect(headers.some((h) => h.startsWith('Year 2') && h.includes('Oct 2026–Sep 2027'))).toBe(true);
     // No column claims to be "Year 1" twice.
     expect(headers.filter((h) => /^Year 1\b/.test(h))).toHaveLength(0);
 

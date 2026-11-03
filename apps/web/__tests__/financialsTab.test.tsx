@@ -187,6 +187,7 @@ import { LINEAGE_OPEN_EVENT, LineageDrawerHost, type LineageOpenDetail } from '@
 import { clearLineageCache } from '@/lib/hooks/useLineage';
 import { CASH_NOI_LABEL, NOI_BEFORE_RESERVE_LABEL } from '@/lib/engines/noi';
 import { STR_MARKET_OVERRIDE_NOTE } from '@/lib/provenance';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();
@@ -480,8 +481,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
         ...OUTPUTS.engines.revenue,
         outputs: {
           ...(OUTPUTS.engines.revenue as { outputs: Record<string, unknown> }).outputs,
-          projection_calendar_years: [2025, 2026, 2027],
-          projection_start_year: 2025,
+          projection_deal_years: calDealYears([2025, 2026, 2027]), exit_noi_deal_year: calExitYear([2025, 2026, 2027]),
         },
       },
       expense: {
@@ -510,7 +510,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
     OUTPUTS_OVERRIDE = withBlock();
     render(<ProjectionsSection dealId="deal-uuid-1" />);
 
-    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 — 2026');
+    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 (Jan–Dec 2026)');
     expect(screen.getByTestId('stabilization-year-badge')).toHaveTextContent('Default — confirm');
     // …and the selected column carries the STABILIZED badge.
     expect(screen.getByTestId('stabilized-badge')).toBeInTheDocument();
@@ -585,7 +585,7 @@ describe('Financials · Projections — the Stabilization Year', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
 
     expect(updateSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 — 2026');
+    expect(screen.getByTestId('stabilization-year-value')).toHaveTextContent('Year 2 (Jan–Dec 2026)');
     OUTPUTS_OVERRIDE = undefined;
   });
 
@@ -642,8 +642,7 @@ function withProjection(patch: { calendar?: number[]; rev?: RevPatch; exp?: ExpP
         ...base.engines.revenue,
         outputs: {
           years: [2025, 2026, 2027].map((y) => ({ ...revYear(y), ...(patch.rev ?? {}) })),
-          projection_calendar_years: patch.calendar ?? [],
-          projection_start_year: patch.calendar?.[0] ?? null,
+          projection_deal_years: calDealYears(patch.calendar ?? []), exit_noi_deal_year: calExitYear(patch.calendar ?? []),
         },
       },
       expense: {
@@ -691,10 +690,10 @@ describe('P&L · Future P&L — column headings carry the calendar year (E-014)'
     mockFieldOverrides = { acquisition_close_date: { value: '2025-11-15', note: 'PSA' } };
     render(<ProjectionsSection dealId="deal-uuid-1" basePeriodLabel="T12 Mar 2025" />);
 
-    expect(header(0)).toHaveTextContent('Base year (Year 1) · 2026');
-    expect(header(1)).toHaveTextContent('Year 2 · 2027');
-    expect(header(2)).toHaveTextContent('Year 3 · 2028');
-    expect(screen.getByTestId('projection-col-header-exit')).toHaveTextContent('Exit Year · 2029');
+    expect(header(0)).toHaveTextContent('Base year (Year 1) · Jan–Dec 2026');
+    expect(header(1)).toHaveTextContent('Year 2 · Jan–Dec 2027');
+    expect(header(2)).toHaveTextContent('Year 3 · Jan–Dec 2028');
+    expect(screen.getByTestId('projection-col-header-exit')).toHaveTextContent('Exit Year · Jan–Dec 2029');
     // The base column's basis line is the primary statement's period, exactly
     // as Historical P&L heads that column; projected columns say so.
     expect(basis(0)).toHaveTextContent('T12 Mar 2025');

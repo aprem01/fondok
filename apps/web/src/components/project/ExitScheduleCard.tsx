@@ -18,6 +18,7 @@
 import type { ReactNode } from 'react';
 import { fmtPct } from '@/lib/format';
 import type { ReturnsExitScheduleRow } from '@/lib/api';
+import type { DealYearSpan } from '@/lib/dealYears';
 import {
   type ExitScheduleRow,
   EXIT_SCHEDULE_MISSING,
@@ -27,7 +28,7 @@ import {
   EXIT_SCHEDULE_TITLE,
   IRR_SENTINEL_NOTE,
   OFF_CYCLE_EXIT_NOTE,
-  exitRowCalendarYear,
+  exitRowDealYear,
   exitRowLabel,
   exitRowReasonLabel,
   exitRowReasonTitle,
@@ -127,13 +128,13 @@ function Pill({ children, tone }: { children: ReactNode; tone: 'selected' | 'pea
 
 export function ExitScheduleTable({
   rows,
-  calendarYears,
+  dealYears,
   compact = false,
   traced = true,
 }: {
   rows: ExitScheduleRow[];
-  /** `revenue.projection_calendar_years` — set only with a close date. */
-  calendarYears?: readonly number[] | null;
+  /** FON-121 — `revenue.projection_deal_years`, set only with a close date. */
+  dealYears?: readonly DealYearSpan[] | null;
   /** IC memo: fewer columns, tighter type. */
   compact?: boolean;
   /** Wrap computed figures in <Traced> (off while a sandbox preview shows). */
@@ -178,7 +179,7 @@ export function ExitScheduleTable({
         <tbody>
           {rows.map((row) => {
             const label = exitRowLabel(row);
-            const cal = exitRowCalendarYear(row, calendarYears);
+            const cal = exitRowDealYear(row, dealYears);
             const unavailable = row.status === 'not_available';
             const reasonLabel = exitRowReasonLabel(row);
             const reasonTitle = exitRowReasonTitle(row) ?? undefined;
@@ -271,11 +272,11 @@ export function ExitScheduleTable({
  */
 export function ExitScheduleCard({
   rows,
-  calendarYears,
+  dealYears,
   sandbox = false,
 }: {
   rows: ExitScheduleRow[] | undefined;
-  calendarYears?: readonly number[] | null;
+  dealYears?: readonly DealYearSpan[] | null;
   sandbox?: boolean;
 }) {
   const missing = rows == null ? (sandbox ? EXIT_SCHEDULE_SANDBOX_MISSING : EXIT_SCHEDULE_MISSING) : null;
@@ -301,7 +302,7 @@ export function ExitScheduleCard({
       ) : (
         <>
           <div style={{ marginTop: 4 }}>
-            <ExitScheduleTable rows={rows!} calendarYears={sandbox ? null : calendarYears} traced={!sandbox} />
+            <ExitScheduleTable rows={rows!} dealYears={sandbox ? null : dealYears} traced={!sandbox} />
           </div>
           <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 9, lineHeight: 1.5 }}>
             One projection, moved only in sale date: each row sells at that year-end on the same operating

@@ -5,18 +5,20 @@
  * print, each cell carrying the source it came from. Nothing in this file
  * invents a number — a cell with no source is ``null`` and renders "—".
  *
- * Column calendar (FON-94): the forecast columns are EXACTLY the revenue
- * engine's ``projection_calendar_years`` (Year 1 = the calendar year of the
- * first operating month after the acquisition close), so the same calendar
- * year sits in the same column as the Future P&L. Historical columns are the
- * six years before Year 1. With no close date the forecast columns carry the
- * ordinal ("Year 1") and the historical columns carry the years the documents
- * themselves report — never a guessed year.
+ * Column calendar (FON-94, FON-121): the forecast columns are EXACTLY the
+ * revenue engine's ``projection_deal_years`` (Year 1 = the twelve months from
+ * the first operating month after the acquisition close — Oct 2025–Sep 2026
+ * for a 30 Sep 2025 close), so the same deal year sits in the same column as
+ * the Future P&L. Historical columns are the six calendar years before the
+ * calendar year Year 1 starts in. With no close date the forecast columns
+ * carry the ordinal ("Year 1") and the historical columns carry the years
+ * the documents themselves report — never a guessed year.
  */
 
 import type { EngineOutputsResponse, HistoricalBaselineResponse, IndexCompSetYear, IndexFigure } from '@/lib/api';
 import { getEngineField } from '@/lib/hooks/useEngineOutputs';
 import { toIndexPoints } from '@/lib/indexTarget';
+import type { DealYearSpan } from '@/lib/dealYears';
 
 // ─────────────────────────── market-data envelope (worker) ───────────────────────────
 // Mirrors apps/worker/app/api/documents.py MarketDataResponse.
@@ -113,8 +115,11 @@ export interface IaColumn {
   key: string;
   kind: IaColumnKind;
   /** The calendar year this column stands for; null when the deal has no
-   *  acquisition close date (forecast) or the column is the STR TTM anchor. */
+   *  acquisition close date (forecast), the column is the STR TTM anchor, or
+   *  the column is a deal year that spans two calendar years (FON-121). */
   calendarYear: number | null;
+  /** FON-121 — a forecast column's deal year (twelve months from the close). */
+  dealYear?: DealYearSpan | null;
   /** Model year ordinal (1..hold) for forecast columns; null for historical. */
   ordinal: number | null;
   /** Header text: "2025", "Year 1" (no close date), "STR TTM". */
@@ -132,7 +137,7 @@ export const DAYS_PER_PROJECTION_YEAR = 365;
 
 /** Same convention as ProjectionsSection.NO_CLOSE_DATE_NOTE — the one line
  *  shown when the deal has no acquisition close date. */
-export const NO_CLOSE_DATE_NOTE = 'Set the acquisition date on CAPEX to map years to calendar years';
+export const NO_CLOSE_DATE_NOTE = 'Set the acquisition date on CAPEX to place the model years on the calendar';
 
 export function isLeapYear(y: number): boolean {
   return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -144,8 +149,8 @@ export function daysForColumn(col: IaColumn): number {
 }
 
 export interface DeriveColumnsInput {
-  /** ``revenue.projection_calendar_years`` — empty / absent with no close date. */
-  calendarYears: readonly number[] | null | undefined;
+  /** ``revenue.projection_deal_years`` — empty / absent with no close date. */
+  dealYears: readonly DealYearSpan[] | null | undefined;
   /** ``revenue.years.length`` — the model horizon (hold years). */
   forecastCount: number;
   /** Calendar years the documents report for the subject (STR annual + P&L
@@ -170,35 +175,42 @@ const finiteInt = (v: unknown): number | null =>
 /**
  * FON-94 — the year columns, derived from the acquisition close calendar.
  *
- *  • With a calendar: historical = Year 1 − 6 … Year 1 − 1; forecast = the
- *    engine's calendar years, exactly the model horizon. Nothing beyond it.
+ *  • With a calendar: historical = the six calendar years before the one
+ *    Year 1 starts in; forecast = the engine's deal years, exactly the model
+ *    horizon. Nothing beyond it.
  *  • Without one: forecast columns are "Year N"; historical columns are the
  *    last six calendar years the documents report (or one "STR TTM" anchor
  *    column when only the STR comp set exists).
  */
 export function deriveIndexColumns(i: DeriveColumnsInput): IaColumns {
-  const cal = (i.calendarYears ?? []).map(finiteInt).filter((y): y is number => y != null);
+  const spans = (i.dealYears ?? []).filter((d) => !!d && typeof d.label === 'string' && typeof d.start === 'string');
   const forecastCount = Math.max(0, Math.trunc(i.forecastCount));
-  const hasCalendar = cal.length > 0 && forecastCount > 0;
+  const hasCalendar = spans.length > 0 && forecastCount > 0;
   const columns: IaColumn[] = [];
 
   if (hasCalendar) {
-    const base = cal[0];
+    const base = Number(spans[0].start.slice(0, 4));
     for (let k = HISTORICAL_COLUMN_COUNT; k >= 1; k--) {
       const y = base - k;
       columns.push({ key: `h-${y}`, kind: 'historical', calendarYear: y, ordinal: null, label: String(y) });
     }
     for (let n = 0; n < forecastCount; n++) {
-      // The engine emits one calendar year per row (revenue.projection_calendar_years).
+      // The engine emits one deal year per row (revenue.projection_deal_years).
       // A row the engine did not label is NOT extrapolated: the column stays an
-      // ordinal ("Year N") with no calendar year rather than a guessed figure.
-      const y = cal[n] ?? null;
+      // ordinal ("Year N") with no span rather than a guessed figure. A deal
+      // year that is one whole calendar year (a 31 Dec close) also keys that
+      // calendar year; one that spans two keys none (a calendar-year figure
+      // does not describe it).
+      const d = spans[n] ?? null;
+      const months = d?.calendar_months ?? [];
+      const y = months.length === 1 && months[0].months === 12 ? months[0].calendar_year : null;
       columns.push({
         key: `f-${n + 1}`,
         kind: 'forecast',
         calendarYear: y,
+        dealYear: d,
         ordinal: n + 1,
-        label: y != null ? String(y) : `Year ${n + 1}`,
+        label: d != null ? d.label : `Year ${n + 1}`,
       });
     }
   } else {
@@ -648,6 +660,10 @@ export const MARKET_FORECAST_UNPLACED_REASON =
   'The CBRE Horizons extraction carries no calendar year for its forecast rows, so they cannot be placed on the deal’s calendar — re-extract the report (pipeline v7).';
 export const MARKET_FORECAST_OUTSIDE_REASON =
   'The CBRE Horizons forecast years fall outside the model horizon shown here.';
+/** FON-121 — every model year spans two calendar years, so no single CBRE
+ *  calendar-year figure describes one (the Future P&L blends them). */
+export const MARKET_FORECAST_DEAL_YEAR_REASON =
+  'Each model year runs twelve months from the close and spans two calendar years; CBRE Horizons publishes calendar years, so its figures are blended into each year’s growth on the Future P&L rather than shown here as a level.';
 
 /**
  * FON-95 — the broader market / chain-scale series. Historical: reported
@@ -751,8 +767,10 @@ export function buildMarketSeries(cols: IaColumns, market: MarketDataAPIResponse
       };
       placed++;
     }
+    const blendedOnly = columns.some((c) => c.kind === 'forecast' && c.dealYear != null)
+      && columns.every((c) => c.kind !== 'forecast' || c.calendarYear == null);
     if (placeable === 0) forecastReason = MARKET_FORECAST_UNPLACED_REASON;
-    else if (placed === 0) forecastReason = MARKET_FORECAST_OUTSIDE_REASON;
+    else if (placed === 0) forecastReason = blendedOnly ? MARKET_FORECAST_DEAL_YEAR_REASON : MARKET_FORECAST_OUTSIDE_REASON;
     else {
       const pageList = Array.from(pages).sort((a, b) => a - b);
       const doc = cbre?.doc_name

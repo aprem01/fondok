@@ -16,6 +16,7 @@
  */
 
 import type { EngineFailure, ToplineGrowthRow, ToplineStatus, ToplineSuggestion } from '@/lib/api';
+import { yearWithSpan, type DealYearSpan } from '@/lib/dealYears';
 import { SOURCE_LABEL_FROM_REGISTRY } from '@/lib/ontology/adapters';
 
 /**
@@ -30,7 +31,7 @@ export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
 }
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
-export const TOPLINE_METHODOLOGY_VERSION = 2;
+export const TOPLINE_METHODOLOGY_VERSION = 3;
 
 /** Field-override keys the topline reads (worker `services/topline.py`). */
 export const TOPLINE_KEYS = {
@@ -55,7 +56,8 @@ export const BENCHMARK_LEVEL_OPTIONS: { value: 'auto' | 'comp_set' | 'submarket'
 /** One model year's topline record (`revenue.topline_by_year[i]`, schemas-ts `IndexDriverYear`). */
 export interface ToplineYearRecord {
   year: number;
-  calendar_year?: number | null;
+  /** FON-121 — the deal year's span (twelve months from the close). */
+  deal_year?: DealYearSpan | null;
   method?: string | null;
   benchmark_level?: string | null;
   benchmark_occupancy?: number | null;
@@ -94,7 +96,7 @@ const GROWTH_SOURCE_TEXT: Record<string, string> = {
   analyst_override: 'your override',
   cbre_horizons: 'CBRE Hotel Horizons forecast',
   costar_submarket_forecast: 'CoStar submarket forecast',
-  carried_forward: 'past the forecast (forecast average for ADR; occupancy held)',
+  carried_forward: 'past the forecast (the report’s forecast average for ADR; occupancy held)',
   held_at_stabilization: 'occupancy flat after stabilization',
 };
 
@@ -119,7 +121,7 @@ function growthSourcesText(s: ToplineStatus): string {
 
 function growthLabels(s: ToplineStatus): string {
   return appliedRows(s)
-    .map((r) => `Year ${r.year}${r.calendar_year ? ` (${r.calendar_year})` : ''}: occupancy ${r.occupancy.label}; ADR ${r.adr.label}`)
+    .map((r) => `${yearWithSpan(r.year, r.deal_year)}: occupancy ${r.occupancy.label}; ADR ${r.adr.label}`)
     .join('\n');
 }
 
@@ -207,10 +209,12 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
         ? 'default — Year 3 after reopening'
         : 'default';
   // Decision 1b (2026-11-03): occupancy holds at its stabilized level; ADR keeps growing.
+  // FON-121 — the stabilized year names its deal-year span.
+  const stabSpan = (s.growth_by_year ?? []).find((r) => r.year === s.stabilization_year)?.deal_year?.label;
   out.push({
     id: 'stabilization',
     tone: 'ok',
-    text: `Stabilized Year ${s.stabilization_year} (${stabWho}) — occupancy flat after it`,
+    text: `Stabilized Year ${s.stabilization_year} (${stabSpan ? `${stabSpan}; ` : ''}${stabWho}) — occupancy flat after it`,
   });
   if (!isGrowthOnly(s)) out.push({ id: 'ramp', ...rampSummary(s) });
   return out;
@@ -278,7 +282,7 @@ export function growthBanner(s: ToplineStatus | null | undefined): GrowthBanner 
         r.occupancy?.value == null ? 'occupancy' : null,
         r.adr?.value == null ? 'ADR' : null,
       ].filter(Boolean);
-      if (metrics.length) gaps.push(`Year ${r.year}${r.calendar_year ? ` (${r.calendar_year})` : ''} ${metrics.join(' and ')}`);
+      if (metrics.length) gaps.push(`${yearWithSpan(r.year, r.deal_year)} ${metrics.join(' and ')}`);
     }
     return {
       state,
@@ -330,7 +334,7 @@ export function calendarAnchorNote(
   );
   if (!placed) return null;
   const where = ANCHOR_TEXT[a.source] ?? a.source.replace(/_/g, ' ');
-  const year = a.first_model_year != null ? ` — Year 1 = ${a.first_model_year}` : '';
+  const year = a.year1?.label ? ` — Year 1 = ${a.year1.label}` : '';
   return {
     source: a.source,
     text: `Forecast placed from ${where} (${a.date})${year}${a.assumed ? ' (assumed: no close date)' : ''}`,

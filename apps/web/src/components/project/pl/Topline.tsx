@@ -29,6 +29,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { InlineEditControls } from '@/components/design';
 import type { ToplineStatus } from '@/lib/api';
+import { calendarMixText } from '@/lib/dealYears';
 import { NOTE_REQUIRED_MESSAGE, requiresNote } from '@/lib/overrideNote';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import {
@@ -587,6 +588,10 @@ export function GrowthByYearTable({
     <span title={g.label} className={g.value == null ? 'text-ink-400' : undefined}>
       {applied ? signedPct(g.value) : 'n/a'}
       <span className="ml-1 text-[9.5px] uppercase tracking-wide text-ink-400">{applied ? SOURCE_SHORT[g.source] ?? g.source : 'as reported'}</span>
+      {/* Decision 3 (2026-11-03) — the report's page is visible, not only in the tooltip. */}
+      {applied && g.chip && (
+        <span className="ml-1 text-[9.5px] text-ink-500" data-testid="topline-growth-chip">{g.chip}</span>
+      )}
     </span>
   );
   return (
@@ -610,7 +615,9 @@ export function GrowthByYearTable({
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.year} className="border-b border-border/40" data-testid={`topline-growth-row-${r.year}`}>
-              <td className="py-0.5 text-ink-600">Year {r.year}{r.calendar_year ? ` · ${r.calendar_year}` : ''}</td>
+              <td className="py-0.5 text-ink-600" title={calendarMixText(r.deal_year) ?? undefined}>
+                Year {r.year}{r.deal_year?.label ? ` · ${r.deal_year.label}` : ''}
+              </td>
               <td className="py-0.5 text-right tabular-nums">
                 {editing ? (
                   <input
@@ -661,6 +668,7 @@ export function GrowthByYearTable({
       )}
       <div className="text-[10.5px] text-ink-500" data-testid="topline-terminal-growth">
         Exit-year growth: {signedPct(status.terminal_revpar_growth?.value)}
+        {status.terminal_revpar_growth?.chip ? ` · ${status.terminal_revpar_growth.chip}` : ''}
         {status.terminal_revpar_growth?.label ? ` — ${status.terminal_revpar_growth.label}` : ''}
       </div>
     </div>
@@ -760,7 +768,7 @@ export function PenetrationByYearGrid({
             const title = [co?.text, ca?.text].filter(Boolean).join('\n') || undefined;
             return (
               <tr key={i} className="border-b border-border/40 align-top" data-testid={`topline-penetration-row-${y}`} title={title}>
-                <td className="py-1 text-ink-600">Year {y}{b?.calendar_year ? ` · ${b.calendar_year}` : ''}</td>
+                <td className="py-1 text-ink-600">Year {y}{b?.deal_year?.label ? ` · ${b.deal_year.label}` : ''}</td>
                 <td className="py-1 text-right tabular-nums" title={b?.label}>
                   {pct1(b?.occupancy)} {b?.basis && b.occupancy != null && <BasisChip basis={b.basis} label={b.label} />}
                 </td>

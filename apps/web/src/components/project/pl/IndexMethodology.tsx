@@ -8,11 +8,11 @@
  *
  *   Root cause (both read the SAME revenue engine, nothing is overridden):
  *   Projections' "Base year (Year 1) · <calendar>" column is ``revenue.years[0]``
- *   with its calendar year from ``revenue.projection_calendar_years`` (the
+ *   with its calendar year from ``revenue.projection_deal_years`` (the
  *   acquisition close date). Index Analysis used to hard-code its forecast
  *   band to 2025–2033 and place ``revenue.years[i]`` at 2024 + i, so its 2025
  *   column was ``years[1]`` — model Year 2. FON-94 derives the Index Analysis
- *   columns from the same ``projection_calendar_years``: Year 1 sits in the
+ *   columns from the same ``projection_deal_years``: Year 1 sits in the
  *   first forecast column, so the two tabs now print the same figure for the
  *   same calendar year. A third figure — the STR subject TTM — anchors the comp
  *   set and the MPI / ARI indices, on another source and period.
@@ -113,8 +113,8 @@ export interface ReconciliationSource {
 export interface ReconciliationInput {
   /** ``revenue.years[0]`` — what Projections shows as Base year (Year 1). */
   baseYear: { occupancy: number; adr: number } | null;
-  /** ``revenue.projection_calendar_years[0]`` — null with no close date. */
-  baseCalendarYear: number | null;
+  /** ``revenue.projection_deal_years[0].label`` — null with no close date. */
+  baseDealYear: string | null;
   /** ``starting_occupancy`` / ``starting_adr`` — the stabilized baseline. */
   startingOccupancy: number | null;
   startingAdr: number | null;
@@ -167,7 +167,7 @@ const near = (a: number | null, b: number | null, tol: number) =>
  */
 export function buildReconciliation(i: ReconciliationInput): Reconciliation | null {
   if (!i.baseYear) return null;
-  const cal = i.baseCalendarYear;
+  const cal = i.baseDealYear;
   const projectionsLabel = `${PL_SUB_LABEL.projections} — Base year (Year 1)${cal != null ? ` · ${cal}` : ''}`;
   const projectionsSource = describeSource(i.occSource);
 

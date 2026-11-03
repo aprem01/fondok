@@ -23,14 +23,15 @@ import {
   type IaColumns,
   type StrTrendAPI,
 } from '@/components/project/pl/indexAnalysisModel';
+import { calDealYears } from './fixtures/dealYears';
 
 const labels = (c: IaColumns) => c.columns.map((x) => x.label);
 
 describe('deriveIndexColumns (FON-94)', () => {
   it('with a calendar: six historical years then exactly the engine horizon', () => {
-    const c = deriveIndexColumns({ calendarYears: [2025, 2026, 2027, 2028, 2029], forecastCount: 5, documentYears: [2019, 2024] });
+    const c = deriveIndexColumns({ dealYears: calDealYears([2025, 2026, 2027, 2028, 2029]), forecastCount: 5, documentYears: [2019, 2024] });
     expect(c.hasCalendar).toBe(true);
-    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027', '2028', '2029']);
+    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'Jan–Dec 2025', 'Jan–Dec 2026', 'Jan–Dec 2027', 'Jan–Dec 2028', 'Jan–Dec 2029']);
     expect(c.firstForecastIndex).toBe(6);
     expect(c.columns[6]).toMatchObject({ kind: 'forecast', ordinal: 1, calendarYear: 2025 });
     expect(c.columns[10]).toMatchObject({ kind: 'forecast', ordinal: 5, calendarYear: 2029 });
@@ -39,8 +40,8 @@ describe('deriveIndexColumns (FON-94)', () => {
   });
 
   it('a calendar shorter than the horizon is not extrapolated — the unlabeled years are "Year N" with no calendar year', () => {
-    const c = deriveIndexColumns({ calendarYears: [2025, 2026], forecastCount: 4, documentYears: [] });
-    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026', 'Year 3', 'Year 4']);
+    const c = deriveIndexColumns({ dealYears: calDealYears([2025, 2026]), forecastCount: 4, documentYears: [] });
+    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'Jan–Dec 2025', 'Jan–Dec 2026', 'Year 3', 'Year 4']);
     const forecast = c.columns.filter((x) => x.kind === 'forecast');
     expect(forecast.map((x) => x.calendarYear)).toEqual([2025, 2026, null, null]);
     expect(forecast.map((x) => x.ordinal)).toEqual([1, 2, 3, 4]);
@@ -50,12 +51,24 @@ describe('deriveIndexColumns (FON-94)', () => {
   });
 
   it('a December close moves Year 1 to the next calendar year — the columns follow', () => {
-    const c = deriveIndexColumns({ calendarYears: [2026, 2027], forecastCount: 2, documentYears: [] });
-    expect(labels(c)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027']);
+    const c = deriveIndexColumns({ dealYears: calDealYears([2026, 2027]), forecastCount: 2, documentYears: [] });
+    expect(labels(c)).toEqual(['2020', '2021', '2022', '2023', '2024', '2025', 'Jan–Dec 2026', 'Jan–Dec 2027']);
+  });
+
+  it('FON-121 — a 30 Sep close: forecast columns are the Oct–Sep deal years, keyed to no single calendar year', () => {
+    const oct = [2025, 2026].map((c, i) => ({
+      year: i + 1, start: `${c}-10-01`, end: `${c + 1}-09-30`, label: `Oct ${c}–Sep ${c + 1}`,
+      calendar_months: [{ calendar_year: c, months: 3 }, { calendar_year: c + 1, months: 9 }], days: 365,
+    }));
+    const c = deriveIndexColumns({ dealYears: oct, forecastCount: 2, documentYears: [] });
+    expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'Oct 2025–Sep 2026', 'Oct 2026–Sep 2027']);
+    const forecast = c.columns.filter((x) => x.kind === 'forecast');
+    expect(forecast.map((x) => x.calendarYear)).toEqual([null, null]);
+    expect(forecast[0].dealYear?.label).toBe('Oct 2025–Sep 2026');
   });
 
   it('without a close date: document years as history, ordinals as forecast, no guessed year', () => {
-    const c = deriveIndexColumns({ calendarYears: [], forecastCount: 3, documentYears: [2024, 2022, 2023, 2022] });
+    const c = deriveIndexColumns({ dealYears: calDealYears([]), forecastCount: 3, documentYears: [2024, 2022, 2023, 2022] });
     expect(c.hasCalendar).toBe(false);
     expect(labels(c)).toEqual(['2022', '2023', '2024', 'Year 1', 'Year 2', 'Year 3']);
     expect(c.columns[3]).toMatchObject({ kind: 'forecast', ordinal: 1, calendarYear: null });
@@ -63,32 +76,32 @@ describe('deriveIndexColumns (FON-94)', () => {
   });
 
   it('without a close date and more than six document years, keeps the latest six', () => {
-    const c = deriveIndexColumns({ calendarYears: null, forecastCount: 1, documentYears: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023] });
+    const c = deriveIndexColumns({ dealYears: calDealYears(null), forecastCount: 1, documentYears: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023] });
     expect(labels(c)).toEqual(['2018', '2019', '2020', '2021', '2022', '2023', 'Year 1']);
   });
 
   it('without any document year, the STR TTM comp anchor still gets one labelled column', () => {
-    const c = deriveIndexColumns({ calendarYears: undefined, forecastCount: 2, documentYears: [], hasStrTtm: true });
+    const c = deriveIndexColumns({ dealYears: calDealYears(undefined), forecastCount: 2, documentYears: [], hasStrTtm: true });
     expect(labels(c)).toEqual(['STR TTM', 'Year 1', 'Year 2']);
     expect(c.columns[0].calendarYear).toBeNull();
   });
 
   it('no engine run at all: history only, firstForecastIndex = length', () => {
-    const c = deriveIndexColumns({ calendarYears: [], forecastCount: 0, documentYears: [2023] });
+    const c = deriveIndexColumns({ dealYears: calDealYears([]), forecastCount: 0, documentYears: [2023] });
     expect(labels(c)).toEqual(['2023']);
     expect(c.firstForecastIndex).toBe(1);
   });
 
   it('forecast columns use the engine’s 365-day year; historical columns their real day count', () => {
-    const c = deriveIndexColumns({ calendarYears: [2025], forecastCount: 1, documentYears: [] });
+    const c = deriveIndexColumns({ dealYears: calDealYears([2025]), forecastCount: 1, documentYears: [] });
     const by = Object.fromEntries(c.columns.map((x) => [x.label, daysForColumn(x)]));
     expect(by['2024']).toBe(366);
     expect(by['2023']).toBe(365);
-    expect(by['2025']).toBe(365);
+    expect(by['Jan–Dec 2025']).toBe(365);
   });
 });
 
-const cols2025 = deriveIndexColumns({ calendarYears: [2025, 2026, 2027], forecastCount: 3, documentYears: [] });
+const cols2025 = deriveIndexColumns({ dealYears: calDealYears([2025, 2026, 2027]), forecastCount: 3, documentYears: [] });
 
 const STR: StrTrendAPI = {
   subject_occupancy_pct: 0.716,
@@ -232,7 +245,7 @@ describe('buildSubjectSeries (FON-95 — STR annual before P&L fiscal year)', ()
     expect(r.sources[8]).toMatchObject({ kind: 'engine', yearIndex: 2 });
     // The boundary is refused: the 2024 actual is an STR calendar year, 2025 the TTM-based Base Year.
     expect(r.boundary.comparable).toBe(false);
-    if (!r.boundary.comparable) expect(r.boundary.note).toMatch(/the 2024 column is the STR calendar-year actual while 2025 is the model's Base Year/);
+    if (!r.boundary.comparable) expect(r.boundary.note).toMatch(/the 2024 column is the STR calendar-year actual while Jan–Dec 2025 is the model's Base Year/);
   });
 
   it('with no historical actual next to Year 1 the boundary is simply comparable (nothing to refuse)', () => {

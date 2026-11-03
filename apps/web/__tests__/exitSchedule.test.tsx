@@ -29,7 +29,7 @@ import {
   isIrrSentinel,
   IRR_SENTINEL_NOTE,
   exitRowLabel,
-  exitRowCalendarYear,
+  exitRowDealYear,
   exitRowReasonLabel,
   exitRowReasonTitle,
   selectedExitLabel,
@@ -162,8 +162,7 @@ function fullRun(returnsPatch: Record<string, unknown> = {}): EngineOutputsRespo
       }),
       revenue: engineRow('revenue', {
         years: [{ year: 1, occupancy: 0.7, adr: 385, revpar: 269.5, total_revenue: 11_900_000 }],
-        projection_calendar_years: [2026, 2027, 2028, 2029, 2030],
-        projection_start_year: 2026,
+        projection_deal_years: calDealYears([2026, 2027, 2028, 2029, 2030]), exit_noi_deal_year: calExitYear([2026, 2027, 2028, 2029, 2030]),
       }),
       debt: engineRow('debt', { year_one_dscr: 1.45, interest_rate: 0.068, loan_amount: 25_000_000 }),
     },
@@ -248,6 +247,7 @@ import ReturnsTab from '@/components/project/ReturnsTab';
 import OverviewTab from '@/components/project/OverviewTab';
 import ICMemoTab from '@/components/project/ICMemoTab';
 import type { Project } from '@/lib/project';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 const PROJECT = { id: 0, name: 'Harbor Hotel' } as unknown as Project;
 
@@ -333,10 +333,11 @@ describe('lib/engines/returns — the one reader', () => {
   it('row labels: year-end rows by year, an off-cycle row by month; calendar year only from the projection calendar', () => {
     expect(exitRowLabel({ exit_year: 3, exit_month: 36 })).toBe('Year 3');
     expect(exitRowLabel({ exit_year: null, exit_month: 52 })).toBe('Month 52');
-    expect(exitRowCalendarYear({ exit_year: 3 }, [2026, 2027, 2028, 2029, 2030])).toBe(2028);
-    expect(exitRowCalendarYear({ exit_year: 3 }, null)).toBeUndefined();
-    expect(exitRowCalendarYear({ exit_year: null }, [2026])).toBeUndefined();
-    expect(exitRowCalendarYear({ exit_year: 9 }, [2026])).toBeUndefined();
+    // FON-121 — the sale year is the deal year the row closes (twelve months from the close).
+    expect(exitRowDealYear({ exit_year: 3 }, calDealYears([2026, 2027, 2028, 2029, 2030]))).toBe('Jan–Dec 2028');
+    expect(exitRowDealYear({ exit_year: 3 }, null)).toBeUndefined();
+    expect(exitRowDealYear({ exit_year: null }, calDealYears([2026]))).toBeUndefined();
+    expect(exitRowDealYear({ exit_year: 9 }, calDealYears([2026]))).toBeUndefined();
   });
 
   it('selected exit: "Year 5 · month 60" at a year-end, "Month 52" off-cycle', () => {

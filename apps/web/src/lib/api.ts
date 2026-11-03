@@ -5,6 +5,7 @@
 // and every data surface renders the "Worker not configured" state
 // (components/WorkerNotConfigured) — there is no fixture fallback.
 
+import type { DealYearSpan } from '@/lib/dealYears';
 import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
 import type { SourceId } from './ontology/concepts.generated';
@@ -384,11 +385,26 @@ export interface ToplineMetricGrowth {
   bucket?: string | null;
   bucket_label?: string | null;
   reason?: string | null;
+  /** Decision 3 (2026-11-03) — the visible source chip, e.g. "CoStar p.26". */
+  chip?: string | null;
+  /** Decision 2 — a post-forecast figure: the report's own average or a computed one. */
+  average_basis?: 'published_average' | 'computed_average' | null;
+  /** FON-121 — the deal year this growth is INTO, and the calendar years it blends. */
+  deal_year?: DealYearSpan | null;
+  calendar_parts?: {
+    calendar_year: number;
+    months: number;
+    value: number | null;
+    source: string;
+    page?: number | null;
+    label: string;
+  }[];
 }
 
 export interface ToplineGrowthRow {
   year: number;
-  calendar_year: number | null;
+  /** FON-121 — twelve months from the close; null without a close date. */
+  deal_year: DealYearSpan | null;
   /** False for Year 1 when the benchmark's own period already is Year 1. */
   applied: boolean;
   occupancy: ToplineMetricGrowth;
@@ -398,7 +414,7 @@ export interface ToplineGrowthRow {
 /** The benchmark level for one model year (`topline_status.benchmark_by_year[i]`). */
 export interface ToplineBenchmarkYear {
   year: number;
-  calendar_year?: number | null;
+  deal_year?: DealYearSpan | null;
   occupancy?: number | null;
   adr?: number | null;
   revpar?: number | null;
@@ -435,7 +451,8 @@ export interface ToplineCalendarAnchor {
   source: string | null;
   date: string | null;
   assumed: boolean;
-  first_model_year: number | null;
+  /** FON-121 — Year 1's span ("Oct 2025–Sep 2026"). */
+  year1: DealYearSpan | null;
   label: string;
 }
 
@@ -497,7 +514,15 @@ export interface ToplineStatus {
     period_label?: string | null;
     doc_name?: string | null;
   } | null;
-  terminal_revpar_growth: { value: number; source_id: string; basis?: string; label?: string };
+  terminal_revpar_growth: {
+    value: number;
+    source_id: string;
+    basis?: string;
+    label?: string;
+    /** Decision 3 — "CoStar p.4". */
+    chip?: string | null;
+    average_basis?: 'published_average' | 'computed_average' | null;
+  };
   suggestions: ToplineSuggestion[];
   legacy_flags: ToplineLegacyFlag[];
   problems: string[];
@@ -755,7 +780,7 @@ export interface IndexTargetAPI {
  *  after it; `value` null + `detail` = the reason. */
 export interface IndexCompSetYear {
   year: number;
-  calendar_year?: number | null;
+  deal_year?: DealYearSpan | null;
   occupancy: IndexFigure;
   adr: IndexFigure;
 }
@@ -763,7 +788,7 @@ export type IndexDriverStatus = 'driven' | 'no_target' | 'benchmark_unavailable'
 /** FON-95 part 2 — one row of the by-year penetration grid. */
 export interface IndexYearRow {
   year: number;
-  calendar_year?: number | null;
+  deal_year?: DealYearSpan | null;
   benchmark_occupancy: IndexFigure;
   benchmark_adr: IndexFigure;
   mpi_target: IndexTargetAPI;

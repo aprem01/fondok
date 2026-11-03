@@ -166,8 +166,8 @@ export const ENGINE_MODEL_LABEL: Record<string, string> = {
 export const ENGINE_SECTION_LABEL: Record<string, string> = {
   // revenue
   'revenue.years': 'Future P&L',
-  'revenue.projection_start_year': 'Projection calendar',
-  'revenue.projection_calendar_years': 'Projection calendar',
+  'revenue.projection_deal_years': 'Projection calendar (deal years)',
+  'revenue.exit_noi_deal_year': 'Exit-NOI deal year',
   'revenue.renovation_displacement_by_year': 'Renovation displacement',
   'revenue.index_drivers_by_year': 'Index Analysis',
   'revenue.assumption_sources': 'Assumption sources',

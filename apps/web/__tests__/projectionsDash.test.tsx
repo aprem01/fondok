@@ -43,7 +43,7 @@ function buildOutputs(): EngineOutputsResponse {
     engines: {
       revenue: engine('revenue', {
         years: Array.from({ length: HOLD_YEARS }, (_, i) => revYear(i)),
-        projection_calendar_years: [2025, 2026, 2027],
+        projection_deal_years: calDealYears([2025, 2026, 2027]), exit_noi_deal_year: calExitYear([2025, 2026, 2027]),
       }),
       // The table mounts only once the expense engine has published its years
       // too; this one is deliberately bare (no waterfall) so the test is about
@@ -115,6 +115,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();

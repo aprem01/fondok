@@ -5,7 +5,7 @@
  *
  * Three stacked index tables (Subject Property, CoStar comp set, Market) and
  * a Penetration table. The year columns are derived from the revenue
- * engine's ``projection_calendar_years`` (Year 1 = calendar year of the first
+ * engine's ``projection_deal_years`` (FON-121; formerly calendar years — Year 1 = the first
  * operating month after close): the forecast columns are exactly the model
  * horizon and the six columns before them are history, so the same calendar
  * year sits in the same column as the Future P&L. Nothing is carried forward
@@ -42,6 +42,7 @@ import { applyOverridePatch, NOTE_REQUIRED_MESSAGE } from '@/lib/overrideNote';
 import { isGrowthOnly, type ToplineYearRecord } from '@/lib/topline';
 import { PenetrationByYearGrid, ToplineBasisLine, ToplineCard, ToplineNotices, type ToplineSave } from './Topline';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { asDealYears } from '@/lib/dealYears';
 import { toIndexPoints } from '@/lib/indexTarget';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useHistoricalBaseline } from '@/lib/hooks/useHistoricalBaseline';
@@ -126,10 +127,10 @@ function YearHeaderRow({ cols, firstLabel }: { cols: IaColumns; firstLabel: stri
             i === 0 && 'border-l border-border',
             i === firstForecastIndex && 'border-l border-border',
           )}
-          title={c.ordinal != null && c.calendarYear != null ? `Model Year ${c.ordinal}` : undefined}
+          title={c.ordinal != null && c.dealYear != null ? `Model Year ${c.ordinal}` : undefined}
         >
           <div>{c.label}</div>
-          {c.ordinal != null && c.calendarYear != null && (
+          {c.ordinal != null && c.dealYear != null && (
             <div className="text-[9.5px] text-ink-400 font-normal">Year {c.ordinal}</div>
           )}
         </th>
@@ -418,19 +419,20 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
 
   const str = marketData?.str_trend ?? null;
   const revYears = getEngineField<RevenueYear[]>(outputs, 'revenue', 'years') ?? [];
-  const calendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years') ?? [];
+  // FON-121 — the deal years (twelve months from the close).
+  const dealYears = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
 
   // FON-94 — the columns come from the engine's calendar, never a constant.
   const cols = useMemo(
     () =>
       deriveIndexColumns({
-        calendarYears,
+        dealYears,
         forecastCount: revYears.length,
         documentYears: subjectDocumentYears(historicalBaseline, str),
         hasStrTtm: !!str,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [calendarYears.join(','), revYears.length, historicalBaseline, str],
+    [dealYears.map((d) => d.label).join(','), revYears.length, historicalBaseline, str],
   );
 
   const subject = useMemo(
@@ -638,7 +640,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     const y0 = revYears[0];
     if (!y0) return null;
     const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-    const baseCal = num(calendarYears[0]);
+    const baseSpan = dealYears[0]?.label ?? null;
     // The column that holds model Year 1 — the one Projections heads
     // "Base year (Year 1)".
     const colIdx = cols.columns.findIndex((c) => c.kind === 'forecast' && c.ordinal === 1);
@@ -657,7 +659,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         : null;
     return buildReconciliation({
       baseYear: { occupancy: y0.occupancy, adr: y0.adr },
-      baseCalendarYear: baseCal,
+      baseDealYear: baseSpan,
       startingOccupancy: num(occSrc?.value),
       startingAdr: num(adrSrc?.value),
       occSource: srcOf(occSrc),
@@ -837,7 +839,7 @@ function toplineCompYears(t: ToplineStatus): IndexCompSetYear[] {
       basis: b.basis ?? null,
       basis_label: b.label,
     });
-    return { year: b.year, calendar_year: b.calendar_year ?? null, occupancy: fig(b.occupancy), adr: fig(b.adr) };
+    return { year: b.year, deal_year: b.deal_year ?? null, occupancy: fig(b.occupancy), adr: fig(b.adr) };
   });
 }
 

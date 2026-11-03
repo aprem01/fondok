@@ -33,9 +33,9 @@ describe('toplineBasisClauses — the one-line basis', () => {
     expect(c.map((x) => x.id)).toEqual(['benchmark', 'growth', 'stabilization', 'ramp']);
     expect(c[0].text).toBe('Benchmark: STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx');
     expect(c[0].tone).toBe('ok');
-    expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · past the forecast (forecast average for ADR; occupancy held)');
+    expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · past the forecast (the report’s forecast average for ADR; occupancy held)');
     expect(c[1].tone).toBe('ok');
-    expect(c[2].text).toBe('Stabilized Year 3 (default) — occupancy flat after it');
+    expect(c[2].text).toBe('Stabilized Year 3 (Jan–Dec 2028; default) — occupancy flat after it');
     expect(c[3].text).toBe('Ramp 85/95/100 (default)');
   });
 
@@ -128,7 +128,7 @@ describe('growthBanner — "No market forecast — set growth manually"', () => 
     );
     const b = growthBanner(toplineStatus({ growth_state: 'partially_sourced', growth_by_year: rows }));
     expect(b!.title).toBe('The market forecast does not cover every year — set the rest manually');
-    expect(b!.detail).toBe('No figure for: Year 3 (2028) ADR. Those years are held flat.');
+    expect(b!.detail).toBe('No figure for: Year 3 (Jan–Dec 2028) ADR. Those years are held flat.');
   });
   it('no suggestion is invented when the worker sends none', () => {
     expect(growthBanner(toplineStatus({ ...unavailableGrowth(), suggestions: [] }))!.suggestion).toBeNull();
@@ -141,7 +141,7 @@ describe('calendar_unknown — a forecast on file that no calendar places (R2-I1
       ...unavailableGrowth(),
       calendar_known: false,
       calendar_unknown: true,
-      calendar_anchor: { source: null, date: null, assumed: false, first_model_year: null, label: 'x' },
+      calendar_anchor: { source: null, date: null, assumed: false, year1: null, label: 'x' },
     });
   it('the banner asks for the close date first, the suggestion stays second', () => {
     const b = growthBanner(calUnknown());
@@ -178,17 +178,17 @@ describe('calendarAnchorNote — which anchor placed the forecast', () => {
   it('the close date: stated, no ask', () => {
     expect(calendarAnchorNote(toplineStatus())).toEqual({
       source: 'acquisition_close',
-      text: 'Forecast placed from the acquisition close (2025-12-31) — Year 1 = 2026',
+      text: 'Forecast placed from the acquisition close (2025-12-31) — Year 1 = Jan–Dec 2026',
       assumed: false,
       askCloseDate: false,
     });
   });
   it('the as-of date: assumed, so it asks for the close date', () => {
-    const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, first_model_year: 2025, label: 'x' } }));
-    expect(n).toMatchObject({ assumed: true, askCloseDate: true, text: 'Forecast placed from the underwriting as-of date (2025-06-30) — Year 1 = 2025 (assumed: no close date)' });
+    const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, year1: { year: 1, start: '2025-07-01', end: '2026-06-30', label: 'Jul 2025–Jun 2026', days: 365 }, label: 'x' } }));
+    expect(n).toMatchObject({ assumed: true, askCloseDate: true, text: 'Forecast placed from the underwriting as-of date (2025-06-30) — Year 1 = Jul 2025–Jun 2026 (assumed: no close date)' });
   });
   it('no anchor → nothing', () => {
-    expect(calendarAnchorNote(toplineStatus({ calendar_anchor: { source: null, date: null, assumed: false, first_model_year: null, label: 'x' } }))).toBeNull();
+    expect(calendarAnchorNote(toplineStatus({ calendar_anchor: { source: null, date: null, assumed: false, year1: null, label: 'x' } }))).toBeNull();
     expect(calendarAnchorNote(toplineStatus({ calendar_anchor: null }))).toBeNull();
   });
 });
@@ -200,8 +200,9 @@ describe('toplineMigrationNotice — runs that predate topline v2', () => {
     );
     expect(toplineMigrationNotice({ hasRevenueRun: true, version: 1 })).not.toBeNull();
   });
-  it('v2 or no run at all → nothing', () => {
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 2 })).toBeNull();
+  it('v3 (deal years, FON-121) or no run at all → nothing; a v2 run predates deal years', () => {
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 3 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 2 })).not.toBeNull();
     expect(toplineMigrationNotice({ hasRevenueRun: false, version: undefined })).toBeNull();
   });
 });
@@ -372,7 +373,7 @@ describe('FON-116 staged rollout — the growth-only topline', () => {
     expect(c[0].text).toBe('Year 1: T-12 actual');
     expect(c[0].tone).toBe('ok');
     expect(c[1].text).toBe('Growth: CoStar submarket forecast (Luxury & Upper Upscale) · occupancy flat after stabilization');
-    expect(c[2].text).toBe('Stabilized Year 3 (default) — occupancy flat after it');
+    expect(c[2].text).toBe('Stabilized Year 3 (Jan–Dec 2028; default) — occupancy flat after it');
     expect(JSON.stringify(c)).not.toMatch(/Benchmark:|Ramp|penetration 100/);
   });
 
@@ -396,7 +397,7 @@ describe('FON-116 staged rollout — the growth-only topline', () => {
     const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
     expect(growthBanner(growthOnlyStatus())).toBeNull();
     expect(growthBanner(growthOnlyStatus({ growth_state: 'unavailable', suggestions: [SUGGESTION_45] }))?.suggestion).toEqual(SUGGESTION_45);
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 2 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 3 })).toBeNull();
   });
 });
 
@@ -408,7 +409,7 @@ describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/eng
     };
     const s = run.topline_status;
     expect(run.revenue.topline_mode).toBe('growth_only');
-    expect(run.revenue.topline_methodology_version).toBe(2);
+    expect(run.revenue.topline_methodology_version).toBe(3);
     const c = toplineBasisClauses(s);
     expect(c.map((x) => x.id)).toEqual(['year1', 'growth', 'stabilization']);
     expect(c[0].text).toBe('Year 1: T-12 actual');
@@ -420,7 +421,10 @@ describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/eng
     }
     expect(toplineReferenceRows(s, 5)).toEqual({ benchmark: null, t12: null });
     const y5 = s.growth_by_year.find((r) => r.year === 5)!;
-    expect(y5.adr.label).toContain('forecast average (+2.4%)');
+    // FON-121 decision 2/3 — the report's published average, with its page chip.
+    expect(y5.adr.label).toContain('CoStar forecast average (as published) +2.5%');
+    expect(y5.adr.chip).toBe('CoStar p.4');
+    expect(y5.deal_year?.label).toBe('Jan–Dec 2030');
     expect(y5.occupancy.source).toBe('held_at_stabilization');
   });
 });

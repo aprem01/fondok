@@ -39,7 +39,7 @@ function buildOutputs(): EngineOutputsResponse {
           year: i + 1, occupancy: 0.75, adr: 300, revpar: 225, rooms_revenue: 9_000_000,
           fb_revenue: 2_500_000, other_revenue: 500_000, total_revenue: 12_000_000,
         })),
-        projection_calendar_years: [2025, 2026],
+        projection_deal_years: calDealYears([2025, 2026]), exit_noi_deal_year: calExitYear([2025, 2026]),
       }),
       expense: engine('expense', { years: Array.from({ length: HOLD_YEARS }, (_, i) => expYear(i)) }),
       returns: engine('returns', fx2.returns),
@@ -106,6 +106,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 import ProjectionsSection from '@/components/project/pl/ProjectionsSection';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();

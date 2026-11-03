@@ -129,7 +129,7 @@ describe('ToplineNotices', () => {
   it('names the calendar anchor; an assumed one asks for the close date', () => {
     render(
       <ToplineNotices
-        status={toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, first_model_year: 2025, label: 'x' } })}
+        status={toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, year1: { year: 1, start: '2025-07-01', end: '2026-06-30', label: 'Jul 2025–Jun 2026', days: 365 }, label: 'x' } })}
         {...base}
       />,
     );
@@ -238,6 +238,50 @@ describe('GrowthByYearTable', () => {
     fireEvent.change(screen.getByLabelText('ADR growth Year 1 (%)'), { target: { value: '80' } });
     expect(screen.getByTestId('topline-growth-error')).toHaveTextContent('outside');
     expect(screen.queryByTestId('topline-growth-save')).toBeNull();
+  });
+});
+
+describe('GrowthByYearTable — FON-121 deal years and decision 3 page chips', () => {
+  const oct = (c: number, year: number) => ({
+    year, start: `${c}-10-01`, end: `${c + 1}-09-30`, label: `Oct ${c}–Sep ${c + 1}`,
+    calendar_months: [{ calendar_year: c, months: 3 }, { calendar_year: c + 1, months: 9 }], days: 365,
+  });
+  const g = (value: number, source: string, label: string, chip: string | null) => ({
+    value, source, label, chip, page: 26, doc_name: 'Miami Beach.pdf',
+  });
+  const status = () =>
+    toplineStatus({
+      growth_by_year: [
+        { year: 1, deal_year: oct(2025, 1), applied: false, occupancy: g(0, 'costar_submarket_forecast', 'x', 'CoStar p.26'), adr: g(0.04, 'costar_submarket_forecast', 'x', 'CoStar p.26') },
+        {
+          year: 2, deal_year: oct(2026, 2), applied: true,
+          occupancy: g(-0.003, 'costar_submarket_forecast', 'Forecast · Oct 2026–Sep 2027 = 3 mo × -1.2% + 9 mo × +0.0%', 'CoStar p.26'),
+          adr: g(0.0, 'costar_submarket_forecast', 'Forecast · Oct 2026–Sep 2027 = 3 mo × +1.8% + 9 mo × -0.6%', 'CoStar p.26'),
+        },
+        {
+          year: 5, deal_year: oct(2029, 5), applied: true,
+          occupancy: g(0, 'held_at_stabilization', 'Assumption · occupancy held at its Year 3 (Oct 2027–Sep 2028) stabilized level', null),
+          adr: g(0.02575, 'carried_forward', 'Assumption · Oct 2029–Sep 2030 = 3 mo × +2.8% + 9 mo × +2.5% CoStar forecast average (as published, p.4)', 'CoStar p.26, p.4'),
+        },
+      ],
+      terminal_revpar_growth: {
+        value: 0.025, source_id: 'growth_carried_forward', basis: 'exit_year_adr_growth', chip: 'CoStar p.4',
+        average_basis: 'published_average',
+        label: 'Year 6 (Oct 2030–Sep 2031, the exit-NOI year) ADR growth +2.5%',
+      },
+    });
+
+  it('each year names its deal-year span and the page is visible, not only on hover', () => {
+    render(<GrowthByYearTable status={status()} overrides={{}} onSave={ok()} running={false} />);
+    const row2 = screen.getByTestId('topline-growth-row-2');
+    expect(row2).toHaveTextContent('Year 2 · Oct 2026–Sep 2027');
+    expect(within(row2).getAllByTestId('topline-growth-chip').map((c) => c.textContent)).toEqual(['CoStar p.26', 'CoStar p.26']);
+    // The span's calendar mix is on the year cell's hover.
+    expect(within(row2).getByText('Year 2 · Oct 2026–Sep 2027').closest('td')).toHaveAttribute('title', '3 mo of 2026 + 9 mo of 2027');
+    const row5 = screen.getByTestId('topline-growth-row-5');
+    expect(row5).toHaveTextContent('CoStar p.26, p.4');
+    expect(screen.getByTestId('topline-terminal-growth')).toHaveTextContent('Exit-year growth: +2.5% · CoStar p.4');
+    expect(screen.getByTestId('topline-terminal-growth')).toHaveTextContent('Oct 2030–Sep 2031');
   });
 });
 

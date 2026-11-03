@@ -88,6 +88,7 @@ import { useToast } from '@/components/ui/Toast';
 import { fmtCurrency, fmtPct, fmtMillions } from '@/lib/format';
 import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { asDealYears, dealYearLabel } from '@/lib/dealYears';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useTraceGraph } from '@/lib/hooks/useValueTrace';
@@ -699,13 +700,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const stab: StabilizedYearBlock | null = stabilizedYearBlock(
     getEngineField<unknown>(outputs, 'expense'),
   );
-  // The calendar year of the stabilized model year, when the deal carries an
-  // acquisition close date (FON-41 #2). No close date → no year, ever.
-  const projectionCalendar = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
-  const stabCalendarYear =
-    stab && Array.isArray(projectionCalendar) && projectionCalendar.length > stab.stabilized_year_index
-      ? projectionCalendar[stab.stabilized_year_index]
-      : undefined;
+  // The deal-year span of the stabilized model year ("Oct 2027–Sep 2028"),
+  // when the deal carries an acquisition close date (FON-41 #2, FON-121). No
+  // close date → no span, ever.
+  const projectionDealYears = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
+  const stabCalendarYear = stab
+    ? dealYearLabel(projectionDealYears, stab.stabilized_year_index + 1) ?? undefined
+    : undefined;
   // "Year 3 after close (default)" / "Year N (your override)" / clamped.
   const stabYearLabel = stabilizationYearLabel(stab);
 
@@ -1023,7 +1024,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ? lnk(
             'stabYear', 'Stabilization Year',
             stabCalendarYear != null
-              ? `${stabYearLabel} — ${stabCalendarYear}`
+              ? `${stabYearLabel} · ${stabCalendarYear}`
               : (stabYearLabel ?? `Year ${stab.stabilized_year}`),
             '→ Future P&L', 'pl',
             {
@@ -1295,7 +1296,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ? {
           label: STABILIZED_NOI_LABEL,
           value: mm(stabNoi),
-          sub: `Stabilization: ${stabYearLabel ?? `Year ${stab?.stabilized_year}`}${stabCalendarYear != null ? ` — ${stabCalendarYear}` : ''}`,
+          sub: `Stabilization: ${stabYearLabel ?? `Year ${stab?.stabilized_year}`}${stabCalendarYear != null ? ` · ${stabCalendarYear}` : ''}`,
         }
       : { label: STABILIZED_NOI_LABEL, value: REFUSAL_GLYPH, sub: stab ? 'stabilization year not set' : 'published after the next model run' };
     // FON-59 R-052 — the two IRRs sit side by side, each saying which stack
@@ -2405,8 +2406,8 @@ export const FUTURE_PL_LINK_LABEL = '→ P&L';
  * `revenue.years[i].total_revenue`, `expense.years[i].noi_institutional`
  * (the legacy after-reserve `noi` only on a pre-upgrade run, and then the row
  * label says so via `noiBeforeReserveLabel`) — and the heading carries the
- * calendar year from `revenue.projection_calendar_years` when the deal has an
- * acquisition close date. A dash for anything the engines have not emitted;
+ * deal-year span from `revenue.projection_deal_years` (FON-121) when the deal
+ * has an acquisition close date. A dash for anything the engines have not emitted;
  * nothing here is a placeholder.
  */
 function FuturePLSummaryCard({
@@ -2420,7 +2421,7 @@ function FuturePLSummaryCard({
     getEngineField<Array<{ total_revenue?: number | null }>>(outputs, 'revenue', 'years') ?? [];
   const expYears =
     getEngineField<Array<{ noi?: number | null; noi_institutional?: number | null }>>(outputs, 'expense', 'years') ?? [];
-  const calendar = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years') ?? [];
+  const calendar = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
   const n = Math.min(FUTURE_PL_YEARS, Math.max(revYears.length, expYears.length));
   const cols = Array.from({ length: n }, (_, i) => i);
   const basisConfirmed = expYears.slice(0, n).some((y) => typeof y?.noi_institutional === 'number');
@@ -2435,7 +2436,7 @@ function FuturePLSummaryCard({
   const money = (v: number | undefined): string =>
     v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   const heading = (i: number): string =>
-    typeof calendar[i] === 'number' ? `Year ${i + 1} · ${calendar[i]}` : `Year ${i + 1}`;
+    calendar[i]?.label ? `Year ${i + 1} · ${calendar[i].label}` : `Year ${i + 1}`;
 
   const th: CSSProperties = {
     fontSize: 10.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',

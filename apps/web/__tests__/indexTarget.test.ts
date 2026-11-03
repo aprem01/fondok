@@ -14,6 +14,7 @@ import {
   indexPoints,
   targetForColumn,
 } from '@/components/project/pl/indexAnalysisModel';
+import { calDealYears } from './fixtures/dealYears';
 
 describe('indexTarget — mirrors the worker bands', () => {
   it('bands match apps/worker INDEX_POINTS_RANGE / INDEX_RATIO_RANGE', () => {
@@ -54,7 +55,7 @@ describe('indexTarget — mirrors the worker bands', () => {
 });
 
 describe('buildCompSeries — the comp-set forecast (Sam #3 c)', () => {
-  const cols = deriveIndexColumns({ calendarYears: [2025, 2026, 2027], forecastCount: 3, documentYears: [] });
+  const cols = deriveIndexColumns({ dealYears: calDealYears([2025, 2026, 2027]), forecastCount: 3, documentYears: [] });
   const STR = {
     subject_occupancy_pct: 0.716,
     subject_adr_usd: 288,

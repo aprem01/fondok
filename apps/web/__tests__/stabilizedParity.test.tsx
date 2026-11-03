@@ -93,8 +93,7 @@ function engines(withBlock: boolean) {
           { year: 1, occupancy: 0.70, adr: 385, revpar: 269.5, rooms_revenue: 9_000_000, fb_revenue: 2_400_000, other_revenue: 500_000, total_revenue: 11_900_000 },
           { year: 2, occupancy: STAB_OCC, adr: STAB_ADR, revpar: 309.4, rooms_revenue: 9_900_000, fb_revenue: 2_450_000, other_revenue: 490_000, total_revenue: STAB_REVENUE },
         ],
-        projection_calendar_years: [2025, 2026],
-        projection_start_year: 2025,
+        projection_deal_years: calDealYears([2025, 2026]), exit_noi_deal_year: calExitYear([2025, 2026]),
       },
     },
     debt: { status: 'complete', outputs: { avg_dscr: 1.6, year_one_dscr: 1.59, interest_rate: 0.068, loan_amount: 26_000_000 } },
@@ -182,6 +181,7 @@ import OverviewTab from '@/components/project/OverviewTab';
 import ICMemoTab from '@/components/project/ICMemoTab';
 import ScenarioComparePanel from '@/components/project/ScenarioComparePanel';
 import type { Project } from '@/lib/project';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 const PROJECT = { id: 0, name: 'Kimpton Angler' } as unknown as Project;
 
@@ -397,7 +397,7 @@ describe('Overview Stabilization card copy (default / override / clamped)', () =
   it('override: "Year N (your override)"', () => {
     BLOCK_PATCH = { source: 'analyst_override', default_year: 3, clamped: false, detected_year: 1, detected_signal: 'occupancy' };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    expect(rowValue('Stabilization Year')).toBe('Year 2 (your override) — 2026');
+    expect(rowValue('Stabilization Year')).toBe('Year 2 (your override) · Jan–Dec 2026');
     expect(rowValue('Model-detected Year')).toBe('Year 1 — hint only');
   });
 
@@ -405,7 +405,7 @@ describe('Overview Stabilization card copy (default / override / clamped)', () =
     BLOCK_PATCH = { source: 'default_year_3', default_year: 3, clamped: true, detected_year: 1, detected_signal: 'occupancy' };
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(rowValue('Stabilization Year')).toBe(
-      'Year 2 (default Year 3 is past the 2-year hold) — 2026',
+      'Year 2 (default Year 3 is past the 2-year hold) · Jan–Dec 2026',
     );
   });
 });

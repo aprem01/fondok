@@ -41,6 +41,7 @@ interface SensitivityMatrix {
   baseCol: number;
 }
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { asDealYears } from '@/lib/dealYears';
 import {
   stabilizedYearBlock,
   stabilizationAnchorCaption,
@@ -766,7 +767,8 @@ function ReturnsSummary({
   // a sandbox preview is showing — the preview's own rows and nothing else
   // (a preview from a worker build without them says so; the canonical table
   // is never shown under a sandbox case). `undefined` = none on this run.
-  const calendarYears = getEngineField<number[]>(outputs, 'revenue', 'projection_calendar_years');
+  // FON-121 — the sale year's span (twelve months from the close).
+  const dealYears = asDealYears(getEngineField<unknown>(outputs, 'revenue', 'projection_deal_years'));
   const scheduleRows = sandboxOn
     ? preview?.exit_schedule != null
       ? exitScheduleRows(preview.exit_schedule)
@@ -918,7 +920,7 @@ function ReturnsSummary({
         />
       </div>
 
-      <ExitScheduleCard rows={scheduleRows} calendarYears={calendarYears} sandbox={sandboxOn} />
+      <ExitScheduleCard rows={scheduleRows} dealYears={dealYears} sandbox={sandboxOn} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
         <ExitAssumptionsCard outputs={outputs} onEdit={onEditInvestment} />

@@ -23,6 +23,7 @@ import {
   strTtmBasisLabel,
   type StrTrendAPI,
 } from '@/components/project/pl/indexAnalysisModel';
+import { calDealYears } from './fixtures/dealYears';
 
 const STR_DOC = 'STR Trend May 2025.xlsx';
 const STR: StrTrendAPI = {
@@ -35,7 +36,7 @@ const STR: StrTrendAPI = {
   ttm_period_end: '2025-05',
   doc_name: STR_DOC,
 };
-const cols = deriveIndexColumns({ calendarYears: [2025, 2026, 2027], forecastCount: 3, documentYears: [] });
+const cols = deriveIndexColumns({ dealYears: calDealYears([2025, 2026, 2027]), forecastCount: 3, documentYears: [] });
 const fig = (value: number | null, extra: Partial<IndexFigure> = {}): IndexFigure => ({
   value, source: value == null ? null : 'computed', inputs: [], detail: null, period_label: null, ...extra,
 });
@@ -79,10 +80,10 @@ describe('label builders', () => {
 describe('the tables label each benchmark column', () => {
   it('comp set: STR TTM anchor = actual; forecast Year 1 actual, Year 2+ assumption (worker label wins)', () => {
     const byYear: IndexCompSetYear[] = [
-      { year: 1, calendar_year: 2025, occupancy: fig(0.694, { basis: 'actual', basis_label: `Actual · STR TTM May 2025 · ${STR_DOC}` }), adr: fig(305.7) },
-      { year: 2, calendar_year: 2026, occupancy: fig(0.70, { basis: 'assumption', basis_label: 'Assumption · grown at market growth' }), adr: fig(315) },
+      { year: 1, deal_year: null, occupancy: fig(0.694, { basis: 'actual', basis_label: `Actual · STR TTM May 2025 · ${STR_DOC}` }), adr: fig(305.7) },
+      { year: 2, deal_year: null, occupancy: fig(0.70, { basis: 'assumption', basis_label: 'Assumption · grown at market growth' }), adr: fig(315) },
       // An older worker: no basis on the figure — the ordinal says it.
-      { year: 3, calendar_year: 2027, occupancy: fig(0.71), adr: fig(325) },
+      { year: 3, deal_year: null, occupancy: fig(0.71), adr: fig(325) },
     ];
     const r = buildCompSeries(cols, STR, byYear);
     const anchor = r.sources[cols.firstForecastIndex - 1]!;

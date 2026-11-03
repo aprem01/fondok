@@ -436,11 +436,11 @@ export default function InvestmentTab() {
         toast('This sample deal is read-only.', { type: 'info' });
         return;
       }
-      // The close date IS an engine input — `revenue.py::projection_start_year`
+      // The close date IS an engine input — `revenue.py::projection_deal_years`
       // reads it to set the projection start year — so it carries a
       // justification like any other, AND the model has to re-run for the
       // change to land. Financials → Projections renders the Base year from
-      // `revenue.projection_start_year`, an ENGINE OUTPUT: refetching the deal
+      // `revenue.projection_deal_years`, an ENGINE OUTPUT: refetching the deal
       // and the timeline cannot move it, because nothing recomputes the engine
       // output until a run. Saving a new close date and watching the Base year
       // sit unchanged is exactly what Sam reported (2026-09-15, "base year /

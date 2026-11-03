@@ -212,6 +212,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
 
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
+import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
   cleanup();
@@ -1177,7 +1178,7 @@ describe('OverviewTab — Future P&L summary card (R-060)', () => {
     outputsRef.value = withEngines({
       revenue: {
         years: [{ year: 1, total_revenue: 13_600_000 }, { year: 2, total_revenue: 1_200_000_000 }],
-        projection_calendar_years: [2027, 2028],
+        projection_deal_years: calDealYears([2027, 2028]), exit_noi_deal_year: calExitYear([2027, 2028]),
       },
       expense: {
         years: [
@@ -1190,8 +1191,8 @@ describe('OverviewTab — Future P&L summary card (R-060)', () => {
     const card = screen.getByTestId('overview-future-pl');
 
     expect(within(card).getByText('Future P&L · Years 1–2')).toBeInTheDocument();
-    expect(within(card).getByTestId('overview-future-pl-col-0')).toHaveTextContent('Year 1 · 2027');
-    expect(within(card).getByTestId('overview-future-pl-col-1')).toHaveTextContent('Year 2 · 2028');
+    expect(within(card).getByTestId('overview-future-pl-col-0')).toHaveTextContent('Year 1 · Jan–Dec 2027');
+    expect(within(card).getByTestId('overview-future-pl-col-1')).toHaveTextContent('Year 2 · Jan–Dec 2028');
     // Full dollars with separators — never scientific notation (E-025).
     expect(futurePlCells('overview-future-pl-revenue').map((c) => c.textContent)).toEqual(['$13,600,000', '$1,200,000,000']);
     expect(futurePlCells('overview-future-pl-noi').map((c) => c.textContent)).toEqual(['$3,100,000', '$3,300,000']);
