@@ -359,7 +359,22 @@ def read_topline_inputs(
             )
             forced = mapped
 
-    if base.get(LEGACY_STR_SEED_FLAG) is not None and not growth_only:
+    if growth_only and base.get(LEGACY_STR_SEED_FLAG) is True:
+        # Still honoured under the growth-only topline (engine_runner), but its
+        # control is retired — listed so "Clear legacy keys" can remove it.
+        legacy.append(
+            {
+                "key": LEGACY_STR_SEED_FLAG,
+                "value": True,
+                "treatment": "applied_growth_only",
+                "reason": ReasonCode.LEGACY_KEY_TRANSLATED.value,
+                "detail": (
+                    "The retired \"Use STR rates\" switch still sets Year 1 to the hotel's STR trailing "
+                    "twelve months while the benchmark method is not switched on. Clear it to use the T-12."
+                ),
+            }
+        )
+    elif base.get(LEGACY_STR_SEED_FLAG) is not None and not growth_only:
         legacy.append(
             {
                 "key": LEGACY_STR_SEED_FLAG,

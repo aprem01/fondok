@@ -424,3 +424,16 @@ describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/eng
     expect(y5.occupancy.source).toBe('held_at_stabilization');
   });
 });
+
+describe('FON-116 staged rollout — the retired STR switch under growth-only', () => {
+  it('is still honoured by the worker but clearable (its control is gone)', async () => {
+    const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
+    const s = growthOnlyStatus({
+      legacy_flags: [
+        { key: 'revenue_seed_from_str_forecast', value: true, treatment: 'applied_growth_only', reason: 'legacy_key_translated', detail: 'x' },
+      ],
+    } as Partial<ToplineStatus>);
+    expect(legacyKeysToClear(s)).toEqual(['revenue_seed_from_str_forecast']);
+    expect(clearLegacyKeysPatch(s)).toEqual({ revenue_seed_from_str_forecast: null });
+  });
+});

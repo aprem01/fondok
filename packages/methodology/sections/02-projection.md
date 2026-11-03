@@ -43,7 +43,8 @@ them at the market growth for that year:
 ::: chain
 1. **Year 1** — Your Year-1 occupancy or ADR (entered with a note) is used as typed; else the
    hotel's own T-12; else, when the deal still has the retired "Use STR rates" switch on, the
-   hotel's own STR trailing twelve months; else, for ADR only, the first forecast year of a CBRE
+   hotel's own STR trailing twelve months (the switch is listed with the retired settings, and
+   "Clear legacy keys" removes it); else, for ADR only, the first forecast year of a CBRE
    Hotel Horizons report. With none of them the projection refuses and asks for the rates — there
    is no default Year-1 rate.
 2. **Market growth, year by year** — the same chain as below (your growth, CBRE, the CoStar

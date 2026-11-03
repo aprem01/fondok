@@ -267,8 +267,9 @@ async def test_growth_only_honours_the_retired_str_switch_with_the_subject_ttm()
     # The STR TTM to May 2025: comp set × MPI / ARI (STR's own subject row).
     assert base["starting_occupancy"] == pytest.approx(0.828892, abs=5e-4)
     assert "starting_occupancy" not in base["__source_fields__"]
-    flags = base["__topline_status__"]["legacy_flags"]
-    assert all(f["key"] != "revenue_seed_from_str_forecast" for f in flags)
+    # Its control is retired: listed (clearable), and honoured until cleared.
+    flags = {f["key"]: f["treatment"] for f in base["__topline_status__"]["legacy_flags"]}
+    assert flags["revenue_seed_from_str_forecast"] == "applied_growth_only"
 
 
 @pytest.mark.asyncio
