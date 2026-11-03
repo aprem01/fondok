@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.context import current_tenant_id
 from ..config import get_settings
-from ..database import get_session_factory
+from ..database import end_transaction_before_external_call, get_session_factory
 from ..extraction import embeddings
 from .tenant_scan import plan_tenant_scan
 
@@ -157,6 +157,10 @@ async def embed_pending_chunks(
             break
         seen.update(ids)
         texts = [r._mapping["chunk_text"] or "" for r in rows]
+        # The embedding API call (with its retries) is external: end the
+        # SELECT's transaction first (incident 2026-11-03). The UPDATEs
+        # below run in a fresh, short one.
+        await end_transaction_before_external_call(session)
         try:
             vectors = await embeddings.embed_batch(texts, input_type="document")
         except Exception as exc:  # noqa: BLE001 — resume on the next call

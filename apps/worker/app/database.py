@@ -264,6 +264,28 @@ def tenant_guc_hook_registered() -> bool:
     return event.contains(TenantSession, "after_begin", _tenant_guc_after_begin)
 
 
+async def end_transaction_before_external_call(session: AsyncSession) -> None:
+    """End ``session``'s open transaction before a long external call.
+
+    Incident 2026-11-03: the extraction pipeline read the document row on its
+    session — which autobegan a transaction holding an ACCESS SHARE lock on
+    ``documents`` — and kept it open (``idle in transaction``, one pooled
+    connection checked out) through a 15-60 minute LLM call. A deploy's boot
+    DDL on ``documents`` waited for that lock, Postgres queued every later
+    query on the table behind the DDL, and the worker's pool ran dry.
+
+    The rule: no transaction (and so no checked-out connection) is held
+    across an LLM / extractor / embedding / webhook / object-store call. Call
+    this right before one. Whatever the transaction did is committed — the
+    callers end READ transactions here (their writes commit at their own
+    commit points); a session with no open transaction is left alone. The
+    session stays usable: its next statement autobegins a fresh, short
+    transaction (and the RLS ``after_begin`` hook re-publishes the tenant).
+    """
+    if session.in_transaction():
+        await session.commit()
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency yielding an ``AsyncSession`` with rollback-on-error.
 

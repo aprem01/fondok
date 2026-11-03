@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database import end_transaction_before_external_call
 from . import embeddings
 from .chunking import Chunk, chunk_pages
 from .models import ParsedDocument
@@ -116,14 +117,13 @@ async def index_parsed_document(
     if not chunks:
         return 0
 
-    # Wipe-and-rewrite for idempotent reprocessing.
-    await session.execute(
-        text(
-            "DELETE FROM document_chunks WHERE deal_id = :deal "
-            "AND document_id = :doc AND tenant_id = :tenant"
-        ),
-        {"deal": deal_id, "doc": document_id, "tenant": tenant_id},
-    )
+    # The embedding API call below is external (batches + retries): end the
+    # table probe's transaction first, and do NOT open the wipe-and-rewrite
+    # transaction until the vectors are in hand — a DELETE held open across
+    # the embedding calls kept row locks and a pooled connection for their
+    # whole duration (incident 2026-11-03,
+    # ``database.end_transaction_before_external_call``).
+    await end_transaction_before_external_call(session)
 
     # Try to embed, batch by batch. A failed batch leaves only its own
     # chunks NULL — still searchable via FTS, and the embedding repair job
@@ -140,6 +140,16 @@ async def index_parsed_document(
                 document_id,
                 exc,
             )
+
+    # Wipe-and-rewrite for idempotent reprocessing — one short transaction
+    # with the inserts below.
+    await session.execute(
+        text(
+            "DELETE FROM document_chunks WHERE deal_id = :deal "
+            "AND document_id = :doc AND tenant_id = :tenant"
+        ),
+        {"deal": deal_id, "doc": document_id, "tenant": tenant_id},
+    )
 
     # Bulk insert. Use parameter binding for chunk_text (long, may
     # contain special chars) but format the vector literal inline

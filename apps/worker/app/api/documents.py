@@ -59,7 +59,11 @@ from ..audit import log_audit
 from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..auth.context import current_tenant_id
-from ..database import get_session, get_session_factory
+from ..database import (
+    end_transaction_before_external_call,
+    get_session,
+    get_session_factory,
+)
 from ..engines.historical_baseline import (
     HistoricalYear,
     YoYDelta,
@@ -344,6 +348,105 @@ def _merge_error_payload(
         if v is not None:
             data[k] = v
     return data
+
+
+#: Keys a failure writes into ``documents.extraction_data`` (the
+#: ``_merge_error_payload`` / parse-failure / 0-field writers). A successful
+#: extraction removes every one of them: a completed row carries no failure.
+EXTRACTION_FAILURE_KEYS: tuple[str, ...] = (
+    "error_kind",
+    "error_message",
+    "error_raw",
+    "failed_from_status",
+    "failed_job_id",
+)
+#: Audit action when a job completes a document someone else had already
+#: failed while it ran (the FON-91 watchdog's ``timeout``, typically).
+AUDIT_COMPLETED_AFTER_FAILURE = "document.extraction_completed_after_failure"
+
+
+async def _settle_failure_state_on_completion(
+    session: AsyncSession, *, doc_id: str, deal_id: str, tenant_id: str
+) -> None:
+    """Make a completing extraction's row consistent, inside the caller's
+    persist transaction (before it sets ``EXTRACTED`` and commits).
+
+    Incident 2026-11-03 (doc 21eece07): the watchdog failed the row as
+    ``timeout`` at 30 minutes; the job finished at 60 and set ``EXTRACTED``,
+    but ``extraction_data.error_kind='timeout'`` stayed — a row both
+    extracted and failed. Decision: **completion wins**. The job produced and
+    persisted a real extraction, so the row's status is ``EXTRACTED`` and
+    every :data:`EXTRACTION_FAILURE_KEYS` entry is removed (the same clean-up
+    applies to a stale error left by an earlier failed attempt that a
+    ``POST .../extract`` retry, which does not re-parse, has now fixed).
+    When the row was ``FAILED`` under the running job (it is ``EXTRACTING``
+    otherwise — this job stamped it), the superseded failure is recorded in
+    ``audit_log`` (:data:`AUDIT_COMPLETED_AFTER_FAILURE`, ``before`` = the
+    failure, ``after`` = ``EXTRACTED``) so the watchdog's earlier audit row is
+    not left as the last word. On Postgres the row is read ``FOR UPDATE`` so
+    a watchdog write cannot slip between this read and the status update.
+    """
+    from ..database import is_sqlite_session
+
+    lock = "" if is_sqlite_session(session) else " FOR UPDATE"
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, extraction_data FROM documents "
+                f"WHERE id = :id AND tenant_id = :tenant{lock}"
+            ),
+            {"id": doc_id, "tenant": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        return
+    status_now = str(row._mapping.get("status") or "")
+    raw = row._mapping.get("extraction_data")
+    data: dict[str, Any] | None = None
+    if isinstance(raw, dict):
+        data = dict(raw)
+    elif isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        data = dict(parsed) if isinstance(parsed, dict) else None
+    stale = {k: data[k] for k in EXTRACTION_FAILURE_KEYS if data and k in data}
+    if stale and data is not None:
+        for k in stale:
+            data.pop(k, None)
+        await session.execute(
+            text(
+                "UPDATE documents SET extraction_data = :d "
+                "WHERE id = :id AND tenant_id = :tenant"
+            ),
+            {"d": json.dumps(data), "id": doc_id, "tenant": str(tenant_id)},
+        )
+    if status_now == DOC_STATUS_FAILED:
+        logger.warning(
+            "extraction: doc=%s job=%s completed after the row was FAILED "
+            "(error_kind=%s) — completion wins, failure cleared",
+            doc_id,
+            _job_tag(),
+            stale.get("error_kind"),
+        )
+        await log_audit(
+            session,
+            tenant_id=str(tenant_id),
+            action=AUDIT_COMPLETED_AFTER_FAILURE,
+            resource_type="document",
+            resource_id=doc_id,
+            deal_id=deal_id,
+            severity="warning",
+            before={"status": status_now, **stale},
+            after={"status": DOC_STATUS_EXTRACTED},
+            diff_summary=(
+                "extraction completed after the document was marked failed "
+                f"({stale.get('error_kind') or 'unknown'}); the failure is cleared"
+            ),
+            metadata={"job_id": _job_tag()},
+            tags=["fon-91", "watchdog", "completed_after_failure"],
+        )
 
 
 async def _mark_document_failed(
@@ -3118,6 +3221,11 @@ async def upload_documents(
             records.append(existing_record)
             continue
 
+        # No transaction across the object-store upload: the duplicate
+        # check's read transaction would otherwise hold an ACCESS SHARE lock
+        # on ``documents`` for the whole put (incident 2026-11-03). The
+        # INSERT below runs in its own short transaction.
+        await end_transaction_before_external_call(session)
         try:
             storage_key = await store.put(
                 tenant_id=tenant_id_str,
@@ -5388,6 +5496,8 @@ async def download_document(
             detail=f"document {doc_id} has no stored bytes",
         )
 
+    # No transaction across the object-store fetch (incident 2026-11-03).
+    await end_transaction_before_external_call(session)
     settings = get_settings()
     store = get_raw_store(settings)
     try:
@@ -5738,6 +5848,8 @@ async def download_document_signed(
             detail=f"document {doc_id} has no stored bytes",
         )
 
+    # No transaction across the object-store fetch (incident 2026-11-03).
+    await end_transaction_before_external_call(session)
     body = await _read_document_bytes(storage_key, doc_id)
     return Response(
         content=body,
@@ -5828,6 +5940,9 @@ async def reprocess_document(
             ),
         )
 
+    # No transaction across the object-store fetch (incident 2026-11-03):
+    # the status stamp + audit below run in a fresh, short one.
+    await end_transaction_before_external_call(session)
     settings = get_settings()
     store = get_raw_store(settings)
     try:
@@ -7726,6 +7841,16 @@ async def _run_extraction_pipeline_inner(
                     content_hash=content_hash,
                 )
 
+            # Incident 2026-11-03 — end the read transaction NOW. Everything
+            # below up to the persist is long and external (the extractor's
+            # LLM graph: 15-60 min on a dense workbook; the quality passes'
+            # raw-store fetch); a transaction left open here held an ACCESS
+            # SHARE lock on ``documents`` and a pooled connection for all of
+            # it, and a deploy's boot DDL queued the whole table behind it.
+            # The backend gets a session FACTORY for its own short
+            # transactions; the persist below autobegins a fresh one.
+            await end_transaction_before_external_call(session)
+
             if cached is not None:
                 cached_fields = cached["fields"]
                 if isinstance(cached_fields, str):
@@ -7800,7 +7925,7 @@ async def _run_extraction_pipeline_inner(
                     classified_doc_type,
                 ) = await current_extraction_backend().extract(
                     ExtractionRequest(
-                        session=session,
+                        session_factory=factory,
                         deal_id=deal_id,
                         tenant_id=tenant_id,
                         doc_id=doc_id,
@@ -8061,6 +8186,11 @@ async def _run_extraction_pipeline_inner(
                 )
                 refined_doc_type = refinement.doc_type
                 classified_doc_type = refinement.classified_doc_type
+                # Completion wins over a failure recorded while this job ran
+                # (watchdog timeout) or left by an earlier attempt.
+                await _settle_failure_state_on_completion(
+                    session, doc_id=doc_id, deal_id=deal_id, tenant_id=tenant_id
+                )
                 structural_pnl_score = refinement.structural_pnl_score
                 misclassified_flag = refinement.misclassified
                 normalized_ai = refinement.normalized_ai
@@ -8936,9 +9066,16 @@ def _try_template_extraction(
 
 @dataclass(frozen=True)
 class ExtractionRequest:
-    """Everything an extraction backend needs for one document."""
+    """Everything an extraction backend needs for one document.
 
-    session: AsyncSession
+    ``session_factory`` (not a session): a backend that needs the database
+    mid-extraction opens a SHORT transaction of its own
+    (``async with request.session_factory() as s: …``) and closes it before
+    any LLM call. The pipeline holds no transaction while ``extract`` runs —
+    incident 2026-11-03, see ``database.end_transaction_before_external_call``.
+    """
+
+    session_factory: Any  # async_sessionmaker[AsyncSession]
     deal_id: str
     tenant_id: str
     doc_id: str
@@ -8966,8 +9103,11 @@ class ExtractionBackend:
 
 
 async def _llm_extract(request: ExtractionRequest) -> ExtractionResult:
-    """Production extraction: sibling-template reuse, else the LLM graph."""
-    session = request.session
+    """Production extraction: sibling-template reuse, else the LLM graph.
+
+    The sibling lookup and the template learning each run in their own short
+    transaction; the Router → Extractor graph between them runs with no
+    connection checked out (its pre-router doc_type persist opens its own)."""
     settings = get_settings()
     # ── Sibling-template reuse (TASK T2) ────────────────
     # Before spending LLM tokens: if a cell-mapping was learned from a
@@ -8985,12 +9125,13 @@ async def _llm_extract(request: ExtractionRequest) -> ExtractionResult:
     ) and not request.force:
         from ..services.sibling_template import try_sibling_reuse
 
-        sibling_hit = await try_sibling_reuse(
-            session,
-            tenant_id=request.tenant_id,
-            doc_id=request.doc_id,
-            extraction_data=request.extraction_data,
-        )
+        async with request.session_factory() as session:
+            sibling_hit = await try_sibling_reuse(
+                session,
+                tenant_id=request.tenant_id,
+                doc_id=request.doc_id,
+                extraction_data=request.extraction_data,
+            )
         if sibling_hit is not None and not _sibling_reuse_allowed(sibling_hit[2]):
             logger.info(
                 "sibling reuse REJECTED: doc=%s source_doc_type=%s "
@@ -9024,14 +9165,15 @@ async def _llm_extract(request: ExtractionRequest) -> ExtractionResult:
     if fields and _sibling_reuse_allowed(classified_doc_type):
         from ..services.sibling_template import maybe_learn_mapping
 
-        await maybe_learn_mapping(
-            session,
-            tenant_id=request.tenant_id,
-            doc_id=request.doc_id,
-            doc_type=classified_doc_type,
-            fields=fields,
-            extraction_data=request.extraction_data,
-        )
+        async with request.session_factory() as session:
+            await maybe_learn_mapping(
+                session,
+                tenant_id=request.tenant_id,
+                doc_id=request.doc_id,
+                doc_type=classified_doc_type,
+                fields=fields,
+                extraction_data=request.extraction_data,
+            )
     return fields, confidence, agent_version, classified_doc_type
 
 
@@ -10698,6 +10840,10 @@ async def _persist_critic_report(
             return
 
         run_narrative = current_extraction_backend().critic_narrative_pass
+        # The narrative pass is an LLM call: end the inputs' read
+        # transaction first (incident 2026-11-03); the writes below run in a
+        # fresh, short one.
+        await end_transaction_before_external_call(session)
         critic_input = CriticInput(
             tenant_id=tenant_id,
             deal_id=deal_id,
@@ -10732,7 +10878,23 @@ async def _persist_critic_report(
                 "created": _now(),
             },
         )
-        for f in report.findings:
+        # ``critic_findings`` is the deal's CURRENT finding set (the history
+        # is ``critic_reports``). Finding ids are stable per (deal, rule,
+        # title) — ``agents.critic._make_finding`` — so the plain INSERT this
+        # replaced collided on ``critic_findings_pkey`` on every run after a
+        # deal's first (deal 76d10a64, 2026-11-03) and rolled the whole
+        # report back. Replace the set: drop the deal's findings, then upsert
+        # each (the upsert also absorbs a concurrent run on the same deal,
+        # e.g. two documents of one upload batch finishing together).
+        await session.execute(
+            text(
+                "DELETE FROM critic_findings "
+                "WHERE deal_id = :deal AND tenant_id = :tenant"
+            ),
+            {"deal": deal_id, "tenant": tenant_id},
+        )
+        unique_findings = {str(f.id): f for f in report.findings}
+        for f in unique_findings.values():
             await session.execute(
                 text(
                     """
@@ -10745,6 +10907,15 @@ async def _persist_critic_report(
                         :severity, :cited_fields, :cited_pages,
                         :impact_estimate_usd, :created
                     )
+                    ON CONFLICT (id) DO UPDATE SET
+                        rule_id = excluded.rule_id,
+                        title = excluded.title,
+                        narrative = excluded.narrative,
+                        severity = excluded.severity,
+                        cited_fields = excluded.cited_fields,
+                        cited_pages = excluded.cited_pages,
+                        impact_estimate_usd = excluded.impact_estimate_usd,
+                        created_at = excluded.created_at
                     """
                 ),
                 {

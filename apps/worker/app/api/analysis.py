@@ -39,7 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_session
+from ..database import end_transaction_before_external_call, get_session
 from .deals import _assert_deal_belongs_to_tenant, get_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -1932,7 +1932,11 @@ async def submit_broker_response(
             exc,
         )
 
-    # 4. Run the resolver agent. Budget exhaustion → 402.
+    # 4. Run the resolver agent. Budget exhaustion → 402. It is an LLM call:
+    #    end the reads' transaction first so no lock / pooled connection is
+    #    held across it (incident 2026-11-03); the writes below autobegin a
+    #    fresh, short one.
+    await end_transaction_before_external_call(session)
     from ..agents.qa_resolver import QAResolverInput, run_qa_resolver
     from ..budget import BudgetExceededError
 
