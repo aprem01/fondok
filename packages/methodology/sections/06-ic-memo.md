@@ -160,7 +160,7 @@ inference.
   slice: the engine's own Year-1 lines (`engine_runner.year_one_actual_lines`, the functions behind
   the revenue and expense loaders — full-period lines only, never a budget, forecast, prior-year or
   variance line), plus the basis statement's stated GOP / NOI / NOI before reserve and its stated total
-  revenue unless its own revenue lines exceed it; `_load_critic_inputs` and
+  revenue unless its own lines contradict it (no rooms line, or lines above it); `_load_critic_inputs` and
   `load_actuals_before_reserve_noi` share it, never blended across statements. A line the statement does
   not state is listed in `USALIFinancials.not_stated` and prints "not stated" in every agent prompt —
   never $0 or a 100% OpEx ratio. With no full-period rooms revenue line, rooms revenue is RevPAR (or
