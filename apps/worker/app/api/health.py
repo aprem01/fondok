@@ -147,8 +147,18 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
         "structural_recognizer": recognizer_ok,
         "ontology_version": ontology_version,
         "methodology_sections": methodology_sections,
+        # FON-116 staged rollout (temporary): "growth_only" until FON-117's
+        # benchmark × penetration × ramp is switched on (services.topline
+        # .topline_mode); the post-deploy check reads it.
+        "topline_mode": _topline_mode(),
         "degraded_reasons": degraded_reasons,
     }
+
+
+def _topline_mode() -> str:
+    from ..services.topline import topline_mode
+
+    return topline_mode()
 
 
 def _raw_store_snapshot() -> dict[str, Any]:

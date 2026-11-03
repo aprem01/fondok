@@ -40,6 +40,10 @@ os.environ.setdefault("ALLOW_TENANT_HEADER_WITHOUT_JWT", "1")
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("VOYAGE_API_KEY", None)
 os.environ["EMBEDDING_REPAIR_ENABLED"] = "false"
+# FON-116 staged rollout — the suite runs the DEPLOYED default (growth-only
+# topline) whatever a developer shell exports; benchmark-mode tests opt in
+# with the ``topline_benchmark`` fixture below.
+os.environ["TOPLINE_BENCHMARK_ENABLED"] = "0"
 
 import pytest  # noqa: E402 — env pinning above must precede every app import
 from sqlalchemy import text  # noqa: E402
@@ -92,6 +96,19 @@ def _isolate_env_and_settings_per_module():
         os.environ.clear()
         os.environ.update(snapshot)
         get_settings.cache_clear()
+
+
+@pytest.fixture
+def topline_benchmark(monkeypatch):
+    """FON-116 staged rollout — run the test with ``TOPLINE_BENCHMARK_ENABLED``
+    ON (the full FON-117 benchmark × penetration × ramp engine). Default OFF
+    (growth-only), pinned above. Remove with the switch once FON-117 is on in
+    production."""
+    monkeypatch.setenv("TOPLINE_BENCHMARK_ENABLED", "1")
+    get_settings.cache_clear()
+    yield
+    monkeypatch.setenv("TOPLINE_BENCHMARK_ENABLED", "0")
+    get_settings.cache_clear()
 
 
 # ── C7 — the canned extraction backend (an injected seam, no env switch) ────

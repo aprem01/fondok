@@ -91,6 +91,23 @@ SUGGESTION_NOTE = "Platform suggestion 4.5% — no market forecast on file"
 
 TOPLINE_STATUS_KEY = "__topline_status__"
 
+#: FON-116 / FON-117 staged rollout (TEMPORARY — remove with the setting once
+#: FON-117 is on in production; DEPLOY.md "Topline rollout switch").
+#:   ``growth_only`` — FON-116: Year 1 from the subject's own basis, growth per
+#:                     year from the resolver (``TOPLINE_BENCHMARK_ENABLED`` off,
+#:                     the default).
+#:   ``benchmark``   — FON-117: benchmark × penetration × ramp (switch on).
+TOPLINE_MODES: tuple[str, str] = ("growth_only", "benchmark")
+
+
+def topline_mode() -> str:
+    """The topline rollout mode — the ONE reader of
+    ``Settings.TOPLINE_BENCHMARK_ENABLED`` (read per call, so a restart with
+    a new environment is the only way it changes)."""
+    from ..config import get_settings
+
+    return "benchmark" if bool(get_settings().TOPLINE_BENCHMARK_ENABLED) else "growth_only"
+
 _RAMP_MAX = 1.5
 
 #: Review I-1 — WHICH deals the default 85 / 95 ramp applies to. The ONE
@@ -836,4 +853,5 @@ __all__ = [
     "coerce_ramp_list",
     "default_stabilization_year",
     "read_topline_inputs",
+    "topline_mode",
 ]
