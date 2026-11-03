@@ -41,7 +41,7 @@ function engines(ramp: number[]) {
     engines: {
       revenue: row('revenue', {
         years: [revYear(1, occ[0], 300), revYear(2, occ[1], 305), revYear(3, occ[2], 310)],
-        topline_methodology_version: 2,
+        topline_methodology_version: 3,
         topline_by_year: [1, 2, 3].map((y) => ({ year: y, mpi_target: 100, ari_target: 100, ramp_pct: y < 3 ? ramp[y - 1] : null, occupancy: occ[y - 1], adr: 300 })),
       }),
       expense: row('expense', { years: [1, 2, 3].map(expYear) }),
@@ -52,7 +52,7 @@ function engines(ramp: number[]) {
 function toplineStatus(ramp: number[], source: 'default' | 'analyst_override') {
   const g = (label: string) => ({ value: null, source: 'unavailable', source_id: 'unavailable', label, reason: 'no_market_forecast' });
   return {
-    methodology_version: 2,
+    methodology_version: 3,
     benchmark_level: 'comp_set',
     benchmark_label: 'STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx',
     benchmark_fallback_reason: null,
@@ -60,7 +60,7 @@ function toplineStatus(ramp: number[], source: 'default' | 'analyst_override') {
     calendar_known: false,
     calendar_unknown: false,
     growth_state: 'unavailable',
-    growth_by_year: [1, 2, 3].map((y) => ({ year: y, calendar_year: null, applied: true, occupancy: g('held flat — no figure'), adr: g('held flat — no figure') })),
+    growth_by_year: [1, 2, 3].map((y) => ({ year: y, deal_year: null, applied: true, occupancy: g('held flat — no figure'), adr: g('held flat — no figure') })),
     stabilization_year: 3,
     stabilization_source: 'default_year_3',
     penetration_occ: 100, penetration_adr: 100,
@@ -77,7 +77,7 @@ function toplineStatus(ramp: number[], source: 'default' | 'analyst_override') {
     terminal_revpar_growth: { value: 0, source_id: 'market_forecast_unavailable', basis: 'unavailable', label: 'not grown' },
     suggestions: [{ key: 'revpar_growth', value: 0.045, label: 'Apply platform suggestion 4.5% RevPAR growth (labelled; not a market forecast)', note_prefill: 'Platform suggestion 4.5% — no market forecast on file' }],
     legacy_flags: [], problems: [], notes: [], reextract_needed: [],
-    calendar_anchor: { source: null, date: null, assumed: false, first_model_year: null, label: '' },
+    calendar_anchor: { source: null, date: null, assumed: false, year1: null, label: '' },
     revenue_basis: { state: 'present', missing: [], message: null },
   };
 }

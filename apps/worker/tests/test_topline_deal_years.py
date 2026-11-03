@@ -44,6 +44,7 @@ def test_a_deal_year_blends_the_two_calendar_years_it_spans() -> None:
     adr2 = g.year(2, "adr")  # Oct 2026–Sep 2027
     assert adr2.deal_year is not None and adr2.deal_year.label == "Oct 2026–Sep 2027"
     assert adr2.value == pytest.approx(3 / 12 * 0.018 + 9 / 12 * -0.006, abs=1e-15)
+    assert adr2.value == 0.0 and adr2.label.endswith("= +0.0% · CoStar Miami Beach submarket (Luxury & Upper Upscale) · Miami Beach-Hospitality-Submarket-2025-12-10.pdf")
     assert adr2.source == "costar_submarket_forecast"
     assert [(cy, m) for cy, m, _g2 in adr2.parts] == [(2026, 3), (2027, 9)]
     assert adr2.label.startswith("Forecast · Oct 2026–Sep 2027 = 3 mo × +1.8% CoStar 2026 forecast p.26")
@@ -76,7 +77,7 @@ def test_a_year_straddling_the_forecast_end_blends_in_the_published_average() ->
     assert adr5.source == "carried_forward"  # part of it is past the forecast: an assumption
     assert adr5.average_basis == "published_average"
     assert adr5.label.startswith("Assumption · Oct 2029–Sep 2030")
-    assert "CoStar forecast average (as published, p.4)" in adr5.label
+    assert "+ 9 mo × +2.5% CoStar 2030 at the forecast average as published p.4" in adr5.label
     assert adr5.chip == "CoStar p.26, p.4"
 
 

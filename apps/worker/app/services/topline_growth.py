@@ -573,7 +573,7 @@ def resolve_growth_by_year(
                 doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
                 bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
                 forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
-                vendor=prev.vendor, short=f"{c} occupancy held (forecast ends {last})",
+                vendor=prev.vendor, short=f"{prev.vendor or 'forecast'} {c} held (the forecast ends {last})",
             )
         if prev.vendor == "CoStar" and published_costar_adr is not None:
             # Decision 2 — the report's own published forecast average.
@@ -595,7 +595,7 @@ def resolve_growth_by_year(
                 bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
                 forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
                 vendor=prev.vendor, average_basis="published_average",
-                short=f"{c} CoStar forecast average (as published" + (f", p.{pub.page})" if pub.page else ")"),
+                short=f"CoStar {c} at the forecast average as published" + (f" p.{pub.page}" if pub.page else ""),
             )
         if prev.forecast_average is not None and prev.forecast_span is not None:
             # Decision 1a — no published average: the series' own forecast
@@ -619,7 +619,7 @@ def resolve_growth_by_year(
                 bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
                 forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
                 vendor=prev.vendor, average_basis="computed_average",
-                short=f"{c} {span} forecast average, computed" + (f" (p.{prev.page})" if prev.page else ""),
+                short=f"{prev.vendor or 'forecast'} {c} at the {span} average, computed" + (f" p.{prev.page}" if prev.page else ""),
             )
         return MetricGrowth(
             value=None, source="unavailable",
@@ -674,7 +674,8 @@ def resolve_growth_by_year(
                 page=first_doc.page if first_doc else None,
                 reason=missing[0][2].reason, deal_year=dy, parts=tuple(parts),
             )
-        value = sum(m / 12.0 * float(g.value) for _cy, m, g in parts)  # type: ignore[arg-type]
+        # Rounded past float noise (¼ × +1.8% + ¾ × −0.6% is 0, not −1e-19).
+        value = round(sum(m / 12.0 * float(g.value) for _cy, m, g in parts), 12) + 0.0  # type: ignore[arg-type]
         sources = [g.source for _cy, _m, g in parts]
         if len(set(sources)) == 1:
             source = sources[0]
