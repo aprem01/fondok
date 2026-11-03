@@ -77,7 +77,8 @@ the Assumptions sheet is applied.
 - **Annual against annual, on the model's own figures.** The actual side is exactly what the model
   reads for Year 1 from the statement it grounds on (the Data Room's Primary source) — never a budget,
   forecast, prior-year or monthly line, and never a line from another statement. A line the statement
-  does not state is shown as not stated, never as $0, and a refusal names the statement. Fondok never
+  does not state is shown as not stated, never as $0, and a refusal names the statement; rooms revenue
+  the statement does not state as a line is its own RevPAR × rooms × days, labelled as derived. Fondok never
   compares a month against a year.
 - **Plausibility guard.** A pair of figures more than three hundred percent apart is reported as
   “Basis mismatch — needs review” with both figures and no severity: two numbers that far apart are on
@@ -162,7 +163,8 @@ inference.
   revenue unless its own revenue lines exceed it; `_load_critic_inputs` and
   `load_actuals_before_reserve_noi` share it, never blended across statements. A line the statement does
   not state is listed in `USALIFinancials.not_stated` and prints "not stated" in every agent prompt —
-  never $0 or a 100% OpEx ratio. If no annual actual exists for a concept
+  never $0 or a 100% OpEx ratio. With no full-period rooms revenue line, rooms revenue is RevPAR (or
+  occupancy × ADR) × keys × the period's days, listed in `derived` and printed with that label. If no annual actual exists for a concept
   there is no flag — Fondok never compares a month against a year, and the report names the concept it
   could not compare with {{reason:period_mismatch}} or {{reason:no_source}}.
 - **Plausibility guard.** As a last line of defence, a pair of figures more than 300% apart is

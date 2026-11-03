@@ -20,6 +20,11 @@ def _not_stated(fin: Any) -> frozenset[str]:
     return frozenset(raw or ())
 
 
+def _derived(fin: Any) -> dict[str, str]:
+    raw = fin.get("derived") if isinstance(fin, Mapping) else getattr(fin, "derived", None)
+    return dict(raw or {})
+
+
 def _value(fin: Any, path: str) -> Any:
     node: Any = fin
     for seg in path.split("."):
@@ -36,7 +41,8 @@ def money(fin: Any, path: str) -> str:
     v = _value(fin, path)
     if isinstance(v, bool) or not isinstance(v, int | float):
         return NOT_STATED
-    return f"${v:,.0f}"
+    how = _derived(fin).get(path)
+    return f"${v:,.0f} (derived: {how})" if how else f"${v:,.0f}"
 
 
 def ratio(fin: Any, path: str, digits: int = 2) -> str:

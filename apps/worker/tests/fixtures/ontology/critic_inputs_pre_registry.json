@@ -73,6 +73,7 @@
             "mgmt_fee",
             "ffe_reserve"
           ],
+          "derived": {},
           "source_statement": "anglers_t12_real"
         }
       }
@@ -149,6 +150,7 @@
             "ffe_reserve",
             "fixed_charges.property_taxes"
           ],
+          "derived": {},
           "source_statement": "anglers_annual_pnl_real"
         }
       }
@@ -230,6 +232,7 @@
             "mgmt_fee",
             "ffe_reserve"
           ],
+          "derived": {},
           "source_statement": "anglers_t12_real"
         }
       }
@@ -577,6 +580,7 @@
             "total_revenue",
             "opex_ratio"
           ],
+          "derived": {},
           "source_statement": null
         },
         "actuals": {
@@ -638,6 +642,7 @@
             "fixed_charges.property_taxes",
             "fixed_charges.total"
           ],
+          "derived": {},
           "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }
@@ -855,6 +860,7 @@
             "total_revenue",
             "opex_ratio"
           ],
+          "derived": {},
           "source_statement": null
         },
         "actuals": {
@@ -917,6 +923,7 @@
             "fixed_charges.property_taxes",
             "fixed_charges.total"
           ],
+          "derived": {},
           "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }
@@ -1469,6 +1476,7 @@
             "total_revenue",
             "opex_ratio"
           ],
+          "derived": {},
           "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }

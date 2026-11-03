@@ -273,6 +273,8 @@ export const USALIFinancials = z.object({
   // "opex_ratio", "fixed_charges.insurance" …): their 0 is a placeholder,
   // never a figure. Render "not stated".
   not_stated: z.array(z.string()).default([]),
+  // FON-22 — path -> how a line was computed from stated ones (labelled).
+  derived: z.record(z.string(), z.string()).default({}),
   // FON-22 — the statement these figures come from.
   source_statement: z.string().nullable().optional(),
 });

@@ -257,10 +257,12 @@ def _format_spread(spread: dict[str, Any]) -> str:
         v = spread.get(k)
         if v is None:
             continue
+        how = (spread.get("derived") or {}).get(k)
+        tail = f" (derived: {how})" if how else ""
         if isinstance(v, float):
-            lines.append(f"  {k}: {v:,.2f}" if k in ("opex_ratio", "occupancy") else f"  {k}: {v:,.0f}")
+            lines.append((f"  {k}: {v:,.2f}" if k in ("opex_ratio", "occupancy") else f"  {k}: {v:,.0f}") + tail)
         else:
-            lines.append(f"  {k}: {v}")
+            lines.append(f"  {k}: {v}{tail}")
     return "\n".join(lines)
 
 

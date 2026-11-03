@@ -168,6 +168,10 @@ class USALIFinancials(BaseModel):
     # because the schema requires a number: a reader must treat a listed path
     # as absent ("not stated"), never as a $0 figure (product rule 1).
     not_stated: list[str] = Field(default_factory=list)
+    # FON-22 — lines the source does not state as such but that are computed
+    # from what it does state, path -> how ("occupancy × ADR × keys × days").
+    # Rendered with that label, never as a stated figure.
+    derived: dict[str, str] = Field(default_factory=dict)
     # FON-22 — the statement these figures come from (the actuals side is the
     # statement the model grounds Year-1 on), named in refusals and prompts.
     source_statement: str | None = None

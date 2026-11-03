@@ -608,7 +608,12 @@ the critic's rooms revenue is now not stated (was the registry's 9,322,920 /
 0.0) while occupancy / ADR / GOP / NOI / total are the statement's own; the
 FON-54a scenarios keep every Sam-facing number; a broker total that is only the
 sum of the broker's legs is not stated, so the broker OpEx ratio is not
-stated.
+stated. When the basis states no full-period rooms revenue line at all (the
+live 2e1db521 / 76d10a64 statement: only budget / prior-year rooms lines), the
+rooms revenue is derived — RevPAR (or occupancy × ADR) × keys × the period's
+days — and listed in `USALIFinancials.derived` with that label; a stated total
+the lines then exceed by more than 0.5% is not an actual (the HR-sheet
+10,839,200 there). No pinned scenario carries keys, so none derives.
 
 ## 8. Phase 1.3b parity exceptions (usali_scorer adapter)
 

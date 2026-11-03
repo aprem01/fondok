@@ -663,3 +663,48 @@ def test_reserve_basis_reason_names_the_statement() -> None:
     text_ = reserve_basis_reason("noi", 3_356_709.0, 1_560_478.0, statement="FY2024 P&L.xlsx")
     assert "FY2024 P&L.xlsx" in text_ and "T-12" not in text_
     assert text_.endswith(RESERVE_BASIS_UNMATCHED)
+
+
+def _basis_2e1_live_shape() -> list[dict[str, object]]:
+    """The live 2e1db521 / 76d10a64 basis: NO full-period rooms revenue line —
+    only budget / prior-year ones and segment splits — plus the HR-sheet total."""
+    return [
+        {"field_name": "p_and_l_usali.prior_year.rooms_revenue", "value": 9_807_990.0},
+        {"field_name": "p_and_l_usali.budget.rooms_revenue", "value": 9_985_570.0},
+        {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 10_839_200.0},
+        {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_739_040.0},
+        {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_228_476.0},
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.832567},
+        {"field_name": "ttm_performance.subject.adr_usd", "value": 236.094},
+        {"field_name": "ttm_performance.subject.revpar_usd", "value": 196.564},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_without_a_full_period_rooms_line_rooms_is_derived_never_the_budget_or_prior_year() -> None:
+    """2e1db521 / 76d10a64 live: rooms revenue is RevPAR × keys × days of the
+    period (9.47M-9.50M), labelled derived — never the budget
+    (9,985,570) or prior-year (9,807,990) line. With it, the statement's
+    revenue lines exceed its 10,839,200 HR-sheet total, which is therefore not
+    an actual."""
+    from app.agents.critic import _format_financials
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)  # 132 keys
+    await _insert_statement(
+        deal_id, doc_type="PNL", filename=_BASIS_2E1, extracted_period_year=2024,
+        ts=datetime(2026, 8, 1, tzinfo=UTC), fields=_basis_2e1_live_shape(),
+    )
+    async with get_session_factory()() as session:
+        _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert actuals is not None
+    # FY2024 whose year end is not known to be Dec 31: 365 days (366 only for
+    # a period known to end Dec 31 of a leap year).
+    assert actuals.rooms_revenue == pytest.approx(196.564 * 132 * 365)
+    assert 9_400_000 < actuals.rooms_revenue < 9_500_000
+    assert "rooms_revenue" in actuals.derived and "rooms_revenue" not in actuals.not_stated
+    assert "total_revenue" in actuals.not_stated
+    text_ = _format_financials("ACTUALS", actuals)
+    assert "derived:" in text_ and "10,839,200" not in text_ and "9,985,570" not in text_

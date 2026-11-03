@@ -5799,6 +5799,11 @@ class YearOneActuals(NamedTuple):
     #: (NOI before the FF&E reserve), when stated, and ``total_revenue``
     #: unless its own revenue lines exceed it.
     stated: dict[str, float]
+    #: Lines computed from stated ones, engine canonical -> how (labelled
+    #: wherever shown): today only ``rooms_revenue`` = RevPAR (or occupancy ×
+    #: ADR) × keys × the period's days when the statement states no
+    #: full-period rooms revenue line.
+    derived: dict[str, str] = {}
 
 
 #: Profit lines read off the basis statement itself (concept registry ids).
@@ -5818,7 +5823,17 @@ def _stated_full_period(fields: list[Any], doc_type: str, concept: str) -> float
     return float(res.value)
 
 
-def year_one_actuals_from_shims(shims: list[dict[str, Any]]) -> YearOneActuals | None:
+def _period_days(period: tuple[Any, ...] | None) -> int:
+    """Days in a full-year period ending Dec 31 of a leap year: 366; else 365."""
+    if period and period[0] == "full" and isinstance(period[1], int) and period[1] % 10_000 == 1231:
+        y = period[1] // 10_000
+        return 366 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 365
+    return 365
+
+
+def year_one_actuals_from_shims(
+    shims: list[dict[str, Any]], *, keys: int | None = None
+) -> YearOneActuals | None:
     """:func:`year_one_actual_lines` over already-read loader rows."""
     choices = choose_statements_by_period(_rank_pnl_shims(shims))
     if not choices:
@@ -5849,6 +5864,22 @@ def year_one_actuals_from_shims(shims: list[dict[str, Any]]) -> YearOneActuals |
 
     revenue = full_period(revenue, rev_src)
     expense = full_period(expense, exp_src)
+    # No full-period rooms revenue line (2e1db521 / 76d10a64: only budget /
+    # prior-year rooms lines): rooms revenue is what the statement's own
+    # RevPAR — or occupancy × ADR — earns over the deal's keys in the
+    # period, the figure the model's Year-1 rooms revenue is built from.
+    derived: dict[str, str] = {}
+    if "rooms_revenue" not in revenue and keys and keys > 0:
+        occ, adr = revenue.get("occupancy"), revenue.get("adr")
+        revpar = revenue.get("revpar") or (occ * adr if occ and adr else None)
+        if revpar:
+            days = _period_days(chosen.period)
+            revenue["rooms_revenue"] = revpar * keys * days
+            basis_words = "RevPAR" if revenue.get("revpar") else "occupancy × ADR"
+            derived["rooms_revenue"] = (
+                f"{basis_words} × {keys} keys × {days} days; the statement states no "
+                "full-period rooms revenue line"
+            )
     stated = {
         c: v
         for c in _STATED_PROFIT_CONCEPTS
@@ -5867,21 +5898,31 @@ def year_one_actuals_from_shims(shims: list[dict[str, Any]]) -> YearOneActuals |
         contradicted = (
             footing.status == "fails" and footing.lines is not None and footing.lines > total
         )
+        if footing.lines is None and "rooms_revenue" in derived:
+            # The footing has no rooms line to sum; with the derived rooms
+            # revenue the lines may still overshoot the total (beyond the
+            # half-percent the derivation is good to).
+            lines = sum(
+                revenue[k]
+                for k in ("rooms_revenue", "fb_revenue", "other_revenue", "misc_revenue", "resort_fees")
+                if k in revenue
+            )
+            contradicted = lines > total * 1.005
         if not contradicted:
             stated["total_revenue"] = total
     return YearOneActuals(
-        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated
+        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated, derived
     )
 
 
 async def year_one_actual_lines(
-    session: AsyncSession, *, deal_id: str, tenant_id: str
+    session: AsyncSession, *, deal_id: str, tenant_id: str, keys: int | None = None
 ) -> YearOneActuals | None:
     """The engine's own Year-1 actuals (FON-22 round 3) — the variance, IC
     memo and dossier actual side reads THIS, so it equals the model by
     construction. ``None`` when the deal has no statement."""
     shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
-    return year_one_actuals_from_shims(shims)
+    return year_one_actuals_from_shims(shims, keys=keys)
 
 
 async def year_one_basis_statement(

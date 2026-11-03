@@ -11101,11 +11101,17 @@ async def _load_critic_inputs(
 
     from ..services.engine_runner import year_one_actual_lines
 
-    year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=tenant_id)
+    year_one = await year_one_actual_lines(
+        session, deal_id=deal_id, tenant_id=tenant_id, keys=keys
+    )
     actual_fields = _critic_actual_fields(year_one) if year_one is not None else {}
 
     def _build(
-        values: dict[str, float], label: str, *, source: str | None = None
+        values: dict[str, float],
+        label: str,
+        *,
+        source: str | None = None,
+        derived: dict[str, str] | None = None,
     ) -> Any | None:
         """``USALIFinancials`` over the stated ``values``. A line not in
         ``values`` is listed in ``not_stated`` (its schema slot holds 0.0, a
@@ -11210,6 +11216,7 @@ async def _load_critic_inputs(
                 adr=values.get("adr") or values.get("adr_usd"),
                 revpar=values.get("revpar") or values.get("revpar_usd"),
                 not_stated=not_stated,
+                derived=dict(derived or {}),
                 source_statement=source,
             )
         except Exception as exc:
@@ -11222,6 +11229,8 @@ async def _load_critic_inputs(
             actual_fields,
             f"Actuals: {year_one.period_words}"[:80],
             source=year_one.statement,
+            # Engine canonicals and the spread's paths coincide for rooms.
+            derived=dict(year_one.derived),
         )
         if year_one is not None
         else None
