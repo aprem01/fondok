@@ -694,7 +694,7 @@ def build_topline(
     # perpetuity. The source's long-run average when one is on file, else the
     # last projected year's ADR growth with occupancy held at its stabilized
     # level, else 0 (no figure).
-    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run)
+    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run, exit_year=_exit_noi_year(growth, hold))
     term, term_source = terminal["value"], terminal["source_id"]
 
     state = growth.state(applied_years)
@@ -759,7 +759,7 @@ def build_growth_only(
     for gy in growth_years:
         occ_list[gy.year - 1] = gy.occupancy_growth
         adr_list[gy.year - 1] = gy.adr_growth
-    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run)
+    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run, exit_year=_exit_noi_year(growth, hold))
     state = growth.state(applied_years)
     notes: list[str] = []
     stored = [label for key, label in _PENETRATION_KEYS_LABEL if key in stored_benchmark_keys]
@@ -806,6 +806,13 @@ def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolutio
     return out
 
 
+def _exit_noi_year(growth: GrowthResolution, hold: int) -> int | None:
+    """Calendar year the exit NOI covers (hold + 1), or None without a calendar."""
+    if len(growth.calendar_years) >= hold >= 1:
+        return growth.calendar_years[hold - 1] + 1
+    return None
+
+
 def _exit_year_adr(growth: GrowthResolution, hold: int) -> MetricGrowth:
     """ADR growth of the year the exit NOI covers — the forward year (hold + 1)
     when the calendar is known, so a sale whose forward year is past the
@@ -824,7 +831,9 @@ def _exit_year_adr(growth: GrowthResolution, hold: int) -> MetricGrowth:
     return last
 
 
-def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None) -> dict[str, Any]:
+def _terminal_growth(
+    last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None, *, exit_year: int | None = None
+) -> dict[str, Any]:
     """``{value, source_id, basis, label}`` of the exit-year growth convention."""
     if long_run is not None:
         return {
@@ -840,8 +849,8 @@ def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth 
             "basis": "exit_year_adr_growth",
             "label": (
                 (
-                    f"{last_adr.calendar_year} (exit-NOI year) ADR growth "
-                    if last_adr.calendar_year is not None
+                    f"{exit_year} (exit-NOI year) ADR growth "
+                    if exit_year is not None
                     else f"Year {hold} ADR growth "
                 )
                 + f"{last_adr.value * 100:+.1f}% — occupancy held at its stabilized level ({last_adr.label})"

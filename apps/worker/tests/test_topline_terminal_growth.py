@@ -119,3 +119,14 @@ def test_exit_growth_past_the_forecast_is_the_forecast_average() -> None:
     assert build.terminal_revpar_growth == pytest.approx(
         sum((0.044, 0.018, -0.006, 0.038, 0.028)) / 5, abs=1e-12
     )
+
+
+def test_a_carried_analyst_figure_names_the_real_exit_noi_year() -> None:
+    """The analyst's Year-5 ADR carries to the exit; the label names the
+    exit-NOI year (2031 for a 2026–2030 hold), not the hold's last year."""
+    inputs = read_topline_inputs(
+        {"adr_growth_by_year": [None, None, None, None, 0.02]}, {}, {"adr_growth_by_year"},
+    )
+    build = build_topline(_bench(), _growth(inputs.growth, cal=CAL[:5]), inputs, hold_years=5, t12=None)
+    assert build.terminal_revpar_growth == pytest.approx(0.02)
+    assert "2031 (exit-NOI year)" in build.status["terminal_revpar_growth"]["label"]

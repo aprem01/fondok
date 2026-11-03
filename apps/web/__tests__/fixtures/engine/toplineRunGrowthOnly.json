@@ -459,7 +459,7 @@
   "terminal_revpar_growth": {
    "value": 0.024399999999999998,
    "source_id": "growth_carried_forward",
-   "basis": "last_year_adr_growth",
+   "basis": "exit_year_adr_growth",
    "label": "Year 5 ADR growth +2.4% \u2014 occupancy held at its stabilized level (Assumption \u00b7 CoStar Miami Beach submarket (Luxury & Upper Upscale) 2025\u20132029 forecast average (+2.4%) \u2014 the forecast ends 2029)"
   },
   "suggestions": [],
