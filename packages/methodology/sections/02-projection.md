@@ -246,7 +246,8 @@ benchmark level — and re-imports them under the same justification rule.
 
 {testid=no-revenue-basis-methodology} **No Year-1 rates, no projection.** When a deal has no T-12, no STR or market benchmark and no
 Year-1 occupancy or ADR of yours, the revenue model does not run and the Future P&L and Overview say
-so in the model's own words: "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR". The
+so in the model's own words: "Upload a T-12, or enter Year-1 occupancy and ADR" (while the benchmark
+topline is switched on it also offers "or STR report", since an STR comp set then sets Year 1). The
 entry is right there; your rates are saved with a note and the model re-runs. No placeholder rate is
 ever substituted.
 
@@ -495,8 +496,8 @@ average; the 95% occupancy cap still applies.
 <!-- source: apps/worker/app/services/engine_runner.py (REVENUE_BASIS_KEYS, _apply_revenue_basis, _revenue_basis_failure) -->
 There is no default Year-1 occupancy or ADR. Year 1 comes from your value, else (benchmark mode)
 the benchmark × penetration × ramp or (growth-only mode) the Year-1 chain above, else the T-12. With none of them the revenue model and every model built on it
-refuse with {{reason:no_revenue_basis}}: "Upload a T-12 or STR report, or enter Year-1 occupancy and
-ADR." The capital stack still runs.
+refuse with {{reason:no_revenue_basis}}: "Upload a T-12, or enter Year-1 occupancy and ADR" (benchmark
+mode: "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"). The capital stack still runs.
 
 <!-- source: apps/worker/app/services/engine_runner.py (_default_assumptions) -->
 Defaults that remain labelled suggestions: expense growth 3.5%, F&B revenue $88.00 per occupied

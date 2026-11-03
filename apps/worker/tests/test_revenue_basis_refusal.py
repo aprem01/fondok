@@ -27,7 +27,10 @@ if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
-GUIDANCE = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
+# Growth-only (the default rollout mode): an STR report does not set Year 1,
+# so the guidance never sends the analyst to upload one (FON-116 review I-1).
+GUIDANCE = "Upload a T-12, or enter Year-1 occupancy and ADR"
+BENCHMARK_GUIDANCE = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
 
 
 @pytest.fixture(autouse=True)
@@ -215,3 +218,21 @@ async def test_returns_preview_answers_422_with_the_basis_reason() -> None:
     assert detail["reason"] == "no_revenue_basis"
     assert detail["missing"] == ["starting_adr", "starting_occupancy"]
     assert GUIDANCE in detail["message"]
+
+
+def test_growth_only_guidance_never_points_at_an_str_upload() -> None:
+    """With the benchmark switch off, an STR report cannot set Year 1, so the
+    refusal must not tell the analyst to upload one (a dead end)."""
+    from app.services.engine_runner import _missing_revenue_basis_message
+
+    msg = _missing_revenue_basis_message(("starting_adr", "starting_occupancy"))
+    assert GUIDANCE in msg
+    assert "STR" not in msg
+
+
+def test_benchmark_mode_guidance_offers_the_str_report(topline_benchmark) -> None:
+    from app.services.engine_runner import _missing_revenue_basis_message
+
+    msg = _missing_revenue_basis_message(("starting_adr", "starting_occupancy"))
+    assert BENCHMARK_GUIDANCE in msg
+    assert "no T-12, no STR or market benchmark" in msg

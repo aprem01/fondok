@@ -555,8 +555,20 @@ def missing_identity_inputs(base: Mapping[str, Any]) -> tuple[str, ...]:
 #: and every engine consuming its output refuse (``no_revenue_basis``).
 REVENUE_BASIS_KEYS: tuple[str, ...] = ("starting_occupancy", "starting_adr")
 
-#: The sentence every ``no_revenue_basis`` surface prints.
-REVENUE_BASIS_GUIDANCE = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
+#: The sentence every ``no_revenue_basis`` surface prints, by topline mode.
+#: With the benchmark switch off (FON-116 growth-only) an STR report does not
+#: set Year 1, so the guidance must not send the analyst to upload one.
+REVENUE_BASIS_GUIDANCE_BENCHMARK = "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR"
+REVENUE_BASIS_GUIDANCE_GROWTH_ONLY = "Upload a T-12, or enter Year-1 occupancy and ADR"
+
+
+def revenue_basis_guidance() -> str:
+    """The guidance sentence for the topline mode in force."""
+    from .topline import topline_mode
+
+    if topline_mode() == "benchmark":
+        return REVENUE_BASIS_GUIDANCE_BENCHMARK
+    return REVENUE_BASIS_GUIDANCE_GROWTH_ONLY
 
 
 def revenue_basis_needed(engine_name: str) -> bool:
@@ -575,10 +587,16 @@ def missing_revenue_basis(base: Mapping[str, Any]) -> tuple[str, ...]:
 def _missing_revenue_basis_message(missing: Sequence[str]) -> str:
     names = {"starting_occupancy": "Year-1 occupancy", "starting_adr": "Year-1 ADR"}
     what = " or ".join(names.get(k, k) for k in sorted(missing, reverse=True))
+    from .topline import topline_mode
+
+    sources = (
+        "no T-12, no STR or market benchmark and no analyst value sets it"
+        if topline_mode() == "benchmark"
+        else "no T-12 and no analyst value sets it"
+    )
     return (
-        f"The deal has no {what} basis — no T-12, no STR or market benchmark and no "
-        f"analyst value sets it. {REVENUE_BASIS_GUIDANCE} on the Future P&L, and run "
-        "the model again — the model never substitutes a placeholder rate."
+        f"The deal has no {what} basis — {sources}. {revenue_basis_guidance()} on the "
+        "Future P&L, and run the model again — the model never substitutes a placeholder rate."
     )
 
 
