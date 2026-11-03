@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -27,9 +28,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
-
 from fondok_schemas import DEAL_STATUSES, DealStatus
+from sqlalchemy import text
 
 from .config import get_settings
 from .database import get_migrations_engine
@@ -2756,6 +2756,13 @@ _LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
 #: ``documents``). A migration that legitimately needs longer than 5 s for its
 #: lock is not a startup migration.
 MIGRATION_LOCK_TIMEOUT_MS = 5000
+#: ``lock_timeout`` for the in-process RETRY of deferred migrations: the
+#: worker is serving then, so a retry that meets a busy table should stall
+#: that table's traffic for at most 1 s before it backs off again.
+MIGRATION_RETRY_LOCK_TIMEOUT_MS = 1000
+_LOCK_TIMEOUT_MS: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "migration_lock_timeout_ms", default=MIGRATION_LOCK_TIMEOUT_MS
+)
 
 
 @asynccontextmanager
@@ -2766,7 +2773,7 @@ async def _migration_transaction(engine: Any, *, is_sqlite: bool) -> AsyncIterat
     async with engine.begin() as conn:
         if not is_sqlite:
             await conn.execute(
-                text(f"SET LOCAL lock_timeout = '{int(MIGRATION_LOCK_TIMEOUT_MS)}ms'")
+                text(f"SET LOCAL lock_timeout = '{int(_LOCK_TIMEOUT_MS.get())}ms'")
             )
         yield conn
 
@@ -2808,6 +2815,13 @@ _DEFERRED: dict[str, str] = {}
 #: backfills), name → error. A running worker cannot refuse to boot, so it
 #: stays listed (``/health``: ``migrations_failed``) until a fixed deploy.
 _FAILED: dict[str, str] = {}
+#: Entries the database refused during a run in which something was
+#: DEFERRED — typically dependents of a deferred entry (an index on a column
+#: whose ADD COLUMN was deferred), name → error. They re-run with the whole
+#: set on retry; ``/health`` stays degraded until they apply. A run with
+#: nothing deferred clears this: a failure that happens without any deferral
+#: is not caused by one (a normal boot treats it the same way).
+_DEPENDENT_FAILED: dict[str, str] = {}
 
 #: Python data migrations, run after the DDL, in order. Looked up by name at
 #: call time (tests replace them). Both are fatal when the database refuses.
@@ -2825,6 +2839,17 @@ def deferred_migrations() -> dict[str, str]:
 def failed_migrations() -> dict[str, str]:
     """Snapshot of the entries a retry found refused (name → error)."""
     return dict(_FAILED)
+
+
+def dependent_failed_migrations() -> dict[str, str]:
+    """Snapshot of the entries that failed alongside a deferral (name → error)."""
+    return dict(_DEPENDENT_FAILED)
+
+
+def migrations_pending() -> bool:
+    """True while anything is deferred or failed alongside a deferral — the
+    worker serves degraded and the retry loop keeps running."""
+    return bool(_DEFERRED or _DEPENDENT_FAILED)
 
 
 #: ``ALTER TABLE <t> ALTER COLUMN <c> SET DEFAULT '<literal>'`` — the one
@@ -2876,9 +2901,13 @@ async def _apply_ddl_entry(engine: Any, name: str, sql: str, *, is_sqlite: bool)
         logger.info("migration applied: %s", name)
 
 
-async def _run_migration_set(*, only: frozenset[str] | None, retry: bool) -> None:
-    """Apply the DDL entries, then the Python data migrations — all of them
-    (``only=None``, the boot) or just the named ones (a retry).
+async def _run_migration_set(*, retry: bool) -> None:
+    """Apply the DDL entries, then the Python data migrations — the WHOLE
+    set, at boot and on every retry. It is idempotent: entries already
+    applied skip from the catalog with no table lock (or are IF NOT EXISTS
+    no-ops), so a retry costs a few catalog reads, and entries that FAILED
+    at boot because an earlier one was deferred (an index on a column not
+    yet added) apply in the same pass as the entry they depend on.
 
     Each entry runs in its OWN transaction (with ``lock_timeout``) so one
     failure cannot poison the rest. A failure that is not the SQL's fault is
@@ -2893,10 +2922,14 @@ async def _run_migration_set(*, only: frozenset[str] | None, retry: bool) -> Non
     entries = SQLITE_MIGRATIONS if is_sqlite else MIGRATIONS
     engine = get_migrations_engine()
 
+    _DEFERRED.clear()
+    _DEPENDENT_FAILED.clear()
+    refused_this_run: dict[str, str] = {}
+
     def _refused(name: str, exc: Exception, *, fatal: bool) -> None:
-        _DEFERRED.pop(name, None)
         logger.exception("migration failed: %s — %s", name, exc)
         if not fatal:
+            refused_this_run[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
             return
         if retry:
             _FAILED[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
@@ -2911,11 +2944,9 @@ async def _run_migration_set(*, only: frozenset[str] | None, retry: bool) -> Non
         ) from exc
 
     for name, sql in entries:
-        if only is not None and name not in only:
-            continue
         try:
             await _apply_ddl_entry(engine, name, sql, is_sqlite=is_sqlite)
-            _DEFERRED.pop(name, None)
+            _FAILED.pop(name, None)
         except Exception as exc:
             reason = _migration_deferred_reason(exc)
             if reason is not None:
@@ -2929,11 +2960,9 @@ async def _run_migration_set(*, only: frozenset[str] | None, retry: bool) -> Non
     # Wave 5 (Sam #5) — the AI-confidence rollup backfill, then (W5 review
     # I3) the display-string repair: data migrations in Python, after the DDL.
     for name, fn_name in _PYTHON_MIGRATIONS:
-        if only is not None and name not in only:
-            continue
         try:
             await globals()[fn_name](engine, is_sqlite=is_sqlite)
-            _DEFERRED.pop(name, None)
+            _FAILED.pop(name, None)
         except Exception as exc:
             reason = _migration_deferred_reason(exc)
             if reason is not None:
@@ -2944,6 +2973,8 @@ async def _run_migration_set(*, only: frozenset[str] | None, retry: bool) -> Non
             # half-migrated data (a boot stops; a retry records it).
             _refused(name, exc, fatal=True)
 
+    if _DEFERRED:
+        _DEPENDENT_FAILED.update(refused_this_run)
 
 async def run_startup_migrations() -> None:
     """Apply every entry in ``MIGRATIONS`` against the live DB.
@@ -2972,9 +3003,8 @@ async def run_startup_migrations() -> None:
             "(deals/documents/extraction_results)"
         )
     logger.info("migrations: ddl engine=%s", settings.migrations_dsn_kind)
-    _DEFERRED.clear()
     _FAILED.clear()
-    await _run_migration_set(only=None, retry=False)
+    await _run_migration_set(retry=False)
     if _DEFERRED:
         logger.error(
             "migrations: %d entr%s DEFERRED (database unavailable or a table "
@@ -2988,26 +3018,32 @@ async def run_startup_migrations() -> None:
 
 
 async def retry_deferred_migrations() -> dict[str, str]:
-    """Re-apply the deferred entries once (in ``MIGRATIONS`` order, with
-    the same lock_timeout); returns what is still deferred. The dedicated
-    owner engine (``DATABASE_URL_MIGRATIONS``) exists only for the attempt:
-    it is disposed afterwards so no owner connection stays pooled."""
+    """Re-run the WHOLE migration set once (see :func:`_run_migration_set`:
+    applied entries skip, so the deferred ones and the dependents that
+    failed with them apply in order) with the shorter
+    :data:`MIGRATION_RETRY_LOCK_TIMEOUT_MS`; returns what is still deferred
+    or dependent-failed. The dedicated owner engine
+    (``DATABASE_URL_MIGRATIONS``) exists only for the attempt: it is
+    disposed afterwards so no owner connection stays pooled."""
     from .database import dispose_migrations_engine
 
-    if not _DEFERRED:
+    if not migrations_pending():
         return {}
+    token = _LOCK_TIMEOUT_MS.set(MIGRATION_RETRY_LOCK_TIMEOUT_MS)
     try:
-        await _run_migration_set(only=frozenset(_DEFERRED), retry=True)
+        await _run_migration_set(retry=True)
     finally:
+        _LOCK_TIMEOUT_MS.reset(token)
         await dispose_migrations_engine()
-    if _DEFERRED:
+    pending = {**_DEPENDENT_FAILED, **_DEFERRED}
+    if pending:
         logger.warning(
-            "migrations retry: still deferred: %s",
-            ", ".join(f"{n} ({r})" for n, r in _DEFERRED.items()),
+            "migrations retry: still pending: %s",
+            ", ".join(f"{n} ({r})" for n, r in pending.items()),
         )
     else:
         logger.warning("migrations retry: every deferred entry is now applied")
-    return dict(_DEFERRED)
+    return pending
 
 
 #: Backoff for the in-process retry of deferred migrations: first retry
@@ -3020,7 +3056,7 @@ _RETRY_TASK: asyncio.Task[Any] | None = None
 
 async def _retry_loop(initial: float, cap: float) -> None:
     delay = initial
-    while _DEFERRED:
+    while migrations_pending():
         await asyncio.sleep(delay)
         try:
             await retry_deferred_migrations()
@@ -3037,7 +3073,7 @@ def start_deferred_migration_retry(
     """Start the background retry when something is deferred (idempotent).
     Returns True when a loop was started."""
     global _RETRY_TASK
-    if not _DEFERRED or (_RETRY_TASK is not None and not _RETRY_TASK.done()):
+    if not migrations_pending() or (_RETRY_TASK is not None and not _RETRY_TASK.done()):
         return False
     _RETRY_TASK = asyncio.get_running_loop().create_task(
         _retry_loop(initial_seconds, max_seconds), name="deferred-migration-retry"
@@ -3365,11 +3401,6 @@ async def repair_display_string_edits(engine, *, is_sqlite: bool) -> dict[str, i
 
 
 __all__ = [
-    "deferred_migrations",
-    "failed_migrations",
-    "retry_deferred_migrations",
-    "start_deferred_migration_retry",
-    "stop_deferred_migration_retry",
     "AI_CONFIDENCE_BACKFILL_MARKER",
     "DISPLAY_STRING_REPAIR_MARKER",
     "FATAL_MIGRATIONS",
@@ -3379,6 +3410,13 @@ __all__ = [
     "DisplayStringRepairError",
     "FatalMigrationError",
     "backfill_deal_ai_confidence",
+    "deferred_migrations",
+    "dependent_failed_migrations",
+    "failed_migrations",
+    "migrations_pending",
     "repair_display_string_edits",
+    "retry_deferred_migrations",
     "run_startup_migrations",
+    "start_deferred_migration_retry",
+    "stop_deferred_migration_retry",
 ]

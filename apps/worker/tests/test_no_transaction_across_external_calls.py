@@ -601,6 +601,7 @@ def fake_ddl(monkeypatch):
     )
     yield fake
     mig._DEFERRED.clear()
+    mig._DEPENDENT_FAILED.clear()
     mig._FAILED.clear()
 
 

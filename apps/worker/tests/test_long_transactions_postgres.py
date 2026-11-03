@@ -554,6 +554,7 @@ async def test_a_deferred_migration_applies_in_the_running_worker(pg_db, monkeyp
     finally:
         await mig.stop_deferred_migration_retry()
         mig._DEFERRED.clear()
+        mig._DEPENDENT_FAILED.clear()
         await holder.close()
 
 
@@ -718,3 +719,70 @@ async def test_concurrent_reindex_of_one_document_does_not_duplicate_chunks(pg_d
     finally:
         await conn.close()
     assert n1 == n2 and total == n1, (n1, n2, total)
+
+
+async def test_a_retry_also_applies_the_dependents_that_failed_at_boot(pg_db, caplog) -> None:
+    """Round-2 review I1: ``documents.add_fiscal_year`` deferred under a held
+    lock makes its index entry FAIL (the column is missing). The retry
+    re-runs the whole set, so both apply; /health stays degraded until the
+    dependent has applied too."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app import migrations as mig
+    from app.main import app
+
+    conn = await _connect()
+    try:
+        await conn.execute("ALTER TABLE documents DROP COLUMN fiscal_year CASCADE")
+    finally:
+        await conn.close()
+    holder = await _connect()
+    try:
+        tr = holder.transaction()
+        await tr.start()
+        await holder.fetchval("SELECT count(*) FROM documents")
+        await mig.run_startup_migrations()
+        assert "documents.add_fiscal_year" in mig.deferred_migrations()
+        dependents = mig.dependent_failed_migrations()
+        assert dependents, "the index on the missing column failed at boot"
+        await tr.rollback()  # the long job ends
+
+        # Only the deferred ADD COLUMN applied (what round 2 did) is not enough:
+        # health must still be degraded while a dependent is unapplied.
+        mig._DEFERRED.clear()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            body = (await c.get("/health")).json()
+        assert "migrations_deferred" in body["degraded_reasons"]
+
+        assert await mig.retry_deferred_migrations() == {}
+        assert not mig.migrations_pending()
+        cols = await holder.fetchval(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_name = 'documents' AND column_name = 'fiscal_year'"
+        )
+        idx = await holder.fetchval(
+            "SELECT count(*) FROM pg_indexes WHERE tablename = 'documents' "
+            "AND indexdef LIKE '%fiscal_year%'"
+        )
+        assert cols == 1 and idx >= 1, (cols, idx)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            body = (await c.get("/health")).json()
+        assert "migrations_deferred" not in body["degraded_reasons"]
+    finally:
+        mig._DEFERRED.clear()
+        mig._DEPENDENT_FAILED.clear()
+        await holder.close()
+
+
+async def test_retries_use_the_shorter_lock_timeout(pg_db) -> None:
+    from sqlalchemy import text
+
+    from app import migrations as mig
+    from app.database import get_engine
+
+    token = mig._LOCK_TIMEOUT_MS.set(mig.MIGRATION_RETRY_LOCK_TIMEOUT_MS)
+    try:
+        async with mig._migration_transaction(get_engine(), is_sqlite=False) as conn:
+            assert (await conn.execute(text("SHOW lock_timeout"))).scalar_one() == "1s"
+    finally:
+        mig._LOCK_TIMEOUT_MS.reset(token)

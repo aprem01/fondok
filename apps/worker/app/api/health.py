@@ -136,7 +136,7 @@ async def public_snapshot(session: AsyncSession) -> dict[str, Any]:
     # background; until it applies the code may name a column that is not
     # there. One the database refused on retry stays until a fixed deploy.
     migrations = _migration_state()
-    if migrations["deferred"]:
+    if migrations["deferred"] or migrations["dependent_failed"]:
         degraded_reasons.append("migrations_deferred")
     if migrations["failed"]:
         degraded_reasons.append("migrations_failed")
@@ -325,6 +325,14 @@ async def ops_snapshot(session: AsyncSession) -> dict[str, Any]:
 
 
 def _migration_state() -> dict[str, dict[str, str]]:
-    from ..migrations import deferred_migrations, failed_migrations
+    from ..migrations import (
+        deferred_migrations,
+        dependent_failed_migrations,
+        failed_migrations,
+    )
 
-    return {"deferred": deferred_migrations(), "failed": failed_migrations()}
+    return {
+        "deferred": deferred_migrations(),
+        "dependent_failed": dependent_failed_migrations(),
+        "failed": failed_migrations(),
+    }
