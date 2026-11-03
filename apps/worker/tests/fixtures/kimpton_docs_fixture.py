@@ -13,6 +13,11 @@ through ``run_all_engines`` exactly as production runs a deal (no
   Index Analysis tab keys for 2025.
 * ``Miami Beach-Hospitality-Submarket-2025-12-10.pdf`` — the CoStar
   submarket report's class-bucket series (``costar_submarket_extracted.json``).
+* ``Anglers T12 May 2025.xlsx`` — the seller's T-12 to May 2025, the real
+  extraction's occupancy / ADR / RevPAR rows only (``t12_anglers_2025_05_extracted.json``,
+  82.89% / $233.45 — the expense side keeps its default ratios, a topline fixture):
+  the Year-1 basis of the growth-only topline (FON-116 rollout, 2026-11-03)
+  and the T-12 reference row of the benchmark topline.
 * ``field_overrides`` = the reference Index Analysis inputs
   (:data:`KIMPTON_REFERENCE_SCENARIO`) + the Kimpton partnership terms + an
   acquisition close of 2025-12-31, which places operating Year 1 on calendar
@@ -60,6 +65,7 @@ _DOCS: tuple[tuple[str, str, str], ...] = (
     # (document id, input file, doc_type)
     ("5b0c1f0e-6d43-5c1b-9a7e-2f6b1d0c4a21", "str_ang_2025_05_extracted.json", "STR_TREND"),
     ("5b0c1f0e-6d43-5c1b-9a7e-2f6b1d0c4a22", "costar_submarket_extracted.json", "MARKET_STUDY"),
+    ("5b0c1f0e-6d43-5c1b-9a7e-2f6b1d0c4a23", "t12_anglers_2025_05_extracted.json", "T12"),
 )
 _NOW = datetime(2025, 12, 31, 12, 0, tzinfo=UTC)
 
@@ -73,7 +79,7 @@ def kimpton_docs_overrides() -> dict[str, Any]:
 
 
 async def seed_kimpton_docs_deal(session: Any) -> tuple[str, str]:
-    """Insert the deal row, its two documents and their extractions.
+    """Insert the deal row, its three documents and their extractions.
     Returns ``(deal_id, tenant_id)``."""
     from sqlalchemy import text
 

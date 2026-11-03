@@ -293,6 +293,8 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
         assert cmp["base"]["topline_methodology_version"] == 2
         assert cmp["head"]["topline_methodology_version"] == 2
         assert cmp["topline_methodology_changed"] is False
+        # FON-116 staged rollout — and the topline mode (the deployed default).
+        assert cmp["base"]["topline_mode"] == cmp["head"]["topline_mode"] == "growth_only"
         assert all(f["status"] != "unchanged" for f in cmp["fields"])
         rows = {f["key"]: f for f in cmp["fields"]}
         occ = rows["revenue.years[0].occupancy"]
@@ -769,3 +771,35 @@ def test_topline_methodology_version_reads_the_revenue_run() -> None:
     ) == 2
     assert topline_methodology_version({"revenue": {"status": "failed", "outputs": None}}) is None
     assert topline_methodology_version({}) is None
+
+
+def test_topline_mode_reads_the_revenue_run() -> None:
+    """FON-116 staged rollout — the mode a run's revenue engine ran; None
+    before the field or without a revenue output."""
+    from app.services.run_compare import topline_mode
+
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"topline_mode": "growth_only"}}}) == "growth_only"
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"topline_mode": "benchmark"}}}) == "benchmark"
+    assert topline_mode({"revenue": {"status": "complete", "outputs": {"years": []}}}) is None
+    assert topline_mode({}) is None
+
+
+def test_a_growth_only_to_benchmark_switch_is_a_method_change() -> None:
+    from app.services.run_compare import build_compare_workbook
+
+    result = {
+        "deal_id": "d",
+        "base": {"run_id": "a", "topline_methodology_version": 2, "topline_mode": "growth_only"},
+        "head": {"run_id": "b", "topline_methodology_version": 2, "topline_mode": "benchmark"},
+        "topline_methodology_changed": True,
+        "fields": [],
+    }
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    ws = load_workbook(BytesIO(build_compare_workbook(result)))["Summary"]
+    cells = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)}
+    assert cells["Topline method (baseline → head)"] == (
+        "v2 → v2 (growth_only → benchmark) — the method changed; topline fields moved by it"
+    )

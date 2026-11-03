@@ -748,6 +748,10 @@ export const RevenueEngineInput = z.object({
   occupancy_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
   adr_growth_by_year: z.array(GrowthFraction.nullable()).nullable().optional(),
   topline: ToplineDrivers.nullable().optional(),
+  // FON-116 staged rollout (temporary): growth_only = no topline, the growth
+  // lists described per year by growth_provenance; benchmark = topline drives.
+  topline_mode: z.enum(['growth_only', 'benchmark']).nullable().optional(),
+  growth_provenance: z.array(GrowthYear).default([]),
 });
 export type RevenueEngineInput = z.infer<typeof RevenueEngineInput>;
 
@@ -805,6 +809,8 @@ export const RevenueEngineOutput = z.object({
   // run used (2 = benchmark × penetration × ramp; 1 = legacy scalar / driver).
   topline_by_year: z.array(IndexDriverYear).default([]),
   topline_methodology_version: z.number().int().min(1).default(1),
+  // FON-116 staged rollout (temporary): the topline mode that ran.
+  topline_mode: z.enum(['growth_only', 'benchmark']).nullable().optional(),
 });
 export type RevenueEngineOutput = z.infer<typeof RevenueEngineOutput>;
 

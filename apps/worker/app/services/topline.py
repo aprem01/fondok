@@ -33,7 +33,7 @@ from datetime import date
 from typing import Any
 
 from fondok_schemas.reasons import ReasonCode
-from fondok_schemas.underwriting import BenchmarkYear, ToplineDrivers, ToplineReference
+from fondok_schemas.underwriting import BenchmarkYear, GrowthYear, ToplineDrivers, ToplineReference
 
 from ..engines.revenue import (
     DEFAULT_PENETRATION_INDEX,
@@ -245,8 +245,16 @@ def read_topline_inputs(
     str_noted_keys: frozenset[str] | set[str] = frozenset(),
     derived_adr_source: str = "derived_from_revpar_growth",
     ramp_policy: str = DEFAULT_RAMP_POLICY,
+    mode: str = "benchmark",
 ) -> ToplineInputs:
-    """Everything the topline reads off the resolved assumptions."""
+    """Everything the topline reads off the resolved assumptions.
+
+    ``mode`` (FON-116 staged rollout): under ``growth_only`` the Year-1 rules
+    are the ones before topline v2 — a rate the retired "Use STR rates" button
+    wrote stays the Year-1 rate and the retired switch itself is still
+    honoured (``engine_runner``), so neither is a legacy flag; the retired
+    method choice moves nothing (no benchmark is in use)."""
+    growth_only = mode == "growth_only"
     applied = analyst_override_paths
     legacy: list[dict[str, Any]] = []
     problems: list[str] = []
@@ -322,7 +330,20 @@ def read_topline_inputs(
         forced = None if raw_level.strip() == "auto" else raw_level.strip()
     else:
         method = base.get(OVERRIDE_METHOD)
-        if isinstance(method, str) and method.strip() in LEGACY_METHOD_TO_LEVEL:
+        if growth_only and isinstance(method, str) and method.strip() in LEGACY_METHOD_TO_LEVEL:
+            legacy.append(
+                {
+                    "key": OVERRIDE_METHOD,
+                    "value": method.strip(),
+                    "treatment": "ignored",
+                    "reason": ReasonCode.LEGACY_KEY_TRANSLATED.value,
+                    "detail": (
+                        "The retired Index Analysis method choice moves nothing: the benchmark "
+                        "method is not switched on in this workspace."
+                    ),
+                }
+            )
+        elif isinstance(method, str) and method.strip() in LEGACY_METHOD_TO_LEVEL:
             mapped = LEGACY_METHOD_TO_LEVEL[method.strip()]
             legacy.append(
                 {
@@ -338,7 +359,7 @@ def read_topline_inputs(
             )
             forced = mapped
 
-    if base.get(LEGACY_STR_SEED_FLAG) is not None:
+    if base.get(LEGACY_STR_SEED_FLAG) is not None and not growth_only:
         legacy.append(
             {
                 "key": LEGACY_STR_SEED_FLAG,
@@ -354,6 +375,10 @@ def read_topline_inputs(
     explicit: list[str] = []
     for key, metric in (("starting_occupancy", "occupancy"), ("starting_adr", "adr")):
         if key not in applied:
+            continue
+        if key in str_noted_keys and growth_only:
+            # Kept as the Year-1 rate (badged STR comp set), as before v2.
+            explicit.append(metric)
             continue
         if key in str_noted_keys:
             legacy.append(
@@ -486,7 +511,8 @@ class LongRunGrowth:
 
 @dataclass
 class ToplineBuild:
-    drivers: ToplineDrivers
+    #: ``None`` under the growth-only rollout mode (no benchmark topline).
+    drivers: ToplineDrivers | None
     occupancy_growth_by_year: list[float | None]
     adr_growth_by_year: list[float | None]
     status: dict[str, Any]
@@ -500,6 +526,9 @@ class ToplineBuild:
     terminal_revpar_growth: float = 0.0
     terminal_revpar_source: str = "market_forecast_unavailable"
     applied_years: list[int] = field(default_factory=list)
+    #: Growth-only rollout mode — the per-year growth record the engine
+    #: labels its records with (``RevenueEngineInput.growth_provenance``).
+    growth_provenance: list[GrowthYear] = field(default_factory=list)
 
 
 def _step_summary(steps: Sequence[MetricGrowth]) -> str:
@@ -672,14 +701,83 @@ def build_topline(
     )
 
 
-def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolution) -> list[dict[str, Any]]:
+#: FON-116 staged rollout — what the growth-only status says about the parts
+#: of the topline that are not switched on.
+GROWTH_ONLY_BENCHMARK_LABEL = (
+    "Not in use — growth-only topline: Year 1 is the subject's own rates; the "
+    "benchmark × penetration × ramp method is not switched on in this workspace"
+)
+GROWTH_ONLY_NOT_APPLIED = "not_applied_growth_only"
+_PENETRATION_KEYS_LABEL = (
+    (KEY_MPI_TARGET, "occupancy penetration"),
+    (KEY_ARI_TARGET, "ADR penetration"),
+    (KEY_MPI_TARGET_BY_YEAR, "occupancy penetration by year"),
+    (KEY_ARI_TARGET_BY_YEAR, "ADR penetration by year"),
+    (KEY_RAMP_BY_YEAR, "ramp"),
+    (FORCED_LEVEL_KEY, "benchmark level"),
+)
+
+
+def build_growth_only(
+    growth: GrowthResolution,
+    inputs: ToplineInputs,
+    *,
+    hold_years: int,
+    t12: ToplineReference | None,
+    long_run: LongRunGrowth | None = None,
+    stored_benchmark_keys: Sequence[str] = (),
+) -> ToplineBuild:
+    """FON-116 staged rollout — the GROWTH-ONLY topline.
+
+    No benchmark, penetration or ramp: Year 1 is the subject's own starting
+    rates (set by the loader as before topline v2) and is NOT grown — the
+    growth INTO Years 2..hold is the resolver's, one figure per year and
+    metric, occupancy flat after stabilization (decision 1b). Exit growth
+    follows the same convention as the benchmark topline. ``drivers`` is
+    ``None`` (the engine runs without ``topline``); the per-year provenance
+    travels on :attr:`ToplineBuild.growth_provenance`."""
+    hold = max(1, int(hold_years))
+    applied_years = list(range(2, hold + 1))
+    growth_years = [growth_year(growth, y) for y in applied_years]
+    occ_list: list[float | None] = [None] * hold
+    adr_list: list[float | None] = [None] * hold
+    for gy in growth_years:
+        occ_list[gy.year - 1] = gy.occupancy_growth
+        adr_list[gy.year - 1] = gy.adr_growth
+    terminal = _terminal_growth(growth.year(hold, "adr"), hold, long_run)
+    state = growth.state(applied_years)
+    notes: list[str] = []
+    stored = [label for key, label in _PENETRATION_KEYS_LABEL if key in stored_benchmark_keys]
+    if stored:
+        notes.append(
+            "Stored benchmark settings (" + ", ".join(stored) + ") are kept but not applied: the "
+            "benchmark × penetration × ramp method is not switched on in this workspace."
+        )
+    status = _status(
+        None, growth, inputs, None,
+        hold=hold, applied_years=applied_years, state=state, notes=notes, t12=t12,
+        terminal=terminal,
+    )
+    return ToplineBuild(
+        drivers=None,
+        occupancy_growth_by_year=occ_list,
+        adr_growth_by_year=adr_list,
+        status=status,
+        terminal_revpar_growth=terminal["value"],
+        terminal_revpar_source=terminal["source_id"],
+        applied_years=applied_years,
+        growth_provenance=growth_years,
+    )
+
+
+def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolution | None) -> list[dict[str, Any]]:
     """Review M-2 — a Year-1 rate the retired "Use STR rates" button wrote is
     set aside for the benchmark × penetration × ramp ONLY when a benchmark is
     in use; with none (as-of gated, forced level unavailable) it stays the
     Year-1 rate, and the flag must say so."""
     out: list[dict[str, Any]] = []
     for flag in flags:
-        if flag.get("treatment") == "treated_as_legacy_seed" and bench.level == "none":
+        if flag.get("treatment") == "treated_as_legacy_seed" and bench is not None and bench.level == "none":
             flag = {
                 **flag,
                 "treatment": "kept_no_benchmark",
@@ -721,10 +819,10 @@ def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth 
 
 
 def _status(
-    bench: BenchmarkResolution,
+    bench: BenchmarkResolution | None,
     growth: GrowthResolution,
     inputs: ToplineInputs,
-    drivers: ToplineDrivers,
+    drivers: ToplineDrivers | None,
     *,
     hold: int,
     applied_years: list[int],
@@ -733,7 +831,16 @@ def _status(
     t12: ToplineReference | None,
     terminal: dict[str, Any],
 ) -> dict[str, Any]:
-    """The ``topline_status`` block (API contract — see the topline report)."""
+    """The ``topline_status`` block (API contract — see the topline report).
+
+    ``bench`` / ``drivers`` are ``None`` under the growth-only rollout mode:
+    the same keys are published (one contract), the benchmark / penetration /
+    ramp ones saying they are not in use."""
+    if bench is None or drivers is None:
+        return _growth_only_status(
+            growth, inputs, hold=hold, applied_years=applied_years, state=state,
+            notes=notes, t12=t12, terminal=terminal,
+        )
     s = drivers.stabilization_year
     if inputs.ramp_off_by_policy:
         ramp = []
@@ -770,30 +877,11 @@ def _status(
             }
         return {"value": None, "label": "No current index — needs the STR report or a T-12", "basis": None}
 
-    growth_rows: list[dict[str, Any]] = []
-    for y in range(1, hold + 1):
-        occ, adr = growth.year(y, "occupancy"), growth.year(y, "adr")
-        growth_rows.append(
-            {
-                "year": y,
-                "calendar_year": growth.calendar_years[y - 1] if growth.calendar_known else None,
-                "applied": y in applied_years,
-                "occupancy": occ.as_dict(),
-                "adr": adr.as_dict(),
-            }
-        )
-    suggestions: list[dict[str, Any]] = []
-    if state in ("unavailable", "withheld", "partially_sourced") and inputs.growth.revpar_all_years is None:
-        suggestions.append(
-            {
-                "key": "revpar_growth",
-                "value": PLATFORM_REVPAR_SUGGESTION,
-                "label": "Apply platform suggestion 4.5% RevPAR growth (labelled; not a market forecast)",
-                "note_prefill": SUGGESTION_NOTE,
-            }
-        )
+    growth_rows = _growth_rows(growth, hold, applied_years)
+    suggestions = _suggestions(state, inputs)
     return {
         "methodology_version": TOPLINE_METHODOLOGY_VERSION,
+        "topline_mode": "benchmark",
         "benchmark": bench.as_dict(),
         "benchmark_level": bench.level,
         "benchmark_label": bench.label,
@@ -831,6 +919,90 @@ def _status(
     }
 
 
+def _growth_rows(growth: GrowthResolution, hold: int, applied_years: Sequence[int]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for y in range(1, hold + 1):
+        occ, adr = growth.year(y, "occupancy"), growth.year(y, "adr")
+        rows.append(
+            {
+                "year": y,
+                "calendar_year": growth.calendar_years[y - 1] if growth.calendar_known else None,
+                "applied": y in applied_years,
+                "occupancy": occ.as_dict(),
+                "adr": adr.as_dict(),
+            }
+        )
+    return rows
+
+
+def _suggestions(state: str, inputs: ToplineInputs) -> list[dict[str, Any]]:
+    if state in ("unavailable", "withheld", "partially_sourced") and inputs.growth.revpar_all_years is None:
+        return [
+            {
+                "key": "revpar_growth",
+                "value": PLATFORM_REVPAR_SUGGESTION,
+                "label": "Apply platform suggestion 4.5% RevPAR growth (labelled; not a market forecast)",
+                "note_prefill": SUGGESTION_NOTE,
+            }
+        ]
+    return []
+
+
+def _growth_only_status(
+    growth: GrowthResolution,
+    inputs: ToplineInputs,
+    *,
+    hold: int,
+    applied_years: list[int],
+    state: str,
+    notes: list[str],
+    t12: ToplineReference | None,
+    terminal: dict[str, Any],
+) -> dict[str, Any]:
+    """FON-116 staged rollout — the ``topline_status`` block of the
+    growth-only topline: the same keys as the benchmark topline's, the
+    benchmark / penetration / ramp ones empty and labelled not in use."""
+    not_in_use = {"value": None, "label": GROWTH_ONLY_BENCHMARK_LABEL, "basis": None}
+    return {
+        "methodology_version": TOPLINE_METHODOLOGY_VERSION,
+        "topline_mode": "growth_only",
+        "benchmark": None,
+        "benchmark_level": "none",
+        "benchmark_label": GROWTH_ONLY_BENCHMARK_LABEL,
+        "benchmark_fallback_reason": None,
+        "benchmark_by_year": [],
+        "class_bucket": growth.class_bucket,
+        "bucket_label": growth.bucket_label,
+        "bucket_note": growth.bucket_note,
+        "calendar_known": growth.calendar_known,
+        "calendar_unknown": growth.calendar_unknown,
+        "growth_state": state,
+        "growth_by_year": _growth_rows(growth, hold, applied_years),
+        "stabilization_year": inputs.stabilization_year,
+        "stabilization_source": inputs.stabilization_source,
+        "penetration_occ": None,
+        "penetration_adr": None,
+        "penetration_occ_source": GROWTH_ONLY_NOT_APPLIED,
+        "penetration_adr_source": GROWTH_ONLY_NOT_APPLIED,
+        "penetration_occ_by_year": [],
+        "penetration_adr_by_year": [],
+        "current_mpi": dict(not_in_use),
+        "current_ari": dict(not_in_use),
+        "ramp_by_year": [],
+        "ramp_source": GROWTH_ONLY_NOT_APPLIED,
+        "ramp_policy": None,
+        "ramp_state": GROWTH_ONLY_NOT_APPLIED,
+        "explicit_metrics": [],
+        "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
+        "terminal_revpar_growth": dict(terminal),
+        "suggestions": _suggestions(state, inputs),
+        "legacy_flags": _legacy_flags_for(inputs.legacy_flags, None),
+        "problems": list(inputs.problems),
+        "notes": notes,
+        "reextract_needed": list(growth.reextract_needed),
+    }
+
+
 __all__ = [
     "KEY_ADR_GROWTH_BY_YEAR",
     "KEY_OCC_GROWTH_BY_YEAR",
@@ -851,6 +1023,7 @@ __all__ = [
     "TOPLINE_STATUS_KEY",
     "ToplineBuild",
     "ToplineInputs",
+    "build_growth_only",
     "build_topline",
     "coerce_ramp_list",
     "default_stabilization_year",

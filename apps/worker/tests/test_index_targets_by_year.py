@@ -31,6 +31,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+
+#: FON-116 staged rollout — this module pins the BENCHMARK topline (FON-117,
+#: ``TOPLINE_BENCHMARK_ENABLED`` on); the deployed growth-only default is
+#: ``tests/test_topline_growth_only.py``.
+pytestmark = pytest.mark.usefixtures("topline_benchmark")
 from fastapi import HTTPException
 from openpyxl import load_workbook
 from sqlalchemy import text

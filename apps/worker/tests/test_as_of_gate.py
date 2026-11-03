@@ -196,6 +196,7 @@ _STR_COMP_SET = [
 ]
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_str_report_after_the_as_of_is_refused_not_used() -> None:
     deal_id = uuid4()
@@ -215,6 +216,7 @@ async def test_str_report_after_the_as_of_is_refused_not_used() -> None:
     assert base["__reasons__"]["starting_adr"]["code"] == "no_revenue_basis"
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_str_report_with_no_date_loads() -> None:
     """No ``report_as_of`` is never a refusal — the comp set is the benchmark."""
@@ -229,6 +231,7 @@ async def test_str_report_with_no_date_loads() -> None:
     assert base["__sources__"]["starting_adr"] == "topline_benchmark"
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_year_precision_report_in_the_as_of_year_is_admitted() -> None:
     """The as-of builder dates a year-precision STAR report to 31 December.
@@ -245,6 +248,7 @@ async def test_year_precision_report_in_the_as_of_year_is_admitted() -> None:
     assert base["__topline_status__"]["benchmark_level"] == "comp_set"
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_acquisition_close_date_is_not_an_as_of_date() -> None:
     """The live QA deal shape: ``acquisition_close_date`` 2021 with 2025 STR

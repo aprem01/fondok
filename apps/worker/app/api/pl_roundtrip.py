@@ -104,6 +104,11 @@ async def _read_upload(file: UploadFile) -> bytes:
     return data
 
 
+#: FON-116 staged rollout — the Source text of the benchmark-only rows under
+#: the growth-only topline.
+GROWTH_ONLY_SOURCE_NOTE = "not applied — growth-only topline (benchmark method not switched on)"
+
+
 def _xlsx_response(data: bytes, filename: str) -> Response:
     return Response(
         content=data,
@@ -493,27 +498,34 @@ async def _assumption_state(
     # Source column names); the ramp shows the ramp the worker APPLIED, one
     # row per year before the stabilization year.
     status = base.get("__topline_status__") or {}
+    # FON-116 staged rollout (temporary): under the growth-only topline the
+    # benchmark rows are kept (a stored value round-trips) but say they are
+    # not applied, and no ramp rows are offered.
+    growth_only = status.get("topline_mode") == "growth_only"
     for key, metric, src_key in (
         ("index_mpi_target", "penetration_occ", "penetration_occ_source"),
         ("index_ari_target", "penetration_adr", "penetration_adr_source"),
     ):
         if key in overrides:
+            if growth_only:
+                srcs[key] = GROWTH_ONLY_SOURCE_NOTE
             continue
         v = to_number(status.get(metric))
         values[key] = v
-        srcs[key] = str(status.get(src_key) or "") if v is not None else ""
+        srcs[key] = GROWTH_ONLY_SOURCE_NOTE if growth_only else (str(status.get(src_key) or "") if v is not None else "")
     lvl = overrides.get("topline_benchmark_level")
     lvl = lvl.get("value") if isinstance(lvl, dict) else lvl
     values["topline_benchmark_level"] = lvl if isinstance(lvl, str) and lvl else "auto"  # type: ignore[assignment]
     srcs["topline_benchmark_level"] = (
-        "analyst_override" if "topline_benchmark_level" in overrides
+        GROWTH_ONLY_SOURCE_NOTE if growth_only
+        else "analyst_override" if "topline_benchmark_level" in overrides
         else f"auto — in use: {status.get('benchmark_label') or 'no benchmark'}"
     )
     try:
         stab = int(status.get("stabilization_year") or 0)
     except (TypeError, ValueError):
         stab = 0
-    topline_specs = topline_list_assumptions(hold, max(0, stab - 1))
+    topline_specs = topline_list_assumptions(hold, 0 if growth_only else max(0, stab - 1))
     growth_rows = {int(r.get("year")): r for r in status.get("growth_by_year") or [] if isinstance(r, dict)}
     applied_ramp = list(status.get("ramp_by_year") or [])
     from ..services.topline import coerce_ramp_list

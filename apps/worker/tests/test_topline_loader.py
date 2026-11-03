@@ -11,6 +11,11 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+
+#: FON-116 staged rollout — this module pins the BENCHMARK topline (FON-117,
+#: ``TOPLINE_BENCHMARK_ENABLED`` on); the deployed growth-only default is
+#: ``tests/test_topline_growth_only.py``.
+pytestmark = pytest.mark.usefixtures("topline_benchmark")
 from sqlalchemy import text
 
 _TMP_DB = Path(tempfile.gettempdir()) / "fondok-tests-topline-loader.db"

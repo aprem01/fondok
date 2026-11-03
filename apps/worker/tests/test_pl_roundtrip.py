@@ -883,6 +883,30 @@ async def test_historical_apply_skips_a_change_without_a_justification() -> None
 
 
 @pytest.mark.asyncio
+async def test_growth_only_export_says_the_benchmark_rows_are_not_applied() -> None:
+    """FON-116 staged rollout (default mode): growth-by-year rows as usual, no
+    ramp rows, and the penetration / level rows name that the benchmark
+    method is not switched on (a stored value still round-trips)."""
+    from app.api.pl_roundtrip import GROWTH_ONLY_SOURCE_NOTE, export_projections
+    from app.database import get_session_factory
+
+    deal_id, *_ = await _setup(overrides={
+        "hold_years": 4,
+        "index_ari_target": {"value": 97, "note": "Reference path"},
+    })
+    async with get_session_factory()() as s:
+        resp = await export_projections(deal_id=deal_id, session=s, auth=_auth())
+    wa = _sheet(resp.body, "Assumptions")
+    rows = {wa.cell(row=r, column=1).value: r for r in range(2, wa.max_row + 1)}
+    assert all(f"adr_growth_by_year.{y}" in rows for y in (1, 2, 3, 4))
+    assert not [k for k in rows if str(k).startswith("penetration_ramp_by_year.")]
+    for key in ("index_mpi_target", "index_ari_target", "topline_benchmark_level"):
+        assert wa.cell(row=rows[key], column=5).value == GROWTH_ONLY_SOURCE_NOTE, key
+    assert wa.cell(row=rows["index_ari_target"], column=3).value == 97
+
+
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
+@pytest.mark.asyncio
 async def test_projection_export_carries_the_topline_rows() -> None:
     """Growth by year (occupancy, ADR) for every model year, the ramp for
     Years 1..S−1 at the ramp the worker APPLIED, the stabilized penetration and
@@ -922,6 +946,7 @@ async def test_projection_export_carries_the_topline_rows() -> None:
     assert "0.045" not in str(wa.cell(row=rows["revpar_growth"], column=4).value)
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_projection_apply_folds_growth_and_ramp_rows_into_their_lists() -> None:
     from app.api.pl_roundtrip import ProjApplyBody, apply_projections_import

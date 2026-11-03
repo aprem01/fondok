@@ -191,6 +191,7 @@ async def test_no_close_date_and_no_forecast_keeps_the_calendar_unknown() -> Non
 # ─────────────────────────── (a) the real close date ───────────────────────────
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_real_close_date_puts_year_one_on_the_benchmarks_own_year() -> None:
     deal_id, tenant_id = await _docs_deal(acquisition_close_date="2025-09-30")

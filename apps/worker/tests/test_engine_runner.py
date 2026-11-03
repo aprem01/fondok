@@ -1243,6 +1243,7 @@ async def test_selected_comps_curation_never_reaches_engine_input() -> None:
     assert base["exit_cap_rate"] == 0.081
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_retired_str_switch_moves_nothing_and_is_flagged() -> None:
     """FON-116 / FON-117 (topline v2): the "Use STR rates" switch and its seed
@@ -1506,6 +1507,7 @@ _INDEX_OVERRIDES = {
 }
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
     """Topline v2: no toggle. The MPI target is the stabilized occupancy
@@ -1536,6 +1538,7 @@ async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
     assert "starting_occupancy" not in base["__source_fields__"]
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
     from app.database import get_session_factory
@@ -1563,6 +1566,7 @@ async def test_index_assumptions_respect_an_explicit_growth_override() -> None:
 # ─────────── FON-116 / FON-117 (topline v2) — the loader's revenue input ───────────
 
 
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_loader_feeds_the_topline_and_the_resolved_growth_lists() -> None:
     """The revenue input the loader builds carries the topline (methodology 2)

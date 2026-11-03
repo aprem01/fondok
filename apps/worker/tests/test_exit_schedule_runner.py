@@ -26,7 +26,9 @@ if _TMP_DB.exists():
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB}"
 
 # The Kimpton fixture's returns block (evals/baselines/
-# kimpton-golden-2026-11-02-topline-v2.json). History: the 2026-10-16
+# kimpton-golden-2026-11-03-growth-only.json — the seed fixture is the same in
+# both topline rollout modes and in kimpton-golden-2026-11-02-topline-v2.json:
+# no market data, no growth). History: the 2026-10-16
 # baseline (levered IRR 0.30507763569294777, unlevered 0.1966981834769953,
 # EM 3.173073565683279, terminal NOI 5133453.812007522, gross sale
 # 73335054.45725031, net proceeds 49645085.86905478); the 2026-11-01 engine

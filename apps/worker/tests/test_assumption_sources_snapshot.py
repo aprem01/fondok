@@ -25,6 +25,11 @@ Regenerations:
   ``revpar_growth`` becomes 0.0 badged ``market_forecast_unavailable`` (it
   was the 4.5% seed). Nothing else moved. Sam's live QA reads these two blocks —
   communicate before deploy (plan §8 item 9).
+
+Not a regeneration: under the FON-116 staged rollout (2026-11-03) the default
+growth-only topline serves the same ``sources`` / ``values`` on this corpus
+(Year 1 is the T-12 in either mode; no market report, no growth); the topline
+mode travels on ``__`` metadata keys, never on ``values``.
 """
 
 from __future__ import annotations
@@ -362,6 +367,29 @@ async def _add_str_trend_subject_ttm(deal_id: UUID) -> None:
         await s.commit()
 
 
+@pytest.mark.asyncio
+async def test_growth_only_subject_ttm_seed_appears_in_the_sources_block_as_its_own_id() -> None:
+    """FON-116 staged rollout (the deployed growth-only topline): the retired
+    "Use STR rates" switch keeps its pre-v2 effect — Sam (FON-61): the Base
+    Year hover reads ``str_subject_ttm`` on the two rate keys, the subject's
+    own TTM, unrounded (restored from main's test)."""
+    from app.ontology.registry import get_registry
+
+    deal_id = uuid4()
+    await _seed_fon54a_deal(deal_id)
+    await _add_str_trend_subject_ttm(deal_id)
+
+    payload = await _sources_and_values(deal_id)
+    sources = payload["sources"]
+    assert sources["starting_occupancy"] == "str_subject_ttm"
+    assert sources["starting_adr"] == "str_subject_ttm"
+    assert sources["revenue_seed_from_str_forecast"] == "str_subject_ttm"
+    assert payload["values"]["starting_occupancy"] == pytest.approx(0.716)
+    assert payload["values"]["starting_adr"] == pytest.approx(288.0)
+    assert "str_subject_ttm" in get_registry().sources
+
+
+@pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
 async def test_retired_str_seed_switch_moves_nothing_and_is_flagged() -> None:
     """Topline v2: the "Use STR rates" switch and its subject-TTM seed are

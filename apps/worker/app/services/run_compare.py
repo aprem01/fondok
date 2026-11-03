@@ -747,6 +747,17 @@ def topline_methodology_version(engines: Mapping[str, Mapping[str, Any]]) -> int
     return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 1
 
 
+def topline_mode(engines: Mapping[str, Mapping[str, Any]]) -> str | None:
+    """FON-116 staged rollout — the topline mode a run's revenue engine ran
+    (``growth_only`` / ``benchmark``); None before the field or without a
+    revenue output."""
+    out = (engines.get("revenue") or {}).get("outputs")
+    if not isinstance(out, Mapping):
+        return None
+    v = out.get("topline_mode")
+    return v if isinstance(v, str) else None
+
+
 def outputs_only(engines: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     return {name: (row.get("outputs") or None) for name, row in engines.items()}
 
@@ -786,6 +797,10 @@ def build_compare_workbook(result: Mapping[str, Any]) -> bytes:
         ("Head completed", head.get("completed_at")),
         ("Topline method (baseline → head)", (
             f"v{base.get('topline_methodology_version')} → v{head.get('topline_methodology_version')}"
+            + (
+                f" ({base.get('topline_mode') or '—'} → {head.get('topline_mode') or '—'})"
+                if base.get("topline_mode") or head.get("topline_mode") else ""
+            )
             + (" — the method changed; topline fields moved by it" if result.get("topline_methodology_changed") else "")
         ) if base.get("topline_methodology_version") and head.get("topline_methodology_version") else None),
         ("Fields compared", result.get("fields_compared")),

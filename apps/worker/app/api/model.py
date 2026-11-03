@@ -767,6 +767,13 @@ class RunCompareSide(BaseModel):
         default=None,
         description="the topline method the run's revenue engine used (1 = before topline v2)",
     )
+    topline_mode: Literal["growth_only", "benchmark"] | None = Field(
+        default=None,
+        description=(
+            "FON-116 staged rollout: growth_only (FON-116) or benchmark (FON-117); null before "
+            "the field"
+        ),
+    )
 
 
 class RunCompareField(BaseModel):
@@ -888,6 +895,7 @@ async def _compare(
         load_run_engines,
         outputs_only,
         topline_methodology_version,
+        topline_mode,
     )
 
     deal_uuid, canonical, runs = await _deal_runs(
@@ -953,15 +961,20 @@ async def _compare(
             "completed_at": meta.get("completed_at"),
             "engines": {name: row["status"] for name, row in engines.items()},
             "topline_methodology_version": topline_methodology_version(engines),
+            "topline_mode": topline_mode(engines),
         }
 
     base_side, head_side = _side(base_id, base_rows), _side(head_id, head_rows)
     bv, hv = base_side["topline_methodology_version"], head_side["topline_methodology_version"]
+    bm, hm = base_side["topline_mode"], head_side["topline_mode"]
     return {
         "deal_id": deal_id,
         "base": base_side,
         "head": head_side,
-        "topline_methodology_changed": bv is not None and hv is not None and bv != hv,
+        # FON-116 staged rollout — a growth-only → benchmark switch is a method
+        # change too (same version 2, different topline).
+        "topline_methodology_changed": (bv is not None and hv is not None and bv != hv)
+        or (bm is not None and hm is not None and bm != hm),
         "include_unchanged": include_unchanged,
         "fields_compared": compared,
         "fields_changed": changed,

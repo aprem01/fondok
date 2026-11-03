@@ -429,6 +429,13 @@ async def test_full_run_anchors_on_the_reopening_and_debt_follows() -> None:
         after = _comparable(reflag[engine]["outputs"])
         before.pop("stabilization", None)
         after.pop("stabilization", None)
+        if engine == "revenue":
+            # Decision 1b (2026-11-03) — the later stabilization changes which
+            # years say "held after stabilization" (no growth figure here, so
+            # no number moves); the provenance records differ, the figures not.
+            for side in (before, after):
+                side.pop("topline_by_year", None)
+                side.pop("provenance", None)
         assert before == after, engine
 
 

@@ -764,6 +764,36 @@ class RevenueEngineInput(BaseModel):
     # ``None`` runs the legacy path above. Mutually exclusive with the legacy
     # per-year drivers: one mechanism sets a year's occupancy / ADR.
     topline: ToplineDrivers | None = None
+    # FON-116 staged rollout (TEMPORARY — removed with TOPLINE_BENCHMARK_ENABLED
+    # once FON-117 is on in production). ``growth_only``: no ``topline``; Year 1
+    # is the starting assumption and the per-year growth lists come from the
+    # growth resolver, described per year by ``growth_provenance`` (moves no
+    # number — it labels the records and traces). ``benchmark``: ``topline``
+    # drives. ``None``: the legacy scalar path (methodology 1).
+    topline_mode: Literal["growth_only", "benchmark"] | None = None
+    growth_provenance: list[GrowthYear] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _topline_mode_matches_its_inputs(self) -> "RevenueEngineInput":
+        if self.topline_mode == "benchmark" and self.topline is None:
+            raise ValueError("topline_mode 'benchmark' needs the topline drivers")
+        if self.topline_mode == "growth_only" and self.topline is not None:
+            raise ValueError("topline_mode 'growth_only' runs without topline drivers")
+        if self.growth_provenance and self.topline is not None:
+            raise ValueError("growth_provenance is the growth-only record; the topline carries its own")
+        for gy in self.growth_provenance:
+            idx = gy.year - 1
+            for lst, want, metric in (
+                (self.occupancy_growth_by_year, gy.occupancy_growth, "occupancy"),
+                (self.adr_growth_by_year, gy.adr_growth, "adr"),
+            ):
+                got = lst[idx] if lst is not None and 0 <= idx < len(lst) else None
+                if got != want:
+                    raise ValueError(
+                        f"{metric}_growth_by_year[{idx}] = {got!r} disagrees with "
+                        f"growth_provenance year {gy.year} ({want!r})"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _topline_excludes_legacy_drivers(self) -> "RevenueEngineInput":
@@ -881,6 +911,10 @@ class RevenueEngineOutput(BaseModel):
     # Index Analysis driver path. Persisted outputs that predate the field read
     # as 1. ``compare_golden_baseline.py`` prints loudly when it moves.
     topline_methodology_version: Annotated[int, Field(ge=1)] = 1
+    # FON-116 staged rollout (temporary): which topline mode ran —
+    # ``growth_only`` (FON-116, growth resolver over the subject's own Year 1)
+    # or ``benchmark`` (FON-117). ``None`` on the legacy path / older outputs.
+    topline_mode: Literal["growth_only", "benchmark"] | None = None
     # Sam, 2026-10-15 — per-year provenance of the renovation displacement
     # schedule (which periods, how many months, the resulting occupancy / ADR
     # factors). One entry per model year the schedule touches; EMPTY when no
