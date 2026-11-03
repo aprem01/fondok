@@ -66,13 +66,14 @@ def test_after_the_forecast_ends_adr_averages_and_occupancy_holds() -> None:
 
 def test_terminal_growth_is_the_last_years_adr_growth_without_occupancy() -> None:
     inputs = read_topline_inputs({}, {}, set())
-    build = build_topline(_bench(), _growth(cal=CAL[:4]), inputs, hold_years=4, t12=None)
-    # Year 4 = 2029: the recovery year's +3.0% occupancy does NOT enter.
+    build = build_topline(_bench(), _growth(cal=CAL[:3]), inputs, hold_years=3, t12=None)
+    # Hold ends 2028; the exit NOI is 2029's: the recovery year's +3.0%
+    # occupancy does NOT enter.
     assert build.terminal_revpar_growth == pytest.approx(0.028)
     assert build.terminal_revpar_source == "costar_submarket_forecast"
     term = build.status["terminal_revpar_growth"]
     assert term["value"] == pytest.approx(0.028)
-    assert term["basis"] == "last_year_adr_growth"
+    assert term["basis"] == "exit_year_adr_growth"
     assert "occupancy held" in term["label"]
 
 
@@ -105,3 +106,16 @@ def test_no_figure_at_all_is_zero_and_unavailable() -> None:
     assert build.terminal_revpar_growth == 0.0
     assert build.terminal_revpar_source == "market_forecast_unavailable"
     assert build.status["terminal_revpar_growth"]["basis"] == "unavailable"
+
+
+def test_exit_growth_past_the_forecast_is_the_forecast_average() -> None:
+    """Sam, 2026-11-03: a hold ending 2029 sells on 2030's NOI, past the
+    CoStar forecast, so the exit grows at the forecast average."""
+    inputs = read_topline_inputs({}, {}, set())
+    build = build_topline(_bench(), _growth(cal=CAL[:4]), inputs, hold_years=4, t12=None)
+    term = build.status["terminal_revpar_growth"]
+    assert term["basis"] == "exit_year_adr_growth"
+    assert "2030 (exit-NOI year)" in term["label"] and "forecast average" in term["label"]
+    assert build.terminal_revpar_growth == pytest.approx(
+        sum((0.044, 0.018, -0.006, 0.038, 0.028)) / 5, abs=1e-12
+    )

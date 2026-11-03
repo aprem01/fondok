@@ -694,7 +694,7 @@ def build_topline(
     # perpetuity. The source's long-run average when one is on file, else the
     # last projected year's ADR growth with occupancy held at its stabilized
     # level, else 0 (no figure).
-    terminal = _terminal_growth(growth.year(hold, "adr"), hold, long_run)
+    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run)
     term, term_source = terminal["value"], terminal["source_id"]
 
     state = growth.state(applied_years)
@@ -759,7 +759,7 @@ def build_growth_only(
     for gy in growth_years:
         occ_list[gy.year - 1] = gy.occupancy_growth
         adr_list[gy.year - 1] = gy.adr_growth
-    terminal = _terminal_growth(growth.year(hold, "adr"), hold, long_run)
+    terminal = _terminal_growth(_exit_year_adr(growth, hold), hold, long_run)
     state = growth.state(applied_years)
     notes: list[str] = []
     stored = [label for key, label in _PENETRATION_KEYS_LABEL if key in stored_benchmark_keys]
@@ -806,6 +806,24 @@ def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolutio
     return out
 
 
+def _exit_year_adr(growth: GrowthResolution, hold: int) -> MetricGrowth:
+    """ADR growth of the year the exit NOI covers — the forward year (hold + 1)
+    when the calendar is known, so a sale whose forward year is past the
+    forecast grows at the post-forecast convention (the forecast average);
+    without a calendar, the last projected year's growth."""
+    last = growth.year(hold, "adr")
+    if len(growth.calendar_years) >= hold >= 1:
+        # The year after THIS deal's hold (the growth calendar may run longer).
+        fwd = growth.calendar(growth.calendar_years[hold - 1] + 1, "adr")
+        # An analyst's figure for the hold's last year is their view of the
+        # exit too, and beats a document figure for the forward year.
+        if fwd is not None and not (
+            last.source == "analyst_override" and fwd.source != "analyst_override"
+        ):
+            return fwd
+    return last
+
+
 def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None) -> dict[str, Any]:
     """``{value, source_id, basis, label}`` of the exit-year growth convention."""
     if long_run is not None:
@@ -819,10 +837,14 @@ def _terminal_growth(last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth 
         return {
             "value": last_adr.value,
             "source_id": last_adr.source_id,
-            "basis": "last_year_adr_growth",
+            "basis": "exit_year_adr_growth",
             "label": (
-                f"Year {hold} ADR growth {last_adr.value * 100:+.1f}% — occupancy held at its "
-                f"stabilized level ({last_adr.label})"
+                (
+                    f"{last_adr.calendar_year} (exit-NOI year) ADR growth "
+                    if last_adr.calendar_year is not None
+                    else f"Year {hold} ADR growth "
+                )
+                + f"{last_adr.value * 100:+.1f}% — occupancy held at its stabilized level ({last_adr.label})"
             ),
         }
     return {

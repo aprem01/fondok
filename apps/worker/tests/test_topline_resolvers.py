@@ -253,8 +253,9 @@ def test_explicit_year_one_override_is_not_penetrated_but_str_noted_one_is() -> 
 def test_terminal_growth_is_the_last_years_adr_growth() -> None:
     """Review I-2 (the full contract: ``test_topline_terminal_growth.py``)."""
     inputs = read_topline_inputs({}, {}, set())
-    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=4, t12=None)
-    # Year 4 = 2029: CoStar L&UU +2.8% ADR; its +3.0% occupancy does not enter.
+    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=3, t12=None)
+    # Hold ends 2028, so the exit NOI is 2029's: CoStar L&UU +2.8% ADR; its
+    # +3.0% occupancy does not enter.
     assert build.terminal_revpar_growth == pytest.approx(0.028)
     assert build.terminal_revpar_source == "costar_submarket_forecast"
 

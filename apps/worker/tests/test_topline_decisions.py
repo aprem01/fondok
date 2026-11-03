@@ -82,20 +82,39 @@ def test_exit_growth_past_the_series_uses_the_forecast_average() -> None:
                                 base_calendar_year=2025, basis="actual")
     build = build_topline(bench, g, inputs, hold_years=5, t12=None)
     assert build.terminal_revpar_growth == pytest.approx(LUU_ADR_AVG, abs=1e-15)
-    assert build.status["terminal_revpar_growth"]["basis"] == "last_year_adr_growth"
+    assert build.status["terminal_revpar_growth"]["basis"] == "exit_year_adr_growth"
     assert "forecast average" in build.status["terminal_revpar_growth"]["label"]
 
 
-def test_exit_growth_inside_the_series_is_that_year() -> None:
+def test_exit_growth_is_the_forward_years_growth_past_the_series() -> None:
+    """The exit NOI is the year after the hold. A hold ending 2029 sells on
+    2030's NOI, which is past the forecast, so the exit grows at the forecast
+    average (Sam, 2026-11-03), not at 2029's +2.8%."""
     inputs = read_topline_inputs({}, {}, set())
     g = resolve_growth_by_year(
-        costar_rows(), inputs.growth, calendar_years=[2026, 2027, 2028, 2029], hold_years=4,
+        costar_rows(), inputs.growth, calendar_years=[2025, 2026, 2027, 2028, 2029], hold_years=5,
+        class_bucket="luxury_upper_upscale", policy=ALLOW, stabilization_year=3,
+    )
+    bench = BenchmarkResolution(level="comp_set", label="comp", occupancy=0.75, adr=300.0,
+                                base_calendar_year=2025, basis="actual")
+    build = build_topline(bench, g, inputs, hold_years=5, t12=None)
+    assert build.terminal_revpar_growth == pytest.approx(LUU_ADR_AVG, abs=1e-15)
+    assert "2030" in build.status["terminal_revpar_growth"]["label"]
+    assert "forecast average" in build.status["terminal_revpar_growth"]["label"]
+
+
+def test_exit_growth_inside_the_series_is_the_forward_year() -> None:
+    """A hold ending 2028 sells on 2029's NOI: 2029's own +2.8%."""
+    inputs = read_topline_inputs({}, {}, set())
+    g = resolve_growth_by_year(
+        costar_rows(), inputs.growth, calendar_years=[2025, 2026, 2027, 2028], hold_years=4,
         class_bucket="luxury_upper_upscale", policy=ALLOW, stabilization_year=3,
     )
     bench = BenchmarkResolution(level="comp_set", label="comp", occupancy=0.75, adr=300.0,
                                 base_calendar_year=2025, basis="actual")
     build = build_topline(bench, g, inputs, hold_years=4, t12=None)
     assert build.terminal_revpar_growth == pytest.approx(0.028)
+    assert "2029" in build.status["terminal_revpar_growth"]["label"]
 
 
 # ─────────────────────────── 1b — occupancy flat after stabilization ───────────────────────────
