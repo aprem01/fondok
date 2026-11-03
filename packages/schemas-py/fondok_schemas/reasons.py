@@ -319,7 +319,7 @@ REASON_META: dict[ReasonCode, ReasonMeta] = {
         "label": "No Year-1 occupancy / ADR",
         "ui": REFUSAL_GLYPH,
         "explanation": (
-            "The deal has no T-12, no STR or market benchmark and no analyst Year-1 occupancy / ADR, so the revenue model does not run — the model never substitutes a placeholder rate."
+            "The deal has no Year-1 occupancy / ADR basis — no T-12, no analyst value and (when the benchmark topline is on) no STR or market benchmark — so the revenue model does not run; the model never substitutes a placeholder rate."
         ),
     },
     ReasonCode.REEXTRACT_NEEDED: {
