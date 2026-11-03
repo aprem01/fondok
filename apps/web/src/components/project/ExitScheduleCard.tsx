@@ -274,10 +274,14 @@ export function ExitScheduleCard({
   rows,
   dealYears,
   sandbox = false,
+  timingNote = null,
 }: {
   rows: ExitScheduleRow[] | undefined;
   dealYears?: readonly DealYearSpan[] | null;
   sandbox?: boolean;
+  /** FON-121 review I1 — `returns.timing_note`: a timing input the worker did
+   *  not apply (a stored acquisition month offset on a deal with a close date). */
+  timingNote?: string | null;
 }) {
   const missing = rows == null ? (sandbox ? EXIT_SCHEDULE_SANDBOX_MISSING : EXIT_SCHEDULE_MISSING) : null;
   return (
@@ -301,6 +305,15 @@ export function ExitScheduleCard({
         </div>
       ) : (
         <>
+          {timingNote && !sandbox && (
+            <div
+              role="note"
+              data-testid="exit-schedule-timing-note"
+              style={{ fontSize: 11.5, color: '#7a5c17', fontWeight: 600, lineHeight: 1.45, marginTop: 2 }}
+            >
+              {timingNote}
+            </div>
+          )}
           <div style={{ marginTop: 4 }}>
             <ExitScheduleTable rows={rows!} dealYears={sandbox ? null : dealYears} traced={!sandbox} />
           </div>

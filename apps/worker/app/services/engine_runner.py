@@ -520,6 +520,9 @@ TOPLINE_STATUS_KEY = "__topline_status__"
 #: the growth-only per-year growth record, for the revenue input builder.
 TOPLINE_MODE_KEY = "__topline_mode__"
 GROWTH_PROVENANCE_KEY = "__topline_growth_provenance__"
+#: FON-121 review I1 — why a stored ``acquisition_month_offset`` was not
+#: applied (the deal's close date sets the deal years); echoed on Returns.
+DEAL_YEAR_TIMING_NOTE_KEY = "__deal_year_timing_note__"
 
 #: Which identity inputs each engine reads DIRECTLY off ``base`` (the
 #: ``base["keys"]`` / ``base["purchase_price"]`` reads in ``_build_input_for``).
@@ -1651,6 +1654,7 @@ async def _load_engine_inputs(
             str_noted_keys=frozenset(),
             t12=None,
         )
+        _apply_deal_year_timing(base, seam_reasons)
         _apply_revenue_basis(base, sources, {}, seam_reasons)
         _resolve_senior_origination_fee(base, sources)
         base["__sources__"] = sources
@@ -2829,6 +2833,8 @@ async def _load_engine_inputs(
         str_noted_keys=frozenset(str_noted_keys),
         t12=_t12_reference(revenue_actuals, revenue_prov),
     )
+    # FON-121 review I1 — deal years govern Returns timing too.
+    _apply_deal_year_timing(base, reasons)
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
     # An analyst override, a deals-row entry or a derived value does not come
@@ -3290,6 +3296,42 @@ def _apply_topline(
                     "(0%). Set RevPAR growth manually, or apply the labelled 4.5% platform suggestion.",
                 )
             )
+
+
+def _apply_deal_year_timing(base: dict[str, Any], reasons: dict[str, dict[str, Any]]) -> None:
+    """FON-121 review I1 — with an acquisition close date, deal years (twelve
+    months from the close) govern every engine, Returns timing included.
+
+    FON-67's ``acquisition_month_offset`` re-aligns the Returns monthly cash
+    flows to CALENDAR years with a stub. On deal years it is 0 by
+    construction, so a stored non-zero offset on a deal WITH a close date is
+    not applied: it is removed from ``base`` and a ``not_applicable`` reason
+    (with the stored value) says so, and Returns carries the same note. With
+    no close date the offset applies as before."""
+    from ..engines.deal_years import deal_years
+    from ..engines.timeline import parse_iso_date
+
+    raw = base.get("acquisition_month_offset")
+    if raw in (None, ""):
+        return
+    try:
+        offset = int(float(raw))
+    except (TypeError, ValueError):
+        return
+    close = parse_iso_date(_iso_date_or_none(base.get("acquisition_close_date")))
+    if close is None or offset == 0:
+        return
+    ys = deal_years(close, 1)
+    year1 = ys[0].label if ys else "twelve months from the close"
+    detail = (
+        f"Acquisition month offset {offset} not applied: the deal has an acquisition close date "
+        f"({close.isoformat()}), so every model year — Returns cash flows and sale dates included — runs "
+        f"twelve months from it (Year 1 = {year1}). The stored offset aligned the Returns cash flows to "
+        "calendar years (FON-67); clear it, or clear the close date to use it."
+    )
+    base.pop("acquisition_month_offset", None)
+    base[DEAL_YEAR_TIMING_NOTE_KEY] = detail
+    reasons["acquisition_month_offset"] = _reason(ReasonCode.NOT_APPLICABLE, detail)
 
 
 def _long_run_growth(base: Mapping[str, Any], sources: Mapping[str, str]) -> Any:
@@ -9305,6 +9347,8 @@ def _build_input_for(
             ),
             # FON-67 — off-cycle disposition month (e.g. a 52-month hold).
             exit_month_override=_exit_month_override(base),
+            # FON-121 review I1 — why a stored month offset is not applied.
+            timing_note=base.get(DEAL_YEAR_TIMING_NOTE_KEY),
             # FON-67 — explicit per-month equity draw schedule.
             equity_draw_schedule=(
                 [float(x) for x in base["equity_draw_schedule"]]

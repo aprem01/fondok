@@ -388,6 +388,18 @@ describe('Returns — the exit schedule card', () => {
     expect(within(selected).getByText('Forward 12-month NOI (Year 6)')).toBeInTheDocument();
   });
 
+  it('FON-121 I1 — a timing input the worker did not apply is stated above the table', () => {
+    const note = 'Acquisition month offset 9 not applied: the deal has an acquisition close date (2025-09-30), so every model year — Returns cash flows and sale dates included — runs twelve months from it.';
+    outputsRef.value = fullRun({ timing_note: note });
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('exit-schedule-timing-note')).toHaveTextContent(note);
+  });
+
+  it('no timing note → nothing extra', () => {
+    render(<ReturnsTab />);
+    expect(screen.queryByTestId('exit-schedule-timing-note')).toBeNull();
+  });
+
   it('a row that paid a lender exit fee says so under its payoff', () => {
     const rows = schedule().map((r) => (r.exit_year === 3 ? { ...r, loan_exit_fee: 240_000 } : r));
     outputsRef.value = fullRun({ exit_schedule: rows });

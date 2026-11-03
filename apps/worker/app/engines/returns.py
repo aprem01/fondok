@@ -606,6 +606,9 @@ class ReturnsEngineInputExt(BaseModel):
     # FON-67 — months elapsed in the acquisition calendar year at close (0-11),
     # for the monthly model's stub-year handling (a 9/30 close = 9).
     acquisition_month_offset: Annotated[int, Field(ge=0, le=11)] = 0
+    # FON-121 review I1 — set by the loader when a stored offset was NOT
+    # applied (the close date sets the deal years); echoed on the output.
+    timing_note: str | None = None
     # FON-67 — off-cycle disposition month (1-based). None → clean hold_years×12
     # exit; set it for a hold that doesn't land on a whole-year boundary (e.g.
     # a 52-month / 4.333-year hold). The monthly model exits here.
@@ -711,6 +714,9 @@ class ReturnsEngineOutputExt(ReturnsEngineOutput):
     # amount charged. Empty when there is no call.
     equity_calls_monthly: list[float] = Field(default_factory=list)
     equity_calls: list[float] = Field(default_factory=list)
+    # FON-121 review I1 — a timing input not applied, and why (e.g. a stored
+    # acquisition month offset on a deal whose close date sets the deal years).
+    timing_note: str | None = None
 
 
 def _project_noi_series(
@@ -1593,6 +1599,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
 
         return ReturnsEngineOutputExt(
             deal_id=payload.deal_id,
+            timing_note=payload.timing_note,
             levered_irr=levered_irr,
             equity_calls_monthly=equity_calls_monthly,
             equity_calls=equity_calls,
@@ -1707,6 +1714,7 @@ def returns_from_cash_flow(
     unl_irr = irr(unlevered_flows)
     return ReturnsEngineOutputExt(
         deal_id=payload.deal_id,
+        timing_note=payload.timing_note,
         levered_irr=lev_irr,
         unlevered_irr=unl_irr,
         equity_multiple=equity_multiple,

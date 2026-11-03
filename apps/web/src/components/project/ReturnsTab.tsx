@@ -920,7 +920,12 @@ function ReturnsSummary({
         />
       </div>
 
-      <ExitScheduleCard rows={scheduleRows} dealYears={dealYears} sandbox={sandboxOn} />
+      <ExitScheduleCard
+          rows={scheduleRows}
+          dealYears={dealYears}
+          sandbox={sandboxOn}
+          timingNote={getEngineField<string | null>(outputs, 'returns', 'timing_note') ?? null}
+        />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 14 }}>
         <ExitAssumptionsCard outputs={outputs} onEdit={onEditInvestment} />
