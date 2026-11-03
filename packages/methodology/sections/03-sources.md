@@ -146,9 +146,16 @@ with the report, page and class named — a market forecast, not the hotel's own
 
 :::
 
-::: badge {source=growth_carried_forward name="Carried Forward"}
-The year is past the last year of the market forecast, so that last year's growth is reused — an
-assumption, labelled with the report and year it carries.
+::: badge {source=growth_carried_forward name="Past the Forecast"}
+The year is past the last year of the market forecast: ADR grows at the average of that forecast's
+years (the label names them, for example "2025–2029 forecast average") and occupancy holds at its
+last forecast level — an assumption, labelled with the report it extends.
+
+:::
+
+::: badge {source=occupancy_held_at_stabilization name="Held After Stabilization"}
+Occupancy is flat after the stabilization year: it holds at the stabilized year's level while ADR
+keeps growing. Only an occupancy growth you enter for that specific year moves it.
 
 :::
 
@@ -751,9 +758,19 @@ unavailable, never patched from another bucket.
 
 :::
 
-::: badge {source=growth_carried_forward name="Carried Forward"}
-A calendar year past `series_last_year` of the document series the previous year used reuses that
-year's growth (`source = carried_forward`); never extended from a withheld or unavailable year.
+::: badge {source=growth_carried_forward name="Past the Forecast"}
+A calendar year past `series_last_year` of the document series the previous year used
+(`source = carried_forward`): ADR = the arithmetic mean of that series' forecast-tagged ADR change
+years (`forecast_average`, `forecast_span` on the label); occupancy = 0 (held). Never extended from a
+withheld or unavailable year; a series with no forecast-tagged year leaves ADR unavailable.
+
+:::
+
+::: badge {source=occupancy_held_at_stabilization name="Held After Stabilization"}
+Occupancy growth INTO model year y > S (the stabilization year) is 0 with
+`source = held_at_stabilization` (`resolve_growth_by_year(stabilization_year=S)`), above every
+document, carry-forward and all-years figure; only `occupancy_growth_by_year[y − 1]` beats it. Both
+topline modes. Excluded from `growth_state`.
 
 :::
 

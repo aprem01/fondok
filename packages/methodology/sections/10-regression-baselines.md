@@ -56,9 +56,13 @@ on a zero baseline, or a field one run does not carry, shows a dash and says why
 exports to Excel. Comparing never re-runs or edits the model.
 
 The repository also keeps a fixed reference: the golden reference fixture's full engine outputs as
-of 2 November 2026 (`evals/baselines/kimpton-golden-2026-11-02-topline-v2.json`) — two fixtures: one
-with no documents (it pins the "no market forecast" state) and one carrying the deal's own STR and
-CoStar reports with the reference Index Analysis inputs. Earlier references stay in the same folder
+of 3 November 2026 — two fixtures: one with no documents (it pins the "no market forecast" state)
+and one carrying the deal's own STR, CoStar and T-12 reports with the reference Index Analysis
+inputs. While the topline is switched on in two steps there are two such files, one per step: the
+growth-only topline that is live (`evals/baselines/kimpton-golden-2026-11-03-growth-only.json`) and
+the benchmark × penetration × ramp topline
+(`evals/baselines/kimpton-golden-2026-11-03-topline-v2-benchmark.json`); both are checked on every
+change, and a comparison across the two says so. Earlier references stay in the same folder
 so the history of every deliberate change remains readable. `scripts/compare_golden_baseline.py`
 re-runs both fixtures on the current code and prints the same field-level diff, so every change to
 a calculation can be checked against what it was expected to move. Every run records the topline

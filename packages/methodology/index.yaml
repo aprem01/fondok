@@ -103,4 +103,9 @@ atlas:
   # Topline card, Excel rows and the no-Year-1-rates entry in `projection`
   # (conceptual) plus the calendar_unknown rule; that question now needs
   # 45,108 characters.
-  max_chars: 46000
+  # 50000 (≈12.5k tokens), was 46000: the FON-116 staged rollout (2026-11-03)
+  # documents the growth-only topline that is live (its Year-1 chain and the
+  # two-step switch) beside the benchmark method, and decisions 1a / 1b
+  # (forecast-average ADR, occupancy flat after stabilization) in
+  # `projection`; that question now needs 48,681 characters.
+  max_chars: 50000

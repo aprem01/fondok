@@ -51,8 +51,38 @@ Set on `fondok-worker` service. Use `railway variables --service fondok-worker` 
 | `LANGSMITH_PROJECT` | _optional_; defaults to `fondok-${DEPLOYMENT_ENVIRONMENT}` |
 | `LANGSMITH_ENDPOINT` | _optional_; self-hosted / EU LangSmith endpoint |
 | `ALLOW_TEST_INGEST` | `false` in production; defaults to `true` for dev |
+| `TOPLINE_BENCHMARK_ENABLED` | **unset / `false`** (TEMPORARY — see "Topline rollout switch" below). `true` turns on the FON-117 benchmark × penetration × ramp topline. |
 
 `PORT` is injected by Railway at runtime; the Dockerfile binds to `${PORT:-8000}`.
+
+### Topline rollout switch (`TOPLINE_BENCHMARK_ENABLED`) — temporary
+
+FON-116 (market growth by year) ships before FON-117 (benchmark ×
+penetration × ramp). One worker setting chooses which topline runs; it is a
+staged-rollout switch, not a second product path, and it is read in one place
+(`app/services/topline.py::topline_mode`).
+
+| Value | `/health.topline_mode` | What the model does |
+| --- | --- | --- |
+| unset / `false` (default) | `growth_only` | Year 1 = the analyst's rate → the T-12 → the STR subject TTM when the retired "Use STR rates" switch is on → CBRE Horizons' first forecast-year ADR; none → `no_revenue_basis`. Every later year grows by the per-year growth resolver (analyst > CBRE > CoStar > post-forecast average > unavailable with the labelled 4.5% suggestion); occupancy flat after stabilization. The Topline card shows the stabilization year only. |
+| `true` | `benchmark` | The full FON-117 engine. The Topline card shows the level, penetration and ramp controls. |
+
+* Flip: set the variable on `fondok-worker`, redeploy, confirm
+  `/health.topline_mode == "benchmark"`, then re-run the deals (the run
+  compare labels the mode change: "growth only → benchmark × penetration ×
+  ramp"). The web needs no change — it reads `topline_status.topline_mode`.
+* CI checks both modes: `scripts/check_golden_gate.py` (default,
+  `evals/baselines/kimpton-golden-2026-11-03-growth-only.json`) and
+  `scripts/check_golden_gate.py --topline-mode benchmark`
+  (`kimpton-golden-2026-11-03-topline-v2-benchmark.json`).
+* **Removal (once FON-117 is on in production):** delete the setting
+  (`app/config.py`), `topline_mode()` and every `growth_only` branch
+  (`services/topline.py::build_growth_only` / `_growth_only_status`,
+  `engine_runner._apply_growth_only_str_seed`, the growth-only CBRE Year-1
+  ADR block, `RevenueEngineInput.topline_mode` / `growth_provenance`, the
+  Excel growth-only Source note, the web `isGrowthOnly` branches), the
+  `topline_benchmark` test fixture and the CI benchmark step, keep the
+  benchmark baseline as the only one, and update methodology 02.
 
 ## Vercel environment variables
 
@@ -424,7 +454,8 @@ railway connect Postgres
 ```bash
 curl -s https://fondok-worker-production.up.railway.app/health | python3 -m json.tool
 # status, version, build_sha, build_time, db, db_migrations_dsn, usali_rules,
-# structural_recognizer, ontology_version, degraded_reasons
+# structural_recognizer, ontology_version, methodology_sections, topline_mode,
+# degraded_reasons
 ```
 
 The one-liner that answers "is the commit I pushed the one serving?":

@@ -36,8 +36,31 @@ precedence for each input is below.
 ::: card
 #### How occupancy and ADR are projected
 
-Every projected year's occupancy and ADR is the **benchmark** for that year × the hotel's
-**penetration** of it. The chain, in order:
+**Today: growth by year on the hotel's own Year 1.** The new topline is being switched on in two
+steps. In the first step, which is live, Year 1 is the hotel's own rates and every later year grows
+them at the market growth for that year:
+
+::: chain
+1. **Year 1** — Your Year-1 occupancy or ADR (entered with a note) is used as typed; else the
+   hotel's own T-12; else, when the deal still has the retired "Use STR rates" switch on, the
+   hotel's own STR trailing twelve months; else, for ADR only, the first forecast year of a CBRE
+   Hotel Horizons report. With none of them the projection refuses and asks for the rates — there
+   is no default Year-1 rate.
+2. **Market growth, year by year** — the same chain as below (your growth, CBRE, the CoStar
+   submarket forecast for the hotel's class), applied from Year 2.
+3. **After stabilization** — Occupancy holds at its stabilized-year level; ADR keeps growing. Only an
+   occupancy growth you enter for a specific year still moves it.
+4. **After the forecast ends** — ADR grows at the average of the forecast's years (the label names
+   them, for example "2025–2029 forecast average (+2.4%)"); occupancy holds.
+
+:::
+
+The benchmark, penetration and ramp below are shown on the Market and Index Analysis tabs for
+reference but do not set any year until the second step is switched on; the Future P&L says which
+step the workspace is on. This two-step switch is temporary.
+
+**When the benchmark method is switched on**, every projected year's occupancy and ADR is the
+**benchmark** for that year × the hotel's **penetration** of it. The chain, in order:
 
 ::: chain
 1. **Your override** — A Year-1 occupancy or ADR you enter yourself (with a note) is used as typed.
@@ -49,8 +72,10 @@ Every projected year's occupancy and ADR is the **benchmark** for that year × t
    and is grown into every projected year, Year 1 included, by the market growth below.
 3. **Market growth, year by year** — Your growth for that year; else your all-years growth; else the
    CBRE Hotel Horizons forecast for that calendar year; else the CoStar submarket forecast for the
-   hotel's class. Past the last forecast year the last forecast year's growth is carried forward and
-   labelled an assumption. With no forecast at all the rate is held flat and the Future P&L says
+   hotel's class. Past the last forecast year ADR grows at the average of that forecast's years and
+   occupancy holds, both labelled assumptions. After the stabilization year occupancy holds at its
+   stabilized level while ADR keeps growing (only your own occupancy growth for a specific year still
+   moves it). With no forecast at all the rate is held flat and the Future P&L says
    "No market forecast — set growth manually". A 4.5% RevPAR growth is offered as a labelled
    platform suggestion you can apply; it is never applied for you.
 4. **Penetration at stabilization** — 100 (parity with the benchmark) unless you set it; the hotel's
@@ -59,7 +84,8 @@ Every projected year's occupancy and ADR is the **benchmark** for that year × t
 5. **Ramp** — Before the stabilization year the hotel runs at a share of its stabilized penetration:
    85% in Year 1 and 95% in Year 2 for a Year-3 stabilization (85% in Year 1 for Year 2). For a later
    stabilization year the years in between run at 100% until you enter them — no ramp is invented.
-6. **The T-12** — Shown beside the projection as a reference row, not the basis.
+6. **The T-12** — Shown beside the projection as a reference row, not the basis. (One ramp applies to
+   occupancy and ADR together.)
 
 :::
 
@@ -242,9 +268,11 @@ comparison row — is read from that year, published once so two screens cannot 
 The stabilization year defaults to **Year 3 of operations** (badged “Default — confirm”); on a
 shorter hold it is the last projected year, and the card says so. You can override it on the Future
 P&L's Assumptions panel. It selects which year the stabilized figures are read from, and it is
-also the year the hotel reaches its stabilized penetration of the benchmark: the ramp runs in the
-years before it. Changing it therefore moves the projected occupancy and ADR of the ramp years and
-everything built on them, and an override carries a justification note.
+also the year occupancy stops growing: from the year after it, occupancy holds at the stabilized
+year's level while ADR keeps growing. With the benchmark method switched on it is also the year the
+hotel reaches its stabilized penetration of the benchmark (the ramp runs in the years before it).
+Changing it therefore moves the projected occupancy of the later years (and, with the benchmark
+method, the ramp years) and everything built on them, and an override carries a justification note.
 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the acquisition close,
 and the Overview reads “Year 3 after close”. For a material repositioning or re-flag, set the
@@ -397,6 +425,15 @@ and an analyst override replaces it.
 ::: card
 #### Occupancy and ADR — topline methodology v2
 
+<!-- source: apps/worker/app/config.py (TOPLINE_BENCHMARK_ENABLED), services/topline.py (topline_mode, build_growth_only, _growth_only_status), services/engine_runner.py (_apply_topline, _apply_growth_only_str_seed, CBRE Year-1 ADR), DEPLOY.md (Topline rollout switch) -->
+Staged rollout (temporary). The worker runs one of two topline modes, reported on the health check
+and on the topline status. Growth-only (the default, live): no benchmark, penetration or ramp; Year 1
+= your value → the T-12 actual → the STR subject trailing twelve months when the retired "Use STR
+rates" switch is on (no synthetic STR forecast point) → CBRE Hotel Horizons' first forecast year's
+ADR; none → {{reason:no_revenue_basis}}. Year 1 is not grown; growth applies into Years 2..hold from
+the resolver below. Benchmark (switched on per environment): the full method below. The switch is
+removed once the benchmark method is live everywhere.
+
 <!-- source: apps/worker/app/services/topline.py (DEFAULT_RAMP_POLICY, default_ramp_applies), topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline, _ramp_for_year) -->
 For each projected year y with stabilization year S, benchmark B, stabilized penetration P (index
 points, default 100), ramp r and a per-year penetration V you may set:
@@ -419,8 +456,12 @@ calendar years after the level's period up to year y's. A step with no growth fi
 Growth per year and metric, first hit: your per-year growth → your all-years growth (your RevPAR
 growth alone sets ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 for each year) →
 CBRE Hotel Horizons All Hotels change for that calendar year → CoStar submarket change for the
-hotel's class → carried forward past the last year of the series the previous year used
-(an assumption) → none (held flat, {{reason:no_market_forecast}}). A CoStar figure under a withhold
+hotel's class → past the last year of the series the previous year used: ADR at the arithmetic
+average of that series' forecast-tagged ADR years, occupancy held (assumptions, the label names the
+years averaged) → none (held flat, {{reason:no_market_forecast}}). Occupancy into every year after
+the stabilization year S is 0 (held at the Year-S level, "held after stabilization") whatever the
+document, carry-forward or all-years figure says; only your per-year occupancy growth for that
+year applies. ADR is unaffected. Held years do not count as a market figure in the growth state. A CoStar figure under a withhold
 data policy is {{reason:license_withheld}}. A CoStar report extracted before the class series were
 read (pipeline before v9, no class table) is never "not in the report": the class's years are
 {{reason:reextract_needed}} ("report on file but extracted before class forecasts were read —
@@ -446,12 +487,13 @@ source's long-run average (CBRE Hotel Horizons long-run RevPAR change, else its 
 when one is on file, else the last projected year's ADR growth with occupancy held at its stabilized
 level — a single forecast year's occupancy gain (a recovery year) is never compounded in
 perpetuity — and 0% (badged No forecast) when there is no figure. The status names the convention
-used. After a forecast series ends, ADR growth carries forward (labelled assumption) and occupancy
-holds at its last level; the 95% occupancy cap still applies.
+used. After a forecast series ends, ADR grows at the series' forecast average (labelled
+assumption) and occupancy holds at its last level, so an exit year past the series uses that
+average; the 95% occupancy cap still applies.
 
 <!-- source: apps/worker/app/services/engine_runner.py (REVENUE_BASIS_KEYS, _apply_revenue_basis, _revenue_basis_failure) -->
-There is no default Year-1 occupancy or ADR. Year 1 comes from your value, else the benchmark ×
-penetration × ramp, else the T-12. With none of them the revenue model and every model built on it
+There is no default Year-1 occupancy or ADR. Year 1 comes from your value, else (benchmark mode)
+the benchmark × penetration × ramp or (growth-only mode) the Year-1 chain above, else the T-12. With none of them the revenue model and every model built on it
 refuse with {{reason:no_revenue_basis}}: "Upload a T-12 or STR report, or enter Year-1 occupancy and
 ADR." The capital stack still runs.
 
@@ -547,7 +589,8 @@ it is clamped to the last projected year and reported as clamped. With a reopeni
 3 is counted from the first full operating year after reopening; a reopening the calendar cannot
 place (no close date, or a Year 3 before the first projected year) falls back to the close anchor
 and states the exception. The analyst's stabilization year wins over either anchor. It selects
-the year the stabilized figures are read from and moves no cash flow.
+the year the stabilized figures are read from, and occupancy growth into every later year is 0
+(held after stabilization, both topline modes); with the benchmark method it also ends the ramp.
 
 :::
 
