@@ -1132,7 +1132,10 @@ period primary on the document list; the badge is `year_one_primary`, the Histor
 `statement_period` and takes rank 0 whatever its status (the store fetches a chosen statement's last
 extraction while it re-extracts), `_load_source_documents` links t12_actual keys without a
 `source_fields` row to the same statement, and `year_one_basis_statement` is the variance / memo /
-dossier actual side. The shared key on the `documents` columns alone is only the badge's fallback
+dossier actual side. `_resolve_statement_lines` never admits a line under `prior_year` /
+`prior_period` / `budget` / `forecast` / `variance` (another period or basis) for any Year-1
+canonical; a month of the statement's own period stays the fallback when it states no full-period
+line. The shared key on the `documents` columns alone is only the badge's fallback
 when the extraction rows cannot be read. The key ranks full-year statements
 before partial ones, the most recent period first, and a T-12 ahead of a calendar-year P&L of the
 same year. A T-12 whose extraction carries no period label is still treated as a

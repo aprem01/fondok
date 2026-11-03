@@ -332,9 +332,9 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
   it('titles a revenue-line flag by concept and never prints a dollar NOI impact for it', () => {
     render(<ICMemoTab project={PROJECT} />);
     expect(screen.getByText('Critical')).toBeInTheDocument();
-    expect(screen.getByText('Rooms revenue — broker overstates T-12 by 5.3%')).toBeInTheDocument();
+    expect(screen.getByText('Rooms revenue — broker overstates the actual by 5.3%')).toBeInTheDocument();
     expect(
-      screen.getByText('Rooms revenue: broker materials report $12.9M against $12.3M in the trailing-twelve-month operating statements.'),
+      screen.getByText('Rooms revenue: broker materials report $12.9M against $12.3M in the actuals statement.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Revenue-line variance — NOI impact not estimated')).toBeInTheDocument();
     expect(screen.queryByText(/Estimated NOI impact/)).not.toBeInTheDocument();
@@ -345,7 +345,7 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
   it('prints "Estimated NOI impact $X" only for an NOI-basis flag', () => {
     fx.flags = [ROOMS_FLAG, NOI_FLAG];
     render(<ICMemoTab project={PROJECT} />);
-    expect(screen.getByText('NOI — broker overstates T-12 by 24.4%')).toBeInTheDocument();
+    expect(screen.getByText('NOI — broker overstates the actual by 24.4%')).toBeInTheDocument();
     expect(screen.getByText(/^Estimated NOI impact \$1\.0M/)).toBeInTheDocument();
     // Exactly one dollar impact on the page — the revenue line still says not estimated.
     expect(screen.getAllByText(/Estimated NOI impact/)).toHaveLength(1);
@@ -353,14 +353,31 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
     expect(screen.getByText(/2 critical diligence items remain open/)).toBeInTheDocument();
   });
 
+  it('FON-22: names the actual statement and shows a derived actual with its derivation', () => {
+    fx.flags = [{
+      ...ROOMS_FLAG,
+      broker_value: 9_708_984, t12_value: 9_496_400, variance_abs: -212_584, variance_pct: -0.0224,
+      actual_source: 'Copy of Angler_s 2024 Full Year Detailed P&L.xlsm',
+      actual_basis: 'derived: RevPAR × 132 keys × 366 days; the statement states no full-period rooms revenue line',
+    } as unknown as VarianceFlag];
+    render(<ICMemoTab project={PROJECT} />);
+    expect(screen.getByText('Rooms revenue — broker overstates the actual by 2.2%')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Rooms revenue: broker materials report $9.7M against $9.5M (derived: RevPAR × 132 keys × 366 days; the statement states no full-period rooms revenue line) in Copy of Angler_s 2024 Full Year Detailed P&L.xlsm.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/T-12/)).not.toBeInTheDocument();
+  });
+
   it('lists the raw paths + rule ids under Technical detail', () => {
     render(<ICMemoTab project={PROJECT} />);
     expect(screen.queryByText(/broker\.rooms_revenue/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Technical detail'));
     const detail = screen.getByText(/concept rooms_revenue · impact basis revenue · 3 raw fields consolidated/);
-    expect(detail.textContent).toContain('rule BROKER_VS_T12_NOI_VARIANCE · field broker_proforma.rooms_revenue_usd · broker $12,900,000 vs T-12 $12,300,000 · p.14');
-    expect(detail.textContent).toContain('field broker.rooms_revenue · broker $12,950,000 vs T-12 $12,300,000');
-    expect(detail.textContent).toContain('field rooms_revenue_usd · broker $12,400,000 vs T-12 $12,300,000');
+    expect(detail.textContent).toContain('rule BROKER_VS_T12_NOI_VARIANCE · field broker_proforma.rooms_revenue_usd · broker $12,900,000 vs actual $12,300,000 · p.14');
+    expect(detail.textContent).toContain('field broker.rooms_revenue · broker $12,950,000 vs actual $12,300,000');
+    expect(detail.textContent).toContain('field rooms_revenue_usd · broker $12,400,000 vs actual $12,300,000');
     expect(screen.getByText('Hide technical detail')).toBeInTheDocument();
   });
 
@@ -409,7 +426,7 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
 
     expect(screen.getByText('Occupancy — basis mismatch, needs review')).toBeInTheDocument();
     expect(screen.getByText(/^Basis mismatch — needs review: broker 83 vs T-12 0\.716/)).toBeInTheDocument();
-    expect(screen.getByText('Basis mismatch — the broker and T-12 figures are not on the same basis; no variance severity assigned')).toBeInTheDocument();
+    expect(screen.getByText('Basis mismatch — the broker and actual figures are not on the same basis; no variance severity assigned')).toBeInTheDocument();
     // Info severity → not a critical diligence item, nothing "overstates".
     expect(screen.getByText('Minor')).toBeInTheDocument();
     expect(screen.queryByText(/overstates T-12/)).not.toBeInTheDocument();
@@ -417,7 +434,7 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
 
     fireEvent.click(screen.getByText('Technical detail'));
     const detail = screen.getByText(/concept occupancy · impact basis revenue · 1 raw field consolidated · 2 excluded/);
-    expect(detail.textContent).toContain('field ttm_summary_per_om.occupancy_pct · broker 8300.0% vs T-12 71.6% · source OM Anglers OM.pdf · basis mismatch');
+    expect(detail.textContent).toContain('field ttm_summary_per_om.occupancy_pct · broker 8300.0% vs actual 71.6% · source OM Anglers OM.pdf · basis mismatch');
     expect(detail.textContent).toContain('excluded · field ttm_performance.segment.luxury_upper_upscale.occupancy_pct · value 74.1% · source OM Anglers OM.pdf · market-segment stat');
     expect(detail.textContent).toContain('excluded · field ttm_summary_per_om.occupancy_pct · value 72.0% · source PNL 2023 P&L.xlsx · from an actuals document (PNL)');
   });
@@ -426,7 +443,7 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
     fx.fieldOverrides = { memo_diligence: { rooms_revenue: { status: 'Accepted', updated_at: '2026-09-10T00:00:00Z' } } };
     render(<ICMemoTab project={PROJECT} />);
     expect(screen.getByText('Accepted')).toBeInTheDocument();
-    expect(screen.getByText('Rooms revenue — broker overstates T-12 by 5.3% — variance accepted')).toBeInTheDocument();
+    expect(screen.getByText('Rooms revenue — broker overstates the actual by 5.3% — variance accepted')).toBeInTheDocument();
     expect(screen.getByText('All critical diligence items resolved')).toBeInTheDocument();
     expect(screen.getByText('Critical diligence items resolved')).toBeInTheDocument();
     expect(screen.queryByText('Resolve')).not.toBeInTheDocument();

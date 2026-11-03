@@ -270,7 +270,15 @@ def _deterministic_cross_field_checks(
                 )
 
     # ── 2. NOI growth without OpEx pressure. ───────────────────────────
-    if proforma is not None and actuals is not None:
+    if (
+        proforma is not None
+        and actuals is not None
+        # FON-22 — an OpEx ratio either side does not state is a 0.0
+        # placeholder, never a ratio that "holds".
+        and not any(
+            p in fin.not_stated for fin in (actuals, proforma) for p in ("noi", "opex_ratio")
+        )
+    ):
         if actuals.noi > 0 and proforma.noi > 0:
             noi_growth = (proforma.noi - actuals.noi) / actuals.noi
             opex_change = abs(proforma.opex_ratio - actuals.opex_ratio)
@@ -284,7 +292,7 @@ def _deterministic_cross_field_checks(
                             f"Broker projects NOI growth of {noi_growth:.1%} "
                             f"(${actuals.noi:,.0f} → ${proforma.noi:,.0f}) while "
                             f"OpEx ratio holds at {proforma.opex_ratio:.1%} "
-                            f"(T-12 actual: {actuals.opex_ratio:.1%}, delta "
+                            f"({_actual_label(actuals)}: {actuals.opex_ratio:.1%}, delta "
                             f"{opex_change:.2%}). Margin expansion of this size "
                             "needs an explicit revenue or labor source in the "
                             "narrative — confirm the assumption stack."
@@ -324,7 +332,7 @@ def _deterministic_cross_field_checks(
                             f"Property is in a coastal market where wind/flood "
                             f"reinsurance has driven insurance per key up 30-60% "
                             f"at renewal. Broker assumes {per_key_broker} "
-                            f"vs T-12 actual {per_key_actual} (only "
+                            f"vs {_actual_label(actuals)} {per_key_actual} (only "
                             f"{growth:+.1%} YoY). Underwrite to a 30-50% lift; "
                             f"the gap would lift insurance expense by "
                             f"~${0.4 * actual_ins:,.0f}."
@@ -534,6 +542,11 @@ Rules:
    stories ON TOP. If the same issue is already in the variance flag
    list, skip it.
 """
+
+
+def _actual_label(fin: USALIFinancials) -> str:
+    """The actual, named by its statement (FON-22) — never an assumed T-12."""
+    return f"actual ({fin.source_statement})" if fin.source_statement else "actual"
 
 
 def _format_financials(label: str, fin: USALIFinancials | None) -> str:

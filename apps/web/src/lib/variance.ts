@@ -75,6 +75,10 @@ export interface VarianceFlag {
   basis_mismatch?: boolean;
   unit_note?: string | null;
   source_doc_type?: string | null;
+  /** FON-22 — the statement the actual is from; null on older workers. */
+  actual_source?: string | null;
+  /** FON-22 — the derivation when the actual is computed, e.g. "derived: RevPAR × 132 keys × 366 days". */
+  actual_basis?: string | null;
 }
 
 /** FON-54a — one raw broker-field comparison behind a consolidated flag. */

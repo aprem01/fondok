@@ -17,11 +17,11 @@
         "broker": null,
         "actuals": {
           "period_label": "Actuals: the year ending 2025-05-31",
-          "rooms_revenue": 0.0,
+          "rooms_revenue": 9322920.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 0.0,
+          "total_revenue": 14009800.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -50,13 +50,12 @@
           },
           "gop": 5081540.0,
           "noi": 1948560.0,
-          "opex_ratio": 0.0,
+          "opex_ratio": 0.8609145027052492,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
           "labor_by_dept": {},
           "not_stated": [
-            "rooms_revenue",
             "fb_revenue",
             "resort_fees",
             "other_revenue",
@@ -71,9 +70,7 @@
             "undistributed.utilities",
             "undistributed.total",
             "mgmt_fee",
-            "ffe_reserve",
-            "total_revenue",
-            "opex_ratio"
+            "ffe_reserve"
           ],
           "derived": {},
           "source_statement": "anglers_t12_real"
@@ -180,11 +177,11 @@
         "broker": null,
         "actuals": {
           "period_label": "Actuals: the year ending 2025-05-31",
-          "rooms_revenue": 0.0,
+          "rooms_revenue": 9322920.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 0.0,
+          "total_revenue": 14009800.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -213,13 +210,12 @@
           },
           "gop": 5081540.0,
           "noi": 1948560.0,
-          "opex_ratio": 0.0,
+          "opex_ratio": 0.8609145027052492,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
           "labor_by_dept": {},
           "not_stated": [
-            "rooms_revenue",
             "fb_revenue",
             "resort_fees",
             "other_revenue",
@@ -234,9 +230,7 @@
             "undistributed.utilities",
             "undistributed.total",
             "mgmt_fee",
-            "ffe_reserve",
-            "total_revenue",
-            "opex_ratio"
+            "ffe_reserve"
           ],
           "derived": {},
           "source_statement": "anglers_t12_real"

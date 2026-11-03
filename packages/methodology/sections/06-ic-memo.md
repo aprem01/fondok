@@ -74,11 +74,13 @@ the Assumptions sheet is applied.
   dollars. A value whose unit cannot be established is not compared, and a percentage claim is never
   read against a dollar line — Fondok does not reconstruct dollars from a percent whose denominator is
   itself an unverified broker figure.
-- **Annual against annual, on the model's own figures.** The actual side is exactly what the model
-  reads for Year 1 from the statement it grounds on (the Data Room's Primary source) — never a budget,
-  forecast, prior-year or monthly line, and never a line from another statement. A line the statement
-  does not state is shown as not stated, never as $0, and a refusal names the statement; rooms revenue
-  the statement does not state as a line is its own RevPAR × rooms × days, labelled as derived. Fondok never
+- **Annual against annual, on one statement.** The actual side is what the model reads for Year 1
+  from the statement it grounds on (the Data Room's Primary source), and only from that statement —
+  never a budget, forecast, prior-year or monthly line. A line that statement lacks is shown as not
+  stated, never as $0 and never filled from another statement or period, even where the model itself
+  fills it; each flag and refusal names the statement ("the actual (FY2024 P&L)"), never an assumed
+  T-12. Rooms revenue a full-year statement does not state as a line is its own RevPAR × rooms × days,
+  shown on the flag as derived; a part-year statement's is not stated, never annualised. Fondok never
   compares a month against a year.
 - **Plausibility guard.** A pair of figures more than three hundred percent apart is reported as
   “Basis mismatch — needs review” with both figures and no severity: two numbers that far apart are on
@@ -155,16 +157,19 @@ inference.
   dollar T-12 line is rejected before any comparison, so it never produces a variance percentage.
   Fondok does not reconstruct dollars from a percent claim — the denominator would itself be an
   unverified broker figure.
-- **Annual against annual.** The T-12 side is the document's annual / trailing-twelve-month line
-  (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly
+- **Annual against annual.** The actual side is the basis statement's annual / trailing-twelve-month
+  line (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly
   slice: the engine's own Year-1 lines (`engine_runner.year_one_actual_lines`, the functions behind
-  the revenue and expense loaders — full-period lines only, never a budget, forecast, prior-year or
-  variance line), plus the basis statement's stated GOP / NOI / NOI before reserve and its stated total
+  the revenue and expense loaders — full-period lines whose `SourceField.document_id` is the basis
+  document only, so a loader fill from another statement is not stated; never a budget, forecast,
+  prior-year or variance line), plus the basis statement's stated GOP / NOI / NOI before reserve and its stated total
   revenue unless its own lines contradict it (no rooms line, or lines above it); `_load_critic_inputs` and
   `load_actuals_before_reserve_noi` share it, never blended across statements. A line the statement does
   not state is listed in `USALIFinancials.not_stated` and prints "not stated" in every agent prompt —
   never $0 or a 100% OpEx ratio. With no full-period rooms revenue line, rooms revenue is RevPAR (or
-  occupancy × ADR) × keys × the period's days, listed in `derived` and printed with that label. If no annual actual exists for a concept
+  occupancy × ADR) × keys × the period's days when the basis covers twelve months (never for a part
+  year), listed in `derived`, printed with that label and carried on the flag as `actual_basis`; the
+  flag's `actual_source` and note name the statement ("vs the actual (FY2024 P&L.xlsx)"). If no annual actual exists for a concept
   there is no flag — Fondok never compares a month against a year, and the report names the concept it
   could not compare with {{reason:period_mismatch}} or {{reason:no_source}}.
 - **Plausibility guard.** As a last line of defence, a pair of figures more than 300% apart is

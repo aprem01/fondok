@@ -716,3 +716,101 @@ async def test_without_a_full_period_rooms_line_rooms_is_derived_never_the_budge
     assert "total_revenue" in actuals.not_stated
     text_ = _format_financials("ACTUALS", actuals)
     assert "derived:" in text_ and "10,839,200" not in text_ and "9,985,570" not in text_
+
+
+# ── Round 4 — the actual side is ONE statement; nothing filled from another ──
+
+
+@pytest.mark.asyncio
+async def test_a_line_the_basis_lacks_is_not_stated_never_filled_from_another_statement() -> None:
+    """Live 2e1db521 / 76d10a64: seven Year-1 lines (insurance, mgmt fee,
+    property taxes, FF&E reserve, S&M, property operations, other revenue) are
+    the loader's fills from the March 2025 TTM — another statement and period —
+    yet the spread named only the FY2024 Detailed P&L. The broker-vs-actual
+    side is one statement: a line it lacks is not stated."""
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_expense_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_statement(
+        deal_id, doc_type="PNL", filename=_BASIS_2E1, extracted_period_year=2024,
+        ts=datetime(2026, 8, 1, tzinfo=UTC),
+        fields=[
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_496_400.0},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_739_040.0},
+            {"field_name": "p_and_l_usali.undistributed.utilities", "value": 288_000.0},
+        ],
+    )
+    await _insert_statement(
+        deal_id, doc_type="PNL_MONTHLY", filename="Copy of The Angler_s - March 2025 Financials.xlsx",
+        ts=datetime(2026, 8, 2, tzinfo=UTC), report_as_of="2025-03-31",
+        fields=[
+            *[{"field_name": f"p_and_l_usali.monthly.{m}_2024.rooms_revenue", "value": 800_000.0}
+              for m in ("apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")],
+            *[{"field_name": f"p_and_l_usali.monthly.{m}_2025.rooms_revenue", "value": 800_000.0}
+              for m in ("jan", "feb", "mar")],
+            {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_429_570.0},
+        ],
+    )
+    async with get_session_factory()() as session:
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    # The model fills insurance from the TTM (its documented fill)…
+    assert exp.get("insurance") == 1_429_570.0
+    # …but the actual side compared with the broker is the basis statement only.
+    assert actuals is not None and actuals.source_statement == _BASIS_2E1
+    assert "fixed_charges.insurance" in actuals.not_stated
+    assert actuals.undistributed.utilities == 288_000.0
+
+
+def test_rooms_revenue_is_never_derived_by_annualising_a_part_year_statement() -> None:
+    """A year-to-date basis (no full year on the deal) states RevPAR for six
+    months; RevPAR × keys × 365 would annualise it. Rooms stays not stated."""
+    from app.services.engine_runner import year_one_actuals_from_shims
+
+    ytd = {
+        "document_id": "ytd", "doc_type": "PNL_YTD", "filename": "June 2025 YTD.xlsx",
+        "fields": [
+            {"field_name": "p_and_l_usali.period_type", "value": "ytd"},
+            {"field_name": "p_and_l_usali.period_ending", "value": "2025-06-30"},
+            {"field_name": "occupancy_pct", "value": 0.85},
+            {"field_name": "adr_usd", "value": 250.0},
+            {"field_name": "revpar_usd", "value": 212.5},
+        ],
+    }
+    out = year_one_actuals_from_shims([ytd], keys=132)
+    assert out is not None
+    assert "rooms_revenue" not in out.revenue and out.derived == {}
+    # A full year states the same RevPAR: derived, labelled.
+    fy = {**ytd, "document_id": "fy", "doc_type": "PNL", "fields": [
+        {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"}, *ytd["fields"][2:],
+    ]}
+    out = year_one_actuals_from_shims([fy], keys=132)
+    assert out is not None and out.revenue["rooms_revenue"] == pytest.approx(212.5 * 132 * 366)
+    assert "366 days" in out.derived["rooms_revenue"]
+
+
+def test_noi_growth_rule_never_reads_a_not_stated_opex_ratio() -> None:
+    """Review M-R3-1: both sides state NOI, neither states total revenue, so
+    both OpEx ratios are 0.0 placeholders — the rule must not fire "OpEx ratio
+    holds at 0.0%"."""
+    from fondok_schemas import USALIFinancials
+
+    def fin(noi: float, label: str) -> USALIFinancials:
+        return USALIFinancials(
+            period_label=label, rooms_revenue=0.0, total_revenue=0.0, gop=0.0, noi=noi,
+            opex_ratio=0.0, not_stated=["total_revenue", "opex_ratio"], source_statement="FY2024.xlsx",
+        )
+
+    from app.agents.critic import CriticInput
+
+    payload = CriticInput(
+        deal_id="d", tenant_id="t",
+        broker_proforma=fin(3_000_000.0, "Broker"), t12_actual=fin(2_000_000.0, "Actuals: FY2024"),
+    )
+    from app.agents.critic import _deterministic_cross_field_checks
+
+    found = _deterministic_cross_field_checks(payload, deal_uuid=uuid4())
+    assert not [f for f in found if f.rule_id == "MULTI_FIELD_NOI_GROWTH_WITHOUT_OPEX_PRESSURE"]

@@ -216,9 +216,9 @@ export function mapWorkerFlag(
     noi_impact_usd,
     explanation:
       f.note ??
-      `Broker pro forma ${broker_value !== undefined ? broker_value : '—'} vs T-12 actual ${t12_value !== undefined ? t12_value : '—'} on ${label}. Delta ${delta !== undefined ? delta.toLocaleString() : '—'}.`,
+      `Broker pro forma ${broker_value !== undefined ? broker_value : '—'} vs the actual${f.actual_source ? ` (${f.actual_source})` : ''} ${t12_value !== undefined ? t12_value : '—'} on ${label}. Delta ${delta !== undefined ? delta.toLocaleString() : '—'}.`,
     recommended_action:
-      'Review the cited T-12 line and re-underwrite the broker assumption.',
+      'Review the cited actual line and re-underwrite the broker assumption.',
     source_documents: f.source_page
       ? [
           {
@@ -233,6 +233,8 @@ export function mapWorkerFlag(
     basis_mismatch: f.basis_mismatch === true,
     unit_note: f.unit_note ?? null,
     source_doc_type: f.source_doc_type ?? null,
+    actual_source: f.actual_source ?? null,
+    actual_basis: f.actual_basis ?? null,
     raw_fields: (f.raw_fields ?? []).map((r) => ({
       field: r.field,
       rule_id: r.rule_id ?? null,

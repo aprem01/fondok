@@ -3746,6 +3746,11 @@ export interface VarianceFlagResult {
   unit_note?: string | null;
   /** Every admitted row failed the plausibility guard — "Basis mismatch — needs review". */
   basis_mismatch?: boolean;
+  /** FON-22 — the statement the actual is from (the one the model uses). */
+  actual_source?: string | null;
+  /** FON-22 — "derived: RevPAR × 132 keys × 366 days; …" when the actual is
+   *  computed from stated lines rather than stated itself. */
+  actual_basis?: string | null;
 }
 
 export interface VarianceReportResult {

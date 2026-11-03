@@ -24,6 +24,8 @@ module too — see ``list_broker_questions`` / ``update_broker_question_state``
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -149,6 +151,13 @@ class VarianceFlagOut(BaseModel):
     #: True when every admitted row for this concept failed the plausibility
     #: guard — "Basis mismatch — needs review", severity Info, no escalation.
     basis_mismatch: bool = False
+    #: FON-22 — the statement the actual is from (the statement the model
+    #: grounds Year-1 on), named on the flag; never "T-12" unless it is one.
+    actual_source: str | None = None
+    #: FON-22 — set when the actual is not a stated line but computed from
+    #: stated ones ("derived: RevPAR × 132 keys × 366 days; …"); the Variance
+    #: row shows it.
+    actual_basis: str | None = None
     #: Phase 4.1 — why this flag is not a usable comparison, as a
     #: ``ReasonCode``: ``basis_mismatch`` (every admitted row failed the 300%
     #: plausibility guard — the same condition ``basis_mismatch`` above
@@ -315,12 +324,20 @@ def _fmt_concept_delta_pct(concept: str, delta_pct: float) -> str:
     return f"{abs(delta_pct):.1%}"
 
 
+def _actual_words(actual_source: str | None) -> str:
+    """How a flag names its actual: the statement, never an assumed "T-12"."""
+    return f"the actual ({actual_source})" if actual_source else "the actual"
+
+
 def _concept_note(
     concept: str,
     label: str,
     basis: VarianceImpactBasis,
     primary: VarianceFlagOut,
     merged: int,
+    *,
+    actual_source: str | None = None,
+    actual_basis: str | None = None,
 ) -> str | None:
     """Business-readable, deterministic description of a consolidated flag."""
     if (
@@ -332,11 +349,13 @@ def _concept_note(
     direction = "overstates" if primary.broker > primary.actual else "understates"
     parts = [
         f"{label}: broker proforma {_fmt_concept_value(concept, primary.broker)} "
-        f"vs T-12 actual {_fmt_concept_value(concept, primary.actual)}"
+        f"vs {_actual_words(actual_source)} {_fmt_concept_value(concept, primary.actual)}"
     ]
+    if actual_basis:
+        parts.append(f" ({actual_basis})")
     if primary.delta_pct is not None and abs(primary.delta_pct) > 0:
         parts.append(
-            f" — broker {direction} the T-12 by "
+            f" — broker {direction} the actual by "
             f"{_fmt_concept_delta_pct(concept, primary.delta_pct)}."
         )
     else:
@@ -380,6 +399,9 @@ def _flag_reason(
 def consolidate_variance_flags(
     flags: list[VarianceFlagOut],
     excluded: list[VarianceRawFieldOut] | None = None,
+    *,
+    actual_source: str | None = None,
+    derived: Mapping[str, str] | None = None,
 ) -> list[VarianceFlagOut]:
     """One IC-facing flag per business concept.
 
@@ -450,15 +472,20 @@ def consolidate_variance_flags(
         source_page = primary.source_page
         if source_page is None:
             source_page = next((m.source_page for m in pool if m.source_page), None)
+        how = (derived or {}).get(key)
+        actual_basis = f"derived: {how}" if how else None
         if all_mismatch:
             severity = "Info"
             note = primary.note or (
-                f"Basis mismatch — needs review: broker {primary.broker} vs T-12 "
-                f"{primary.actual} on {label} are not on the same basis."
+                f"Basis mismatch — needs review: broker {primary.broker} vs "
+                f"{_actual_words(actual_source)} {primary.actual} on {label} are not on the same basis."
             )
         else:
             severity = primary.severity
-            note = _concept_note(key, label, basis, primary, len(same_basis))
+            note = _concept_note(
+                key, label, basis, primary, len(same_basis),
+                actual_source=actual_source, actual_basis=actual_basis,
+            )
         out.append(
             VarianceFlagOut(
                 field=key,
@@ -478,6 +505,8 @@ def consolidate_variance_flags(
                 source_document=primary.source_document,
                 unit_note=primary.unit_note,
                 basis_mismatch=all_mismatch,
+                actual_source=actual_source,
+                actual_basis=actual_basis,
                 reason=_flag_reason(all_mismatch, raw),
             )
         )
@@ -860,7 +889,12 @@ async def _compute_variance(
     # counts are taken from the consolidated list, case-insensitively —
     # the Severity enum values are title-case ("Critical"), so the prior
     # lowercase comparison under-counted critical/warn flags.
-    out_flags = consolidate_variance_flags(raw_flags, excluded=excluded_rows)
+    out_flags = consolidate_variance_flags(
+        raw_flags,
+        excluded=excluded_rows,
+        actual_source=actuals.source_statement,
+        derived=actuals.derived,
+    )
     crit = warn = info = 0
     for cf in out_flags:
         rank = _severity_rank(cf.severity)

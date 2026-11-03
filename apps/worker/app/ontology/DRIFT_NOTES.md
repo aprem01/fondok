@@ -634,6 +634,16 @@ listed); the broker side still needs revenue. No pinned scenario carries keys,
 so none derives; the two real payloads keep their stated occupancy / ADR / GOP
 / NOI / insurance with rooms revenue and total revenue not stated.
 
+**Round 4 (FON-22 R3-I1 / R3-I2).** The actual side keeps only the loader
+lines whose `SourceField.document_id` is the basis document — a line the model
+fills from another statement (2e1db521: seven from the March 2025 TTM) is not
+stated there. A part-year basis never derives rooms revenue. Pins: the real
+T-12 scenarios now carry its full-period rooms revenue 9,322,920 (the loader
+reads `p_and_l_usali.rooms.revenue_usd`, §6a), so its stated total and OpEx
+ratio stand; `variance_pre_registry.json` notes read "vs the actual (<file>)
+… overstates the actual by …" and every flag carries `actual_source` /
+`actual_basis` — no number moved.
+
 ## 8. Phase 1.3b parity exceptions (usali_scorer adapter)
 
 `services/usali_scorer.py` is now registry-driven: `_ALIASES` is a read-only

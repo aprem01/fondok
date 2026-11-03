@@ -6175,10 +6175,10 @@ class YearOneBasis(NamedTuple):
 
 
 class YearOneActuals(NamedTuple):
-    """The deal's actuals exactly as the engine reads Year-1 (FON-22): the
-    revenue and expense lines of the loaders, plus the basis statement's own
-    stated profit lines. Every value is the statement's; an absent line is
-    absent (never 0)."""
+    """The basis statement's own actuals as the engine reads Year-1 (FON-22):
+    the loaders' revenue and expense lines that come off the basis statement
+    itself (never a fill from another statement), plus its own stated profit
+    lines. Every value is the statement's; an absent line is absent (never 0)."""
 
     basis: YearOneBasis
     #: The basis statement's file name and period words ("FY2024").
@@ -6242,15 +6242,21 @@ def year_one_actuals_from_shims(
     revenue, rev_src = _year_one_revenue_lines(shims, with_provenance=True)
     expense, exp_src = _year_one_expense_lines(shims, with_provenance=True)
 
+    basis_doc = basis.document_id
+
     def full_period(lines: dict[str, float], src: dict[str, SourceField]) -> dict[str, float]:
-        # The loader falls back to a sub-period slice of the PRIMARY when it
-        # has no full-period line (pinned on the real T-12: January rooms
-        # revenue). That is never an annual actual to compare a broker's
-        # claim against: such a line is absent here.
+        # ONE statement, ONE period (FON-22 round 4): a line the loader filled
+        # from another statement (same period first, then the most recent
+        # twelve months — 2e1db521: seven lines from the March 2025 TTM) is
+        # the model's, but not the basis statement's, so it is absent here.
+        # The loader's sub-period fallback on the primary (a month of its own
+        # period) is never an annual actual either.
         out: dict[str, float] = {}
         for k, v in lines.items():
             sf = src.get(k)
-            name = getattr(getattr(sf, "resolution", None), "field_name", None) or ""
+            if sf is None or (basis_doc and str(sf.document_id) != basis_doc):
+                continue
+            name = getattr(sf.resolution, "field_name", None) or ""
             if not _is_sub_period_path(name):
                 out[k] = v
         return out
@@ -6262,7 +6268,9 @@ def year_one_actuals_from_shims(
     # RevPAR — or occupancy × ADR — earns over the deal's keys in the
     # period, the figure the model's Year-1 rooms revenue is built from.
     derived: dict[str, str] = {}
-    if "rooms_revenue" not in revenue and keys and keys > 0:
+    # Only over twelve months: a part-year statement's RevPAR × 365 would
+    # annualise it, so rooms revenue stays not stated there.
+    if "rooms_revenue" not in revenue and keys and keys > 0 and chosen.twelve:
         occ, adr = revenue.get("occupancy"), revenue.get("adr")
         revpar = revenue.get("revpar") or (occ * adr if occ and adr else None)
         if revpar:

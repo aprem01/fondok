@@ -85,8 +85,11 @@ def test_three_raw_paths_become_one_flag_with_raw_fields() -> None:
     assert f.source_page == 14
     # Business-readable note, never the raw path.
     assert f.note is not None
-    assert f.note.startswith("Rooms revenue: broker proforma $12,950,000 vs T-12 actual $12,300,000")
-    assert "broker overstates the T-12 by 5.3%" in f.note
+    # FON-22 round 4: the actual is never called "T-12" unless the caller says
+    # which statement it is (see the next test).
+    assert f.note.startswith("Rooms revenue: broker proforma $12,950,000 vs the actual $12,300,000")
+    assert "broker overstates the actual by 5.3%" in f.note
+    assert "T-12" not in f.note
     assert "Consolidated from 3 broker fields" in f.note
     assert "broker_proforma." not in f.note
 
@@ -329,3 +332,31 @@ async def test_get_variance_endpoint_consolidates_duplicate_broker_paths() -> No
     assert resp.critical_count + resp.warn_count + resp.info_count == len(resp.flags)
     assert resp.critical_count == sum(1 for f in resp.flags if f.severity.lower() == "critical")
     assert resp.warn_count == sum(1 for f in resp.flags if f.severity.lower() == "warn")
+
+
+
+def test_the_note_names_the_actual_statement_and_carries_a_derivation() -> None:
+    """FON-22 round 4: the flag says which statement the actual is from, and a
+    derived actual (rooms revenue = RevPAR × keys × days) carries that
+    derivation on the flag for the Variance row."""
+    from app.api.analysis import consolidate_variance_flags
+
+    how = "RevPAR × 132 keys × 366 days; the statement states no full-period rooms revenue line"
+    flags = [_flag("broker_proforma.rooms_revenue_usd", "Warn", broker=9_708_984, actual=9_496_400, page=14)]
+    out = consolidate_variance_flags(
+        flags, actual_source="FY2024 Detailed P&L.xlsm", derived={"rooms_revenue": how}
+    )
+    f = out[0]
+    assert f.actual_source == "FY2024 Detailed P&L.xlsm"
+    assert f.actual_basis == f"derived: {how}"
+    assert f.note.startswith(
+        "Rooms revenue: broker proforma $9,708,984 vs the actual (FY2024 Detailed P&L.xlsm) $9,496,400"
+    )
+    assert f"derived: {how}" in f.note
+    assert "T-12" not in f.note
+    # A line that is not derived carries no derivation.
+    occ = consolidate_variance_flags(
+        [_flag("broker_proforma.occupancy", "Warn", broker=0.83, actual=0.80)],
+        actual_source="FY2024 Detailed P&L.xlsm", derived={"rooms_revenue": how},
+    )[0]
+    assert occ.actual_basis is None

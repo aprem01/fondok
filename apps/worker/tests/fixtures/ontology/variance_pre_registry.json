@@ -11,7 +11,7 @@
         "delta": -209437.0,
         "delta_pct": -0.022442644206555867,
         "source_page": 14,
-        "note": "Rooms revenue: broker proforma $9,541,537 vs T-12 actual $9,332,100 — broker overstates the T-12 by 2.2%.",
+        "note": "Rooms revenue: broker proforma $9,541,537 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $9,332,100 — broker overstates the actual by 2.2%.",
         "concept": "rooms_revenue",
         "concept_label": "Rooms revenue",
         "impact_basis": "revenue",
@@ -110,7 +110,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "gop",
@@ -121,7 +123,7 @@
         "delta": -117808.0,
         "delta_pct": -0.02370162922546404,
         "source_page": 14,
-        "note": "GOP: broker proforma $5,088,268 vs T-12 actual $4,970,460 — broker overstates the T-12 by 2.4%.",
+        "note": "GOP: broker proforma $5,088,268 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $4,970,460 — broker overstates the actual by 2.4%.",
         "concept": "gop",
         "concept_label": "GOP",
         "impact_basis": "noi",
@@ -190,7 +192,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "noi",
@@ -201,7 +205,7 @@
         "delta": -1009999.0,
         "delta_pct": -0.43038935360568625,
         "source_page": 14,
-        "note": "NOI: broker proforma $3,356,709 vs T-12 actual $2,346,710 — broker overstates the T-12 by 43.0%.",
+        "note": "NOI: broker proforma $3,356,709 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $2,346,710 — broker overstates the actual by 43.0%.",
         "concept": "noi",
         "concept_label": "NOI",
         "impact_basis": "noi",
@@ -240,7 +244,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": "compared on the before-FF&E-reserve basis: the actuals document's EBITDA line ($2,346,710), not its after-reserve NOI",
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "occupancy",
@@ -251,7 +257,7 @@
         "delta": -0.11399999999999999,
         "delta_pct": 0.11399999999999999,
         "source_page": 12,
-        "note": "Occupancy: broker proforma 83.0% vs T-12 actual 71.6% — broker overstates the T-12 by 11.4 pts.",
+        "note": "Occupancy: broker proforma 83.0% vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) 71.6% — broker overstates the actual by 11.4 pts.",
         "concept": "occupancy",
         "concept_label": "Occupancy",
         "impact_basis": "revenue",
@@ -365,7 +371,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": "occupancy 83% read as 0.830",
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "adr",
@@ -376,7 +384,7 @@
         "delta": -12.600000000000023,
         "delta_pct": -0.033834586466165474,
         "source_page": 12,
-        "note": "ADR: broker proforma $385 vs T-12 actual $372 — broker overstates the T-12 by 3.4%.",
+        "note": "ADR: broker proforma $385 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $372 — broker overstates the actual by 3.4%.",
         "concept": "adr",
         "concept_label": "ADR",
         "impact_basis": "revenue",
@@ -430,7 +438,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "revpar",
@@ -441,7 +451,7 @@
         "delta": -52.39999999999998,
         "delta_pct": -0.19654913728432097,
         "source_page": 12,
-        "note": "RevPAR: broker proforma $319 vs T-12 actual $267 — broker overstates the T-12 by 19.7%.",
+        "note": "RevPAR: broker proforma $319 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $267 — broker overstates the actual by 19.7%.",
         "concept": "revpar",
         "concept_label": "RevPAR",
         "impact_basis": "revenue",
@@ -495,7 +505,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       }
     ],
     "critical_count": 1,
@@ -515,7 +527,7 @@
         "delta": 0.029999999999999916,
         "delta_pct": 0.029999999999999916,
         "source_page": 30,
-        "note": "Occupancy: broker proforma 80.0% vs T-12 actual 83.0% — broker understates the T-12 by 3.0 pts. Consolidated from 2 broker fields on this line.",
+        "note": "Occupancy: broker proforma 80.0% vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) 83.0% — broker understates the actual by 3.0 pts. Consolidated from 2 broker fields on this line.",
         "concept": "occupancy",
         "concept_label": "Occupancy",
         "impact_basis": "revenue",
@@ -629,7 +641,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "adr",
@@ -640,7 +654,7 @@
         "delta": -19.119999999999976,
         "delta_pct": -0.08214116939468134,
         "source_page": 30,
-        "note": "ADR: broker proforma $252 vs T-12 actual $233 — broker overstates the T-12 by 8.2%. Consolidated from 2 broker fields on this line.",
+        "note": "ADR: broker proforma $252 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $233 — broker overstates the actual by 8.2%. Consolidated from 2 broker fields on this line.",
         "concept": "adr",
         "concept_label": "ADR",
         "impact_basis": "revenue",
@@ -709,7 +723,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       },
       {
         "field": "rooms_revenue",
@@ -720,7 +736,7 @@
         "delta": -209437.0,
         "delta_pct": -0.022442644206555867,
         "source_page": 14,
-        "note": "Rooms revenue: broker proforma $9,541,537 vs T-12 actual $9,332,100 — broker overstates the T-12 by 2.2%.",
+        "note": "Rooms revenue: broker proforma $9,541,537 vs the actual (Copy of The Angler_s - March 2025 Financials.xlsx) $9,332,100 — broker overstates the actual by 2.2%.",
         "concept": "rooms_revenue",
         "concept_label": "Rooms revenue",
         "impact_basis": "revenue",
@@ -759,7 +775,9 @@
         "source_doc_type": "OM",
         "source_document": "Copy of Miami Beach Anglers Offering Memorandum.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "Copy of The Angler_s - March 2025 Financials.xlsx",
+        "actual_basis": null
       }
     ],
     "critical_count": 0,
@@ -779,7 +797,7 @@
         "delta": -650000.0,
         "delta_pct": -0.052845528455284556,
         "source_page": 15,
-        "note": "Rooms revenue: broker proforma $12,950,000 vs T-12 actual $12,300,000 — broker overstates the T-12 by 5.3%. Consolidated from 3 broker fields on this line.",
+        "note": "Rooms revenue: broker proforma $12,950,000 vs the actual (t12.xlsx) $12,300,000 — broker overstates the actual by 5.3%. Consolidated from 3 broker fields on this line.",
         "concept": "rooms_revenue",
         "concept_label": "Rooms revenue",
         "impact_basis": "revenue",
@@ -848,7 +866,9 @@
         "source_doc_type": "OM",
         "source_document": "om.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "t12.xlsx",
+        "actual_basis": null
       },
       {
         "field": "total_revenue",
@@ -859,7 +879,7 @@
         "delta": -1000000.0,
         "delta_pct": -0.05,
         "source_page": 14,
-        "note": "Total revenue: broker proforma $21,000,000 vs T-12 actual $20,000,000 — broker overstates the T-12 by 5.0%.",
+        "note": "Total revenue: broker proforma $21,000,000 vs the actual (t12.xlsx) $20,000,000 — broker overstates the actual by 5.0%.",
         "concept": "total_revenue",
         "concept_label": "Total revenue",
         "impact_basis": "revenue",
@@ -898,7 +918,9 @@
         "source_doc_type": "OM",
         "source_document": "om.pdf",
         "unit_note": null,
-        "basis_mismatch": false
+        "basis_mismatch": false,
+        "actual_source": "t12.xlsx",
+        "actual_basis": null
       }
     ],
     "critical_count": 1,

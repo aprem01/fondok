@@ -493,6 +493,12 @@ def _severity_for(rule_id: str, delta_pct: float, *, idx: dict) -> Severity:
     return Severity(rule.severity_norm())
 
 
+def _actual_name(actuals: USALIFinancials) -> str:
+    """The actual's statement, named (FON-22) — never an assumed "T-12"."""
+    src = getattr(actuals, "source_statement", None)
+    return f"the actual ({src})" if src else "the actual"
+
+
 def _build_flags(
     *,
     deal_uuid: UUID,
@@ -568,7 +574,7 @@ def _build_flags(
             severity = Severity.INFO
             note = (
                 f"Basis mismatch — needs review: broker {float(bf.value):,.4g} vs "
-                f"T-12 {float(actual):,.4g} on {bf.field} are not on the same basis "
+                f"{_actual_name(actuals)} {float(actual):,.4g} on {bf.field} are not on the same basis "
                 f"({abs(delta_pct):.0%} apart). No variance severity assigned."
             )
 

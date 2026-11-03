@@ -1133,7 +1133,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
       .map((f) => {
         const critical = f.severity === 'CRITICAL';
         const id = f.concept ?? f.metric;
-        const label = f.field_label || 'Broker vs T-12';
+        const label = f.field_label || 'Broker vs actual';
         const basis = f.impact_basis ?? 'other';
         const isPercent = f.format === 'percent';
         const isMarket = /_vs_market$/.test(id);
@@ -1150,24 +1150,29 @@ export default function ICMemoTab({ project }: { project: Project }) {
         // dress it up as a variance with a severity.
         const mismatch = f.basis_mismatch === true;
 
-        // Title: "{Concept} — broker overstates T-12 by {pct}" (or understates).
+        // FON-22 — the actual is named by its statement (the one the model
+        // uses), never an assumed "T-12"; a derived actual says how.
+        const actualIn = f.actual_source ?? 'the actuals statement';
+        const derivedNote = f.actual_basis ? ` (${f.actual_basis})` : '';
+
+        // Title: "{Concept} — broker overstates the actual by {pct}" (or understates).
         const title = mismatch
           ? `${label} — basis mismatch, needs review`
           : isMarket
             ? `${label} — broker projects ${pctText ? `${pctText} ` : ''}${f.broker_overstates ? 'above' : 'below'} the market forecast`
-            : `${label} — broker ${f.broker_overstates ? 'overstates' : 'understates'} T-12${pctText ? ` by ${pctText}` : ''}`;
+            : `${label} — broker ${f.broker_overstates ? 'overstates' : 'understates'} the actual${pctText ? ` by ${pctText}` : ''}`;
 
         // Body: business-readable, numbers from the flag itself.
         const body =
           mismatch || isMarket || f.broker_value == null || f.t12_value == null
             ? f.explanation
-            : `${label}: broker materials report ${fmtV(f.broker_value)} against ${fmtV(f.t12_value)} in the trailing-twelve-month operating statements.`;
+            : `${label}: broker materials report ${fmtV(f.broker_value)} against ${fmtV(f.t12_value)}${derivedNote} in ${actualIn}.`;
 
         // Impact: a dollar figure ONLY for an NOI-basis flag.
         const impact = mismatch
-          ? 'Basis mismatch — the broker and T-12 figures are not on the same basis; no variance severity assigned'
+          ? 'Basis mismatch — the broker and actual figures are not on the same basis; no variance severity assigned'
           : basis === 'noi' && Math.abs(f.noi_impact_usd) > 0
-            ? `Estimated NOI impact ${fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} · broker figure taken at face vs. the T-12`
+            ? `Estimated NOI impact ${fmtCurrency(Math.abs(f.noi_impact_usd), { compact: true })} · broker figure taken at face vs. the actual`
             : basis === 'revenue'
               ? 'Revenue-line variance — NOI impact not estimated'
               : basis === 'expense'
@@ -1190,13 +1195,14 @@ export default function ICMemoTab({ project }: { project: Project }) {
           r.source_doc_type || r.source_document ? ` · source ${[r.source_doc_type, r.source_document].filter(Boolean).join(' ')}` : '';
         const rawLines = admitted.map(
           (r) =>
-            `rule ${r.rule_id ?? f.rule_id} · field ${r.field} · broker ${fmtRaw(r.broker)} vs T-12 ${fmtRaw(r.actual)}${r.source_page ? ` · p.${r.source_page}` : ''}${src(r)}${'unit_note' in r && r.unit_note ? ` · ${r.unit_note}` : ''}${'basis_mismatch' in r && r.basis_mismatch ? ' · basis mismatch' : ''}`,
+            `rule ${r.rule_id ?? f.rule_id} · field ${r.field} · broker ${fmtRaw(r.broker)} vs actual ${fmtRaw(r.actual)}${r.source_page ? ` · p.${r.source_page}` : ''}${src(r)}${'unit_note' in r && r.unit_note ? ` · ${r.unit_note}` : ''}${'basis_mismatch' in r && r.basis_mismatch ? ' · basis mismatch' : ''}`,
         );
         const excludedLines = excluded.map(
           (r) => `excluded · field ${r.field}${r.broker != null ? ` · value ${fmtRaw(r.broker)}` : ''}${src(r)} · ${r.excluded_reason}`,
         );
         const raw = [
           `concept ${id} · impact basis ${basis} · ${admitted.length} raw field${admitted.length === 1 ? '' : 's'} consolidated${excluded.length ? ` · ${excluded.length} excluded` : ''}`,
+          ...(f.actual_source ? [`actual from ${f.actual_source}${f.actual_basis ? ` · ${f.actual_basis}` : ''}`] : []),
           ...rawLines,
           ...excludedLines,
         ].join('\n');

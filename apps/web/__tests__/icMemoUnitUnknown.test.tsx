@@ -153,7 +153,7 @@ describe('ICMemoTab — a unit_unknown diligence row is disclosed, not priced', 
     expect(pctLine).not.toContain('vs T-12');
     expect(pctLine).not.toMatch(/%/);
     expect(text).toContain(
-      'rule BROKER_VS_T12_NOI_VARIANCE · field broker_proforma.rooms_revenue_usd · broker $9,708,984 vs T-12 $9,332,100 · p.14',
+      'rule BROKER_VS_T12_NOI_VARIANCE · field broker_proforma.rooms_revenue_usd · broker $9,708,984 vs actual $9,332,100 · p.14',
     );
   });
 
@@ -161,7 +161,7 @@ describe('ICMemoTab — a unit_unknown diligence row is disclosed, not priced', 
     render(<ICMemoTab project={PROJECT} />);
 
     // The 4.0% dollar-vs-dollar variance, not the -100% the $1 would have made.
-    expect(screen.getByText('Rooms revenue — broker overstates T-12 by 4.0%')).toBeInTheDocument();
+    expect(screen.getByText('Rooms revenue — broker overstates the actual by 4.0%')).toBeInTheDocument();
     expect(screen.queryByText(/by 100.0%/)).not.toBeInTheDocument();
     expect(screen.queryByText(/understates/)).not.toBeInTheDocument();
   });
