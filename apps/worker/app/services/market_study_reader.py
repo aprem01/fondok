@@ -1047,6 +1047,15 @@ _CLASS_PAGE_ORDER = (
     "supply_change_pct", "demand_change_pct", "supply_rooms", "demand_room_nights",
 )
 _FORECAST_FIRST_YEAR = "market_study.forecast.first_year"
+#: FON-121 decision 2 — the report's PUBLISHED forecast average per metric
+#: (CoStar's overview "Average Trend" table, "Forecast Average" column; the
+#: submarket as a whole, all classes).
+_PUBLISHED_AVG_RE = re.compile(
+    r"^market_study\.performance\.forecast_avg_(?P<metric>occupancy|adr|revpar)_change_pct$"
+)
+#: The pipeline version whose MARKET_STUDY contract asks for the published
+#: forecast average (an older extraction never read it).
+PUBLISHED_AVERAGE_PIPELINE_VERSION = 11
 _FORECAST_LAST_YEAR = "market_study.forecast.last_year"
 
 
@@ -1110,6 +1119,19 @@ class ClassSeries:
 
 
 @dataclass(frozen=True)
+class PublishedAverage:
+    """A forecast average the report itself prints (decision 2), with its
+    page. ``scope`` is the series it describes — ``all`` = the submarket
+    overall (CoStar's Average Trend table), never a class bucket."""
+
+    metric: str
+    value: float
+    page: int | None
+    doc_name: str | None
+    scope: str = "all"
+
+
+@dataclass(frozen=True)
 class ClassForecastReading:
     """One report's class-bucket and overall series.
 
@@ -1134,6 +1156,18 @@ class ClassForecastReading:
     #: :data:`CLASS_SERIES_PIPELINE_VERSION` and carries no class table: a
     #: bucket it lacks is "not read yet", never "not in the report".
     predates_class_series: bool = False
+    #: Decision 2 — the report's published forecast averages, by metric.
+    published_averages: Mapping[str, PublishedAverage] = field(default_factory=dict)
+    #: The pipeline version of the extraction read (None = unknown).
+    pipeline_version: int | None = None
+
+    def published_average(self, metric: str) -> PublishedAverage | None:
+        return self.published_averages.get(metric)
+
+    @property
+    def predates_published_average(self) -> bool:
+        """The extraction read predates the published-average contract."""
+        return self.pipeline_version is not None and self.pipeline_version < PUBLISHED_AVERAGE_PIPELINE_VERSION
 
     def series(self, bucket: str | None) -> ClassSeries:
         """The requested bucket's years; the overall series, flagged, when the
@@ -1400,8 +1434,20 @@ def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
         and chosen_pv < CLASS_SERIES_PIPELINE_VERSION
         and not any(b != "all" for b in buckets)
     )
+    published: dict[str, PublishedAverage] = {}
+    for r in chosen:
+        m = _PUBLISHED_AVG_RE.match(r.lname)
+        if m is None or m.group("metric") in published:
+            continue
+        v = _class_change(r)
+        if v is not None:
+            published[m.group("metric")] = PublishedAverage(
+                metric=m.group("metric"), value=v, page=r.page, doc_name=r.doc_name,
+            )
     return ClassForecastReading(
         buckets=buckets,
+        published_averages=published,
+        pipeline_version=chosen_pv,
         doc_name=anchor.doc_name,
         doc_id=anchor.doc_id,
         extraction_id=chosen[0].extraction_id,
@@ -1417,6 +1463,8 @@ def read_class_forecast(rows: Sequence[FieldRow]) -> ClassForecastReading:
 
 
 __all__ = [
+    "PUBLISHED_AVERAGE_PIPELINE_VERSION",
+    "PublishedAverage",
     "CLASS_BUCKETS",
     "CLASS_BUCKET_LABELS",
     "GROWTH_PREFIXES",

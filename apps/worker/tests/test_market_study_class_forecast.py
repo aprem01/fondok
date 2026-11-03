@@ -493,3 +493,51 @@ def test_critic_is_silent_without_both_levels_or_outside_market_study() -> None:
         {"field_name": f"market_study.class.{LUU}.2026.adr_change_pct", "value": 0.5},
     ]
     assert check_market_study_consistency(fields) == []
+
+
+# ─────────── FON-121 decision 2 — the report's PUBLISHED forecast average ───────────
+
+
+def test_reader_serves_the_published_forecast_average_with_its_page(reading: ClassForecastReading) -> None:
+    """CoStar's overview "Average Trend" table prints a Forecast Average
+    column for the submarket (all classes): ADR change +2.5% on PDF p.4."""
+    adr = reading.published_average("adr")
+    assert adr is not None
+    assert adr.value == pytest.approx(0.025)
+    assert adr.page == 4
+    assert adr.doc_name == DOC_NAME
+    assert adr.scope == "all"
+    occ = reading.published_average("occupancy")
+    assert occ is not None and occ.value == pytest.approx(-0.001)
+
+
+def test_no_published_average_row_reads_none() -> None:
+    rows = [
+        _row("market_study.class.luxury_upper_upscale.2027.adr_change_pct", -0.006, unit="pct"),
+        _row("market_study.class.luxury_upper_upscale.2027.period", "forecast"),
+    ]
+    assert read_class_forecast(rows).published_average("adr") is None
+
+
+def test_published_average_comes_from_the_report_that_is_read() -> None:
+    """Another extraction's average is never mixed into the chosen report."""
+    rows = [
+        _row("market_study.class.luxury_upper_upscale.2027.adr_change_pct", -0.006, unit="pct", ext="new"),
+        _row("market_study.report_date", "2025-12-10", ext="new"),
+        _row("market_study.trend.2027.adr_change_pct", 0.01, unit="pct", ext="old"),
+        _row("market_study.report_date", "2024-12-10", ext="old"),
+        _row("market_study.performance.forecast_avg_adr_change_pct", 0.04, unit="pct", page=4, ext="old"),
+    ]
+    reading = read_class_forecast(rows)
+    assert reading.extraction_id == "new"
+    assert reading.published_average("adr") is None
+
+
+def test_market_study_schema_asks_for_the_published_forecast_average() -> None:
+    from app.agents.extraction_schemas.loader import schema_text
+
+    md = schema_text("MARKET_STUDY")
+    assert md is not None
+    for leaf in ("occupancy", "adr", "revpar"):
+        assert f"`market_study.performance.forecast_avg_{leaf}_change_pct`" in md
+    assert "Forecast Average" in md

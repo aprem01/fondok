@@ -1,5 +1,5 @@
 {
- "comment": "Expected MARKET_STUDY extraction of the Miami Beach CoStar submarket report (2025-12-10) under extraction_schemas/market_study.md — class-bucket performance + supply & demand series and the overall trend, every row with its PDF page. Generated from the PDF text layer by build_costar_fixture.py (wave1 task 7a); the PDF is the source of truth. Years above the YTD row (2025-2029) are the report's projections (period=forecast); 2024 and earlier are actuals. Blank cells (Midscale & Economy 2015-2020) are absent, never 0.",
+ "comment": "Expected MARKET_STUDY extraction of the Miami Beach CoStar submarket report (2025-12-10) under extraction_schemas/market_study.md — class-bucket performance + supply & demand series and the overall trend, every row with its PDF page. Generated from the PDF text layer by build_costar_fixture.py (wave1 task 7a); the PDF is the source of truth. Years above the YTD row (2025-2029) are the report's projections (period=forecast); 2024 and earlier are actuals. Blank cells (Midscale & Economy 2015-2020) are absent, never 0. FON-121 (2026-11-03): the overview's Average Trend table (p.4) 'Forecast Average' column — the submarket's published forecast averages (all classes) — added as market_study.performance.forecast_avg_*_change_pct.",
  "document_id": "miami-beach-costar-submarket-2025-12-10",
  "filename": "Miami Beach-Hospitality-Submarket-2025-12-10.pdf",
  "doc_type": "MARKET_STUDY",
@@ -4413,6 +4413,30 @@
    "source_page": 24,
    "confidence": 0.97,
    "raw_text": "2029 is the last year printed"
+  },
+  {
+   "field_name": "market_study.performance.forecast_avg_occupancy_change_pct",
+   "value": -0.001,
+   "unit": "pct",
+   "source_page": 4,
+   "confidence": 0.97,
+   "raw_text": "Average Trend Current 3 Mo YTD 12 Mo Historical Average Forecast Average / Occupancy Change -11.0% -4.6% -1.0% 0% 4.3% -0.1%"
+  },
+  {
+   "field_name": "market_study.performance.forecast_avg_adr_change_pct",
+   "value": 0.025,
+   "unit": "pct",
+   "source_page": 4,
+   "confidence": 0.97,
+   "raw_text": "Average Trend Current 3 Mo YTD 12 Mo Historical Average Forecast Average / ADR Change -7.6% -2.5% 1.4% 1.6% 2.7% 2.5%"
+  },
+  {
+   "field_name": "market_study.performance.forecast_avg_revpar_change_pct",
+   "value": 0.024,
+   "unit": "pct",
+   "source_page": 4,
+   "confidence": 0.97,
+   "raw_text": "Average Trend Current 3 Mo YTD 12 Mo Historical Average Forecast Average / RevPAR Change -17.8% -6.9% 0.4% 1.6% 7.2% 2.4%"
   }
  ]
 }

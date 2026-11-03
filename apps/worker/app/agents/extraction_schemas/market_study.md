@@ -114,6 +114,19 @@ Forecast window (once per report):
   (the year printed just above the YTD row)
 - `market_study.forecast.last_year` — the last year printed
 
+Published forecast average (the overview's "Average Trend" table, its
+**Forecast Average** column — the submarket as a whole, all classes; once
+per report, only when the report prints it):
+
+- `market_study.performance.forecast_avg_occupancy_change_pct`
+- `market_study.performance.forecast_avg_adr_change_pct` — e.g. `0.025`
+  for an "ADR Change … Forecast Average 2.5%" cell
+- `market_study.performance.forecast_avg_revpar_change_pct`
+
+The future P&L grows ADR past the last forecast year at this published
+average (FON-121). Never compute it yourself and never emit the Historical
+Average column under these paths; a blank or "-" cell is omitted.
+
 Class inventory (the overview's KEY INDICATORS table, when present):
 
 - `market_study.class.<bucket>.rooms` — existing rooms in the bucket

@@ -646,7 +646,13 @@ async def _audit_re_extract_requested(
 # without a separate header, and the clipped "Property Operation & Maintenan"
 # label. Every "<Month> Financials" extraction cached under v9 was typed and
 # read as a single month and must re-run once.
-EXTRACTION_PIPELINE_VERSION = "v10"
+# v11 (FON-121, 2026-11-03): the MARKET_STUDY contract asks for the CoStar
+# overview's published "Forecast Average" column
+# (``market_study.performance.forecast_avg_*_change_pct``) — the future P&L
+# grows ADR past the forecast at it. A CoStar report cached under v10 never
+# read it and must re-run once (until then the computed average applies,
+# labelled).
+EXTRACTION_PIPELINE_VERSION = "v11"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
