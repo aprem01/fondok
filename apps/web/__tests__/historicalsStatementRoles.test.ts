@@ -210,3 +210,53 @@ describe('occupancy / ADR the chosen statement lacks — same period only (FON-2
     expect(y24.filled ?? {}).toEqual({});
   });
 });
+
+describe('the chosen statement is re-extracting or its re-extract failed (FON-22 R2-I1)', () => {
+  const pair = (detailedStatus: string) => [
+    doc('det', {
+      filename: DETAILED, extracted_period_year: 2024, status: detailedStatus,
+      ...role('year_one_primary', 0, 'det'),
+    }),
+    doc('csv', { filename: CSV, extracted_period_year: 2024, ...role('supplemental', 1, 'det') }),
+  ];
+  const extractions = { det: ex('det', detailedFields), csv: ex('csv', csvFields) };
+
+  it.each([
+    ['EXTRACTING', 'reextracting', `${DETAILED} is re-extracting; showing its last extraction, which the model still reads.`],
+    ['FAILED', 'reextract_failed', `${DETAILED}: re-extract failed — showing the last extraction, which the model still reads.`],
+  ])('%s: the column keeps the chosen statement’s last extraction, labelled', (status, state, note) => {
+    const y24 = buildHistoricalYears(pair(status), extractions, KEYS).find((y) => y.year === '2024')!;
+    expect(y24.docId).toBe('det');
+    expect(y24.occupancyPct).toBeCloseTo(0.832567, 6);
+    expect(y24.adr).toBeCloseTo(236.094, 3);
+    expect(y24.supplementalDocs?.map((d) => d.docId)).toEqual(['csv']);
+    expect(y24.statementStatus).toEqual({ state, note });
+  });
+
+  it('with no extraction loaded for it, the supplemental is NOT promoted — the period shows “—”', () => {
+    const years = buildHistoricalYears(pair('EXTRACTING'), { csv: ex('csv', csvFields) }, KEYS);
+    const y24 = years.find((y) => y.year === '2024')!;
+    expect(y24.populated).toBe(false);
+    expect(y24.docId).toBeUndefined();
+    expect(y24.statementStatus?.state).toBe('reextracting');
+    expect(years.filter((y) => y.year.startsWith('2024'))).toHaveLength(1);
+  });
+
+  it('an EXTRACTED chosen statement carries no status label', () => {
+    const y24 = buildHistoricalYears(pair('EXTRACTED'), extractions, KEYS).find((y) => y.year === '2024')!;
+    expect(y24.statementStatus).toBeUndefined();
+  });
+
+  it('M6: a chosen PNL_MONTHLY statement sharing its period with a P&L takes the column', () => {
+    const t12 = doc('t12', { doc_type: 'PNL_MONTHLY', fiscal_year: 2024, ...role('year_one_primary', 0, 't12') });
+    const pnl = doc('pnl', { fiscal_year: 2024, ...role('supplemental', 1, 't12') });
+    const y = buildHistoricalYears(
+      [t12, pnl],
+      { t12: ex('t12', [f('occupancy_pct', 0.81), f('rooms_revenue', 9_100_000)]), pnl: ex('pnl', csvFields) },
+      KEYS,
+    ).filter(histHasData);
+    expect(y).toHaveLength(1);
+    expect(y[0].docId).toBe('t12');
+    expect(y[0].supplementalDocs?.map((d) => d.docId)).toEqual(['pnl']);
+  });
+});

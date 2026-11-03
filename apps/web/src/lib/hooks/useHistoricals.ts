@@ -60,6 +60,32 @@ interface ColumnEntry {
   fields: ExtractionResult['fields'];
 }
 
+const isChosenRole = (d: WorkerDocument): boolean =>
+  d.statement_role === 'year_one_primary' || d.statement_role === 'period_primary';
+
+const IN_FLIGHT_STATUSES = new Set(['PARSING', 'UPLOADED', 'CLASSIFYING', 'EXTRACTING', 'PROCESSING']);
+
+/** FON-22 R2-I1 — the column's statement is not EXTRACTED: say so. ``shown``
+ *  is whether its last extraction is on the column. */
+function statusOf(d: WorkerDocument, shown: boolean): HistYear['statementStatus'] {
+  if (d.status === 'EXTRACTED') return undefined;
+  const name = d.filename ?? 'The statement';
+  if (IN_FLIGHT_STATUSES.has(d.status)) {
+    return {
+      state: 'reextracting',
+      note: shown
+        ? `${name} is re-extracting; showing its last extraction, which the model still reads.`
+        : `${name} is re-extracting; its last extraction, which the model still reads, is not loaded.`,
+    };
+  }
+  return {
+    state: 'reextract_failed',
+    note: shown
+      ? `${name}: re-extract failed — showing the last extraction, which the model still reads.`
+      : `${name}: re-extract failed — its last extraction, which the model still reads, is not loaded.`,
+  };
+}
+
 const rankOf = (e: ColumnEntry): number =>
   typeof e.doc.statement_period_rank === 'number' ? e.doc.statement_period_rank : Number.POSITIVE_INFINITY;
 const isT12Label = (label: string) => baseYearLabel(label) === 'T-12';
@@ -77,16 +103,31 @@ export function buildHistoricalYears(
 ): HistYear[] {
   if (!(keys > 0)) return [];
   const extracted = (docs ?? []).filter((d) => d.status === 'EXTRACTED');
-  const pnlDocs = extracted.filter(isPnlDoc);
+  const shown = extracted.filter(isPnlDoc);
+  // FON-22 R2-I1 / M6 — a period's CHOSEN statement (worker role) is the
+  // period's column whatever its list status (re-extracting, or a failed
+  // re-extract: the model still reads its last extraction) and whatever its
+  // P&L-family type, as long as the period has a column at all; it is never
+  // replaced by a supplemental statement.
+  const shownPeriods = new Set(shown.map((d) => d.statement_period).filter((p): p is string => !!p));
+  const chosenExtra = (docs ?? []).filter(
+    (d) => !shown.includes(d) && isChosenRole(d)
+      && (isPnlDoc(d) || (!!d.statement_period && shownPeriods.has(d.statement_period))),
+  );
+  const pnlDocs = [...shown, ...chosenExtra];
   const omDocs = extracted.filter(isOmDoc);
   if (pnlDocs.length === 0 && omDocs.length === 0) return [];
 
   const byLabel = new Map<string, HistYear>();
   const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
   const entries: ColumnEntry[] = [];
+  const unavailable: WorkerDocument[] = [];
   for (const doc of sorted) {
     const ext = extractions[doc.id];
-    if (!ext?.fields) continue;
+    if (!ext?.fields?.length) {
+      if (chosenExtra.includes(doc)) unavailable.push(doc);
+      continue;
+    }
     const fields = actualsOnly(ext.fields);
     const base = deriveYearLabel(
       fields, doc.filename ?? '', doc.doc_type,
@@ -116,13 +157,38 @@ export function buildHistoricalYears(
   // legacy collision rule below stands.
   if (entries.some((e) => e.doc.statement_role != null)) {
     const groups = new Map<string, ColumnEntry[]>();
+    // A chosen statement whose last extraction is not on the page: its period
+    // gets an empty, labelled column — the supplemental is NOT promoted.
+    const held = new Map<string, WorkerDocument>();
+    for (const d of unavailable) {
+      if (d.statement_period) held.set(`period:${d.statement_period}`, d);
+    }
     for (const e of entries) {
       const key = e.doc.statement_period ? `period:${e.doc.statement_period}` : `doc:${e.doc.id}`;
       const g = groups.get(key);
       if (g) g.push(e);
       else groups.set(key, [e]);
     }
-    for (const members of groups.values()) {
+    for (const [key, d] of held) {
+      if (groups.has(key)) continue;
+      const base = deriveYearLabel([], d.filename ?? '', d.doc_type, d.fiscal_year ?? d.extracted_period_year);
+      const label = uniqueYearLabel(base, new Set(byLabel.keys()));
+      byLabel.set(label, { ...blankYear(label), statementStatus: statusOf(d, false) });
+    }
+    for (const [key, members] of groups) {
+      const heldChosen = held.get(key);
+      if (heldChosen) {
+        const base = members[0].base;
+        const label = uniqueYearLabel(base, new Set(byLabel.keys()));
+        byLabel.set(label, {
+          ...blankYear(label),
+          statementStatus: statusOf(heldChosen, false),
+          supplementalDocs: members.map((s) => ({
+            docId: s.doc.id, filename: s.doc.filename ?? 'statement', fields: s.fields.length,
+          })),
+        });
+        continue;
+      }
       // The worker's order within the period; a member without a rank (no
       // role yet) sorts last, in upload order.
       const ordered = members
@@ -142,6 +208,8 @@ export function buildHistoricalYears(
           docId: s.doc.id, filename: s.doc.filename ?? 'statement', fields: s.fields.length,
         }));
       }
+      const status = statusOf(chosen.doc, true);
+      if (status) col = { ...col, statementStatus: status };
       const label = uniqueYearLabel(chosen.base, new Set(byLabel.keys()));
       col.year = label;
       byLabel.set(label, col);

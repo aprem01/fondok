@@ -212,9 +212,25 @@ function scheduleExtractionRetry(
   store.retryTimers.set(docId, t);
 }
 
+/** FON-22 R2-I1 — a period's chosen statement in the worker's choice. The
+ *  model keeps reading its last extraction while it re-extracts or after a
+ *  failed re-extract, so the page must hold that extraction too. */
+const isChosenStatement = (doc: WorkerDocument): boolean =>
+  doc.statement_role === 'year_one_primary' || doc.statement_role === 'period_primary';
+
 /** Fetch a doc's extraction at most once per (doc, list status). */
 function ensureExtraction(store: DealStore, dealId: string, doc: WorkerDocument): void {
-  if (!FETCHABLE_DOC_STATUSES.has(doc.status)) return;
+  if (!FETCHABLE_DOC_STATUSES.has(doc.status)) {
+    // A chosen statement that is not EXTRACTED: fetch its last extraction
+    // once (the worker serves the latest row whatever the status) and keep
+    // it — never refetched per poll, never for a supplemental statement.
+    if (
+      !isChosenStatement(doc) || store.results.has(doc.id) || store.inflight.has(doc.id)
+      || store.retryTimers.has(doc.id) || store.attempts.has(doc.id)
+    ) return;
+    void runExtractionFetch(store, dealId, doc.id, doc.status, EXTRACTION_MAX_ATTEMPTS);
+    return;
+  }
   const existing = store.results.get(doc.id);
   if (existing && TERMINAL_EXTRACTION_STATUSES.has(existing.status) && !store.stale.has(doc.id)) {
     return;

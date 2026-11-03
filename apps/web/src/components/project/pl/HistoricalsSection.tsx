@@ -151,6 +151,10 @@ export interface HistYear {
    *  statement of the SAME period (``fillSamePeriodStats``). Absent when
    *  nothing was filled. */
   filled?: Record<string, HistFill>;
+  /** FON-22 R2-I1 — the column's statement is re-extracting, or its
+   *  re-extract failed: the column still shows (or, when not loaded, holds
+   *  the place of) its last extraction, which the model reads. */
+  statementStatus?: { state: 'reextracting' | 'reextract_failed'; note: string };
 }
 
 /** One operating statistic read from a same-period statement (FON-22). */

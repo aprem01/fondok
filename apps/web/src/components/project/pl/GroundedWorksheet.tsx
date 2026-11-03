@@ -920,6 +920,9 @@ export default function GroundedWorksheet({
   // FON-22 — two statements on one fiscal year no longer get two columns: the
   // historicals loader keeps the primary (the one that drives the model) and
   // lists the rest as supplemental on that column. This chip names both.
+  const statementNotices = allHistYears
+    .filter((y) => y.statementStatus)
+    .map((y) => ({ year: y.year, label: y.periodLabel, note: y.statementStatus!.note }));
   const collidedPeriods = histYears
     .filter((y) => (y.supplementalDocs?.length ?? 0) > 0)
     .map((y) => ({
@@ -1136,6 +1139,21 @@ export default function GroundedWorksheet({
               className="w-48 pl-7 pr-2 py-1 text-[11.5px] rounded-md border border-border focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
             />
           </div>
+        </div>
+      )}
+      {/* FON-22 R2-I1 — a column's statement is re-extracting or its re-extract
+          failed: the column keeps the statement the model reads, and says so. */}
+      {statementNotices.length > 0 && (
+        <div
+          data-testid="historicals-statement-status"
+          className="px-5 py-2 bg-warn-50 border-b border-warn-500/30 text-[11.5px] text-warn-800 space-y-0.5"
+        >
+          {statementNotices.map((n) => (
+            <div key={n.year} className="flex items-center gap-1.5">
+              <AlertTriangle size={11} aria-hidden="true" />
+              <span>{n.label}: {n.note}</span>
+            </div>
+          ))}
         </div>
       )}
       {flaggedCount > 0 && (
