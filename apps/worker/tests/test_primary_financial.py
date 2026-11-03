@@ -1,8 +1,12 @@
-"""FON-22 — primary-financial-source ranking (_mark_primary_financial).
+"""FON-22 — the Data Room's FALLBACK primary-source ranking
+(``_mark_primary_financial``).
 
-Verifies the derived "Primary source" flag the DataRoom badges: full-year
-sources beat partial periods, the most recent period wins within full-year,
-and a detailed statement beats a summary of the same period.
+The badge normally comes from the loader's own per-period choice
+(``engine_runner.statement_roles``; ``tests/test_statement_roles.py``). When
+the statement rows cannot be read this fallback keeps a badge on the shared
+key over the ``documents`` columns: full-year sources beat partial periods,
+the most recent period wins, and an equal period falls to the newest upload —
+never to ``structural_pnl_score``.
 """
 
 from datetime import datetime, timezone
@@ -62,11 +66,13 @@ def test_most_recent_full_year_wins():
     assert winner is new
 
 
-def test_detailed_beats_summary_same_year():
-    summary = _doc("PNL", year=2024, score=0.3)
-    detailed = _doc("PNL", year=2024, score=0.85)
-    winner = _primary([summary, detailed])
-    assert winner is detailed
+def test_structural_score_never_ranks_an_equal_period():
+    """b67bfdee: the Detailed P&L and the Summary CSV both score 1.0 — the
+    score saturates — so it is not a ranking member; an equal period falls to
+    the newest upload (``records`` is newest-first)."""
+    newer = _doc("PNL", year=2024, score=0.3)
+    older = _doc("PNL", year=2024, score=0.85)
+    assert _primary([newer, older]) is newer
 
 
 def test_only_extracted_docs_eligible():

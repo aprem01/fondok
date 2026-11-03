@@ -4566,9 +4566,11 @@ def _rank_pnl_shims(rows: list[Any]) -> list[tuple[list[Any], str, Any]]:
     Ranking is byte-identical — this is the same function body; the caller
     just gets a handle on the source row as well.
 
-    Preference order — ONE key, ``financial_source_rank.financial_source_sort_key``,
-    shared with the Data Room's "Primary source" badge so the document the UI
-    calls primary is the one that drives Year-1 actuals:
+    Preference order — ONE key, ``financial_source_rank.financial_source_sort_key``.
+    :func:`choose_statements_by_period` then picks each period's statement;
+    the Data Room's "Primary source" badge reads that choice
+    (:func:`statement_roles`), so the document the UI calls primary is the
+    one that drives Year-1 actuals:
       1. **Period tier** — full-year sources (annual + trailing-twelve) rank
          above partial periods (YTD / quarterly / monthly). From the extracted
          ``period_type`` when labelled; otherwise from ``doc_type`` (``T12``
@@ -4662,8 +4664,9 @@ async def _load_source_documents(
     function maps source labels back to doc_types and picks the
     highest-ranked document of that type for the deal:
 
-      - P&L family (t12_actual) → highest-ranked by period_type
-        (annual > trailing_twelve > ytd > monthly), then newest.
+      - P&L family (t12_actual) → the statement the model grounds Year-1
+        on (the Year-1 basis period's chosen statement,
+        :func:`choose_statements_by_period`).
       - OM / CBRE / PNL_BENCHMARK → newest extracted doc of that type.
 
     Source labels with no document provenance (seed / deal_row /
@@ -4737,39 +4740,27 @@ async def _load_source_documents(
         dt = (r._mapping.get("doc_type") or "").upper()
         by_doc_type.setdefault(dt, []).append(r)
 
-    # Pick the winner per doc_type.
+    # Pick the winner per doc_type. The P&L family links to the statement the
+    # model grounds Year-1 on — the Year-1 basis period's chosen statement
+    # (FON-22: :func:`choose_statements_by_period`, the one choice every
+    # surface reads), never a separate period-type ranking.
     winners: dict[str, str] = {}
     pnl_family = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
+    pnl_types = [dt for dt in by_doc_type if dt in pnl_family]
+    if pnl_types:
+        primary: str | None = None
+        try:
+            shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+            choices = choose_statements_by_period(_rank_pnl_shims(shims))
+            doc = choices[0].chosen.shim.get("document_id") if choices else None
+            primary = str(doc) if doc else None
+        except Exception:
+            primary = None
+        if primary:
+            for dt in pnl_types:
+                winners[dt] = primary
     for dt, rs in by_doc_type.items():
-        if dt in pnl_family:
-            # Use the same period_type ranking as the loaders.
-            best_rank = 99
-            best_doc: str | None = None
-            from ..extraction.terse_schema import read_extraction_fields
-
-            for r in rs:
-                m = r._mapping
-                raw = m["fields"]
-                if isinstance(raw, str):
-                    try:
-                        raw = json.loads(raw)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                if not isinstance(raw, list):
-                    continue
-                # Expand terse rows to long-form before reading period_type.
-                # Without this a terse P&L row yields period_type "" for
-                # every doc → wrong provenance winner (the two T12 loaders
-                # were hotfixed for this; this sibling was missed).
-                raw = read_extraction_fields(raw)
-                pt = _extract_period_type(raw)
-                rank = _PERIOD_TYPE_RANK.get(pt, 50)
-                if rank < best_rank:
-                    best_rank = rank
-                    best_doc = str(m["document_id"])
-            if best_doc:
-                winners[dt] = best_doc
-        else:
+        if dt not in pnl_family:
             # OM / CBRE / PNL_BENCHMARK — newest doc by created_at.
             winners[dt] = str(rs[0]._mapping["document_id"])
 
@@ -5415,6 +5406,41 @@ def _compose_conflict(c: _StatementConflict, extra: Mapping[str | None, str] | N
     return " ".join(parts)
 
 
+class PeriodChoice(NamedTuple):
+    """The engine's choice for ONE exact period (FON-22): the statement whose
+    lines the period uses, and every other statement of the period.
+
+    This is the only "primary statement" rule on the platform — the loader,
+    the Data Room's "Primary source" badge, the Historical P&L columns and
+    the ledger link all read it (:func:`statement_roles`)."""
+
+    #: Exact period identity (:func:`_statement_period`); ``None`` when the
+    #: statement does not state its period precisely enough to group.
+    period_key: tuple[Any, ...] | None
+    #: How the period is named to the analyst ("FY2024", "the year ending …").
+    period_words: str
+    chosen: _Statement
+    #: The period's other statements, in rank order.
+    siblings: tuple[_Statement, ...]
+    #: Why ``chosen`` is the period's statement, in the notice's words.
+    why: str
+    #: ``foots`` / ``fails`` / ``unverifiable`` for ``chosen`` when the period
+    #: has two or more statements (footing decides only then); else ``None``.
+    footing_status: str | None
+
+
+def choose_statements_by_period(
+    ranked: list[tuple[list[Any], str, Any]],
+) -> list[PeriodChoice]:
+    """One :class:`PeriodChoice` per exact period, the Year-1 basis first.
+
+    ``ranked`` is :func:`_rank_pnl_shims` output (the shared key with
+    field-count completeness). See :func:`_choose_period_statements` for the
+    footing / outlier rules that pick each period's statement.
+    """
+    return _period_choices(ranked)[0]
+
+
 def _choose_period_statements(
     ranked: list[tuple[list[Any], str, Any]],
 ) -> tuple[list[_Statement], list[_Statement], list[_StatementConflict]]:
@@ -5432,7 +5458,7 @@ def _choose_period_statements(
        the median may set the top-ranked aside as a mis-read
        (:func:`_outlier_lines`); the next statement that is not itself an
        outlier takes the whole period.
-    3. Otherwise the top-ranked statement (the Data Room's Primary source).
+    3. Otherwise the top-ranked statement — it ranks first for the period.
 
     The first list is the Year-1 basis period: its chosen statement (the
     primary), then its siblings in rank order. The second is every other
@@ -5441,7 +5467,24 @@ def _choose_period_statements(
     Also returns one :class:`_StatementConflict` per period whose statements
     disagree by more than :data:`_SAME_PERIOD_CONFLICT_TOLERANCE` on a
     headline line, or whose top-ranked statement was set aside.
+
+    A thin wrapper over :func:`choose_statements_by_period` (the same choice
+    every surface reads).
     """
+    choices, conflicts = _period_choices(ranked)
+    if not choices:
+        return [], [], conflicts
+    rest = sorted(
+        (st for ch in choices[1:] for st in (ch.chosen, *ch.siblings)),
+        key=lambda st: st.rank,
+    )
+    return [choices[0].chosen, *choices[0].siblings], rest, conflicts
+
+
+def _period_choices(
+    ranked: list[tuple[list[Any], str, Any]],
+) -> tuple[list[PeriodChoice], list[_StatementConflict]]:
+    """:func:`choose_statements_by_period` plus the same-period conflicts."""
     stated_full_ends: list[int] = []
     identities = []
     for fields, doc_type, shim in ranked:
@@ -5480,13 +5523,14 @@ def _choose_period_statements(
             groups.append(members)
         members.append(st)
 
-    ordered_groups: list[list[_Statement]] = []
+    choices: list[PeriodChoice] = []
     conflicts: list[_StatementConflict] = []
     for members in groups:
         top = members[0]
         pick = top
-        why = "it ranks first for the period (the Data Room's Primary source)"
+        why = "it ranks first for the period"
         top_clause = ""
+        footing_status: str | None = None
         if len(members) >= 2:
             footing = {st.rank: _revenue_footing(st.fields, st.doc_type) for st in members}
             footers = [st for st in members if footing[st.rank].status == "foots"]
@@ -5544,13 +5588,18 @@ def _choose_period_statements(
                     others=tuple(others),
                 )
                 conflicts.append(conflict._replace(detail=_compose_conflict(conflict)))
-        ordered_groups.append([pick, *(st for st in members if st is not pick)])
-    if not ordered_groups:
-        return [], [], conflicts
-    rest = sorted(
-        (st for g in ordered_groups[1:] for st in g), key=lambda st: st.rank
-    )
-    return ordered_groups[0], rest, conflicts
+            footing_status = footing[pick.rank].status
+        choices.append(
+            PeriodChoice(
+                period_key=pick.period,
+                period_words=pick.period_words,
+                chosen=pick,
+                siblings=tuple(st for st in members if st is not pick),
+                why=why,
+                footing_status=footing_status,
+            )
+        )
+    return choices, conflicts
 
 
 async def _read_pnl_shims(
@@ -5620,6 +5669,99 @@ async def _read_pnl_shims(
             }
         )
     return shims
+
+
+#: Statement roles (FON-22), best first. ``year_one_primary`` — the chosen
+#: statement of the Year-1 basis period (the Data Room's "Primary source");
+#: ``period_primary`` — the chosen statement of another period;
+#: ``supplemental`` — another statement of a period, never blended in;
+#: ``not_a_statement`` — a P&L-typed extraction the ranking drops (debt terms,
+#: an unreadable field list).
+STATEMENT_ROLES: tuple[str, ...] = (
+    "year_one_primary",
+    "period_primary",
+    "supplemental",
+    "not_a_statement",
+)
+
+
+class StatementRole(NamedTuple):
+    """One document's part in the engine's statement choice (FON-22)."""
+
+    role: str
+    #: Stable, opaque identity of the statement's exact period — two
+    #: documents share it only when the loader groups them as one period.
+    #: ``None`` for an undated statement (it stands alone) and for
+    #: ``not_a_statement``.
+    period_key: str | None
+    #: The period as the analyst reads it ("FY2024"); ``None`` when no role.
+    period_words: str | None
+    #: Position in the period's order: 0 = the period's chosen statement,
+    #: then the siblings in the loader's fill order.
+    period_rank: int | None
+    #: The chosen statement of this document's period.
+    primary_document_id: str | None
+    why: str
+
+
+def _period_key_text(period: tuple[Any, ...] | None) -> str | None:
+    if period is None:
+        return None
+    return ":".join(str(p) for p in period)
+
+
+def statement_roles_from_shims(shims: list[dict[str, Any]]) -> dict[str, StatementRole]:
+    """``{document_id: StatementRole}`` over the loader's own rows — the
+    ranking (:func:`_rank_pnl_shims`) and per-period choice
+    (:func:`choose_statements_by_period`) the engine grounds Year-1 on. A
+    document with several extraction rows takes its best role."""
+    choices = choose_statements_by_period(_rank_pnl_shims(shims))
+    order = {r: i for i, r in enumerate(STATEMENT_ROLES)}
+    roles: dict[str, StatementRole] = {}
+
+    def _offer(doc: Any, cand: StatementRole) -> None:
+        if not doc:
+            return
+        cur = roles.get(str(doc))
+        if cur is None or order[cand.role] < order[cur.role]:
+            roles[str(doc)] = cand
+
+    for gi, ch in enumerate(choices):
+        primary = ch.chosen.shim.get("document_id")
+        primary_id = str(primary) if primary else None
+        key = _period_key_text(ch.period_key)
+        used = _statement_label(ch.chosen.shim)
+        for pos, st in enumerate((ch.chosen, *ch.siblings)):
+            if pos == 0:
+                role = "year_one_primary" if gi == 0 else "period_primary"
+                why = ch.why
+            else:
+                role = "supplemental"
+                why = f"{used} is the statement used for {ch.period_words}"
+            _offer(
+                st.shim.get("document_id"),
+                StatementRole(role, key, ch.period_words, pos, primary_id, why),
+            )
+    for shim in shims:
+        _offer(
+            shim.get("document_id"),
+            StatementRole(
+                "not_a_statement", None, None, None, None,
+                "its extraction carries no P&L statement lines",
+            ),
+        )
+    return roles
+
+
+async def statement_roles(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> dict[str, StatementRole]:
+    """Every P&L-family document's :class:`StatementRole` on the deal — read
+    off the same rows, ranking and per-period choice as the Year-1 loaders,
+    so no surface re-ranks. A read failure propagates (the caller decides
+    its fallback)."""
+    shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+    return statement_roles_from_shims(shims)
 
 
 def _year_one_lines(

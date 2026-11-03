@@ -1,15 +1,16 @@
 """One ranking key for "which financial statement is the primary source".
 
-Two places decide which of a deal's financial statements (T-12 / annual
-P&L / YTD / monthly) is the base year the model is grounded on:
+The engine loaders in ``services.engine_runner`` rank the deal's financial
+statements (T-12 / annual P&L / YTD / monthly) with this key
+(``_rank_pnl_shims``), then choose one statement per exact period
+(``choose_statements_by_period`` — the footing / outlier override). That
+choice is the ONLY primary-statement rule (FON-22): the Data Room's "Primary
+source" badge, the Historical P&L columns and the ledger link read it through
+``engine_runner.statement_roles`` and never re-rank. The Data Room sorts by
+this key itself only as a fallback when the statement rows cannot be read
+(``api.documents._mark_primary_financial``).
 
-* the engine loaders in ``services.engine_runner`` (``_rank_pnl_shims`` →
-  ``_load_t12_revenue_actuals`` / ``_load_t12_expense_actuals``), which drive
-  Year-1 revenue and expense actuals, and
-* the Data Room's "Primary source" badge
-  (``api.documents._mark_primary_financial``).
-
-Until 2026-10 they used two DIFFERENT keys. The engines ranked purely on the
+Until 2026-10 the engines and the Data Room used two DIFFERENT keys. The engines ranked purely on the
 extracted ``*.period_type`` / ``*.period_ending`` fields, so a T-12 whose
 extraction emitted neither (the sibling-template path does not) fell to the
 "unknown period" tier — BELOW a monthly statement — and recency 0, while the
@@ -19,8 +20,9 @@ Year-1 on a 2024 detailed P&L whose extractor had mapped one restaurant
 concession to the F&B totals: total revenue $9.6M instead of $13.8M, levered
 IRR -100%.
 
-:func:`financial_source_sort_key` is the single, pure key both callers now
-sort by (ascending — lower tuple = preferred). Its members, in order:
+Then (2026-10 to FON-22) both sorted by :func:`financial_source_sort_key`
+but with different completeness measures (member 4 below). It is the single,
+pure key, sorted (ascending — lower tuple = preferred). Its members, in order:
 
 1. **tier** — full-year sources first. From the extracted ``period_type``
    when it is a recognised label (``annual`` / ``ttm`` / … → 0; ``ytd`` 5;
@@ -39,9 +41,12 @@ sort by (ascending — lower tuple = preferred). Its members, in order:
 3. **doc-type preference** — ``T12`` (0) before ``PNL`` (1) before anything
    else (2) on an equal period: a trailing-twelve is the more current base
    than a calendar year ending in the same year.
-4. **-completeness** — the caller's detail score (the engines'
-   ``_pnl_completeness_score``, the Data Room's ``structural_pnl_score``);
-   a Detailed P&L beats a Summary of the same period (FON-22).
+4. **-completeness** — the engines' ``_pnl_completeness_score`` (a count of
+   distinct numeric lines); a Detailed P&L beats a Summary of the same
+   period (FON-22). ``structural_pnl_score`` is NOT a completeness measure:
+   it saturates at 1.0 on any real statement, so on b67bfdee the Detailed
+   P&L (1,031 lines) and the Summary CSV (17) tied on it and the newer CSV
+   took the badge. The Data Room fallback passes no completeness.
 5. **upload_order** — the caller's newest-first index; the newest upload
    is the final tiebreaker.
 

@@ -1196,13 +1196,26 @@ class DocumentRecord(BaseModel):
     # the recognizer made its call. NULL on docs extracted before v4 OR
     # on non-P&L docs the recognizer ignored.
     structural_pnl_score: float | None = None
-    # FON-22 — True on the single financial statement the engines treat as
-    # the primary source of truth for historical modeling. Computed across
-    # the deal's financial docs (full-year > partial period, then most
-    # recent period, then most complete/detailed) so the UI can badge it
-    # "Primary source" and mark the rest as supplemental. Purely derived —
-    # not persisted; recomputed on every list.
+    # FON-22 — True on the single financial statement the engines ground
+    # Year-1 on: the chosen statement of the Year-1 basis period in the
+    # loader's own per-period choice (``engine_runner.statement_roles``), so
+    # the UI can badge it "Primary source" and mark the rest supplemental.
+    # Purely derived — not persisted; recomputed on every list.
     primary_financial_source: bool = False
+    # FON-22 — this document's part in that same choice, for every P&L-family
+    # document with an extraction: ``year_one_primary`` | ``period_primary``
+    # (the chosen statement of another period) | ``supplemental`` (another
+    # statement of a period, never blended in) | ``not_a_statement``. NULL on
+    # any other document, or when the statement rows could not be read.
+    statement_role: str | None = None
+    # The loader's exact-period identity (opaque; two documents share it only
+    # when the loader treats them as one period) and its words ("FY2024").
+    statement_period: str | None = None
+    statement_period_words: str | None = None
+    # 0 = the period's chosen statement, then the siblings in fill order.
+    statement_period_rank: int | None = None
+    # The chosen statement of this document's period.
+    period_primary_document_id: UUID | None = None
     # FON-41 / R-036 — per-file subcategory inside a doc_type. Today only
     # CAPEX carries one — its lane: ``pip`` (PIP / renovation budget — the
     # one lane that feeds the model), ``future`` (forward hold-period
@@ -1223,23 +1236,42 @@ _FINANCIAL_DOC_TYPES = {"T12", "PNL", "PNL_MONTHLY", "PNL_YTD"}
 _FULL_YEAR_DOC_TYPES = _SHARED_FULL_YEAR_DOC_TYPES
 
 
+def _mark_statement_roles(
+    records: list["DocumentRecord"], roles: Mapping[str, Any]
+) -> None:
+    """Stamp the engine's statement choice onto the list in place (FON-22).
+
+    ``roles`` is ``engine_runner.statement_roles`` — the loader's ranking and
+    per-period choice (footing / outlier override included) over its own
+    extraction rows. The badge is the Year-1 basis period's chosen
+    statement; nothing here re-ranks.
+    """
+    for r in records:
+        role = roles.get(str(r.id))
+        if role is None:
+            continue
+        r.statement_role = role.role
+        r.statement_period = role.period_key
+        r.statement_period_words = role.period_words
+        r.statement_period_rank = role.period_rank
+        r.period_primary_document_id = (
+            UUID(role.primary_document_id) if role.primary_document_id else None
+        )
+        r.primary_financial_source = role.role == "year_one_primary"
+
+
 def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
-    """Flag the primary financial source in-place (FON-22).
+    """FALLBACK badge when the statement rows cannot be read (FON-22).
 
-    Sorts by the SAME key the engine loaders use
-    (``services.financial_source_rank.financial_source_sort_key`` — also
-    behind ``engine_runner._rank_pnl_shims``), so the document this badge
-    calls primary is the one that drives Year-1 revenue / expense actuals.
-    2026-10: the two had drifted (this used doc_type + fiscal_year, the
-    engines used the extracted period labels) and on two testers' deals the
-    badge sat on the T-12 while the model ran off a 2024 P&L.
-
-    The list endpoint carries no extraction fields, so ``period_type`` /
-    ``period_ending`` are ``None`` here and recency falls through to
-    ``report_as_of`` → ``extracted_period_year`` → ``fiscal_year`` — which
-    for a P&L are derived from the very ``period_ending`` the engines read.
-    Only EXTRACTED financial docs are eligible; nothing is flagged when the
-    deal has no financials yet.
+    The badge normally comes from :func:`_mark_statement_roles`. When the
+    extraction rows behind it cannot be read, this keeps the badge on the
+    statement the shared key (``financial_source_sort_key``) ranks first on
+    the ``documents`` columns alone, so it never disappears. It has no
+    extraction in hand, so there is no completeness to rank on (the engine's
+    measure is a field count) — equal periods fall to the newest upload.
+    ``structural_pnl_score`` is never a ranking member: it saturates at 1.0
+    on any real statement (b67bfdee: Detailed P&L and Summary CSV tied).
+    Only EXTRACTED financial docs are eligible.
     """
     eligible = [
         r
@@ -1263,7 +1295,6 @@ def _mark_primary_financial(records: list["DocumentRecord"]) -> None:
             report_as_of=r.report_as_of,
             extracted_period_year=r.extracted_period_year,
             fiscal_year=r.fiscal_year,
-            completeness=r.structural_pnl_score or 0.0,
             # ``records`` is uploaded_at DESC — lower index = newer upload,
             # the key's final tiebreaker.
             upload_order=idx,
@@ -3815,8 +3846,22 @@ async def list_documents(
         {"deal_id": str(deal_id), "tenant": str(tenant_id)},
     )
     records = [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
-    # FON-22 — badge the primary financial source across the doc set.
-    _mark_primary_financial(records)
+    # FON-22 — the badge and each statement's role come from the loader's own
+    # per-period choice; the shared key on the documents columns is only the
+    # fallback when the statement rows cannot be read.
+    from ..services import engine_runner
+
+    try:
+        roles = await engine_runner.statement_roles(
+            session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+        )
+    except Exception:  # noqa: BLE001 — the list must still render
+        logger.warning("list_documents: statement roles unavailable for deal=%s", deal_id, exc_info=True)
+        roles = None
+    if roles is None:
+        _mark_primary_financial(records)
+    else:
+        _mark_statement_roles(records, roles)
     return records
 
 

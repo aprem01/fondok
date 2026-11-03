@@ -116,58 +116,92 @@ def test_two_pnls_same_period_more_complete_first() -> None:
     )
 
 
-def test_data_room_key_and_engine_key_agree_on_the_live_deal() -> None:
-    """(7) The fixture mirrors tester 1's deal: T-12 (fiscal_year 2025, no
-    extracted period fields), PNL 2024 (period_ending 2024-12-31), PNL 2023,
-    PNL 2019. The engine ranks with the extracted fields; the Data Room has
-    only the ``documents`` columns (``extracted_period_year`` derived from
-    the same period_ending). Both must put the T-12 first and agree on the
-    whole order."""
-    docs = [
-        # (label, doc_type, period_type, period_ending, extracted_period_year, fiscal_year)
-        ("t12", "T12", None, None, None, 2025),
-        ("pnl_2024", "PNL", "annual", "2024-12-31", 2024, None),
-        ("pnl_2023", "PNL", "annual", "2023-12-31", 2023, None),
-        ("pnl_2019", "PNL", "annual", "2019-12-31", 2019, None),
-    ]
-    engine = _ranked(
-        *(
-            (
-                label,
-                financial_source_sort_key(
-                    doc_type=dt,
-                    period_type=pt,
-                    period_ending=pe,
-                    fiscal_year=fy,
-                    completeness=30,
-                    upload_order=idx,
-                ),
-            )
-            for idx, (label, dt, pt, pe, _epy, fy) in enumerate(docs)
-        )
-    )
-    data_room = _ranked(
-        *(
-            (
-                label,
-                financial_source_sort_key(
-                    doc_type=dt,
-                    period_type=None,
-                    period_ending=None,
-                    extracted_period_year=epy,
-                    fiscal_year=fy,
-                    completeness=0.8,
-                    upload_order=idx,
-                ),
-            )
-            for idx, (label, dt, _pt, _pe, epy, fy) in enumerate(docs)
-        )
-    )
-    assert engine[0] == "t12"
-    assert engine == data_room == ["t12", "pnl_2024", "pnl_2023", "pnl_2019"]
+def _shim(doc_id: str, doc_type: str, fields: list[dict], **cols) -> dict:
+    return {"fields": fields, "doc_type": doc_type, "document_id": doc_id, "filename": doc_id, **cols}
 
-    # Tester 2's variant: the T-12 row has fiscal_year NULL and
-    # extracted_period_year NULL — still the current period on both sides.
+
+def _record(doc_id: str, doc_type: str, *, idx: int, structural_pnl_score: float, **cols):
+    from app.api.documents import DocumentRecord
+
+    return DocumentRecord(
+        id=uuid4(),
+        deal_id=uuid4(),
+        tenant_id=uuid4(),
+        filename=doc_id,
+        doc_type=doc_type,
+        status="EXTRACTED",
+        uploaded_at=datetime(2026, 10, 20 - idx, tzinfo=UTC),
+        structural_pnl_score=structural_pnl_score,
+        **cols,
+    )
+
+
+def _numeric(prefix: str, n: int) -> list[dict]:
+    return [{"field_name": f"p_and_l_usali.{prefix}.line_{i:04d}", "value": float(i + 1)} for i in range(n)]
+
+
+def test_data_room_badge_and_engine_choice_agree_on_the_same_rows() -> None:
+    """(7) Both sides computed from the SAME rows, with REAL, non-uniform
+    completeness. b67bfdee: the Summary CSV (17 numeric lines, states
+    ``annual``, newer upload) and the Detailed P&L (1,031 lines, older) both
+    score ``structural_pnl_score`` 1.0 — the measure the old badge ranked on,
+    which tied and handed the badge to the newer CSV. The badge must equal
+    the engine's per-period choice; it is built from that choice, never from
+    a second ranking."""
+    from app.api.documents import _mark_statement_roles
+    from app.services.engine_runner import (
+        _choose_period_statements,
+        _pnl_completeness_score,
+        _rank_pnl_shims,
+        statement_roles_from_shims,
+    )
+
+    rooms = {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue"}
+    csv_fields = [
+        {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+        {"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+        {**rooms, "value": 8_900_000.0},
+        *_numeric("summary", 16),
+    ]
+    detailed_fields = [{**rooms, "value": 9_496_407.22}, *_numeric("detail", 1_030)]
+    records = [
+        _record("csv", "PNL", idx=0, structural_pnl_score=1.0,
+                report_as_of=date(2024, 12, 31), extracted_period_year=2024),
+        _record("detailed", "PNL", idx=1, structural_pnl_score=1.0, extracted_period_year=2024),
+        _record("fy2023", "PNL", idx=2, structural_pnl_score=1.0, extracted_period_year=2023),
+    ]
+    by_name = {r.filename: r for r in records}
+    ids = {name: str(r.id) for name, r in by_name.items()}
+    # Newest-first, as both the list endpoint and the loader read them.
+    shims = [
+        _shim(ids["csv"], "PNL", csv_fields, report_as_of="2024-12-31", extracted_period_year=2024),
+        _shim(ids["detailed"], "PNL", detailed_fields, extracted_period_year=2024),
+        _shim(ids["fy2023"], "PNL", [{**rooms, "value": 8_000_000.0}], extracted_period_year=2023),
+    ]
+    assert _pnl_completeness_score(csv_fields) == 17
+    assert _pnl_completeness_score(detailed_fields) == 1_031
+    _mark_statement_roles(records, statement_roles_from_shims(shims))
+
+    engine_primary = _choose_period_statements(_rank_pnl_shims(shims))[0][0].shim["document_id"]
+    assert engine_primary == ids["detailed"]
+    assert [str(r.id) for r in records if r.primary_financial_source] == [engine_primary]
+    assert by_name["csv"].statement_role == "supplemental"
+    assert by_name["fy2023"].statement_role == "period_primary"
+
+    # The legacy Data Room key (``structural_pnl_score`` as completeness) on
+    # the same records ranks the CSV first — the divergence this pins.
+    legacy = min(
+        enumerate(records),
+        key=lambda t: financial_source_sort_key(
+            doc_type=t[1].doc_type, report_as_of=t[1].report_as_of,
+            extracted_period_year=t[1].extracted_period_year,
+            completeness=t[1].structural_pnl_score or 0.0, upload_order=t[0],
+        ),
+    )[1]
+    assert legacy.filename == "csv"
+
+    # Tester 2's variant still holds on the key itself: an undated T-12 is the
+    # current period on both sides.
     assert financial_source_sort_key(doc_type="T12") < financial_source_sort_key(
         doc_type="PNL", period_type="annual", period_ending="2024-12-31"
     )
