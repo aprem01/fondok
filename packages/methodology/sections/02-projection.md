@@ -125,10 +125,12 @@ anchored on, exactly as the Historical P&L heads that column.
 
 {testid=primary-statement-methodology} **One statement per year.** When two statements cover the same fiscal year (a detailed and a summary
 P&L, say), the Historical P&L shows one column, built from the primary statement, and names the
-other as supplemental on that column. The primary is the one that drives the model: the statement
-the Data Room marks “Primary source” — a full-year statement ahead of a partial one, then the fuller
-extraction, then the newer upload. Re-tag a statement's year in the Data Room to change which is
-primary. The other statement is never averaged into Year 1. When the primary lacks a full-year rooms
+other as supplemental on that column. The column's statement is the one the model chooses for that
+period — for the Year-1 year, the statement the Data Room marks “Primary source”: a full-year
+statement ahead of a partial one, then the statement with more line items, then the newer upload.
+Re-tag a statement's year in the Data Room to change which is primary. When the column's statement
+states no occupancy, ADR or RevPAR, the figure is read from the other statement of the same period,
+and the cell names it; never from another period. The other statement is never averaged into Year 1. When the primary lacks a full-year rooms
 revenue line or its revenue lines do not add up to its own stated total, and the other statement's
 do, the other statement drives the year; a statement that does not add up carries a review note
 even when it is the only one;
