@@ -115,4 +115,10 @@ atlas:
   # of headroom for every single-section selection, so the next near-miss
   # fails loudly — raise the cap here (or split the section), never trim copy.
   # 50000 kept at the merge (main's FON-116 raise covers FON-22's sources copy).
-  max_chars: 50000
+  # 51000 (≈12.75k tokens), was 50000: after the merge the `projection`
+  # selection ("What exit cap rate does the model use?") needs 49,036
+  # characters — 964 under 50000, inside the 1,000-character headroom the
+  # test enforces (main alone: 48,989). Raised rather than trimmed, per the
+  # rule above; splitting `projection` (topline vs exit / refi) is the
+  # structural fix and should come before the next projection copy edit.
+  max_chars: 51000
