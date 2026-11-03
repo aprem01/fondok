@@ -883,8 +883,8 @@ async def _compute_variance(
         concept_key = variance_concept(bf.field)
         what = {
             "noi": "NOI before the FF&E reserve",
-            "total_revenue": "a total revenue its own revenue lines bear out",
-        }.get(concept_key, f"an annual {concept_key.replace('_', ' ')} line")
+            "total_revenue": "total revenue that its own revenue lines bear out",
+        }.get(concept_key, f"annual {concept_key.replace('_', ' ')} line")
         candidate_refusals.append(
             Refusal(
                 code=ReasonCode.NO_SOURCE,

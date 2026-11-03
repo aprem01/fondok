@@ -572,6 +572,7 @@ async def _insert_om(deal_id: UUID) -> None:
         fields=[
             {"field_name": "ttm_summary_per_om.noi_usd", "value": 3_356_709.0, "source_page": 14, "confidence": 0.8},
             {"field_name": "ttm_summary_per_om.rooms_revenue_usd", "value": 9_541_537.0, "source_page": 14, "confidence": 0.8},
+            {"field_name": "ttm_summary_per_om.total_revenue_usd", "value": 15_926_405.0, "source_page": 14, "confidence": 0.8},
         ],
     )
 
@@ -655,6 +656,13 @@ async def test_noi_refusal_names_the_statement_the_model_uses() -> None:
     assert noi, details
     assert any(_BASIS_2E1 in d and "states no NOI before" in d for d in noi), noi
     assert not any("T-12" in d for d in noi), noi
+    # The HR-sheet total its own lines exceed is not an actual: the refusal
+    # names the statement too, in plain words.
+    total = [d for d in details if "total revenue" in d and _BASIS_2E1 in d]
+    assert total == [
+        f"{_BASIS_2E1}, the statement the model uses, states no total revenue that its own "
+        "revenue lines bear out — the broker's figure has nothing to be compared against"
+    ], details
 
 
 def test_reserve_basis_reason_names_the_statement() -> None:
