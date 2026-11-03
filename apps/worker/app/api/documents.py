@@ -10891,7 +10891,7 @@ def _critic_actual_fields(year_one: Any) -> dict[str, float]:
     put("resort_fees", rev.get("resort_fees"))
     # The model's Other Revenue pool: Other Operated + Miscellaneous Income.
     put("other_revenue", total("other_revenue", "misc_revenue", src=rev))
-    # Total revenue: the statement's own total, unless its own lines exceed it.
+    # Total revenue: the statement's own total, unless its own lines contradict it.
     put("total_revenue", stated.get("total_revenue"))
     put("occupancy", rev.get("occupancy"))
     put("adr", rev.get("adr"))
@@ -11112,6 +11112,7 @@ async def _load_critic_inputs(
         *,
         source: str | None = None,
         derived: dict[str, str] | None = None,
+        require_revenue: bool = True,
     ) -> Any | None:
         """``USALIFinancials`` over the stated ``values``. A line not in
         ``values`` is listed in ``not_stated`` (its schema slot holds 0.0, a
@@ -11134,8 +11135,10 @@ async def _load_critic_inputs(
         )
         other = values.get("other_revenue") or values.get("other_revenue_usd") or 0.0
         if total_rev is None:
+            # The slot needs a number; the total itself is listed as not
+            # stated below, so this sum is never read as one.
             total_rev = rooms + fb + resort_fees + other
-        if total_rev <= 0:
+        if total_rev <= 0 and require_revenue:
             return None
         noi_stated = values.get("noi") if values.get("noi") is not None else values.get("noi_usd")
         gop_stated = values.get("gop") if values.get("gop") is not None else values.get("gop_usd")
@@ -11231,6 +11234,9 @@ async def _load_critic_inputs(
             source=year_one.statement,
             # Engine canonicals and the spread's paths coincide for rooms.
             derived=dict(year_one.derived),
+            # The statement's occupancy / ADR / NOI stand even when no revenue
+            # line or total is stated (each absent one is listed).
+            require_revenue=False,
         )
         if year_one is not None
         else None

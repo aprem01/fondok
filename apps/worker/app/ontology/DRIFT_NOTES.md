@@ -611,9 +611,14 @@ sum of the broker's legs is not stated, so the broker OpEx ratio is not
 stated. When the basis states no full-period rooms revenue line at all (the
 live 2e1db521 / 76d10a64 statement: only budget / prior-year rooms lines), the
 rooms revenue is derived — RevPAR (or occupancy × ADR) × keys × the period's
-days — and listed in `USALIFinancials.derived` with that label; a stated total
-the lines then exceed by more than 0.5% is not an actual (the HR-sheet
-10,839,200 there). No pinned scenario carries keys, so none derives.
+days — and listed in `USALIFinancials.derived` with that label. A stated total
+revenue is an actual unless the statement's own lines contradict it (the
+engine's `_revenue_footing`: no full-period rooms line, or lines above the
+total) — the HR-sheet 10,839,200 there is not. The actual side is built even
+when no revenue is stated (occupancy / ADR / GOP / NOI stand, each absent line
+listed); the broker side still needs revenue. No pinned scenario carries keys,
+so none derives; the two real payloads keep their stated occupancy / ADR / GOP
+/ NOI / insurance with rooms revenue and total revenue not stated.
 
 ## 8. Phase 1.3b parity exceptions (usali_scorer adapter)
 

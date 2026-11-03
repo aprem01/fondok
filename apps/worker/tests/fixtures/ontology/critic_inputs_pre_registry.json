@@ -21,7 +21,7 @@
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 14009800.0,
+          "total_revenue": 0.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -50,7 +50,7 @@
           },
           "gop": 5081540.0,
           "noi": 1948560.0,
-          "opex_ratio": 0.8609145027052492,
+          "opex_ratio": 0.0,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
@@ -71,7 +71,9 @@
             "undistributed.utilities",
             "undistributed.total",
             "mgmt_fee",
-            "ffe_reserve"
+            "ffe_reserve",
+            "total_revenue",
+            "opex_ratio"
           ],
           "derived": {},
           "source_statement": "anglers_t12_real"
@@ -97,7 +99,7 @@
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 12940200.0,
+          "total_revenue": 0.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -126,7 +128,7 @@
           },
           "gop": 4736470.0,
           "noi": 1957310.0,
-          "opex_ratio": 0.848741905071019,
+          "opex_ratio": 0.0,
           "occupancy": 0.82391,
           "adr": 247.078,
           "revpar": 203.57,
@@ -148,7 +150,9 @@
             "undistributed.total",
             "mgmt_fee",
             "ffe_reserve",
-            "fixed_charges.property_taxes"
+            "fixed_charges.property_taxes",
+            "total_revenue",
+            "opex_ratio"
           ],
           "derived": {},
           "source_statement": "anglers_annual_pnl_real"
@@ -180,7 +184,7 @@
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
-          "total_revenue": 14009800.0,
+          "total_revenue": 0.0,
           "dept_expenses": {
             "rooms": 0.0,
             "food_beverage": 0.0,
@@ -209,7 +213,7 @@
           },
           "gop": 5081540.0,
           "noi": 1948560.0,
-          "opex_ratio": 0.8609145027052492,
+          "opex_ratio": 0.0,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
@@ -230,7 +234,9 @@
             "undistributed.utilities",
             "undistributed.total",
             "mgmt_fee",
-            "ffe_reserve"
+            "ffe_reserve",
+            "total_revenue",
+            "opex_ratio"
           ],
           "derived": {},
           "source_statement": "anglers_t12_real"

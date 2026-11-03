@@ -5797,7 +5797,7 @@ class YearOneActuals(NamedTuple):
     expense: dict[str, float]
     #: The basis statement's own full-period ``gop`` / ``noi`` / ``ebitda``
     #: (NOI before the FF&E reserve), when stated, and ``total_revenue``
-    #: unless its own revenue lines exceed it.
+    #: unless its own revenue lines contradict it.
     stated: dict[str, float]
     #: Lines computed from stated ones, engine canonical -> how (labelled
     #: wherever shown): today only ``rooms_revenue`` = RevPAR (or occupancy ×
@@ -5885,29 +5885,20 @@ def year_one_actuals_from_shims(
         for c in _STATED_PROFIT_CONCEPTS
         if (v := _stated_full_period(chosen.fields, chosen.doc_type, c)) is not None
     }
-    # Total revenue: the statement's own stated total — unless its own
-    # full-period revenue lines sum to MORE than it beyond the precision they
-    # were read at (the engine's footing check, the same one the Historical
-    # P&L runs). Lines short of the total only mean a line was not itemised;
-    # lines above it contradict it — 2e1db521: an HR-sheet 10,839,200 against
-    # 13.46M of revenue lines — and it is not an actual to compare a broker's
-    # claim against.
+    # Total revenue: the statement's own stated total — unless the
+    # statement's revenue lines contradict it (the engine's footing check, the
+    # same one the Historical P&L runs): it itemises no full-period rooms
+    # revenue line, or its full-period lines sum to MORE than it beyond the
+    # precision they were read at. Lines short of the total only mean a line
+    # was not itemised. 2e1db521 / 76d10a64: 10,839,200 on the operating-revenue
+    # line (the HR-sheet figure) with no rooms line beside a 13.48M
+    # ``total_revenue_2024`` — not an actual to compare a broker's claim against.
     total = _stated_full_period(chosen.fields, chosen.doc_type, "total_revenue")
     if total is not None:
         footing = _revenue_footing(chosen.fields, chosen.doc_type)
-        contradicted = (
-            footing.status == "fails" and footing.lines is not None and footing.lines > total
+        contradicted = footing.status == "fails" and (
+            footing.lines is None or footing.lines > total
         )
-        if footing.lines is None and "rooms_revenue" in derived:
-            # The footing has no rooms line to sum; with the derived rooms
-            # revenue the lines may still overshoot the total (beyond the
-            # half-percent the derivation is good to).
-            lines = sum(
-                revenue[k]
-                for k in ("rooms_revenue", "fb_revenue", "other_revenue", "misc_revenue", "resort_fees")
-                if k in revenue
-            )
-            contradicted = lines > total * 1.005
         if not contradicted:
             stated["total_revenue"] = total
     return YearOneActuals(
