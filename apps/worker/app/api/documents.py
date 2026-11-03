@@ -60,6 +60,7 @@ from ..auth import AuthContext, get_current_auth, require_role
 from ..config import get_settings
 from ..auth.context import current_tenant_id
 from ..database import (
+    advisory_xact_lock,
     end_transaction_before_external_call,
     get_session,
     get_session_factory,
@@ -380,7 +381,9 @@ async def _settle_failure_state_on_completion(
     applies to a stale error left by an earlier failed attempt that a
     ``POST .../extract`` retry, which does not re-parse, has now fixed).
     When the row was ``FAILED`` under the running job (it is ``EXTRACTING``
-    otherwise — this job stamped it), the superseded failure is recorded in
+    otherwise — this job stamped it), or it still carries the watchdog's
+    ``timeout`` verdict (a Retry may have re-stamped it EXTRACTING since),
+    the superseded failure is recorded in
     ``audit_log`` (:data:`AUDIT_COMPLETED_AFTER_FAILURE`, ``before`` = the
     failure, ``after`` = ``EXTRACTED``) so the watchdog's earlier audit row is
     not left as the last word. On Postgres the row is read ``FOR UPDATE`` so
@@ -422,7 +425,15 @@ async def _settle_failure_state_on_completion(
             ),
             {"d": json.dumps(data), "id": doc_id, "tenant": str(tenant_id)},
         )
-    if status_now == DOC_STATUS_FAILED:
+    # The superseded failure is audited when this job completes a row that
+    # is FAILED under it, or that still carries the watchdog's timeout
+    # verdict — the latter also when a Retry re-stamped the row EXTRACTING
+    # in between (watchdog FAILED → Retry → this older job completes), where
+    # the status alone no longer shows it.
+    from ..services.extraction_watchdog import TIMEOUT_ERROR_KIND
+
+    superseded_timeout = stale.get("error_kind") == TIMEOUT_ERROR_KIND
+    if status_now == DOC_STATUS_FAILED or superseded_timeout:
         logger.warning(
             "extraction: doc=%s job=%s completed after the row was FAILED "
             "(error_kind=%s) — completion wins, failure cleared",
@@ -10886,6 +10897,10 @@ async def _persist_critic_report(
         # report back. Replace the set: drop the deal's findings, then upsert
         # each (the upsert also absorbs a concurrent run on the same deal,
         # e.g. two documents of one upload batch finishing together).
+        # Two runs on one deal (two documents of a batch finishing together)
+        # would each DELETE before the other's INSERTs commit and leave the
+        # union of both sets: serialize the replacement per deal.
+        await advisory_xact_lock(session, f"critic_findings:{deal_id}")
         await session.execute(
             text(
                 "DELETE FROM critic_findings "

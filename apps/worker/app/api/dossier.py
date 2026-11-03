@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_session
+from ..database import end_transaction_before_external_call, get_session
 from ..dossier import DealDossier, build_dossier
 from .deals import _assert_deal_belongs_to_tenant, assert_deal_active, get_tenant_id
 
@@ -146,6 +146,8 @@ async def ask_deal(
         question=body.question,
         dossier=dossier,
     )
+    # No transaction across the researcher's LLM call (incident 2026-11-03).
+    await end_transaction_before_external_call(session)
     try:
         out = await run_researcher(payload)
     except HTTPException:

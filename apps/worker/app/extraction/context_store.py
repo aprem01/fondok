@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import end_transaction_before_external_call
+from ..database import advisory_xact_lock, end_transaction_before_external_call
 from . import embeddings
 from .chunking import Chunk, chunk_pages
 from .models import ParsedDocument
@@ -142,7 +142,9 @@ async def index_parsed_document(
             )
 
     # Wipe-and-rewrite for idempotent reprocessing — one short transaction
-    # with the inserts below.
+    # with the inserts below, serialized per document so two concurrent
+    # indexings cannot both DELETE first and then both INSERT (duplicates).
+    await advisory_xact_lock(session, f"document_chunks:{document_id}")
     await session.execute(
         text(
             "DELETE FROM document_chunks WHERE deal_id = :deal "
@@ -287,6 +289,9 @@ async def search_chunks(
     # different space and would score as noise).
     vec_scores: dict[str, float] = {}
     if embeddings.is_enabled():
+        # The query embedding is an API call: end the FTS read's
+        # transaction first (incident 2026-11-03).
+        await end_transaction_before_external_call(session)
         try:
             q_vec = (await embeddings.embed_batch([q], input_type="query"))[0]
             vec_literal = _to_vector_literal(q_vec)

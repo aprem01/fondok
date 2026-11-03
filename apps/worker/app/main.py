@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -38,8 +38,18 @@ from .api import scenarios as scenarios_router
 from .api import settings as settings_router
 from .api import webhooks as webhooks_router
 from .config import get_settings
-from .database import dispose_engine, dispose_migrations_engine, get_engine
-from .migrations import FatalMigrationError, run_startup_migrations
+from .database import (
+    dispose_engine,
+    dispose_migrations_engine,
+    get_engine,
+    release_request_transaction,
+)
+from .migrations import (
+    FatalMigrationError,
+    run_startup_migrations,
+    start_deferred_migration_retry,
+    stop_deferred_migration_retry,
+)
 from .services.batch_scheduler import start_poller, stop_poller
 from .services.digest_scheduler import start_scheduler, stop_scheduler
 from .services.engine_runner import EngineInputsLoadError, MissingIdentityInputsError
@@ -113,6 +123,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_migrations_engine()
     except Exception as exc:
         logger.warning("migrations engine dispose failed: %s", exc)
+    # Incident 2026-11-03 — entries deferred above (database unavailable, or
+    # a table busy past lock_timeout) are re-applied in this running worker
+    # with a bounded backoff, not left until the next deploy; /health reports
+    # ``migrations_deferred`` meanwhile.
+    try:
+        start_deferred_migration_retry()
+    except Exception as exc:
+        logger.exception("deferred migration retry start failed: %s", exc)
     # Defense-in-depth tenant-isolation listener — installed AFTER
     # migrations so the schema bootstrap (which legitimately runs
     # CREATE TABLE + a handful of unscoped SELECTs against system
@@ -246,6 +264,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await stop_embedding_repair()
         except Exception as exc:
             logger.warning("embedding repair stop failed: %s", exc)
+        try:
+            await stop_deferred_migration_retry()
+        except Exception as exc:
+            logger.warning("deferred migration retry stop failed: %s", exc)
         await dispose_engine()
 
 
@@ -283,6 +305,10 @@ def create_app() -> FastAPI:
         version=__version__,
         description="Python tier: FastAPI + LangGraph hotel-underwriting agent runtime.",
         lifespan=lifespan,
+        # Incident 2026-11-03 round 2: no request carries a transaction into
+        # its BackgroundTasks or StreamingResponse (see
+        # ``database.release_request_transaction``).
+        dependencies=[Depends(release_request_transaction, scope="function")],
     )
 
     settings = get_settings()

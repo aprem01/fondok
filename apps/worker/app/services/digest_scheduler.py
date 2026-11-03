@@ -219,7 +219,9 @@ async def _tick_with_session(session: AsyncSession, *, now: datetime) -> int:
             # Slack / email webhooks are external calls (5 s / 8 s timeouts):
             # no transaction is held across them (incident 2026-11-03).
             await end_transaction_before_external_call(session)
-            dispatch_digest(schedule, payload)
+            # Synchronous urllib calls: off the event loop, so a slow
+            # webhook does not stall every other request in the worker.
+            await asyncio.to_thread(dispatch_digest, schedule, payload)
         except Exception as ex:  # noqa: BLE001 — never crash the loop
             logger.exception(
                 "digest_scheduler: dispatch failed for %s: %s",

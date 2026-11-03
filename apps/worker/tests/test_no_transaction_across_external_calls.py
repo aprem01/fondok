@@ -545,3 +545,158 @@ async def test_a_fatal_entry_that_times_out_on_a_lock_does_not_stop_the_boot(mon
     monkeypatch.setattr(mig, "SQLITE_MIGRATIONS", [("t.fatal", "SELECT 1 -- FAIL_WITH 42501")])
     with pytest.raises(mig.FatalMigrationError):
         await mig.run_startup_migrations()
+
+
+class _FakeDDL:
+    """A fake migrations engine: a statement containing ``FAIL:<key>`` raises
+    the SQLSTATE queued for ``key`` (one per call) and succeeds once the
+    queue is empty."""
+
+    def __init__(self) -> None:
+        self.fail: dict[str, list[str]] = {}
+        self.ran: list[str] = []
+        outer = self
+
+        class _Conn:
+            async def execute(self, stmt, *a, **k):
+                sql = str(stmt)
+                if "FAIL:" in sql:
+                    key = sql.split("FAIL:")[1].split()[0]
+                    queue = outer.fail.get(key) or []
+                    if queue:
+                        raise _pg_error(queue.pop(0))
+                outer.ran.append(sql)
+
+        class _Begin:
+            async def __aenter__(self):
+                return _Conn()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Engine:
+            def begin(self):
+                return _Begin()
+
+        self.engine = _Engine()
+
+
+@pytest.fixture
+def fake_ddl(monkeypatch):
+    from app import migrations as mig
+
+    fake = _FakeDDL()
+
+    async def _noop(engine, *, is_sqlite):
+        return None
+
+    monkeypatch.setattr(mig, "get_migrations_engine", lambda: fake.engine)
+    monkeypatch.setattr(mig, "backfill_deal_ai_confidence", _noop)
+    monkeypatch.setattr(mig, "repair_display_string_edits", _noop)
+    monkeypatch.setattr(mig, "FATAL_MIGRATIONS", frozenset({"t.fatal"}))
+    monkeypatch.setattr(
+        mig,
+        "SQLITE_MIGRATIONS",
+        [("t.fatal", "SELECT 1 -- FAIL:fatal"), ("t.plain", "SELECT 2 -- FAIL:plain")],
+    )
+    yield fake
+    mig._DEFERRED.clear()
+    mig._FAILED.clear()
+
+
+async def test_a_deferred_migration_is_listed_and_health_says_degraded(fake_ddl) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app import migrations as mig
+    from app.main import app
+
+    fake_ddl.fail["fatal"] = ["55P03"]
+    await mig.run_startup_migrations()
+    assert mig.deferred_migrations() == {"t.fatal": "lock wait timed out"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        body = (await c.get("/health")).json()
+    assert "migrations_deferred" in body["degraded_reasons"]
+    assert body["status"] == "degraded"
+
+    assert await mig.retry_deferred_migrations() == {}
+    assert any("FAIL:fatal" in s for s in fake_ddl.ran)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        body = (await c.get("/health")).json()
+    assert "migrations_deferred" not in body["degraded_reasons"]
+
+
+async def test_the_retry_loop_applies_a_deferred_entry_in_the_running_worker(fake_ddl) -> None:
+    """Deferred at boot, still busy on the first retry, applied on the
+    second — without a redeploy; the loop then stops by itself."""
+    import asyncio
+
+    from app import migrations as mig
+
+    fake_ddl.fail["plain"] = ["55P03", "55P03"]
+    await mig.run_startup_migrations()
+    assert set(mig.deferred_migrations()) == {"t.plain"}
+    assert mig.start_deferred_migration_retry(initial_seconds=0.01, max_seconds=0.02)
+    assert not mig.start_deferred_migration_retry()  # idempotent while running
+    for _ in range(200):
+        if not mig.deferred_migrations():
+            break
+        await asyncio.sleep(0.01)
+    assert mig.deferred_migrations() == {}
+    assert sum("FAIL:plain" in s for s in fake_ddl.ran) == 1
+    await asyncio.sleep(0.05)
+    assert mig._RETRY_TASK is None or mig._RETRY_TASK.done()
+    await mig.stop_deferred_migration_retry()
+
+
+async def test_a_retry_the_database_refuses_is_recorded_not_raised(fake_ddl) -> None:
+    """A running worker cannot refuse to boot: a FATAL entry refused on retry
+    is listed as failed (``migrations_failed``) and the retry stops for it."""
+    from app import migrations as mig
+
+    fake_ddl.fail["fatal"] = ["55P03", "42501"]
+    await mig.run_startup_migrations()
+    assert await mig.retry_deferred_migrations() == {}
+    assert set(mig.failed_migrations()) == {"t.fatal"}
+    assert mig.start_deferred_migration_retry() is False  # nothing left to retry
+
+
+async def test_no_retry_loop_when_nothing_is_deferred(fake_ddl) -> None:
+    from app import migrations as mig
+
+    await mig.run_startup_migrations()
+    assert mig.deferred_migrations() == {}
+    assert mig.start_deferred_migration_retry() is False
+
+
+async def test_a_completion_after_timeout_then_retry_is_still_audited(db_env) -> None:
+    """Review M3: watchdog FAILED (timeout) → a Retry re-stamps EXTRACTING →
+    the OLDER job completes. The row is EXTRACTING when it settles, but the
+    watchdog's verdict it supersedes is still recorded."""
+    factory, tenant_id, deal_id = db_env
+    doc = await _seed_doc(
+        factory,
+        tenant_id=tenant_id,
+        deal_id=deal_id,
+        extra_data={"error_kind": "timeout", "error_message": "Timed out after 31 min"},
+    )
+
+    async def _extract(request: Any):
+        return list(_FIELDS), {"overall": 0.9}, "txn-probe", None
+
+    previous = docs_module.set_extraction_backend(_backend(_extract))
+    try:
+        await docs_module._run_extraction_pipeline(
+            deal_id=deal_id, doc_id=doc, tenant_id=tenant_id, force=True
+        )
+    finally:
+        docs_module.set_extraction_backend(previous)
+
+    row = await _doc_row(factory, doc, tenant_id)
+    assert row["status"] == "EXTRACTED"
+    assert "error_kind" not in row["extraction_data"]
+    audits = [a for a in await _audit_rows(factory, tenant_id=tenant_id, doc_id=doc)
+              if a["action"] == docs_module.AUDIT_COMPLETED_AFTER_FAILURE]
+    assert len(audits) == 1
+    assert audits[0]["before"]["error_kind"] == "timeout"
+    assert audits[0]["before"]["status"] == "EXTRACTING"

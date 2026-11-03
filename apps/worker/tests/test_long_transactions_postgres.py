@@ -30,6 +30,7 @@ import contextlib
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -406,3 +407,314 @@ async def test_a_redeploy_takes_no_table_lock_for_columns_that_exist(pg_db, capl
     deferred = [r.getMessage() for r in caplog.records if "not applied" in r.getMessage()]
     assert deferred == [], deferred
     assert elapsed < mig.MIGRATION_LOCK_TIMEOUT_MS / 1000, elapsed
+
+
+# ───────────── round 2: request → background task / stream ─────────────
+
+_PDF = (Path(__file__).parent / "fixtures" / "sample_t12.pdf").read_bytes()
+
+
+def _http_client():
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    return AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers={"X-Tenant-Id": TENANT}
+    )
+
+
+async def _probe_lock_free(table: str) -> dict[str, Any]:
+    conn = await _connect()
+    try:
+        out: dict[str, Any] = {"idle_in_txn": await _idle_in_transaction(conn)}
+        t0 = time.monotonic()
+        async with conn.transaction():
+            await conn.execute("SET LOCAL lock_timeout = '1s'")
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS bg_probe INT")
+            await conn.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS bg_probe")
+        out["ddl_seconds"] = time.monotonic() - t0
+        return out
+    finally:
+        await conn.close()
+
+
+async def test_upload_ending_in_a_duplicate_carries_no_lock_into_the_batch(
+    pg_db, monkeypatch, tmp_path
+) -> None:
+    """The reviewer's reproduction (C1): upload ``[new, dup]`` — the
+    duplicate check's read used to stay open through the whole background
+    parse/extract and block ``ALTER TABLE documents``."""
+    import hashlib
+
+    from app.api import documents as docs_module
+    from app.storage import reset_raw_store_cache
+
+    deal_id = pg_db
+    monkeypatch.setenv("DOCUMENT_STORAGE_ROOT", str(tmp_path))
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    reset_raw_store_cache()
+    conn = await _connect()
+    try:
+        await conn.execute(
+            "INSERT INTO documents (id, deal_id, tenant_id, filename, doc_type, status, "
+            "uploaded_at, content_hash) VALUES ($1, $2, $3, 'old.pdf', 'T12', 'EXTRACTED', now(), $4)",
+            str(uuid4()), deal_id, TENANT, hashlib.sha256(_PDF).hexdigest(),
+        )
+    finally:
+        await conn.close()
+    probes: list[dict[str, Any]] = []
+
+    async def _batch(*, batch):
+        probes.append(await _probe_lock_free("documents"))
+
+    monkeypatch.setattr(docs_module, "_run_parse_and_extract_batch", _batch)
+    files = [
+        ("files", ("new.pdf", _PDF + uuid4().hex.encode(), "application/pdf")),
+        ("files", ("dup.pdf", _PDF, "application/pdf")),
+    ]
+    try:
+        async with _http_client() as client:
+            r = await client.post(f"/deals/{deal_id}/documents/upload", files=files)
+    finally:
+        get_settings.cache_clear()
+        reset_raw_store_cache()
+    assert r.status_code == 201, r.text
+    assert len(probes) == 1
+    assert probes[0]["idle_in_txn"] == [], probes
+    assert probes[0]["ddl_seconds"] < 1.0
+
+
+async def test_memo_generate_carries_no_lock_into_the_analyst(pg_db, monkeypatch) -> None:
+    from app.agents.analyst import AnalystInput
+    from app.api import deals as deals_module
+
+    deal_id = pg_db
+    probes: list[dict[str, Any]] = []
+
+    async def _payload(*args: Any, **kwargs: Any):
+        session = kwargs.get("session") or args[0]
+        from sqlalchemy import text
+
+        await session.execute(text("SELECT id FROM documents WHERE tenant_id = :t"), {"t": TENANT})
+        return AnalystInput(tenant_id=TENANT, deal_id=deal_id, deal_data={"id": deal_id})
+
+    async def _analyst(payload: Any) -> None:
+        probes.append(await _probe_lock_free("deals"))
+
+    monkeypatch.setattr(deals_module, "_load_deal_payload", _payload)
+    monkeypatch.setattr(deals_module, "_safe_run_analyst_streaming", _analyst)
+    async with _http_client() as client:
+        r = await client.post(f"/deals/{deal_id}/memo/generate")
+    assert r.status_code == 200, r.text
+    assert probes and probes[0]["idle_in_txn"] == [], probes
+    assert probes[0]["ddl_seconds"] < 1.0
+
+
+# ───────────── round 2: in-worker retry of a deferred migration ─────────────
+
+
+async def test_a_deferred_migration_applies_in_the_running_worker(pg_db, monkeypatch) -> None:
+    """Review I1: deferred under a held lock, then applied by the background
+    retry once the lock goes — no redeploy."""
+    from app import migrations as mig
+
+    async def _noop(engine, *, is_sqlite):
+        return None
+
+    monkeypatch.setattr(mig, "backfill_deal_ai_confidence", _noop)
+    monkeypatch.setattr(mig, "repair_display_string_edits", _noop)
+    monkeypatch.setattr(
+        mig, "MIGRATIONS",
+        [("documents.retry_probe", "ALTER TABLE documents ADD COLUMN IF NOT EXISTS retry_probe INT")],
+    )
+    holder = await _connect()
+    try:
+        tr = holder.transaction()
+        await tr.start()
+        await holder.fetchval("SELECT count(*) FROM documents")
+        await mig.run_startup_migrations()
+        assert mig.deferred_migrations() == {"documents.retry_probe": "lock wait timed out"}
+        assert mig.start_deferred_migration_retry(initial_seconds=0.2, max_seconds=0.4)
+        await asyncio.sleep(0.1)
+        await tr.rollback()  # the long job ends
+        for _ in range(100):
+            if not mig.deferred_migrations():
+                break
+            await asyncio.sleep(0.1)
+        assert mig.deferred_migrations() == {}
+        has_col = await holder.fetchval(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_name = 'documents' AND column_name = 'retry_probe'"
+        )
+        assert has_col == 1
+        await holder.execute("ALTER TABLE documents DROP COLUMN retry_probe")
+    finally:
+        await mig.stop_deferred_migration_retry()
+        mig._DEFERRED.clear()
+        await holder.close()
+
+
+async def test_a_redeploy_takes_no_lock_on_deals_either(pg_db, caplog) -> None:
+    """Review M1: ``deals.status_default_in_progress`` (ALTER COLUMN SET
+    DEFAULT) took ACCESS EXCLUSIVE on ``deals`` on every boot; the catalog
+    shows the default already set, so the boot now skips it."""
+    from app import migrations as mig
+
+    holder = await _connect()
+    try:
+        tr = holder.transaction()
+        await tr.start()
+        await holder.fetchval("SELECT count(*) FROM deals")
+        await holder.fetchval("SELECT count(*) FROM documents")
+        caplog.set_level("ERROR", logger="app.migrations")
+        t0 = time.monotonic()
+        await mig.run_startup_migrations()
+        elapsed = time.monotonic() - t0
+        await tr.rollback()
+    finally:
+        await holder.close()
+    assert [r.getMessage() for r in caplog.records if "not applied" in r.getMessage()] == []
+    assert elapsed < mig.MIGRATION_LOCK_TIMEOUT_MS / 1000, elapsed
+
+
+# ───────────── round 2: serialized replacements ─────────────
+
+
+async def test_concurrent_critic_runs_leave_one_finding_set(pg_db, monkeypatch) -> None:
+    """Review M2: two runs on one deal at once used to leave the UNION of
+    their sets (each DELETE ran before the other's INSERTs committed)."""
+    from uuid import UUID
+
+    from fondok_schemas.critic import CriticReport, Severity
+
+    from app.agents import critic
+    from app.agents.critic import CriticOutput, _make_finding
+    from app.api import documents as docs_module
+    from app.auth.context import current_tenant_id
+    from app.database import get_session_factory
+
+    deal_id = pg_db
+
+    def _out(titles: list[str]) -> CriticOutput:
+        fs = [
+            _make_finding(deal_uuid=UUID(deal_id), rule_id="MULTI_FIELD_FNB_MARGIN_AGGRESSIVE",
+                          title=t, narrative=t, severity=Severity.INFO)
+            for t in titles
+        ]
+        return CriticOutput(deal_id=deal_id, report=CriticReport(deal_id=UUID(deal_id), findings=fs))
+
+    sets = {"a": ["a1", "a2"], "b": ["b1"]}
+    gate = asyncio.Event()
+
+    async def _run(payload, *, run_narrative_pass: bool = True):
+        which = payload["market_context"]["which"]
+        if which == "a":
+            gate.set()
+        else:
+            await gate.wait()
+        return _out(sets[which])
+
+    monkeypatch.setattr(critic, "run_critic", _run)
+    monkeypatch.setattr(critic, "CriticInput", lambda **kw: kw)
+    current_tenant_id.set(TENANT)
+
+    # Each run needs its own inputs: route through a per-task contextvar.
+    import contextvars
+
+    which_var: contextvars.ContextVar[str] = contextvars.ContextVar("which")
+
+    async def _inputs_ctx(session, *, deal_id: str, tenant_id: str):
+        return {"noi": 1.0}, {"noi": 2.0}, {"which": which_var.get()}, 100
+
+    monkeypatch.setattr(docs_module, "_load_critic_inputs", _inputs_ctx)
+
+    async def _persist(which: str) -> None:
+        which_var.set(which)
+        async with get_session_factory()() as s:
+            await docs_module._persist_critic_report(s, deal_id=deal_id, tenant_id=TENANT)
+
+    for _ in range(5):
+        gate.clear()
+        await asyncio.gather(_persist("a"), _persist("b"))
+        conn = await _connect()
+        try:
+            titles = sorted(r["title"] for r in await conn.fetch(
+                "SELECT title FROM critic_findings WHERE deal_id = $1", deal_id))
+        finally:
+            await conn.close()
+        assert titles in (sorted(sets["a"]), sorted(sets["b"])), titles
+
+
+async def test_search_query_embedding_runs_with_no_transaction_open(pg_db, monkeypatch) -> None:
+    from app.auth.context import current_tenant_id
+    from app.database import get_session_factory
+    from app.extraction import embeddings
+    from app.extraction.context_store import search_chunks
+
+    seen: list[list[str]] = []
+
+    async def _batch(texts, *, input_type):
+        conn = await _connect()
+        try:
+            seen.append(await _idle_in_transaction(conn))
+        finally:
+            await conn.close()
+        return [[0.0] * embeddings.EMBEDDING_DIM for _ in texts]
+
+    monkeypatch.setattr(embeddings, "is_enabled", lambda: True)
+    monkeypatch.setattr(embeddings, "embed_batch", _batch)
+    current_tenant_id.set(TENANT)
+    async with get_session_factory()() as s:
+        await search_chunks(s, deal_id=pg_db, query="rooms revenue", tenant_id=TENANT)
+    assert seen == [[]], seen
+
+
+async def test_concurrent_reindex_of_one_document_does_not_duplicate_chunks(pg_db, monkeypatch) -> None:
+    """Review M5: two indexings of one document at once each DELETEd before
+    the other's INSERTs committed, leaving both chunk sets."""
+    from datetime import UTC, datetime
+
+    from app.auth.context import current_tenant_id
+    from app.database import get_session_factory
+    from app.extraction import embeddings
+    from app.extraction.context_store import index_parsed_document
+    from app.extraction.models import ParsedDocument, ParsedPage
+
+    deal_id = pg_db
+    doc = await _seed_doc(deal_id)
+    gate = asyncio.Event()
+    arrived = 0
+
+    async def _iter_partial(texts, *, input_type):
+        nonlocal arrived
+        arrived += 1
+        if arrived == 2:
+            gate.set()
+        await gate.wait()  # both runs have embedded before either writes
+        return [None] * len(texts)
+
+    monkeypatch.setattr(embeddings, "is_enabled", lambda: True)
+    monkeypatch.setattr(embeddings, "embed_iter_partial", _iter_partial)
+    parsed = ParsedDocument(
+        filename="x.xlsx", content_hash=uuid4().hex * 2, parsed_at=datetime.now(UTC),
+        parser="test-fixture", total_pages=1,
+        pages=[ParsedPage(page_num=p, text=f"Page {p} rooms revenue 1,000. " * 300) for p in range(1, 9)],
+    )
+    current_tenant_id.set(TENANT)
+
+    async def _index() -> int:
+        async with get_session_factory()() as s:
+            return await index_parsed_document(
+                s, deal_id=deal_id, tenant_id=TENANT, document_id=doc, parsed=parsed
+            )
+
+    n1, n2 = await asyncio.gather(_index(), _index())
+    conn = await _connect()
+    try:
+        total = await conn.fetchval("SELECT count(*) FROM document_chunks WHERE document_id = $1", doc)
+    finally:
+        await conn.close()
+    assert n1 == n2 and total == n1, (n1, n2, total)
