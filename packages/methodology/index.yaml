@@ -121,4 +121,9 @@ atlas:
   # test enforces (main alone: 48,989). Raised rather than trimmed, per the
   # rule above; splitting `projection` (topline vs exit / refi) is the
   # structural fix and should come before the next projection copy edit.
-  max_chars: 51000
+  # 53000, was 51000 (FON-121): deal years (twelve months from the close), the
+  # month-weighted calendar blend and the published forecast average add the
+  # `projection` copy they need; that selection now needs 51,251 characters
+  # (+1,000 headroom = 52,251). Raised per the rule above — the projection
+  # split (topline vs exit / refi) is still the structural fix.
+  max_chars: 53000

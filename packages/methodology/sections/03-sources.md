@@ -764,6 +764,7 @@ Benchmark level `market` from a non-CoStar market report (`ttm_performance.marke
 
 ::: badge {source=costar_submarket_forecast name="CoStar Submarket Forecast"}
 Growth INTO a calendar year from `market_study.class.<bucket>.<YYYY>.(occupancy|adr)_change_pct`
+(a model year blends the calendar years it spans by their months, FON-121; chip "CoStar p.N")
 (`services/topline_growth.py`), behind the analyst's figures and CBRE Hotel Horizons
 (`cbre_horizons.segment_all.<YYYY>.*_change_pct`). A bucket year missing inside the series is
 unavailable, never patched from another bucket.
@@ -772,8 +773,10 @@ unavailable, never patched from another bucket.
 
 ::: badge {source=growth_carried_forward name="Past the Forecast"}
 A calendar year past `series_last_year` of the document series the previous year used
-(`source = carried_forward`): ADR = the arithmetic mean of that series' forecast-tagged ADR change
-years (`forecast_average`, `forecast_span` on the label); occupancy = 0 (held). Never extended from a
+(`source = carried_forward`): ADR = the report's published forecast average
+(`market_study.performance.forecast_avg_adr_change_pct`, `average_basis = published_average`, its
+page on the chip), else the arithmetic mean of that series' forecast-tagged ADR change years
+(`computed_average`, `forecast_span` on the label); occupancy = 0 (held). Never extended from a
 withheld or unavailable year; a series with no forecast-tagged year leaves ADR unavailable.
 
 :::
@@ -863,7 +866,7 @@ the values it ignored.
 
 ::: badge {source=index_assumption name="Index Analysis · Columns & Rows"}
 The Index Analysis year columns follow the acquisition close calendar — the
-same`projection_calendar_years` the Future P&L prints: Year 1 is the calendar year of the first
+same `projection_deal_years` the Future P&L prints: Year 1 is the twelve months from the first
 operating month after close and sits in the first forecast column, the forecast columns are exactly
 the model horizon (nothing is carried forward beyond it — no held-flat occupancy or 3% ADR
 extension), and the six columns before Year 1 are history. With no close date the forecast columns
@@ -882,6 +885,8 @@ Opportunity at Par fill from it. A separate Market row carries market-level actu
 STR market rows) by calendar year and, as its forecast, CBRE Horizons placed by the report's own
 calendar year (`cbre_horizons.year_<n>.calendar_year`, pipeline v7) and labelled Market / CBRE
 Horizons with document and page — a CBRE forecast is a market forecast, not a comp-set forecast. A
+model year that spans two calendar years shows no CBRE level (the reason says the growth is blended
+on the Future P&L). A
 calendar shorter than the horizon is not extended: a model year the engine did not place reads "Year
 N" with no calendar year. **Actual vs forecast labels.** Year 1 uses the reported TTM and Year 2
 onward the CBRE Horizons forecast (market benchmark), so every benchmark value names its kind,

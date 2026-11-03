@@ -72,9 +72,13 @@ step the workspace is on. This two-step switch is temporary.
    benchmark describes its own period — an STR trailing twelve months to May 2025 describes 2025 —
    and is grown into every projected year, Year 1 included, by the market growth below.
 3. **Market growth, year by year** — Your growth for that year; else your all-years growth; else the
-   CBRE Hotel Horizons forecast for that calendar year; else the CoStar submarket forecast for the
-   hotel's class. Past the last forecast year ADR grows at the average of that forecast's years and
-   occupancy holds, both labelled assumptions. After the stabilization year occupancy holds at its
+   CBRE Hotel Horizons forecast; else the CoStar submarket forecast for the hotel's class. Forecasts
+   are published by calendar year and each model year runs twelve months from the close, so a
+   year's growth blends the calendar years it spans by their months (Oct 2026–Sep 2027 = 3 months of
+   2026 + 9 months of 2027). Past the last forecast year ADR grows at the report's own published
+   forecast average when it prints one (CoStar's "Forecast Average", labelled as published, with its
+   page), else at the average of the forecast's years (labelled as computed); occupancy holds. Every
+   document figure shows its page ("CoStar p.26"). After the stabilization year occupancy holds at its
    stabilized level while ADR keeps growing (only your own occupancy growth for a specific year still
    moves it). With no forecast at all the rate is held flat and the Future P&L says
    "No market forecast — set growth manually". A 4.5% RevPAR growth is offered as a labelled
@@ -108,10 +112,12 @@ rooms, never the F&B price.
 #### The projection calendar
 
 The model projects operating years — Year 1 through the end of the hold — and places them on the
-calendar from one date: the **acquisition close date**. Operating Year 1 is the calendar year of the
-first operating month after close, so a September close projects Year 1 in the same year and a
-December close projects it in the next. With no close date the statement prints no calendar year at
-all; a guessed year would be an invented number.
+calendar from one date: the **acquisition close date**. Each model year is the twelve months from
+the close: Year 1 starts with the first operating month after close, so a 30 September 2025 close
+makes Year 1 Oct 2025–Sep 2026 and Year 3 Oct 2027–Sep 2028, and a 31 December close makes each year
+a calendar year. Every column, the stabilization year, the exit's sale year, the exports and the IC
+memo name that span. With no close date the statement prints no calendar span at all; a guessed
+year would be an invented number.
 
 The first column is labelled **Base year (Year 1)** because that is what it is: the model's first
 operating year, the year the returns and the Cash Flow statement call Year 1. The horizon is the
@@ -171,7 +177,7 @@ travels through the Excel export.
 
 The P&L tab has two views: **Historical P&L** — the normalised actuals, one column per fiscal year —
 and **Future P&L**, the forward plan the returns are built on. Every projected column is headed by
-its operating year and calendar year; the first column also names the statement period it is
+its operating year and its twelve-month span from the close; the first column also names the statement period it is
 anchored on, exactly as the Historical P&L heads that column.
 
 {testid=primary-statement-methodology} **One statement per year.** When two statements cover the same fiscal year (a detailed and a summary
@@ -279,7 +285,8 @@ method, the ramp years) and everything built on them, and an override carries a 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the acquisition close,
 and the Overview reads “Year 3 after close”. For a material repositioning or re-flag, set the
 **reopening date** on the Overview's Investment Profile card: the default then counts Year 3 from
-the first full operating year after reopening, and every stabilized figure says so (“Year 3 after
+the first full model year after reopening (the first one that starts on or after it), and every
+stabilized figure says so (“Year 3 after
 reopening”). A reopening Fondok cannot place — no close date, or a Year 3 that falls before the
 projection starts — keeps the close anchor and states the exception in plain sight wherever the
 anchor is shown. Stabilized NOI stays a separate figure from the exit NOI the sale is valued on; the
@@ -450,17 +457,27 @@ penetration from Year 1 and each of its ramp years says so.
 Benchmark level, first available unless you force one: competitive set (STR TTM blend = subject
 TTM ÷ MPI / ARI from one report; else a CoStar comp set) → CoStar submarket, the hotel's class, the
 latest actual year (overall series, labelled, when the class is not in the report or no positioning
-tier is set) → market (market-wide report figures, else CBRE Hotel Horizons All Hotels). The level is
-grown from its own calendar year into each projected year: B(y) = level × Π(1 + growth) over the
-calendar years after the level's period up to year y's. A step with no growth figure holds B flat.
+tier is set) → market (market-wide report figures, else CBRE Hotel Horizons All Hotels). The level
+describes its own calendar year L. Year 1's level is the month-weighted level over Year 1's months:
+B(1) = level × Σ (months in calendar year c ÷ 12) × Π(1 + growth of L+1..c); after it B(y) = B(y−1)
+× (1 + growth into y). A step with no growth figure holds B flat.
 
 <!-- source: apps/worker/app/services/topline_growth.py (resolve_growth_by_year), services/topline.py (read_topline_inputs), services/market_study_reader.py (CLASS_SERIES_PIPELINE_VERSION, predates_class_series) -->
 Growth per year and metric, first hit: your per-year growth → your all-years growth (your RevPAR
 growth alone sets ADR growth = (1 + RevPAR growth) ÷ (1 + occupancy growth) − 1 for each year) →
-CBRE Hotel Horizons All Hotels change for that calendar year → CoStar submarket change for the
-hotel's class → past the last year of the series the previous year used: ADR at the arithmetic
-average of that series' forecast-tagged ADR years, occupancy held (assumptions, the label names the
-years averaged) → none (held flat, {{reason:no_market_forecast}}). Occupancy into every year after
+the document figure → none (held flat, {{reason:no_market_forecast}}). The document figure is read
+per calendar year — CBRE Hotel Horizons All Hotels change, else CoStar submarket change for the
+hotel's class, else past the last year of the series the previous year used: ADR at the report's
+published forecast average (`market_study.performance.forecast_avg_adr_change_pct`, "as published",
+with its page; it is the submarket overall, which the label says when the yearly rows are a class),
+else the arithmetic average of the series' forecast-tagged ADR years ("computed", naming the years;
+"re-extract" when the extraction predates v11), occupancy held. CBRE Hotel Horizons publishes no
+forecast average in the extraction (its long-run average is the exit convention below), so a CBRE
+series uses the computed average. A model year's figure is then the month-weighted blend of the
+calendar years it spans: g(y) = Σ (months of y in c ÷ 12) × g(c); a year with any calendar part
+missing has no figure (never a partial one), a withheld part withholds it, and a part past the
+forecast makes it an assumption. The label lists each part ("3 mo × +1.8% CoStar 2026 forecast
+p.26 + 9 mo × −0.6% …") and the year shows a page chip ("CoStar p.26"). Occupancy into every year after
 the stabilization year S is 0 (held at the Year-S level, "held after stabilization") whatever the
 document, carry-forward or all-years figure says; only your per-year occupancy growth for that
 year applies. ADR is unaffected. Held years do not count as a market figure in the growth state. A CoStar figure under a withhold
@@ -469,11 +486,11 @@ read (pipeline before v9, no class table) is never "not in the report": the clas
 {{reason:reextract_needed}} ("report on file but extracted before class forecasts were read —
 re-extract") and the overall series is not substituted.
 
-<!-- source: apps/worker/app/engines/revenue.py (projection_start_year), services/topline.py (calendar_anchor, CalendarAnchor), services/engine_runner.py (_apply_topline) -->
-Model years sit on the calendar from the acquisition close: Year 1 is the calendar year of the first
-operating month (close + 1 month), so a 30 September 2025 close puts Year 1 on 2025 and a
-31 December 2025 close puts it on 2026. A benchmark whose own period is Year 1's calendar year is
-used as reported; growth applies from the next year. With no close date a document forecast is
+<!-- source: apps/worker/app/engines/deal_years.py (deal_years, first_operating_month), services/topline.py (calendar_anchor, CalendarAnchor), services/engine_runner.py (_apply_topline) -->
+Model years are deal years: twelve months from the first operating month (the month after the close
+month; a mid-month close's stub is not a period of its own). A 30 September 2025 close puts Year 1
+on Oct 2025–Sep 2026; a 31 December 2025 close puts it on Jan–Dec 2026. A benchmark whose own period
+is Year 1's calendar year is used as reported; growth applies from the next year. With no close date a document forecast is
 still used when the deal has an underwriting as-of date: it is placed on a calendar assumed from
 that date, and the status names the anchor and asks for the close date. With neither date the
 forecast is not placed on a guessed calendar — never the comp report's date, never the run date,
@@ -486,14 +503,14 @@ Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year)
 <!-- source: apps/worker/app/services/engine_runner.py (_apply_topline: revpar_growth, _long_run_growth), services/topline.py (_terminal_growth), services/topline_growth.py (carried_forward) -->
 Returns grows the exit-year NOI at your RevPAR growth when you set one. Otherwise it uses the
 source's long-run average (CBRE Hotel Horizons long-run RevPAR change, else its long-run ADR change)
-when one is on file, else the ADR growth of the year the exit NOI covers — the year after the hold
-(a 5-year hold closing 2025-09-30 sells on 2030's NOI) — with occupancy held at its stabilized
+when one is on file, else the ADR growth of the year the exit NOI covers — the model year after the
+hold (a 5-year hold closing 2025-09-30 sells on Year 6's NOI, Oct 2030–Sep 2031) — with occupancy held at its stabilized
 level; a single forecast year's occupancy gain (a recovery year) is never compounded in perpetuity.
 Your own ADR growth for the hold's last year carries to the exit when you set no figure for the
 year after. 0% (badged No forecast) when there is no figure. The status names the year and the
-convention used. After a forecast series ends, ADR grows at the series' forecast average (labelled
-assumption) and occupancy holds at its last level, so an exit NOI year past the series uses that
-average; the 95% occupancy cap still applies.
+convention used. After a forecast series ends, ADR grows at the report's published forecast average,
+else the computed one (labelled assumption, with the page chip) and occupancy holds at its last
+level, so an exit NOI year past the series uses that average; the 95% occupancy cap still applies.
 
 <!-- source: apps/worker/app/services/engine_runner.py (REVENUE_BASIS_KEYS, _apply_revenue_basis, _revenue_basis_failure) -->
 There is no default Year-1 occupancy or ADR. Year 1 comes from your value, else (benchmark mode)
@@ -522,10 +539,11 @@ and the cap — a clip is never silent.
 ::: card
 #### The projection calendar
 
-<!-- source: apps/worker/app/engines/revenue.py (projection_calendar_years), apps/worker/app/engines/stabilization.py -->
-Operating Year 1 is the calendar year containing the first operating month, which is the month
-after the acquisition close. Every later column is that year plus one. With no close date no
-calendar year is printed. The horizon is the hold period plus one Exit Year column.
+<!-- source: apps/worker/app/engines/deal_years.py, apps/worker/app/engines/revenue.py (projection_deal_years, exit_noi_deal_year), apps/worker/app/engines/stabilization.py (reopening_stabilized_index) -->
+Each model year is the twelve months from the first operating month, which is the month after the
+acquisition close (`revenue.projection_deal_years`; the exit-NOI year is `exit_noi_deal_year`). Each
+names its span and the months it has in each calendar year. With no close date no span is printed.
+The horizon is the hold period plus one Exit Year column. Topline methodology version 3.
 
 :::
 
@@ -590,8 +608,9 @@ before-reserve figure; debt coverage and the exit valuation use the after-reserv
 <!-- source: apps/worker/app/engines/stabilization.py (DEFAULT_STABILIZATION_YEAR = 3, DEFAULT_STABILIZATION_ANCHOR = acquisition_close) -->
 Default: operating Year 3 counted from the acquisition close; on a hold shorter than three years
 it is clamped to the last projected year and reported as clamped. With a reopening date set, Year
-3 is counted from the first full operating year after reopening; a reopening the calendar cannot
-place (no close date, or a Year 3 before the first projected year) falls back to the close anchor
+3 is counted from the first full model year after reopening (the first that starts on or after
+it); a reopening the calendar cannot place (no close date, or a Year 3 before the first projected
+year) falls back to the close anchor
 and states the exception. The analyst's stabilization year wins over either anchor. It selects
 the year the stabilized figures are read from, and occupancy growth into every later year is 0
 (held after stabilization, both topline modes); with the benchmark method it also ends the ramp.
