@@ -55,6 +55,7 @@ from app.services.index_methodology import (  # noqa: E402
     resolve_index_by_year,
 )
 from app.services.market_fields import FieldRow  # noqa: E402
+from tests.fixtures.deal_calendar import calendar_deal_years
 
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach Submarket 2025.pdf"
@@ -217,7 +218,7 @@ def test_str_comp_set_series_is_the_ttm_level_grown_at_the_market_growth_assumpt
     r = resolve_index_by_year(
         [*STR_ROWS, *MARKET_ROWS],
         {KEY_MPI_TARGET: {"value": 115, "note": "n"}, KEY_ARI_TARGET: {"value": 100, "note": "n"}},
-        hold_years=3, calendar_years=[2025, 2026, 2027],
+        hold_years=3, deal_years=calendar_deal_years([2025, 2026, 2027]),
     )
     y1, y2, y3 = r.years
     assert y1.benchmark_occupancy.value == pytest.approx(COMP_OCC) and y1.benchmark_occupancy.source == "computed"
@@ -237,7 +238,7 @@ def test_str_comp_set_series_is_the_ttm_level_grown_at_the_market_growth_assumpt
     assert y2.rgi_derived == pytest.approx(115.0)
     assert y2.occupancy is None and y2.adr is None
     assert (y2.occupancy_status, y2.adr_status) == ("scalar_year1_only", "scalar_year1_only")
-    assert y2.calendar_year == 2026
+    assert y2.deal_year is not None and y2.deal_year.label == "Jan–Dec 2026"
 
 
 def test_scalar_target_drives_year_one_only_unless_the_analyst_asks_for_the_out_years() -> None:
@@ -295,7 +296,7 @@ def test_market_benchmark_series_is_cbre_horizons_by_calendar_year() -> None:
     r = resolve_index_by_year(
         [*STR_ROWS, *MARKET_ROWS, *CBRE_ROWS],
         {"index_methodology": METHOD_MARKET_BENCHMARK, KEY_MPI_TARGET_BY_YEAR: {"value": [110, 110, 110], "note": "n"}},
-        hold_years=3, calendar_years=[2025, 2026, 2027],
+        hold_years=3, deal_years=calendar_deal_years([2025, 2026, 2027]),
     )
     y1, y2, y3 = r.years
     # Year 1 anchors on the reported level (as the scalar path does).
@@ -313,7 +314,7 @@ def test_market_benchmark_series_is_cbre_horizons_by_calendar_year() -> None:
     r_scalar = resolve_index_by_year(
         [*STR_ROWS, *MARKET_ROWS, *CBRE_ROWS],
         {"index_methodology": METHOD_MARKET_BENCHMARK, KEY_MPI_TARGET: {"value": 110, "note": "n"}},
-        hold_years=3, calendar_years=[2025, 2026, 2027],
+        hold_years=3, deal_years=calendar_deal_years([2025, 2026, 2027]),
     )
     assert r_scalar.years[0].occupancy == pytest.approx(0.712 * 1.10)
     assert r_scalar.years[1].occupancy_status == "scalar_year1_only" and r_scalar.years[1].benchmark_occupancy.value == pytest.approx(0.73)
@@ -330,7 +331,7 @@ def test_market_benchmark_uses_the_chosen_segment_table_when_cbre_carries_it() -
     r = resolve_index_by_year(
         rows,
         {"index_methodology": METHOD_MARKET_BENCHMARK, "index_market_segment": "upper_priced", KEY_ARI_TARGET: {"value": 100, "note": "n"}},
-        hold_years=2, calendar_years=[2025, 2026],
+        hold_years=2, deal_years=calendar_deal_years([2025, 2026]),
     )
     assert r.years[1].benchmark_adr.value == pytest.approx(310.0)
     assert "upper priced" in (r.years[1].benchmark_adr.detail or "")
@@ -340,7 +341,7 @@ def test_market_benchmark_without_a_close_date_cannot_place_the_forecast() -> No
     r = resolve_index_by_year(
         [*STR_ROWS, *MARKET_ROWS, *CBRE_ROWS],
         {"index_methodology": METHOD_MARKET_BENCHMARK, KEY_MPI_TARGET_BY_YEAR: {"value": [110, 110], "note": "n"}},
-        hold_years=2, calendar_years=[],
+        hold_years=2, deal_years=calendar_deal_years([]),
     )
     assert r.calendar_known is False
     assert r.years[0].occupancy == pytest.approx(0.712 * 1.10)
@@ -499,7 +500,7 @@ async def test_by_year_targets_drive_the_topline_on_every_deal() -> None:
 
     out = RevenueEngine().run(_build_input_for("revenue", deal_id, base, {}))
     years = out.years
-    assert out.topline_methodology_version == 2
+    assert out.topline_methodology_version == 3
     # Year 1: occupancy 100 × 0.85 ramp; ADR the scalar ARI 100 × 0.85.
     assert years[0].occupancy == pytest.approx(_COMP_OCC_DB * 0.85, rel=1e-6)
     assert years[0].adr == pytest.approx(_COMP_ADR_DB * 0.85, rel=1e-6)
@@ -510,7 +511,7 @@ async def test_by_year_targets_drive_the_topline_on_every_deal() -> None:
     recs = {r.year: r for r in out.topline_by_year}
     assert recs[2].mpi_target_source == "by_year" and recs[2].mpi_target == pytest.approx(115.0)
     assert recs[2].adr_growth_source == "unavailable"
-    assert recs[2].calendar_year is None  # no close date on this deal — never guessed
+    assert recs[2].deal_year is None  # no close date on this deal — never guessed
 
 
 @pytest.mark.asyncio
@@ -554,9 +555,9 @@ async def test_endpoint_carries_the_by_year_grid_on_the_deal_calendar_and_is_ten
     assert exc.value.status_code == 404
     payload = out.model_dump(mode="json")
     assert payload["hold_years"] == 3 and payload["calendar_known"] is True
-    assert [r["calendar_year"] for r in payload["by_year"]] == [2025, 2026, 2027]
+    assert [r["deal_year"]["label"] for r in payload["by_year"]] == ["Oct 2025–Sep 2026", "Oct 2026–Sep 2027", "Oct 2027–Sep 2028"]
     assert payload["by_year_applies"] is False and "retired Index Analysis view" in payload["by_year_disabled_reason"]
-    assert payload["topline_status"]["methodology_version"] == 2
+    assert payload["topline_status"]["methodology_version"] == 3
     y2 = payload["by_year"][1]
     assert y2["mpi_target"] == {"value": 115.0, "source": "by_year", "note": "Year-2 share gain after the PIP", "problem": None}
     assert y2["ari_target"]["source"] == "scalar" and y2["rgi_derived"] == pytest.approx(115.0)

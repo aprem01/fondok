@@ -14,11 +14,12 @@ from app.services.topline import build_topline, read_topline_inputs
 from app.services.topline_benchmark import BenchmarkResolution
 from app.services.topline_growth import resolve_growth_by_year
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 
 
 def _build(bench: BenchmarkResolution):
     inputs = read_topline_inputs({"starting_adr": 280.0}, {}, {"starting_adr"}, str_noted_keys={"starting_adr"})
-    g = resolve_growth_by_year([], inputs.growth, calendar_years=[2026, 2027, 2028], hold_years=3,
+    g = resolve_growth_by_year([], inputs.growth, deal_years=calendar_deal_years([2026, 2027, 2028]), hold_years=3,
                                class_bucket="all", policy=TenantDataPolicies())
     return build_topline(bench, g, inputs, hold_years=3, t12=None)
 

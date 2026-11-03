@@ -51,12 +51,14 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
 import pytest
 
+from app.engines.deal_years import deal_years
 from app.engines.revenue import RevenueEngine
 from app.services.index_methodology import rows_from_records
 from app.services.topline import build_topline, read_topline_inputs
 from app.services.topline_benchmark import BenchmarkResolution, resolve_benchmark
 from app.services.topline_growth import resolve_growth_by_year
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 from fondok_schemas.underwriting import RevenueEngineInput
 
 REPO = Path(__file__).resolve().parents[3]
@@ -111,15 +113,14 @@ def _run(
     rows: list,
     *,
     close: str = "2025-12-31",
-    years: list[int] = YEARS,
+    hold: int = HOLD,
 ):
-    hold = len(years)
     base = dict(overrides)
     inputs = read_topline_inputs(base, {}, set(overrides))
     growth = resolve_growth_by_year(
-        rows, inputs.growth, calendar_years=years, hold_years=hold,
+        rows, inputs.growth, deal_years=deal_years(close, hold), hold_years=hold,
         class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
-        first_calendar_year=(bench.base_calendar_year + 1) if bench.base_calendar_year else None,
+        benchmark_base_year=bench.base_calendar_year,
         # As the loader does: occupancy flat after the stabilization year (1b).
         stabilization_year=inputs.stabilization_year,
     )
@@ -164,8 +165,8 @@ HELD_FROM = 2029
 def test_exact_reference_path_from_the_keyed_comp_set() -> None:
     build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows())
     subj, comp = REFERENCE["SUBJECT PROPERTY"], REFERENCE["COMPETITIVE SET"]
-    assert out.topline_methodology_version == 2
-    assert out.projection_calendar_years == YEARS
+    assert out.topline_methodology_version == 3
+    assert [d.label for d in out.projection_deal_years] == [f"Jan–Dec {c}" for c in YEARS]
     assert build.status["stabilization_year"] == 3
     for i, cal in enumerate(YEARS):
         y = out.years[i]
@@ -229,7 +230,7 @@ def test_costar_growth_equals_the_reference_submarket_row() -> None:
     Upper Upscale forecast Fondok reads off p.26 for 2026–2029."""
     inputs = read_topline_inputs({}, {}, set())
     growth = resolve_growth_by_year(
-        costar_rows(), inputs.growth, calendar_years=YEARS, hold_years=HOLD,
+        costar_rows(), inputs.growth, deal_years=calendar_deal_years(YEARS), hold_years=HOLD,
         class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
     )
     sub = REFERENCE["Miami Beach Luxury & Upper Upscale"]
@@ -239,10 +240,11 @@ def test_costar_growth_equals_the_reference_submarket_row() -> None:
         assert occ.page == 26
         assert occ.value == pytest.approx(sub["Occupancy Growth"][str(cal)], abs=1e-12)
         assert adr.value == pytest.approx(sub["ADR Growth"][str(cal)], abs=1e-12)
-    # Past the report's last forecast year (2029): ADR at the 2025–2029
-    # forecast average (decision 1a, 2026-11-03), not 2029's +2.8%.
+    # Past the report's last forecast year (2029): ADR at the report's
+    # published forecast average (FON-121 decision 2: p.4, +2.5%), not 2029's
+    # +2.8%.
     assert growth.year(5, "adr").source == "carried_forward"
-    assert growth.year(5, "adr").value == pytest.approx(0.0244)
+    assert growth.year(5, "adr").value == pytest.approx(0.025)
 
 
 def test_documents_path_differs_only_by_the_reference_rounding_of_the_comp_set() -> None:
@@ -294,10 +296,12 @@ def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
     occ_src = [g["occupancy"]["source"] for g in status["growth_by_year"]]
     assert occ_src[3:] == ["held_at_stabilization"] * 4
     assert all(out.years[i].occupancy == pytest.approx(out.years[2].occupancy, rel=1e-12) for i in range(3, 7))
-    # Decision 1a: ADR 2030–2032 at the CoStar 2025–2029 forecast average.
+    # Decision 1a / FON-121 decision 2: ADR 2030–2032 at CoStar's published
+    # forecast average (+2.5%, p.4).
     for i in (4, 5, 6):
-        assert status["growth_by_year"][i]["adr"]["value"] == pytest.approx(0.0244, abs=1e-15)
-        assert out.years[i].adr == pytest.approx(out.years[i - 1].adr * 1.0244, rel=1e-12)
+        assert status["growth_by_year"][i]["adr"]["value"] == pytest.approx(0.025, abs=1e-15)
+        assert status["growth_by_year"][i]["adr"]["chip"] == "CoStar p.4"
+        assert out.years[i].adr == pytest.approx(out.years[i - 1].adr * 1.025, rel=1e-12)
     # Pinned default path (the comp set grown at CoStar L&UU growth).
     expected_occ = [0.754959 * 0.988 * 0.85, 0.754959 * 0.988 * 0.95]
     assert out.years[0].occupancy == pytest.approx(expected_occ[0], rel=1e-6)
@@ -305,51 +309,65 @@ def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
     assert out.years[0].adr == pytest.approx(310.7753 * 1.018 * 0.85, rel=1e-6)
 
 
-#: Review I-4 (a) — the same reference inputs keyed for Sam's REAL close,
-#: 2025-09-30. Operating Year 1 is the calendar year of the first operating
-#: month (October 2025 → 2025, ``projection_start_year``), so model year y is
-#: calendar 2024 + y: her 2026 column is Fondok's Year 2. Every per-year key
-#: moves one index later; Year 1 (2025, the TTM benchmark's own year) is
-#: outside her tab — no growth, penetration 100 for occupancy (her MPI row) and
-#: the default 85% ramp on the ADR side (her ARI row starts in 2026).
+#: FON-121 — Sam's REAL close, 2025-09-30, on her own convention: model years
+#: run twelve months from the close, so Year 1 = Oct 2025–Sep 2026 — her
+#: "2026" column — and the tab's per-year keys apply unshifted. What differs
+#: from her tab is the market growth: she applies each CoStar CALENDAR year
+#: straight to the column ending in it; Fondok blends the calendar years each
+#: deal year spans (Oct 2026–Sep 2027 = 3 months of 2026 + 9 months of 2027).
 REAL_CLOSE = "2025-09-30"
-REAL_CLOSE_YEARS = list(range(2025, 2033))
-SCENARIO_REAL_CLOSE: dict[str, object] = {
-    "occupancy_growth_by_year": [None, 0.0, None, None, None, 0.005, 0.0, 0.0],
-    "adr_growth_by_year": [None, -0.02, None, None, None, 0.02, 0.0425, 0.04],
-    "index_mpi_target": 100,
-    "index_ari_target": 100,
-    "index_mpi_target_by_year": [100, 100, 100, 100, 100],
-    "index_ari_target_by_year": [None, 97, 98, 99, 100],
-    # The default Year-3 stabilization of the 2026-based keying (2028) sits
-    # one model year later too.
-    "stabilization_year": 4,
-}
+#: CoStar Miami Beach L&UU (p.26) — occupancy / ADR change by calendar year.
+LUU_OCC = {2026: -0.012, 2027: 0.0, 2028: -0.012, 2029: 0.03}
+LUU_ADR = {2026: 0.018, 2027: -0.006, 2028: 0.038, 2029: 0.028}
 
 
-def test_reference_path_on_the_real_close_date_is_the_tab_one_model_year_later() -> None:
-    build, out = _run(_keyed_comp_set(), SCENARIO_REAL_CLOSE, costar_rows(), close=REAL_CLOSE, years=REAL_CLOSE_YEARS)
+def _blend(series: dict[int, float], end_year: int) -> float:
+    """Growth INTO the deal year Oct (end_year − 1)–Sep end_year."""
+    return 3 / 12 * series[end_year - 1] + 9 / 12 * series[end_year]
+
+
+def test_reference_on_the_real_close_is_her_tab_with_deal_year_blended_growth() -> None:
+    build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows(), close=REAL_CLOSE)
+    subj, comp = REFERENCE["SUBJECT PROPERTY"], REFERENCE["COMPETITIVE SET"]
+    assert [d.label for d in out.projection_deal_years] == [
+        f"Oct {c - 1}–Sep {c}" for c in YEARS
+    ]
+    assert build.status["stabilization_year"] == 3
+    g = build.status["growth_by_year"]
+    # Year 1 (Oct 2025–Sep 2026, her 2026): her own 0.0% / −2.0% — exact.
+    assert out.years[0].occupancy == pytest.approx(subj["Occupancy"]["2026"], rel=1e-12)
+    assert out.years[0].adr == pytest.approx(subj["ADR"]["2026"], rel=1e-12)
+    # Years 2–4: the blended CoStar growth (occupancy held after Year 3).
+    occ_g = [0.0, _blend(LUU_OCC, 2027), _blend(LUU_OCC, 2028), 0.0, 0.005, 0.0, 0.0]
+    adr_g = [-0.02, _blend(LUU_ADR, 2027), _blend(LUU_ADR, 2028), _blend(LUU_ADR, 2029), 0.02, 0.0425, 0.04]
+    assert [row["occupancy"]["value"] for row in g] == pytest.approx(occ_g, abs=1e-15)
+    assert [row["adr"]["value"] for row in g] == pytest.approx(adr_g, abs=1e-15)
+    assert g[3]["occupancy"]["source"] == "held_at_stabilization"
+    assert "Year 3 (Oct 2027–Sep 2028)" in g[3]["occupancy"]["label"]
+    assert g[1]["adr"]["label"].startswith("Forecast · Oct 2026–Sep 2027 = 3 mo × +1.8% CoStar 2026 forecast p.26")
+    # The whole path: her comp-set level grown by those figures × her penetration.
+    ari = [97, 98, 99, 100, 100, 100, 100]
+    occ, adr = comp["Occupancy"]["2025"], comp["ADR"]["2025"]
+    for i in range(HOLD):
+        occ *= 1 + occ_g[i]
+        adr *= 1 + adr_g[i]
+        assert out.years[i].occupancy == pytest.approx(occ, rel=1e-12), i + 1
+        assert out.years[i].adr == pytest.approx(adr * ari[i] / 100, rel=1e-12), i + 1
+
+
+def test_real_close_gap_to_her_tab_is_the_calendar_blend_alone() -> None:
+    """Where Fondok and her tab differ on her convention, pinned (reported to
+    the domain lead): Year 1 matches; from Year 2 every gap is the blend of
+    the CoStar calendar years (plus decision 1b's held occupancy from Year 4)."""
+    _build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows(), close=REAL_CLOSE)
     subj = REFERENCE["SUBJECT PROPERTY"]
-    assert out.projection_calendar_years == REAL_CLOSE_YEARS
-    # Year 1 = 2025: the comp-set level as reported (not grown), ADR at the ramp.
-    assert build.status["growth_by_year"][0]["applied"] is False
-    assert out.years[0].occupancy == pytest.approx(0.755, rel=1e-12)
-    assert out.years[0].adr == pytest.approx(310.78 * 0.85, rel=1e-12)
-    # Years 2–8 = her 2026–2032 columns: ADR exactly; occupancy exactly
-    # through the 2028 stabilization, then without the held 2029 step (1b).
-    for i, cal in enumerate(REAL_CLOSE_YEARS[1:], start=1):
-        y, k = out.years[i], str(cal)
-        held = HELD_2029_STEP if cal >= HELD_FROM else 1.0
-        assert y.occupancy == pytest.approx(subj["Occupancy"][k] / held, rel=1e-9, abs=0), cal
-        assert y.adr == pytest.approx(subj["ADR"][k], rel=1e-9, abs=0), cal
-        assert y.revpar == pytest.approx(subj["RevPAR"][k] / held, rel=1e-9, abs=0), cal
-
-
-def test_unshifted_keys_on_the_real_close_date_do_not_reproduce_the_tab() -> None:
-    """The trap the review found: Sam's tab keyed as-is on her real close
-    places her 2026 growth on 2025 — the pinned mismatch, so nobody later
-    'discovers' it."""
-    _build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows(), close=REAL_CLOSE, years=list(range(2025, 2032)))
-    subj = REFERENCE["SUBJECT PROPERTY"]
-    # Year 2 (2026) runs at ARI 98 over a 2026 ADR grown by her 2027 −0.6%.
-    assert out.years[1].adr != pytest.approx(subj["ADR"]["2026"], rel=1e-6)
+    adr = {c: out.years[i].adr for i, c in enumerate(YEARS)}
+    occ = {c: out.years[i].occupancy for i, c in enumerate(YEARS)}
+    assert adr[2026] == pytest.approx(subj["ADR"]["2026"], rel=1e-12)
+    # Her 2027 ADR grows −0.6% (CoStar 2027) over 2026 at ARI 97 → 98;
+    # Fondok's Oct 2026–Sep 2027 grows 0.0% (¼ × +1.8% + ¾ × −0.6%).
+    assert adr[2027] / adr[2026] == pytest.approx(1.0 * 98 / 97, rel=1e-12)
+    assert subj["ADR"]["2027"] / subj["ADR"]["2026"] == pytest.approx(0.994 * 98 / 97, rel=1e-9)
+    # Occupancy: her 2027 is flat (CoStar 2027 0.0%); Fondok −0.3% (¼ × −1.2%).
+    assert occ[2027] / occ[2026] == pytest.approx(1 - 0.003, rel=1e-12)
+    assert subj["Occupancy"]["2027"] / subj["Occupancy"]["2026"] == pytest.approx(1.0, rel=1e-9)

@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 
 from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.underwriting import (
+    DealYearSpan,
     IndexDriverYear,
     PIPDisplacement,
     RenovationDisplacementPeriod,
@@ -68,7 +69,6 @@ from fondok_schemas.underwriting import (
 )
 
 from .base import BaseEngine
-from .timeline import parse_iso_date
 
 DAYS_PER_YEAR = 365
 
@@ -82,7 +82,11 @@ DAYS_PER_YEAR = 365
 #: :data:`LEGACY_TOPLINE_METHODOLOGY_VERSION`, so "0 headline changes" is never
 #: claimed across methods (``scripts/compare_golden_baseline.py`` prints when
 #: the two differ).
-TOPLINE_METHODOLOGY_VERSION = 2
+#: 3 (FON-121, 2026-11-03): model years are deal years — twelve months from
+#: the close — and a deal year's market growth is the month-weighted blend of
+#: the calendar years it spans; ADR past a forecast grows at the report's
+#: published forecast average when it states one.
+TOPLINE_METHODOLOGY_VERSION = 3
 LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
 
 #: The occupancy ceiling every projected year is held under — the same 0.95
@@ -217,7 +221,7 @@ def _ramp_for_year(
 
 
 def _plan_topline(
-    payload: RevenueEngineInput, calendar_years: Sequence[int]
+    payload: RevenueEngineInput, deal_year_spans: Sequence[DealYearSpan]
 ) -> _ToplinePlan:
     """Resolve §2.4 for every model year: the per-year driver values the loop
     applies and the provenance record each year is echoed on.
@@ -249,11 +253,11 @@ def _plan_topline(
         notes: list[str] = []
         rec = IndexDriverYear(
             year=y,
-            calendar_year=(
-                bench.calendar_year
-                if bench is not None and bench.calendar_year is not None
-                else (gy.calendar_year if gy is not None and gy.calendar_year is not None else None)
-                or (calendar_years[y - 1] if y - 1 < len(calendar_years) else None)
+            deal_year=(
+                bench.deal_year
+                if bench is not None and bench.deal_year is not None
+                else (gy.deal_year if gy is not None and gy.deal_year is not None else None)
+                or (deal_year_spans[y - 1] if y - 1 < len(deal_year_spans) else None)
             ),
             method=_TOPLINE_METHOD,
             benchmark_level=topline.benchmark_level,
@@ -344,35 +348,23 @@ def _plan_topline(
     return plan
 
 
-def projection_start_year(close_date: str | None) -> int | None:
-    """Calendar year of operating Year 1, or ``None`` with no close date.
+def projection_deal_years(close_date: str | None, hold_years: int) -> list[DealYearSpan]:
+    """FON-121 — the span of every projection row (``engines.deal_years``):
+    twelve months from the acquisition close, ``[]`` with no (parseable)
+    close date. The projection's ``year`` field stays an ordinal; this is the
+    ONLY place the ordinal is placed on the calendar. It never falls back to
+    the wall clock — a guessed year is a fabricated number."""
+    from .deal_years import deal_year_spans
 
-    FON-41 #2. The projection's ``year`` field is an ordinal (1..hold_years);
-    this is the ONLY place the ordinal is mapped onto the calendar, and it
-    anchors on exactly the date the timeline engine anchors on
-    (``acquisition_close_date``). Operating Year 1 is the calendar year
-    containing the first operating month — close + 1 month — so a 2025-09-30
-    close projects Year 1 in 2025 and a 2025-12-15 close projects it in 2026.
-
-    An unparseable or absent date returns ``None``: the grid then renders the
-    ordinal alone. It never falls back to the wall clock — a guessed year is a
-    fabricated number.
-    """
-    d = parse_iso_date(close_date)
-    if d is None:
-        return None
-    # First operating month = close + 1 month; its calendar year is Year 1's.
-    return d.year + 1 if d.month == 12 else d.year
+    return deal_year_spans(close_date, hold_years)
 
 
-def projection_calendar_years(
-    close_date: str | None, hold_years: int
-) -> list[int]:
-    """``[start, start+1, ...]`` for ``hold_years`` rows, or ``[]`` with no anchor."""
-    start = projection_start_year(close_date)
-    if start is None or hold_years <= 0:
-        return []
-    return [start + i for i in range(hold_years)]
+def exit_noi_deal_year(close_date: str | None, hold_years: int) -> DealYearSpan | None:
+    """The deal year after the hold (the exit-NOI year), or None."""
+    from .deal_years import deal_year_after, deal_years
+
+    nxt = deal_year_after(deal_years(close_date, hold_years))
+    return nxt.span() if nxt is not None else None
 
 
 # ──────── Renovation displacement schedule (Sam, 2026-10-15) ────────
@@ -950,9 +942,9 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # baseline; a later driven year becomes the anchor the following
         # undriven years compound from. Both lists empty → the legacy
         # expressions below run unchanged (byte-identical goldens).
-        # FON-41 #2 — the projection calendar (read by the per-year records
+        # FON-121 — the projection calendar (read by the per-year records
         # below and echoed on the output; nothing in the math reads it).
-        calendar_years = projection_calendar_years(
+        deal_year_spans = projection_deal_years(
             payload.acquisition_close_date, payload.hold_years
         )
         # FON-116 / FON-117 — the topline (benchmark × penetration × ramp)
@@ -960,7 +952,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # Analysis drivers arrive as lists. The two are mutually exclusive
         # (input validator), so from here on one list per metric drives.
         topline_plan = (
-            _plan_topline(payload, calendar_years) if payload.topline is not None else None
+            _plan_topline(payload, deal_year_spans) if payload.topline is not None else None
         )
         if topline_plan is not None:
             occ_drivers = topline_plan.occ_drivers
@@ -1422,10 +1414,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             gp = growth_prov.get(y)
             rec_out = drv_out if drv_out is not None else IndexDriverYear(
                 year=y,
-                calendar_year=(
-                    calendar_years[y - 1]
-                    if y - 1 < len(calendar_years)
-                    else (gp.calendar_year if gp is not None else None)
+                deal_year=(
+                    deal_year_spans[y - 1]
+                    if y - 1 < len(deal_year_spans)
+                    else (gp.deal_year if gp is not None else None)
                 ),
                 growth_label=gp.label if gp is not None else None,
                 occupancy_growth_source=gp.occupancy_source if gp is not None else None,
@@ -1757,17 +1749,16 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         else:
             cagr = 0.0
 
-        # FON-41 #2 — the projection calendar rides alongside the ordinal rows.
+        # FON-121 — the projection calendar rides alongside the ordinal rows.
         # Nothing in the math above reads it; it exists so the statement can
-        # print "Year 1 — 2025" instead of printing the ordinal as a year.
-        start_year = projection_start_year(payload.acquisition_close_date)
+        # print "Year 1 · Oct 2025–Sep 2026" instead of the ordinal alone.
 
         return RevenueEngineOutput(
             deal_id=payload.deal_id,
             years=years,
             total_revenue_cagr=cagr,
-            projection_start_year=start_year,
-            projection_calendar_years=calendar_years,
+            projection_deal_years=deal_year_spans,
+            exit_noi_deal_year=exit_noi_deal_year(payload.acquisition_close_date, payload.hold_years),
             provenance=apply_states(prov),
             # The legacy Index Analysis echo — empty under the topline (nothing
             # legacy drove the run); the API and the Index Analysis grid read it.
@@ -1794,8 +1785,8 @@ __all__ = [
     "TOPLINE_METHODOLOGY_VERSION",
     "RevenueEngine",
     "default_ramp_by_year",
-    "projection_calendar_years",
-    "projection_start_year",
+    "exit_noi_deal_year",
+    "projection_deal_years",
     "renovation_displacement_factors",
     "schedule_period_label",
     "_BRAND_DISPLACEMENT_MULTIPLIERS",

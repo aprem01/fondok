@@ -92,7 +92,7 @@ async def test_run_all_engines_kimpton() -> None:
     em = results["returns"]["outputs"]["equity_multiple"]
     assert 1.2 <= em <= 1.6, f"equity multiple out of band: {em}"
     rev = results["revenue"]["outputs"]
-    assert rev["topline_methodology_version"] == 2
+    assert rev["topline_methodology_version"] == 3
     assert {y["occupancy"] for y in rev["years"]} == {0.762}
     assert {y["adr"] for y in rev["years"]} == {385.0}
 

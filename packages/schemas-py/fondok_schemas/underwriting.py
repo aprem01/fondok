@@ -436,6 +436,30 @@ PenetrationPoints = Annotated[float, Field(ge=25.0, le=250.0)]
 RampFraction = Annotated[float, Field(gt=0.0, le=1.5)]
 
 
+class CalendarMonths(BaseModel):
+    """How many months of a deal year fall in one calendar year (FON-121)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    calendar_year: int
+    months: Annotated[int, Field(ge=1, le=12)]
+
+
+class DealYearSpan(BaseModel):
+    """FON-121 — one model year on the calendar: twelve months from the
+    acquisition close (``engines.deal_years``). A 2025-09-30 close puts Year 1
+    on Oct 2025–Sep 2026 (``calendar_months`` 3 of 2025 + 9 of 2026)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    year: Annotated[int, Field(ge=1)]
+    start: str
+    end: str
+    label: str
+    calendar_months: list[CalendarMonths] = Field(default_factory=list)
+    days: Annotated[int, Field(ge=365, le=366)]
+
+
 class GrowthYear(BaseModel):
     """Growth applied INTO one model year, per metric, with its source.
 
@@ -448,7 +472,8 @@ class GrowthYear(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     year: Annotated[int, Field(ge=1)]
-    calendar_year: int | None = None
+    #: FON-121 — the deal year's span (None without a close date).
+    deal_year: DealYearSpan | None = None
     occupancy_growth: GrowthFraction | None = None
     adr_growth: GrowthFraction | None = None
     occupancy_source: GrowthSource
@@ -459,6 +484,8 @@ class GrowthYear(BaseModel):
     page: int | None = None
     report_date: str | None = None
     label: str
+    #: Decision 3 (2026-11-03) — the visible source chip, e.g. "CoStar p.26".
+    chip: str | None = None
     reason: ReasonCode | None = None
 
 
@@ -478,7 +505,7 @@ class BenchmarkYear(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     year: Annotated[int, Field(ge=1)]
-    calendar_year: int | None = None
+    deal_year: DealYearSpan | None = None
     occupancy: Annotated[float, Field(gt=0.0, le=1.0)] | None = None
     adr: Annotated[float, Field(gt=0.0)] | None = None
     revpar: Annotated[float, Field(ge=0.0)] | None = None
@@ -598,7 +625,7 @@ class IndexDriverYear(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     year: Annotated[int, Field(ge=1)]
-    calendar_year: int | None = None
+    deal_year: DealYearSpan | None = None
     method: str | None = None
     benchmark_occupancy: float | None = None
     benchmark_adr: float | None = None
@@ -883,13 +910,16 @@ class RevenueEngineOutput(BaseModel):
     deal_id: UUID
     years: list[RevenueProjectionYear]
     total_revenue_cagr: float
-    # FON-41 #2 — the projection calendar. ``projection_start_year`` is the
-    # calendar year of operating Year 1; ``projection_calendar_years[i]`` is the
-    # calendar year of ``years[i]``. BOTH are empty / None when the deal carries
-    # no acquisition close date — the grid then shows the ordinal alone. A
-    # fabricated year (the wall clock, the extraction year) is never emitted.
-    projection_start_year: int | None = None
-    projection_calendar_years: list[int] = Field(default_factory=list)
+    # FON-121 — the projection calendar: ``projection_deal_years[i]`` is the
+    # twelve-month span of ``years[i]`` counted from the acquisition close
+    # (Year 1 = Oct 2025–Sep 2026 for a 2025-09-30 close), and
+    # ``exit_noi_deal_year`` the year after the hold (the exit-NOI year).
+    # Empty / None when the deal carries no acquisition close date — the grid
+    # then shows the ordinal alone. A fabricated year (the wall clock, the
+    # extraction year) is never emitted. Replaces FON-41's calendar-year
+    # ``projection_start_year`` / ``projection_calendar_years``.
+    projection_deal_years: list[DealYearSpan] = Field(default_factory=list)
+    exit_noi_deal_year: DealYearSpan | None = None
     # FON-25 — per-value provenance sidecar. Keyed by dotted output path
     # (e.g. "years[0].rooms_revenue") → ValueTrace(formula, inputs, source).
     # Empty by default so legacy callers/tests are unaffected; the UI reads

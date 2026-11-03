@@ -52,6 +52,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..engines.deal_years import DealYear
 from .market_comp_set import build_str_inputs, derive_ttm_blend
 from .market_fields import (
     FieldRef,
@@ -862,7 +863,8 @@ class TargetReading:
 @dataclass(frozen=True)
 class IndexYearReading:
     year: int
-    calendar_year: int | None
+    #: FON-121 — the deal year (twelve months from the close), or None.
+    deal_year: DealYear | None
     benchmark_occupancy: Figure  # fraction
     benchmark_adr: Figure  # USD
     mpi_target: TargetReading
@@ -1005,18 +1007,19 @@ def _cbre_series(
     rows: Sequence[FieldRow],
     *,
     segment: str | None,
-    calendar_years: Sequence[int],
+    deal_years: Sequence[DealYear],
     hold_years: int,
     level_occ: Figure,
     level_adr: Figure,
     method_label: str,
 ) -> tuple[list[Figure], list[Figure]]:
     """The market benchmark by model year: Year 1 = the reported level (as the
-    scalar path uses), Year 2+ = the CBRE Horizons forecast for that model
-    year's CALENDAR year — the segment table named like the chosen segment
-    when the report carries one, else All Hotels. A year the report does not
-    carry (or that cannot be placed without a close date) is ``None`` with the
-    reason."""
+    scalar path uses), Year 2+ = the CBRE Horizons forecast level for that
+    model year — FON-121: a deal year (twelve months from the close) is the
+    month-weighted average of the calendar years it spans — the segment table
+    named like the chosen segment when the report carries one, else All
+    Hotels. A year whose calendar years the report does not all carry (or
+    that cannot be placed without a close date) is ``None`` with the reason."""
     tables: dict[str, dict[int, dict[str, FieldRow]]] = {}
     legacy: dict[int, dict[str, FieldRow]] = {}
     for r in rows:
@@ -1054,8 +1057,8 @@ def _cbre_series(
                 period_label=level.period_label,
                 basis=level.basis, basis_label=level.basis_label, period_end=level.period_end,
             )
-        cal = calendar_years[y - 1] if y - 1 < len(calendar_years) else None
-        if cal is None:
+        dy = deal_years[y - 1] if y - 1 < len(deal_years) else None
+        if dy is None:
             return Figure.none(
                 "No acquisition close date — the CBRE Horizons forecast cannot be placed on the "
                 "model calendar (set the acquisition date on CAPEX)."
@@ -1064,24 +1067,38 @@ def _cbre_series(
             return Figure.none(
                 "No CBRE Hotel Horizons report on this deal — upload one for the market benchmark's forecast years."
             )
-        row = (table.get(cal) or {}).get(attr)
-        v = coerce_float(row.value) if row is not None else None
-        if noun == "occupancy":
-            v = _occ_fraction(v)
-        elif v is not None and v <= 0:
-            v = None
-        if row is None or v is None:
-            return Figure.none(f"No CBRE Horizons {scope_label} {noun} for {cal} on this deal.")
-        period_row = (table.get(cal) or {}).get("period")
-        period = period_row.value if period_row is not None and isinstance(period_row.value, str) else None
-        kind = "forecast" if (period or "forecast").strip().lower().startswith("forecast") else "actual"
+        parts: list[tuple[int, int, float, FieldRow, str]] = []
+        for cal, months in dy.calendar_months:
+            row = (table.get(cal) or {}).get(attr)
+            v = coerce_float(row.value) if row is not None else None
+            if noun == "occupancy":
+                v = _occ_fraction(v)
+            elif v is not None and v <= 0:
+                v = None
+            if row is None or v is None:
+                return Figure.none(f"No CBRE Horizons {scope_label} {noun} for {cal} on this deal ({dy.label}).")
+            period_row = (table.get(cal) or {}).get("period")
+            period = period_row.value if period_row is not None and isinstance(period_row.value, str) else None
+            kind = "forecast" if (period or "forecast").strip().lower().startswith("forecast") else "actual"
+            parts.append((cal, months, v, row, kind))
+        kind = "forecast" if any(p[4] == "forecast" for p in parts) else "actual"
+        value = sum(m / 12.0 * v for _c, m, v, _r, _k in parts)
+        first = parts[0][3]
+        if len(parts) == 1:
+            cal = parts[0][0]
+            detail = f"CBRE Horizons {scope_label} {cal} {kind} {noun}"
+            basis_label = forecast_label(cal, first.doc_name, first.page, kind=kind)
+        else:
+            mix = " + ".join(f"{m} mo of {c}" for c, m, _v, _r, _k in parts)
+            detail = f"CBRE Horizons {scope_label} {kind} {noun}, {dy.label} = {mix} (month-weighted)"
+            basis_label = forecast_label(parts[-1][0], first.doc_name, first.page, kind=kind) + f" · {dy.label} = {mix}"
         return Figure(
-            value=v, source="document", inputs=[FieldRef.of(row)],
-            detail=f"CBRE Horizons {scope_label} {cal} {kind} {noun}", period_label=str(cal),
+            value=value, source="document", inputs=[FieldRef.of(p[3]) for p in parts],
+            detail=detail, period_label=dy.label,
             basis="forecast" if kind == "forecast" else "actual",
-            basis_label=forecast_label(cal, row.doc_name, row.page, kind=kind),
-            period_end=str(cal) if kind == "actual" else None,
-            report_date=report_dates.get(row.extraction_id) or row.report_as_of,
+            basis_label=basis_label,
+            period_end=dy.end.isoformat() if kind == "actual" else None,
+            report_date=report_dates.get(first.extraction_id) or first.report_as_of,
         )
 
     occ = [year_figure(y, "occupancy_pct", level_occ, "occupancy") for y in range(1, hold_years + 1)]
@@ -1094,7 +1111,7 @@ def resolve_index_by_year(
     overrides: Mapping[str, Any] | None,
     *,
     hold_years: int,
-    calendar_years: Sequence[int] | None = None,
+    deal_years: Sequence[DealYear] | None = None,
     service_hint: str | None = None,
 ) -> IndexByYearReading:
     """Everything the by-year grid shows — and exactly what the runner drives
@@ -1109,7 +1126,7 @@ def resolve_index_by_year(
     target is ``no_target``. Nothing is invented.
     """
     hold = max(1, min(int(hold_years or 1), MAX_MODEL_YEARS))
-    cal = [int(c) for c in (calendar_years or [])]
+    cal = list(deal_years or [])[:hold]
     reading = resolve_index_methodology(rows, overrides, service_hint=service_hint)
     chosen = reading.method(reading.selected)
     assert chosen is not None
@@ -1121,7 +1138,7 @@ def resolve_index_by_year(
         bench_adr = [Figure.none(reason) for _ in range(hold)]
     elif chosen.method == METHOD_MARKET_BENCHMARK:
         bench_occ, bench_adr = _cbre_series(
-            rows, segment=chosen.segment, calendar_years=cal, hold_years=hold,
+            rows, segment=chosen.segment, deal_years=cal, hold_years=hold,
             level_occ=chosen.occupancy, level_adr=chosen.adr, method_label=chosen.label,
         )
     else:
@@ -1171,7 +1188,7 @@ def resolve_index_by_year(
         years.append(
             IndexYearReading(
                 year=y,
-                calendar_year=cal[y - 1] if y - 1 < len(cal) else None,
+                deal_year=cal[y - 1] if y - 1 < len(cal) else None,
                 benchmark_occupancy=bo,
                 benchmark_adr=ba,
                 mpi_target=mt,

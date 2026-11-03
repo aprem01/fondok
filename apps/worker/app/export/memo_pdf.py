@@ -1169,7 +1169,7 @@ def _render_loi_appendix(loi: dict[str, Any] | None) -> str:
 # ───────────────────────────────────────────────────────────────────────
 
 
-def _render_exit_schedule(ret: dict[str, Any] | None) -> str:
+def _render_exit_schedule(ret: dict[str, Any] | None, deal_years: Any = None) -> str:
     """FON-118 — "Returns by Exit Year": the same projection sold at each
     year-end. A row the engine did not price renders the glyph + its reason
     label (and records the refusal); a payload with no table says why.
@@ -1194,7 +1194,7 @@ def _render_exit_schedule(ret: dict[str, Any] | None) -> str:
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
-        label = html.escape(exit_row_label(row))
+        label = html.escape(exit_row_label(row, deal_years))
         concept = f"returns.exit_schedule[{i}]"
         if row.get("status") != "computed":
             code = coerce_reason(row.get("reason"))
@@ -1439,7 +1439,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
         f"<tr><td>Year 1 Debt Yield</td><td class='num'>{_fmt_pct(debt.get('year1_debt_yield'), concept='debt_yield')}</td></tr>",
     ])
     # FON-118 — returns by exit year, under the Returns Summary.
-    exit_schedule_html = _render_exit_schedule(ret or None)
+    exit_schedule_html = _render_exit_schedule(ret or None, model.get("deal_years"))
     # B9 — the flat-SOFR provenance note travels with the debt figures.
     benchmark_note = debt.get("benchmark_note")
     debt_note_html = (

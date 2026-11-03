@@ -201,9 +201,14 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str | None, str, str, str], ...] = (
 )
 
 
-def _year_label(row: Any, idx: int) -> str:
+def _year_label(row: Any, idx: int, spans: Any = None) -> str:
+    """``Year 2`` — with the run's deal-year span when it has one (FON-121):
+    ``Year 2 · Oct 2026–Sep 2027``."""
     yr = row.get("year") if isinstance(row, Mapping) else None
-    return f"Year {yr}" if isinstance(yr, int) else f"Year {idx + 1}"
+    n = yr if isinstance(yr, int) else idx + 1
+    span = spans[n - 1] if isinstance(spans, list) and 1 <= n <= len(spans) else None
+    label = span.get("label") if isinstance(span, Mapping) else None
+    return f"Year {n} · {label}" if isinstance(label, str) and label else f"Year {n}"
 
 
 #: (path suffix inside an exit-schedule row, label, unit) — FON-118.
@@ -215,15 +220,19 @@ _EXIT_ROW_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _exit_row_label(row: Any, idx: int) -> str:
+def _exit_row_label(row: Any, idx: int, spans: Any = None) -> str:
     """``Exit Year 3`` / ``Exit month 52`` (off-cycle), ``· selected`` when it
-    is the deal's own exit. Rows are keyed by index, labelled for a reader."""
+    is the deal's own exit; a year-end row names the sale year's span
+    (FON-121). Rows are keyed by index, labelled for a reader."""
     if not isinstance(row, Mapping):
         return f"Exit row {idx + 1}"
     yr = row.get("exit_year")
     month = row.get("exit_month")
+    span = spans[yr - 1] if isinstance(yr, int) and isinstance(spans, list) and 1 <= yr <= len(spans) else None
+    span_label = span.get("label") if isinstance(span, Mapping) else None
     label = (
-        f"Exit Year {yr}" if isinstance(yr, int)
+        (f"Exit Year {yr} ({span_label})" if isinstance(span_label, str) else f"Exit Year {yr}")
+        if isinstance(yr, int)
         else f"Exit month {month}" if isinstance(month, int)
         else f"Exit row {idx + 1}"
     )
@@ -260,8 +269,10 @@ def extract_headline_fields(engines: Mapping[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
     rev = engines.get("revenue") or {}
+    #: FON-121 — the run's own deal-year spans label every per-year row.
+    spans = rev.get("projection_deal_years")
     for i, row in enumerate(rev.get("years") or []):
-        ylab = _year_label(row, i)
+        ylab = _year_label(row, i, spans)
         for sub, label, unit in _REVENUE_YEAR_FIELDS:
             path = f"years[{i}].{sub}"
             out.append(
@@ -271,7 +282,7 @@ def extract_headline_fields(engines: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     exp = engines.get("expense") or {}
     for i, row in enumerate(exp.get("years") or []):
-        ylab = _year_label(row, i)
+        ylab = _year_label(row, i, spans)
         for sub, label, unit in _EXPENSE_YEAR_FIELDS:
             path = f"years[{i}].{sub}"
             out.append(
@@ -312,7 +323,7 @@ def extract_headline_fields(engines: Mapping[str, Any]) -> list[dict[str, Any]]:
         # DSCR / debt service by year sit right after the debt scalars.
         if engine == "debt" and path == "year_one_debt_yield":
             for i, row in enumerate(src.get("schedule") or []):
-                ylab = _year_label(row, i)
+                ylab = _year_label(row, i, spans)
                 for sub, slabel, sunit in (
                     ("dscr", "DSCR", "x"),
                     ("debt_service", "Debt service", "usd"),
@@ -328,7 +339,7 @@ def extract_headline_fields(engines: Mapping[str, Any]) -> list[dict[str, Any]]:
         # table and a head with one differ only by ``added`` rows.
         if engine == "returns" and path == "peak_levered_exit_year":
             for i, row in enumerate(src.get("exit_schedule") or []):
-                rlab = _exit_row_label(row, i)
+                rlab = _exit_row_label(row, i, spans)
                 for sub, slabel, sunit in _EXIT_ROW_FIELDS:
                     spath = f"exit_schedule[{i}].{sub}"
                     out.append(
@@ -417,12 +428,17 @@ def diff_fields(
         else:
             reason = "non-numeric value"
 
+        label = meta["label"]
+        if b and h and b.get("label") != h.get("label"):
+            # FON-121 — the two runs place the year differently (a close
+            # date moved, or the baseline predates deal years): say both.
+            label = f"{h['label']} (baseline: {b['label']})"
         rows.append(
             {
                 "key": key,
                 "engine": meta["engine"],
                 "group": meta["group"],
-                "label": meta["label"],
+                "label": label,
                 "unit": meta["unit"],
                 "status": status,
                 "base_value": bv,

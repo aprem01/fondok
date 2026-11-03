@@ -94,7 +94,8 @@ def test_calendar_anchor_is_the_close_else_the_as_of_else_none() -> None:
     assert (a.source, a.date, a.assumed) == ("acquisition_close", date(2025, 9, 30), False)
     a = calendar_anchor(None, underwriting_as_of=date(2025, 6, 30))
     assert (a.source, a.date, a.assumed) == ("underwriting_as_of", date(2025, 6, 30), True)
-    assert calendar_anchor(None, underwriting_as_of=date(2025, 12, 15)).first_model_year == 2026
+    y1 = calendar_anchor(None, underwriting_as_of=date(2025, 12, 15)).year1
+    assert y1 is not None and y1.label == "Jan–Dec 2026"
     a = calendar_anchor(None, underwriting_as_of=None)
     assert (a.source, a.date) == (None, None)
     # R2-I1 — no clock and no comp-report date can place the forecast.
@@ -124,8 +125,8 @@ async def test_no_close_date_places_the_costar_forecast_on_the_underwriting_as_o
     assert "Set the acquisition close date" in anchor["label"]
     assert st["calendar_known"] is True
     assert st["growth_state"] == "sourced"
-    years = [r["calendar_year"] for r in st["growth_by_year"]]
-    assert years == [2026, 2027, 2028, 2029, 2030]
+    years = [r["deal_year"]["label"] for r in st["growth_by_year"]]
+    assert years == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     assert st["growth_by_year"][0]["adr"]["source"] == "costar_submarket_forecast"
     labels = json.dumps(st)
     assert "cannot be placed on the model calendar" not in labels
@@ -143,7 +144,7 @@ async def test_no_close_and_no_as_of_is_calendar_unknown_not_the_run_date() -> N
     assert st["calendar_unknown"] is True
     assert st["growth_state"] == "unavailable"
     for row in st["growth_by_year"]:
-        assert row["calendar_year"] is None
+        assert row["deal_year"] is None
         for metric in ("occupancy", "adr"):
             g = row[metric]
             if metric == "occupancy" and row["year"] > st["stabilization_year"]:
@@ -193,20 +194,24 @@ async def test_no_close_date_and_no_forecast_keeps_the_calendar_unknown() -> Non
 
 @pytest.mark.usefixtures("topline_benchmark")  # FON-116 rollout: the benchmark topline
 @pytest.mark.asyncio
-async def test_real_close_date_puts_year_one_on_the_benchmarks_own_year() -> None:
+async def test_real_close_date_puts_year_one_on_twelve_months_from_the_close() -> None:
+    """FON-121: Year 1 = Oct 2025–Sep 2026. The CY-2025 benchmark (the STR
+    TTM's own year) is grown to it month by month: 3 months at the 2025
+    level, 9 months grown by CoStar's 2026 forecast."""
     deal_id, tenant_id = await _docs_deal(acquisition_close_date="2025-09-30")
     st = await _status(deal_id, tenant_id)
-    assert st["calendar_anchor"] == {
-        "source": "acquisition_close", "date": "2025-09-30", "assumed": False,
-        "first_model_year": 2025, "label": st["calendar_anchor"]["label"],
-    }
-    assert [r["calendar_year"] for r in st["growth_by_year"]] == [2025, 2026, 2027, 2028, 2029]
-    # Year 1 = 2025 = the STR TTM's own year: used as reported, no growth applied.
-    assert st["growth_by_year"][0]["applied"] is False
+    anchor = st["calendar_anchor"]
+    assert (anchor["source"], anchor["date"], anchor["assumed"]) == ("acquisition_close", "2025-09-30", False)
+    assert anchor["year1"]["label"] == "Oct 2025–Sep 2026"
+    assert "Year 1 = Oct 2025–Sep 2026" in anchor["label"]
+    assert [r["deal_year"]["label"] for r in st["growth_by_year"]] == [
+        f"Oct {c}–Sep {c + 1}" for c in (2025, 2026, 2027, 2028, 2029)
+    ]
+    assert st["growth_by_year"][0]["applied"] is True
     b1 = st["benchmark_by_year"][0]
-    assert b1["calendar_year"] == 2025
-    assert b1["occupancy"] == pytest.approx(0.754959, abs=1e-6)
-    assert b1["adr"] == pytest.approx(310.7753, abs=1e-3)
-    # Year 2 = 2026 is grown by the CoStar L&UU 2026 forecast.
+    assert b1["deal_year"]["label"] == "Oct 2025–Sep 2026"
+    assert b1["occupancy"] == pytest.approx(0.754959 * (3 / 12 + 9 / 12 * (1 - 0.012)), rel=1e-5)
+    assert b1["adr"] == pytest.approx(310.7753 * (3 / 12 + 9 / 12 * 1.018), rel=1e-6)
+    # Year 2 = Oct 2026–Sep 2027: ¼ × +1.8% (2026) + ¾ × −0.6% (2027) = 0.0%.
     b2 = st["benchmark_by_year"][1]
-    assert b2["adr"] == pytest.approx(310.7753 * 1.018, rel=1e-6)
+    assert b2["adr"] == pytest.approx(b1["adr"], rel=1e-9)

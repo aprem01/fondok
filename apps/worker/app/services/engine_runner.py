@@ -3129,7 +3129,6 @@ def _apply_topline(
     exists). A growth scalar the analyst did not set is REMOVED from ``base``:
     no seeded rate is ever shown as the deal's growth.
     """
-    from ..engines.revenue import projection_calendar_years as _cal_years
     from .topline import (
         TOPLINE_STATUS_KEY as _STATUS,
         build_topline,
@@ -3180,13 +3179,12 @@ def _apply_topline(
     growth = resolve_growth_by_year(
         knowable,
         inputs.growth,
-        calendar_years=_cal_years(anchor.date.isoformat(), hold) if anchor.date is not None else [],
+        # FON-121 — deal years: twelve months from the close.
+        deal_years=anchor.years(hold),
         hold_years=hold,
         class_bucket=bucket,
         policy=policy,
-        first_calendar_year=(
-            (bench.base_calendar_year + 1) if bench is not None and bench.base_calendar_year is not None else None
-        ),
+        benchmark_base_year=bench.base_calendar_year if bench is not None else None,
         gated_doc_types=gated,
         # Decision 1b — occupancy flat after the stabilization year.
         stabilization_year=inputs.stabilization_year,

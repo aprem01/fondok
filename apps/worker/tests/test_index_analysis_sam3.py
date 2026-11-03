@@ -34,6 +34,7 @@ from app.services.index_methodology import (
     stored_target_problem,
 )
 from app.services.market_fields import FieldRow
+from tests.fixtures.deal_calendar import calendar_deal_years
 
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach Submarket 2025.pdf"
@@ -88,8 +89,8 @@ def test_panel_shows_no_value_and_the_reason_for_a_legacy_scalar() -> None:
 
 def test_by_year_grid_ignores_a_legacy_scalar_and_says_why() -> None:
     r = resolve_index_by_year(
-        STR_ROWS, {KEY_MPI_TARGET: {"value": 5, "note": "old"}}, hold_years=2, calendar_years=[2025, 2026]
-    )
+        STR_ROWS, {KEY_MPI_TARGET: {"value": 5, "note": "old"}}, hold_years=2, deal_years=calendar_deal_years([2025, 2026]
+    ))
     for y in r.years:
         assert y.mpi_target.value is None and y.occupancy is None
         assert y.occupancy_status == "no_target"
@@ -111,7 +112,7 @@ def test_endpoint_carries_the_problem_on_the_target() -> None:
 
     overrides = {KEY_ARI_TARGET: {"value": 1000, "note": "old"}}
     reading = resolve_index_methodology(STR_ROWS, overrides)
-    by_year = resolve_index_by_year(STR_ROWS, overrides, hold_years=2, calendar_years=[2025, 2026])
+    by_year = resolve_index_by_year(STR_ROWS, overrides, hold_years=2, deal_years=calendar_deal_years([2025, 2026]))
     out = index_methodology_response(uuid4(), reading, by_year).model_dump(mode="json")
     assert out["assumptions"][KEY_ARI_TARGET]["value"] is None
     assert "1000 is outside" in out["assumptions"][KEY_ARI_TARGET]["detail"]
@@ -124,7 +125,7 @@ def test_endpoint_carries_the_problem_on_the_target() -> None:
 def test_a_ratio_scalar_reads_as_index_points_in_panel_grid_and_engine() -> None:
     overrides = {KEY_MPI_TARGET: {"value": 1.10, "note": "ratio"}}
     assert resolve_index_methodology(STR_ROWS, overrides).assumptions[KEY_MPI_TARGET].value == pytest.approx(110.0)
-    by_year = resolve_index_by_year(STR_ROWS, overrides, hold_years=1, calendar_years=[2025])
+    by_year = resolve_index_by_year(STR_ROWS, overrides, hold_years=1, deal_years=calendar_deal_years([2025]))
     assert by_year.years[0].mpi_target.value == pytest.approx(110.0)
     assert by_year.years[0].occupancy == pytest.approx(COMP_OCC * 1.10)
     # The topline reads the same value the same way (topline v2).
@@ -142,7 +143,7 @@ def test_comp_set_series_is_the_ttm_grown_at_market_growth_whatever_method_is_se
 
     for overrides in ({}, {"index_methodology": METHOD_MARKET_BENCHMARK}):
         rows = [*STR_ROWS, *MARKET_ROWS]
-        r = resolve_index_by_year(rows, overrides, hold_years=3, calendar_years=[2025, 2026, 2027])
+        r = resolve_index_by_year(rows, overrides, hold_years=3, deal_years=calendar_deal_years([2025, 2026, 2027]))
         assert r.comp_set_occupancy[0].value == pytest.approx(COMP_OCC)
         assert r.comp_set_occupancy[1].value == pytest.approx(COMP_OCC * 1.005)
         assert r.comp_set_adr[2].value == pytest.approx(COMP_ADR * 1.031**2)
@@ -152,26 +153,26 @@ def test_comp_set_series_is_the_ttm_grown_at_market_growth_whatever_method_is_se
         out = index_methodology_response(uuid4(), resolve_index_methodology(rows, overrides), r).model_dump(mode="json")
         comp = out["comp_set_by_year"]
         assert [c["year"] for c in comp] == [1, 2, 3]
-        assert [c["calendar_year"] for c in comp] == [2025, 2026, 2027]
+        assert [c["deal_year"]["label"] for c in comp] == ["Jan–Dec 2025", "Jan–Dec 2026", "Jan–Dec 2027"]
         assert comp[1]["occupancy"]["value"] == pytest.approx(COMP_OCC * 1.005)
         assert comp[1]["occupancy"]["source"] == "computed"
 
 
 def test_comp_set_out_years_are_none_with_the_reason_without_a_growth_value() -> None:
-    r = resolve_index_by_year(STR_ROWS, {}, hold_years=3, calendar_years=[2025, 2026, 2027])
+    r = resolve_index_by_year(STR_ROWS, {}, hold_years=3, deal_years=calendar_deal_years([2025, 2026, 2027]))
     assert r.comp_set_occupancy[0].value == pytest.approx(COMP_OCC)
     assert r.comp_set_occupancy[1].value is None
     assert "No market occupancy growth assumption" in (r.comp_set_occupancy[1].detail or "")
     # An analyst override is a growth value too.
     r2 = resolve_index_by_year(
-        STR_ROWS, {KEY_ADR_GROWTH: {"value": 0.02, "note": "g"}}, hold_years=2, calendar_years=[2025, 2026]
-    )
+        STR_ROWS, {KEY_ADR_GROWTH: {"value": 0.02, "note": "g"}}, hold_years=2, deal_years=calendar_deal_years([2025, 2026]
+    ))
     assert r2.comp_set_adr[1].value == pytest.approx(COMP_ADR * 1.02)
     assert "your override" in (r2.comp_set_adr[1].detail or "")
 
 
 def test_no_str_report_means_no_comp_set_series_with_the_reason() -> None:
-    r = resolve_index_by_year(MARKET_ROWS, {}, hold_years=2, calendar_years=[])
+    r = resolve_index_by_year(MARKET_ROWS, {}, hold_years=2, deal_years=calendar_deal_years([]))
     assert all(f.value is None for f in r.comp_set_occupancy)
     assert "No STR Trend report" in (r.comp_set_occupancy[0].detail or "")
 

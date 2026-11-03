@@ -1047,7 +1047,8 @@ class ProjectionExtras:
     cash_flow_noi_pin: tuple[float | None, ...]
     exit_noi: Sourced
     exit_noi_label: str
-    exit_calendar_year: int | None
+    #: FON-121 — the exit-NOI deal year's span ("Oct 2030–Sep 2031").
+    exit_deal_year_label: str | None
 
 
 def _engine_missing(engine: str) -> Sourced:
@@ -1151,8 +1152,15 @@ def projection_extras(
             "the returns engine published no terminal NOI on this run",
         )
 
-    cal = rev.get("projection_calendar_years") if isinstance(rev, Mapping) else None
-    last = cal[year_count - 1] if isinstance(cal, list) and 0 < year_count <= len(cal) else None
+    exit_span = rev.get("exit_noi_deal_year") if isinstance(rev, Mapping) else None
+    spans = rev.get("projection_deal_years") if isinstance(rev, Mapping) else None
+    # The exit-NOI year is the deal year after THIS sheet's last year.
+    after = (
+        spans[year_count] if isinstance(spans, list) and 0 < year_count < len(spans)
+        else exit_span if isinstance(spans, list) and len(spans) == year_count
+        else None
+    )
+    exit_label = after.get("label") if isinstance(after, Mapping) else None
     return ProjectionExtras(
         engines=engines,
         operating={k: tuple(v) for k, v in operating.items()},
@@ -1160,7 +1168,7 @@ def projection_extras(
         cash_flow_noi_pin=tuple(pins),
         exit_noi=exit_noi,
         exit_noi_label=label,
-        exit_calendar_year=last + 1 if isinstance(last, int) else None,
+        exit_deal_year_label=exit_label if isinstance(exit_label, str) else None,
     )
 
 
@@ -1263,9 +1271,9 @@ def build_projections_workbook(
             ws.cell(row=1, column=amount_col(i) + off, value=f"{h} {suffix}")
             ws.cell(row=2, column=amount_col(i) + off, value=f"{key}:{i}")
     if exit_col is not None:
-        cy = extras.exit_calendar_year
+        span = extras.exit_deal_year_label
         ws.cell(row=1, column=exit_col,
-                value=f"{EXIT_COLUMN_LABEL} · {cy}" if cy is not None else EXIT_COLUMN_LABEL)
+                value=f"{EXIT_COLUMN_LABEL} · {span}" if span is not None else EXIT_COLUMN_LABEL)
         ws.cell(row=2, column=exit_col, value="exit")
     if bm_col is not None:
         ws.cell(row=1, column=bm_col, value=BENCHMARK_HEADER)

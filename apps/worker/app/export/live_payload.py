@@ -1795,6 +1795,11 @@ async def _assemble_live_payload(
         model["investment_engine"] = investment
     if proforma:
         model["p_and_l_engine_proforma"] = proforma
+    # FON-121 — every export names each model year's span (twelve months
+    # from the close); absent without a close date.
+    spans = revenue.get("projection_deal_years") if isinstance(revenue, dict) else None
+    if isinstance(spans, list) and spans:
+        model["deal_years"] = spans
     debt_block = _build_debt(debt, capital)
     if debt_block:
         model["debt_engine"] = debt_block

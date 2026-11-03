@@ -34,7 +34,9 @@ from tests.fixtures.kimpton_seed import KIMPTON_FIXTURE_DEAL_ID, kimpton_seed  #
 T12_OCC, T12_ADR = 0.828892, 233.446
 #: CoStar Miami Beach Luxury & Upper Upscale, forecast years (p.26).
 LUU = {2026: (-0.012, 0.018), 2027: (0.0, -0.006), 2028: (-0.012, 0.038), 2029: (0.03, 0.028)}
-LUU_ADR_AVG = (0.044 + 0.018 - 0.006 + 0.038 + 0.028) / 5
+#: Past the series: CoStar's PUBLISHED forecast average (overview p.4, +2.5%;
+#: FON-121 decision 2) — the computed 2025–2029 mean would be +2.44%.
+LUU_ADR_AVG = 0.025
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +96,7 @@ async def test_growth_only_year1_is_the_t12_and_growth_is_the_resolver() -> None
     src = base["__sources__"]
     status = base["__topline_status__"]
     assert status["topline_mode"] == "growth_only"
-    assert status["methodology_version"] == 2
+    assert status["methodology_version"] == 3
     # Year 1: the subject's own T-12 — NOT the comp set × penetration × ramp.
     assert base["starting_occupancy"] == pytest.approx(T12_OCC, rel=1e-6)
     assert base["starting_adr"] == pytest.approx(T12_ADR, rel=1e-6)
@@ -103,7 +105,7 @@ async def test_growth_only_year1_is_the_t12_and_growth_is_the_resolver() -> None
     # Growth: Year 1 is not grown (the T-12 is Year 1 as reported); Years 2–4
     # = CoStar 2027–2029 on the close-2025-12-31 calendar (Year 1 = 2026).
     rows = status["growth_by_year"]
-    assert [r["calendar_year"] for r in rows] == [2026, 2027, 2028, 2029, 2030]
+    assert [r["deal_year"]["label"] for r in rows] == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     assert [r["applied"] for r in rows] == [False, True, True, True, True]
     assert base["adr_growth_by_year"] == pytest.approx([None, -0.006, 0.038, 0.028, LUU_ADR_AVG])
     # Occupancy: CoStar through the Year-3 stabilization (2028), held after (1b).
@@ -112,7 +114,8 @@ async def test_growth_only_year1_is_the_t12_and_growth_is_the_resolver() -> None
         "costar_submarket_forecast", "costar_submarket_forecast", "held_at_stabilization", "held_at_stabilization",
     ]
     assert rows[4]["adr"]["source"] == "carried_forward"
-    assert "2025–2029 forecast average (+2.4%)" in rows[4]["adr"]["label"]
+    assert "CoStar forecast average (as published) +2.5%" in rows[4]["adr"]["label"]
+    assert rows[4]["adr"]["chip"] == "CoStar p.4"
     assert status["growth_state"] == "sourced"
     # Benchmark × penetration × ramp is not in use and says so.
     assert status["benchmark_level"] == "none"
@@ -132,7 +135,7 @@ async def test_growth_only_engine_run_compounds_the_t12_by_the_resolved_growth()
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     out = _revenue(deal_id, base)
-    assert out.topline_methodology_version == 2
+    assert out.topline_methodology_version == 3
     assert out.topline_mode == "growth_only"
     occ = [y.occupancy for y in out.years]
     adr = [y.adr for y in out.years]

@@ -19,6 +19,8 @@ These are display strings only — nothing here changes an engine value.
 
 from __future__ import annotations
 
+from typing import Any
+
 #: NOI before the FF&E reserve — the headline / entry-cap basis.
 NOI_BEFORE_RESERVE = "NOI (before FF&E reserve)"
 
@@ -88,13 +90,33 @@ EXIT_SCHEDULE_COLUMNS: tuple[str, ...] = (
 )
 
 
-def exit_row_label(row: dict) -> str:
+def deal_year_label(deal_years: Any, year: int) -> str | None:
+    """FON-121 — the span of model year ``year`` ("Oct 2025–Sep 2026") from
+    the revenue engine's ``projection_deal_years`` (``model["deal_years"]``
+    in the exports), or None without a close date."""
+    if not isinstance(deal_years, (list, tuple)) or not (1 <= year <= len(deal_years)):
+        return None
+    span = deal_years[year - 1]
+    label = span.get("label") if isinstance(span, dict) else None
+    return label if isinstance(label, str) and label else None
+
+
+def year_heading(year: int, deal_years: Any = None) -> str:
+    """``Year 1`` or, with a close date, ``Year 1 · Oct 2025–Sep 2026``."""
+    span = deal_year_label(deal_years, year)
+    return f"Year {year} · {span}" if span else f"Year {year}"
+
+
+def exit_row_label(row: dict, deal_years: Any = None) -> str:
     """``Year 3`` / ``Month 52`` (off-cycle) with ``· selected`` / ``· peak``
-    markers — the first column of the exit-year table in every export."""
+    markers — the first column of the exit-year table in every export. A
+    year-end row names the sale year's span (FON-121) when the deal has a
+    close date: ``Year 3 (Oct 2027–Sep 2028)``."""
     yr = row.get("exit_year")
     month = row.get("exit_month")
+    span = deal_year_label(deal_years, yr) if isinstance(yr, int) else None
     label = (
-        f"Year {yr}" if isinstance(yr, int)
+        (f"Year {yr} ({span})" if span else f"Year {yr}") if isinstance(yr, int)
         else f"Month {month}" if isinstance(month, int)
         else "Exit"
     )
@@ -103,6 +125,7 @@ def exit_row_label(row: dict) -> str:
     if row.get("is_peak_levered"):
         label += " · peak"
     return label
+
 
 #: The grid solver raised. ``error`` is the exception TYPE only (the message
 #: may quote deal data; the full traceback is in the worker log).

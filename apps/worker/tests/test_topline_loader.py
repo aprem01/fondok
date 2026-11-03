@@ -79,7 +79,7 @@ async def test_documents_deal_runs_the_reference_path_through_the_loader() -> No
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     status = base["__topline_status__"]
-    assert status["methodology_version"] == 2
+    assert status["methodology_version"] == 3
     assert status["benchmark_level"] == "comp_set"
     assert status["benchmark"]["source_id"] == "str_comp_set"
     assert status["class_bucket"] == "luxury_upper_upscale"
@@ -110,11 +110,12 @@ async def test_defaults_on_the_documents_deal_ramp_and_carry_the_forecast() -> N
     assert status["ramp_by_year"] == [0.85, 0.95]
     assert base["starting_occupancy"] == pytest.approx(0.754959 * 0.988 * 0.85, rel=1e-5)
     assert [r["adr"]["source"] for r in status["growth_by_year"]] == ["costar_submarket_forecast"] * 4 + ["carried_forward"]
-    # Terminal growth = 2030 ADR past the CoStar series: the 2025–2029
-    # forecast average (+2.44%, decision 1a), not 2029's +2.8%. Occupancy is
+    # Terminal growth = 2030 ADR past the CoStar series: the report's
+    # published forecast average (+2.5%, p.4 — FON-121 decision 2), not
+    # 2029's +2.8%. Occupancy is
     # flat after the Year-3 stabilization (decision 1b): the 2029 +3.0% and
     # 2030 are held.
-    assert base["revpar_growth"] == pytest.approx(0.0244)
+    assert base["revpar_growth"] == pytest.approx(0.025)
     occ = [r["occupancy"] for r in status["growth_by_year"]]
     assert [g["source"] for g in occ][3:] == ["held_at_stabilization"] * 2
     assert [g["value"] for g in occ][3:] == [0.0, 0.0]
@@ -222,8 +223,8 @@ async def test_full_chain_on_the_documents_deal_echoes_the_topline() -> None:
         results = await run_all_engines(s, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
     rev = results["revenue"]["outputs"]
     rev = rev if isinstance(rev, dict) else rev.model_dump(mode="json")
-    assert rev["topline_methodology_version"] == 2
-    assert rev["projection_calendar_years"] == [2026, 2027, 2028, 2029, 2030]
+    assert rev["topline_methodology_version"] == 3
+    assert [d["label"] for d in rev["projection_deal_years"]] == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     recs = rev["topline_by_year"]
     assert [r["ari_target"] for r in recs] == pytest.approx([97, 98, 99, 100, 100])
     assert {r["occupancy_status"] for r in recs} == {"driven"}

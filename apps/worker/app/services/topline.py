@@ -35,6 +35,7 @@ from typing import Any
 from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.underwriting import BenchmarkYear, GrowthYear, ToplineDrivers, ToplineReference
 
+from ..engines.deal_years import DealYear, deal_years
 from ..engines.revenue import (
     DEFAULT_PENETRATION_INDEX,
     OCCUPANCY_CAP,
@@ -44,7 +45,7 @@ from ..engines.revenue import (
 )
 from ..engines.stabilization import (
     DEFAULT_STABILIZATION_YEAR,
-    first_full_operating_year_after_reopening,
+    reopening_stabilized_index,
 )
 from ..engines.timeline import parse_iso_date
 from .index_methodology import (
@@ -220,20 +221,17 @@ def _scalar_growth(v: Any) -> float | None:
 
 def default_stabilization_year(base: Mapping[str, Any]) -> tuple[int, str]:
     """``(S, source)`` with no analyst value: Year 3 after the close, or Year 3
-    after the first full operating year after a reopening date that places on
-    the projection (FON-98) — NOT clamped to the hold (the engine says so)."""
-    from ..engines.revenue import projection_start_year
-
+    after the first full deal year after a reopening date that places on the
+    projection (FON-98, on the FON-121 deal calendar) — NOT clamped to the
+    hold (the engine says so)."""
     reopening = parse_iso_date(base.get("reopening_date"))
     close = base.get("acquisition_close_date")
-    start = projection_start_year(
-        close.isoformat() if isinstance(close, date) else (str(close) if close not in (None, "") else None)
-    )
-    if reopening is not None and start is not None:
-        cal = first_full_operating_year_after_reopening(reopening) + DEFAULT_STABILIZATION_YEAR - 1
-        s = cal - start + 1
-        if s >= 1:
-            return s, "default_year_3_reopening"
+    if reopening is not None:
+        index = reopening_stabilized_index(
+            close if isinstance(close, date) else (str(close) if close not in (None, "") else None), reopening
+        )
+        if index is not None and index >= 0:
+            return index + 1, "default_year_3_reopening"
     return DEFAULT_STABILIZATION_YEAR, "default_year_3"
 
 
@@ -450,45 +448,49 @@ CALENDAR_ANCHOR_LABELS: dict[str, str] = {
 class CalendarAnchor:
     """The date the model years are placed from, and why.
 
-    Operating Year 1 is the calendar year of the first operating month (the
-    anchor + 1 month — ``revenue.projection_start_year``, FON-41): a
-    2025-09-30 close puts Year 1 on 2025, a 2025-12-31 close on 2026. With no
-    close date the anchor is ASSUMED from the underwriting as-of date and used
-    only to place a document forecast; the statement's calendar stays blank.
-    With neither there is no anchor (R2-I1)."""
+    FON-121: the model years are DEAL years — twelve months from the first
+    operating month (the month after the anchor's month,
+    ``engines.deal_years``): a 2025-09-30 close puts Year 1 on Oct 2025–Sep
+    2026, a 2025-12-31 close on Jan–Dec 2026. With no close date the anchor
+    is ASSUMED from the underwriting as-of date and used only to place a
+    document forecast; the statement's calendar stays blank. With neither
+    there is no anchor (R2-I1)."""
 
     source: str | None
     date: date | None
     assumed: bool
 
-    @property
-    def first_model_year(self) -> int | None:
-        from ..engines.revenue import projection_start_year
+    def years(self, n: int) -> list[DealYear]:
+        return deal_years(self.date, n) if self.date is not None else []
 
-        return projection_start_year(self.date.isoformat()) if self.date is not None else None
+    @property
+    def year1(self) -> DealYear | None:
+        ys = self.years(1)
+        return ys[0] if ys else None
 
     @property
     def label(self) -> str:
         if self.source is None or self.date is None:
             return "No acquisition close date and no underwriting as-of date — the model years carry no calendar."
         where = CALENDAR_ANCHOR_LABELS.get(self.source, self.source)
+        y1 = self.year1.label if self.year1 is not None else "—"
         if not self.assumed:
             return (
-                f"Model calendar from {where} {self.date.isoformat()}: Year 1 = {self.first_model_year} "
-                "(the calendar year of the first operating month)."
+                f"Model calendar from {where} {self.date.isoformat()}: Year 1 = {y1} "
+                "(each model year is the twelve months from the close)."
             )
         return (
             f"No acquisition close date — the market forecast is placed on a calendar assumed from {where} "
-            f"{self.date.isoformat()} (Year 1 = {self.first_model_year}). Set the acquisition close date to "
-            "place it exactly."
+            f"{self.date.isoformat()} (Year 1 = {y1}). Set the acquisition close date to place it exactly."
         )
 
     def as_dict(self) -> dict[str, Any]:
+        y1 = self.year1
         return {
             "source": self.source,
             "date": self.date.isoformat() if self.date is not None else None,
             "assumed": self.assumed,
-            "first_model_year": self.first_model_year,
+            "year1": y1.as_dict() if y1 is not None else None,
             "label": self.label,
         }
 
@@ -549,7 +551,7 @@ class ToplineBuild:
 def _step_summary(steps: Sequence[MetricGrowth]) -> str:
     parts: list[str] = []
     for g in steps:
-        c = g.calendar_year
+        c = g.deal_year.label if g.deal_year is not None else g.calendar_year
         if g.value is None:
             parts.append(f"{c}: held flat — no figure")
         else:
@@ -574,15 +576,37 @@ def build_topline(
     long_run: LongRunGrowth | None = None,
 ) -> ToplineBuild:
     hold = max(1, int(hold_years))
-    cal = growth.calendar_years
     base_year = bench.base_calendar_year
     levels = {"occupancy": bench.occupancy, "adr": bench.adr}
+
+    def _first_step(y: int, metric: str) -> tuple[float, list[MetricGrowth]]:
+        """FON-121 — the benchmark level (its own calendar year B) grown to the
+        first benchmarked deal year: the deal year's month-weighted level
+        Σ w_c · I_c, with I_B = 1 and I_c the calendar years B+1..c grown by
+        their resolved growth (an analyst's growth for THAT model year
+        replaces the step). Returns ``(factor, steps)``."""
+        g_y = growth.year(y, metric)
+        if g_y.per_year_override:
+            return 1.0 + (g_y.value or 0.0), [g_y]
+        dy = growth.deal_year(y)
+        assert dy is not None and base_year is not None
+        steps: list[MetricGrowth] = []
+        index = {base_year: 1.0}
+        level = 1.0
+        for k in range(base_year + 1, dy.calendar_months[-1][0] + 1):
+            g = growth.calendar(k, metric)
+            if g is not None:
+                steps.append(g)
+            level *= 1.0 + (g.value if g is not None and g.value is not None else 0.0)
+            index[k] = level
+        return sum(m / 12.0 * index[cy] for cy, m in dy.calendar_months), steps
 
     bench_years: list[BenchmarkYear] = []
     year1_growth_applied = False
     notes: list[str] = []
+    prev_values: dict[str, float | None] = {"occupancy": None, "adr": None}
     for y in range(1, hold + 1):
-        c = cal[y - 1] if cal else None
+        dy = growth.deal_year(y)
         values: dict[str, float | None] = {}
         all_steps: list[MetricGrowth] = []
         for metric in METRICS:
@@ -590,35 +614,40 @@ def build_topline(
             if bench.level == "none" or level is None or metric in inputs.explicit_metrics:
                 values[metric] = None
                 continue
-            if c is None or base_year is None:
+            if dy is None or base_year is None:
                 steps = [growth.year(k, metric) for k in range(2, y + 1)]
-            elif c < base_year:
+                v = float(level)
+                for g in steps:
+                    v *= 1.0 + (g.value if g.value is not None else 0.0)
+            elif dy.start.year < base_year:
                 values[metric] = None
+                prev_values[metric] = None
                 if metric == "occupancy":
                     notes.append(
-                        f"Year {y} ({c}) is before the benchmark's own period ({bench.period_label}); "
-                        "no benchmark is shown for it."
+                        f"Year {y} ({dy.label}) starts before the benchmark's own period "
+                        f"({bench.period_label}); no benchmark is shown for it."
                     )
                 continue
-            else:
-                steps = []
-                for k in range(base_year + 1, c + 1):
-                    g = growth.calendar(k, metric)
-                    if g is not None:
-                        steps.append(g)
+            elif prev_values[metric] is None:
+                factor, steps = _first_step(y, metric)
+                v = float(level) * factor
                 if y == 1 and steps:
                     year1_growth_applied = True
-            v = float(level)
-            for g in steps:
-                v *= 1.0 + (g.value if g.value is not None else 0.0)
+            else:
+                g = growth.year(y, metric)
+                steps = [g]
+                v = float(prev_values[metric]) * (1.0 + (g.value if g.value is not None else 0.0))  # type: ignore[arg-type]
             if metric == "occupancy" and not (0.0 < v <= 1.0):
                 values[metric] = None
+                prev_values[metric] = None
                 notes.append(f"Year {y}: the benchmark occupancy grown to {v:.1%} is not a rate; not used.")
                 continue
             values[metric] = v
+            prev_values[metric] = v
             all_steps.extend(steps)
         if values.get("occupancy") is None and values.get("adr") is None:
             continue
+        where = dy.label if dy is not None else f"Year {y}"
         if not all_steps:
             basis = bench.basis or "actual"
             label = f"{'Forecast' if basis == 'forecast' else 'Actual'} · {bench.label}"
@@ -626,14 +655,14 @@ def build_topline(
             doc_only = all(g.source in ("cbre_horizons", "costar_submarket_forecast") for g in all_steps)
             basis = "forecast" if doc_only else "assumption"
             label = (
-                f"{'Forecast' if doc_only else 'Assumption'} · {bench.label}, grown to {c} — "
+                f"{'Forecast' if doc_only else 'Assumption'} · {bench.label}, grown to {where} — "
                 + _step_summary([g for g in all_steps])
             )
         occ_v, adr_v = values.get("occupancy"), values.get("adr")
         bench_years.append(
             BenchmarkYear(
                 year=y,
-                calendar_year=c,
+                deal_year=dy.span() if dy is not None else None,
                 occupancy=occ_v,
                 adr=adr_v,
                 revpar=(occ_v * adr_v) if occ_v is not None and adr_v is not None else None,
@@ -806,33 +835,40 @@ def _legacy_flags_for(flags: Sequence[dict[str, Any]], bench: BenchmarkResolutio
     return out
 
 
-def _exit_noi_year(growth: GrowthResolution, hold: int) -> int | None:
-    """Calendar year the exit NOI covers (hold + 1), or None without a calendar."""
-    if len(growth.calendar_years) >= hold >= 1:
-        return growth.calendar_years[hold - 1] + 1
+def _forward_adr(growth: GrowthResolution, hold: int) -> MetricGrowth | None:
+    """The ADR growth INTO the deal year after THIS hold (the resolution may
+    run longer than the hold the build uses)."""
+    if hold + 1 <= growth.hold_years:
+        return growth.year(hold + 1, "adr")
+    return growth.forward.get("adr") if hold == growth.hold_years else None
+
+
+def _exit_noi_year(growth: GrowthResolution, hold: int) -> str | None:
+    """The deal year the exit NOI covers (hold + 1), labelled, or None
+    without a calendar."""
+    fwd = _forward_adr(growth, hold)
+    if fwd is not None and fwd.deal_year is not None:
+        return f"Year {hold + 1} ({fwd.deal_year.label}, the exit-NOI year)"
     return None
 
 
 def _exit_year_adr(growth: GrowthResolution, hold: int) -> MetricGrowth:
-    """ADR growth of the year the exit NOI covers — the forward year (hold + 1)
-    when the calendar is known, so a sale whose forward year is past the
-    forecast grows at the post-forecast convention (the forecast average);
-    without a calendar, the last projected year's growth."""
+    """ADR growth of the year the exit NOI covers — the forward deal year
+    (hold + 1) when the calendar is known, so a sale whose forward year is
+    past the forecast grows at the post-forecast convention (the report's
+    published forecast average, else the computed one); without a calendar,
+    the last projected year's growth."""
     last = growth.year(hold, "adr")
-    if len(growth.calendar_years) >= hold >= 1:
-        # The year after THIS deal's hold (the growth calendar may run longer).
-        fwd = growth.calendar(growth.calendar_years[hold - 1] + 1, "adr")
-        # An analyst's figure for the hold's last year is their view of the
-        # exit too, and beats a document figure for the forward year.
-        if fwd is not None and not (
-            last.source == "analyst_override" and fwd.source != "analyst_override"
-        ):
-            return fwd
+    fwd = _forward_adr(growth, hold) if growth.calendar_known else None
+    # An analyst's figure for the hold's last year is their view of the exit
+    # too, and beats a document figure for the forward year.
+    if fwd is not None and not (last.source == "analyst_override" and fwd.source != "analyst_override"):
+        return fwd
     return last
 
 
 def _terminal_growth(
-    last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None, *, exit_year: int | None = None
+    last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None, *, exit_year: str | None = None
 ) -> dict[str, Any]:
     """``{value, source_id, basis, label}`` of the exit-year growth convention."""
     if long_run is not None:
@@ -847,12 +883,10 @@ def _terminal_growth(
             "value": last_adr.value,
             "source_id": last_adr.source_id,
             "basis": "exit_year_adr_growth",
+            "chip": last_adr.chip,
+            "average_basis": last_adr.average_basis,
             "label": (
-                (
-                    f"{exit_year} (exit-NOI year) ADR growth "
-                    if exit_year is not None
-                    else f"Year {hold} ADR growth "
-                )
+                (f"{exit_year} ADR growth " if exit_year is not None else f"Year {hold} ADR growth ")
                 + f"{last_adr.value * 100:+.1f}% — occupancy held at its stabilized level ({last_adr.label})"
             ),
         }
@@ -972,7 +1006,7 @@ def _growth_rows(growth: GrowthResolution, hold: int, applied_years: Sequence[in
         rows.append(
             {
                 "year": y,
-                "calendar_year": growth.calendar_years[y - 1] if growth.calendar_known else None,
+                "deal_year": growth.deal_years[y - 1].as_dict() if growth.calendar_known else None,
                 "applied": y in applied_years,
                 "occupancy": occ.as_dict(),
                 "adr": adr.as_dict(),

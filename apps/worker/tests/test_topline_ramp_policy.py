@@ -24,6 +24,7 @@ from app.services.topline import build_topline, default_ramp_applies, read_topli
 from app.services.topline_benchmark import BenchmarkResolution
 from app.services.topline_growth import resolve_growth_by_year
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 from fondok_schemas.underwriting import RevenueEngineInput
 
 CAL = [2026, 2027, 2028, 2029, 2030]
@@ -38,7 +39,7 @@ def _bench() -> BenchmarkResolution:
 
 def _run(base: dict, policy: str):
     inputs = read_topline_inputs(base, {}, set(), ramp_policy=policy)
-    g = resolve_growth_by_year([], inputs.growth, calendar_years=CAL, hold_years=5,
+    g = resolve_growth_by_year([], inputs.growth, deal_years=calendar_deal_years(CAL), hold_years=5,
                                class_bucket="all", policy=TenantDataPolicies())
     build = build_topline(_bench(), g, inputs, hold_years=5, t12=None)
     out = RevenueEngine().run(RevenueEngineInput(

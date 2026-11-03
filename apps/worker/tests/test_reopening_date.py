@@ -186,7 +186,8 @@ _SEVEN = dict(
     noi_before_reserve_by_year=[3.0, 3.6, 4.2, 4.3, 4.4, 4.5, 4.6],
     cash_noi_by_year=[2.6, 3.1, 3.7, 3.8, 3.9, 4.0, 4.1],
 )
-# Close 30 Sep 2025 → projection Year 1 is calendar 2025 (revenue engine rule).
+# Close 30 Sep 2025 → projection Year 1 is the deal year Oct 2025–Sep 2026
+# (FON-121: twelve months from the close).
 _CLOSE = "2025-09-30"
 
 
@@ -204,9 +205,10 @@ def test_no_reopening_date_is_year_3_after_close_byte_identical() -> None:
     assert after.anchor_fallback_reason is None
 
 
-def test_reopening_mid_2027_counts_year_3_from_2028() -> None:
-    """Reopen 15 Mar 2027 → first FULL operating year 2028 → Year 3 = 2030 →
-    projection index 5 (Year 6) on a 2025 Year-1 calendar."""
+def test_reopening_mid_2027_counts_year_3_from_the_next_full_deal_year() -> None:
+    """Reopen 15 Mar 2027 → first FULL deal year Oct 2027–Sep 2028 (Year 3 of
+    the deal) is the reopening's Year 1 → its Year 3 = Oct 2029–Sep 2030 =
+    projection index 4 (Year 5)."""
     from app.engines.stabilization import (
         build_stabilized_year,
         reopening_anchor_index,
@@ -219,18 +221,18 @@ def test_reopening_mid_2027_counts_year_3_from_2028() -> None:
     assert block is not None
     assert block.source == "default_year_3_reopening"
     assert block.anchor == "reopening"
-    assert block.stabilized_year_index == 5
-    assert block.stabilized_year == 6
+    assert block.stabilized_year_index == 4
+    assert block.stabilized_year == 5
     assert block.clamped is False
     assert block.reopening_date == "2027-03-15"
     assert block.anchor_fallback_reason is None
     # Every figure is that year's.
-    assert block.stabilized_revenue == pytest.approx(13.2)
-    assert block.stabilized_cash_noi == pytest.approx(4.0)
+    assert block.stabilized_revenue == pytest.approx(12.8)
+    assert block.stabilized_cash_noi == pytest.approx(3.9)
     # The debt entry point resolves the SAME index.
     assert reopening_anchor_index(
         acquisition_close_date=_CLOSE, reopening_date="2027-03-15", n_years=7
-    ) == (5, None)
+    ) == (4, None)
     assert (
         resolve_stabilized_year_index(
             occupancy_by_year=None,
@@ -239,31 +241,31 @@ def test_reopening_mid_2027_counts_year_3_from_2028() -> None:
             acquisition_close_date=_CLOSE,
             reopening_date="2027-03-15",
         )
-        == 5
+        == 4
     )
 
 
-def test_a_first_of_january_reopening_is_itself_the_first_full_year() -> None:
-    from app.engines.stabilization import (
-        first_full_operating_year_after_reopening,
-        reopening_anchor_index,
-    )
-    from datetime import date
+def test_a_reopening_on_a_deal_years_first_day_is_itself_the_first_full_year() -> None:
+    from app.engines.stabilization import reopening_anchor_index
 
-    assert first_full_operating_year_after_reopening(date(2027, 1, 1)) == 2027
-    assert first_full_operating_year_after_reopening(date(2027, 1, 2)) == 2028
-    # 2027 is Year 1 → Year 3 = 2029 → index 4 on a 2025 calendar.
+    # 1 Oct 2026 starts deal Year 2 → that is the reopening's Year 1 → its
+    # Year 3 = deal Year 4 (index 3); a day later, deal Year 3 is the first
+    # full one (index 4).
     assert reopening_anchor_index(
-        acquisition_close_date=_CLOSE, reopening_date="2027-01-01", n_years=7
+        acquisition_close_date=_CLOSE, reopening_date="2026-10-01", n_years=7
+    ) == (3, None)
+    assert reopening_anchor_index(
+        acquisition_close_date=_CLOSE, reopening_date="2026-10-02", n_years=7
     ) == (4, None)
 
 
 def test_reopening_past_the_hold_clamps_to_the_last_year_and_says_so() -> None:
     from app.engines.stabilization import build_stabilized_year
 
-    # Reopen Jun 2029 → first full 2030 → Year 3 = 2032 → index 7 > 6.
+    # Reopen Jun 2030 → first full deal year Oct 2030 (index 5) → Year 3 =
+    # index 7 > 6.
     block = build_stabilized_year(
-        **_SEVEN, acquisition_close_date=_CLOSE, reopening_date="2029-06-01"
+        **_SEVEN, acquisition_close_date=_CLOSE, reopening_date="2030-06-01"
     )
     assert block is not None
     assert block.anchor == "reopening"
@@ -316,7 +318,7 @@ def test_the_analyst_override_wins_over_the_reopening_anchor() -> None:
         **_SEVEN,
         acquisition_close_date=_CLOSE,
         reopening_date="2027-03-15",
-        stabilization_year=6,
+        stabilization_year=5,
     )
     assert same is not None
     assert same.source == "default_year_3_reopening"
@@ -392,12 +394,13 @@ async def test_full_run_anchors_on_the_reopening_and_debt_follows() -> None:
     assert stab1["reopening_date"] == "2027-03-15"
     assert stab1["anchor_fallback_reason"] is None
     n_years = len(reflag["expense"]["outputs"]["years"])
-    # 2025 calendar → Year 3 after reopening = 2030 = index 5, clamped to hold.
-    assert stab1["stabilized_year_index"] == min(5, n_years - 1)
+    # Deal Year 3 (Oct 2027–Sep 2028) is the reopening's first full year →
+    # its Year 3 = deal Year 5 = index 4, clamped to the hold.
+    assert stab1["stabilized_year_index"] == min(4, n_years - 1)
     assert stab1["stabilized_year_index"] != stab0["stabilized_year_index"]
 
     # The projection calendar the revenue engine published agrees.
-    assert reflag["revenue"]["outputs"]["projection_calendar_years"][0] == 2025
+    assert reflag["revenue"]["outputs"]["projection_deal_years"][0]["label"] == "Oct 2025–Sep 2026"
 
     # Debt resolves the SAME index through its own entry point…
     noi = [y["noi"] for y in reflag["expense"]["outputs"]["years"]]

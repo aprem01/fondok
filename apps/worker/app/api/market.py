@@ -30,6 +30,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fondok_schemas.underwriting import DealYearSpan
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1176,7 +1177,8 @@ class IndexCompSetYearOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     year: int
-    calendar_year: int | None = None
+    #: FON-121 — the deal year (twelve months from the close), or None.
+    deal_year: DealYearSpan | None = None
     occupancy: IndexFigureOut
     adr: IndexFigureOut
 
@@ -1187,7 +1189,7 @@ class IndexYearOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     year: int
-    calendar_year: int | None = None
+    deal_year: DealYearSpan | None = None
     benchmark_occupancy: IndexFigureOut
     benchmark_adr: IndexFigureOut
     mpi_target: IndexTargetOut
@@ -1277,7 +1279,7 @@ def index_methodology_response(
         rows_out.append(
             IndexYearOut(
                 year=y.year,
-                calendar_year=y.calendar_year,
+                deal_year=y.deal_year.span() if y.deal_year is not None else None,
                 benchmark_occupancy=IndexFigureOut.of(y.benchmark_occupancy),
                 benchmark_adr=IndexFigureOut.of(y.benchmark_adr),
                 mpi_target=IndexTargetOut(
@@ -1300,14 +1302,14 @@ def index_methodology_response(
         )
     comp_out: list[IndexCompSetYearOut] = []
     if by_year is not None:
-        cal_by_year = {y.year: y.calendar_year for y in by_year.years}
+        cal_by_year = {y.year: (y.deal_year.span() if y.deal_year is not None else None) for y in by_year.years}
         for k, (occ, adr) in enumerate(
             zip(getattr(by_year, "comp_set_occupancy", []) or [], getattr(by_year, "comp_set_adr", []) or [], strict=False),
             start=1,
         ):
             comp_out.append(
                 IndexCompSetYearOut(
-                    year=k, calendar_year=cal_by_year.get(k),
+                    year=k, deal_year=cal_by_year.get(k),
                     occupancy=IndexFigureOut.of(occ), adr=IndexFigureOut.of(adr),
                 )
             )
@@ -1341,13 +1343,13 @@ def index_methodology_response(
 
 async def _model_horizon(
     session: AsyncSession, *, deal_id: UUID, tenant_id: UUID, overrides: Mapping[str, Any]
-) -> tuple[int, list[int], list[Mapping[str, Any]]]:
-    """``(hold_years, calendar_years, engine drivers)`` for the by-year grid —
-    the LAST model run's revenue calendar (the same ``projection_calendar_years``
-    Index Analysis columns follow), else the deal's ``hold_years`` /
-    ``acquisition_close_date`` overrides. A year is never guessed: with no
-    close date the calendar is empty and the grid shows ordinals."""
-    from ..engines.revenue import projection_calendar_years
+) -> tuple[int, list[Any], list[Mapping[str, Any]]]:
+    """``(hold_years, deal years, engine drivers)`` for the by-year grid — the
+    LAST model run's revenue calendar (``projection_deal_years``, the same
+    spans the Index Analysis columns follow), else the deal's ``hold_years``
+    / ``acquisition_close_date`` overrides. A year is never guessed: with no
+    close date there are no deal years and the grid shows ordinals."""
+    from ..engines.deal_years import deal_years as _deal_years
     from ..services.engine_runner import get_run_scoped_outputs
     from ..services.index_methodology import MAX_MODEL_YEARS, override_scalar
 
@@ -1369,12 +1371,23 @@ async def _model_horizon(
     drivers = out.get("index_drivers_by_year") if isinstance(out, dict) else None
     if isinstance(years, list) and years:
         hold = max(1, min(len(years), MAX_MODEL_YEARS))
-        cal = out.get("projection_calendar_years")
-        cal_years = [int(c) for c in cal if isinstance(c, int)] if isinstance(cal, list) else []
-        return hold, cal_years[:hold], list(drivers) if isinstance(drivers, list) else []
+        spans = out.get("projection_deal_years")
+        first = spans[0] if isinstance(spans, list) and spans and isinstance(spans[0], dict) else None
+        # The run's Year 1 starts the month after its close: rebuild the same
+        # deal years from the day before that start.
+        start = first.get("start") if first else None
+        dys: list[Any] = []
+        if isinstance(start, str):
+            from datetime import timedelta
+
+            try:
+                dys = _deal_years(date.fromisoformat(start) - timedelta(days=1), hold)
+            except ValueError:
+                dys = []
+        return hold, dys, list(drivers) if isinstance(drivers, list) else []
     hold = _hold_from_overrides()
     close = override_scalar(overrides, "acquisition_close_date")
-    return hold, projection_calendar_years(str(close) if close else None, hold), []
+    return hold, _deal_years(str(close) if close else None, hold), []
 
 
 @router.get("/{deal_id}/index-methodology", response_model=IndexMethodologyResponse)
@@ -1405,11 +1418,11 @@ async def index_methodology(
         logger.exception("index_methodology: extraction read failed")
         rows = []
     reading = resolve_index_methodology(rows, overrides, service_hint=m.get("service"))
-    hold, calendar_years, engine_drivers = await _model_horizon(
+    hold, deal_years, engine_drivers = await _model_horizon(
         session, deal_id=deal_id, tenant_id=tenant_id, overrides=overrides
     )
     by_year = resolve_index_by_year(
-        rows, overrides, hold_years=hold, calendar_years=calendar_years, service_hint=m.get("service")
+        rows, overrides, hold_years=hold, deal_years=deal_years, service_hint=m.get("service")
     )
     out = index_methodology_response(deal_id, reading, by_year, engine_drivers=engine_drivers)
     # FON-116 / FON-117 — the topline block, from the same cached read the

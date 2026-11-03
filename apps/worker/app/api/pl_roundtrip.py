@@ -410,12 +410,14 @@ async def _projection_state(
         if isinstance(out, dict):
             outputs[name] = out
     n, values = projection_values(outputs)
-    cal = (outputs.get("revenue") or {}).get("projection_calendar_years")
+    # FON-121 — each column names its deal year (twelve months from close).
+    spans = (outputs.get("revenue") or {}).get("projection_deal_years")
     headers: list[str] = []
     for i in range(n):
         label = "Base year (Year 1)" if i == 0 else f"Year {i + 1}"
-        cy = cal[i] if isinstance(cal, list) and i < len(cal) else None
-        headers.append(f"{label} · {cy}" if isinstance(cy, int) else label)
+        span = spans[i] if isinstance(spans, list) and i < len(spans) else None
+        span_label = span.get("label") if isinstance(span, dict) else None
+        headers.append(f"{label} · {span_label}" if isinstance(span_label, str) else label)
     return headers, values, projection_extras(outputs, n)
 
 

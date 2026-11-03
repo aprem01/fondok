@@ -19,6 +19,7 @@ from app.services.topline_growth import (
     resolve_growth_by_year,
 )
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 from fondok_schemas.reasons import ReasonCode
 from tests.test_topline_kimpton_reference import costar_rows, str_rows
 
@@ -45,7 +46,7 @@ def cbre_rows(years: dict[int, tuple[float, float]], *, period: str = "forecast"
 
 
 def _growth(rows, overrides=GrowthOverrides(), *, cal=CAL, bucket="luxury_upper_upscale", policy=ALLOW, **kw):
-    return resolve_growth_by_year(rows, overrides, calendar_years=cal, hold_years=len(cal) or 5,
+    return resolve_growth_by_year(rows, overrides, deal_years=calendar_deal_years(cal), hold_years=len(cal) or 5,
                                   class_bucket=bucket, policy=policy, **kw)
 
 
@@ -61,14 +62,14 @@ def test_precedence_override_then_cbre_then_costar_then_carried() -> None:
     # 2027 occupancy: CBRE's series ended in 2026, but CoStar prints 2027 — a
     # document forecast wins over carrying CBRE forward.
     assert g.year(2, "occupancy").source == "costar_submarket_forecast"
-    # 2030: past CoStar's last forecast year (2029) → ADR at the series'
-    # 2025–2029 forecast average (decision 1a), occupancy HELD at its 2029
-    # level (review I-2).
+    # 2030: past CoStar's last forecast year (2029) → ADR at the report's
+    # published forecast average (FON-121 decision 2; p.4), occupancy HELD at
+    # its 2029 level (review I-2).
     occ30, adr30 = g.year(5, "occupancy"), g.year(5, "adr")
     assert occ30.source == "carried_forward" and occ30.value == 0.0
     assert "held at its 2029 level" in occ30.label and "CoStar Miami Beach submarket" in occ30.label
-    assert adr30.source == "carried_forward" and adr30.value == pytest.approx(0.0244)
-    assert "CoStar Miami Beach submarket (Luxury & Upper Upscale) 2025–2029 forecast average" in adr30.label
+    assert adr30.source == "carried_forward" and adr30.value == pytest.approx(0.025)
+    assert "CoStar forecast average (as published) +2.5% · Miami Beach submarket" in adr30.label
 
 
 def test_all_years_scalar_beats_documents_and_legacy_key_reads_as_scalar() -> None:
@@ -204,7 +205,7 @@ def _bench(**kw) -> BenchmarkResolution:
 
 def test_benchmark_grows_into_year_one_only_when_its_period_is_earlier() -> None:
     inputs = read_topline_inputs({}, {}, set())
-    g = _growth(costar_rows(), inputs.growth, first_calendar_year=2026)
+    g = _growth(costar_rows(), inputs.growth, benchmark_base_year=2025)
     build = build_topline(_bench(), g, inputs, hold_years=5, t12=None)
     assert [gy.year for gy in build.drivers.growth_by_year] == [1, 2, 3, 4, 5]
     b1 = build.drivers.benchmark_by_year[0]
@@ -221,7 +222,7 @@ def test_benchmark_grows_into_year_one_only_when_its_period_is_earlier() -> None
 
 def test_unavailable_step_holds_the_benchmark_flat_and_offers_the_labelled_suggestion() -> None:
     inputs = read_topline_inputs({}, {}, set())
-    build = build_topline(_bench(), _growth([], inputs.growth, first_calendar_year=2026), inputs, hold_years=5, t12=None)
+    build = build_topline(_bench(), _growth([], inputs.growth, benchmark_base_year=2025), inputs, hold_years=5, t12=None)
     assert all(b.adr == pytest.approx(300.0) for b in build.drivers.benchmark_by_year)
     assert all(b.basis == "assumption" for b in build.drivers.benchmark_by_year)
     assert "held flat" in build.drivers.benchmark_by_year[1].label
@@ -240,7 +241,7 @@ def test_unavailable_step_holds_the_benchmark_flat_and_offers_the_labelled_sugge
 
 def test_explicit_year_one_override_is_not_penetrated_but_str_noted_one_is() -> None:
     inputs = read_topline_inputs({"starting_adr": 280.0}, {}, {"starting_adr"})
-    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=5, t12=None)
+    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, benchmark_base_year=2025), inputs, hold_years=5, t12=None)
     assert build.drivers.explicit_year1 == ["adr"]
     assert all(b.adr is None for b in build.drivers.benchmark_by_year)
     assert build.year1_adr is None and build.year1_occupancy is not None
@@ -253,7 +254,7 @@ def test_explicit_year_one_override_is_not_penetrated_but_str_noted_one_is() -> 
 def test_terminal_growth_is_the_last_years_adr_growth() -> None:
     """Review I-2 (the full contract: ``test_topline_terminal_growth.py``)."""
     inputs = read_topline_inputs({}, {}, set())
-    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=3, t12=None)
+    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, benchmark_base_year=2025), inputs, hold_years=3, t12=None)
     # Hold ends 2028, so the exit NOI is 2029's: CoStar L&UU +2.8% ADR; its
     # +3.0% occupancy does not enter.
     assert build.terminal_revpar_growth == pytest.approx(0.028)
@@ -262,10 +263,10 @@ def test_terminal_growth_is_the_last_years_adr_growth() -> None:
 
 def test_default_penetration_and_ramp_set_year_one() -> None:
     inputs = read_topline_inputs({}, {}, set())
-    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, first_calendar_year=2026), inputs, hold_years=5, t12=None)
+    build = build_topline(_bench(), _growth(costar_rows(), inputs.growth, benchmark_base_year=2025), inputs, hold_years=5, t12=None)
     assert build.year1_occupancy == pytest.approx(0.7 * 0.988 * 0.85)
     assert build.status["ramp_state"] == "defined"
     s4 = read_topline_inputs({"stabilization_year": 4}, {}, {"stabilization_year"})
-    b4 = build_topline(_bench(), _growth(costar_rows(), s4.growth, first_calendar_year=2026), s4, hold_years=5, t12=None)
+    b4 = build_topline(_bench(), _growth(costar_rows(), s4.growth, benchmark_base_year=2025), s4, hold_years=5, t12=None)
     assert b4.status["ramp_state"] == "undefined_for_stabilization_year"
     assert b4.status["ramp_by_year"] == [0.85, 0.95, None]

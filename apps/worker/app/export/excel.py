@@ -94,6 +94,7 @@ from .labels import (
     NOI_HEADLINE_LABELS,
     SOLVER_STATUS_NOTE,
     exit_row_label,
+    year_heading,
     line_label,
     source_display,
 )
@@ -762,7 +763,7 @@ def _build_proforma(wb: Workbook, model: dict[str, Any]) -> None:
     pl = model.get("p_and_l_engine_proforma", {})
     lines = pl.get("lines", [])
 
-    headers = ["Line Item", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "CAGR"]
+    headers = ["Line Item", *(year_heading(y, model.get("deal_years")) for y in range(1, 6)), "CAGR"]
     for i, h in enumerate(headers, start=1):
         ws.cell(row=1, column=i, value=h)
     _style_header_row(ws, 1, len(headers))
@@ -945,7 +946,7 @@ def _build_returns(wb: Workbook, model: dict[str, Any]) -> None:
             if not isinstance(r, dict):
                 continue
             concept = f"returns.exit_schedule[{i}]"
-            ws.cell(row=row, column=1, value=exit_row_label(r))
+            ws.cell(row=row, column=1, value=exit_row_label(r, model.get("deal_years")))
             if r.get("status") != "computed":
                 code = coerce_reason(r.get("reason"))
                 _write_note(

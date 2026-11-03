@@ -58,6 +58,13 @@ B_OCC = 0.70
 B_ADR = 200.0
 
 
+def _span(cal: int):
+    """The Jan–Dec deal year of calendar ``cal`` (a 31 Dec close)."""
+    from app.engines.deal_years import deal_years
+
+    return deal_years(f"{cal - 1}-12-31", 1)[0].span()
+
+
 def _bench(hold: int, *, occ: float | None = B_OCC, adr: float | None = B_ADR,
            gaps: dict[int, dict[str, Any]] | None = None) -> list[BenchmarkYear]:
     out = []
@@ -67,7 +74,7 @@ def _bench(hold: int, *, occ: float | None = B_OCC, adr: float | None = B_ADR,
             kw.update(gaps[y])
         out.append(
             BenchmarkYear(
-                year=y, calendar_year=2025 + y, basis="actual" if y == 1 else "forecast",
+                year=y, deal_year=_span(2025 + y), basis="actual" if y == 1 else "forecast",
                 level="comp_set", label=f"STR comp set {2025 + y}", doc_name="STR Trend.xlsx", page=3,
                 **kw,
             )
@@ -146,12 +153,12 @@ def test_s3_default_penetration_and_ramp() -> None:
         assert rec[y].penetration_occ_source == "default" and rec[y].penetration_adr_source == "default"
         assert rec[y].benchmark_occupancy == B_OCC and rec[y].benchmark_adr == B_ADR
         assert rec[y].benchmark_doc == "STR Trend.xlsx" and rec[y].benchmark_page == 3
-        assert rec[y].calendar_year == 2025 + y
+        assert rec[y].deal_year is not None and rec[y].deal_year.label == f"Jan–Dec {2025 + y}"
         # The record echoes the figures that ran.
         assert rec[y].occupancy == out.years[y - 1].occupancy
         assert rec[y].adr == out.years[y - 1].adr
         assert rec[y].rgi_derived == pytest.approx(rec[y].mpi_target * rec[y].ari_target / 100.0)
-    assert out.topline_methodology_version == TOPLINE_METHODOLOGY_VERSION == 2
+    assert out.topline_methodology_version == TOPLINE_METHODOLOGY_VERSION == 3
     # The legacy echo stays empty: nothing legacy drove this run.
     assert out.index_drivers_by_year == []
 
@@ -346,7 +353,7 @@ def test_no_benchmark_at_all_runs_the_subject_level_times_growth_exactly_like_th
         assert rec[y].mpi_target is None and rec[y].ari_target is None
     assert "No benchmark — projecting from the subject's own starting occupancy and ADR as supplied" in (rec[1].reason or "")
     assert "no STR, market study or CBRE Horizons on the deal" in (rec[1].reason or "")
-    assert out.topline_methodology_version == 2
+    assert out.topline_methodology_version == 3
 
 
 def test_missing_growth_for_one_metric_holds_it_flat_for_that_year() -> None:
@@ -446,7 +453,7 @@ def test_t12_reference_passes_through_and_moves_no_number() -> None:
 
 def test_growth_provenance_labels_ride_on_the_records() -> None:
     growth = [
-        GrowthYear(year=y, calendar_year=2025 + y, occupancy_growth=0.01, adr_growth=0.03,
+        GrowthYear(year=y, deal_year=_span(2025 + y), occupancy_growth=0.01, adr_growth=0.03,
                    occupancy_source="cbre_horizons", adr_source="cbre_horizons",
                    label=f"Forecast · CBRE Horizons {2025 + y} · All Hotels")
         for y in range(2, 6)

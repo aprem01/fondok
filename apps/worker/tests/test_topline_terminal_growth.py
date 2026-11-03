@@ -32,6 +32,7 @@ from app.services.topline import LongRunGrowth, build_topline, read_topline_inpu
 from app.services.topline_benchmark import BenchmarkResolution
 from app.services.topline_growth import GrowthOverrides, resolve_growth_by_year
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 from tests.test_topline_kimpton_reference import costar_rows
 
 CAL = [2026, 2027, 2028, 2029, 2030, 2031, 2032]
@@ -46,8 +47,8 @@ def _bench() -> BenchmarkResolution:
 
 def _growth(overrides: GrowthOverrides = GrowthOverrides(), *, cal=CAL):
     return resolve_growth_by_year(
-        costar_rows(), overrides, calendar_years=cal, hold_years=len(cal),
-        class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(), first_calendar_year=2026,
+        costar_rows(), overrides, deal_years=calendar_deal_years(cal), hold_years=len(cal),
+        class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(), benchmark_base_year=2025,
     )
 
 
@@ -57,11 +58,12 @@ def test_after_the_forecast_ends_adr_averages_and_occupancy_holds() -> None:
     assert g.year(4, "occupancy").value == pytest.approx(0.03)
     for y in (5, 6, 7):  # 2030–2032
         occ, adr = g.year(y, "occupancy"), g.year(y, "adr")
-        # Decision 1a (2026-11-03): the 2025–2029 forecast average, not 2029's +2.8%.
-        assert adr.source == "carried_forward" and adr.value == pytest.approx(0.0244)
+        # Decision 1a / FON-121 decision 2: the report's published forecast
+        # average (+2.5%, p.4), not 2029's +2.8%.
+        assert adr.source == "carried_forward" and adr.value == pytest.approx(0.025)
         assert occ.source == "carried_forward" and occ.value == 0.0
         assert "held at its 2029 level" in occ.label
-        assert "2025–2029 forecast average (+2.4%)" in adr.label
+        assert "CoStar forecast average (as published) +2.5%" in adr.label
 
 
 def test_terminal_growth_is_the_last_years_adr_growth_without_occupancy() -> None:
@@ -99,7 +101,7 @@ def test_terminal_growth_with_an_analyst_last_year_adr_uses_it() -> None:
 def test_no_figure_at_all_is_zero_and_unavailable() -> None:
     inputs = read_topline_inputs({}, {}, set())
     g = resolve_growth_by_year(
-        [], inputs.growth, calendar_years=CAL[:5], hold_years=5,
+        [], inputs.growth, deal_years=calendar_deal_years(CAL[:5]), hold_years=5,
         class_bucket="all", policy=TenantDataPolicies(),
     )
     build = build_topline(_bench(), g, inputs, hold_years=5, t12=None)
@@ -115,10 +117,8 @@ def test_exit_growth_past_the_forecast_is_the_forecast_average() -> None:
     build = build_topline(_bench(), _growth(cal=CAL[:4]), inputs, hold_years=4, t12=None)
     term = build.status["terminal_revpar_growth"]
     assert term["basis"] == "exit_year_adr_growth"
-    assert "2030 (exit-NOI year)" in term["label"] and "forecast average" in term["label"]
-    assert build.terminal_revpar_growth == pytest.approx(
-        sum((0.044, 0.018, -0.006, 0.038, 0.028)) / 5, abs=1e-12
-    )
+    assert "Year 5 (Jan–Dec 2030, the exit-NOI year)" in term["label"] and "forecast average (as published)" in term["label"]
+    assert build.terminal_revpar_growth == pytest.approx(0.025, abs=1e-12)
 
 
 def test_a_carried_analyst_figure_names_the_real_exit_noi_year() -> None:
@@ -129,4 +129,4 @@ def test_a_carried_analyst_figure_names_the_real_exit_noi_year() -> None:
     )
     build = build_topline(_bench(), _growth(inputs.growth, cal=CAL[:5]), inputs, hold_years=5, t12=None)
     assert build.terminal_revpar_growth == pytest.approx(0.02)
-    assert "2031 (exit-NOI year)" in build.status["terminal_revpar_growth"]["label"]
+    assert "Year 6 (Jan–Dec 2031, the exit-NOI year)" in build.status["terminal_revpar_growth"]["label"]

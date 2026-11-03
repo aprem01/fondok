@@ -51,6 +51,7 @@ from app.services.index_methodology import (  # noqa: E402
     resolve_index_methodology,
 )
 from app.services.market_fields import FieldRow  # noqa: E402
+from tests.fixtures.deal_calendar import calendar_deal_years
 
 STR_DOC = "Subject STR Trend May 2025.xlsx"
 MARKET_DOC = "Miami Beach Submarket 2025.pdf"
@@ -107,7 +108,7 @@ def test_period_end_text_reads_month_and_year() -> None:
 
 def test_str_comp_set_year_one_is_actual_and_out_years_are_assumptions() -> None:
     growth = {KEY_OCC_GROWTH: {"value": 0.01, "note": "CBRE"}, KEY_ADR_GROWTH: {"value": 0.03, "note": "CBRE"}}
-    r = resolve_index_by_year(ROWS, growth, hold_years=3, calendar_years=CAL)
+    r = resolve_index_by_year(ROWS, growth, hold_years=3, deal_years=calendar_deal_years(CAL))
     y1, y2, y3 = r.years
     for fig in (y1.benchmark_occupancy, y1.benchmark_adr):
         assert fig.basis == "actual"
@@ -124,7 +125,7 @@ def test_str_comp_set_year_one_is_actual_and_out_years_are_assumptions() -> None
 
 
 def test_market_benchmark_year_one_actual_then_cbre_forecast_with_page_and_report_date() -> None:
-    r = resolve_index_by_year(ROWS, {OVERRIDE_METHOD: METHOD_MARKET_BENCHMARK}, hold_years=3, calendar_years=CAL)
+    r = resolve_index_by_year(ROWS, {OVERRIDE_METHOD: METHOD_MARKET_BENCHMARK}, hold_years=3, deal_years=calendar_deal_years(CAL))
     assert r.method == METHOD_MARKET_BENCHMARK
     y1, y2, y3 = r.years
     assert y1.benchmark_occupancy.basis == "actual"
@@ -140,7 +141,7 @@ def test_market_benchmark_year_one_actual_then_cbre_forecast_with_page_and_repor
 
 def test_a_figure_with_no_value_carries_no_basis() -> None:
     # No growth assumption → comp-set out-years are "—" with a reason, no label.
-    r = resolve_index_by_year(STR_ROWS, {}, hold_years=2, calendar_years=[2025, 2026])
+    r = resolve_index_by_year(STR_ROWS, {}, hold_years=2, deal_years=calendar_deal_years([2025, 2026]))
     y2 = r.years[1].benchmark_occupancy
     assert y2.value is None and y2.basis is None and y2.basis_label is None
     assert y2.detail
@@ -149,7 +150,7 @@ def test_a_figure_with_no_value_carries_no_basis() -> None:
 def test_api_carries_ttm_period_end_cbre_report_date_and_per_figure_labels() -> None:
     overrides = {OVERRIDE_METHOD: METHOD_MARKET_BENCHMARK}
     reading = resolve_index_methodology(ROWS, overrides)
-    by_year = resolve_index_by_year(ROWS, overrides, hold_years=3, calendar_years=CAL)
+    by_year = resolve_index_by_year(ROWS, overrides, hold_years=3, deal_years=calendar_deal_years(CAL))
     out = index_methodology_response(uuid4(), reading, by_year).model_dump()
     assert out["subject_period_end"] == "2025-05"
     assert out["cbre_report_date"] == "March 2026"

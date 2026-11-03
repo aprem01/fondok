@@ -18,11 +18,17 @@ ONE mechanism decides the occupancy / ADR growth applied INTO each model year
    overall series, labelled. A bucket series that lacks a year inside its own
    range is NOT patched from another bucket.
 4. ``carried_forward`` — a calendar year past the last year of the document
-   series the previous year was read from: ADR grows at the ARITHMETIC
-   AVERAGE of that series' forecast-tagged ADR growth years (domain lead
-   2026-11-03, decision 1a — "use the forecast average rather than last
-   year's"; the label names the years, e.g. "CoStar … 2025–2029 forecast
-   average (+2.4%)"); OCCUPANCY HOLDS at its last level (growth 0) — a
+   series the previous year was read from: ADR grows at the report's
+   PUBLISHED forecast average when it states one (FON-121 decision 2 —
+   ``market_study.performance.forecast_avg_adr_change_pct``, CoStar's
+   overview "Forecast Average", the submarket overall: "CoStar forecast
+   average (as published) +2.5% … p.4", naming the class the yearly rows
+   are when they are a bucket), else at the ARITHMETIC AVERAGE of that
+   series' forecast-tagged ADR growth years (decision 1a, labelled
+   "computed" with its years — "re-extract" when the extraction predates
+   v11). CBRE Hotel Horizons publishes no forecast average in the
+   extraction contract, so a CBRE series uses the computed one. OCCUPANCY
+   HOLDS at its last level (growth 0) — a
    forecast's recovery-year occupancy gain cannot repeat every year (review
    I-2; the 95 % cap still applies). Both are assumptions, labelled with the
    report they extend. A series with no forecast-tagged ADR year has no
@@ -30,6 +36,16 @@ ONE mechanism decides the occupancy / ADR growth applied INTO each model year
 5. ``unavailable`` — nothing at all: the figure is ``None`` and the engine
    holds the metric flat (``flat_no_growth``). Growth 0 is the absence of
    growth, never a seeded rate.
+
+FON-121 — the model years are DEAL years (twelve months from the close,
+``engines.deal_years``). The document chain above is resolved per CALENDAR
+year (forecasts are published that way); a deal year's figure is the
+month-weighted blend of the calendar years it spans —
+g(Oct 2026–Sep 2027) = 3/12 × g(2026) + 9/12 × g(2027) — every part must
+have a figure (else the year is unavailable / withheld, never a partial
+figure), and a part past the forecast makes the year an assumption. The
+label lists every part; ``chip`` shows the pages ("CoStar p.26, p.4").
+The exit-NOI year (hold + 1) is resolved the same way (``forward``).
 
 Occupancy is FLAT after stabilization (domain lead 2026-11-03, decision 1b):
 with ``stabilization_year`` = S, the occupancy growth INTO every model year
@@ -53,12 +69,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.underwriting import GrowthSource, GrowthYear
 
+from ..engines.deal_years import DealYear, deal_year_after
 from ..tenants import TenantDataPolicies
 from .market_fields import FieldRow, coerce_float
 from .market_study_reader import (
@@ -198,6 +215,21 @@ class MetricGrowth:
     #: growth years for this metric, and the first / last such year.
     forecast_average: float | None = None
     forecast_span: tuple[int, int] | None = None
+    #: "CoStar" / "CBRE" — the vendor of a document-derived figure.
+    vendor: str | None = None
+    #: FON-121 — the deal year this figure is the growth INTO (None for a
+    #: calendar-year figure), and its calendar parts ``(year, months, figure)``.
+    deal_year: DealYear | None = None
+    parts: tuple[tuple[int, int, MetricGrowth], ...] = ()
+    #: Decision 2 — a post-forecast figure's basis: ``published_average``
+    #: (the report's own) or ``computed_average`` (its forecast years).
+    average_basis: str | None = None
+    #: Decision 3 — the visible source chip ("CoStar p.26").
+    chip: str | None = None
+    #: The calendar year's part of a blended label ("2027 forecast p.26").
+    short: str | None = None
+    #: An analyst override typed for THIS model year (not the all-years one).
+    per_year_override: bool = False
 
     @property
     def source_id(self) -> str:
@@ -215,20 +247,38 @@ class MetricGrowth:
             "bucket": self.bucket,
             "bucket_label": CLASS_BUCKET_LABELS.get(self.bucket) if self.bucket else None,
             "reason": self.reason.value if self.reason is not None else None,
+            "chip": self.chip,
+            "average_basis": self.average_basis,
+            "deal_year": self.deal_year.as_dict() if self.deal_year is not None else None,
+            "calendar_parts": [
+                {
+                    "calendar_year": cy,
+                    "months": m,
+                    "value": g.value,
+                    "source": g.source,
+                    "page": g.page,
+                    "label": g.label,
+                }
+                for cy, m, g in self.parts
+            ],
         }
 
 
 @dataclass
 class GrowthResolution:
-    """Per model year (index ``y − 1``) and per calendar year, per metric."""
+    """Per model (deal) year (index ``y − 1``), the exit-NOI year after the
+    hold, and per calendar year, per metric."""
 
     hold_years: int
-    calendar_years: list[int]
+    #: FON-121 — the deal years the model years are (``[]`` = no calendar).
+    deal_years: list[DealYear]
     by_year: dict[str, list[MetricGrowth]]
-    #: ``(metric, calendar year)`` → resolution, for every calendar year the
-    #: resolver was asked about (model years AND the benchmark's gap years
-    #: before Year 1). Gap years carry the all-years overrides, never a
-    #: per-year (model-year) override.
+    #: The exit-NOI year (hold + 1), per metric — empty without a calendar.
+    forward: dict[str, MetricGrowth] = field(default_factory=dict)
+    #: ``(metric, calendar year)`` → the calendar year's figure (document,
+    #: carry-forward, or the analyst's ALL-years figure — never a per-year
+    #: one), for every calendar year the deal years (and the benchmark's
+    #: first step) touch.
     by_calendar: dict[tuple[str, int], MetricGrowth] = field(default_factory=dict)
     class_bucket: str = "all"
     bucket_label: str = CLASS_BUCKET_LABELS["all"]
@@ -241,10 +291,13 @@ class GrowthResolution:
 
     @property
     def calendar_known(self) -> bool:
-        return bool(self.calendar_years)
+        return bool(self.deal_years)
 
     def year(self, y: int, metric: str) -> MetricGrowth:
         return self.by_year[metric][y - 1]
+
+    def deal_year(self, y: int) -> DealYear | None:
+        return self.deal_years[y - 1] if 1 <= y <= len(self.deal_years) else None
 
     def calendar(self, cal: int, metric: str) -> MetricGrowth | None:
         return self.by_calendar.get((metric, cal))
@@ -346,30 +399,50 @@ def _fmt(v: float) -> str:
 # ─────────────────────────── the resolver ───────────────────────────
 
 
+def _pages_chip(vendor: str | None, pages: Sequence[int | None]) -> str | None:
+    """Decision 3 — the visible source chip: "CoStar p.26", "CoStar p.26, p.4"."""
+    if not vendor:
+        return None
+    seen: list[int] = []
+    for p in pages:
+        if p is not None and p not in seen:
+            seen.append(p)
+    return vendor + ("" if not seen else " " + ", ".join(f"p.{p}" for p in seen))
+
+
+def _blend_short(g: MetricGrowth) -> str:
+    """One calendar year's part of a blended deal-year label."""
+    what = g.short or g.label
+    return f"{_fmt(g.value)} {what}" if g.value is not None else what
+
+
 def resolve_growth_by_year(
     rows: Sequence[FieldRow],
     overrides: GrowthOverrides,
     *,
-    calendar_years: Sequence[int],
+    deal_years: Sequence[DealYear],
     hold_years: int,
     class_bucket: str,
     policy: TenantDataPolicies,
-    first_calendar_year: int | None = None,
+    benchmark_base_year: int | None = None,
     gated_doc_types: Sequence[str] = (),
     stabilization_year: int | None = None,
 ) -> GrowthResolution:
-    """Resolve the growth INTO every model year ``1..hold_years`` (and every
-    calendar year from ``first_calendar_year`` — the benchmark's first growth
-    step — up to the last model year). See the module docstring."""
+    """Resolve the growth INTO every model (deal) year ``1..hold_years`` and
+    the exit-NOI year after it (FON-121: deal years run twelve months from
+    the close — ``engines.deal_years``), plus every calendar year from the
+    benchmark's first growth step (``benchmark_base_year`` + 1) up to the
+    last calendar year the exit-NOI year touches. See the module docstring."""
     hold = max(1, int(hold_years))
     s_year = int(stabilization_year) if stabilization_year is not None and int(stabilization_year) >= 1 else None
-    cal = [int(c) for c in calendar_years][:hold]
-    if len(cal) < hold:
-        cal = []  # a partial calendar is no calendar
+    dys = list(deal_years)[:hold]
+    if len(dys) < hold:
+        dys = []  # a partial calendar is no calendar
+    fwd_dy = deal_year_after(dys)
     gated = {t.upper() for t in gated_doc_types}
     market_gated = bool(gated & {"CBRE_HORIZONS", "MARKET_STUDY", "COSTAR"})
     #: R2-I1 — a forecast on file that no calendar can place.
-    calendar_unknown = not cal and document_growth_on_file(rows)
+    calendar_unknown = not dys and document_growth_on_file(rows)
 
     # ── document series ──
     cbre, cbre_date = _cbre_series(rows)
@@ -399,7 +472,7 @@ def resolve_growth_by_year(
     def _forecast_average(series_by_year: dict[int, _DocYear]) -> tuple[float | None, tuple[int, int] | None]:
         """Decision 1a — mean of the forecast-tagged years (``period`` not
         actual / historical; an untagged year reads as forecast, as its
-        label does)."""
+        label does) — used when the report publishes no average."""
         fc = sorted(y for y, d in series_by_year.items() if not _is_actual(d.period))
         if not fc:
             return None, None
@@ -410,6 +483,11 @@ def resolve_growth_by_year(
         for src, by_metric in (("cbre", cbre), ("costar", costar))
         for metric, series_by_year in by_metric.items()
     }
+    #: FON-121 decision 2 — the CoStar report's PUBLISHED forecast average
+    #: (its Average Trend table: the submarket overall). CBRE Hotel Horizons
+    #: publishes no forecast average in the extraction contract (its
+    #: long-run average is the exit convention, ``LongRunGrowth``).
+    published_costar_adr = costar_reading.published_average("adr") if series.years else None
 
     reextract: list[str] = []
     if stale_extraction:
@@ -429,7 +507,8 @@ def resolve_growth_by_year(
                 value=hit.value, source="cbre_horizons", label=label, doc_name=hit.doc_name,
                 page=hit.page, report_date=hit.report_date or cbre_date,
                 series_last_year=max(cbre[metric]), report="CBRE Hotel Horizons", calendar_year=c,
-                forecast_average=avg, forecast_span=span,
+                forecast_average=avg, forecast_span=span, vendor="CBRE",
+                short=f"CBRE {c} {kind.lower()}" + (f" p.{hit.page}" if hit.page else ""),
             )
         hit = costar[metric].get(c)
         if hit is not None:
@@ -453,7 +532,8 @@ def resolve_growth_by_year(
                 doc_name=hit.doc_name, page=hit.page, report_date=hit.report_date,
                 bucket=series.bucket, series_last_year=max(costar[metric]),
                 report=f"{costar_report} ({bucket_label})", calendar_year=c,
-                forecast_average=avg, forecast_span=span,
+                forecast_average=avg, forecast_span=span, vendor="CoStar",
+                short=f"CoStar {c} {kind.lower()}" + (f" p.{hit.page}" if hit.page else ""),
             )
         return None
 
@@ -483,63 +563,151 @@ def resolve_growth_by_year(
             calendar_year=c,
         )
 
+    def _past_series(metric: str, c: int, prev: MetricGrowth) -> MetricGrowth:
+        """A calendar year past the end of the series ``prev`` was read from."""
+        last = prev.series_last_year
+        if metric == "occupancy":
+            return MetricGrowth(
+                value=0.0, source="carried_forward",
+                label=f"Assumption · occupancy held at its {last} level — the {prev.report} forecast ends {last}",
+                doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
+                bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
+                forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
+                vendor=prev.vendor, short=f"{c} occupancy held (forecast ends {last})",
+            )
+        if prev.vendor == "CoStar" and published_costar_adr is not None:
+            # Decision 2 — the report's own published forecast average.
+            pub = published_costar_adr
+            overall_note = (
+                f" — the report publishes it for the submarket overall; the per-year rows are {bucket_label}"
+                if series.bucket != "all" else ""
+            )
+            label = (
+                f"Assumption · CoStar forecast average (as published) {_fmt(pub.value)} · {submarket} "
+                f"submarket{overall_note}"
+                + (f" · {pub.doc_name}" if pub.doc_name else "")
+                + (f" p.{pub.page}" if pub.page else "")
+                + f" — the forecast ends {last}"
+            )
+            return MetricGrowth(
+                value=pub.value, source="carried_forward", label=label,
+                doc_name=pub.doc_name or prev.doc_name, page=pub.page, report_date=prev.report_date,
+                bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
+                forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
+                vendor=prev.vendor, average_basis="published_average",
+                short=f"{c} CoStar forecast average (as published" + (f", p.{pub.page})" if pub.page else ")"),
+            )
+        if prev.forecast_average is not None and prev.forecast_span is not None:
+            # Decision 1a — no published average: the series' own forecast
+            # years averaged, labelled as computed (never the last year's
+            # figure carried on).
+            value = prev.forecast_average
+            first, fl = prev.forecast_span
+            span = f"{first}–{fl}" if first != fl else f"{first}"
+            hint = (
+                "; re-extract the report to read its published average"
+                if prev.vendor == "CoStar" and costar_reading.predates_published_average
+                else "; the report publishes no average"
+            )
+            return MetricGrowth(
+                value=value, source="carried_forward",
+                label=(
+                    f"Assumption · {prev.report} {span} forecast average, computed ({_fmt(value)}) — "
+                    f"the forecast ends {last}{hint}"
+                ),
+                doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
+                bucket=prev.bucket, series_last_year=last, report=prev.report, calendar_year=c,
+                forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
+                vendor=prev.vendor, average_basis="computed_average",
+                short=f"{c} {span} forecast average, computed" + (f" (p.{prev.page})" if prev.page else ""),
+            )
+        return MetricGrowth(
+            value=None, source="unavailable",
+            label=(
+                f"No ADR growth for {c}: the {prev.report} series ends "
+                f"{last} and has no forecast years to average — set growth manually"
+            ),
+            reason=ReasonCode.NO_MARKET_FORECAST, calendar_year=c,
+        )
+
     # ── the document chain, calendar year by calendar year (carry-forward
     # needs the previous year whether or not the analyst overrode it) ──
     doc_by_cal: dict[tuple[str, int], MetricGrowth] = {}
-    if cal:
-        start = min(cal[0], first_calendar_year) if first_calendar_year is not None else cal[0]
+    cal_range: list[int] = []
+    if dys and fwd_dy is not None:
+        first_cy = dys[0].calendar_months[0][0]
+        if benchmark_base_year is not None:
+            first_cy = min(first_cy, benchmark_base_year + 1)
+        # The chain runs through the exit-NOI year (hold + 1): the exit
+        # growth convention reads its own figure.
+        cal_range = list(range(first_cy, fwd_dy.calendar_months[-1][0] + 1))
         for metric in METRICS:
             prev: MetricGrowth | None = None
-            # The chain runs one year past the hold: the exit NOI is the
-            # forward year (hold + 1), which needs its own growth figure.
-            for c in range(start, cal[-1] + 2):
+            for c in cal_range:
                 hit = _doc(metric, c)
                 if hit is None and prev is not None and prev.value is not None and (
                     prev.series_last_year is not None and c > prev.series_last_year
                 ):
-                    held = metric == "occupancy"
-                    if held:
-                        value: float | None = 0.0
-                        label = (
-                            f"Assumption · occupancy held at its {prev.series_last_year} level — "
-                            f"the {prev.report} forecast ends {prev.series_last_year}"
-                        )
-                    elif prev.forecast_average is not None and prev.forecast_span is not None:
-                        # Decision 1a — the series' forecast average, never
-                        # the last year's figure carried on.
-                        value = prev.forecast_average
-                        first, last = prev.forecast_span
-                        span = f"{first}–{last}" if first != last else f"{first}"
-                        label = (
-                            f"Assumption · {prev.report} {span} forecast average ({_fmt(value)}) — "
-                            f"the forecast ends {prev.series_last_year}"
-                        )
-                    else:
-                        value = None
-                    if value is not None:
-                        hit = MetricGrowth(
-                            value=value, source="carried_forward", label=label,
-                            doc_name=prev.doc_name, page=prev.page, report_date=prev.report_date,
-                            bucket=prev.bucket, series_last_year=prev.series_last_year,
-                            report=prev.report, calendar_year=c,
-                            forecast_average=prev.forecast_average, forecast_span=prev.forecast_span,
-                        )
-                    else:
-                        hit = MetricGrowth(
-                            value=None, source="unavailable",
-                            label=(
-                                f"No ADR growth for {c}: the {prev.report} series ends "
-                                f"{prev.series_last_year} and has no forecast years to average — set growth manually"
-                            ),
-                            reason=ReasonCode.NO_MARKET_FORECAST, calendar_year=c,
-                        )
+                    hit = _past_series(metric, c, prev)
                 if hit is None:
                     hit = _unavailable(metric, c)
                 doc_by_cal[(metric, c)] = hit
                 prev = hit
 
+    def _blend(metric: str, dy: DealYear) -> MetricGrowth:
+        """FON-121 — a deal year's document growth: the month-weighted blend
+        of the calendar years it spans (3 months of 2026 + 9 months of 2027
+        for Oct 2026–Sep 2027). Every part must have a figure: a missing
+        part makes the year unavailable (never half a figure)."""
+        parts = [(cy, m, doc_by_cal.get((metric, cy)) or _unavailable(metric, cy)) for cy, m in dy.calendar_months]
+        if len(parts) == 1:
+            g = parts[0][2]
+            return replace(g, deal_year=dy, parts=tuple(parts), chip=_pages_chip(g.vendor, [g.page]))
+        missing = [(cy, m, g) for cy, m, g in parts if g.value is None]
+        first_doc = next((g for _cy, _m, g in parts if g.doc_name), None)
+        if missing:
+            withheld = any(g.source == "withheld_by_policy" for _cy, _m, g in missing)
+            return MetricGrowth(
+                value=None, source="withheld_by_policy" if withheld else "unavailable",
+                label=f"{dy.label}: " + "; ".join(f"{m} mo of {cy} — {g.label}" for cy, m, g in missing),
+                doc_name=first_doc.doc_name if first_doc else None,
+                page=first_doc.page if first_doc else None,
+                reason=missing[0][2].reason, deal_year=dy, parts=tuple(parts),
+            )
+        value = sum(m / 12.0 * float(g.value) for _cy, m, g in parts)  # type: ignore[arg-type]
+        sources = [g.source for _cy, _m, g in parts]
+        if len(set(sources)) == 1:
+            source = sources[0]
+        elif "carried_forward" in sources:
+            source = "carried_forward"
+        else:
+            source = max(parts, key=lambda p: p[1])[2].source
+        kinds = {("Assumption" if g.source == "carried_forward" else g.label.split(" · ", 1)[0]) for _c, _m, g in parts}
+        kind = "Assumption" if "Assumption" in kinds else ("Forecast" if "Forecast" in kinds else "Actual")
+        last = parts[-1][2]
+        tail = last.report or ""
+        if first_doc is not None and first_doc.doc_name:
+            tail += f" · {first_doc.doc_name}"
+        label = (
+            f"{kind} · {dy.label} = "
+            + " + ".join(f"{m} mo × {_blend_short(g)}" for _cy, m, g in parts)
+            + f" = {_fmt(value)}"
+            + (f" · {tail}" if tail else "")
+        )
+        vendor = next((g.vendor for _c, _m, g in parts if g.vendor), None)
+        return MetricGrowth(
+            value=value, source=source, label=label,  # type: ignore[arg-type]
+            doc_name=first_doc.doc_name if first_doc else None,
+            page=next((g.page for _c, _m, g in parts if g.page), None),
+            report_date=last.report_date, bucket=last.bucket, series_last_year=last.series_last_year,
+            report=last.report, forecast_average=last.forecast_average, forecast_span=last.forecast_span,
+            vendor=vendor, deal_year=dy, parts=tuple(parts),
+            average_basis=next((g.average_basis for _c, _m, g in parts if g.average_basis), None),
+            chip=_pages_chip(vendor, [g.page for _c, _m, g in parts]),
+        )
+
     # ── analyst overrides on top ──
-    def _scalar(metric: str, c: int | None, occ_value: float | None) -> MetricGrowth | None:
+    def _scalar(metric: str, occ_value: float | None) -> MetricGrowth | None:
         if metric == "occupancy" and overrides.occupancy_all_years is not None:
             v = overrides.occupancy_all_years
             key = overrides.occupancy_all_years_key
@@ -547,7 +715,6 @@ def resolve_growth_by_year(
                 value=v, source="analyst_override",
                 label=f"Analyst override · {_fmt(v)} occupancy growth, all years"
                 + ("" if key == "occupancy_growth" else f" (legacy key {key}, read as all-years growth)"),
-                calendar_year=c,
             )
         if metric == "adr" and overrides.adr_all_years is not None:
             v = overrides.adr_all_years
@@ -556,7 +723,6 @@ def resolve_growth_by_year(
                 value=v, source="analyst_override",
                 label=f"Analyst override · {_fmt(v)} ADR growth, all years"
                 + ("" if key == "adr_growth" else f" (legacy key {key}, read as all-years growth)"),
-                calendar_year=c,
             )
         if metric == "adr" and overrides.revpar_all_years is not None:
             occ = occ_value if occ_value is not None else 0.0
@@ -568,34 +734,33 @@ def resolve_growth_by_year(
                         f"Derived from your {_fmt(overrides.revpar_all_years)} RevPAR growth override "
                         f"over {_fmt(occ)} occupancy growth"
                     ),
-                    calendar_year=c,
                 )
         return None
 
-    def _resolve(metric: str, y: int | None, c: int | None, occ_value: float | None) -> MetricGrowth:
+    def _resolve(metric: str, y: int | None, dy: DealYear | None, occ_value: float | None) -> MetricGrowth:
         lst = overrides.occupancy_by_year if metric == "occupancy" else overrides.adr_by_year
         if y is not None and 0 <= y - 1 < len(lst) and lst[y - 1] is not None:
             v = float(lst[y - 1])  # type: ignore[arg-type]
             return MetricGrowth(
                 value=v, source="analyst_override",
                 label=f"Analyst override · Year {y} {METRIC_NOUN[metric]} growth {_fmt(v)}",
-                calendar_year=c,
+                deal_year=dy, per_year_override=True,
             )
         if metric == "occupancy" and y is not None and s_year is not None and y > s_year:
             # Decision 1b — occupancy is flat after stabilization.
-            where = f"Year {s_year} ({cal[s_year - 1]})" if cal else f"Year {s_year}"
+            where = f"Year {s_year} ({dys[s_year - 1].label})" if dys and s_year <= len(dys) else f"Year {s_year}"
             return MetricGrowth(
                 value=0.0, source="held_at_stabilization",
                 label=(
                     f"Assumption · occupancy held at its {where} stabilized level — occupancy is "
                     "flat after stabilization; ADR keeps growing"
                 ),
-                calendar_year=c,
+                deal_year=dy,
             )
-        hit = _scalar(metric, c, occ_value)
+        hit = _scalar(metric, occ_value)
         if hit is not None:
-            return hit
-        if c is None:
+            return replace(hit, deal_year=dy)
+        if dy is None:
             # Review I-3 — a stale extraction is the more useful reason: the
             # report on file was never read for its forecast at all.
             if stale_extraction:
@@ -603,38 +768,36 @@ def resolve_growth_by_year(
             if calendar_unknown and not stale_extraction:
                 return MetricGrowth(
                     value=None, source="unavailable", label=CALENDAR_UNKNOWN_DETAIL,
-                    reason=ReasonCode.CALENDAR_UNKNOWN, calendar_year=None,
+                    reason=ReasonCode.CALENDAR_UNKNOWN,
                 )
             return _unavailable(metric, None, NO_CLOSE_DATE_DETAIL)
-        return doc_by_cal.get((metric, c)) or _unavailable(metric, c)
+        return _blend(metric, dy)
 
     by_year: dict[str, list[MetricGrowth]] = {"occupancy": [], "adr": []}
-    by_cal: dict[tuple[str, int], MetricGrowth] = {}
     for y in range(1, hold + 1):
-        c = cal[y - 1] if cal else None
-        occ = _resolve("occupancy", y, c, None)
-        adr = _resolve("adr", y, c, occ.value)
+        dy = dys[y - 1] if dys else None
+        occ = _resolve("occupancy", y, dy, None)
         by_year["occupancy"].append(occ)
-        by_year["adr"].append(adr)
-        if c is not None:
-            by_cal[("occupancy", c)] = occ
-            by_cal[("adr", c)] = adr
-    if cal:
-        # The forward (exit-NOI) year — read by the exit growth convention.
-        fwd = cal[-1] + 1
-        occ_f = _resolve("occupancy", None, fwd, None)
-        by_cal[("occupancy", fwd)] = occ_f
-        by_cal[("adr", fwd)] = _resolve("adr", None, fwd, occ_f.value)
-    if cal and first_calendar_year is not None:
-        for c in range(first_calendar_year, cal[0]):
-            occ = _resolve("occupancy", None, c, None)
-            by_cal[("occupancy", c)] = occ
-            by_cal[("adr", c)] = _resolve("adr", None, c, occ.value)
+        by_year["adr"].append(_resolve("adr", y, dy, occ.value))
+    forward: dict[str, MetricGrowth] = {}
+    if fwd_dy is not None:
+        # The exit-NOI year (hold + 1) — read by the exit growth convention.
+        forward["occupancy"] = _resolve("occupancy", None, fwd_dy, None)
+        forward["adr"] = _resolve("adr", None, fwd_dy, forward["occupancy"].value)
+    by_cal: dict[tuple[str, int], MetricGrowth] = {}
+    for c in cal_range:
+        # Calendar-year figures (the benchmark's first step from its own
+        # year): the all-years overrides apply, never a per-(deal-)year one.
+        occ_c = _scalar("occupancy", None) or doc_by_cal[("occupancy", c)]
+        by_cal[("occupancy", c)] = replace(occ_c, calendar_year=c)
+        adr_c = _scalar("adr", occ_c.value) or doc_by_cal[("adr", c)]
+        by_cal[("adr", c)] = replace(adr_c, calendar_year=c)
 
     return GrowthResolution(
         hold_years=hold,
-        calendar_years=cal,
+        deal_years=dys,
         by_year=by_year,
+        forward=forward,
         by_calendar=by_cal,
         class_bucket=series.bucket if series.years else class_bucket,
         bucket_label=bucket_label if series.years else CLASS_BUCKET_LABELS.get(class_bucket, class_bucket),
@@ -655,7 +818,7 @@ def growth_year(res: GrowthResolution, y: int) -> GrowthYear:
     bucket = next((g.bucket for g in (adr, occ) if g.bucket), None)
     return GrowthYear(
         year=y,
-        calendar_year=res.calendar_years[y - 1] if res.calendar_known else None,
+        deal_year=res.deal_years[y - 1].span() if res.calendar_known else None,
         occupancy_growth=occ.value,
         adr_growth=adr.value,
         occupancy_source=occ.source,
@@ -666,8 +829,26 @@ def growth_year(res: GrowthResolution, y: int) -> GrowthYear:
         page=doc.page if doc else None,
         report_date=doc.report_date if doc else None,
         label=label,
+        chip=merge_chips(adr.chip, occ.chip),
         reason=occ.reason or adr.reason,
     )
+
+
+def merge_chips(*chips: str | None) -> str | None:
+    """"CoStar p.26" + "CoStar p.4" → "CoStar p.26, p.4" (same vendor);
+    different vendors are listed side by side."""
+    by_vendor: dict[str, list[str]] = {}
+    for chip in chips:
+        if not chip:
+            continue
+        vendor, _, pages = chip.partition(" ")
+        lst = by_vendor.setdefault(vendor, [])
+        for p in (x.strip() for x in pages.split(",") if x.strip()):
+            if p not in lst:
+                lst.append(p)
+    if not by_vendor:
+        return None
+    return " · ".join(v + (" " + ", ".join(ps) if ps else "") for v, ps in by_vendor.items())
 
 
 def coerce_growth_list(raw: object, *, max_years: int = 20) -> tuple[list[float | None], list[str]]:
@@ -716,6 +897,7 @@ __all__ = [
     "costar_withheld",
     "document_growth_on_file",
     "growth_year",
+    "merge_chips",
     "resolve_growth_by_year",
     "vendor_of",
 ]

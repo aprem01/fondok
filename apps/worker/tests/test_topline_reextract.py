@@ -29,6 +29,7 @@ from app.services.market_fields import pipeline_version_number
 from app.services.market_study_reader import read_class_forecast
 from app.services.topline_growth import GrowthOverrides, resolve_growth_by_year
 from app.tenants import TenantDataPolicies
+from tests.fixtures.deal_calendar import calendar_deal_years
 from fondok_schemas.reasons import ReasonCode
 
 INPUT = Path(__file__).resolve().parents[3] / "evals" / "golden-set" / "kimpton-angler" / "input"
@@ -62,7 +63,7 @@ def _costar(*, pv: str | None, keep_class: bool = True, keep_trend: bool = True)
 
 def _growth(rows, bucket: str):
     return resolve_growth_by_year(
-        rows, GrowthOverrides(), calendar_years=CAL, hold_years=5,
+        rows, GrowthOverrides(), deal_years=calendar_deal_years(CAL), hold_years=5,
         class_bucket=bucket, policy=TenantDataPolicies(),
     )
 
@@ -170,7 +171,7 @@ async def test_loader_reports_the_reextract_on_sams_qa_deal_shape() -> None:
 def test_a_stale_report_on_a_deal_with_no_close_date_still_says_re_extract() -> None:
     rows = _costar(pv="v8", keep_class=False, keep_trend=False)
     g = resolve_growth_by_year(
-        rows, GrowthOverrides(), calendar_years=[], hold_years=5,
+        rows, GrowthOverrides(), deal_years=calendar_deal_years([]), hold_years=5,
         class_bucket="luxury_upper_upscale", policy=TenantDataPolicies(),
     )
     hit = g.year(2, "adr")

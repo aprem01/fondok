@@ -41,9 +41,10 @@ FON-98 (Rani + Eshan, 2026-10). The anchor is resolved, not a constant:
   (projection Year 1 is the first operating year after close, so "Year 3
   after close" is projection index 2). Source ``default_year_3``.
 * **A material repositioning / re-flag** — the deal carries
-  ``deals.reopening_date``; Year 3 is counted from the **first full operating
-  year after reopening**, placed on the projection through the same calendar
-  the revenue engine uses (``projection_start_year``). Source
+  ``deals.reopening_date``; Year 3 is counted from the **first full deal
+  year after reopening** (the first deal year — twelve months from the close,
+  FON-121 ``engines.deal_years`` — that starts on or after the reopening
+  date). Source
   ``default_year_3_reopening``, anchor ``reopening``. A reopening that cannot
   be placed (no acquisition close date to derive the projection calendar, or a
   reopening whose Year 3 falls before the projection starts) falls back to the
@@ -82,27 +83,26 @@ StabilizationAnchorFallback = Literal[
 ]
 
 
-def _projection_start_year(acquisition_close_date: object) -> int | None:
-    """Calendar year of projection Year 1 — the revenue engine's rule
-    (``revenue.projection_start_year``: the year containing the first
-    operating month, close + 1 month). Imported lazily so this module stays
-    free of the revenue engine's imports."""
-    from .revenue import projection_start_year
+def _deal_years(acquisition_close_date: object, n: int) -> list:
+    """The projection's deal years (FON-121, ``engines.deal_years`` — twelve
+    months from the close; the revenue engine's calendar). Imported lazily so
+    this module stays free of the engine imports."""
+    from .deal_years import deal_years
 
     if isinstance(acquisition_close_date, date):
-        acquisition_close_date = acquisition_close_date.isoformat()
-    return projection_start_year(
-        acquisition_close_date if isinstance(acquisition_close_date, str) else None
-    )
+        return deal_years(acquisition_close_date, n)
+    return deal_years(acquisition_close_date if isinstance(acquisition_close_date, str) else None, n)
 
 
-def first_full_operating_year_after_reopening(reopening: date) -> int:
-    """Calendar year of the first FULL operating year after ``reopening``.
+def reopening_stabilized_index(acquisition_close_date: object, reopening: date) -> int | None:
+    """0-based deal-year index of "Year 3 after reopening" — counted from the
+    first FULL deal year after ``reopening`` (the first deal year starting on
+    or after it; that year is Year 1) — NOT clamped to the hold. None without
+    a close date."""
+    from .deal_years import first_full_deal_year_index
 
-    A hotel reopening on 1 January is open for that whole calendar year; any
-    later reopening makes the following calendar year the first full one.
-    """
-    return reopening.year if (reopening.month, reopening.day) == (1, 1) else reopening.year + 1
+    first = first_full_deal_year_index(_deal_years(acquisition_close_date, 1), reopening)
+    return None if first is None else first + DEFAULT_STABILIZATION_YEAR - 1
 
 
 def reopening_anchor_index(
@@ -121,23 +121,12 @@ def reopening_anchor_index(
     reopening = parse_iso_date(reopening_date)
     if reopening is None or n_years <= 0:
         return None, None
-    start_year = _projection_start_year(acquisition_close_date)
-    if start_year is None:
+    index = reopening_stabilized_index(acquisition_close_date, reopening)
+    if index is None:
         return None, "no_close_date"
-    index = _reopening_stabilized_calendar_year(reopening) - start_year
     if index < 0:
         return None, "reopening_before_projection"
     return min(index, n_years - 1), None
-
-
-def _reopening_stabilized_calendar_year(reopening: date) -> int:
-    """Calendar year of Year ``DEFAULT_STABILIZATION_YEAR`` counted from the
-    first full operating year after ``reopening`` (that year is Year 1)."""
-    return (
-        first_full_operating_year_after_reopening(reopening)
-        + DEFAULT_STABILIZATION_YEAR
-        - 1
-    )
 
 
 def default_stabilized_year_index(n_years: int) -> int | None:
@@ -372,9 +361,8 @@ def build_stabilized_year(
         default_source: StabilizationSource = "default_year_3_reopening"
         # Clamped when Year 3 after reopening lands past the last projected
         # year — the hold ends before the asset stabilizes on this rule.
-        start_year = _projection_start_year(acquisition_close_date) or 0
         default_clamped = (
-            _reopening_stabilized_calendar_year(reopening) - start_year
+            reopening_stabilized_index(acquisition_close_date, reopening) or 0
         ) > default_index
     else:
         default_index = close_default_index
@@ -449,7 +437,7 @@ __all__ = [
     "REOPENING_STABILIZATION_ANCHOR",
     "StabilizationAnchor",
     "StabilizationAnchorFallback",
-    "first_full_operating_year_after_reopening",
+    "reopening_stabilized_index",
     "reopening_anchor_index",
     "StabilizationSignal",
     "StabilizationSource",
