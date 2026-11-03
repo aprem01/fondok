@@ -10784,13 +10784,10 @@ async def _persist_critic_report(
 # (``app/ontology/concepts.yaml``): ``concept_for_path`` gives the concept,
 # ``bindings.critic_key`` the bucket, ``scope`` says whether the line is a
 # period total and ``basis`` says whose number it is. What stays here are the
-# two rules the loader owns — the actuals are the Year-1 basis statement only
-# (FON-22, the engine's own choice), and a ratio line is normalised to a
-# fraction before the schema sees it.
+# rules the loader owns — the ACTUAL side is the engine's own Year-1 lines
+# (FON-22, ``engine_runner.year_one_actual_lines``), and a broker ratio line
+# is normalised to a fraction before the schema sees it.
 
-#: Statement document types: a row of one that is NOT the Year-1 basis
-#: statement never feeds either side.
-_CRITIC_ACTUAL_DOC_TYPES: tuple[str, ...] = ("T12", "PNL")
 #: Documents whose extraction is broker material.
 _CRITIC_BROKER_DOC_TYPES: tuple[str, ...] = ("OM",)
 #: Registry scopes that ARE an annual line for the critic's purposes (what the
@@ -10873,32 +10870,48 @@ def _pre_registry_critic_reach(lname: str, critic_key: str) -> bool:
     return len(parts) > 1 and parts[-2] in parents and tail in tails
 
 
-#: Critic keys that are revenue lines; every other money key is an expense /
-#: profit line. Ratios (occupancy / ADR / RevPAR) and profit lines carry no
-#: section rule.
-_CRITIC_REVENUE_KEYS: frozenset[str] = frozenset(
-    {"rooms_revenue", "fb_revenue", "other_revenue", "total_revenue", "resort_fees"}
-)
-_CRITIC_EXPENSE_KEYS: frozenset[str] = frozenset(
-    {
-        "departmental_expenses", "departmental_fb", "departmental_rooms", "ffe_reserve",
-        "fixed_charges", "insurance", "mgmt_fee", "property_taxes", "undistributed_expenses",
-    }
-)
+def _critic_actual_fields(year_one: Any) -> dict[str, float]:
+    """The critic's actual-side values from the engine's Year-1 lines
+    (``engine_runner.YearOneActuals``), keyed as ``_build`` reads them. A line
+    the engine did not read is absent; a total is the sum of its STATED parts
+    and absent when none is stated (FON-22 round 3)."""
+    rev, exp, stated = year_one.revenue, year_one.expense, year_one.stated
+    out: dict[str, float] = {}
 
+    def put(key: str, value: float | None) -> None:
+        if value is not None:
+            out[key] = float(value)
 
-def _crosses_section(path: str, key: str) -> bool:
-    """True when ``path`` reads ``key`` out of the opposite P&L section — the
-    engine loader's rule (``engine_runner._is_cost_section`` /
-    ``_is_revenue_section`` over the path's parent segments)."""
-    from ..services.engine_runner import _is_cost_section, _is_revenue_section
+    def total(*parts: str, src: dict[str, float]) -> float | None:
+        got = [src[p] for p in parts if p in src]
+        return sum(got) if got else None
 
-    parents = path.split(".")[:-1]
-    if key in _CRITIC_REVENUE_KEYS:
-        return any(_is_cost_section(seg) for seg in parents)
-    if key in _CRITIC_EXPENSE_KEYS:
-        return any(_is_revenue_section(seg) for seg in parents)
-    return False
+    put("rooms_revenue", rev.get("rooms_revenue"))
+    put("fb_revenue", rev.get("fb_revenue"))
+    put("resort_fees", rev.get("resort_fees"))
+    # The model's Other Revenue pool: Other Operated + Miscellaneous Income.
+    put("other_revenue", total("other_revenue", "misc_revenue", src=rev))
+    # Total revenue: the statement's own total, unless its own lines exceed it.
+    put("total_revenue", stated.get("total_revenue"))
+    put("occupancy", rev.get("occupancy"))
+    put("adr", rev.get("adr"))
+    put("revpar", rev.get("revpar"))
+    put("departmental_rooms", exp.get("rooms_dept_expense"))
+    put("departmental_fb", exp.get("fb_dept_expense"))
+    put("departmental_other", exp.get("other_dept_expense"))
+    put("departmental_expenses", total("rooms_dept_expense", "fb_dept_expense", "other_dept_expense", src=exp))
+    for k in ("administrative_general", "information_telecom", "sales_marketing", "property_operations", "utilities"):
+        put(k, exp.get(k))
+    put(
+        "undistributed_expenses",
+        total("administrative_general", "information_telecom", "sales_marketing", "property_operations", "utilities", src=exp),
+    )
+    for k in ("mgmt_fee", "ffe_reserve", "insurance", "property_taxes"):
+        put(k, exp.get(k))
+    put("fixed_charges", total("insurance", "property_taxes", src=exp))
+    put("gop", stated.get("gop"))
+    put("noi", stated.get("noi"))
+    return out
 
 
 async def _load_critic_inputs(
@@ -10989,10 +11002,13 @@ async def _load_critic_inputs(
     #     registry's ``subordinate_namespaces``) never feed either side;
     #   * rows map to a CANONICAL key — the registry's concept for the path
     #     (``bindings.critic_key``) rather than a bare last segment;
-    #   * actuals come from ONE statement — the one the model grounds Year-1
-    #     on (FON-22: ``engine_runner.year_one_basis_statement``, the loader's
-    #     own per-period choice), never blended across statements; a line the
-    #     registry scopes annual / TTM wins over a generically-scoped one; broker rows come
+    #   * the ACTUAL side is not read here at all: it is the engine's own
+    #     Year-1 lines (FON-22: ``engine_runner.year_one_actual_lines`` — the
+    #     loaders' statement choice, aliases, sub-period and section rules),
+    #     so it equals the model by construction; a T-12 / P&L row feeds the
+    #     broker side only through an explicit broker claim;
+    #   * a broker line the registry scopes annual / TTM wins over a
+    #     generically-scoped one; broker rows come
     #     only from the OM's own claim (registry basis ``broker``, never
     #     ``om_history`` or ``market``);
     #   * a ratio line (registry ``unit``) is normalised to a fraction before
@@ -11021,7 +11037,6 @@ async def _load_critic_inputs(
 
     # canonical key → (rank tuple, value); lower rank wins, ties keep first seen.
     broker_ranked: dict[str, tuple[tuple[int, int, int], float]] = {}
-    actual_ranked: dict[str, tuple[tuple[int, int, int], float]] = {}
     order = 0
 
     def _offer(
@@ -11034,11 +11049,6 @@ async def _load_critic_inputs(
         if cur is None or rank < cur[0]:
             bucket[key] = (rank, value)
 
-    from ..services.engine_runner import year_one_basis_statement
-
-    basis = await year_one_basis_statement(session, deal_id=deal_id, tenant_id=tenant_id)
-    basis_row = basis.extraction_result_id if basis is not None else None
-
     for r in rows.fetchall():
         m = r._mapping
         raw_fields = m["fields"]
@@ -11050,9 +11060,6 @@ async def _load_critic_inputs(
         if not isinstance(raw_fields, list):
             continue
         doc_type = (m.get("doc_type") or "").upper()
-        # Actuals: the Year-1 basis statement's own row, and no other.
-        is_basis = basis_row is not None and str(m.get("extraction_result_id")) == basis_row
-        actual_doc_rank = 0
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -11065,7 +11072,7 @@ async def _load_critic_inputs(
             hit = _critic_concept(lname, doc_type)
             if hit is None:
                 continue  # not a concept the critic compares
-            key, basis, scope, unit = hit
+            key, path_basis, scope, unit = hit
             # ``subordinate_namespaces`` plus the month-name / ``pageN``
             # segment rules; the resolver's own helper, per the adapter plan
             # in DRIFT_NOTES §4 (a ``.budget.`` / ``.forecast.`` namespace is
@@ -11073,23 +11080,10 @@ async def _load_critic_inputs(
             is_slice, _slice_scope = ontology._subordinate_scope(lname, reg._subordinate)
             if is_slice:
                 continue  # a month / quarter / page slice is never an annual line
-            if basis in _CRITIC_EXCLUDED_BASES:
+            if path_basis in _CRITIC_EXCLUDED_BASES:
                 continue  # a comp-set stat / the OM's history is not the broker's claim
-            if basis == "broker":
-                side = "broker"  # an explicit broker claim, wherever it sits
-            elif is_basis:
-                # The loader's section rule: a revenue line is never read out
-                # of a cost section, nor an expense line out of a revenue one
-                # (b67bfdee: ``cost_of_services.rooms_revenue_usd`` $552.77).
-                if _crosses_section(lname, key):
-                    continue
-                side = "actual"
-            elif doc_type in _CRITIC_ACTUAL_DOC_TYPES:
-                continue  # another statement: never blended into the actuals
-            elif doc_type in _CRITIC_BROKER_DOC_TYPES:
-                side = "broker"
-            else:
-                continue
+            if path_basis != "broker" and doc_type not in _CRITIC_BROKER_DOC_TYPES:
+                continue  # an actual: read from the engine's Year-1 lines below
             # ``normalize_broker_value`` keys its occupancy branch off the field
             # tail; the registry's ``unit`` is what decides, so hand it the
             # concept when the line is a ratio and the raw name otherwise (the
@@ -11101,19 +11095,28 @@ async def _load_critic_inputs(
                 continue  # unit could not be established — do not compare
             # 0 = a line the registry scopes annual / TTM, 1 = a generic line.
             path_rank = 0 if scope in _CRITIC_ANNUAL_SCOPES else 1
-            if side == "broker":
-                _offer(broker_ranked, key, (0, path_rank, order), norm)
-            else:
-                _offer(actual_ranked, key, (actual_doc_rank, path_rank, order), norm)
+            _offer(broker_ranked, key, (0, path_rank, order), norm)
 
     broker_fields: dict[str, float] = {k: v for k, (_r, v) in broker_ranked.items()}
-    actual_fields: dict[str, float] = {k: v for k, (_r, v) in actual_ranked.items()}
 
-    def _build(values: dict[str, float], label: str) -> Any | None:
+    from ..services.engine_runner import year_one_actual_lines
+
+    year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=tenant_id)
+    actual_fields = _critic_actual_fields(year_one) if year_one is not None else {}
+
+    def _build(
+        values: dict[str, float], label: str, *, source: str | None = None
+    ) -> Any | None:
+        """``USALIFinancials`` over the stated ``values``. A line not in
+        ``values`` is listed in ``not_stated`` (its schema slot holds 0.0, a
+        placeholder) — never derived from another line: GOP is not NOI, and
+        the OpEx ratio exists only when NOI is stated (FON-22 round 3)."""
         if not values:
             return None
-        # Prefer explicit total_revenue; otherwise sum the legs we know.
-        total_rev = values.get("total_revenue") or values.get("total_revenue_usd")
+        # A stated total_revenue; otherwise the sum of the stated legs fills
+        # the schema slot, and the total is listed as not stated.
+        total_stated = values.get("total_revenue") or values.get("total_revenue_usd")
+        total_rev = total_stated
         rooms = values.get("rooms_revenue") or values.get("rooms_revenue_usd") or 0.0
         fb = values.get("fb_revenue") or values.get("fb_revenue_usd") or 0.0
         # Resort Fees — distinct USALI 11th-edition revenue line. Sam
@@ -11128,14 +11131,49 @@ async def _load_critic_inputs(
             total_rev = rooms + fb + resort_fees + other
         if total_rev <= 0:
             return None
-        noi = (
-            values.get("noi") or values.get("noi_usd") or 0.0
-        )
-        gop = values.get("gop") or values.get("gop_usd") or noi
+        noi_stated = values.get("noi") if values.get("noi") is not None else values.get("noi_usd")
+        gop_stated = values.get("gop") if values.get("gop") is not None else values.get("gop_usd")
+        noi = float(noi_stated) if noi_stated is not None else 0.0
+        gop = float(gop_stated) if gop_stated is not None else 0.0
         opex_ratio = (
-            (total_rev - noi) / total_rev if total_rev > 0 else 0.0
+            max(0.0, min(2.0, (total_rev - noi) / total_rev))
+            if noi_stated is not None and total_stated is not None and total_rev > 0
+            else 0.0
         )
-        opex_ratio = max(0.0, min(2.0, opex_ratio))
+        def _has(*keys: str) -> bool:
+            return any(values.get(k) is not None for k in keys)
+
+        not_stated = [
+            path
+            for path, keys in (
+                ("rooms_revenue", ("rooms_revenue", "rooms_revenue_usd")),
+                ("fb_revenue", ("fb_revenue", "fb_revenue_usd")),
+                ("resort_fees", ("resort_fees", "resort_fees_usd")),
+                ("other_revenue", ("other_revenue", "other_revenue_usd")),
+                ("dept_expenses.rooms", ("departmental_rooms",)),
+                ("dept_expenses.food_beverage", ("departmental_fb",)),
+                ("dept_expenses.other_operated", ("departmental_other",)),
+                ("dept_expenses.total", ("departmental_expenses",)),
+                ("undistributed.administrative_general", ("administrative_general",)),
+                ("undistributed.information_telecom", ("information_telecom",)),
+                ("undistributed.sales_marketing", ("sales_marketing",)),
+                ("undistributed.property_operations", ("property_operations",)),
+                ("undistributed.utilities", ("utilities",)),
+                ("undistributed.total", ("undistributed_expenses",)),
+                ("mgmt_fee", ("mgmt_fee",)),
+                ("ffe_reserve", ("ffe_reserve",)),
+                ("fixed_charges.insurance", ("insurance",)),
+                ("fixed_charges.property_taxes", ("property_taxes",)),
+                ("fixed_charges.total", ("fixed_charges",)),
+                ("gop", ("gop", "gop_usd")),
+                ("noi", ("noi", "noi_usd")),
+            )
+            if not _has(*keys)
+        ]
+        if total_stated is None:
+            not_stated.append("total_revenue")
+        if noi_stated is None or total_stated is None:
+            not_stated.append("opex_ratio")
         try:
             return USALIFinancials(
                 period_label=label,
@@ -11147,10 +11185,17 @@ async def _load_critic_inputs(
                 dept_expenses=DepartmentalExpenses(
                     rooms=max(0.0, values.get("departmental_rooms", 0.0)),
                     food_beverage=max(0.0, values.get("departmental_fb", 0.0)),
-                    other_operated=0.0,
+                    other_operated=max(0.0, values.get("departmental_other", 0.0)),
                     total=max(0.0, values.get("departmental_expenses", 0.0)),
                 ),
-                undistributed=UndistributedExpenses(),
+                undistributed=UndistributedExpenses(
+                    administrative_general=max(0.0, values.get("administrative_general", 0.0)),
+                    information_telecom=max(0.0, values.get("information_telecom", 0.0)),
+                    sales_marketing=max(0.0, values.get("sales_marketing", 0.0)),
+                    property_operations=max(0.0, values.get("property_operations", 0.0)),
+                    utilities=max(0.0, values.get("utilities", 0.0)),
+                    total=max(0.0, values.get("undistributed_expenses", 0.0)),
+                ),
                 mgmt_fee=max(0.0, values.get("mgmt_fee", 0.0)),
                 ffe_reserve=max(0.0, values.get("ffe_reserve", 0.0)),
                 fixed_charges=FixedCharges(
@@ -11164,13 +11209,23 @@ async def _load_critic_inputs(
                 occupancy=values.get("occupancy") or values.get("occupancy_pct"),
                 adr=values.get("adr") or values.get("adr_usd"),
                 revpar=values.get("revpar") or values.get("revpar_usd"),
+                not_stated=not_stated,
+                source_statement=source,
             )
         except Exception as exc:
             logger.debug("critic: %s build failed (%s)", label, exc)
             return None
 
     broker = _build(broker_fields, "Broker Proforma Year 1")
-    actuals = _build(actual_fields, "T-12 Actual")
+    actuals = (
+        _build(
+            actual_fields,
+            f"Actuals: {year_one.period_words}"[:80],
+            source=year_one.statement,
+        )
+        if year_one is not None
+        else None
+    )
     return broker, actuals, market_context, keys
 
 

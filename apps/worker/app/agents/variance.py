@@ -399,6 +399,9 @@ def _actual_for(field: str, actuals: USALIFinancials) -> float | None:
     attr = _actuals_attr_by_concept().get(cid or "")
     if not attr:
         return None
+    # FON-22 — a line the statement does not state is absent, not 0.
+    if attr in (getattr(actuals, "not_stated", None) or ()):
+        return None
     node: Any = actuals
     for segment in attr.split("."):
         node = getattr(node, segment, None)
@@ -525,7 +528,13 @@ def _build_flags(
                 # assign a severity to a reserve difference (FON-54 §2).
                 if basis_excluded is not None:
                     basis_excluded.append(
-                        (bf, reserve_basis_reason(bf.field, float(bf.value), float(after_reserve)))
+                        (
+                            bf,
+                            reserve_basis_reason(
+                                bf.field, float(bf.value), float(after_reserve),
+                                statement=getattr(actuals, "source_statement", None),
+                            ),
+                        )
                     )
                 continue
             else:
@@ -738,12 +747,17 @@ NOI_BEFORE_RESERVE_CONCEPT = "ebitda"
 RESERVE_BASIS_UNMATCHED = "not on the same FF&E-reserve basis"
 
 
-def reserve_basis_reason(field: str, broker: float, actual: float) -> str:
-    """Prose for a NOI pair that straddles the FF&E reserve — both figures named."""
+def reserve_basis_reason(
+    field: str, broker: float, actual: float, *, statement: str | None = None
+) -> str:
+    """Prose for a NOI pair that straddles the FF&E reserve — both figures
+    named, and the statement the actual comes from (FON-22: the statement the
+    model uses, which need not be a T-12)."""
+    where = f"{statement} (the statement the model uses)" if statement else "the actuals statement"
     return (
         f"{field}: broker ${broker:,.0f} is NOI before the FF&E replacement "
-        f"reserve; the only T-12 line is ${actual:,.0f} after it, and the "
-        f"document states no before-reserve (EBITDA) line — "
+        f"reserve; the only NOI line on {where} is ${actual:,.0f} after it, and "
+        f"it states no NOI before reserve (EBITDA) — "
         f"{RESERVE_BASIS_UNMATCHED}"
     )
 

@@ -269,6 +269,12 @@ export const USALIFinancials = z.object({
   // Optional per-department labor breakdown. Empty record when the
   // source only carries rolled-up labor numbers.
   labor_by_dept: z.record(z.string(), LaborByDepartment).default({}),
+  // FON-22 — attribute paths the source does NOT state ("noi", "gop",
+  // "opex_ratio", "fixed_charges.insurance" …): their 0 is a placeholder,
+  // never a figure. Render "not stated".
+  not_stated: z.array(z.string()).default([]),
+  // FON-22 — the statement these figures come from.
+  source_statement: z.string().nullable().optional(),
 });
 export type USALIFinancials = z.infer<typeof USALIFinancials>;
 

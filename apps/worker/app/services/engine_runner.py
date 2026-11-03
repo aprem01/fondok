@@ -5781,6 +5781,109 @@ class YearOneBasis(NamedTuple):
     doc_type: str
 
 
+class YearOneActuals(NamedTuple):
+    """The deal's actuals exactly as the engine reads Year-1 (FON-22): the
+    revenue and expense lines of the loaders, plus the basis statement's own
+    stated profit lines. Every value is the statement's; an absent line is
+    absent (never 0)."""
+
+    basis: YearOneBasis
+    #: The basis statement's file name and period words ("FY2024").
+    statement: str
+    period_words: str
+    #: Engine canonicals — :data:`_T12_REVENUE_FIELD_ALIASES` values.
+    revenue: dict[str, float]
+    #: Engine canonicals — :data:`_T12_EXPENSE_FIELD_ALIASES` values.
+    expense: dict[str, float]
+    #: The basis statement's own full-period ``gop`` / ``noi`` / ``ebitda``
+    #: (NOI before the FF&E reserve), when stated, and ``total_revenue``
+    #: unless its own revenue lines exceed it.
+    stated: dict[str, float]
+
+
+#: Profit lines read off the basis statement itself (concept registry ids).
+_STATED_PROFIT_CONCEPTS: tuple[str, ...] = ("gop", "noi", "ebitda")
+
+
+def _stated_full_period(fields: list[Any], doc_type: str, concept: str) -> float | None:
+    """A statement's own full-period line for ``concept`` — never a budget,
+    forecast, prior-year, variance or monthly line (the loader's
+    :func:`_is_sub_period_path` rule)."""
+    dt = (doc_type or "").strip().upper() or None
+    res = resolve_concept(fields, concept, doc_type=dt, want="annual")
+    if res.reason is not None or isinstance(res.value, bool) or not isinstance(res.value, (int, float)):
+        return None
+    if _is_sub_period_path(res.field_name or ""):
+        return None
+    return float(res.value)
+
+
+def year_one_actuals_from_shims(shims: list[dict[str, Any]]) -> YearOneActuals | None:
+    """:func:`year_one_actual_lines` over already-read loader rows."""
+    choices = choose_statements_by_period(_rank_pnl_shims(shims))
+    if not choices:
+        return None
+    chosen = choices[0].chosen
+    shim = chosen.shim
+    doc, er = shim.get("document_id"), shim.get("extraction_result_id")
+    basis = YearOneBasis(
+        str(doc) if doc else None,
+        str(er) if er else None,
+        (shim.get("doc_type") or "").upper(),
+    )
+    revenue, rev_src = _year_one_revenue_lines(shims, with_provenance=True)
+    expense, exp_src = _year_one_expense_lines(shims, with_provenance=True)
+
+    def full_period(lines: dict[str, float], src: dict[str, SourceField]) -> dict[str, float]:
+        # The loader falls back to a sub-period slice of the PRIMARY when it
+        # has no full-period line (pinned on the real T-12: January rooms
+        # revenue). That is never an annual actual to compare a broker's
+        # claim against: such a line is absent here.
+        out: dict[str, float] = {}
+        for k, v in lines.items():
+            sf = src.get(k)
+            name = getattr(getattr(sf, "resolution", None), "field_name", None) or ""
+            if not _is_sub_period_path(name):
+                out[k] = v
+        return out
+
+    revenue = full_period(revenue, rev_src)
+    expense = full_period(expense, exp_src)
+    stated = {
+        c: v
+        for c in _STATED_PROFIT_CONCEPTS
+        if (v := _stated_full_period(chosen.fields, chosen.doc_type, c)) is not None
+    }
+    # Total revenue: the statement's own stated total — unless its own
+    # full-period revenue lines sum to MORE than it beyond the precision they
+    # were read at (the engine's footing check, the same one the Historical
+    # P&L runs). Lines short of the total only mean a line was not itemised;
+    # lines above it contradict it — 2e1db521: an HR-sheet 10,839,200 against
+    # 13.46M of revenue lines — and it is not an actual to compare a broker's
+    # claim against.
+    total = _stated_full_period(chosen.fields, chosen.doc_type, "total_revenue")
+    if total is not None:
+        footing = _revenue_footing(chosen.fields, chosen.doc_type)
+        contradicted = (
+            footing.status == "fails" and footing.lines is not None and footing.lines > total
+        )
+        if not contradicted:
+            stated["total_revenue"] = total
+    return YearOneActuals(
+        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated
+    )
+
+
+async def year_one_actual_lines(
+    session: AsyncSession, *, deal_id: str, tenant_id: str
+) -> YearOneActuals | None:
+    """The engine's own Year-1 actuals (FON-22 round 3) — the variance, IC
+    memo and dossier actual side reads THIS, so it equals the model by
+    construction. ``None`` when the deal has no statement."""
+    shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
+    return year_one_actuals_from_shims(shims)
+
+
 async def year_one_basis_statement(
     session: AsyncSession, *, deal_id: str, tenant_id: str
 ) -> YearOneBasis | None:
@@ -6000,11 +6103,8 @@ async def _load_t12_revenue_actuals(
     values.
     """
     shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
-    actuals, provenance = _year_one_lines(
+    actuals, provenance = _year_one_revenue_lines(
         shims,
-        _T12_REVENUE_FIELD_ALIASES,
-        opposite_section=_is_cost_section,
-        normalize=_normalize_revenue_line,
         with_provenance=with_provenance,
         conflicts=conflicts,
         fills=fills,
@@ -6012,6 +6112,42 @@ async def _load_t12_revenue_actuals(
         footing_notes=footing_notes,
     )
     return (actuals, provenance) if with_provenance else actuals
+
+
+def _year_one_revenue_lines(
+    shims: list[dict[str, Any]], **kw: Any
+) -> tuple[dict[str, float], dict[str, SourceField]]:
+    """The Year-1 revenue lines exactly as the revenue loader reads them —
+    the one definition both the loader and :func:`year_one_actual_lines`
+    (variance / IC memo / dossier actuals) call."""
+    kw.setdefault("with_provenance", False)
+    return _year_one_lines(
+        shims,
+        _T12_REVENUE_FIELD_ALIASES,
+        opposite_section=_is_cost_section,
+        normalize=_normalize_revenue_line,
+        **kw,
+    )
+
+
+def _year_one_expense_lines(
+    shims: list[dict[str, Any]], **kw: Any
+) -> tuple[dict[str, float], dict[str, SourceField]]:
+    """The Year-1 expense lines exactly as the expense loader reads them."""
+    kw.setdefault("with_provenance", False)
+    return _year_one_lines(
+        shims,
+        _T12_EXPENSE_FIELD_ALIASES,
+        opposite_section=_is_revenue_section,
+        # Zero-leak guard (Eshan's NOI bug): every real hotel has admin &
+        # general, sales & marketing, utilities, property ops, mgmt fee, FF&E
+        # reserve, fixed charges. The extractor emits 0.0 when it can't find
+        # the line; honoring that zero wrote it into the projection P&L and
+        # NOI collapsed to ~100% of revenue. Non-positive lines never claim a
+        # canonical, so the USALI ratio fallback supplies the missing line.
+        admit=lambda v: v > 0.0,
+        **kw,
+    )
 
 
 async def _load_t12_expense_actuals(
@@ -6038,17 +6174,8 @@ async def _load_t12_expense_actuals(
     values.
     """
     shims = await _read_pnl_shims(session, deal_id=deal_id, tenant_id=tenant_id)
-    actuals, provenance = _year_one_lines(
+    actuals, provenance = _year_one_expense_lines(
         shims,
-        _T12_EXPENSE_FIELD_ALIASES,
-        opposite_section=_is_revenue_section,
-        # Zero-leak guard (Eshan's NOI bug): every real hotel has admin &
-        # general, sales & marketing, utilities, property ops, mgmt fee, FF&E
-        # reserve, fixed charges. The extractor emits 0.0 when it can't find
-        # the line; honoring that zero wrote it into the projection P&L and
-        # NOI collapsed to ~100% of revenue. Non-positive lines never claim a
-        # canonical, so the USALI ratio fallback supplies the missing line.
-        admit=lambda v: v > 0.0,
         with_provenance=with_provenance,
         fills=fills,
         skips=skips,

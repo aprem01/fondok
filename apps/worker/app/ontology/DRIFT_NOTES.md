@@ -590,6 +590,26 @@ Pin regenerated for one scenario only, `fon41_live_capture` (four statements):
 lines it was compared with; the T-12 (the Year-1 basis there) states no total,
 so `_build` sums its own legs. The five other scenarios are byte-identical.
 
+**Round 3 (FON-22 R2-I1 / R2-I2).** The actual side is no longer resolved by
+the critic at all: it is the engine's own Year-1 lines
+(`engine_runner.year_one_actual_lines` — `_year_one_revenue_lines` /
+`_year_one_expense_lines`, the functions behind the two loaders), full-period
+lines only, plus the basis statement's stated `gop` / `noi` / `ebitda` and its
+stated total revenue unless its own revenue lines exceed it. So no budget,
+forecast, prior-year, variance or monthly line can reach it (2e1db521: the
+critic read `p_and_l_usali.budget.rooms_revenue` 9,985,570; the engine reads
+9,496,400). Every line the source does not state is listed in
+`USALIFinancials.not_stated` instead of being a $0 / 100% figure, and the OpEx
+ratio exists only when NOI and total revenue are both stated. Pin regenerated
+for all six scenarios: `not_stated` / `source_statement` / `period_label`
+("Actuals: <period>") on every actuals side; on the two real payloads the
+engine's rooms revenue is its January slice (the loader's pinned fallback), so
+the critic's rooms revenue is now not stated (was the registry's 9,322,920 /
+0.0) while occupancy / ADR / GOP / NOI / total are the statement's own; the
+FON-54a scenarios keep every Sam-facing number; a broker total that is only the
+sum of the broker's legs is not stated, so the broker OpEx ratio is not
+stated.
+
 ## 8. Phase 1.3b parity exceptions (usali_scorer adapter)
 
 `services/usali_scorer.py` is now registry-driven: `_ALIASES` is a read-only

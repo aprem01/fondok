@@ -185,7 +185,7 @@ def _format_dossier_for_prompt(d: DealDossier) -> str:
             parts.append(line)
 
     if d.spread_actuals:
-        parts.append("\n--- T-12 Actuals (USALI normalized) ---")
+        parts.append("\n--- Actuals (the statement the model uses, USALI normalized) ---")
         parts.append(_format_spread(d.spread_actuals))
     if d.spread_broker:
         parts.append("\n--- Broker Pro Forma (USALI normalized) ---")
@@ -229,6 +229,10 @@ def _format_dossier_for_prompt(d: DealDossier) -> str:
 
 
 def _format_spread(spread: dict[str, Any]) -> str:
+    # FON-22 — an absent line (``not_stated``) prints "not stated", never 0.
+    from .spread_text import NOT_STATED, source_line
+
+    absent = set(spread.get("not_stated") or ())
     keys = (
         "period_label",
         "rooms_revenue",
@@ -244,7 +248,12 @@ def _format_spread(spread: dict[str, Any]) -> str:
         "revpar",
     )
     lines = []
+    if (src := source_line(spread)):
+        lines.append(f"  {src}")
     for k in keys:
+        if k in absent:
+            lines.append(f"  {k}: {NOT_STATED}")
+            continue
         v = spread.get(k)
         if v is None:
             continue

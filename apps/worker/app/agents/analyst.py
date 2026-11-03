@@ -220,21 +220,25 @@ def _to_uuid(value: str) -> UUID:
 
 
 def _format_spread(spread: USALIFinancials) -> str:
+    # FON-22 — an absent line prints "not stated", never $0 / 100%.
+    from .spread_text import money, ratio, source_line
+
     parts = [
         "=== LOCKED USALI SPREAD ===",
         f"Period: {spread.period_label}",
-        f"Total Revenue: ${spread.total_revenue:,.0f}",
-        f"  Rooms:         ${spread.rooms_revenue:,.0f}",
-        f"  F&B:           ${spread.fb_revenue:,.0f}",
-        f"  Other:         ${spread.other_revenue:,.0f}",
-        f"Departmental:    ${spread.dept_expenses.total:,.0f}",
-        f"Undistributed:   ${spread.undistributed.total:,.0f}",
-        f"Mgmt Fee:        ${spread.mgmt_fee:,.0f}",
-        f"FF&E Reserve:    ${spread.ffe_reserve:,.0f}",
-        f"Fixed Charges:   ${spread.fixed_charges.total:,.0f}",
-        f"GOP:             ${spread.gop:,.0f}",
-        f"NOI:             ${spread.noi:,.0f}",
-        f"OpEx Ratio:      {spread.opex_ratio:.2%}",
+        *([src] if (src := source_line(spread)) else []),
+        f"Total Revenue: {money(spread, 'total_revenue')}",
+        f"  Rooms:         {money(spread, 'rooms_revenue')}",
+        f"  F&B:           {money(spread, 'fb_revenue')}",
+        f"  Other:         {money(spread, 'other_revenue')}",
+        f"Departmental:    {money(spread, 'dept_expenses.total')}",
+        f"Undistributed:   {money(spread, 'undistributed.total')}",
+        f"Mgmt Fee:        {money(spread, 'mgmt_fee')}",
+        f"FF&E Reserve:    {money(spread, 'ffe_reserve')}",
+        f"Fixed Charges:   {money(spread, 'fixed_charges.total')}",
+        f"GOP:             {money(spread, 'gop')}",
+        f"NOI:             {money(spread, 'noi')}",
+        f"OpEx Ratio:      {ratio(spread, 'opex_ratio')}",
     ]
     if spread.occupancy is not None:
         parts.append(f"Occupancy:       {spread.occupancy:.1%}")

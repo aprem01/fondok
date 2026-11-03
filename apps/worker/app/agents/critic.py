@@ -384,7 +384,13 @@ def _deterministic_cross_field_checks(
             )
 
     # ── 6. Labor inflation missing in a high-wage-growth market. ───────
-    if proforma is not None and actuals is not None:
+    _labor_parts = ("dept_expenses.rooms", "dept_expenses.food_beverage", "undistributed.administrative_general")
+    if (
+        proforma is not None
+        and actuals is not None
+        # FON-22 — a labour line either side does not state is absent, not $0.
+        and not any(p in actuals.not_stated or p in proforma.not_stated for p in _labor_parts)
+    ):
         market_wage_growth = context.get("market_wage_growth_yoy")
         actual_labor = (
             actuals.dept_expenses.rooms
@@ -533,27 +539,31 @@ Rules:
 def _format_financials(label: str, fin: USALIFinancials | None) -> str:
     if fin is None:
         return f"=== {label} ===\n(not provided)"
+    # FON-22 — an absent line prints "not stated", never $0 / 100%.
+    from .spread_text import money, ratio, source_line
+
     parts = [
         f"=== {label} ===",
         f"Period: {fin.period_label}",
-        f"Total Revenue: ${fin.total_revenue:,.0f}",
-        f"  Rooms:   ${fin.rooms_revenue:,.0f}",
-        f"  F&B:     ${fin.fb_revenue:,.0f}",
-        f"  Other:   ${fin.other_revenue:,.0f}",
-        f"Departmental Total: ${fin.dept_expenses.total:,.0f}",
-        f"  Rooms:   ${fin.dept_expenses.rooms:,.0f}",
-        f"  F&B:     ${fin.dept_expenses.food_beverage:,.0f}",
-        f"Undistributed Total: ${fin.undistributed.total:,.0f}",
-        f"  A&G:     ${fin.undistributed.administrative_general:,.0f}",
-        f"  Sales/Mkt: ${fin.undistributed.sales_marketing:,.0f}",
-        f"Mgmt Fee:    ${fin.mgmt_fee:,.0f}",
-        f"FF&E Reserve: ${fin.ffe_reserve:,.0f}",
-        f"Fixed Charges: ${fin.fixed_charges.total:,.0f}",
-        f"  Insurance: ${fin.fixed_charges.insurance:,.0f}",
-        f"  Property Tax: ${fin.fixed_charges.property_taxes:,.0f}",
-        f"GOP:    ${fin.gop:,.0f}",
-        f"NOI:    ${fin.noi:,.0f}",
-        f"OpEx Ratio: {fin.opex_ratio:.2%}",
+        *([src] if (src := source_line(fin)) else []),
+        f"Total Revenue: {money(fin, 'total_revenue')}",
+        f"  Rooms:   {money(fin, 'rooms_revenue')}",
+        f"  F&B:     {money(fin, 'fb_revenue')}",
+        f"  Other:   {money(fin, 'other_revenue')}",
+        f"Departmental Total: {money(fin, 'dept_expenses.total')}",
+        f"  Rooms:   {money(fin, 'dept_expenses.rooms')}",
+        f"  F&B:     {money(fin, 'dept_expenses.food_beverage')}",
+        f"Undistributed Total: {money(fin, 'undistributed.total')}",
+        f"  A&G:     {money(fin, 'undistributed.administrative_general')}",
+        f"  Sales/Mkt: {money(fin, 'undistributed.sales_marketing')}",
+        f"Mgmt Fee:    {money(fin, 'mgmt_fee')}",
+        f"FF&E Reserve: {money(fin, 'ffe_reserve')}",
+        f"Fixed Charges: {money(fin, 'fixed_charges.total')}",
+        f"  Insurance: {money(fin, 'fixed_charges.insurance')}",
+        f"  Property Tax: {money(fin, 'fixed_charges.property_taxes')}",
+        f"GOP:    {money(fin, 'gop')}",
+        f"NOI:    {money(fin, 'noi')}",
+        f"OpEx Ratio: {ratio(fin, 'opex_ratio')}",
     ]
     if fin.occupancy is not None:
         parts.append(f"Occupancy: {fin.occupancy:.1%}")
@@ -592,7 +602,7 @@ def _build_user_prompt(payload: CriticInput) -> str:
         f"deal_id: {payload.deal_id}",
         f"tenant_id: {payload.tenant_id}",
         _format_market_context(payload.market_context),
-        _format_financials("T-12 ACTUAL", payload.t12_actual),
+        _format_financials("ACTUALS (the statement the model uses)", payload.t12_actual),
         _format_financials("BROKER PROFORMA", payload.broker_proforma),
         _format_variance(payload.initial_variance),
         (

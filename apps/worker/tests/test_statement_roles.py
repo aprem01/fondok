@@ -535,3 +535,131 @@ async def test_list_endpoint_reads_the_statement_rows_once_while_the_deal_is_unc
     records = await _list(deal_id)
     assert calls["n"] == 2
     assert _badged(records) == [str(newer)]
+
+
+# ── Round 3 — the actual side IS the engine's Year-1 lines; absent stays absent ──
+#
+# Live (2e1db521 / 76d10a64, read-only 2026-11-03): inside the Year-1 basis
+# statement the critic's own resolver read ``p_and_l_usali.budget.rooms_revenue``
+# (9,985,570) as the "T-12 actual" rooms revenue and ``operating_revenue
+# .total_revenue`` (10,839,200, the HR-sheet figure) as total revenue, while the
+# engine reads rooms 9,496,400. And with no NOI on the statement, ``_build``
+# printed "NOI: $0" / "OpEx Ratio: 100%" into the critic and analyst prompts.
+
+_BASIS_2E1 = "Copy of Angler_s 2024 Full Year Detailed P&L.xlsm"
+
+
+def _basis_2e1_fields() -> list[dict[str, object]]:
+    return [
+        {"field_name": "p_and_l_usali.budget.rooms_revenue", "value": 9_985_570.0},
+        {"field_name": "p_and_l_usali.prior_year.rooms_revenue", "value": 9_807_990.0},
+        {"field_name": "p_and_l_usali.forecast.total_revenue", "value": 11_239_200.0},
+        {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 10_839_200.0},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_496_400.0},
+        {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_739_040.0},
+        {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_228_476.0},
+        {"field_name": "ttm_performance.subject.occupancy_pct", "value": 0.832567},
+        {"field_name": "ttm_performance.subject.adr_usd", "value": 236.094},
+        {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_160_000.0},
+        {"field_name": "p_and_l_usali.budget.insurance", "value": 2_000_000.0},
+    ]
+
+
+async def _insert_om(deal_id: UUID) -> None:
+    await _insert_statement(
+        deal_id, doc_type="OM", filename="Offering Memorandum.pdf",
+        ts=datetime(2026, 7, 1, tzinfo=UTC),
+        fields=[
+            {"field_name": "ttm_summary_per_om.noi_usd", "value": 3_356_709.0, "source_page": 14, "confidence": 0.8},
+            {"field_name": "ttm_summary_per_om.rooms_revenue_usd", "value": 9_541_537.0, "source_page": 14, "confidence": 0.8},
+        ],
+    )
+
+
+async def _insert_2e1(deal_id: UUID) -> UUID:
+    return await _insert_statement(
+        deal_id, doc_type="PNL", filename=_BASIS_2E1, extracted_period_year=2024,
+        ts=datetime(2026, 8, 1, tzinfo=UTC), fields=_basis_2e1_fields(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_critic_actuals_equal_the_engines_year_one_lines() -> None:
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+    from app.services.engine_runner import _load_t12_expense_actuals, _load_t12_revenue_actuals
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_2e1(deal_id)
+    async with get_session_factory()() as session:
+        _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert actuals is not None
+    assert rev["rooms_revenue"] == 9_496_400.0
+    assert actuals.rooms_revenue == rev["rooms_revenue"]  # never the budget line
+    assert actuals.fb_revenue == rev["fb_revenue"]
+    assert actuals.other_revenue == pytest.approx(rev.get("other_revenue", 0.0) + rev["misc_revenue"])
+    # The statement's stated total (10,839,200, the HR-sheet figure) does not
+    # foot to its own lines, and its forecast total is never read: total
+    # revenue is not stated (the schema slot carries the sum of the lines,
+    # listed as not stated, so nothing compares or prints it).
+    assert "total_revenue" in actuals.not_stated
+    assert actuals.total_revenue == pytest.approx(9_496_400.0 + 2_739_040.0 + 1_228_476.0)
+    assert actuals.occupancy == pytest.approx(rev["occupancy"])
+    assert actuals.adr == pytest.approx(rev["adr"])
+    assert actuals.fixed_charges.insurance == exp["insurance"] == 1_160_000.0
+    assert actuals.source_statement == _BASIS_2E1
+
+
+@pytest.mark.asyncio
+async def test_an_absent_actual_stays_absent_and_prints_not_stated() -> None:
+    from app.agents.analyst import _format_spread as analyst_spread
+    from app.agents.critic import _format_financials
+    from app.agents.researcher import _format_spread as researcher_spread
+    from app.api.documents import _load_critic_inputs
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_2e1(deal_id)
+    async with get_session_factory()() as session:
+        _b, actuals, _c, _k = await _load_critic_inputs(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert actuals is not None
+    for path in ("noi", "gop", "opex_ratio", "total_revenue", "mgmt_fee", "ffe_reserve", "dept_expenses.total"):
+        assert path in actuals.not_stated, path
+    for text_ in (
+        _format_financials("ACTUALS", actuals),
+        analyst_spread(actuals),
+        researcher_spread(actuals.model_dump(mode="json")),
+    ):
+        assert "$0" not in text_ and "100.00%" not in text_, text_
+        assert "NOI" in text_ or "noi" in text_
+        assert "not stated" in text_
+
+
+@pytest.mark.asyncio
+async def test_noi_refusal_names_the_statement_the_model_uses() -> None:
+    from app.api.analysis import _compute_variance
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    await _insert_2e1(deal_id)
+    await _insert_om(deal_id)
+    async with get_session_factory()() as session:
+        report = await _compute_variance(session, deal_id=deal_id, tenant_id=UUID(_TENANT))
+    details = [r.detail for r in report.reasons]
+    noi = [d for d in details if "NOI" in d]
+    assert noi, details
+    assert any(_BASIS_2E1 in d and "states no NOI before" in d for d in noi), noi
+    assert not any("T-12" in d for d in noi), noi
+
+
+def test_reserve_basis_reason_names_the_statement() -> None:
+    from app.agents.variance import RESERVE_BASIS_UNMATCHED, reserve_basis_reason
+
+    text_ = reserve_basis_reason("noi", 3_356_709.0, 1_560_478.0, statement="FY2024 P&L.xlsx")
+    assert "FY2024 P&L.xlsx" in text_ and "T-12" not in text_
+    assert text_.endswith(RESERVE_BASIS_UNMATCHED)

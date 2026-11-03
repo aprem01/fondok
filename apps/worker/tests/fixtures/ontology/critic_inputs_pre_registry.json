@@ -16,8 +16,8 @@
       "expected": {
         "broker": null,
         "actuals": {
-          "period_label": "T-12 Actual",
-          "rooms_revenue": 9322920.0,
+          "period_label": "Actuals: the year ending 2025-05-31",
+          "rooms_revenue": 0.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
@@ -42,19 +42,38 @@
           "mgmt_fee": 0.0,
           "ffe_reserve": 0.0,
           "fixed_charges": {
-            "property_taxes": 0.0,
-            "insurance": 0.0,
+            "property_taxes": 543094.0,
+            "insurance": 1392610.0,
             "rent": 0.0,
             "other_fixed": 0.0,
-            "total": 0.0
+            "total": 1935704.0
           },
           "gop": 5081540.0,
-          "noi": 0.0,
-          "opex_ratio": 1.0,
+          "noi": 1948560.0,
+          "opex_ratio": 0.8609145027052492,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "rooms_revenue",
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve"
+          ],
+          "source_statement": "anglers_t12_real"
         }
       }
     },
@@ -72,7 +91,7 @@
       "expected": {
         "broker": null,
         "actuals": {
-          "period_label": "T-12 Actual",
+          "period_label": "Actuals: an undated full-year statement",
           "rooms_revenue": 0.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
@@ -99,18 +118,38 @@
           "ffe_reserve": 0.0,
           "fixed_charges": {
             "property_taxes": 0.0,
-            "insurance": 0.0,
+            "insurance": 1351730.0,
             "rent": 0.0,
             "other_fixed": 0.0,
-            "total": 0.0
+            "total": 1351730.0
           },
-          "gop": 0.0,
-          "noi": 0.0,
-          "opex_ratio": 1.0,
+          "gop": 4736470.0,
+          "noi": 1957310.0,
+          "opex_ratio": 0.848741905071019,
           "occupancy": 0.82391,
           "adr": 247.078,
           "revpar": 203.57,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "rooms_revenue",
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.property_taxes"
+          ],
+          "source_statement": "anglers_annual_pnl_real"
         }
       }
     },
@@ -134,8 +173,8 @@
       "expected": {
         "broker": null,
         "actuals": {
-          "period_label": "T-12 Actual",
-          "rooms_revenue": 9322920.0,
+          "period_label": "Actuals: the year ending 2025-05-31",
+          "rooms_revenue": 0.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
           "other_revenue": 0.0,
@@ -160,19 +199,38 @@
           "mgmt_fee": 0.0,
           "ffe_reserve": 0.0,
           "fixed_charges": {
-            "property_taxes": 0.0,
-            "insurance": 0.0,
+            "property_taxes": 543094.0,
+            "insurance": 1392610.0,
             "rent": 0.0,
             "other_fixed": 0.0,
-            "total": 0.0
+            "total": 1935704.0
           },
           "gop": 5081540.0,
-          "noi": 0.0,
-          "opex_ratio": 1.0,
+          "noi": 1948560.0,
+          "opex_ratio": 0.8609145027052492,
           "occupancy": 0.828892,
           "adr": 233.446,
           "revpar": 193.502,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "rooms_revenue",
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve"
+          ],
+          "source_statement": "anglers_t12_real"
         }
       }
     },
@@ -492,14 +550,37 @@
           },
           "gop": 5088268.0,
           "noi": 3356709.0,
-          "opex_ratio": 0.6482003895179571,
+          "opex_ratio": 0.0,
           "occupancy": 0.83,
           "adr": 385.0,
           "revpar": 319.0,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.insurance",
+            "fixed_charges.property_taxes",
+            "fixed_charges.total",
+            "total_revenue",
+            "opex_ratio"
+          ],
+          "source_statement": null
         },
         "actuals": {
-          "period_label": "T-12 Actual",
+          "period_label": "Actuals: the current trailing twelve months",
           "rooms_revenue": 9332100.0,
           "fb_revenue": 3216620.0,
           "resort_fees": 0.0,
@@ -537,7 +618,27 @@
           "occupancy": 0.716,
           "adr": 372.4,
           "revpar": 266.6,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.insurance",
+            "fixed_charges.property_taxes",
+            "fixed_charges.total"
+          ],
+          "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }
     },
@@ -724,16 +825,40 @@
             "other_fixed": 0.0,
             "total": 0.0
           },
-          "gop": 3356709.0,
+          "gop": 0.0,
           "noi": 3356709.0,
-          "opex_ratio": 0.6482003895179571,
+          "opex_ratio": 0.0,
           "occupancy": 0.831,
           "adr": 237.64,
           "revpar": null,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.insurance",
+            "fixed_charges.property_taxes",
+            "fixed_charges.total",
+            "gop",
+            "total_revenue",
+            "opex_ratio"
+          ],
+          "source_statement": null
         },
         "actuals": {
-          "period_label": "T-12 Actual",
+          "period_label": "Actuals: the current trailing twelve months",
           "rooms_revenue": 9332100.0,
           "fb_revenue": 0.0,
           "resort_fees": 0.0,
@@ -771,7 +896,28 @@
           "occupancy": 0.83,
           "adr": 232.77,
           "revpar": null,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "fb_revenue",
+            "resort_fees",
+            "other_revenue",
+            "dept_expenses.rooms",
+            "dept_expenses.food_beverage",
+            "dept_expenses.other_operated",
+            "dept_expenses.total",
+            "undistributed.administrative_general",
+            "undistributed.information_telecom",
+            "undistributed.sales_marketing",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "undistributed.total",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.insurance",
+            "fixed_charges.property_taxes",
+            "fixed_charges.total"
+          ],
+          "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }
     },
@@ -1272,27 +1418,27 @@
       "expected": {
         "broker": null,
         "actuals": {
-          "period_label": "T-12 Actual",
+          "period_label": "Actuals: the current trailing twelve months",
           "rooms_revenue": 9332100.0,
           "fb_revenue": 3216620.0,
           "resort_fees": 0.0,
-          "other_revenue": 0.0,
-          "total_revenue": 12548720.0,
+          "other_revenue": 1247620.0,
+          "total_revenue": 13796340.0,
           "dept_expenses": {
-            "rooms": 0.0,
-            "food_beverage": 0.0,
+            "rooms": 2770770.0,
+            "food_beverage": 2533250.0,
             "other_operated": 0.0,
-            "total": 0.0,
+            "total": 5304020.0,
             "fb_detail": null
           },
           "undistributed": {
-            "administrative_general": 0.0,
+            "administrative_general": 1291420.0,
             "information_telecom": 0.0,
-            "sales_marketing": 0.0,
+            "sales_marketing": 1161320.0,
             "property_operations": 0.0,
             "utilities": 0.0,
             "service_charge_distribution": 0.0,
-            "total": 0.0,
+            "total": 2452740.0,
             "utilities_detail": null
           },
           "mgmt_fee": 0.0,
@@ -1302,15 +1448,28 @@
             "insurance": 1429570.0,
             "rent": 0.0,
             "other_fixed": 0.0,
-            "total": 0.0
+            "total": 1429570.0
           },
           "gop": 4970460.0,
           "noi": 1794100.0,
-          "opex_ratio": 0.8570292428231724,
+          "opex_ratio": 0.0,
           "occupancy": null,
           "adr": null,
           "revpar": null,
-          "labor_by_dept": {}
+          "labor_by_dept": {},
+          "not_stated": [
+            "resort_fees",
+            "dept_expenses.other_operated",
+            "undistributed.information_telecom",
+            "undistributed.property_operations",
+            "undistributed.utilities",
+            "mgmt_fee",
+            "ffe_reserve",
+            "fixed_charges.property_taxes",
+            "total_revenue",
+            "opex_ratio"
+          ],
+          "source_statement": "Copy of The Angler_s - March 2025 Financials.xlsx"
         }
       }
     }

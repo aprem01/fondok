@@ -162,6 +162,16 @@ class USALIFinancials(BaseModel):
     # rolled-up labor numbers.
     labor_by_dept: dict[str, LaborByDepartment] = Field(default_factory=dict)
 
+    # FON-22 — the lines the source does NOT state, as attribute paths
+    # (``noi``, ``gop``, ``opex_ratio``, ``dept_expenses.total``,
+    # ``fixed_charges.insurance`` …). Their numeric slots hold 0.0 only
+    # because the schema requires a number: a reader must treat a listed path
+    # as absent ("not stated"), never as a $0 figure (product rule 1).
+    not_stated: list[str] = Field(default_factory=list)
+    # FON-22 — the statement these figures come from (the actuals side is the
+    # statement the model grounds Year-1 on), named in refusals and prompts.
+    source_statement: str | None = None
+
 
 class ModelAssumptions(BaseModel):
     """Underwriting assumption set bound to a deal."""

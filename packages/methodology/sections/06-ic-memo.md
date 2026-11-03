@@ -74,10 +74,11 @@ the Assumptions sheet is applied.
   dollars. A value whose unit cannot be established is not compared, and a percentage claim is never
   read against a dollar line — Fondok does not reconstruct dollars from a percent whose denominator is
   itself an unverified broker figure.
-- **Annual against annual, on the model's own statement.** The actual side is the statement the model
-  grounds Year 1 on (the Data Room's Primary source) — its annual or trailing-twelve-month lines, never
-  a monthly or quarterly slice, and never a line from another statement. Fondok never compares a month
-  against a year.
+- **Annual against annual, on the model's own figures.** The actual side is exactly what the model
+  reads for Year 1 from the statement it grounds on (the Data Room's Primary source) — never a budget,
+  forecast, prior-year or monthly line, and never a line from another statement. A line the statement
+  does not state is shown as not stated, never as $0, and a refusal names the statement. Fondok never
+  compares a month against a year.
 - **Plausibility guard.** A pair of figures more than three hundred percent apart is reported as
   “Basis mismatch — needs review” with both figures and no severity: two numbers that far apart are on
   different bases, not evidence of an overstatement.
@@ -155,9 +156,13 @@ inference.
   unverified broker figure.
 - **Annual against annual.** The T-12 side is the document's annual / trailing-twelve-month line
   (annual rooms revenue, gross operating profit, net operating income), never a monthly or quarterly
-  slice, read off ONE extraction row — the Year-1 basis statement the loader chooses
-  (`engine_runner.year_one_basis_statement`; `_load_critic_inputs` and
-  `load_actuals_before_reserve_noi` share it), never blended across statements. If no annual actual exists for a concept
+  slice: the engine's own Year-1 lines (`engine_runner.year_one_actual_lines`, the functions behind
+  the revenue and expense loaders — full-period lines only, never a budget, forecast, prior-year or
+  variance line), plus the basis statement's stated GOP / NOI / NOI before reserve and its stated total
+  revenue unless its own revenue lines exceed it; `_load_critic_inputs` and
+  `load_actuals_before_reserve_noi` share it, never blended across statements. A line the statement does
+  not state is listed in `USALIFinancials.not_stated` and prints "not stated" in every agent prompt —
+  never $0 or a 100% OpEx ratio. If no annual actual exists for a concept
   there is no flag — Fondok never compares a month against a year, and the report names the concept it
   could not compare with {{reason:period_mismatch}} or {{reason:no_source}}.
 - **Plausibility guard.** As a last line of defence, a pair of figures more than 300% apart is
