@@ -5181,6 +5181,23 @@ def _is_sub_period_path(name: str) -> bool:
     return any(seg in _SUB_PERIOD_PATH_SEGMENTS for seg in str(name or "").lower().split("."))
 
 
+#: Path segments naming ANOTHER period or basis than the statement's own
+#: actuals — a prior year, a budget, a forecast, a variance column. Unlike a
+#: month of the statement's own period (a slice the loader may fall back on
+#: when the statement states no full-period line), such a line is never the
+#: statement's value for any canonical (FON-22 round 4: on 2e1db521 /
+#: 76d10a64 ``prior_year.rooms_revenue`` — FY2023's 9,807,990 — became FY2024
+#: Year-1 rooms revenue through the tail match).
+_OTHER_BASIS_PATH_SEGMENTS: frozenset[str] = frozenset(
+    {"prior_year", "prior_period", "budget", "forecast", "variance"}
+)
+
+
+def _is_other_basis_path(name: str) -> bool:
+    """True when a dotted field path is another period's or basis's line."""
+    return any(seg in _OTHER_BASIS_PATH_SEGMENTS for seg in str(name or "").lower().split("."))
+
+
 def _full_period_lines_first(fields: list[Any]) -> list[Any]:
     """The row's fields with every sub-period line moved AFTER the
     full-period ones, so a canonical resolves to the statement's own line
@@ -5363,6 +5380,9 @@ def _resolve_statement_lines(
        ``opposite_section`` rejects (a cost / expense section for a revenue
        canonical, a revenue section for an expense canonical).
 
+    A line under another period or basis (:data:`_OTHER_BASIS_PATH_SEGMENTS`
+    — prior year, budget, forecast, variance) never claims a canonical.
+
     The first field to claim a canonical in a pass keeps it. ``admit`` is the
     loader's value guard (the expense loader drops non-positive lines, so a
     later field may still claim that canonical).
@@ -5374,6 +5394,8 @@ def _resolve_statement_lines(
         value = f.get("value")
         if not name or not isinstance(value, (int, float)):
             continue
+        if _is_other_basis_path(name):
+            continue  # another period's / a budget's line is never this one's
         usable.append((name, float(value), f))
 
     lines: dict[str, tuple[float, dict[str, Any]]] = {}

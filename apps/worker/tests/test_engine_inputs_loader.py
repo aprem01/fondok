@@ -527,16 +527,17 @@ async def test_with_provenance_names_the_exact_row_on_the_real_t12() -> None:
         "occupancy": ("ttm_summary_per_om.occupancy_pct", 4),
         "adr": ("ttm_summary_per_om.adr_usd", 4),
         "revpar": ("ttm_summary_per_om.revpar_usd", 4),
-        # The gated alias set resolves rooms revenue off the January 2025
-        # monthly block (page 6) — pinned as-is; Phase 2.1 does not widen
-        # the vocabulary, it only records what the loader already chose.
-        "rooms_revenue": ("p_and_l_usali.monthly.jan_2025.rooms_revenue_usd", 6),
+        # FON-22 round 4: the T-12's own full-period rooms line
+        # (``p_and_l_usali.rooms.revenue_usd``, $9,322,920) is an exact alias,
+        # so Year-1 rooms revenue is no longer the January 2025 monthly slice.
+        "rooms_revenue": ("p_and_l_usali.rooms.revenue_usd", None),
     }
     assert set(provenance) == set(actuals)
     for canonical, (field_name, page) in expected.items():
         sf = provenance[canonical]
         assert sf.resolution.field_name == field_name, canonical
-        assert sf.resolution.source_page == page, canonical
+        if page is not None:
+            assert sf.resolution.source_page == page, canonical
         assert sf.resolution.value == pytest.approx(actuals[canonical])
         assert sf.document_id == str(doc_id)
         assert sf.extraction_result_id == str(er_id)
@@ -547,8 +548,9 @@ async def test_with_provenance_names_the_exact_row_on_the_real_t12() -> None:
 
 @pytest.mark.asyncio
 async def test_with_provenance_classifies_scope_and_basis() -> None:
-    """The registry classifies the row the loader picked: a monthly slice is
-    reported as ``monthly``, and a T-12 line as ``actual`` basis."""
+    """The registry classifies the row the loader picked: the T-12's annual
+    rooms line is no longer the January slice (``monthly``) — FON-22 round 4 —
+    and every line is ``actual`` basis."""
     from app.database import get_session_factory
     from app.services.engine_runner import _load_t12_revenue_actuals
 
@@ -565,7 +567,11 @@ async def test_with_provenance_classifies_scope_and_basis() -> None:
             with_provenance=True,
         )
 
-    assert provenance["rooms_revenue"].resolution.scope == "monthly"
+    # The registry states no scope for this path ("unknown"); it is no
+    # longer a monthly slice.
+    assert provenance["rooms_revenue"].resolution.scope != "monthly"
+    assert provenance["rooms_revenue"].resolution.field_name == "p_and_l_usali.rooms.revenue_usd"
+    assert _actuals["rooms_revenue"] == 9_322_920
     assert provenance["occupancy"].resolution.concept == "occupancy"
     assert {p.resolution.basis for p in provenance.values()} == {"actual"}
 
@@ -660,11 +666,12 @@ async def test_load_engine_inputs_exposes_source_fields_and_reasons() -> None:
     # The T-12 IS on the deal — the F&B anchor just did not resolve.
     assert reasons["fb_revenue_per_occupied_room"]["code"] is ReasonCode.NO_SOURCE
     # A key the T-12 grounded carries no SEED reason. It does carry a review
-    # note: this real T-12's only rooms-revenue line is a monthly slice, so
-    # its revenue lines cannot foot to its stated total (W5 round 3).
+    # note: the gated aliases read only this real T-12's rooms line (FON-22
+    # round 4: its full-period ``rooms.revenue_usd``, no longer the January
+    # slice), so its revenue lines cannot foot to its stated total.
     occ = reasons["starting_occupancy"]
     assert occ["code"] is ReasonCode.NEEDS_REVIEW
-    assert "no full-period rooms revenue line" in occ["detail"]
+    assert "$9,322,920 against its stated total revenue of $14,009,800" in occ["detail"]
     assert occ["detail"].count("does not foot") == 1
 
 
@@ -2749,3 +2756,61 @@ async def test_a_lease_that_is_not_a_management_agreement_sets_no_fee_terms() ->
     assert base["__sources__"]["mgmt_fee_pct"] != "management_agreement"
     assert base["__sources__"]["ffe_reserve_pct"] != "management_agreement"
     assert base["mgmt_fee_pct"] == pytest.approx(0.03)
+
+
+
+# ═══════ FON-22 round 4 — a prior-year / budget / forecast / variance line is never Year 1 ═══════
+
+
+@pytest.mark.parametrize("namespace", ["prior_year", "prior_period", "budget", "forecast", "variance"])
+@pytest.mark.asyncio
+async def test_a_prior_year_or_budget_line_is_never_the_year_one_value(namespace: str) -> None:
+    """Live 2e1db521 / 76d10a64: the FY2024 Detailed P&L states rooms revenue
+    only as ``prior_year.rooms_revenue`` (9,807,990 — FY2023) and
+    ``budget.rooms_revenue``; the tail match let the prior-year line become
+    Year-1 rooms revenue. Such a line is another period / basis, never the
+    statement's own value: the canonical stays unread from that statement."""
+    from app.services.engine_runner import _load_t12_revenue_actuals, _load_t12_expense_actuals
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="2e1db521", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="PNL", filename="FY2024 Detailed.xlsm", fiscal_year=2024,
+        ts=datetime(2026, 8, 1, tzinfo=UTC),
+        fields=[
+            {"field_name": f"p_and_l_usali.{namespace}.rooms_revenue", "value": 9_807_990.0},
+            {"field_name": f"p_and_l_usali.{namespace}.insurance", "value": 2_000_000.0},
+            {"field_name": "occupancy_pct", "value": 0.832567},
+            {"field_name": "adr_usd", "value": 236.094},
+            {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 2_739_040.0},
+        ],
+    )
+    async with get_session_factory()() as session:
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+        exp = await _load_t12_expense_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert "rooms_revenue" not in rev
+    assert "insurance" not in exp
+    assert rev["fb_revenue"] == 2_739_040.0
+    assert rev["occupancy"] == pytest.approx(0.832567)
+
+
+@pytest.mark.asyncio
+async def test_a_monthly_slice_still_backs_a_primary_with_no_annual_line() -> None:
+    """The loader's documented sub-period fallback is unchanged for a slice of
+    the statement's OWN period (a month of the trailing twelve)."""
+    from app.services.engine_runner import _load_t12_revenue_actuals
+    from app.database import get_session_factory
+
+    deal_id = uuid4()
+    await _insert_deal(deal_id, name="monthly only", keys=132, purchase=36_400_000)
+    await _insert_financial_extraction(
+        deal_id, doc_type="T12", filename="T12.xlsx", ts=datetime(2026, 8, 1, tzinfo=UTC),
+        fields=[
+            {"field_name": "p_and_l_usali.monthly.jan_2025.rooms_revenue_usd", "value": 1_040_720.0},
+            {"field_name": "occupancy_pct", "value": 0.80},
+        ],
+    )
+    async with get_session_factory()() as session:
+        rev = await _load_t12_revenue_actuals(session, deal_id=str(deal_id), tenant_id=_TENANT)
+    assert rev["rooms_revenue"] == 1_040_720.0

@@ -117,6 +117,9 @@ t12_revenue:
   rooms_revenue:
     - p_and_l_usali.operating_revenue.rooms_revenue
     - p_and_l_usali.operating_revenue.rooms_revenue_usd
+    # FON-22 round 4: the T-12's own full-period rooms line (registry alias);
+    # without it Year-1 rooms revenue fell back to the January monthly slice.
+    - p_and_l_usali.rooms.revenue_usd
     - rooms_revenue_usd
     - rooms_revenue
   fb_revenue:

@@ -431,6 +431,20 @@ order — and deliberately does not reorder `concepts.yaml`, since concept order
 is also the resolver's "first seen" tiebreak and moving blocks there WOULD
 change behaviour.
 
+### 6a. FON-22 round 4 — one deliberate widening, one exclusion
+
+* `t12_revenue.rooms_revenue` gains `p_and_l_usali.rooms.revenue_usd` (already
+  a registry alias): the real Anglers T-12 states its trailing-twelve rooms
+  revenue there ($9,322,920) and the loader fell back to the January 2025
+  monthly slice ($1,040,720). Snapshot `field_catalog_pre_registry.json`
+  updated for exactly this alias.
+* `engine_runner._resolve_statement_lines` no longer admits a line under
+  `prior_year` / `prior_period` / `budget` / `forecast` / `variance` for any
+  canonical (it is another period or basis). 2e1db521 / 76d10a64 took
+  `prior_year.rooms_revenue` (FY2023, 9,807,990) as FY2024 rooms revenue via
+  the tail match. A month of the statement's own period (`monthly.*`) is still
+  the documented fallback when no full-period line exists.
+
 ## 7. Phase 1.3c parity exceptions (`documents._load_critic_inputs`)
 
 The critic / variance input loader is registry-driven as of Phase 1.3c:

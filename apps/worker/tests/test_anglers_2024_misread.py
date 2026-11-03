@@ -115,9 +115,10 @@ def test_the_loader_reads_full_year_rooms_not_the_prior_year(parsed):
     before = er._resolve_statement_lines(
         _v1_fields(), T12_REVENUE_FIELD_ALIASES, opposite_section=er._is_cost_section
     )
-    # The prod symptom: with rooms as text, the only numeric rooms line read
-    # was a prior-year / budget row.
-    assert before["rooms_revenue"][1]["field_name"] != "p_and_l_usali.operating_revenue.rooms_revenue"
+    # The prod symptom: with rooms as text, the only numeric rooms lines were
+    # prior-year / budget rows — which the loader read as Year-1 rooms
+    # revenue until FON-22 round 4; such a line is never read now.
+    assert "rooms_revenue" not in before
 
     r = reconcile_extraction(
         _v1_fields(), {}, doc_type="T12", extraction_data=extraction_data, file_bytes=body

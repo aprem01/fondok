@@ -1,5 +1,5 @@
 {
-  "_note": "Pre-registry snapshot of apps/worker/app/extraction/field_catalog.py's six public constants, taken before the registry adapter landed (Phase 1.3a). 'constants' holds the exported values with sorted keys; 'insertion_order' pins the key order each dict was built in; 'source_lists' holds the {canonical: [alias, ...]} lists from field_catalog.yaml in their original order, which is what the inverted dicts' ordering semantics derive from. Deliberate widening (W5 extract, 2026-11-02): t12_expense.property_taxes and t12_expense.insurance gained the exact statement-level paths the real Angler's annual P&Ls carry (fixed_charges.*_usd, fixed_charges.property_and_other_taxes[_usd], non_operating.insurance_usd / property_and_other_taxes_usd); Kimpton golden unchanged.",
+  "_note": "Pre-registry snapshot of apps/worker/app/extraction/field_catalog.py's six public constants, taken before the registry adapter landed (Phase 1.3a). 'constants' holds the exported values with sorted keys; 'insertion_order' pins the key order each dict was built in; 'source_lists' holds the {canonical: [alias, ...]} lists from field_catalog.yaml in their original order, which is what the inverted dicts' ordering semantics derive from. Deliberate widening (W5 extract, 2026-11-02): t12_expense.property_taxes and t12_expense.insurance gained the exact statement-level paths the real Angler's annual P&Ls carry (fixed_charges.*_usd, fixed_charges.property_and_other_taxes[_usd], non_operating.insurance_usd / property_and_other_taxes_usd); Kimpton golden unchanged. FON-22 round 4 (deliberate widening): t12_revenue.rooms_revenue gains p_and_l_usali.rooms.revenue_usd (the T-12's own full-period rooms line; registry alias).",
   "constants": {
     "T12_EXPENSE_FIELD_ALIASES": {
       "admin_general": "administrative_general",
@@ -59,6 +59,7 @@
       "p_and_l_usali.operational_kpis.adr_usd": "adr",
       "p_and_l_usali.operational_kpis.occupancy_pct": "occupancy",
       "p_and_l_usali.operational_kpis.revpar_usd": "revpar",
+      "p_and_l_usali.rooms.revenue_usd": "rooms_revenue",
       "resort_fees": "resort_fees",
       "resort_fees_usd": "resort_fees",
       "revpar": "revpar",
@@ -300,6 +301,7 @@
       "rooms_revenue": [
         "p_and_l_usali.operating_revenue.rooms_revenue",
         "p_and_l_usali.operating_revenue.rooms_revenue_usd",
+        "p_and_l_usali.rooms.revenue_usd",
         "rooms_revenue_usd",
         "rooms_revenue"
       ],
