@@ -292,12 +292,10 @@ never replaced by a number, and the workspace's own uploaded figures are unaffec
 #### Which statement is the Year-1 basis
 
 Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the
-Data Room badges as **Primary source**. There is one choice, made once, and every surface reads it —
-the model, the badge, the Historical P&L columns and the document links. Statements rank full-year
-before partial, the most recent period first, a T-12 ahead of a calendar-year P&L of the same year,
-then the statement with more line items (a detailed P&L ahead of a summary of the same year, whichever
-was uploaded last); within each period the footing check below can then pass the top-ranked one over.
-Two statements are never averaged: every Year-1 number traces to a single row of one statement.
+Data Room badges as **Primary source**. One choice feeds the model, the badge, the Historical P&L and
+the document links: full-year statements before partial ones, the most recent period first, a T-12
+ahead of a calendar-year P&L of the same year, then the statement with more line items; the footing
+check below can pass the top-ranked one over. Two statements are never averaged: every Year-1 number traces to a single row of one statement.
 Earlier years still feed the Historical P&L and the variance checks.
 
 Statements count as the same period only when they cover the same span ending on the same date; a
@@ -314,14 +312,8 @@ revenue, F&B revenue, total revenue or NOI, when a line comes from another state
 statement's own revenue lines do not add up to its total. The document link on each figure opens
 the statement the model used.
 
-On the Historical P&L each period is one column, built from the statement chosen for that period;
-the period's other statements are listed on it as supplemental, and the Data Room marks the chosen
-statement of an earlier period “Primary for FY2023” (or the period it covers). When the chosen
-statement states no occupancy, ADR or RevPAR, the figure is read from another statement of the same
-period — its full-year lines only — and the cell says so: “Occupancy is not on the Summary P&L; read
-from the Detailed P&L (the same period, FY2024)”. A figure is never taken from another period, a
-monthly slice, an STR report or an offering memorandum; with no same-period statement the cell shows
-“—”.
+Each Historical P&L column is its period's chosen statement. Occupancy, ADR or RevPAR it lacks is
+read, named, from another statement of the same period only; otherwise “—”.
 
 :::
 
@@ -991,16 +983,10 @@ key is never shown as a vendor identifier.
 #### Which statement is the Year-1 basis
 
 Year-1 occupancy, ADR, revenue lines and expense lines all come from one statement: the document the
-Data Room badges as **Primary source**. There is one choice (FON-22): the loader's per-period pick,
-`choose_statements_by_period` over `_rank_pnl_shims` (the shared `financial_source_sort_key` with
-completeness = `_pnl_completeness_score`, a count of distinct numeric lines — never
-`structural_pnl_score`, which saturates at 1.0 and tied a 1,031-line Detailed P&L with a 17-line
-Summary CSV on deal b67bfdee). `statement_roles` gives every P&L-family document its role
-(`year_one_primary` / `period_primary` / `supplemental` / `not_a_statement`), exact period and
-period primary on the document list; the badge is `year_one_primary`, the Historical P&L groups on
-`statement_period` and takes rank 0, and `_load_source_documents` links t12_actual keys without a
-`source_fields` row to the same statement. The shared key on the `documents` columns alone is only
-the badge's fallback when the extraction rows cannot be read. The key ranks full-year statements
+Data Room badges as **Primary source**. One choice: `statement_roles` (role, `statement_period`,
+period primary per document) from `choose_statements_by_period` over `_rank_pnl_shims` (completeness
+= `_pnl_completeness_score`, never the saturating `structural_pnl_score`) feeds the badge, the
+Historical P&L grouping and `_load_source_documents`. The key ranks full-year statements
 before partial ones, the most recent period first, and a T-12 ahead of a calendar-year P&L of the
 same year. A T-12 whose extraction carries no period label is still treated as a
 trailing-twelve, and when it carries no date at all it is taken as the current period, because an
@@ -1100,11 +1086,9 @@ Provenance runs on two levels, and every figure on the platform carries one or t
   and a classification that would have to be guessed at — the column renders the **bare year with a
   "basis unknown" chip** under {{reason:period_mismatch}}, never an invented FY or T-12. A period-end
   date that falls outside the column's own year is likewise dropped rather than shown.
-- **Primary financial source.** When several statements cover the same periods, Fondok ranks them —
-  full-year sources over partial (monthly / YTD), most-recent period, then most-detailed (more line
-  items) — chooses one per period (the footing check can pass the top-ranked over), and badges the
-  Year-1 statement “Primary source” in the Data Room. The badge, the Historical P&L column, the
-  Future P&L base-period label and the document links all read that one choice.
+- **Primary financial source.** Fondok ranks the statements — full-year over partial, most-recent
+  period, then most-detailed — picks one per period, and badges the Year-1 one “Primary source”;
+  every surface reads that one choice.
 - **Cross-checked across statements, never blended.** When more than one statement covers the same
   period, Year-1 takes its lines from one statement: the footing one when the top-ranked does not
   foot to its stated total (deal 7a9928e0: a $96,528 F&B misread), else the median outlier switch
