@@ -553,6 +553,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
     primaryFinancialSource?: boolean;
     /** FON-22 — the worker's statement role, and the period it is for. */
     statementRole?: string | null;
+    statementPeriod?: string | null;
     statementPeriodWords?: string | null;
     /** FON-41 / R-036 — CAPEX lane ``pip`` / ``historic`` / ``future``
      *  (null = unstated → treated as ``pip``). */
@@ -589,6 +590,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
           extractedPeriodYear: d.extracted_period_year ?? null,
           primaryFinancialSource: d.primary_financial_source ?? false,
           statementRole: d.statement_role ?? null,
+          statementPeriod: d.statement_period ?? null,
           statementPeriodWords: d.statement_period_words ?? null,
           docSubtype: d.doc_subtype ?? null,
         };
@@ -1320,6 +1322,7 @@ export default function DataRoomTab({ projectId }: { projectId: number | string 
               status: d.rawStatus,
               primaryFinancialSource: d.primaryFinancialSource ?? false,
               statementRole: d.statementRole ?? null,
+              statementPeriod: d.statementPeriod ?? null,
               statementPeriodWords: d.statementPeriodWords ?? null,
             }),
           )}

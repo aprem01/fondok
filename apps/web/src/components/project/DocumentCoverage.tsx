@@ -67,7 +67,9 @@ export interface CoverageFile {
   /** FON-22 — the worker's `statement_role`; a `period_primary` is the
    *  statement the Historical P&L uses for another period. */
   statementRole?: string | null;
-  /** That period in words ("FY2023"). */
+  /** The worker's exact-period identity (null for an undated statement) and
+   *  that period in words ("FY2023"). */
+  statementPeriod?: string | null;
   statementPeriodWords?: string | null;
   /** Count of fields still needing review (<85%, not yet accepted). */
   toReview: number;
@@ -1156,7 +1158,7 @@ function CoverageFileRow({
             Primary source
           </span>
         )}
-        {!file.primaryFinancialSource && file.statementRole === 'period_primary' && file.statementPeriodWords && (
+        {!file.primaryFinancialSource && file.statementRole === 'period_primary' && file.statementPeriod && file.statementPeriodWords && (
           <span
             data-testid="period-primary-badge"
             title={`The Historical P&L uses this statement for ${file.statementPeriodWords}. It does not drive Year-1.`}
