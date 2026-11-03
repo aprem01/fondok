@@ -260,3 +260,14 @@ describe('the chosen statement is re-extracting or its re-extract failed (FON-22
     expect(y[0].supplementalDocs?.map((d) => d.docId)).toEqual(['pnl']);
   });
 });
+
+describe('statement status labels (round 3)', () => {
+  it('a status this build does not know is named, not called a failed re-extract', () => {
+    const det = doc('det', { filename: DETAILED, extracted_period_year: 2024, status: 'QUARANTINED', ...role('year_one_primary', 0, 'det') });
+    const y = buildHistoricalYears([det], { det: ex('det', detailedFields) }, KEYS).find((c) => c.year === '2024')!;
+    expect(y.statementStatus).toEqual({
+      state: 'reextracting',
+      note: `${DETAILED} is QUARANTINED; showing its last extraction, which the model still reads.`,
+    });
+  });
+});

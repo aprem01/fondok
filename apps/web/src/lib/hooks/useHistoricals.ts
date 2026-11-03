@@ -64,6 +64,7 @@ const isChosenRole = (d: WorkerDocument): boolean =>
   d.statement_role === 'year_one_primary' || d.statement_role === 'period_primary';
 
 const IN_FLIGHT_STATUSES = new Set(['PARSING', 'UPLOADED', 'CLASSIFYING', 'EXTRACTING', 'PROCESSING']);
+const FAILED_STATUSES = new Set(['FAILED', 'PARSE_FAILED']);
 
 /** FON-22 R2-I1 — the column's statement is not EXTRACTED: say so. ``shown``
  *  is whether its last extraction is on the column. */
@@ -76,6 +77,15 @@ function statusOf(d: WorkerDocument, shown: boolean): HistYear['statementStatus'
       note: shown
         ? `${name} is re-extracting; showing its last extraction, which the model still reads.`
         : `${name} is re-extracting; its last extraction, which the model still reads, is not loaded.`,
+    };
+  }
+  if (!FAILED_STATUSES.has(d.status)) {
+    // A status this build does not know: say what it is, claim nothing more.
+    return {
+      state: 'reextracting',
+      note: shown
+        ? `${name} is ${d.status}; showing its last extraction, which the model still reads.`
+        : `${name} is ${d.status}; its last extraction, which the model still reads, is not loaded.`,
     };
   }
   return {
