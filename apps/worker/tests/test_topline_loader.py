@@ -259,9 +259,12 @@ async def test_stabilization_year_ends_the_ramp_on_a_benchmark_deal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exit_growth_uses_the_cbre_long_run_average_when_on_file() -> None:
-    """Review I-2 — the source's long-run average is the exit-growth
-    convention when a CBRE Hotel Horizons report carries one."""
+async def test_exit_growth_follows_the_post_forecast_rule_with_a_cbre_long_run_average_on_file() -> None:
+    """FON-121 review M3 (supersedes review I-2's precedence) — the exit-NOI
+    year uses its own resolved ADR growth like every year: on this deal the
+    analyst's Year-5 ADR growth (+2.0%, the reference scenario) carries to
+    the exit, not the CBRE long-run average (which applies only when that
+    year has no figure — ``test_topline_terminal_growth.py``)."""
     from app.database import get_session_factory
 
     deal_id, tenant_id = await _docs_deal()
@@ -289,7 +292,7 @@ async def test_exit_growth_uses_the_cbre_long_run_average_when_on_file() -> None
         await s.commit()
     base = await _load(deal_id, tenant_id)
     term = base["__topline_status__"]["terminal_revpar_growth"]
-    assert term["basis"] == "long_run_average"
-    assert term["value"] == pytest.approx(0.031)
-    assert base["revpar_growth"] == pytest.approx(0.031)
-    assert base["__sources__"]["revpar_growth"] == "cbre_horizons"
+    assert term["basis"] == "exit_year_adr_growth"
+    assert term["value"] == pytest.approx(0.02)
+    assert base["revpar_growth"] == pytest.approx(0.02)
+    assert base["__sources__"]["revpar_growth"] == "analyst_override"

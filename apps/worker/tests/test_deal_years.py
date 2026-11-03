@@ -43,7 +43,10 @@ def test_first_operating_month_is_the_month_after_the_close_month() -> None:
     # not modelled as its own period.
     assert first_operating_month(date(2025, 9, 30)) == date(2025, 10, 1)
     assert first_operating_month(date(2025, 12, 15)) == date(2026, 1, 1)
-    assert first_operating_month(date(2025, 1, 1)) == date(2025, 2, 1)
+    # Review M4 — a close ON the 1st starts operations that same month.
+    assert first_operating_month(date(2025, 1, 1)) == date(2025, 1, 1)
+    assert first_operating_month(date(2025, 10, 1)) == date(2025, 10, 1)
+    assert deal_years("2025-01-01", 1)[0].label == "Jan–Dec 2025"
 
 
 def test_days_count_the_leap_day_inside_the_span() -> None:
@@ -78,7 +81,7 @@ def test_as_dict_is_the_published_shape() -> None:
         ("2026-09-30", 1),
         ("2026-10-01", 1),
         ("2025-09-01", 0),
-        ("2024-01-01", -1),  # before the close: deal year −1 (Oct 2023–Sep 2024 starts before it)
+        ("2024-01-01", -1),  # before the close: deal year −1 (Oct 2024–Sep 2025) is the first to start after it
     ],
 )
 def test_first_full_deal_year_after_a_reopening(reopening: str, expected: int) -> None:

@@ -396,6 +396,15 @@ def _fmt(v: float) -> str:
     return f"{v * 100:+.1f}%"
 
 
+def fmt_applied_pct(v: float) -> str:
+    """FON-121 review M1 — a figure at the precision the model applies (a
+    blend is +3.05%, +2.575%): up to 3 decimals, at least one."""
+    t = f"{abs(v) * 100:.3f}".rstrip("0")
+    t = t + "0" if t.endswith(".") else t
+    sign = "-" if v < 0 and float(t) != 0 else "+"
+    return f"{sign}{t}%"
+
+
 # ─────────────────────────── the resolver ───────────────────────────
 
 
@@ -413,7 +422,7 @@ def _pages_chip(vendor: str | None, pages: Sequence[int | None]) -> str | None:
 def _blend_short(g: MetricGrowth) -> str:
     """One calendar year's part of a blended deal-year label."""
     what = g.short or g.label
-    return f"{_fmt(g.value)} {what}" if g.value is not None else what
+    return f"{fmt_applied_pct(g.value)} {what}" if g.value is not None else what
 
 
 def resolve_growth_by_year(
@@ -607,7 +616,7 @@ def resolve_growth_by_year(
             hint = (
                 "; re-extract the report to read its published average"
                 if prev.vendor == "CoStar" and costar_reading.predates_published_average
-                else "; the report publishes no average"
+                else "; the report publishes no forecast average"
             )
             return MetricGrowth(
                 value=value, source="carried_forward",
@@ -692,7 +701,7 @@ def resolve_growth_by_year(
         label = (
             f"{kind} · {dy.label} = "
             + " + ".join(f"{m} mo × {_blend_short(g)}" for _cy, m, g in parts)
-            + f" = {_fmt(value)}"
+            + f" = {fmt_applied_pct(value)}"
             + (f" · {tail}" if tail else "")
         )
         vendor = next((g.vendor for _c, _m, g in parts if g.vendor), None)
@@ -704,7 +713,9 @@ def resolve_growth_by_year(
             report=last.report, forecast_average=last.forecast_average, forecast_span=last.forecast_span,
             vendor=vendor, deal_year=dy, parts=tuple(parts),
             average_basis=next((g.average_basis for _c, _m, g in parts if g.average_basis), None),
-            chip=_pages_chip(vendor, [g.page for _c, _m, g in parts]),
+            # Review M2 — each part keeps its own vendor (a CBRE part's page is
+            # never shown as CoStar's).
+            chip=merge_chips(*(g.chip or _pages_chip(g.vendor, [g.page]) for _c, _m, g in parts)),
         )
 
     # ── analyst overrides on top ──
@@ -897,6 +908,7 @@ __all__ = [
     "coerce_growth_list",
     "costar_withheld",
     "document_growth_on_file",
+    "fmt_applied_pct",
     "growth_year",
     "merge_chips",
     "resolve_growth_by_year",

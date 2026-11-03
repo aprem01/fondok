@@ -59,6 +59,14 @@ const pct1 = (v: number | null | undefined): string =>
   v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(1)}%`;
 const signedPct = (v: number | null | undefined): string =>
   v == null || !Number.isFinite(v) ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}%`;
+/** FON-121 review M1 — a growth figure at the precision the model applies
+ *  (a blend of two calendar years is +3.05%, not +3.1%): up to 3 decimals,
+ *  trailing zeros dropped, at least one. */
+export const appliedPct = (v: number | null | undefined): string => {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const t = Math.abs(v * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+  return `${v < 0 && Number(t) !== 0 ? '−' : '+'}${t}%`;
+};
 const usd0 = (v: number | null | undefined): string =>
   v == null || !Number.isFinite(v) ? '—' : `$${Math.round(v).toLocaleString('en-US')}`;
 const pts = (v: number | null | undefined): string =>
@@ -586,7 +594,7 @@ export function GrowthByYearTable({
   const error = !po.ok ? po.error : !pa.ok ? pa.error : null;
   const cell = (g: ToplineStatus['growth_by_year'][number]['occupancy'], applied: boolean) => (
     <span title={g.label} className={g.value == null ? 'text-ink-400' : undefined}>
-      {applied ? signedPct(g.value) : 'n/a'}
+      {applied ? appliedPct(g.value) : 'n/a'}
       <span className="ml-1 text-[9.5px] uppercase tracking-wide text-ink-400">{applied ? SOURCE_SHORT[g.source] ?? g.source : 'as reported'}</span>
       {/* Decision 3 (2026-11-03) — the report's page is visible, not only in the tooltip. */}
       {applied && g.chip && (
@@ -667,7 +675,7 @@ export function GrowthByYearTable({
         </>
       )}
       <div className="text-[10.5px] text-ink-500" data-testid="topline-terminal-growth">
-        Exit-year growth: {signedPct(status.terminal_revpar_growth?.value)}
+        Exit-year growth: {appliedPct(status.terminal_revpar_growth?.value)}
         {status.terminal_revpar_growth?.chip ? ` · ${status.terminal_revpar_growth.chip}` : ''}
         {status.terminal_revpar_growth?.label ? ` — ${status.terminal_revpar_growth.label}` : ''}
       </div>

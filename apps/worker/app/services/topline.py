@@ -35,7 +35,7 @@ from typing import Any
 from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.underwriting import BenchmarkYear, GrowthYear, ToplineDrivers, ToplineReference
 
-from ..engines.deal_years import DealYear, deal_years
+from ..engines.deal_years import DealYear, deal_years, first_operating_month
 from ..engines.revenue import (
     DEFAULT_PENETRATION_INDEX,
     OCCUPANCY_CAP,
@@ -72,6 +72,7 @@ from .topline_growth import (
     GrowthResolution,
     MetricGrowth,
     coerce_growth_list,
+    fmt_applied_pct,
     growth_year,
 )
 
@@ -461,7 +462,16 @@ class CalendarAnchor:
     assumed: bool
 
     def years(self, n: int) -> list[DealYear]:
-        return deal_years(self.date, n) if self.date is not None else []
+        """The model years. A real close: deal years (twelve months from it).
+        An ASSUMED anchor (no close date, the underwriting as-of date) keeps
+        the calendar-year placement it always had (review M5): Year 1 = the
+        calendar year of the first operating month, Jan–Dec."""
+        if self.date is None:
+            return []
+        if self.assumed:
+            first = first_operating_month(self.date)
+            return deal_years(date(first.year - 1, 12, 31), n)
+        return deal_years(self.date, n)
 
     @property
     def year1(self) -> DealYear | None:
@@ -870,14 +880,13 @@ def _exit_year_adr(growth: GrowthResolution, hold: int) -> MetricGrowth:
 def _terminal_growth(
     last_adr: MetricGrowth, hold: int, long_run: LongRunGrowth | None, *, exit_year: str | None = None
 ) -> dict[str, Any]:
-    """``{value, source_id, basis, label}`` of the exit-year growth convention."""
-    if long_run is not None:
-        return {
-            "value": long_run.value,
-            "source_id": long_run.source_id,
-            "basis": "long_run_average",
-            "label": f"{long_run.label} (the source's long-run average)",
-        }
+    """``{value, source_id, basis, label}`` of the exit-year growth convention.
+
+    Review M3 (FON-121): the exit-NOI year follows the SAME rule as every
+    post-forecast year — its own resolved ADR growth (the report's published
+    forecast average past the series, else the computed one). The source's
+    long-run average (CBRE Hotel Horizons) applies only when that year has
+    no figure."""
     if last_adr.value is not None:
         return {
             "value": last_adr.value,
@@ -887,8 +896,15 @@ def _terminal_growth(
             "average_basis": last_adr.average_basis,
             "label": (
                 (f"{exit_year} ADR growth " if exit_year is not None else f"Year {hold} ADR growth ")
-                + f"{last_adr.value * 100:+.1f}% — occupancy held at its stabilized level ({last_adr.label})"
+                + f"{fmt_applied_pct(last_adr.value)} — occupancy held at its stabilized level ({last_adr.label})"
             ),
+        }
+    if long_run is not None:
+        return {
+            "value": long_run.value,
+            "source_id": long_run.source_id,
+            "basis": "long_run_average",
+            "label": f"{long_run.label} (the source's long-run average; no ADR growth figure for the exit-NOI year)",
         }
     return {
         "value": 0.0,

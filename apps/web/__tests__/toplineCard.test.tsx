@@ -281,6 +281,8 @@ describe('GrowthByYearTable — FON-121 deal years and decision 3 page chips', (
     const row5 = screen.getByTestId('topline-growth-row-5');
     expect(row5).toHaveTextContent('CoStar p.26, p.4');
     expect(screen.getByTestId('topline-terminal-growth')).toHaveTextContent('Exit-year growth: +2.5% · CoStar p.4');
+    // Review M1 — a blended figure shows the precision it applies.
+    expect(row5).toHaveTextContent('+2.575%');
     expect(screen.getByTestId('topline-terminal-growth')).toHaveTextContent('Oct 2030–Sep 2031');
   });
 });

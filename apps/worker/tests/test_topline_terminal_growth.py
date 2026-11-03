@@ -79,10 +79,26 @@ def test_terminal_growth_is_the_last_years_adr_growth_without_occupancy() -> Non
     assert "occupancy held" in term["label"]
 
 
-def test_terminal_growth_prefers_the_sources_long_run_average() -> None:
+def test_exit_growth_follows_the_post_forecast_rule_even_with_a_long_run_average_on_file() -> None:
+    """FON-121 review M3 — the exit-NOI year uses the SAME rule as every
+    post-forecast year (the report's published average, else the computed
+    one); a CBRE long-run average does not override it."""
     inputs = read_topline_inputs({}, {}, set())
     long_run = LongRunGrowth(value=0.031, source_id="cbre_horizons", label="CBRE Hotel Horizons long-run average RevPAR change 3.1%")
     build = build_topline(_bench(), _growth(cal=CAL[:5]), inputs, hold_years=5, t12=None, long_run=long_run)
+    assert build.terminal_revpar_growth == pytest.approx(0.025)
+    assert build.status["terminal_revpar_growth"]["basis"] == "exit_year_adr_growth"
+    assert build.status["terminal_revpar_growth"]["average_basis"] == "published_average"
+
+
+def test_the_long_run_average_applies_only_when_no_exit_year_figure_exists() -> None:
+    inputs = read_topline_inputs({}, {}, set())
+    long_run = LongRunGrowth(value=0.031, source_id="cbre_horizons", label="CBRE Hotel Horizons long-run average RevPAR change 3.1%")
+    g = resolve_growth_by_year(
+        [], inputs.growth, deal_years=calendar_deal_years(CAL[:5]), hold_years=5,
+        class_bucket="all", policy=TenantDataPolicies(),
+    )
+    build = build_topline(_bench(), g, inputs, hold_years=5, t12=None, long_run=long_run)
     assert build.terminal_revpar_growth == pytest.approx(0.031)
     assert build.terminal_revpar_source == "cbre_horizons"
     assert build.status["terminal_revpar_growth"]["basis"] == "long_run_average"

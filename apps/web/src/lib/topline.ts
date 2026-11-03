@@ -334,7 +334,9 @@ export function calendarAnchorNote(
   );
   if (!placed) return null;
   const where = ANCHOR_TEXT[a.source] ?? a.source.replace(/_/g, ' ');
-  const year = a.year1?.label ? ` — Year 1 = ${a.year1.label}` : '';
+  // Review M8 — a status from before deal years names Year 1's calendar year.
+  const y1 = a.year1?.label ?? (a.first_model_year != null ? String(a.first_model_year) : null);
+  const year = y1 ? ` — Year 1 = ${y1}` : '';
   return {
     source: a.source,
     text: `Forecast placed from ${where} (${a.date})${year}${a.assumed ? ' (assumed: no close date)' : ''}`,

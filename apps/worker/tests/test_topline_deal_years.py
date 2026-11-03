@@ -143,3 +143,37 @@ def test_benchmark_first_step_is_the_deal_years_month_weighted_level() -> None:
     assert by[0].occupancy == pytest.approx(0.75 * (3 / 12 + 9 / 12 * (1 - 0.012)), rel=1e-12)
     # Year 2 on: the previous deal year × the deal year's blended growth.
     assert by[1].adr == pytest.approx(by[0].adr * (1 + g.year(2, "adr").value), rel=1e-12)  # type: ignore[operator]
+
+
+def test_a_blend_shows_the_precision_it_applies() -> None:
+    """Review M1 — +3.05% is shown as +3.05%, and the label's arithmetic foots."""
+    adr4 = _g().year(4, "adr")  # Oct 2028–Sep 2029
+    assert adr4.value == pytest.approx(0.0305, abs=1e-12)
+    assert adr4.label.startswith("Forecast · Oct 2028–Sep 2029 = 3 mo × +3.8% CoStar 2028 forecast p.26 + 9 mo × +2.8% CoStar 2029 forecast p.26 = +3.05%")
+    adr5 = _g().year(5, "adr")
+    assert "= +2.575%" in adr5.label
+
+
+def test_a_blend_across_sources_chips_each_part_with_its_own_vendor() -> None:
+    """Review M2 — CBRE ends 2026, CoStar carries 2027: Oct 2026–Sep 2027 reads
+    "CBRE p.4 · CoStar p.26", never CBRE for CoStar's page."""
+    from tests.test_topline_resolvers import cbre_rows
+
+    rows = [*cbre_rows({2025: (0.01, 0.02), 2026: (0.01, 0.02)}), *costar_rows()]
+    adr2 = _g(rows).year(2, "adr")
+    assert adr2.chip == "CBRE p.4 · CoStar p.26"
+
+
+def test_no_close_date_with_an_as_of_keeps_the_calendar_year_placement() -> None:
+    """Review M5 — the assumed (as-of) calendar places forecasts on CALENDAR
+    years as before: Year 1 = the calendar year of the first operating month."""
+    from datetime import date
+
+    from app.services.topline import calendar_anchor
+
+    a = calendar_anchor(None, underwriting_as_of=date(2025, 6, 30))
+    assert a.assumed and [y.label for y in a.years(3)] == ["Jan–Dec 2025", "Jan–Dec 2026", "Jan–Dec 2027"]
+    a = calendar_anchor(None, underwriting_as_of=date(2025, 12, 15))
+    assert a.years(1)[0].label == "Jan–Dec 2026"
+    # A real close keeps deal years.
+    assert calendar_anchor(date(2025, 6, 30), underwriting_as_of=None).years(1)[0].label == "Jul 2025–Jun 2026"

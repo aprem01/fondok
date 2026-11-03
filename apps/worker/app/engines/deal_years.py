@@ -4,9 +4,9 @@ THE one mechanism that places model years on the calendar (it replaces the
 FON-41 rule "Year 1 = the calendar year of the first operating month").
 
 * The first operating month is the month after the close month (the FON-41
-  close + 1 month rule, unchanged): a 2025-09-30 close starts operations on
-  1 Oct 2025; a 2025-12-31 close on 1 Jan 2026. A mid-month close's stub is
-  not a period of its own.
+  close + 1 month rule): a 2025-09-30 close starts operations on 1 Oct 2025;
+  a 2025-12-31 close on 1 Jan 2026. A close ON the 1st starts that month. A
+  mid-month close's stub is not a period of its own.
 * Year ``y`` is the twelve months starting ``y − 1`` years after that month:
   the Kimpton close puts Year 1 on Oct 2025–Sep 2026 and Year 3 on
   Oct 2027–Sep 2028.
@@ -39,8 +39,10 @@ def _add_months(d: date, n: int) -> date:
 
 
 def first_operating_month(close: date) -> date:
-    """First day of the first operating month: the month after the close month."""
-    return _add_months(close, 1)
+    """First day of the first operating month: the month after the close
+    month — or, for a close ON the 1st, that same month (review M4: a
+    2025-10-01 close owns October)."""
+    return close if close.day == 1 else _add_months(close, 1)
 
 
 @dataclass(frozen=True)

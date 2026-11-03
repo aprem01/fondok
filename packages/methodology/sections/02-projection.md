@@ -488,11 +488,15 @@ re-extract") and the overall series is not substituted.
 
 <!-- source: apps/worker/app/engines/deal_years.py (deal_years, first_operating_month), services/topline.py (calendar_anchor, CalendarAnchor), services/engine_runner.py (_apply_topline) -->
 Model years are deal years: twelve months from the first operating month (the month after the close
-month; a mid-month close's stub is not a period of its own). A 30 September 2025 close puts Year 1
-on Oct 2025–Sep 2026; a 31 December 2025 close puts it on Jan–Dec 2026. A benchmark whose own period
+month, or the close month itself for a close on the 1st; a mid-month close's stub is not a period of
+its own). A 30 September 2025 close puts Year 1 on Oct 2025–Sep 2026; a 31 December 2025 close puts
+it on Jan–Dec 2026. Returns follows the same years: a stored acquisition month offset (a
+calendar-year alignment of the cash flows) is not applied to a deal with a close date, and the
+Returns exit table and the assumption say so, naming the stored value. A benchmark whose own period
 is Year 1's calendar year is used as reported; growth applies from the next year. With no close date a document forecast is
-still used when the deal has an underwriting as-of date: it is placed on a calendar assumed from
-that date, and the status names the anchor and asks for the close date. With neither date the
+still used when the deal has an underwriting as-of date: it is placed on calendar years assumed from
+that date (Year 1 = the calendar year of the month after it, as before), and the status names the
+anchor and asks for the close date. With neither date the
 forecast is not placed on a guessed calendar — never the comp report's date, never the run date,
 so a deal does not move with the clock: every year shows {{reason:calendar_unknown}} ("Set the
 acquisition close date to place the market forecast"), ranked above the labelled 4.5% suggestion.
@@ -501,10 +505,11 @@ Analysis market growth reads as your all-years growth, the "Use STR rates" switc
 Year-1 rate that switch wrote is treated as a seed (the benchmark sets the year).
 
 <!-- source: apps/worker/app/services/engine_runner.py (_apply_topline: revpar_growth, _long_run_growth), services/topline.py (_terminal_growth), services/topline_growth.py (carried_forward) -->
-Returns grows the exit-year NOI at your RevPAR growth when you set one. Otherwise it uses the
-source's long-run average (CBRE Hotel Horizons long-run RevPAR change, else its long-run ADR change)
-when one is on file, else the ADR growth of the year the exit NOI covers — the model year after the
-hold (a 5-year hold closing 2025-09-30 sells on Year 6's NOI, Oct 2030–Sep 2031) — with occupancy held at its stabilized
+Returns grows the exit-year NOI at your RevPAR growth when you set one. Otherwise it uses the ADR
+growth of the year the exit NOI covers — the model year after the hold (a 5-year hold closing
+2025-09-30 sells on Year 6's NOI, Oct 2030–Sep 2031), resolved by the same rule as every year past
+a forecast — else the source's long-run average (CBRE Hotel Horizons long-run RevPAR change, else
+its long-run ADR change) when that year has no figure — with occupancy held at its stabilized
 level; a single forecast year's occupancy gain (a recovery year) is never compounded in perpetuity.
 Your own ADR growth for the hold's last year carries to the exit when you set no figure for the
 year after. 0% (badged No forecast) when there is no figure. The status names the year and the

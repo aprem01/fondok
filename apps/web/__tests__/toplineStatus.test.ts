@@ -187,6 +187,10 @@ describe('calendarAnchorNote — which anchor placed the forecast', () => {
     const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'underwriting_as_of', date: '2025-06-30', assumed: true, year1: { year: 1, start: '2025-07-01', end: '2026-06-30', label: 'Jul 2025–Jun 2026', days: 365 }, label: 'x' } }));
     expect(n).toMatchObject({ assumed: true, askCloseDate: true, text: 'Forecast placed from the underwriting as-of date (2025-06-30) — Year 1 = Jul 2025–Jun 2026 (assumed: no close date)' });
   });
+  it('a status from before deal years still names its Year 1 (review M8)', () => {
+    const n = calendarAnchorNote(toplineStatus({ calendar_anchor: { source: 'acquisition_close', date: '2025-09-30', assumed: false, year1: null, first_model_year: 2025, label: 'x' } }));
+    expect(n?.text).toBe('Forecast placed from the acquisition close (2025-09-30) — Year 1 = 2025');
+  });
   it('no anchor → nothing', () => {
     expect(calendarAnchorNote(toplineStatus({ calendar_anchor: { source: null, date: null, assumed: false, year1: null, label: 'x' } }))).toBeNull();
     expect(calendarAnchorNote(toplineStatus({ calendar_anchor: null }))).toBeNull();

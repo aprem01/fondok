@@ -1015,11 +1015,11 @@ def _cbre_series(
 ) -> tuple[list[Figure], list[Figure]]:
     """The market benchmark by model year: Year 1 = the reported level (as the
     scalar path uses), Year 2+ = the CBRE Horizons forecast level for that
-    model year — FON-121: a deal year (twelve months from the close) is the
-    month-weighted average of the calendar years it spans — the segment table
+    model year when that deal year IS a calendar year (FON-121; a deal year
+    spanning two calendar years has no CBRE level, said) — the segment table
     named like the chosen segment when the report carries one, else All
-    Hotels. A year whose calendar years the report does not all carry (or
-    that cannot be placed without a close date) is ``None`` with the reason."""
+    Hotels. A year the report does not carry (or that cannot be placed
+    without a close date) is ``None`` with the reason."""
     tables: dict[str, dict[int, dict[str, FieldRow]]] = {}
     legacy: dict[int, dict[str, FieldRow]] = {}
     for r in rows:
@@ -1067,38 +1067,34 @@ def _cbre_series(
             return Figure.none(
                 "No CBRE Hotel Horizons report on this deal — upload one for the market benchmark's forecast years."
             )
-        parts: list[tuple[int, int, float, FieldRow, str]] = []
-        for cal, months in dy.calendar_months:
-            row = (table.get(cal) or {}).get(attr)
-            v = coerce_float(row.value) if row is not None else None
-            if noun == "occupancy":
-                v = _occ_fraction(v)
-            elif v is not None and v <= 0:
-                v = None
-            if row is None or v is None:
-                return Figure.none(f"No CBRE Horizons {scope_label} {noun} for {cal} on this deal ({dy.label}).")
-            period_row = (table.get(cal) or {}).get("period")
-            period = period_row.value if period_row is not None and isinstance(period_row.value, str) else None
-            kind = "forecast" if (period or "forecast").strip().lower().startswith("forecast") else "actual"
-            parts.append((cal, months, v, row, kind))
-        kind = "forecast" if any(p[4] == "forecast" for p in parts) else "actual"
-        value = sum(m / 12.0 * v for _c, m, v, _r, _k in parts)
-        first = parts[0][3]
-        if len(parts) == 1:
-            cal = parts[0][0]
-            detail = f"CBRE Horizons {scope_label} {cal} {kind} {noun}"
-            basis_label = forecast_label(cal, first.doc_name, first.page, kind=kind)
-        else:
-            mix = " + ".join(f"{m} mo of {c}" for c, m, _v, _r, _k in parts)
-            detail = f"CBRE Horizons {scope_label} {kind} {noun}, {dy.label} = {mix} (month-weighted)"
-            basis_label = forecast_label(parts[-1][0], first.doc_name, first.page, kind=kind) + f" · {dy.label} = {mix}"
+        if len(dy.calendar_months) > 1:
+            # Review M6 — the same treatment as the web Index Analysis: CBRE
+            # publishes calendar years, and a deal year spanning two is not
+            # described by either one's level (its GROWTH is blended on the
+            # Future P&L). No level is invented here.
+            return Figure.none(
+                f"{dy.label} spans two calendar years; CBRE Horizons publishes calendar years, so no "
+                "single CBRE level describes it — its growth is blended on the Future P&L."
+            )
+        cal = dy.calendar_months[0][0]
+        row = (table.get(cal) or {}).get(attr)
+        v = coerce_float(row.value) if row is not None else None
+        if noun == "occupancy":
+            v = _occ_fraction(v)
+        elif v is not None and v <= 0:
+            v = None
+        if row is None or v is None:
+            return Figure.none(f"No CBRE Horizons {scope_label} {noun} for {cal} on this deal.")
+        period_row = (table.get(cal) or {}).get("period")
+        period = period_row.value if period_row is not None and isinstance(period_row.value, str) else None
+        kind = "forecast" if (period or "forecast").strip().lower().startswith("forecast") else "actual"
         return Figure(
-            value=value, source="document", inputs=[FieldRef.of(p[3]) for p in parts],
-            detail=detail, period_label=dy.label,
+            value=v, source="document", inputs=[FieldRef.of(row)],
+            detail=f"CBRE Horizons {scope_label} {cal} {kind} {noun}", period_label=dy.label,
             basis="forecast" if kind == "forecast" else "actual",
-            basis_label=basis_label,
-            period_end=dy.end.isoformat() if kind == "actual" else None,
-            report_date=report_dates.get(first.extraction_id) or first.report_as_of,
+            basis_label=forecast_label(cal, row.doc_name, row.page, kind=kind),
+            period_end=str(cal) if kind == "actual" else None,
+            report_date=report_dates.get(row.extraction_id) or row.report_as_of,
         )
 
     occ = [year_figure(y, "occupancy_pct", level_occ, "occupancy") for y in range(1, hold_years + 1)]

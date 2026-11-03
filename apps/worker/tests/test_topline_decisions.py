@@ -96,7 +96,7 @@ def test_the_average_uses_forecast_tagged_years_only() -> None:
     assert adr28.source == "carried_forward"
     assert adr28.value == pytest.approx(0.03, abs=1e-15)  # (2% + 4%) / 2, the 2024 actual is not averaged
     assert "CBRE Hotel Horizons 2026–2027 forecast average, computed (+3.0%)" in adr28.label
-    assert "the report publishes no average" in adr28.label
+    assert "the report publishes no forecast average" in adr28.label
 
 
 def test_exit_growth_past_the_series_uses_the_forecast_average() -> None:

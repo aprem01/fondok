@@ -453,6 +453,9 @@ export interface ToplineCalendarAnchor {
   assumed: boolean;
   /** FON-121 — Year 1's span ("Oct 2025–Sep 2026"). */
   year1: DealYearSpan | null;
+  /** A topline-v2 status (before FON-121): Year 1's calendar year. Read only
+   *  to word an older run; never derived from. */
+  first_model_year?: number | null;
   label: string;
 }
 
