@@ -2108,7 +2108,7 @@ function ReopeningDateField({
   const hint = fallbackNote
     ?? (shown
       ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
-      : 'Optional · only if the hotel closes or is new, leave blank if it stays open: the ramp and stabilization default count from the first full year after this date; blank = Year 3 after close');
+      : 'Optional · only if the hotel closes or is new, leave blank if it stays open: the hotel earns nothing before this date, and the ramp and stabilization default count from it; blank = Year 3 after close');
   return (
     <div data-testid="reopening-date-field" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <div style={{ ...profileLabel, display: 'flex', alignItems: 'center', gap: 5 }}>

@@ -116,16 +116,22 @@ def deal_year_after(years: list[DealYear]) -> DealYear | None:
     return DealYear(year=last.year + 1, start=_add_months(last.start, 12))
 
 
+def first_full_deal_month_index(years: list[DealYear], when: date) -> int | None:
+    """Months from the first operating month to the first deal month that starts
+    on or after ``when``: negative before Year 1, ``None`` without deal years."""
+    if not years:
+        return None
+    start = years[0].start
+    return (when.year - start.year) * 12 + (when.month - start.month) + (1 if when.day > 1 else 0)
+
+
 def first_full_deal_year_index(years: list[DealYear], when: date) -> int | None:
     """0-based index of the first deal year that starts on or after ``when``,
     on the deal calendar of ``years`` — not clamped: past the listed years it
     keeps counting, and before Year 1 it is negative (deal year 0 = the twelve
     months before Year 1). ``None`` without deal years."""
-    if not years:
-        return None
-    start = years[0].start
-    months = (when.year - start.year) * 12 + (when.month - start.month) + (1 if when.day > 1 else 0)
-    return -(-months // 12)
+    months = first_full_deal_month_index(years, when)
+    return None if months is None else -(-months // 12)
 
 
 __all__ = [
@@ -133,6 +139,7 @@ __all__ = [
     "deal_year_after",
     "deal_year_spans",
     "deal_years",
+    "first_full_deal_month_index",
     "first_full_deal_year_index",
     "first_operating_month",
 ]

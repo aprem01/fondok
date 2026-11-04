@@ -154,7 +154,7 @@ def test_market_benchmark_with_only_segments_and_no_hint_names_them() -> None:
 def test_market_benchmark_unavailable_without_market_rows() -> None:
     m = read_market_benchmark(STR_ROWS)
     assert not m.available
-    assert "ttm_performance.segment" in (m.disabled_reason or "")
+    assert "market reports" in (m.disabled_reason or "") and "ttm_performance" not in (m.disabled_reason or "")
 
 
 def test_market_benchmark_penetration_default_is_computed_from_both_documents() -> None:

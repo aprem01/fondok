@@ -88,7 +88,7 @@ DAYS_PER_YEAR = 365
 #: published forecast average when it states one.
 #: 4 (2026-11-04): an operating hotel ramps in a straight line from today's index;
 #: 85 / 95 / 100 is for a new or reopened hotel, counted from the opening.
-TOPLINE_METHODOLOGY_VERSION = 4
+TOPLINE_METHODOLOGY_VERSION = 5
 LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
 
 #: The occupancy ceiling every projected year is held under — the same 0.95
@@ -110,14 +110,38 @@ _DEFAULT_RAMP_Y2 = 0.95
 _TOPLINE_METHOD = "benchmark_penetration_ramp"
 
 
-def default_ramp_by_year(stabilization_year: int, ramp_start_year: int = 1) -> list[float | None]:
+def _opening_ramp_fraction(year: int, opening_offset: int) -> float | None:
+    """Model year ``year``'s ramp when the steps count from the opening: 85 %
+    for the first 12 months open, 95 % for the next 12, then 100 %, averaged
+    over the year's open months. ``None`` = the year is past the 95 % step; a
+    year with no open month reads as the first step (it sells nothing)."""
+    first = MONTHS_PER_YEAR * (year - 1) + 1
+    open_months = [m - opening_offset for m in range(first, first + MONTHS_PER_YEAR) if m > opening_offset]
+    if not open_months:
+        return _DEFAULT_RAMP_Y1
+    if open_months[0] > 2 * MONTHS_PER_YEAR:
+        return None
+    steps = [
+        _DEFAULT_RAMP_Y1 if m <= MONTHS_PER_YEAR else _DEFAULT_RAMP_Y2 if m <= 2 * MONTHS_PER_YEAR else 1.0
+        for m in open_months
+    ]
+    return round(sum(steps) / len(steps), 10)
+
+
+def default_ramp_by_year(
+    stabilization_year: int, ramp_start_year: int = 1, opening_offset: int | None = None
+) -> list[float | None]:
     """Default ramp fractions for years ``1..S−1`` (index ``y − 1``).
 
     ``[]`` for S ≤ 1, ``[0.85]`` for S = 2, ``[0.85, 0.95]`` for S = 3 and
     ``[0.85, 0.95, None, …]`` for S ≥ 4 — ``None`` = undefined for that year.
-    ``ramp_start_year`` is the model year the 85 % falls in, so the steps count
-    from a reopening; a year before it runs at the first step.
+    ``ramp_start_year`` is the model year the 85 % falls in. With
+    ``opening_offset`` (months from the first operating month to the opening)
+    the steps count from the opening month instead: Sam, 2026-11-04, the ramp's
+    Year 1 is the first 12 months after opening.
     """
+    if opening_offset is not None:
+        return [_opening_ramp_fraction(y, opening_offset) for y in range(1, stabilization_year)]
     out: list[float | None] = []
     for year in range(1, stabilization_year):
         step = year - ramp_start_year
@@ -150,7 +174,7 @@ def penetration_for_year(
         if start is not None:
             return start + (p - start) * year / s, None, start
         # The other metric has an index, this one does not: its default ramp.
-        ramp = default_ramp_by_year(s, topline.ramp_start_year)
+        ramp = default_ramp_by_year(s, topline.ramp_start_year, topline.opening_offset)
         r = ramp[year - 1] if year - 1 < len(ramp) else None
     else:
         r, _state, _note = _ramp_for_year(topline, year, hold_years)
@@ -245,7 +269,7 @@ def _ramp_for_year(
     ramp = (
         topline.ramp_by_year
         if topline.ramp_by_year is not None
-        else default_ramp_by_year(s, topline.ramp_start_year)
+        else default_ramp_by_year(s, topline.ramp_start_year, topline.opening_offset)
     )
     r = ramp[year - 1] if 0 <= year - 1 < len(ramp) else None
     if r is None:
@@ -267,10 +291,13 @@ def _ramp_for_year(
         return None, state, note
     if after_hold:
         return r, "stabilization_after_hold", after_hold_note.format(ramp=f"{r:g}")
-    if topline.ramp_by_year is None and year < topline.ramp_start_year:
+    closed = min(MONTHS_PER_YEAR, max(0, (topline.opening_offset or 0) - MONTHS_PER_YEAR * (year - 1)))
+    if closed == MONTHS_PER_YEAR:
+        return r, "ramped", f"Year {year} is before the opening: the hotel is closed and earns nothing."
+    if closed:
         return r, "ramped", (
-            f"Year {year} is before the first full year after opening: it runs at the first ramp "
-            "step. Closed months come from the renovation displacement schedule."
+            f"Year {year} is closed for {closed} of 12 months until the opening; the ramp "
+            "applies to the months open."
         )
     return r, "ramped", None
 
@@ -513,6 +540,32 @@ def renovation_displacement_factors(
             occupancy_factor=min(1.0, max(0.0, occupancy_factor)),
             adr_factor=min(1.0, max(0.0, adr_factor)),
         )
+    return out
+
+
+def closed_month_open_shares(
+    closed_months: int,
+    schedule: list[RenovationDisplacementPeriod],
+    hold_years: int,
+) -> dict[int, float]:
+    """Sam, 2026-11-04 — a hotel earns nothing before it opens. The per-model-year
+    multiplier on occupancy for the first ``closed_months`` months from the first
+    operating month: months open ÷ 12, listing only the years it moves. A renovation
+    period inside the closed months is not counted twice: the multiplier is what the
+    closure adds to the schedule's own occupancy factor."""
+    if closed_months <= 0:
+        return {}
+    closure = RenovationDisplacementPeriod(
+        start_month=1, end_month=min(closed_months, MONTHS_PER_YEAR * hold_years), rooms_offline_pct=1.0
+    )
+    alone = renovation_displacement_factors(schedule, hold_years)
+    combined = renovation_displacement_factors([*schedule, closure], hold_years)
+    out: dict[int, float] = {}
+    for y, row in combined.items():
+        before = alone[y].occupancy_factor if y in alone else 1.0
+        share = row.occupancy_factor / before if before > 0.0 else 1.0
+        if share < 1.0:
+            out[y] = share
     return out
 
 
@@ -1179,6 +1232,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             y2_occ_recovery_factor = 1.0
             effective_revpar_index = 1.0
 
+        open_shares = closed_month_open_shares(payload.closed_months, schedule, payload.hold_years)
+
         for y in range(1, payload.hold_years + 1):
             if y == 1:
                 if pip_v2 is not None:
@@ -1258,6 +1313,13 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     adr = base_adr_y
                 if not use_resort_fee_buildup:
                     resort_fees = resort_fees * (1.0 + payload.resort_fees_growth)
+
+            # Sam, 2026-11-04 — closed until the opening: the year sells only its
+            # open months. Later years compound from the undisplaced base.
+            open_share = open_shares.get(y, 1.0)
+            if open_share < 1.0:
+                occ = occ * open_share
+                occ_disp_f = occ_disp_f * open_share
 
             occupied = rooms_available * occ
 
@@ -1348,7 +1410,14 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             fb_por_y = payload.fb_revenue_per_occupied_room * fb_price_index
             fb_revenue = occupied * fb_por_y
             other_revenue = rooms_revenue * payload.other_revenue_pct_of_rooms
-            total_revenue = rooms_revenue + fb_revenue + resort_fees + other_revenue
+            # The flat anchor is prorated too; the build-up already moved with
+            # occupied rooms. ``resort_fees`` itself keeps compounding unprorated.
+            resort_fees_y = (
+                resort_fees * open_share
+                if open_share < 1.0 and not use_resort_fee_buildup
+                else resort_fees
+            )
+            total_revenue = rooms_revenue + fb_revenue + resort_fees_y + other_revenue
 
             # ─── Provenance for this year's canonical revenue lines ───
             idx = y - 1
@@ -1647,7 +1716,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     ),
                     ValueInput(
                         name="resort_fees",
-                        value=resort_fees,
+                        value=resort_fees_y,
                         traces_to=f"years[{idx}].resort_fees",
                     ),
                     ValueInput(
@@ -1715,6 +1784,18 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 prov[f"years[{idx}].occupancy"] = tr.model_copy(
                     update={"note": f"{tr.note} {held_note}" if tr.note else held_note}
                 )
+            if open_share < 1.0:
+                occ_trace = prov[f"years[{idx}].occupancy"]
+                occ_trace.formula = f"{occ_trace.formula} × open_share"
+                occ_trace.inputs.append(ValueInput(name="open_share", value=open_share))
+                occ_trace.note = (
+                    f"{occ_trace.note} Closed until the opening: {open_share * MONTHS_PER_YEAR:g} of 12 months open."
+                )
+                if not use_resort_fee_buildup and f"years[{idx}].resort_fees" in prov:
+                    fee_trace = prov[f"years[{idx}].resort_fees"]
+                    fee_trace.value = resort_fees_y
+                    fee_trace.formula = f"{fee_trace.formula} × open_share"
+                    fee_trace.inputs.append(ValueInput(name="open_share", value=open_share))
             prov[f"years[{idx}].adr"] = _rate_trace(
                 metric="adr",
                 year=y,
@@ -1797,7 +1878,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                     revpar=revpar,
                     rooms_revenue=rooms_revenue,
                     fb_revenue=fb_revenue,
-                    resort_fees=resort_fees,
+                    resort_fees=resort_fees_y,
                     other_revenue=other_revenue,
                     total_revenue=total_revenue,
                     segment_breakdown=segment_breakdown,
@@ -1850,6 +1931,7 @@ __all__ = [
     "TOPLINE_METHODOLOGY_VERSION",
     "RevenueEngine",
     "default_ramp_by_year",
+    "closed_month_open_shares",
     "exit_noi_deal_year",
     "projection_deal_years",
     "renovation_displacement_factors",

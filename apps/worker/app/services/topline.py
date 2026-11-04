@@ -35,7 +35,7 @@ from typing import Any
 from fondok_schemas.reasons import ReasonCode
 from fondok_schemas.underwriting import BenchmarkYear, GrowthYear, ToplineDrivers, ToplineReference
 
-from ..engines.deal_years import DealYear, deal_years, first_operating_month
+from ..engines.deal_years import DealYear, deal_years, first_full_deal_month_index, first_operating_month
 from ..engines.revenue import (
     DEFAULT_PENETRATION_INDEX,
     OCCUPANCY_CAP,
@@ -138,21 +138,32 @@ def ramp_mode_for(base: Mapping[str, Any]) -> str:
     return RAMP_MODE_NEW if is_development_like(base.get("deal_type")) else RAMP_MODE_OPERATING
 
 
-def _pre_opening_closed(base: Mapping[str, Any], pre_opening_years: int) -> bool:
-    """Do the live displacement inputs take rooms offline in every month of the
-    years before opening? A PIP closure schedule counts as its own answer."""
+def opening_offset_for(base: Mapping[str, Any]) -> int | None:
+    """Months from the first operating month to the first full month open, for a
+    new or reopened hotel whose date places on the deal calendar. A month the hotel
+    opens partway through does not count, the same rule as the first full year."""
+    opening = parse_iso_date(base.get("reopening_date"))
+    if opening is None or ramp_mode_for(base) != RAMP_MODE_NEW:
+        return None
+    close = base.get("acquisition_close_date")
+    years = deal_years(close if isinstance(close, date) else (str(close) if close not in (None, "") else None), 1)
+    return first_full_deal_month_index(years, opening)
+
+
+def closed_months_for(base: Mapping[str, Any]) -> int:
+    """Sam, 2026-11-04: the months from close the hotel is closed and earns nothing."""
+    return max(0, opening_offset_for(base) or 0)
+
+
+def _displacement_on_top(base: Mapping[str, Any]) -> bool:
     from .engine_runner import _build_pip_displacement, _coerce_renovation_schedule
 
+    if _coerce_renovation_schedule(dict(base)):
+        return False  # the schedule switches both off, and is not counted twice
     pip = _build_pip_displacement(dict(base))
     if pip is not None and pip.closure_strategy != "none":
         return True
-    months = {
-        m
-        for p in _coerce_renovation_schedule(dict(base))
-        if p.rooms_offline_pct > 0
-        for m in range(p.start_month, p.end_month + 1)
-    }
-    return all(m in months for m in range(1, MONTHS_IN_YEAR * pre_opening_years + 1))
+    return any(float(base.get(k) or 0.0) > 0.0 for k in ("y1_occupancy_displacement_pct", "y1_adr_displacement_pct"))
 
 
 @dataclass(frozen=True)
@@ -176,8 +187,9 @@ class ToplineInputs:
     ramp_flag: str | None = None
     #: A new hotel with no opening date: the page asks for one.
     opening_date_missing: bool = False
-    #: The displacement inputs close the hotel for every month before opening.
-    pre_opening_closed: bool = False
+    opening_offset: int | None = None
+    #: A flat Year-1 or PIP displacement is set too, and applies to the open months.
+    displacement_on_top: bool = False
 
 
 def coerce_ramp_list(raw: Any) -> tuple[list[float | None], list[str]]:
@@ -442,7 +454,8 @@ def read_topline_inputs(
         ramp_start_year=default_s - 2 if placed else 1,
         ramp_flag=ramp_flag,
         opening_date_missing=ramp_mode == RAMP_MODE_NEW and opening is None,
-        pre_opening_closed=_pre_opening_closed(base, default_s - 3 if placed else 0),
+        opening_offset=opening_offset_for(base) if placed else None,
+        displacement_on_top=_displacement_on_top(base),
     )
 
 
@@ -648,12 +661,10 @@ def _ramp_flag(
     elif inputs.opening_date_missing:
         flags.append("No opening date yet, so the stabilized year counts from the close. Enter the opening date.")
     new_hotel = inputs.ramp_mode == RAMP_MODE_NEW
-    if ramp_runs and new_hotel and drivers.ramp_start_year > 1 and not inputs.pre_opening_closed:
-        last = drivers.ramp_start_year - 1
-        years = "Year 1 is" if last == 1 else f"Years 1–{last} are"
+    if (inputs.opening_offset or 0) > 0 and inputs.displacement_on_top:
         flags.append(
-            f"{years} before the first full year after opening, still earning revenue at the "
-            "first ramp step. Enter the closed months in the displacement schedule."
+            "A Year-1 or PIP displacement is also set and applies to the months open, on top of the "
+            "closure until the opening date. Remove it if it describes the same closure."
         )
     per_metric = (
         ("occupancy", "occupancy", drivers.start_index_occ, drivers.penetration_occ_by_year, drivers.penetration_occ_source),
@@ -832,6 +843,7 @@ def build_topline(
         ramp_by_year=list(inputs.ramp) if inputs.ramp is not None else None,
         ramp_mode=inputs.ramp_mode,  # type: ignore[arg-type]
         ramp_start_year=inputs.ramp_start_year,
+        opening_offset=inputs.opening_offset,
         start_index_occ=start["occupancy"],
         start_index_adr=start["adr"],
         penetration_occ_by_year=list(inputs.penetration_occ_by_year)[:hold],
@@ -1075,7 +1087,7 @@ def _status(
         ramp_source = "straight_line"
         ramp_state = "defined"
     else:
-        ramp = default_ramp_by_year(s, drivers.ramp_start_year)
+        ramp = default_ramp_by_year(s, drivers.ramp_start_year, drivers.opening_offset)
         ramp_source = "default"
         ramp_state = "undefined_for_stabilization_year" if None in ramp else "defined"
     if ramp_source != "analyst_override" and _by_year_runs_every_ramp_year(drivers, hold):
@@ -1101,6 +1113,7 @@ def _status(
         "growth_state": state,
         "growth_by_year": growth_rows,
         "stabilization_year": s,
+        "closed_months": max(0, drivers.opening_offset or 0),
         "stabilization_source": inputs.stabilization_source,
         "penetration_occ": drivers.penetration_occ,
         "penetration_adr": drivers.penetration_adr,
@@ -1176,6 +1189,7 @@ def _growth_only_status(
     return {
         "methodology_version": TOPLINE_METHODOLOGY_VERSION,
         "topline_mode": "growth_only",
+        "closed_months": max(0, inputs.opening_offset or 0),
         "benchmark": None,
         "benchmark_level": "none",
         "benchmark_label": GROWTH_ONLY_BENCHMARK_LABEL,

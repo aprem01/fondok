@@ -14,6 +14,7 @@ Implements a simplified USALI flow:
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -127,6 +128,7 @@ _LINE_OUTPUT_PATH: dict[str, str] = {
     "property_operations": "undistributed.property_operations",
     "utilities": "undistributed.utilities",
 }
+_YEAR_PATH = re.compile(r"^years\[(\d+)\]\.")
 #: Days in the rooms-available year — the revenue engine's own convention
 #: (``engines/revenue.py`` ``DAYS_PER_YEAR``).
 _DAYS_PER_YEAR = 365
@@ -172,6 +174,11 @@ class LineMethodInfo(BaseModel):
 
 class ExpenseEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    # Sam, 2026-11-04 — model year → months open ÷ 12 for a year closed until the
+    # opening. ``revenue`` is then the hotel as if open; every line of those years
+    # is prorated, so the closed months carry no operating costs. Empty = no closure.
+    open_shares_by_year: dict[int, float] = Field(default_factory=dict)
 
     deal_id: UUID
     revenue: FBRevenueOutput
@@ -369,6 +376,17 @@ class SynthesizedLine(BaseModel):
     basis: Literal["rooms_revenue", "fb_revenue", "other_revenue", "total_revenue"]
     source: Literal["seed", "ratio_override"]
     reason: str
+
+
+def _prorated(model: BaseModel, share: float) -> BaseModel:
+    """A copy of an expense-year record with every dollar field × ``share``."""
+    update: dict[str, object] = {}
+    for name in type(model).model_fields:
+        v = getattr(model, name)
+        if name == "year" or v is None:
+            continue
+        update[name] = _prorated(v, share) if isinstance(v, BaseModel) else v * share
+    return model.model_copy(update=update)
 
 
 class ExpenseEngineOutput(BaseModel):
@@ -1207,6 +1225,13 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         # land high and out-year expense growth eats into a thin margin)
         # would otherwise raise a negative number to a fractional power and
         # return a complex result Pydantic refuses to coerce to float.
+        open_shares = payload.open_shares_by_year
+        if open_shares:
+            years = [
+                _prorated(row, open_shares[row.year]) if row.year in open_shares else row  # type: ignore[misc]
+                for row in years
+            ]
+
         if len(years) >= 2 and years[0].noi > 0 and years[-1].noi > 0:
             n = len(years) - 1
             noi_cagr = (years[-1].noi / years[0].noi) ** (1 / n) - 1
@@ -1314,7 +1339,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 SynthesizedLine(
                     line=line,
                     label=label,
-                    value=value,
+                    value=value * open_shares.get(1, 1.0),
                     ratio=ratio,
                     ratio_key=ratio_key,
                     basis=basis,  # type: ignore[arg-type]
@@ -1339,6 +1364,18 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     note=reason,
                 ),
             )
+
+        if open_shares:
+            for path, trace in prov.items():
+                m = _YEAR_PATH.match(path)
+                share = open_shares.get(int(m.group(1)) + 1) if m else None
+                if share is None:
+                    continue
+                if trace.value is not None:
+                    trace.value = trace.value * share
+                trace.formula = f"({trace.formula}) × open_share"
+                trace.inputs.append(ValueInput(name="open_share", value=share))
+                trace.note = f"{trace.note or ''} Closed until the opening: prorated by months open.".strip()
 
         return ExpenseEngineOutput(
             deal_id=payload.deal_id,

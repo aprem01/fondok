@@ -150,17 +150,20 @@ def test_stabilization_after_the_hold_never_reaches_the_target() -> None:
     assert "never reaches" in (rec[5].reason or "")
 
 
-def test_a_reopened_hotel_counts_85_95_100_from_the_reopening() -> None:
-    # Close 2025-12-31, reopening 2027-03-01: the first full deal year starts
-    # 2027-12-31, Year 3 → stabilized in Year 5.
-    build, rec, _ = _run(STR, {"reopening_date": "2027-03-01"})
+def test_a_reopened_hotel_counts_85_95_100_from_the_opening_month() -> None:
+    # Close 2025-12-31 (first month Jan 2026), opening 2027-03-01: 14 months closed.
+    # Year 2 has 10 months at 85 %; Year 3 two at 85 %, ten at 95 %; Year 4 two at
+    # 95 %, ten at 100 %. Year 5 is the stabilized year.
+    build, rec, years = _run(STR, {"reopening_date": "2027-03-01"})
     assert build.drivers.stabilization_year == 5
-    assert build.drivers.ramp_start_year == 3
-    assert [round(rec[y].ramp_pct, 2) if rec[y].ramp_pct else None for y in range(1, 6)] == [0.85, 0.85, 0.85, 0.95, None]
-    assert "before the first full year after opening" in (rec[1].reason or "")
+    assert build.drivers.opening_offset == 14
+    assert [rec[y].ramp_pct and round(rec[y].ramp_pct, 4) for y in range(1, 6)] == [0.85, 0.85, 0.9333, 0.9917, None]
+    assert "closed and earns nothing" in (rec[1].reason or "")
+    assert "closed for 2 of 12 months" in (rec[2].reason or "")
     assert rec[1].mpi_start_index is None
     assert build.status["ramp_mode"] == "new_or_reopened"
-    assert "still earning revenue" in build.status["ramp_flag"]
+    assert build.status["closed_months"] == 14
+    assert build.status["ramp_flag"] is None
     assert build.status["opening_date_missing"] is False
 
 
@@ -174,21 +177,6 @@ def test_a_development_with_no_opening_date_counts_from_the_close_and_flags_it()
 def test_a_development_with_a_date_uses_it() -> None:
     build, _, _ = _run(STR, {"deal_type": "development", "reopening_date": "2027-03-01"})
     assert build.drivers.ramp_start_year == 3 and build.status["opening_date_missing"] is False
-
-
-def _closure(start: int, end: int) -> dict:
-    return {"start_month": start, "end_month": end, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}
-
-
-def test_a_schedule_covering_the_pre_opening_years_clears_the_flag() -> None:
-    build, _, _ = _run(STR, {"reopening_date": "2027-03-01", "renovation_displacement_schedule": [_closure(1, 24)]})
-    assert build.status["ramp_flag"] is None
-
-
-@pytest.mark.parametrize("schedule", [[_closure(1, 3)], [{"start_month": 1}]])
-def test_a_partial_or_invalid_schedule_keeps_the_flag(schedule: list) -> None:
-    build, _, _ = _run(STR, {"reopening_date": "2027-03-01", "renovation_displacement_schedule": schedule})
-    assert "still earning revenue" in build.status["ramp_flag"]
 
 
 def test_a_typed_year_1_rate_does_not_claim_a_missing_t12() -> None:

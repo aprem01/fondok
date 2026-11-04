@@ -698,6 +698,7 @@ export const ToplineDrivers = z.object({
   ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
   ramp_mode: z.enum(['operating', 'new_or_reopened']).default('new_or_reopened'),
   ramp_start_year: z.number().int().default(1),
+  opening_offset: z.number().int().nullable().optional(),
   start_index_occ: z.number().nullable().optional(),
   start_index_adr: z.number().nullable().optional(),
   penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),

@@ -93,10 +93,13 @@ step the workspace is on. This two-step switch is temporary.
    straight line from today's index to the target at the stabilization year: no repositioning jump is
    assumed without a business plan. Today's index is the STR-published MPI / ARI, else the T-12 ÷ the
    benchmark, labelled derived. A new or reopened hotel (Deal Type Development or Adaptive Reuse, or a
-   reopening date) runs 85% / 95% / 100% of the target, counted from the first full deal year after
-   opening; a reopening whose ramp finished before the projection starts is an operating hotel. Years
-   before the first full year after opening still earn revenue at the first step, flagged, until you
-   enter the closed months in the displacement schedule. A re-flag with no closure should leave the
+   reopening date) runs 85% / 95% / 100% of the target: 85% for the first 12 months after opening, 95% for the
+   next 12, then 100%, with a deal year that spans two steps averaging its open months. A reopening whose ramp
+   finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
+   before it earn nothing and carry no operating costs (pre-opening costs are your input, in Soft Costs), and the
+   opening year is prorated by whole months open, starting with the first full month. The sale is still priced
+   on a full year's income if the hotel opens in the sale year; a hotel still closed at the end of the hold has no
+   exit value and the run stops and says so. Debt service still runs while the hotel is closed. A re-flag with no closure should leave the
    reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
    stabilization year the years in between run at 100% until you enter them — no ramp is invented.
 6. **The T-12** — Shown beside the projection as a reference row, not the basis. (Occupancy and ADR ramp over the same years.)
@@ -459,9 +462,10 @@ points, default 100), ramp r and a per-year penetration V you may set:
 penetration = V when set; for an operating hotel with today's index I and y \< S,
 I + (P − I) × y ÷ S; P × r(y) when y \< S and the ramp defines the year; P otherwise.
 Occupancy = min(95%, B occupancy × penetration ÷ 100); ADR = B ADR × penetration ÷ 100. Renovation
-displacement multiplies on top, unchanged. The r(y) default: 85% / 95% for S = 3, 85% for S = 2;
-undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4, each step counted from the first full deal year after a
-reopening date (an earlier year runs at the first step). It applies to a new or reopened hotel, and to an
+displacement multiplies on top, unchanged, and so does the share of the year open: months open ÷ 12 before an
+opening date, with no month counted twice against a renovation period. The r(y) default: 85% / 95% for S = 3, 85% for S = 2;
+undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4, with a reopening date each step is 12 months counted from
+the first full month open, and a deal year spanning two steps takes the average over its open months. It applies to a new or reopened hotel, and to an
 operating hotel with no index for that metric, flagged; your own ramp always wins. P defaults to 100 against a
 comp set and to the derived index against a submarket or market average, including for a reopened hotel with a
 T-12; a hotel with no T-12 keeps 100, flagged.

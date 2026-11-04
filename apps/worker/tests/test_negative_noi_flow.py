@@ -177,7 +177,8 @@ def test_non_positive_terminal_noi_stops_returns_with_the_new_sentence() -> None
     assert text_.startswith("Returns: terminal_noi = ")
     assert (
         "Exit-year NOI is not positive, so no exit value can be computed. "
-        "Check the hold period, growth or the stabilized exit basis."
+        "Check the hold period, growth, the stabilized exit basis, or an opening "
+        "date after the end of the hold."
     ) in text_
     assert "Sensitivity, Partnership and Cash Flow were not run" in text_
 

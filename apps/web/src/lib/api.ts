@@ -514,6 +514,7 @@ export interface ToplineStatus {
   ramp_flag?: string | null;
   /** A new hotel with no opening date: the page asks for one. */
   opening_date_missing?: boolean;
+  closed_months?: number;
   start_index_occ?: number | null;
   start_index_adr?: number | null;
   explicit_metrics: ('occupancy' | 'adr')[];

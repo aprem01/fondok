@@ -567,6 +567,11 @@ class ReturnsEngineInputExt(BaseModel):
     loan_balance_at_exit: Annotated[float, Field(ge=0)] | None = None
     equity: Annotated[float, Field(gt=0)]
     noi_by_year: list[float] = Field(default_factory=list)
+    # Sam, 2026-11-04 — the NOI a sale is priced on for a hotel closed until its
+    # opening: a partly open year reads as the open hotel, because a buyer caps a
+    # full year's income. A year still fully closed stays at its own NOI. Empty =
+    # ``noi_by_year``.
+    exit_noi_by_year: list[float] = Field(default_factory=list)
     # Wave 4 W4.4 — full debt-stack DS series. When set, the engine
     # uses these year-by-year debt service totals (senior + mezz + pref
     # equity aggregate) instead of the scalar ``annual_debt_service``.
@@ -775,6 +780,8 @@ class _ExitContext:
     # The signed net refinance cash flow to equity: + cash-out, − the equity
     # contribution the refinance needs.
     refi_net: float = 0.0
+    #: The series a sale is priced on; empty = ``noi_series``.
+    exit_noi_series: tuple[float, ...] = ()
 
 
 @dataclass
@@ -1130,7 +1137,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 terminal_src_idx,
                 terminal_formula,
             ) = _resolve_terminal_noi(
-                noi_series=noi_series,
+                noi_series=list(ctx.exit_noi_series) or noi_series,
                 hold=hold,
                 growth=assumptions.revpar_growth,
                 basis=payload.exit_noi_basis,
@@ -1150,7 +1157,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 terminal_src_idx,
                 terminal_formula,
             ) = _resolve_terminal_noi(
-                noi_series=noi_series[:k],
+                noi_series=(list(ctx.exit_noi_series) or noi_series)[:k],
                 hold=k,
                 growth=assumptions.revpar_growth,
                 basis=payload.exit_noi_basis,
@@ -1159,7 +1166,7 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
                 override=None,
                 # Open decision 1 — the projected Year k+1 Cash NOI where the
                 # projection has it; the final year is grown, as the headline.
-                next_year_noi=noi_series[k] if k < len(noi_series) else None,
+                next_year_noi=(list(ctx.exit_noi_series) or noi_series)[k] if k < len(noi_series) else None,
             )
         case.basis = exit_noi_basis
         case.label = exit_noi_period_label
@@ -1430,10 +1437,14 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             refi_payoff_month = max(1, min(hold * 12, round(_rt * 12)))
 
         full_term = hold * 12
+        exit_noi_series = tuple(payload.exit_noi_by_year[:hold])
+        if exit_noi_series and len(exit_noi_series) < hold:
+            exit_noi_series = (*exit_noi_series, *noi_series[len(exit_noi_series):hold])
         ctx = _ExitContext(
             hold=hold,
             full_term=full_term,
             noi_series=noi_series,
+            exit_noi_series=exit_noi_series,
             op_cfad=op_cfad,
             refi_active=refi_active,
             refi_month=refi_month,

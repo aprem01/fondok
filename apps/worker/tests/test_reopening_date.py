@@ -423,23 +423,12 @@ async def test_full_run_anchors_on_the_reopening_and_debt_follows() -> None:
         noi[stab1["stabilized_year_index"]] / debt1["loan_amount"]
     )
 
-    # Reporting-only: every return is bit-identical (same guard as
-    # test_stabilization_year_does_not_move_returns).
-    for key in ("gross_sale_price", "levered_irr", "equity_multiple", "terminal_noi"):
+    # Sam, 2026-11-04 — the months before the opening earn nothing, so the cash
+    # flows move; the sale in Year 5, on a full year's income, does not.
+    for key in ("gross_sale_price", "terminal_noi"):
         assert reflag["returns"]["outputs"][key] == baseline["returns"]["outputs"][key], key
-    for engine in ("revenue", "fb", "expense", "capital", "returns"):
-        before = _comparable(baseline[engine]["outputs"])
-        after = _comparable(reflag[engine]["outputs"])
-        before.pop("stabilization", None)
-        after.pop("stabilization", None)
-        if engine == "revenue":
-            # Decision 1b (2026-11-03) — the later stabilization changes which
-            # years say "held after stabilization" (no growth figure here, so
-            # no number moves); the provenance records differ, the figures not.
-            for side in (before, after):
-                side.pop("topline_by_year", None)
-                side.pop("provenance", None)
-        assert before == after, engine
+    assert reflag["returns"]["outputs"]["levered_irr"] < baseline["returns"]["outputs"]["levered_irr"]
+    assert reflag["revenue"]["outputs"]["years"][0]["total_revenue"] == 0.0
 
 
 @pytest.mark.asyncio

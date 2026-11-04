@@ -306,7 +306,8 @@ _VALIDATION_HINTS: dict[tuple[str, str], str] = {
     # NOI is the one real stop, because the reversion is NOI ÷ exit cap.
     ("returns", "terminal_noi"): (
         "Exit-year NOI is not positive, so no exit value can be computed. "
-        "Check the hold period, growth or the stabilized exit basis."
+        "Check the hold period, growth, the stabilized exit basis, or an opening "
+        "date after the end of the hold."
     ),
 }
 
@@ -3757,6 +3758,12 @@ def _displacement_status(
             _DISPLACEMENT_BUDGET_IS_CAPITAL if budget > 0.0 else ""
         )
 
+    closed_months = _closed_months_for(base)
+    if closed_months > 0:
+        detail = (
+            f"Closed until the opening date: the first {closed_months} months earn nothing and carry "
+            f"no operating costs. {detail}"
+        )
     return {
         "active": active,
         "state": state,
@@ -8885,6 +8892,53 @@ def _analyst_year_one_dollars(base: Mapping[str, Any], key: str) -> float | None
     return value if value is not None and value >= 0 else None
 
 
+def _closed_months_for(base: dict[str, Any]) -> int:
+    from .topline import closed_months_for
+
+    return closed_months_for(base)
+
+
+def _expense_revenue_basis(
+    deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
+) -> tuple[dict[str, BaseModel], dict[int, float]]:
+    """What the expense engine prices costs on, and the years it then prorates.
+
+    Sam, 2026-11-04: the closed months before an opening carry no operating costs
+    (pre-opening costs are the analyst's input). A closed Year 1 has no revenue to
+    seed a cost ratio, so costs are priced on the hotel as if open and each year
+    is prorated by its months open. No closure → the accumulated engines as they are.
+    """
+    from ..engines.revenue import closed_month_open_shares
+    from .topline import closed_months_for
+
+    if closed_months_for(base) <= 0:
+        return accumulated, {}
+    payload = _build_input_for("revenue", deal_id, base, accumulated)
+    shares = closed_month_open_shares(
+        payload.closed_months, list(payload.renovation_displacement_schedule or []), payload.hold_years
+    )
+    revenue = RevenueEngine().run(payload.model_copy(update={"closed_months": 0}))
+    fb = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
+    return {**accumulated, "revenue": revenue, "fb": fb}, shares
+
+
+def _exit_noi_by_year(
+    deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel], noi_by_year: list[float]
+) -> list[float]:
+    """The NOI a sale is priced on when the hotel is closed until its opening
+    (``ReturnsEngineInputExt.exit_noi_by_year``); ``[]`` with no closure."""
+    _, shares = _expense_revenue_basis(deal_id, base, accumulated)
+    if not shares:
+        return []
+    as_if_open = ExpenseEngine().run(
+        _build_input_for("expense", deal_id, base, accumulated).model_copy(update={"open_shares_by_year": {}})
+    )
+    return [
+        as_if_open.years[i].noi if shares.get(i + 1, 1.0) > 0.0 else noi
+        for i, noi in enumerate(noi_by_year)
+    ]
+
+
 def _build_input_for(
     engine_name: str,
     deal_id: str,
@@ -9010,6 +9064,9 @@ def _build_input_for(
             # (empty unless the analyst entered one; wins over the two levers
             # above inside the engine).
             renovation_displacement_schedule=_coerce_renovation_schedule(base),
+            # Sam, 2026-11-04 — closed until the opening date: those months earn
+            # nothing.
+            closed_months=_closed_months_for(base),
             # FON-41 #2 — the projection calendar anchor. The SAME date the
             # timeline engine is built on (below), so "Year 1 — 2025" on the
             # statement and "Hotel Purchase 2025-09-30" on the timeline can
@@ -9032,9 +9089,11 @@ def _build_input_for(
         )
 
     if engine_name == "expense":
+        expense_basis, open_shares = _expense_revenue_basis(deal_id, base, accumulated)
         return ExpenseEngineInput(
             deal_id=deal_uuid,
-            revenue=accumulated["fb"],
+            revenue=expense_basis["fb"],
+            open_shares_by_year=open_shares,
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],
@@ -9081,8 +9140,8 @@ def _build_input_for(
             # same year index); these are the inputs it cannot derive itself.
             # ``stabilized_occupancy`` is EXACTLY what the debt engine is passed
             # for its stabilized DSCR / debt yield, so both resolve one year.
-            occupancy_by_year=_occupancy_by_year(accumulated),
-            adr_by_year=_adr_by_year(accumulated),
+            occupancy_by_year=_occupancy_by_year(expense_basis),
+            adr_by_year=_adr_by_year(expense_basis),
             stabilized_occupancy=_stabilized_occupancy_assumption(base),
             stabilization_year=_coerce_stabilization_year(
                 base.get(STABILIZATION_YEAR_KEY)
@@ -9319,6 +9378,11 @@ def _build_input_for(
             exit_cap_comp_lookback_anchor_source=_lookback.get("source"),
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
+            exit_noi_by_year=(
+                _exit_noi_by_year(deal_id, base, accumulated, noi_by_year)
+                if noi_from_expense_engine
+                else []
+            ),
             noi_from_expense_engine=noi_from_expense_engine,
             exit_noi_basis=exit_noi_basis,
             stabilized_year=stabilized_year,

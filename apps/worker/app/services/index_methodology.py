@@ -636,8 +636,7 @@ def read_market_benchmark(
             )
         else:
             reason = (
-                "No market or chain-scale occupancy / ADR in the uploaded CoStar / STR market reports "
-                "(ttm_performance.segment.* or pnl_benchmark.market.*)."
+                "No market or chain-scale occupancy / ADR in the uploaded CoStar / STR market reports."
             )
         return MethodReading(
             method=METHOD_MARKET_BENCHMARK, label=label, available=False, disabled_reason=reason,

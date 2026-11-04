@@ -594,6 +594,10 @@ class ToplineDrivers(BaseModel):
     #: ``new_or_reopened``: the model year the 85 % step falls in (the first
     #: full deal year after opening; ≤ 0 when that was before the close).
     ramp_start_year: int = 1
+    #: ``new_or_reopened`` with a placed date: months from the first operating
+    #: month to the first full month open (negative when that was before the
+    #: close). The ramp's steps count from it. ``None`` = no placed date.
+    opening_offset: int | None = None
     #: ``operating``: today's index ``I`` per metric, the start of the straight
     #: line. ``None`` = not known, so that metric takes the default ramp.
     start_index_occ: PenetrationPoints | None = None
@@ -705,6 +709,9 @@ class RevenueEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     deal_id: UUID
+    #: Sam, 2026-11-04 — months from the first operating month the hotel is
+    #: closed until its opening date. They earn nothing. 0 = open from close.
+    closed_months: Annotated[int, Field(ge=0)] = 0
     keys: Annotated[int, Field(gt=0)]
     starting_occupancy: Annotated[float, Field(ge=0.0, le=1.0)]
     starting_adr: Annotated[float, Field(gt=0)]

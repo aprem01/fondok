@@ -937,7 +937,7 @@ a document-sourced figure, editable on Financing and the single source for the S
 ::: badge {source=deal_row name="Deal Row"}
 Sourced from the deals table (entered on the create-deal wizard or PATCHed via the API). Project
 name, city, brand, keys, service (the FON-115 property type — OM-only, fill-only, never guessed; see
-services/property_type.py), the reopening / re-flag date — and the **purchase price**: the wizard's
+services/property_type.py), the reopening / opening date — and the **purchase price**: the wizard's
 "Purchase / Indicative Price" field is parsed to whole dollars ("$36.4M", "36,400,000"; a range such
 as "$120-140M" stores its *midpoint* and is labelled "range midpoint" on the Review step) and saved
 as `purchase_price`, which seeds the model's purchase price with this badge rather than "Seed". A

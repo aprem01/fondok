@@ -31,7 +31,7 @@ export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
 }
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
-export const TOPLINE_METHODOLOGY_VERSION = 4;
+export const TOPLINE_METHODOLOGY_VERSION = 5;
 
 /** Field-override keys the topline reads (worker `services/topline.py`). */
 export const TOPLINE_KEYS = {
@@ -87,7 +87,7 @@ export interface ToplineYearRecord {
 export type ClauseTone = 'ok' | 'warn';
 
 export interface ToplineClause {
-  id: 'benchmark' | 'year1' | 'growth' | 'stabilization' | 'ramp';
+  id: 'benchmark' | 'year1' | 'growth' | 'stabilization' | 'ramp' | 'closed';
   text: string;
   tone: ClauseTone;
   /** Hover text — the worker's full labels. */
@@ -236,6 +236,13 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
     text: `Stabilized Year ${s.stabilization_year} (${stabSpan ? `${stabSpan}; ` : ''}${stabWho}) — occupancy flat after it`,
   });
   if (!isGrowthOnly(s)) out.push({ id: 'ramp', ...rampSummary(s) });
+  if (s.closed_months) {
+    out.push({
+      id: 'closed',
+      tone: 'ok',
+      text: `Closed for the first ${s.closed_months} months: no revenue or operating costs until the opening date`,
+    });
+  }
   return out;
 }
 
