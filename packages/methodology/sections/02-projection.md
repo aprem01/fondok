@@ -99,8 +99,7 @@ step the workspace is on. This two-step switch is temporary.
    enter the closed months in the displacement schedule. A re-flag with no closure should leave the
    reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
    stabilization year the years in between run at 100% until you enter them — no ramp is invented.
-6. **The T-12** — Shown beside the projection as a reference row, not the basis. (One ramp applies to
-   occupancy and ADR together.)
+6. **The T-12** — Shown beside the projection as a reference row, not the basis. (Occupancy and ADR ramp over the same years.)
 
 :::
 
@@ -293,8 +292,9 @@ Changing it therefore moves the projected occupancy of the later years (and, wit
 method, the ramp years) and everything built on them, and an override carries a justification note.
 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the acquisition close,
-and the Overview reads “Year 3 after close”. For a material repositioning or re-flag, set the
-**reopening date** on the Overview's Investment Profile card: the default then counts Year 3 from
+and the Overview reads “Year 3 after close”. For a hotel that closes or is new, set the
+**reopening / opening date** on the Overview's Investment Profile card (leave it blank if the hotel stays
+open, including through a re-flag): the default then counts Year 3 from
 the first full model year after reopening (the first one that starts on or after it), and every
 stabilized figure says so (“Year 3 after
 reopening”). A reopening Fondok cannot place — no close date, or a Year 3 that falls before the
@@ -1004,8 +1004,8 @@ shown beneath it as a *model-detected* hint, but it never selects the year — a
 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the **acquisition
 close**: projection Year 1 is the first operating year after close, so the default is projection
-Year 3 and the Overview reads "Year 3 after close". For a **material repositioning or re-flag** the
-analyst sets the **reopening / re-flag date** on the Overview's Investment Profile card (stored on
+Year 3 and the Overview reads "Year 3 after close". For a **hotel that closes or is new** the
+analyst sets the **reopening / opening date** on the Overview's Investment Profile card (stored on
 the deal as `reopening_date`; a change on an underwritten deal carries a justification note, since it
 moves where the default penetration ramp ends). The default then counts
 Year 3 from the *first full operating year after reopening* — a hotel reopening in March 2027 has

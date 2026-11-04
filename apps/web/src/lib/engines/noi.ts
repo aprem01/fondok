@@ -119,7 +119,7 @@ export interface StabilizedYearBlock {
   default_year?: number | null;
   /** True when the default was pulled back to the hold's last year. */
   clamped?: boolean | null;
-  /** FON-98 — the deal's reopening / re-flag date (ISO), when it has one. */
+  /** FON-98 — the deal's reopening / opening date (ISO), when it has one. */
   reopening_date?: string | null;
   /** FON-98 — set only when a reopening date exists but could not anchor. */
   anchor_fallback_reason?: StabilizationAnchorFallback | string | null;

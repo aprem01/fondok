@@ -150,6 +150,9 @@ export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone 
   if (s.ramp_state === 'undefined_for_stabilization_year') {
     const gap = s.ramp_by_year?.findIndex((r) => r == null) ?? -1;
     const first = gap >= 0 ? gap + 1 : 3;
+    if (first === 1) {
+      return { text: `Ramp: the default ramp has finished; enter the ramp for Years 1–${S - 1} or they run at 100%`, tone: 'warn' };
+    }
     return {
       text: `Ramp: enter the ramp for Years ${first}–${S - 1} (the default covers ${first === 2 ? 'Year 1' : `Years 1–${first - 1}`} only; those years run at 100%)`,
       tone: 'warn',
@@ -157,6 +160,9 @@ export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone 
   }
   if (s.ramp_source === 'by_year') {
     return { text: 'Your by-year penetration — no ramp', tone: 'ok' };
+  }
+  if (S <= 1) {
+    return { text: 'No ramp — stabilized from Year 1', tone: 'ok' };
   }
   if (s.ramp_source === 'straight_line') {
     return { text: `Straight line from today's index to the target by Year ${S}`, tone: 'ok' };

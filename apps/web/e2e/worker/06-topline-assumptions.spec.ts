@@ -41,7 +41,7 @@ function engines(ramp: number[]) {
     engines: {
       revenue: row('revenue', {
         years: [revYear(1, occ[0], 300), revYear(2, occ[1], 305), revYear(3, occ[2], 310)],
-        topline_methodology_version: 3,
+        topline_methodology_version: 4,
         topline_by_year: [1, 2, 3].map((y) => ({ year: y, mpi_target: 100, ari_target: 100, ramp_pct: y < 3 ? ramp[y - 1] : null, occupancy: occ[y - 1], adr: 300 })),
       }),
       expense: row('expense', { years: [1, 2, 3].map(expYear) }),
@@ -52,7 +52,7 @@ function engines(ramp: number[]) {
 function toplineStatus(ramp: number[], source: 'default' | 'analyst_override') {
   const g = (label: string) => ({ value: null, source: 'unavailable', source_id: 'unavailable', label, reason: 'no_market_forecast' });
   return {
-    methodology_version: 3,
+    methodology_version: 4,
     benchmark_level: 'comp_set',
     benchmark_label: 'STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx',
     benchmark_fallback_reason: null,

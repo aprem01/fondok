@@ -1036,7 +1036,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         : awa('stabYear', 'Stabilization Year', { reason: 'awaiting_analyst' });
     // FON-98 — which anchor the Year-3 default counts from, exactly as the
     // worker resolved it: "Year 3 after reopening (Mar 2027)" when the deal's
-    // reopening / re-flag date placed on the projection, else "Year 3 after
+    // reopening / opening date placed on the projection, else "Year 3 after
     // close". A reopening date the worker could not use says why. The date
     // itself is edited on the Investment Profile card above.
     const stabAnchorRow = (): RowDef =>
@@ -1044,13 +1044,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
         ? lnk(
             'stabAnchor', 'Stabilization Anchor',
             stabilizationAnchorLabel(stab) ?? '—',
-            '→ Investment Profile (reopening / re-flag date)', '',
+            '→ Investment Profile (reopening / opening date)', '',
             {
               where: stab.anchor === 'reopening'
-                ? `Reopening / re-flag date on the deal record${stab.reopening_date ? ` (${fmtISODate(stab.reopening_date)})` : ''}`
-                : 'Acquisition close date (no reopening / re-flag date on the deal)',
+                ? `Reopening date on the deal record${stab.reopening_date ? ` (${fmtISODate(stab.reopening_date)})` : ''}`
+                : 'Acquisition close date (no reopening / opening date on the deal)',
               sub: stabilizationAnchorFallbackNote(stab)
-                ?? 'Default Year 3 of operations counts from the reopening / re-flag date when the deal has one, else from the acquisition close. Analyst-overridable on Future P&L.',
+                ?? 'Default Year 3 of operations counts from the reopening / opening date when the deal has one, else from the acquisition close. Analyst-overridable on Future P&L.',
             },
           )
         : awa('stabAnchor', 'Stabilization Anchor', { reason: 'awaiting_analyst' });
@@ -1717,7 +1717,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               marketSource={deal?.market_source}
               onSave={persistMarket}
             />
-            {/* FON-98 — the reopening / re-flag date (deals.reopening_date).
+            {/* FON-98 — the reopening / opening date (deals.reopening_date).
                 Rani + Eshan: the stabilization default is Year 3 of operations;
                 for a material repositioning / re-flag it counts from the
                 reopening date, else from the acquisition close. A deal column;
@@ -2046,7 +2046,7 @@ function ProfileSelect({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// FON-98 — Reopening / re-flag date (deals.reopening_date). An analyst input
+// FON-98 — Reopening / opening date (deals.reopening_date). An analyst input
 // (blue assumption dot). Blank = no reopening → the stabilization default
 // counts Year 3 from the acquisition close; a date → Year 3 from the first
 // full operating year after it. Blur / Enter on a CHANGED date opens the
@@ -2108,17 +2108,17 @@ function ReopeningDateField({
   const hint = fallbackNote
     ?? (shown
       ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
-      : 'Optional · material repositioning / re-flag: the stabilization default counts Year 3 from the first full year after this date; blank = Year 3 after close');
+      : 'Optional · only if the hotel closes or is new, leave blank if it stays open: the ramp and stabilization default count from the first full year after this date; blank = Year 3 after close');
   return (
     <div data-testid="reopening-date-field" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <div style={{ ...profileLabel, display: 'flex', alignItems: 'center', gap: 5 }}>
         <ProvenanceDot state="assumption" size={7} title="Analyst input" />
-        Reopening / re-flag date
+        Reopening / opening date
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         <input
           type="date"
-          aria-label="Reopening / re-flag date"
+          aria-label="Reopening / opening date"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -2136,7 +2136,7 @@ function ReopeningDateField({
         {shown && (
           <button
             type="button"
-            aria-label="Clear reopening / re-flag date"
+            aria-label="Clear reopening / opening date"
             title="Clear — the default returns to Year 3 after acquisition close"
             onClick={() => send(null)}
             style={{ border: 'none', background: 'none', cursor: 'pointer', color: palette.textMuted, fontSize: 13, lineHeight: 1, padding: '0 2px', fontFamily: 'inherit' }}

@@ -1576,8 +1576,8 @@ describe('OverviewTab — R-051 Asking vs Bidding price', () => {
   });
 });
 
-// ── FON-98 — stabilization anchor: reopening / re-flag date ──────────────
-describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)', () => {
+// ── FON-98 — stabilization anchor: reopening / opening date ──────────────
+describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)', () => {
   /** OUTPUTS with a published stabilization block. */
   const withStabBlock = (block: Record<string, unknown>): EngineOutputsResponse => {
     const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
@@ -1604,7 +1604,7 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     expect(rowValue('Stabilization Year')).toBe('Year 6 — Year 3 after reopening (Mar 2027) (default)');
     // The editor echoes the anchor the run resolved.
     expect(screen.getByTestId('reopening-date-field')).toHaveTextContent('Year 3 after reopening (Mar 2027)');
-    expect(screen.getByLabelText('Reopening / re-flag date')).toHaveValue('2027-03-15');
+    expect(screen.getByLabelText('Reopening / opening date')).toHaveValue('2027-03-15');
   });
 
   it('reads "Year 3 after close" with no reopening date', () => {
@@ -1614,7 +1614,7 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(rowValue('Stabilization Anchor')).toBe('Year 3 after close');
     expect(rowValue('Stabilization Year')).toBe('Year 3 after close (default)');
-    expect(screen.getByLabelText('Reopening / re-flag date')).toHaveValue('');
+    expect(screen.getByLabelText('Reopening / opening date')).toHaveValue('');
   });
 
   it('a reopening date the worker could not place keeps the close anchor and says why', () => {
@@ -1632,7 +1632,7 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
 
   it('saving a changed date asks why, then PATCHes deals.reopening_date with reopening_date_note (review I-6)', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const input = screen.getByLabelText('Reopening / re-flag date');
+    const input = screen.getByLabelText('Reopening / opening date');
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.blur(input);
     // The date moves the default stabilization year, which ends the topline
@@ -1650,14 +1650,14 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     // A second Save / stray blur while the PATCH is in flight (the deal has not
     // refreshed yet, so the prop still reads blank) must not send it again.
     fireEvent.click(within(screen.getByTestId('reopening-date-field')).getByRole('button', { name: 'Save' }));
-    fireEvent.blur(screen.getByLabelText('Reopening / re-flag date'));
+    fireEvent.blur(screen.getByLabelText('Reopening / opening date'));
     await new Promise((r) => setTimeout(r, 0));
     expect(updateSpy).toHaveBeenCalledTimes(1);
   });
 
   it('Save without a justification writes nothing; Cancel restores the saved date', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const input = screen.getByLabelText('Reopening / re-flag date') as HTMLInputElement;
+    const input = screen.getByLabelText('Reopening / opening date') as HTMLInputElement;
     input.focus();
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -1666,21 +1666,21 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / re-flag date)
     await new Promise((r) => setTimeout(r, 0));
     expect(updateSpy).not.toHaveBeenCalled();
     fireEvent.click(within(field).getByRole('button', { name: 'Cancel' }));
-    expect((screen.getByLabelText('Reopening / re-flag date') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Reopening / opening date') as HTMLInputElement).value).toBe('');
     expect(screen.queryByLabelText('Reopening date — override justification')).not.toBeInTheDocument();
   });
 
   it('× clears the date (writes null) so the default returns to Year 3 after close', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Clear reopening / re-flag date' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear reopening / opening date' }));
     await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: null }));
   });
 
   it('re-saving the same date is a no-op (no PATCH)', () => {
     mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const input = screen.getByLabelText('Reopening / re-flag date');
+    const input = screen.getByLabelText('Reopening / opening date');
     fireEvent.change(input, { target: { value: '2027-03-15' } });
     fireEvent.blur(input);
     expect(updateSpy).not.toHaveBeenCalled();

@@ -406,7 +406,7 @@ function PenetrationField({
   const [draft, setDraft] = useState(shown);
   useEffect(() => setDraft(shown), [shown]);
   const parsed = Number(draft);
-  const dirty = draft.trim() !== '' && Number.isFinite(parsed) && Math.abs(parsed - (value ?? NaN)) > 1e-9;
+  const dirty = draft.trim() !== '' && Number.isFinite(parsed) && Math.abs(parsed - Number(shown)) > 1e-9;
   const invalid = draft.trim() !== '' && (!Number.isFinite(parsed) || parsed < 25 || parsed > 250);
   return (
     <div className="space-y-0.5" data-testid={`topline-penetration-${metric}`}>

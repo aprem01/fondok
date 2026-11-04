@@ -113,6 +113,7 @@ def topline_mode() -> str:
     return "benchmark" if bool(get_settings().TOPLINE_BENCHMARK_ENABLED) else "growth_only"
 
 _RAMP_MAX = 1.5
+MONTHS_IN_YEAR = 12
 #: ``PenetrationPoints`` bounds: a derived index outside them is not usable.
 _INDEX_MIN, _INDEX_MAX = 25.0, 250.0
 
@@ -137,6 +138,23 @@ def ramp_mode_for(base: Mapping[str, Any]) -> str:
     return RAMP_MODE_NEW if is_development_like(base.get("deal_type")) else RAMP_MODE_OPERATING
 
 
+def _pre_opening_closed(base: Mapping[str, Any], pre_opening_years: int) -> bool:
+    """Do the live displacement inputs take rooms offline in every month of the
+    years before opening? A PIP closure schedule counts as its own answer."""
+    from .engine_runner import _build_pip_displacement, _coerce_renovation_schedule
+
+    pip = _build_pip_displacement(dict(base))
+    if pip is not None and pip.closure_strategy != "none":
+        return True
+    months = {
+        m
+        for p in _coerce_renovation_schedule(dict(base))
+        if p.rooms_offline_pct > 0
+        for m in range(p.start_month, p.end_month + 1)
+    }
+    return all(m in months for m in range(1, MONTHS_IN_YEAR * pre_opening_years + 1))
+
+
 @dataclass(frozen=True)
 class ToplineInputs:
     growth: GrowthOverrides
@@ -158,7 +176,8 @@ class ToplineInputs:
     ramp_flag: str | None = None
     #: A new hotel with no opening date: the page asks for one.
     opening_date_missing: bool = False
-    has_displacement_schedule: bool = False
+    #: The displacement inputs close the hotel for every month before opening.
+    pre_opening_closed: bool = False
 
 
 def coerce_ramp_list(raw: Any) -> tuple[list[float | None], list[str]]:
@@ -423,7 +442,7 @@ def read_topline_inputs(
         ramp_start_year=default_s - 2 if placed else 1,
         ramp_flag=ramp_flag,
         opening_date_missing=ramp_mode == RAMP_MODE_NEW and opening is None,
-        has_displacement_schedule=bool(base.get("renovation_displacement_schedule")),
+        pre_opening_closed=_pre_opening_closed(base, default_s - 3 if placed else 0),
     )
 
 
@@ -612,12 +631,7 @@ def _by_year_runs_every_ramp_year(drivers: ToplineDrivers, hold: int) -> bool:
 
 
 def _ramp_flag(
-    inputs: ToplineInputs,
-    drivers: ToplineDrivers,
-    bench: BenchmarkResolution,
-    hold: int,
-    *,
-    base_has_schedule: bool,
+    inputs: ToplineInputs, drivers: ToplineDrivers, bench: BenchmarkResolution, hold: int
 ) -> str | None:
     """The one thing about this deal's ramp the analyst must look at, if any."""
     s = drivers.stabilization_year
@@ -628,44 +642,37 @@ def _ramp_flag(
         and not _by_year_runs_every_ramp_year(drivers, hold)
         and len(drivers.explicit_year1) < 2
     )
-    if not ramp_runs:
-        return (
-            "No opening date yet, so the stabilized year counts from the close. Enter the opening date."
-            if inputs.opening_date_missing
-            else None
+    flags: list[str] = []
+    if ramp_runs and inputs.ramp_flag:
+        flags.append(inputs.ramp_flag)
+    elif inputs.opening_date_missing:
+        flags.append("No opening date yet, so the stabilized year counts from the close. Enter the opening date.")
+    new_hotel = inputs.ramp_mode == RAMP_MODE_NEW
+    if ramp_runs and new_hotel and drivers.ramp_start_year > 1 and not inputs.pre_opening_closed:
+        last = drivers.ramp_start_year - 1
+        years = "Year 1 is" if last == 1 else f"Years 1–{last} are"
+        flags.append(
+            f"{years} before the first full year after opening, still earning revenue at the "
+            "first ramp step. Enter the closed months in the displacement schedule."
         )
-    if inputs.ramp_flag:
-        return inputs.ramp_flag
-    if inputs.ramp_mode == RAMP_MODE_NEW:
-        if drivers.ramp_start_year > 1 and not base_has_schedule:
-            last = drivers.ramp_start_year - 1
-            years = "Year 1 is" if last == 1 else f"Years 1–{last} are"
-            return (
-                f"{years} before the first full year after opening, still earning revenue at the "
-                "first ramp step. Enter the closed months in the displacement schedule."
-            )
-        if bench.level != "comp_set" and "default" in (
-            drivers.penetration_occ_source, drivers.penetration_adr_source
-        ):
-            return (
-                "The target is 100% of a class or market average because there's no T-12 to derive an "
-                "index from. Set a target."
-            )
-        return None
-    missing = [
-        label
-        for metric, label, index, by_year in (
-            ("occupancy", "occupancy", drivers.start_index_occ, drivers.penetration_occ_by_year),
-            ("adr", "ADR", drivers.start_index_adr, drivers.penetration_adr_by_year),
-        )
-        if index is None and metric not in drivers.explicit_year1 and not _by_year_covers(by_year, s, hold)
-    ]
-    if not missing:
-        return None
-    return (
-        f"Today's {' and '.join(missing)} index isn't available (no STR index or usable T-12 comparison), "
-        "so the 85/95/100 ramp applies to it."
+    per_metric = (
+        ("occupancy", "occupancy", drivers.start_index_occ, drivers.penetration_occ_by_year, drivers.penetration_occ_source),
+        ("adr", "ADR", drivers.start_index_adr, drivers.penetration_adr_by_year, drivers.penetration_adr_source),
     )
+    live = [m for m in per_metric if m[0] not in drivers.explicit_year1 and not _by_year_covers(m[3], s, hold)]
+    if ramp_runs and not new_hotel:
+        missing = [m[1] for m in live if m[2] is None]
+        if missing:
+            flags.append(
+                f"Today's {' and '.join(missing)} index isn't available (no STR index or usable T-12 "
+                "comparison), so the 85/95/100 ramp applies to it."
+            )
+    if bench.level in ("submarket", "market") and any(m[4] == "default" for m in live):
+        flags.append(
+            "The target is 100% of a class or market average because there's no usable T-12 to derive "
+            "an index from. Set a target."
+        )
+    return " ".join(flags) or None
 
 
 def _start_index(bench: BenchmarkResolution, t12: ToplineReference | None, metric: str) -> float | None:
@@ -1107,7 +1114,7 @@ def _status(
         "ramp_source": ramp_source,
         "ramp_state": ramp_state,
         "ramp_mode": inputs.ramp_mode,
-        "ramp_flag": _ramp_flag(inputs, drivers, bench, hold, base_has_schedule=inputs.has_displacement_schedule),
+        "ramp_flag": _ramp_flag(inputs, drivers, bench, hold),
         "opening_date_missing": inputs.opening_date_missing,
         "start_index_occ": drivers.start_index_occ,
         "start_index_adr": drivers.start_index_adr,

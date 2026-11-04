@@ -176,9 +176,37 @@ def test_a_development_with_a_date_uses_it() -> None:
     assert build.drivers.ramp_start_year == 3 and build.status["opening_date_missing"] is False
 
 
-def test_a_schedule_clears_the_pre_opening_flag() -> None:
-    build, _, _ = _run(STR, {"reopening_date": "2027-03-01", "renovation_displacement_schedule": [{"start_month": 1}]})
+def _closure(start: int, end: int) -> dict:
+    return {"start_month": start, "end_month": end, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}
+
+
+def test_a_schedule_covering_the_pre_opening_years_clears_the_flag() -> None:
+    build, _, _ = _run(STR, {"reopening_date": "2027-03-01", "renovation_displacement_schedule": [_closure(1, 24)]})
     assert build.status["ramp_flag"] is None
+
+
+@pytest.mark.parametrize("schedule", [[_closure(1, 3)], [{"start_month": 1}]])
+def test_a_partial_or_invalid_schedule_keeps_the_flag(schedule: list) -> None:
+    build, _, _ = _run(STR, {"reopening_date": "2027-03-01", "renovation_displacement_schedule": schedule})
+    assert "still earning revenue" in build.status["ramp_flag"]
+
+
+def test_a_typed_year_1_rate_does_not_claim_a_missing_t12() -> None:
+    build, _, _ = _run(
+        {**CLASS}, {"reopening_date": "2025-12-15", "starting_adr": 280.0}, applied={"starting_adr"},
+    )
+    assert "no usable T-12" not in (build.status["ramp_flag"] or "")
+
+
+def test_a_ground_up_hotel_shows_every_flag_that_applies() -> None:
+    build, _, _ = _run(CLASS, {"deal_type": "development"}, t12=None)
+    assert "No opening date" in build.status["ramp_flag"]
+    assert "100% of a class or market average" in build.status["ramp_flag"]
+
+
+def test_an_analyst_ramp_still_flags_a_100_class_target() -> None:
+    build, _, _ = _run(CLASS, {"penetration_ramp_by_year": [0.9, 0.95]}, applied={"penetration_ramp_by_year"}, t12=None)
+    assert "100% of a class or market average" in build.status["ramp_flag"]
 
 
 def test_a_reopened_hotel_against_a_class_average_holds_the_index_as_its_target() -> None:
