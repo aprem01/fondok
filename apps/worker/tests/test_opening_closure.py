@@ -198,3 +198,28 @@ async def test_a_refinance_in_the_opening_year_sizes_on_a_full_year() -> None:
     assert sizing[0] == pytest.approx(0.0)  # fully closed: nothing to lend on
     assert sizing[1] == pytest.approx(open_hotel["expense"].years[1].noi)
     assert open_hotel["debt_input"].refi_noi_by_year == []
+
+
+@pytest.mark.asyncio
+async def test_years_the_closure_does_not_touch_keep_the_deals_own_displacement() -> None:
+    # Half offline in Year 3, with the hotel open by then: the year matches the same
+    # deal with no date, including the costs that follow its revenue.
+    period = {"start_month": 25, "end_month": 36, "rooms_offline_pct": 0.5, "rate_discount_pct": 0.0}
+    plain = await _model(renovation_displacement_schedule=[period], grow_opex_independently=False)
+    closed = await _model(
+        reopening_date="2027-03-31", renovation_displacement_schedule=[period], grow_opex_independently=False
+    )
+    assert closed["expense"].years[2].noi == pytest.approx(plain["expense"].years[2].noi)
+    assert closed["expense"].years[3].noi == pytest.approx(plain["expense"].years[3].noi)
+
+
+def test_an_analysts_year_1_fee_prorates_by_months_open() -> None:
+    def fb(out):
+        return FBRevenueEngine().run(FBRevenueInput(deal_id=uuid4(), revenue=out))
+
+    out = ExpenseEngine().run(ExpenseEngineInput(
+        deal_id=uuid4(), revenue=fb(_revenue()), mgmt_fee_pct=0.03, ffe_reserve_pct=0.04,
+        expense_growth=0.03, grow_opex_independently=True, mgmt_fee_y1_override=1_000_000.0,
+        open_shares_by_year=months_open_shares(6, 5), actual_revenue=fb(_revenue(closed_months=6)),
+    ))
+    assert out.years[0].mgmt_fee == pytest.approx(500_000.0)

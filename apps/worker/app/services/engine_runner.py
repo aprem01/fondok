@@ -8904,29 +8904,43 @@ def _expense_revenue_basis(
     """``(what costs are priced on, months-open shares, the revenue actually earned)``.
 
     Sam, 2026-11-04: the closed months before an opening carry no operating costs
-    (pre-opening costs are the analyst's input). A closed or displaced Year 1 must not
-    seed the out-years' costs, so with a closure they are priced on the hotel open and
-    undisplaced (``ExpenseEngine._closed_year`` then brings each year to what it earned).
-    No closure → the accumulated engines as they are.
+    (pre-opening costs are the analyst's input). Costs are priced on the same deal
+    without the closure, with its displacement kept: only a schedule's months inside
+    the closure go, since they describe months that sell nothing. A fully closed Year 1
+    has no revenue to seed a ratio, so it seeds from the hotel open and undisplaced.
+    ``ExpenseEngine._closed_year`` then brings the years the closure touches to what
+    they earned. No closure → the accumulated engines as they are.
     """
-    from ..engines.revenue import months_open_shares
+    from ..engines.revenue import MONTHS_PER_YEAR, months_open_shares
     from .topline import closed_months_for
 
     closed = closed_months_for(base)
     if closed <= 0:
         return accumulated, {}, None
     payload = _build_input_for("revenue", deal_id, base, accumulated)
-    revenue = RevenueEngine().run(
-        payload.model_copy(
-            update={
-                "closed_months": 0,
-                "renovation_displacement_schedule": [],
-                "y1_occupancy_displacement_pct": 0.0,
-                "y1_adr_displacement_pct": 0.0,
-                "pip_displacement": None,
-            }
-        )
+    undisplaced = {
+        "closed_months": 0,
+        "renovation_displacement_schedule": [],
+        "y1_occupancy_displacement_pct": 0.0,
+        "y1_adr_displacement_pct": 0.0,
+        "pip_displacement": None,
+    }
+    analyst_schedule = list(payload.renovation_displacement_schedule or [])
+    open_periods = [
+        p.model_copy(update={"start_month": max(p.start_month, closed + 1)})
+        for p in analyst_schedule
+        if p.end_month > closed
+    ]
+    # A schedule switches the other levers off, in the run this prices and the real one.
+    update = (
+        undisplaced | {"renovation_displacement_schedule": open_periods}
+        if analyst_schedule
+        else {"closed_months": 0}
     )
+    revenue = RevenueEngine().run(payload.model_copy(update=update))
+    if closed >= MONTHS_PER_YEAR:
+        seed = RevenueEngine().run(payload.model_copy(update=undisplaced))
+        revenue = revenue.model_copy(update={"years": [seed.years[0], *revenue.years[1:]]})
     fb = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
     return (
         {**accumulated, "revenue": revenue, "fb": fb},
@@ -8946,7 +8960,7 @@ def _full_year_noi_by_year(
         return []
     as_if_open = ExpenseEngine().run(
         _build_input_for("expense", deal_id, base, accumulated).model_copy(
-            update={"open_shares_by_year": {}, "actual_revenue": None}
+            update={"open_shares_by_year": {}, "actual_revenue": None, "actual_occupancy_by_year": None}
         )
     )
     return [
@@ -9111,6 +9125,7 @@ def _build_input_for(
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
             actual_revenue=actual_revenue,
+            actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],
