@@ -48,6 +48,9 @@ class DebtEngineInputExt(DebtEngineInput):
     # year's DSCR is N/A and its uncovered debt service is a shortfall, instead
     # of the whole model stopping at this validator.
     noi_by_year: list[float] = Field(default_factory=list)
+    # Sam, 2026-11-04 — what a refinance is sized on for a hotel closed until its
+    # opening: a partly open year reads as a full year. Empty = ``noi_by_year``.
+    refi_noi_by_year: list[float] = Field(default_factory=list)
     # PROVENANCE ONLY — never read by any calculation. True (the default) means
     # ``noi_by_year[i]`` is the expense engine's ``years[i].noi``, so the DSCR
     # traces can ASSERT ``traces_to="expense.years[i].noi"`` instead of leaving
@@ -1361,7 +1364,7 @@ class DebtEngine(BaseEngine[DebtEngineInputExt, DebtEngineOutputExt]):
             computed = _compute_refi(
                 refi,
                 schedule,
-                payload.noi_by_year,
+                payload.refi_noi_by_year or payload.noi_by_year,
                 horizon,
                 senior_ds_by_year,
                 retired_exit_fee=senior_exit_fee,

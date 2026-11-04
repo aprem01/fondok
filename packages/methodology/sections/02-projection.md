@@ -97,8 +97,10 @@ step the workspace is on. This two-step switch is temporary.
    next 12, then 100%, with a deal year that spans two steps averaging its open months. A reopening whose ramp
    finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
    before it earn nothing and carry no operating costs (pre-opening costs are your input, in Soft Costs), and the
-   opening year is prorated by whole months open, starting with the first full month. The sale is still priced
-   on a full year's income if the hotel opens in the sale year; a hotel still closed at the end of the hold has no
+   opening year is prorated by whole months open, starting with the first full month. Costs are priced on the
+   hotel open and undisplaced, so a closed Year 1 never seeds the later years: undistributed and fixed lines are
+   prorated by months open, departmental lines, fees and reserve follow the revenue earned. A sale or refinance is still priced
+   on a full year's income if the hotel opens in that year; a hotel still closed at the end of the hold has no
    exit value and the run stops and says so. Debt service still runs while the hotel is closed. A re-flag with no closure should leave the
    reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
    stabilization year the years in between run at 100% until you enter them — no ramp is invented.

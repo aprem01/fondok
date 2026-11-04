@@ -25,7 +25,7 @@ from fondok_schemas.provenance import ValueInput, ValueTrace, apply_states
 from fondok_schemas.reasons import ReasonCode
 
 from .base import BaseEngine
-from .fb_revenue import FBRevenueOutput
+from .fb_revenue import FBRevenueOutput, FBRevenueYear
 from .stabilization import StabilizedYear, build_stabilized_year
 
 
@@ -176,9 +176,13 @@ class ExpenseEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Sam, 2026-11-04 — model year → months open ÷ 12 for a year closed until the
-    # opening. ``revenue`` is then the hotel as if open; every line of those years
-    # is prorated, so the closed months carry no operating costs. Empty = no closure.
+    # opening: undistributed and fixed lines are prorated by it, so the closed months
+    # carry no operating costs; departmental lines, fees and reserve follow the revenue
+    # actually earned. A closed Year 1 can't seed the out-years. Empty = no closure.
     open_shares_by_year: dict[int, float] = Field(default_factory=dict)
+    # The revenue the deal actually earns (closure and any displacement). Set with
+    # the above; ``revenue`` is then the hotel open and undisplaced.
+    actual_revenue: FBRevenueOutput | None = None
 
     deal_id: UUID
     revenue: FBRevenueOutput
@@ -379,14 +383,21 @@ class SynthesizedLine(BaseModel):
 
 
 def _prorated(model: BaseModel, share: float) -> BaseModel:
-    """A copy of an expense-year record with every dollar field × ``share``."""
-    update: dict[str, object] = {}
-    for name in type(model).model_fields:
-        v = getattr(model, name)
-        if name == "year" or v is None:
-            continue
-        update[name] = _prorated(v, share) if isinstance(v, BaseModel) else v * share
-    return model.model_copy(update=update)
+    """A copy of a dollar-lines record with every field × ``share``."""
+    return model.model_copy(
+        update={name: v * share for name in type(model).model_fields if (v := getattr(model, name)) is not None}
+    )
+
+
+def _ratio(actual: float, as_if_open: float) -> float:
+    return actual / as_if_open if as_if_open else 0.0
+
+
+def _read_path(row: BaseModel, path: str) -> float | None:
+    value: object = row
+    for part in path.split("."):
+        value = getattr(value, part, None)
+    return value if isinstance(value, (int, float)) else None
 
 
 class ExpenseEngineOutput(BaseModel):
@@ -421,6 +432,46 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
     """Compute departmental, undistributed, fixed expenses → GOP → NOI."""
 
     name = "expense"
+
+    @staticmethod
+    def _closed_year(
+        payload: ExpenseEngineInput, row: ExpenseYear, actual: FBRevenueYear, as_open: FBRevenueYear, share: float
+    ) -> ExpenseYear:
+        """One year of a hotel closed until its opening, from the open hotel's ``row``."""
+        rooms = row.dept_expenses.rooms * _ratio(actual.rooms_revenue, as_open.rooms_revenue)
+        fb = row.dept_expenses.food_beverage * _ratio(actual.fb_revenue, as_open.fb_revenue)
+        other = row.dept_expenses.other_operated * _ratio(actual.other_revenue, as_open.other_revenue)
+        dept_total = rooms + fb + other
+        undist = _prorated(row.undistributed, share)
+        fixed = _prorated(row.fixed_charges, share)
+        revenue_share = _ratio(actual.total_revenue, as_open.total_revenue)
+        gop = actual.total_revenue - dept_total - undist.total
+        mgmt = row.mgmt_fee * revenue_share
+        ffe = row.ffe_reserve * revenue_share
+        in_lieu = row.mgmt_fee_in_lieu * share if row.mgmt_fee_in_lieu is not None else None
+        incentive = (
+            max(0.0, gop - mgmt - (in_lieu or 0.0)) * payload.incentive_mgmt_fee_pct_of_gop
+            if row.incentive_mgmt_fee is not None and payload.incentive_mgmt_fee_pct_of_gop is not None
+            else None
+        )
+        noi_institutional = gop - mgmt - fixed.total - (in_lieu or 0.0) - (incentive or 0.0)
+        return row.model_copy(
+            update={
+                "total_revenue": actual.total_revenue,
+                "dept_expenses": row.dept_expenses.model_copy(
+                    update={"rooms": rooms, "food_beverage": fb, "other_operated": other, "total": dept_total}
+                ),
+                "undistributed": undist,
+                "fixed_charges": fixed,
+                "mgmt_fee": mgmt,
+                "ffe_reserve": ffe,
+                "mgmt_fee_in_lieu": in_lieu,
+                "incentive_mgmt_fee": incentive,
+                "gop": gop,
+                "noi": noi_institutional - ffe,
+                "noi_institutional": noi_institutional,
+            }
+        )
 
     def run(self, payload: ExpenseEngineInput) -> ExpenseEngineOutput:
         defaults = {
@@ -1225,18 +1276,21 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
         # land high and out-year expense growth eats into a thin margin)
         # would otherwise raise a negative number to a fractional power and
         # return a complex result Pydantic refuses to coerce to float.
-        open_shares = payload.open_shares_by_year
-        if open_shares:
-            years = [
-                _prorated(row, open_shares[row.year]) if row.year in open_shares else row  # type: ignore[misc]
-                for row in years
-            ]
-
         if len(years) >= 2 and years[0].noi > 0 and years[-1].noi > 0:
             n = len(years) - 1
             noi_cagr = (years[-1].noi / years[0].noi) ** (1 / n) - 1
         else:
             noi_cagr = 0.0
+
+        # NOI CAGR above stays the open hotel's: a closed Year 1 has no growth to report.
+        open_shares = payload.open_shares_by_year
+        if payload.actual_revenue is not None:
+            actual_by_year = {row.year: row for row in payload.actual_revenue.years}
+            open_by_year = {row.year: row for row in payload.revenue.years}
+            years = [
+                self._closed_year(payload, row, actual_by_year[row.year], open_by_year[row.year], open_shares.get(row.year, 1.0))
+                for row in years
+            ]
 
         # FON-41 / FON-59 #3 — publish the stabilized year off THIS projection.
         # Display-only: nothing below reads it, and no figure above depends on
@@ -1339,7 +1393,11 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 SynthesizedLine(
                     line=line,
                     label=label,
-                    value=value * open_shares.get(1, 1.0),
+                    value=(
+                        _read_path(years[0], _LINE_OUTPUT_PATH.get(line) or f"fixed_charges.{line}") or 0.0
+                        if payload.actual_revenue is not None
+                        else value
+                    ),
                     ratio=ratio,
                     ratio_key=ratio_key,
                     basis=basis,  # type: ignore[arg-type]
@@ -1365,17 +1423,22 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 ),
             )
 
-        if open_shares:
+        if payload.actual_revenue is not None:
             for path, trace in prov.items():
                 m = _YEAR_PATH.match(path)
-                share = open_shares.get(int(m.group(1)) + 1) if m else None
-                if share is None:
+                if m is None:
                     continue
-                if trace.value is not None:
-                    trace.value = trace.value * share
-                trace.formula = f"({trace.formula}) × open_share"
-                trace.inputs.append(ValueInput(name="open_share", value=share))
-                trace.note = f"{trace.note or ''} Closed until the opening: prorated by months open.".strip()
+                y = int(m.group(1)) + 1
+                value = _read_path(years[y - 1], path[m.end():])
+                if value is not None:
+                    trace.value = value
+                share = open_shares.get(y)
+                if share is not None:
+                    trace.inputs.append(ValueInput(name="open_share", value=share))
+                    trace.note = (
+                        f"{trace.note or ''} Priced on the open hotel, then to the "
+                        f"{share * 12:g} of 12 months open."
+                    ).strip()
 
         return ExpenseEngineOutput(
             deal_id=payload.deal_id,

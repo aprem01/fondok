@@ -295,6 +295,14 @@ def _exit_value_provenance(
     }
 
 
+def _full_year_note(exit_noi_series: tuple[float, ...], trace: ValueTrace) -> ValueTrace:
+    """A hotel closed until its opening: say the sale prices a full year's income."""
+    if not exit_noi_series:
+        return trace
+    note = "A year the hotel opens partway through reads as the full year open: a buyer caps a full year's income."
+    return trace.model_copy(update={"note": f"{trace.note or ''} {note}".strip()})
+
+
 def _terminal_noi_trace(
     *,
     terminal_noi: float,
@@ -1636,19 +1644,25 @@ class ReturnsEngine(BaseEngine[ReturnsEngineInputExt, ReturnsEngineOutputExt]):
             cash_flows_unlevered=unlevered_flows,
             noi_by_year=list(noi_series),
             provenance=apply_states({
-                "terminal_noi": _terminal_noi_trace(
+                "terminal_noi": _full_year_note(exit_noi_series, _terminal_noi_trace(
                     terminal_noi=terminal_noi,
                     basis=exit_noi_basis,
                     label=exit_noi_period_label,
                     formula=terminal_formula,
                     source_noi=(
-                        noi_series[terminal_src_idx]
+                        (list(exit_noi_series) or noi_series)[terminal_src_idx]
                         if terminal_src_idx is not None
                         else None
                     ),
-                    source_ref=terminal_noi_ref,
+                    source_ref=(
+                        None
+                        if exit_noi_series
+                        and terminal_src_idx is not None
+                        and exit_noi_series[terminal_src_idx] != noi_series[terminal_src_idx]
+                        else terminal_noi_ref
+                    ),
                     growth=assumptions.revpar_growth,
-                ),
+                )),
                 **_exit_value_provenance(
                     terminal_noi=terminal_noi,
                     basis_label=exit_noi_period_label,

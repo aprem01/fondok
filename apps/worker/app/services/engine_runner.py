@@ -8900,41 +8900,57 @@ def _closed_months_for(base: dict[str, Any]) -> int:
 
 def _expense_revenue_basis(
     deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
-) -> tuple[dict[str, BaseModel], dict[int, float]]:
-    """What the expense engine prices costs on, and the years it then prorates.
+) -> tuple[dict[str, BaseModel], dict[int, float], BaseModel | None]:
+    """``(what costs are priced on, months-open shares, the revenue actually earned)``.
 
     Sam, 2026-11-04: the closed months before an opening carry no operating costs
-    (pre-opening costs are the analyst's input). A closed Year 1 has no revenue to
-    seed a cost ratio, so costs are priced on the hotel as if open and each year
-    is prorated by its months open. No closure → the accumulated engines as they are.
+    (pre-opening costs are the analyst's input). A closed or displaced Year 1 must not
+    seed the out-years' costs, so with a closure they are priced on the hotel open and
+    undisplaced (``ExpenseEngine._closed_year`` then brings each year to what it earned).
+    No closure → the accumulated engines as they are.
     """
-    from ..engines.revenue import closed_month_open_shares
+    from ..engines.revenue import months_open_shares
     from .topline import closed_months_for
 
-    if closed_months_for(base) <= 0:
-        return accumulated, {}
+    closed = closed_months_for(base)
+    if closed <= 0:
+        return accumulated, {}, None
     payload = _build_input_for("revenue", deal_id, base, accumulated)
-    shares = closed_month_open_shares(
-        payload.closed_months, list(payload.renovation_displacement_schedule or []), payload.hold_years
+    revenue = RevenueEngine().run(
+        payload.model_copy(
+            update={
+                "closed_months": 0,
+                "renovation_displacement_schedule": [],
+                "y1_occupancy_displacement_pct": 0.0,
+                "y1_adr_displacement_pct": 0.0,
+                "pip_displacement": None,
+            }
+        )
     )
-    revenue = RevenueEngine().run(payload.model_copy(update={"closed_months": 0}))
     fb = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
-    return {**accumulated, "revenue": revenue, "fb": fb}, shares
+    return (
+        {**accumulated, "revenue": revenue, "fb": fb},
+        months_open_shares(closed, payload.hold_years),
+        accumulated["fb"],
+    )
 
 
-def _exit_noi_by_year(
+def _full_year_noi_by_year(
     deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel], noi_by_year: list[float]
 ) -> list[float]:
-    """The NOI a sale is priced on when the hotel is closed until its opening
-    (``ReturnsEngineInputExt.exit_noi_by_year``); ``[]`` with no closure."""
-    _, shares = _expense_revenue_basis(deal_id, base, accumulated)
+    """The NOI a sale or a refinance is sized on when the hotel is closed until its
+    opening: a partly open year reads as the open hotel, because a buyer or lender
+    underwrites a full year; every other year is its own NOI. ``[]`` with no closure."""
+    _, shares, _actual = _expense_revenue_basis(deal_id, base, accumulated)
     if not shares:
         return []
     as_if_open = ExpenseEngine().run(
-        _build_input_for("expense", deal_id, base, accumulated).model_copy(update={"open_shares_by_year": {}})
+        _build_input_for("expense", deal_id, base, accumulated).model_copy(
+            update={"open_shares_by_year": {}, "actual_revenue": None}
+        )
     )
     return [
-        as_if_open.years[i].noi if shares.get(i + 1, 1.0) > 0.0 else noi
+        as_if_open.years[i].noi if 0.0 < shares.get(i + 1, 1.0) < 1.0 else noi
         for i, noi in enumerate(noi_by_year)
     ]
 
@@ -9089,11 +9105,12 @@ def _build_input_for(
         )
 
     if engine_name == "expense":
-        expense_basis, open_shares = _expense_revenue_basis(deal_id, base, accumulated)
+        expense_basis, open_shares, actual_revenue = _expense_revenue_basis(deal_id, base, accumulated)
         return ExpenseEngineInput(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
+            actual_revenue=actual_revenue,
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],
@@ -9255,6 +9272,11 @@ def _build_input_for(
             amortization_years=base["amortization_years"],
             interest_only_years=base.get("interest_only_years", 0),
             noi_by_year=noi_by_year,
+            refi_noi_by_year=(
+                _full_year_noi_by_year(deal_id, base, accumulated, noi_by_year)
+                if noi_from_expense_engine
+                else []
+            ),
             noi_from_expense_engine=noi_from_expense_engine,
             # FON-63 — deal basis for the multi-tranche stack's LTV / LTC.
             purchase_price_usd=base.get("purchase_price"),
@@ -9379,7 +9401,7 @@ def _build_input_for(
             year_one_noi=noi_by_year[0],
             noi_by_year=noi_by_year,
             exit_noi_by_year=(
-                _exit_noi_by_year(deal_id, base, accumulated, noi_by_year)
+                _full_year_noi_by_year(deal_id, base, accumulated, noi_by_year)
                 if noi_from_expense_engine
                 else []
             ),

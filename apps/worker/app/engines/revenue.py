@@ -543,29 +543,14 @@ def renovation_displacement_factors(
     return out
 
 
-def closed_month_open_shares(
-    closed_months: int,
-    schedule: list[RenovationDisplacementPeriod],
-    hold_years: int,
-) -> dict[int, float]:
-    """Sam, 2026-11-04 — a hotel earns nothing before it opens. The per-model-year
-    multiplier on occupancy for the first ``closed_months`` months from the first
-    operating month: months open ÷ 12, listing only the years it moves. A renovation
-    period inside the closed months is not counted twice: the multiplier is what the
-    closure adds to the schedule's own occupancy factor."""
-    if closed_months <= 0:
-        return {}
-    closure = RenovationDisplacementPeriod(
-        start_month=1, end_month=min(closed_months, MONTHS_PER_YEAR * hold_years), rooms_offline_pct=1.0
-    )
-    alone = renovation_displacement_factors(schedule, hold_years)
-    combined = renovation_displacement_factors([*schedule, closure], hold_years)
+def months_open_shares(closed_months: int, hold_years: int) -> dict[int, float]:
+    """Sam, 2026-11-04 — months open ÷ 12 for each model year the first
+    ``closed_months`` months from the first operating month touch."""
     out: dict[int, float] = {}
-    for y, row in combined.items():
-        before = alone[y].occupancy_factor if y in alone else 1.0
-        share = row.occupancy_factor / before if before > 0.0 else 1.0
-        if share < 1.0:
-            out[y] = share
+    for y in range(1, hold_years + 1):
+        closed = min(MONTHS_PER_YEAR, max(0, closed_months - MONTHS_PER_YEAR * (y - 1)))
+        if closed:
+            out[y] = (MONTHS_PER_YEAR - closed) / MONTHS_PER_YEAR
     return out
 
 
@@ -1195,6 +1180,21 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
         # percentages and the structured PIP are switched OFF here so nothing
         # is applied twice. Empty → ``{}`` and every branch below is verbatim.
         schedule = list(payload.renovation_displacement_schedule or [])
+        # Sam, 2026-11-04 — closed until the opening. Beside an analyst's schedule the
+        # closure is one more period (no month counted twice, a discount averaged over
+        # the open months only); on its own it is a share of the year, so the scalar and
+        # PIP levers keep applying to the months open.
+        months_open = months_open_shares(payload.closed_months, payload.hold_years)
+        closure_in_schedule = bool(schedule) and bool(months_open)
+        if closure_in_schedule:
+            schedule.append(
+                RenovationDisplacementPeriod(
+                    start_month=1,
+                    end_month=min(payload.closed_months, MONTHS_PER_YEAR * payload.hold_years),
+                    rooms_offline_pct=1.0,
+                    note="Closed until the opening date",
+                )
+            )
         sched_by_year = renovation_displacement_factors(schedule, payload.hold_years)
         if schedule:
             pip_v2 = None
@@ -1231,8 +1231,6 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             y1_adr_drag = 1.0
             y2_occ_recovery_factor = 1.0
             effective_revpar_index = 1.0
-
-        open_shares = closed_month_open_shares(payload.closed_months, schedule, payload.hold_years)
 
         for y in range(1, payload.hold_years + 1):
             if y == 1:
@@ -1316,7 +1314,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
 
             # Sam, 2026-11-04 — closed until the opening: the year sells only its
             # open months. Later years compound from the undisplaced base.
-            open_share = open_shares.get(y, 1.0)
+            months_share = months_open.get(y, 1.0)
+            open_share = 1.0 if closure_in_schedule else months_share
             if open_share < 1.0:
                 occ = occ * open_share
                 occ_disp_f = occ_disp_f * open_share
@@ -1413,8 +1412,8 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             # The flat anchor is prorated too; the build-up already moved with
             # occupied rooms. ``resort_fees`` itself keeps compounding unprorated.
             resort_fees_y = (
-                resort_fees * open_share
-                if open_share < 1.0 and not use_resort_fee_buildup
+                resort_fees * months_share
+                if months_share < 1.0 and not use_resort_fee_buildup
                 else resort_fees
             )
             total_revenue = rooms_revenue + fb_revenue + resort_fees_y + other_revenue
@@ -1791,11 +1790,11 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 occ_trace.note = (
                     f"{occ_trace.note} Closed until the opening: {open_share * MONTHS_PER_YEAR:g} of 12 months open."
                 )
-                if not use_resort_fee_buildup and f"years[{idx}].resort_fees" in prov:
-                    fee_trace = prov[f"years[{idx}].resort_fees"]
-                    fee_trace.value = resort_fees_y
-                    fee_trace.formula = f"{fee_trace.formula} × open_share"
-                    fee_trace.inputs.append(ValueInput(name="open_share", value=open_share))
+            if months_share < 1.0 and not use_resort_fee_buildup and f"years[{idx}].resort_fees" in prov:
+                fee_trace = prov[f"years[{idx}].resort_fees"]
+                fee_trace.value = resort_fees_y
+                fee_trace.formula = f"{fee_trace.formula} × open_share"
+                fee_trace.inputs.append(ValueInput(name="open_share", value=months_share))
             prov[f"years[{idx}].adr"] = _rate_trace(
                 metric="adr",
                 year=y,
@@ -1931,7 +1930,7 @@ __all__ = [
     "TOPLINE_METHODOLOGY_VERSION",
     "RevenueEngine",
     "default_ramp_by_year",
-    "closed_month_open_shares",
+    "months_open_shares",
     "exit_noi_deal_year",
     "projection_deal_years",
     "renovation_displacement_factors",
