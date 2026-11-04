@@ -31,7 +31,7 @@ export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
 }
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
-export const TOPLINE_METHODOLOGY_VERSION = 3;
+export const TOPLINE_METHODOLOGY_VERSION = 4;
 
 /** Field-override keys the topline reads (worker `services/topline.py`). */
 export const TOPLINE_KEYS = {
@@ -68,6 +68,8 @@ export interface ToplineYearRecord {
   ari_target?: number | null;
   ramp_pct?: number | null;
   ramp_state?: string | null;
+  mpi_start_index?: number | null;
+  ari_start_index?: number | null;
   occupancy?: number | null;
   adr?: number | null;
   occupancy_status?: string | null;
@@ -125,16 +127,19 @@ function growthLabels(s: ToplineStatus): string {
     .join('\n');
 }
 
-const RAMP_POLICY_TEXT = (p: string | null | undefined): string => (p ?? 'not stated').replace(/_/g, ' ');
+/** Which default ramp applies to this deal (Sam, 2026-11-04). */
+export function rampModeLabel(s: ToplineStatus): string | null {
+  if (s.benchmark_level === 'none') return null;
+  if (s.ramp_mode === 'operating') return 'Operating hotel';
+  if (s.ramp_mode === 'new_or_reopened') return 'New or reopened hotel';
+  return null;
+}
 
 /** The ramp the worker APPLIED, and why — never a ramp the browser assumes. */
 export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone } {
   const S = s.stabilization_year;
-  if (s.ramp_source === 'not_applied_by_policy') {
-    return {
-      text: `No ramp — the default ramp does not apply to this deal (ramp policy: ${RAMP_POLICY_TEXT(s.ramp_policy)})`,
-      tone: 'ok',
-    };
+  if (s.benchmark_level === 'none') {
+    return { text: 'No ramp — no benchmark to penetrate', tone: 'ok' };
   }
   if (s.ramp_state === 'stabilization_after_hold') {
     return {
@@ -143,10 +148,18 @@ export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone 
     };
   }
   if (s.ramp_state === 'undefined_for_stabilization_year') {
+    const gap = s.ramp_by_year?.findIndex((r) => r == null) ?? -1;
+    const first = gap >= 0 ? gap + 1 : 3;
     return {
-      text: `Ramp: enter the ramp for Years 3–${S - 1} (the default covers Years 1–2 only; those years run at 100%)`,
+      text: `Ramp: enter the ramp for Years ${first}–${S - 1} (the default covers ${first === 2 ? 'Year 1' : `Years 1–${first - 1}`} only; those years run at 100%)`,
       tone: 'warn',
     };
+  }
+  if (s.ramp_source === 'by_year') {
+    return { text: 'Your by-year penetration — no ramp', tone: 'ok' };
+  }
+  if (s.ramp_source === 'straight_line') {
+    return { text: `Straight line from today's index to the target by Year ${S}`, tone: 'ok' };
   }
   if (S <= 1 || !s.ramp_by_year?.length) {
     return { text: 'No ramp — stabilized from Year 1', tone: 'ok' };
@@ -495,7 +508,8 @@ export function toplineYearChain(
   const final = occ ? r.occupancy : r.adr;
   if (benchmark == null || pen == null || final == null) return null;
   const byYear = (occ ? r.mpi_target_source : r.ari_target_source) === 'by_year';
-  const rampApplied = !byYear && r.ramp_pct != null && r.ramp_pct > 0;
+  const start = occ ? r.mpi_start_index : r.ari_start_index;
+  const rampApplied = !byYear && start == null && r.ramp_pct != null && r.ramp_pct > 0;
   const ramp = rampApplied ? (r.ramp_pct as number) : null;
   const stabilizedPenetration = ramp != null ? pen / ramp : null;
   const raw = (benchmark * pen) / 100;
@@ -506,6 +520,8 @@ export function toplineYearChain(
   const pts = (v: number) => String(Math.round(v * 10) / 10);
   const penText = byYear
     ? `penetration ${pts(pen)} (your Year ${r.year} value — no ramp)`
+    : start != null
+      ? `penetration ${pts(pen)} (straight line from today's ${pts(start)})`
     : ramp != null
       ? `penetration ${pts(stabilizedPenetration as number)} × ramp ${fmtPctWhole(ramp)}%`
       : `penetration ${pts(pen)}`;

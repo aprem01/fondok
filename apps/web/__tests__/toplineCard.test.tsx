@@ -204,17 +204,29 @@ describe('ToplineCard — note-gated inputs the worker requires (review I-6)', (
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({ penetration_ramp_by_year: [0.9, 0.95] }, 'Soft opening'));
   });
 
-  it('a ramp the policy does not apply is named — no default ramp is assumed', () => {
+  it('names the mode and shows why a new hotel counts from the close', () => {
     render(
       <ToplineCard
-        status={toplineStatus({ ramp_by_year: [], ramp_source: 'not_applied_by_policy', ramp_policy: 'repositioning_only' })}
+        status={toplineStatus({ ramp_mode: 'new_or_reopened', ramp_flag: 'No opening date yet, so the ramp counts from the close. Enter the opening date.' })}
         overrides={{}}
         onSave={ok()}
         running={false}
       />,
     );
-    expect(screen.getByTestId('topline-ramp-summary')).toHaveTextContent('the default ramp does not apply to this deal (ramp policy: repositioning only)');
-    expect((screen.getByLabelText('Ramp Year 1 (%)') as HTMLInputElement).value).toBe('');
+    expect(screen.getByTestId('topline-ramp-mode')).toHaveTextContent('New or reopened hotel');
+    expect(screen.getByTestId('topline-ramp-flag')).toHaveTextContent('No opening date yet');
+  });
+
+  it('a class-average target says it holds today’s index', () => {
+    render(
+      <ToplineCard
+        status={toplineStatus({ penetration_adr: 57.7, penetration_adr_source: 'hold_index' })}
+        overrides={{}}
+        onSave={ok()}
+        running={false}
+      />,
+    );
+    expect(screen.getByTestId('topline-penetration-adr-source')).toHaveTextContent('Holds today’s index');
   });
 });
 

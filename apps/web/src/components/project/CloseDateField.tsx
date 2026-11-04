@@ -42,6 +42,7 @@ function fmtISODate(iso: string | null | undefined): string {
 /** The acquisition close date — an editable date cell. */
 export default function CloseDateField({
   iso, editable, onSave, noteKey = CLOSE_DATE_KEY, emptyLabel = 'Set date', testId,
+  ariaLabel = 'Acquisition close date', hint = `Click to change — ${TAB_LABEL.investment} owns this assumption`,
 }: {
   iso: string | null;
   editable: boolean;
@@ -50,6 +51,8 @@ export default function CloseDateField({
   noteKey?: string;
   emptyLabel?: string;
   testId?: string;
+  ariaLabel?: string;
+  hint?: string;
 }) {
   const current = iso ? iso.slice(0, 10) : null;
   const ed = useInlineEdit<string>({
@@ -75,7 +78,7 @@ export default function CloseDateField({
         style={{ color: prov.blue, fontWeight: 500, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline dotted', cursor: 'pointer' }}
         onClick={() => ed.start()}
         onKeyDown={(e) => { if (e.key === 'Enter') ed.start(); }}
-        title={`Click to change — ${TAB_LABEL.investment} owns this assumption`}>
+        title={hint}>
         {iso ? display : <span style={{ color: palette.textFaint, fontWeight: 400 }}>{emptyLabel}</span>}
       </span>
     );
@@ -84,7 +87,7 @@ export default function CloseDateField({
     <span ref={ed.containerRef} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <input
         type="date" value={ed.draft} autoFocus disabled={ed.saving}
-        aria-label="Acquisition close date"
+        aria-label={ariaLabel}
         onChange={(e) => ed.setDraft(e.target.value)}
         onKeyDown={ed.onKeyDown}
         style={{ ...inlineEditInputStyle, textAlign: 'left' }}

@@ -86,7 +86,9 @@ DAYS_PER_YEAR = 365
 #: the close — and a deal year's market growth is the month-weighted blend of
 #: the calendar years it spans; ADR past a forecast grows at the report's
 #: published forecast average when it states one.
-TOPLINE_METHODOLOGY_VERSION = 3
+#: 4 (2026-11-04): an operating hotel ramps in a straight line from today's index;
+#: 85 / 95 / 100 is for a new or reopened hotel, counted from the opening.
+TOPLINE_METHODOLOGY_VERSION = 4
 LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
 
 #: The occupancy ceiling every projected year is held under — the same 0.95
@@ -108,15 +110,51 @@ _DEFAULT_RAMP_Y2 = 0.95
 _TOPLINE_METHOD = "benchmark_penetration_ramp"
 
 
-def default_ramp_by_year(stabilization_year: int) -> list[float | None]:
+def default_ramp_by_year(stabilization_year: int, ramp_start_year: int = 1) -> list[float | None]:
     """Default ramp fractions for years ``1..S−1`` (index ``y − 1``).
 
     ``[]`` for S ≤ 1, ``[0.85]`` for S = 2, ``[0.85, 0.95]`` for S = 3 and
     ``[0.85, 0.95, None, …]`` for S ≥ 4 — ``None`` = undefined for that year.
+    ``ramp_start_year`` is the model year the 85 % falls in, so the steps count
+    from a reopening; a year before it runs at the first step.
     """
-    n = max(0, stabilization_year - 1)
-    defined: list[float | None] = [_DEFAULT_RAMP_Y1, _DEFAULT_RAMP_Y2][:n]
-    return defined + [None] * (n - len(defined))
+    out: list[float | None] = []
+    for year in range(1, stabilization_year):
+        step = year - ramp_start_year
+        out.append(_DEFAULT_RAMP_Y1 if step <= 0 else _DEFAULT_RAMP_Y2 if step == 1 else None)
+    return out
+
+
+def _straight_line_applies(topline: ToplineDrivers) -> bool:
+    """An operating hotel on the default ramp whose today's index is known."""
+    return (
+        topline.ramp_mode == "operating"
+        and topline.ramp_by_year is None
+        and (topline.start_index_occ is not None or topline.start_index_adr is not None)
+    )
+
+
+def penetration_for_year(
+    topline: ToplineDrivers, metric: str, year: int, hold_years: int
+) -> tuple[float, float | None, float | None]:
+    """``(penetration, ramp fraction applied, straight-line start)`` before a
+    per-year override: ``I + (P − I) × y ÷ S`` for an operating hotel below S,
+    else ``P × r_y``, else ``P``. The ONE statement of the formula."""
+    occ = metric == "occupancy"
+    p = topline.penetration_occ if occ else topline.penetration_adr
+    start = topline.start_index_occ if occ else topline.start_index_adr
+    s = topline.stabilization_year
+    if year >= s:
+        return p, None, None
+    if _straight_line_applies(topline):
+        if start is not None:
+            return start + (p - start) * year / s, None, start
+        # The other metric has an index, this one does not: its default ramp.
+        ramp = default_ramp_by_year(s, topline.ramp_start_year)
+        r = ramp[year - 1] if year - 1 < len(ramp) else None
+    else:
+        r, _state, _note = _ramp_for_year(topline, year, hold_years)
+    return (p * r if r is not None else p), r, None
 
 
 def _compound(value: float, steps: Sequence[float | None]) -> float:
@@ -182,6 +220,8 @@ def _ramp_for_year(
     * ``y < S`` without a fraction → 100 %: ``undefined_for_stabilization_year``
       when the default ramp is in use and undefined for the year (S ≥ 4, years
       3..S−1), ``no_ramp`` when the analyst's ramp has no entry for the year.
+    * an operating hotel with today's index known → no fraction,
+      ``straight_line`` (:func:`penetration_for_year` runs the line).
     """
     s = topline.stabilization_year  # as the analyst set it — NOT pre-clamped
     if year >= s:
@@ -195,18 +235,28 @@ def _ramp_for_year(
         f"Stabilization (Year {s}) is after the hold; Year {hold_years} runs at ramp "
         "{ramp} and the projection never reaches the stabilized penetration."
     )
-    ramp = topline.ramp_by_year if topline.ramp_by_year is not None else default_ramp_by_year(s)
+    if _straight_line_applies(topline):
+        if after_hold:
+            return None, "stabilization_after_hold", (
+                f"Stabilization (Year {s}) is after the hold; Year {hold_years} is still on the "
+                "straight line and the projection never reaches the target."
+            )
+        return None, "straight_line", None
+    ramp = (
+        topline.ramp_by_year
+        if topline.ramp_by_year is not None
+        else default_ramp_by_year(s, topline.ramp_start_year)
+    )
     r = ramp[year - 1] if 0 <= year - 1 < len(ramp) else None
     if r is None:
-        if topline.ramp_by_year is None and s >= 4 and year >= 3:
+        if topline.ramp_by_year is None:
+            first = topline.ramp_start_year + 2
             state, note = "undefined_for_stabilization_year", (
                 f"Year {year}: the default ramp is defined for stabilization in Year 3 "
                 f"(85 % / 95 %) only — with stabilization in Year {s} the ramp for "
-                f"Years 3–{s - 1} is undefined, so the year runs at 100 % of the "
-                f"stabilized penetration. Enter the ramp for Years 3–{s - 1}."
+                f"Years {first}–{s - 1} is undefined, so the year runs at 100 % of the "
+                f"stabilized penetration. Enter the ramp for Years {first}–{s - 1}."
             )
-        elif topline.ramp_policy_note:
-            state, note = "no_ramp", f"Year {year}: {topline.ramp_policy_note}"
         else:
             state, note = "no_ramp", (
                 f"Year {year}: no ramp entered for the year — it runs at 100 % of the "
@@ -217,6 +267,11 @@ def _ramp_for_year(
         return None, state, note
     if after_hold:
         return r, "stabilization_after_hold", after_hold_note.format(ramp=f"{r:g}")
+    if topline.ramp_by_year is None and year < topline.ramp_start_year:
+        return r, "ramped", (
+            f"Year {year} is before the first full year after opening: it runs at the first ramp "
+            "step. Closed months come from the renovation displacement schedule."
+        )
     return r, "ramped", None
 
 
@@ -226,8 +281,8 @@ def _plan_topline(
     """Resolve §2.4 for every model year: the per-year driver values the loop
     applies and the provenance record each year is echoed on.
 
-    ``pen_y = V_y`` (per-year override) | ``P × r_y`` (y < S, ramp defined) |
-    ``P``; ``occupancy = benchmark × pen ÷ 100`` (the loop applies the 0.95
+    ``pen_y = V_y`` (per-year override) | :func:`penetration_for_year`;
+    ``occupancy = benchmark × pen ÷ 100`` (the loop applies the 0.95
     cap and flags it), ``adr = benchmark × pen ÷ 100``. A metric with no
     benchmark for the year is NOT penetrated: ``None`` here, and the loop runs
     the subject's own level × growth for it.
@@ -303,7 +358,6 @@ def _plan_topline(
                         + "); penetration and ramp are not applied to it."
                     )
                 continue
-            p = topline.penetration_occ if metric == "occupancy" else topline.penetration_adr
             p_source = (
                 topline.penetration_occ_source if metric == "occupancy" else topline.penetration_adr_source
             )
@@ -315,7 +369,15 @@ def _plan_topline(
                 pen = v
                 setattr(rec, source_attr, "by_year")
             else:
-                pen = p * ramp if ramp is not None else p
+                pen, r_applied, start = penetration_for_year(topline, metric, y, payload.hold_years)
+                if r_applied is not None:
+                    rec.ramp_pct = r_applied
+                if start is not None:
+                    setattr(rec, f"{'mpi' if metric == 'occupancy' else 'ari'}_start_index", start)
+                    notes.append(
+                        f"{'Occupancy' if metric == 'occupancy' else 'ADR'} penetration is on the straight line from "
+                        f"today's index {start:.1f} to the target by Year {topline.stabilization_year}."
+                    )
                 setattr(rec, source_attr, "scalar")
                 setattr(rec, f"penetration_{'occ' if metric == 'occupancy' else 'adr'}_source", p_source)
             driver = b_value * pen / 100.0
@@ -335,6 +397,9 @@ def _plan_topline(
                 plan.adr_drivers[y - 1] = driver
         if rec.mpi_target is not None and rec.ari_target is not None:
             rec.rgi_derived = rec.mpi_target * rec.ari_target / 100.0
+        if rec.ramp_state == "straight_line" and rec.mpi_start_index is None and rec.ari_start_index is None:
+            # The line never ran this year (by-year values, or no index).
+            rec.ramp_state = "ramped" if rec.ramp_pct is not None else "no_ramp"
         if rec.occupancy_status != "driven" and rec.adr_status != "driven":
             # Nothing was penetrated this year (no benchmark, or explicit
             # values): the ramp did not apply, so the record does not claim it.

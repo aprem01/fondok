@@ -96,7 +96,7 @@ async def test_growth_only_year1_is_the_t12_and_growth_is_the_resolver() -> None
     src = base["__sources__"]
     status = base["__topline_status__"]
     assert status["topline_mode"] == "growth_only"
-    assert status["methodology_version"] == 3
+    assert status["methodology_version"] == 4
     # Year 1: the subject's own T-12 — NOT the comp set × penetration × ramp.
     assert base["starting_occupancy"] == pytest.approx(T12_OCC, rel=1e-6)
     assert base["starting_adr"] == pytest.approx(T12_ADR, rel=1e-6)
@@ -135,7 +135,7 @@ async def test_growth_only_engine_run_compounds_the_t12_by_the_resolved_growth()
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     out = _revenue(deal_id, base)
-    assert out.topline_methodology_version == 3
+    assert out.topline_methodology_version == 4
     assert out.topline_mode == "growth_only"
     occ = [y.occupancy for y in out.years]
     adr = [y.adr for y in out.years]

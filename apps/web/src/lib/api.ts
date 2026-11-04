@@ -497,7 +497,7 @@ export interface ToplineStatus {
   /** `null` under the growth-only topline (not in use). */
   penetration_occ: number | null;
   penetration_adr: number | null;
-  penetration_occ_source: 'default' | 'analyst_override' | string;
+  penetration_occ_source: 'default' | 'analyst_override' | 'hold_index' | string;
   penetration_adr_source: 'default' | 'analyst_override' | string;
   penetration_occ_by_year: (number | null)[];
   penetration_adr_by_year: (number | null)[];
@@ -505,10 +505,17 @@ export interface ToplineStatus {
   current_ari: ToplineCurrentIndex;
   /** Fractions for years 1..S−1 (the ramp the worker APPLIED). */
   ramp_by_year: (number | null)[];
-  /** `default` | `analyst_override` | `not_applied_by_policy`. */
+  /** `default` | `analyst_override` | `straight_line` | `by_year`. */
   ramp_source: string;
-  ramp_policy?: string | null;
   ramp_state: 'defined' | 'undefined_for_stabilization_year' | 'stabilization_after_hold' | string;
+  /** `operating` | `new_or_reopened`; `null` when the benchmark is not in use. */
+  ramp_mode?: 'operating' | 'new_or_reopened' | null;
+  /** Why the ramp is not counted the way its mode normally counts it. */
+  ramp_flag?: string | null;
+  /** A new hotel with no opening date: the page asks for one. */
+  opening_date_missing?: boolean;
+  start_index_occ?: number | null;
+  start_index_adr?: number | null;
   explicit_metrics: ('occupancy' | 'adr')[];
   t12_reference: {
     occupancy?: number | null;

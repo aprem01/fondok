@@ -102,6 +102,7 @@ import {
   RevenueBasisEntry,
   ToplineBasisLine,
   ToplineCard,
+  OpeningDatePrompt,
   ToplineGrowthBanner,
   ToplineNotices,
   type ToplineSave,
@@ -590,6 +591,21 @@ export default function ProjectionsSection({
     },
     [overrides, dealId, refreshDeal, run, toast],
   );
+  // A new hotel's opening date is the deal's reopening date (the same column,
+  // the same note rule as the Overview's field).
+  const saveOpeningDate = useCallback(
+    async (iso: string, note: string) => {
+      try {
+        await api.deals.update(dealId, { reopening_date: iso, reopening_date_note: note });
+        refreshDeal();
+        toast('Opening date saved — re-running the model…', { type: 'success' });
+        await run();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Could not save the opening date.', { type: 'error' });
+      }
+    },
+    [dealId, refreshDeal, run, toast],
+  );
   // Plan §6 — "Clear legacy keys": one audited PATCH; nulls are reverts (no note).
   const clearLegacyKeys = useCallback(
     (keys: string[]) => {
@@ -884,6 +900,7 @@ export default function ProjectionsSection({
             onSave={applyPatch}
             running={overrideCtx.running}
           />
+          <OpeningDatePrompt status={toplineStatus} editable={!!deal} onSave={saveOpeningDate} />
           <ToplineNotices
             status={toplineStatus}
             dealId={dealId}

@@ -414,7 +414,13 @@ GrowthSource = Literal[
     "unavailable",
 ]
 BenchmarkBasis = Literal["actual", "forecast", "assumption"]
-PenetrationSource = Literal["default", "analyst_override"]
+#: ``hold_index`` — no target set and the benchmark is a class / market average,
+#: not a comp set (Sam, 2026-11-04): the target holds today's derived index flat.
+PenetrationSource = Literal["default", "analyst_override", "hold_index"]
+#: Which default ramp a deal runs (Sam, 2026-11-04). ``operating`` — a straight
+#: line from today's index to the target at the stabilized year;
+#: ``new_or_reopened`` — target × 85 / 95 / 100 counted from the opening.
+ToplineRampMode = Literal["operating", "new_or_reopened"]
 #: How the ramp was applied to ONE model year (``IndexDriverYear.ramp_state``):
 #: ``ramped`` — ``P × r_y`` (y < S, ramp defined); ``stabilized`` — y ≥ S, full
 #: penetration; ``no_ramp`` — y < S but the analyst's ramp has no entry for the
@@ -423,7 +429,12 @@ PenetrationSource = Literal["default", "analyst_override"]
 #: interpolation invented); ``stabilization_after_hold`` — the hold ends before
 #: S, so this (last) year still runs at its ramp and never reaches 100 %.
 ToplineRampState = Literal[
-    "ramped", "stabilized", "no_ramp", "undefined_for_stabilization_year", "stabilization_after_hold"
+    "ramped",
+    "straight_line",
+    "stabilized",
+    "no_ramp",
+    "undefined_for_stabilization_year",
+    "stabilization_after_hold",
 ]
 
 #: Growth fraction per year, as the engine accepts it (−50 %..+50 %, like the
@@ -536,6 +547,7 @@ class ToplineDrivers(BaseModel):
     Built by the loader's resolvers; consumed by ``RevenueEngine`` as::
 
         pen_y = V_y                 if a per-year override is set
+              = I + (P − I) × y ÷ S if y < S, operating, today's index I known
               = P × r_y             if y < S and the ramp defines r_y
               = P                   otherwise (y ≥ S, or no ramp for the year)
         occ_y = min(0.95, B_occ,y × pen_occ,y ÷ 100)
@@ -577,10 +589,15 @@ class ToplineDrivers(BaseModel):
     #: (No separate ``ramp_source`` field: the source IS whether a list was
     #: supplied, and the per-year record's ``ramp_state`` says how it applied.)
     ramp_by_year: list[RampFraction | None] | None = None
-    #: Review I-1 — set when the default ramp does NOT apply to this deal under
-    #: the ramp policy (``services.topline.DEFAULT_RAMP_POLICY``); ``ramp_by_year``
-    #: is then ``[]`` and each pre-stabilization year's record says why.
-    ramp_policy_note: str | None = None
+    #: Which default ramp applies. An analyst's ``ramp_by_year`` wins over both.
+    ramp_mode: ToplineRampMode = "new_or_reopened"
+    #: ``new_or_reopened``: the model year the 85 % step falls in (the first
+    #: full deal year after opening; ≤ 0 when that was before the close).
+    ramp_start_year: int = 1
+    #: ``operating``: today's index ``I`` per metric, the start of the straight
+    #: line. ``None`` = not known, so that metric takes the default ramp.
+    start_index_occ: PenetrationPoints | None = None
+    start_index_adr: PenetrationPoints | None = None
     penetration_occ_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     penetration_adr_by_year: list[PenetrationPoints | None] = Field(default_factory=list)
     #: Metrics whose Year-1 value the analyst entered explicitly
@@ -658,6 +675,10 @@ class IndexDriverYear(BaseModel):
     #: undefined, or not applicable) and how it was applied.
     ramp_pct: float | None = None
     ramp_state: ToplineRampState | None = None
+    #: Today's index the year's straight line started from, per metric
+    #: (``None`` = the year is not on a straight line).
+    mpi_start_index: float | None = None
+    ari_start_index: float | None = None
     #: Where the STABILIZED penetration ``P`` for each metric came from (the
     #: effective ``mpi_target`` / ``ari_target`` above is ``P × r_y`` or the
     #: per-year override — ``*_target_source`` says which).

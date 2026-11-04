@@ -43,6 +43,7 @@ import {
   overrideList,
   parseGrowthPercentList,
   parseRampPercentList,
+  rampModeLabel,
   rampSummary,
   reextractNotice,
   toplineBasisClauses,
@@ -424,7 +425,7 @@ function PenetrationField({
             className="text-[10px] font-semibold uppercase tracking-wide text-ink-500"
             data-testid={`topline-penetration-${metric}-source`}
           >
-            {source === 'analyst_override' ? 'Your override' : 'Default'}
+            {source === 'analyst_override' ? 'Your override' : source === 'hold_index' ? 'Holds today’s index' : 'Default'}
           </span>
         </span>
       </div>
@@ -469,12 +470,20 @@ function RampField({ status, overrides, onSave, running }: { status: ToplineStat
   return (
     <div className="space-y-1" data-testid="topline-ramp">
       <div className="text-[12px] text-ink-500">Ramp to stabilization</div>
+      {rampModeLabel(status) && (
+        <div className="text-[11px] font-medium text-ink-700" data-testid="topline-ramp-mode">
+          {rampModeLabel(status)}
+        </div>
+      )}
       <div
         className={summary.tone === 'warn' ? 'text-[11px] text-warning-700' : 'text-[11px] text-ink-600'}
         data-testid="topline-ramp-summary"
       >
         {summary.text}
       </div>
+      {status.ramp_flag && (
+        <div className="text-[11px] text-warning-700" data-testid="topline-ramp-flag">{status.ramp_flag}</div>
+      )}
       {years > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {cells.map((c, i) => (
@@ -516,6 +525,35 @@ function RampField({ status, overrides, onSave, running }: { status: ToplineStat
           onSave={(note) => void onSave({ [TOPLINE_KEYS.rampByYear]: parsed.value }, note)}
         />
       )}
+    </div>
+  );
+}
+
+/** A new hotel with no opening date: ask for it, as the close date is asked for. */
+export function OpeningDatePrompt({
+  status, editable, onSave,
+}: {
+  status: ToplineStatus | null;
+  editable: boolean;
+  onSave: (iso: string, note: string) => void | Promise<void>;
+}) {
+  if (!status?.opening_date_missing) return null;
+  return (
+    <div
+      role="status"
+      data-testid="topline-opening-date-entry"
+      className="rounded-md border border-warning-500/40 bg-warning-50 px-3 py-2 text-[11.5px] text-ink-700 flex flex-wrap items-center gap-2"
+    >
+      <span className="text-ink-600">{status.ramp_flag ?? 'Enter the opening date.'}</span>
+      <CloseDateField
+        iso={null}
+        editable={editable}
+        onSave={onSave}
+        emptyLabel="Set the opening date"
+        ariaLabel="Opening date"
+        hint="The 85/95/100 ramp and the stabilized year count from this date"
+        testId="topline-opening-date"
+      />
     </div>
   );
 }
@@ -809,7 +847,7 @@ export function PenetrationByYearGrid({
       </table>
       <div className="text-[10.5px] text-ink-500" data-testid="topline-penetration-grid-footer">
         Occupancy before displacement = benchmark × MPI ÷ 100 × ramp (capped at 95%); ADR before displacement =
-        benchmark × ARI ÷ 100 × ramp. MPI / ARI are the penetration at stabilization; the ramp applies in the years before it. A penetration
+        benchmark × ARI ÷ 100 × ramp. MPI / ARI are the penetration at stabilization; the ramp applies in the years before it (an operating hotel moves in a straight line from today&apos;s index, so its ramp column is blank). A penetration
         you set for a single year runs with no ramp. Renovation displacement (the Year-1 assumptions or the
         displacement schedule) then applies to give the occupancy and ADR the model ran on.
       </div>

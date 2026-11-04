@@ -10,6 +10,7 @@ import {
   clearLegacyKeysPatch,
   growthBanner,
   legacyKeysToClear,
+  rampModeLabel,
   rampSummary,
   reextractNotice,
   revenueBasisRefusal,
@@ -84,11 +85,13 @@ describe('toplineBasisClauses — the one-line basis', () => {
 });
 
 describe('rampSummary — whichever ramp the worker applied, and why', () => {
-  it('a ramp the policy does not apply is named with the policy, not as a default', () => {
-    expect(rampSummary(toplineStatus({ ramp_by_year: [], ramp_source: 'not_applied_by_policy', ramp_policy: 'repositioning_only' }))).toEqual({
-      text: 'No ramp — the default ramp does not apply to this deal (ramp policy: repositioning only)',
+  it('an operating hotel names the straight line, not a ramp list', () => {
+    expect(rampSummary(toplineStatus({ ramp_by_year: [], ramp_source: 'straight_line', ramp_mode: 'operating' }))).toEqual({
+      text: "Straight line from today's index to the target by Year 3",
       tone: 'ok',
     });
+    expect(rampModeLabel(toplineStatus({ ramp_mode: 'operating' }))).toBe('Operating hotel');
+    expect(rampModeLabel(toplineStatus({ ramp_mode: 'new_or_reopened' }))).toBe('New or reopened hotel');
   });
   it('S ≥ 4 with the default ramp asks for the missing years', () => {
     expect(rampSummary(toplineStatus({ stabilization_year: 5, ramp_state: 'undefined_for_stabilization_year' }))).toEqual({
@@ -204,9 +207,9 @@ describe('toplineMigrationNotice — runs that predate topline v2', () => {
     );
     expect(toplineMigrationNotice({ hasRevenueRun: true, version: 1 })).not.toBeNull();
   });
-  it('v3 (deal years, FON-121) or no run at all → nothing; a v2 run predates deal years', () => {
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 3 })).toBeNull();
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 2 })).not.toBeNull();
+  it('v4 (operating ramp) or no run at all → nothing; a v3 run predates it', () => {
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 4 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 3 })).not.toBeNull();
     expect(toplineMigrationNotice({ hasRevenueRun: false, version: undefined })).toBeNull();
   });
 });
@@ -401,7 +404,7 @@ describe('FON-116 staged rollout — the growth-only topline', () => {
     const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
     expect(growthBanner(growthOnlyStatus())).toBeNull();
     expect(growthBanner(growthOnlyStatus({ growth_state: 'unavailable', suggestions: [SUGGESTION_45] }))?.suggestion).toEqual(SUGGESTION_45);
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 3 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 4 })).toBeNull();
   });
 });
 
@@ -413,7 +416,7 @@ describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/eng
     };
     const s = run.topline_status;
     expect(run.revenue.topline_mode).toBe('growth_only');
-    expect(run.revenue.topline_methodology_version).toBe(3);
+    expect(run.revenue.topline_methodology_version).toBe(4);
     const c = toplineBasisClauses(s);
     expect(c.map((x) => x.id)).toEqual(['year1', 'growth', 'stabilization']);
     expect(c[0].text).toBe('Year 1: T-12 actual');

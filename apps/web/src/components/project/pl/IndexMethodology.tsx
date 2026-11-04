@@ -177,7 +177,7 @@ export function buildReconciliation(i: ReconciliationInput): Reconciliation | nu
     steps.push(`Stabilized baseline ${pair(i.startingOccupancy, i.startingAdr)} — ${projectionsSource}`);
   }
   if (i.occSource?.source === 'topline_benchmark' || i.adrSource?.source === 'topline_benchmark') {
-    steps.push('Topline: the benchmark × your penetration × the ramp sets the Year-1 rate');
+    steps.push('Topline: the benchmark × that year’s penetration sets the Year-1 rate');
   }
   const dOcc = i.y1OccDisplacement ?? 0;
   const dAdr = i.y1AdrDisplacement ?? 0;

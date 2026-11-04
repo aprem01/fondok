@@ -70,7 +70,6 @@ function toplineStatus(ramp: number[], source: 'default' | 'analyst_override') {
     current_ari: { value: 75.1, label: 'Current ARI 75.1 (STR TTM May 2025)', basis: 'str_published' },
     ramp_by_year: ramp,
     ramp_source: source,
-    ramp_policy: 'all_deals',
     ramp_state: 'defined',
     explicit_metrics: [],
     t12_reference: null,

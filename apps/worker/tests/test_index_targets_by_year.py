@@ -500,14 +500,16 @@ async def test_by_year_targets_drive_the_topline_on_every_deal() -> None:
 
     out = RevenueEngine().run(_build_input_for("revenue", deal_id, base, {}))
     years = out.years
-    assert out.topline_methodology_version == 3
-    # Year 1: occupancy 100 × 0.85 ramp; ADR the scalar ARI 100 × 0.85.
-    assert years[0].occupancy == pytest.approx(_COMP_OCC_DB * 0.85, rel=1e-6)
-    assert years[0].adr == pytest.approx(_COMP_ADR_DB * 0.85, rel=1e-6)
-    # Year 2: the by-year MPI 115 beats the ramp; the benchmark grew 1.2%.
+    assert out.topline_methodology_version == 4
+    # Year 1: both metrics on the straight line from today's index.
+    status = base["__topline_status__"]
+    mpi, ari = status["current_mpi"]["value"], status["current_ari"]["value"]
+    assert years[0].occupancy == pytest.approx(_COMP_OCC_DB * (mpi + (100 - mpi) / 3) / 100, rel=1e-5)
+    assert years[0].adr == pytest.approx(_COMP_ADR_DB * (ari + (100 - ari) / 3) / 100, rel=1e-5)
+    # Year 2: the by-year MPI 115 beats the line; the benchmark grew 1.2%.
     assert years[1].occupancy == pytest.approx(_COMP_OCC_DB * 1.012 * 1.15, rel=1e-6)
-    # ADR has no growth figure (only occupancy growth was set): held flat × 95% ramp.
-    assert years[1].adr == pytest.approx(_COMP_ADR_DB * 0.95, rel=1e-6)
+    # ADR has no growth figure (only occupancy growth was set): held flat, on the line.
+    assert years[1].adr == pytest.approx(_COMP_ADR_DB * (ari + (100 - ari) * 2 / 3) / 100, rel=1e-5)
     recs = {r.year: r for r in out.topline_by_year}
     assert recs[2].mpi_target_source == "by_year" and recs[2].mpi_target == pytest.approx(115.0)
     assert recs[2].adr_growth_source == "unavailable"
@@ -557,7 +559,7 @@ async def test_endpoint_carries_the_by_year_grid_on_the_deal_calendar_and_is_ten
     assert payload["hold_years"] == 3 and payload["calendar_known"] is True
     assert [r["deal_year"]["label"] for r in payload["by_year"]] == ["Oct 2025–Sep 2026", "Oct 2026–Sep 2027", "Oct 2027–Sep 2028"]
     assert payload["by_year_applies"] is False and "retired Index Analysis view" in payload["by_year_disabled_reason"]
-    assert payload["topline_status"]["methodology_version"] == 3
+    assert payload["topline_status"]["methodology_version"] == 4
     y2 = payload["by_year"][1]
     assert y2["mpi_target"] == {"value": 115.0, "source": "by_year", "note": "Year-2 share gain after the PIP", "problem": None}
     assert y2["ari_target"]["source"] == "scalar" and y2["rgi_derived"] == pytest.approx(115.0)

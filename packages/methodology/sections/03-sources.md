@@ -174,8 +174,10 @@ withheld until the licence covers the workspace. Nothing is shared between works
 :::
 
 ::: badge {source=penetration_default name="Penetration Default"}
-Parity with the benchmark (index 100) at stabilization, with the 85% / 95% ramp in Years 1 and 2 for
-a Year-3 stabilization — a labelled suggestion; the hotel's current STR index is shown beside it.
+Parity with the competitive set (index 100) at stabilization, or the hotel's derived index held flat
+against a submarket or market average — a labelled suggestion; the hotel's current index is shown
+beside it. An operating hotel gets there in a straight line from today's index; a new or reopened
+hotel by the 85% / 95% ramp counted from opening.
 
 :::
 
@@ -807,8 +809,10 @@ per load (`base["__data_policy__"]`) and is part of the read-cache fingerprint.
 
 ::: badge {source=penetration_default name="Penetration Default"}
 `penetration_occ` / `penetration_adr` = 100 with source `default` when the analyst set no
-`index_mpi_target` / `index_ari_target`; default ramp `[0.85, 0.95]` for S = 3, `[0.85]` for S = 2,
-undefined for Years 3..S−1 when S ≥ 4 (`ramp_state = undefined_for_stabilization_year`).
+`index_mpi_target` / `index_ari_target` (source `hold_index`, the derived `start_index_*`, against a
+submarket or market level); `ramp_mode = operating` runs `ramp_state = straight_line`; default ramp
+`[0.85, 0.95]` for S = 3, `[0.85]` for S = 2, undefined for Years 3..S−1 when S ≥ 4
+(`ramp_state = undefined_for_stabilization_year`), counted from `ramp_start_year`.
 `topline_status.current_mpi` / `current_ari` print the STR-published index beside it.
 
 :::
@@ -904,8 +908,8 @@ value with no source shows "—" and no chip. The labels are display only — th
 by-year drivers are unchanged. Penetration rows follow the benchmark the model runs on.
 With the STR comp set: the STR-published MPI / ARI / RGI in the TTM anchor column; across the
 forecast columns the penetration the model applied that year — your per-year value (which runs with
-no ramp), else the stabilized penetration (100 by default) × that year's ramp, so 85 / 95 / 100 under
-the default ramp; RGI derived as MPI × ARI ÷ 100 — always what the Subject rows run on; the hover
+no ramp), else that year's point on the straight line from today's index for an operating hotel, or the
+stabilized penetration × the year's ramp (85 / 95 / 100 by default) for a new or reopened hotel; RGI derived as MPI × ARI ÷ 100 — always what the Subject rows run on; the hover
 text says which. With the submarket or market level, the index rows read
 "vs \<benchmark\>": the
 anchor column is the subject STR TTM ÷ that benchmark × 100 and each forecast column is the subject

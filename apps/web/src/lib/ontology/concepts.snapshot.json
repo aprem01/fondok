@@ -8370,7 +8370,7 @@
       "badge": "Default 100",
       "kind": "assumption",
       "doc_types": [],
-      "explanation": "Parity with the benchmark (index 100) at stabilization, with an 85% / 95% ramp in Years 1–2 for a Year-3 stabilization — a labelled suggestion; the current STR index is shown beside it.",
+      "explanation": "Parity with the competitive set (index 100) at stabilization, or the hotel's derived index held flat against a submarket or market average — a labelled suggestion. An operating hotel gets there in a straight line from today's index; a new or reopened hotel by the 85% / 95% ramp counted from opening.",
       "reason": null
     },
     "pip_document": {

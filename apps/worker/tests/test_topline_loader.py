@@ -79,7 +79,7 @@ async def test_documents_deal_runs_the_reference_path_through_the_loader() -> No
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     status = base["__topline_status__"]
-    assert status["methodology_version"] == 3
+    assert status["methodology_version"] == 4
     assert status["benchmark_level"] == "comp_set"
     assert status["benchmark"]["source_id"] == "str_comp_set"
     assert status["class_bucket"] == "luxury_upper_upscale"
@@ -107,8 +107,9 @@ async def test_defaults_on_the_documents_deal_ramp_and_carry_the_forecast() -> N
     base = await _load(deal_id, tenant_id)
     status = base["__topline_status__"]
     assert status["penetration_occ_source"] == "default"
-    assert status["ramp_by_year"] == [0.85, 0.95]
-    assert base["starting_occupancy"] == pytest.approx(0.754959 * 0.988 * 0.85, rel=1e-5)
+    assert status["ramp_by_year"] == [] and status["ramp_source"] == "straight_line"
+    mpi = status["current_mpi"]["value"]
+    assert base["starting_occupancy"] == pytest.approx(0.754959 * 0.988 * (mpi + (100 - mpi) / 3) / 100, rel=1e-5)
     assert [r["adr"]["source"] for r in status["growth_by_year"]] == ["costar_submarket_forecast"] * 4 + ["carried_forward"]
     # Terminal growth = 2030 ADR past the CoStar series: the report's
     # published forecast average (+2.5%, p.4 — FON-121 decision 2), not
@@ -223,7 +224,7 @@ async def test_full_chain_on_the_documents_deal_echoes_the_topline() -> None:
         results = await run_all_engines(s, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
     rev = results["revenue"]["outputs"]
     rev = rev if isinstance(rev, dict) else rev.model_dump(mode="json")
-    assert rev["topline_methodology_version"] == 3
+    assert rev["topline_methodology_version"] == 4
     assert [d["label"] for d in rev["projection_deal_years"]] == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     recs = rev["topline_by_year"]
     assert [r["ari_target"] for r in recs] == pytest.approx([97, 98, 99, 100, 100])
@@ -235,7 +236,7 @@ async def test_full_chain_on_the_documents_deal_echoes_the_topline() -> None:
 @pytest.mark.asyncio
 async def test_stabilization_year_ends_the_ramp_on_a_benchmark_deal() -> None:
     """Topline v2: S is where the penetration reaches its stabilized value.
-    Moving S from the Year-3 default to Year 2 removes the Year-2 ramp (95%)."""
+    Moving S from the Year-3 default to Year 2 steepens the straight line."""
     deal_id, tenant_id = await _docs_deal(
         index_mpi_target_by_year=None, index_ari_target_by_year=None,
     )
@@ -250,11 +251,12 @@ async def test_stabilization_year_ends_the_ramp_on_a_benchmark_deal() -> None:
         await s.execute(text("UPDATE deals SET field_overrides = :ov WHERE id = :id"), {"ov": json.dumps(ov), "id": deal2})
         await s.commit()
     s2 = await _load(deal2, tenant2)
-    assert s3["__topline_status__"]["ramp_by_year"] == [0.85, 0.95]
-    assert s2["__topline_status__"]["ramp_by_year"] == [0.85]
     assert s2["__topline_status__"]["stabilization_source"] == "analyst_override"
-    # Year 1 is the same (85% either way); the drivers differ from Year 2.
-    assert s2["starting_occupancy"] == pytest.approx(s3["starting_occupancy"])
+    # The straight line is steeper: half way to the target in Year 1, not a third.
+    mpi = s3["__topline_status__"]["current_mpi"]["value"]
+    assert s2["starting_occupancy"] / s3["starting_occupancy"] == pytest.approx(
+        (mpi + (100 - mpi) / 2) / (mpi + (100 - mpi) / 3), rel=1e-9
+    )
     assert s2["topline"]["stabilization_year"] == 2 and s3["topline"]["stabilization_year"] == 3
 
 

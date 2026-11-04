@@ -126,4 +126,4 @@ atlas:
   # `projection` copy they need; that selection now needs 51,251 characters
   # (+1,000 headroom = 52,251). Raised per the rule above — the projection
   # split (topline vs exit / refi) is still the structural fix.
-  max_chars: 53000
+  max_chars: 55000

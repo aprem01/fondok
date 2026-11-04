@@ -602,12 +602,13 @@ export type GrowthSource = z.infer<typeof GrowthSource>;
 export const BenchmarkBasis = z.enum(['actual', 'forecast', 'assumption']);
 export type BenchmarkBasis = z.infer<typeof BenchmarkBasis>;
 
-export const PenetrationSource = z.enum(['default', 'analyst_override']);
+export const PenetrationSource = z.enum(['default', 'analyst_override', 'hold_index']);
 export type PenetrationSource = z.infer<typeof PenetrationSource>;
 
 /** How the ramp applied to ONE model year — see the Python docstring. */
 export const ToplineRampState = z.enum([
   'ramped',
+  'straight_line',
   'stabilized',
   'no_ramp',
   'undefined_for_stabilization_year',
@@ -695,7 +696,10 @@ export const ToplineDrivers = z.object({
   penetration_adr_source: PenetrationSource.default('default'),
   // null = the engine's default ramp for S; a list = the analyst's ramp.
   ramp_by_year: z.array(RampFraction.nullable()).nullable().optional(),
-  ramp_policy_note: z.string().nullable().optional(),
+  ramp_mode: z.enum(['operating', 'new_or_reopened']).default('new_or_reopened'),
+  ramp_start_year: z.number().int().default(1),
+  start_index_occ: z.number().nullable().optional(),
+  start_index_adr: z.number().nullable().optional(),
   penetration_occ_by_year: z.array(PenetrationPoints.nullable()).default([]),
   penetration_adr_by_year: z.array(PenetrationPoints.nullable()).default([]),
   t12_reference: ToplineReference.nullable().optional(),
@@ -727,6 +731,8 @@ export const IndexDriverYear = z.object({
   benchmark_level: BenchmarkLevel.nullable().optional(),
   ramp_pct: z.number().nullable().optional(),
   ramp_state: ToplineRampState.nullable().optional(),
+  mpi_start_index: z.number().nullable().optional(),
+  ari_start_index: z.number().nullable().optional(),
   penetration_occ_source: PenetrationSource.nullable().optional(),
   penetration_adr_source: PenetrationSource.nullable().optional(),
   occupancy_growth_applied: z.number().nullable().optional(),

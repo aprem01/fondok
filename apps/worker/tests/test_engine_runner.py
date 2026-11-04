@@ -92,7 +92,7 @@ async def test_run_all_engines_kimpton() -> None:
     em = results["returns"]["outputs"]["equity_multiple"]
     assert 1.2 <= em <= 1.6, f"equity multiple out of band: {em}"
     rev = results["revenue"]["outputs"]
-    assert rev["topline_methodology_version"] == 3
+    assert rev["topline_methodology_version"] == 4
     assert {y["occupancy"] for y in rev["years"]} == {0.762}
     assert {y["adr"] for y in rev["years"]} == {385.0}
 
@@ -1511,9 +1511,9 @@ _INDEX_OVERRIDES = {
 @pytest.mark.asyncio
 async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
     """Topline v2: no toggle. The MPI target is the stabilized occupancy
-    penetration (Year 1 ramps at 85% of it for a Year-3 stabilization); the
-    retired market-growth keys read as all-years growth with a legacy flag;
-    ADR (no ARI target) runs at the 100 default × the ramp."""
+    penetration, reached in a straight line from the published MPI by Year 3;
+    the retired market-growth keys read as all-years growth with a legacy flag;
+    ADR (no ARI target) lines up from the published ARI to the 100 default."""
     from app.database import get_session_factory
     from app.services.engine_runner import _load_engine_inputs
 
@@ -1524,8 +1524,8 @@ async def test_index_assumptions_feed_the_topline_on_every_deal() -> None:
 
     status = base["__topline_status__"]
     # No close date: the comp set is Year 1 as reported.
-    assert base["starting_occupancy"] == pytest.approx(0.785 / 1.032 * 1.10 * 0.85, abs=1e-6)
-    assert base["starting_adr"] == pytest.approx(412.0 / 0.942 * 0.85, rel=1e-6)  # blend rounds to 4 dp
+    assert base["starting_occupancy"] == pytest.approx(0.785 / 1.032 * (1.032 + (1.10 - 1.032) / 3), abs=1e-6)
+    assert base["starting_adr"] == pytest.approx(412.0 / 0.942 * (0.942 + (1.0 - 0.942) / 3), rel=1e-5)  # blend rounds to 4 dp
     assert base["__sources__"]["starting_occupancy"] == "topline_benchmark"
     assert status["penetration_occ"] == 110.0 and status["penetration_occ_source"] == "analyst_override"
     assert status["penetration_adr_source"] == "default"

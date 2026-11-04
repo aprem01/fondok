@@ -290,8 +290,8 @@ async def test_runs_list_and_compare_real_chain_runs_tenant_scoped() -> None:
         assert cmp["fields_changed"] == len(cmp["fields"]) > 0
         # Plan §6 / PR 7 — each side names the topline method its run used,
         # so a comparison across methods is labelled, never silent.
-        assert cmp["base"]["topline_methodology_version"] == 3
-        assert cmp["head"]["topline_methodology_version"] == 3
+        assert cmp["base"]["topline_methodology_version"] == 4
+        assert cmp["head"]["topline_methodology_version"] == 4
         assert cmp["topline_methodology_changed"] is False
         # FON-116 staged rollout — and the topline mode (the deployed default).
         assert cmp["base"]["topline_mode"] == cmp["head"]["topline_mode"] == "growth_only"

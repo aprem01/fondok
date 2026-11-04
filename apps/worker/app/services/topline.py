@@ -40,14 +40,16 @@ from ..engines.revenue import (
     DEFAULT_PENETRATION_INDEX,
     OCCUPANCY_CAP,
     TOPLINE_METHODOLOGY_VERSION,
-    _ramp_for_year,
+    _straight_line_applies,
     default_ramp_by_year,
+    penetration_for_year,
 )
 from ..engines.stabilization import (
     DEFAULT_STABILIZATION_YEAR,
     reopening_stabilized_index,
 )
 from ..engines.timeline import parse_iso_date
+from .deal_type import is_development_like
 from .index_methodology import (
     KEY_ARI_TARGET,
     KEY_ARI_TARGET_BY_YEAR,
@@ -111,53 +113,28 @@ def topline_mode() -> str:
     return "benchmark" if bool(get_settings().TOPLINE_BENCHMARK_ENABLED) else "growth_only"
 
 _RAMP_MAX = 1.5
+#: ``PenetrationPoints`` bounds: a derived index outside them is not usable.
+_INDEX_MIN, _INDEX_MAX = 25.0, 250.0
 
-#: Review I-1 — WHICH deals the default 85 / 95 ramp applies to. The ONE
-#: policy point: the domain lead's decision is a change of this line.
-#:   ``all_deals``          — every deal (Sam, 2026-11-01; current).
-#:   ``repositioning_only`` — only a deal with a reopening date or an explicit
-#:                            renovation displacement (Year-1 displacement %,
-#:                            PIP closure schedule or displacement schedule):
-#:                            the ramp is a lease-up concept; a stabilized
-#:                            operating asset runs at the stabilized
-#:                            penetration from Year 1.
-#:   ``never``              — no default ramp on any deal.
-#: An analyst's ``penetration_ramp_by_year`` always wins over the policy.
-RAMP_POLICIES: tuple[str, ...] = ("all_deals", "repositioning_only", "never")
-DEFAULT_RAMP_POLICY = "all_deals"
-
-_DISPLACEMENT_KEYS = (
-    "y1_occupancy_displacement_pct",
-    "y1_adr_displacement_pct",
-    "pip_displacement_overrides",
-    "renovation_displacement_schedule",
-)
+#: The default ramp (Sam, 2026-11-04): an open hotel ramps from where it is
+#: today, a new or reopened one leases up. Deal Type Development (and adaptive
+#: reuse, the same build / convert configuration) or a reopening date is new; a
+#: hotel that stays open through displacement is operating.
+RAMP_MODE_OPERATING = "operating"
+RAMP_MODE_NEW = "new_or_reopened"
 
 
-def default_ramp_applies(base: Mapping[str, Any], policy: str = DEFAULT_RAMP_POLICY) -> bool:
-    """Does the default ramp apply to the deal described by ``base`` under
-    ``policy``? See :data:`DEFAULT_RAMP_POLICY`."""
-    if policy == "all_deals":
-        return True
-    if policy == "never":
-        return False
-    if base.get("reopening_date") not in (None, ""):
-        return True
-    for key in _DISPLACEMENT_KEYS:
-        v = base.get(key)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            if v > 0:
-                return True
-        elif v:
-            return True
-    return False
-
-
-def _ramp_policy_note(policy: str) -> str:
-    return (
-        f"the default ramp does not apply to this deal (ramp policy: {policy}) — the stabilized "
-        "penetration applies from Year 1. Enter a ramp to phase it in."
-    )
+def ramp_mode_for(base: Mapping[str, Any]) -> str:
+    """Which default ramp the deal described by ``base`` runs. A reopening whose
+    85 / 95 / 100 finished before the projection starts is an operating hotel."""
+    reopening = parse_iso_date(base.get("reopening_date"))
+    if reopening is not None:
+        close = base.get("acquisition_close_date")
+        index = reopening_stabilized_index(
+            close if isinstance(close, date) else (str(close) if close not in (None, "") else None), reopening
+        )
+        return RAMP_MODE_OPERATING if index is not None and index < 0 else RAMP_MODE_NEW
+    return RAMP_MODE_NEW if is_development_like(base.get("deal_type")) else RAMP_MODE_OPERATING
 
 
 @dataclass(frozen=True)
@@ -174,10 +151,14 @@ class ToplineInputs:
     explicit_metrics: tuple[str, ...] = ()
     legacy_flags: tuple[dict[str, Any], ...] = ()
     problems: tuple[str, ...] = ()
-    #: Review I-1 — the ramp policy in force, and whether it switched the
-    #: default ramp off for this deal (``ramp`` is then ``()``).
-    ramp_policy: str = DEFAULT_RAMP_POLICY
-    ramp_off_by_policy: bool = False
+    ramp_mode: str = RAMP_MODE_OPERATING
+    #: The model year the 85 % step falls in (``new_or_reopened``).
+    ramp_start_year: int = 1
+    #: Why a new or reopened hotel's ramp counts from the close instead.
+    ramp_flag: str | None = None
+    #: A new hotel with no opening date: the page asks for one.
+    opening_date_missing: bool = False
+    has_displacement_schedule: bool = False
 
 
 def coerce_ramp_list(raw: Any) -> tuple[list[float | None], list[str]]:
@@ -243,7 +224,6 @@ def read_topline_inputs(
     *,
     str_noted_keys: frozenset[str] | set[str] = frozenset(),
     derived_adr_source: str = "derived_from_revpar_growth",
-    ramp_policy: str = DEFAULT_RAMP_POLICY,
     mode: str = "benchmark",
 ) -> ToplineInputs:
     """Everything the topline reads off the resolved assumptions.
@@ -311,9 +291,17 @@ def read_topline_inputs(
         lst, rp = coerce_ramp_list(ramp_raw)
         problems += [f"Ramp — {p} (ignored)" for p in rp]
         ramp = tuple(lst)
-    ramp_off = False
-    if ramp is None and not default_ramp_applies(base, ramp_policy):
-        ramp, ramp_off = (), True
+    ramp_mode = ramp_mode_for(base)
+    opening = parse_iso_date(base.get("reopening_date"))
+    default_s, default_s_source = default_stabilization_year(base)
+    placed = default_s_source == "default_year_3_reopening"
+    ramp_flag = None
+    if ramp_mode == RAMP_MODE_NEW and not placed:
+        ramp_flag = (
+            "The opening date can't be placed on the projection, so the ramp counts from the close."
+            if opening is not None
+            else "No opening date yet, so the ramp counts from the close. Enter the opening date."
+        )
 
     from .engine_runner import STABILIZATION_YEAR_KEY, _coerce_stabilization_year
 
@@ -431,8 +419,11 @@ def read_topline_inputs(
         explicit_metrics=tuple(explicit),
         legacy_flags=tuple(legacy),
         problems=tuple(problems),
-        ramp_policy=ramp_policy,
-        ramp_off_by_policy=ramp_off,
+        ramp_mode=ramp_mode,
+        ramp_start_year=default_s - 2 if placed else 1,
+        ramp_flag=ramp_flag,
+        opening_date_missing=ramp_mode == RAMP_MODE_NEW and opening is None,
+        has_displacement_schedule=bool(base.get("renovation_displacement_schedule")),
     )
 
 
@@ -576,6 +567,113 @@ def _step_summary(steps: Sequence[MetricGrowth]) -> str:
     return "; ".join(parts)
 
 
+def _current_index(
+    bench: BenchmarkResolution, t12: ToplineReference | None, metric: str
+) -> dict[str, Any]:
+    """Today's index for one metric: the STR published MPI / ARI, else derived
+    from the subject's T-12 against the benchmark level (labelled derived)."""
+    published = bench.published_mpi if metric == "occupancy" else bench.published_ari
+    if published is not None:
+        return {
+            "value": published,
+            "label": f"Current {'MPI' if metric == 'occupancy' else 'ARI'} {published:.1f} "
+            f"(STR {bench.index_period_label or 'TTM'})",
+            "basis": "str_published",
+        }
+    level = bench.occupancy if metric == "occupancy" else bench.adr
+    subject = (t12.occupancy if metric == "occupancy" else t12.adr) if t12 is not None else None
+    if level and subject:
+        v = subject / level * 100.0
+        return {
+            "value": round(v, 2),
+            "label": f"Derived: subject T-12 ÷ benchmark = {v:.1f}",
+            "basis": "t12_over_benchmark",
+        }
+    return {"value": None, "label": "No current index — needs the STR report or a T-12", "basis": None}
+
+
+def _by_year_covers(by_year: Sequence[float | None], s: int, hold: int) -> bool:
+    years = range(1, min(s - 1, hold) + 1)
+    return all(y <= len(by_year) and by_year[y - 1] is not None for y in years)
+
+
+def _by_year_runs_every_ramp_year(drivers: ToplineDrivers, hold: int) -> bool:
+    """Every benchmark-driven metric's ramp years are analyst by-year values."""
+    s = drivers.stabilization_year
+    driven = [
+        by_year
+        for metric, by_year in (
+            ("occupancy", drivers.penetration_occ_by_year),
+            ("adr", drivers.penetration_adr_by_year),
+        )
+        if metric not in drivers.explicit_year1
+    ]
+    return s > 1 and bool(driven) and all(_by_year_covers(by_year, s, hold) for by_year in driven)
+
+
+def _ramp_flag(
+    inputs: ToplineInputs,
+    drivers: ToplineDrivers,
+    bench: BenchmarkResolution,
+    hold: int,
+    *,
+    base_has_schedule: bool,
+) -> str | None:
+    """The one thing about this deal's ramp the analyst must look at, if any."""
+    s = drivers.stabilization_year
+    ramp_runs = (
+        bench.level != "none"
+        and drivers.ramp_by_year is None
+        and s > 1
+        and not _by_year_runs_every_ramp_year(drivers, hold)
+        and len(drivers.explicit_year1) < 2
+    )
+    if not ramp_runs:
+        return (
+            "No opening date yet, so the stabilized year counts from the close. Enter the opening date."
+            if inputs.opening_date_missing
+            else None
+        )
+    if inputs.ramp_flag:
+        return inputs.ramp_flag
+    if inputs.ramp_mode == RAMP_MODE_NEW:
+        if drivers.ramp_start_year > 1 and not base_has_schedule:
+            last = drivers.ramp_start_year - 1
+            years = "Year 1 is" if last == 1 else f"Years 1–{last} are"
+            return (
+                f"{years} before the first full year after opening, still earning revenue at the "
+                "first ramp step. Enter the closed months in the displacement schedule."
+            )
+        if bench.level != "comp_set" and "default" in (
+            drivers.penetration_occ_source, drivers.penetration_adr_source
+        ):
+            return (
+                "The target is 100% of a class or market average because there's no T-12 to derive an "
+                "index from. Set a target."
+            )
+        return None
+    missing = [
+        label
+        for metric, label, index, by_year in (
+            ("occupancy", "occupancy", drivers.start_index_occ, drivers.penetration_occ_by_year),
+            ("adr", "ADR", drivers.start_index_adr, drivers.penetration_adr_by_year),
+        )
+        if index is None and metric not in drivers.explicit_year1 and not _by_year_covers(by_year, s, hold)
+    ]
+    if not missing:
+        return None
+    return (
+        f"Today's {' and '.join(missing)} index isn't available (no STR index or usable T-12 comparison), "
+        "so the 85/95/100 ramp applies to it."
+    )
+
+
+def _start_index(bench: BenchmarkResolution, t12: ToplineReference | None, metric: str) -> float | None:
+    """The straight line's start, or ``None`` when no usable index exists."""
+    v = _current_index(bench, t12, metric)["value"]
+    return v if v is not None and _INDEX_MIN <= v <= _INDEX_MAX else None
+
+
 def build_topline(
     bench: BenchmarkResolution,
     growth: GrowthResolution,
@@ -692,6 +790,26 @@ def build_topline(
         occ_list[gy.year - 1] = gy.occupancy_growth
         adr_list[gy.year - 1] = gy.adr_growth
 
+    # An operating hotel ramps from today's index. Against a class or market
+    # average (not a comp set) the default target holds that index flat.
+    operating = inputs.ramp_mode == RAMP_MODE_OPERATING and bench.level != "none"
+    start: dict[str, float | None] = {
+        m: _start_index(bench, t12, m) if operating and m not in inputs.explicit_metrics else None
+        for m in METRICS
+    }
+
+    def _target(metric: str, set_value: float | None) -> tuple[float, str]:
+        if set_value is not None:
+            return set_value, "analyst_override"
+        if bench.level in ("submarket", "market") and metric not in inputs.explicit_metrics:
+            held = _start_index(bench, t12, metric)
+            if held is not None:
+                return held, "hold_index"
+        return DEFAULT_PENETRATION_INDEX, "default"
+
+    target_occ, target_occ_source = _target("occupancy", inputs.penetration_occ)
+    target_adr, target_adr_source = _target("adr", inputs.penetration_adr)
+
     drivers = ToplineDrivers(
         methodology_version=TOPLINE_METHODOLOGY_VERSION,
         benchmark_level=bench.level,
@@ -700,12 +818,15 @@ def build_topline(
         benchmark_by_year=bench_years,
         growth_by_year=growth_years,
         stabilization_year=inputs.stabilization_year,
-        penetration_occ=inputs.penetration_occ if inputs.penetration_occ is not None else DEFAULT_PENETRATION_INDEX,
-        penetration_adr=inputs.penetration_adr if inputs.penetration_adr is not None else DEFAULT_PENETRATION_INDEX,
-        penetration_occ_source="analyst_override" if inputs.penetration_occ is not None else "default",
-        penetration_adr_source="analyst_override" if inputs.penetration_adr is not None else "default",
+        penetration_occ=target_occ,
+        penetration_adr=target_adr,
+        penetration_occ_source=target_occ_source,  # type: ignore[arg-type]
+        penetration_adr_source=target_adr_source,  # type: ignore[arg-type]
         ramp_by_year=list(inputs.ramp) if inputs.ramp is not None else None,
-        ramp_policy_note=_ramp_policy_note(inputs.ramp_policy) if inputs.ramp_off_by_policy else None,
+        ramp_mode=inputs.ramp_mode,  # type: ignore[arg-type]
+        ramp_start_year=inputs.ramp_start_year,
+        start_index_occ=start["occupancy"],
+        start_index_adr=start["adr"],
         penetration_occ_by_year=list(inputs.penetration_occ_by_year)[:hold],
         penetration_adr_by_year=list(inputs.penetration_adr_by_year)[:hold],
         explicit_year1=list(inputs.explicit_metrics),
@@ -715,16 +836,15 @@ def build_topline(
     # Year-1 rate the topline sets (same arithmetic as the engine's plan).
     year1: dict[str, float | None] = {"occupancy": None, "adr": None}
     b1 = next((b for b in bench_years if b.year == 1), None)
-    ramp1, _state, _note = _ramp_for_year(drivers, 1, hold)
-    for metric, p, by_year in (
-        ("occupancy", drivers.penetration_occ, drivers.penetration_occ_by_year),
-        ("adr", drivers.penetration_adr, drivers.penetration_adr_by_year),
+    for metric, by_year in (
+        ("occupancy", drivers.penetration_occ_by_year),
+        ("adr", drivers.penetration_adr_by_year),
     ):
         bv = getattr(b1, metric) if b1 is not None else None
         if bv is None:
             continue
         v_override = by_year[0] if by_year else None
-        pen = v_override if v_override is not None else (p * ramp1 if ramp1 is not None else p)
+        pen = v_override if v_override is not None else penetration_for_year(drivers, metric, 1, hold)[0]
         v = bv * pen / 100.0
         year1[metric] = min(OCCUPANCY_CAP, v) if metric == "occupancy" else v
 
@@ -938,40 +1058,23 @@ def _status(
             notes=notes, t12=t12, terminal=terminal,
         )
     s = drivers.stabilization_year
-    if inputs.ramp_off_by_policy:
-        ramp = []
-        ramp_source = "not_applied_by_policy"
-        ramp_state = "defined"
-    elif drivers.ramp_by_year is not None:
+    straight_line = _straight_line_applies(drivers)
+    if drivers.ramp_by_year is not None:
         ramp = list(drivers.ramp_by_year)
         ramp_source = "analyst_override"
         ramp_state = "defined"
+    elif straight_line:
+        ramp = []
+        ramp_source = "straight_line"
+        ramp_state = "defined"
     else:
-        ramp = default_ramp_by_year(s)
+        ramp = default_ramp_by_year(s, drivers.ramp_start_year)
         ramp_source = "default"
-        ramp_state = "undefined_for_stabilization_year" if s >= 4 else "defined"
+        ramp_state = "undefined_for_stabilization_year" if None in ramp else "defined"
+    if ramp_source != "analyst_override" and _by_year_runs_every_ramp_year(drivers, hold):
+        ramp, ramp_source, ramp_state = [], "by_year", "defined"
     if s > hold:
         ramp_state = "stabilization_after_hold"
-
-    def current_index(metric: str) -> dict[str, Any]:
-        published = bench.published_mpi if metric == "occupancy" else bench.published_ari
-        if published is not None:
-            return {
-                "value": published,
-                "label": f"Current {'MPI' if metric == 'occupancy' else 'ARI'} {published:.1f} "
-                f"(STR {bench.index_period_label or 'TTM'})",
-                "basis": "str_published",
-            }
-        level = bench.occupancy if metric == "occupancy" else bench.adr
-        subject = (t12.occupancy if metric == "occupancy" else t12.adr) if t12 is not None else None
-        if level and subject:
-            v = subject / level * 100.0
-            return {
-                "value": round(v, 2),
-                "label": f"Subject T-12 ÷ benchmark = {v:.1f}",
-                "basis": "t12_over_benchmark",
-            }
-        return {"value": None, "label": "No current index — needs the STR report or a T-12", "basis": None}
 
     growth_rows = _growth_rows(growth, hold, applied_years)
     suggestions = _suggestions(state, inputs)
@@ -998,12 +1101,16 @@ def _status(
         "penetration_adr_source": drivers.penetration_adr_source,
         "penetration_occ_by_year": drivers.penetration_occ_by_year,
         "penetration_adr_by_year": drivers.penetration_adr_by_year,
-        "current_mpi": current_index("occupancy"),
-        "current_ari": current_index("adr"),
+        "current_mpi": _current_index(bench, t12, "occupancy"),
+        "current_ari": _current_index(bench, t12, "adr"),
         "ramp_by_year": ramp,
         "ramp_source": ramp_source,
-        "ramp_policy": inputs.ramp_policy,
         "ramp_state": ramp_state,
+        "ramp_mode": inputs.ramp_mode,
+        "ramp_flag": _ramp_flag(inputs, drivers, bench, hold, base_has_schedule=inputs.has_displacement_schedule),
+        "opening_date_missing": inputs.opening_date_missing,
+        "start_index_occ": drivers.start_index_occ,
+        "start_index_adr": drivers.start_index_adr,
         "explicit_metrics": list(inputs.explicit_metrics),
         "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
         "terminal_revpar_growth": dict(terminal),
@@ -1086,8 +1193,12 @@ def _growth_only_status(
         "current_ari": dict(not_in_use),
         "ramp_by_year": [],
         "ramp_source": GROWTH_ONLY_NOT_APPLIED,
-        "ramp_policy": None,
         "ramp_state": GROWTH_ONLY_NOT_APPLIED,
+        "ramp_mode": None,
+        "ramp_flag": None,
+        "opening_date_missing": False,
+        "start_index_occ": None,
+        "start_index_adr": None,
         "explicit_metrics": [],
         "t12_reference": t12.model_dump(mode="json") if t12 is not None else None,
         "terminal_revpar_growth": dict(terminal),
@@ -1104,9 +1215,7 @@ __all__ = [
     "KEY_OCC_GROWTH_BY_YEAR",
     "KEY_RAMP_BY_YEAR",
     "CalendarAnchor",
-    "DEFAULT_RAMP_POLICY",
-    "RAMP_POLICIES",
-    "default_ramp_applies",
+    "ramp_mode_for",
     "LongRunGrowth",
     "NO_CALENDAR_ANCHOR",
     "calendar_anchor",

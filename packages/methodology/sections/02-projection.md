@@ -83,11 +83,21 @@ step the workspace is on. This two-step switch is temporary.
    moves it). With no forecast at all the rate is held flat and the Future P&L says
    "No market forecast — set growth manually". A 4.5% RevPAR growth is offered as a labelled
    platform suggestion you can apply; it is never applied for you.
-4. **Penetration at stabilization** — 100 (parity with the benchmark) unless you set it; the hotel's
-   current STR index (for example an MPI of 110) is printed beside the default so you can raise it.
-   A penetration you set for a specific year beats the formula for that year.
-5. **Ramp** — Before the stabilization year the hotel runs at a share of its stabilized penetration:
-   85% in Year 1 and 95% in Year 2 for a Year-3 stabilization (85% in Year 1 for Year 2). For a later
+4. **Penetration at stabilization** — 100 (parity with the benchmark) against a competitive set,
+   unless you set it; the hotel's current STR index (for example an MPI of 110) is printed beside the
+   default so you can change it. Against a submarket or market average, which is not a comp set, the
+   default holds the hotel's derived index flat: an upscale class average is not where the hotel is
+   heading unless you say so. A penetration you set for a specific year beats the formula for that
+   year, so a business plan (a reflag lifting rate in Year 1) goes in as by-year penetration.
+5. **Ramp** — An operating hotel, including one that stays open through displacement, moves in a
+   straight line from today's index to the target at the stabilization year: no repositioning jump is
+   assumed without a business plan. Today's index is the STR-published MPI / ARI, else the T-12 ÷ the
+   benchmark, labelled derived. A new or reopened hotel (Deal Type Development or Adaptive Reuse, or a
+   reopening date) runs 85% / 95% / 100% of the target, counted from the first full deal year after
+   opening; a reopening whose ramp finished before the projection starts is an operating hotel. Years
+   before the first full year after opening still earn revenue at the first step, flagged, until you
+   enter the closed months in the displacement schedule. A re-flag with no closure should leave the
+   reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
    stabilization year the years in between run at 100% until you enter them — no ramp is invented.
 6. **The T-12** — Shown beside the projection as a reference row, not the basis. (One ramp applies to
    occupancy and ADR together.)
@@ -220,10 +230,10 @@ the deal, else the platform default, labelled as such.
 {testid=topline-ui-methodology} **The topline on screen.** Under the Future P&L header one line names what the
 occupancy and ADR run on: the benchmark (level, report and period, and why a higher level was not
 used), the market growth source with the hotel's class, the stabilized year and the ramp actually
-applied — "Ramp 85/95/100 (default)", your own ramp, or "the default ramp does not apply to this
-deal" with the ramp policy. Each projected Occupancy and ADR column carries a chip saying whether
+applied, with the mode it follows (Operating hotel or New or reopened hotel) — the straight line from
+today's index, "Ramp 85/95/100 (default)", or your own ramp. Each projected Occupancy and ADR column carries a chip saying whether
 that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the model's chain:
-benchmark × penetration × ramp = the rate before displacement, then any renovation displacement as
+benchmark × that year's penetration (and ramp, where one applies) = the rate before displacement, then any renovation displacement as
 its own step to the figure in the column (a penetration you set for one year runs with no ramp). Two reference rows sit under RevPAR: the benchmark for
 each year, and the hotel's own T-12 repeated with its period — neither moves a number. When growth
 is missing the Future P&L says "No market forecast — set growth manually" (or that a CoStar forecast
@@ -443,15 +453,18 @@ ADR; none → {{reason:no_revenue_basis}}. Year 1 is not grown; growth applies i
 the resolver below. Benchmark (switched on per environment): the full method below. The switch is
 removed once the benchmark method is live everywhere.
 
-<!-- source: apps/worker/app/services/topline.py (DEFAULT_RAMP_POLICY, default_ramp_applies), topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline, _ramp_for_year) -->
+<!-- source: apps/worker/app/services/topline.py (ramp_mode_for, _start_index), topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline, penetration_for_year, _ramp_for_year) -->
 For each projected year y with stabilization year S, benchmark B, stabilized penetration P (index
 points, default 100), ramp r and a per-year penetration V you may set:
-penetration = V when set; P × r(y) when y \< S and the ramp defines the year; P otherwise.
+penetration = V when set; for an operating hotel with today's index I and y \< S,
+I + (P − I) × y ÷ S; P × r(y) when y \< S and the ramp defines the year; P otherwise.
 Occupancy = min(95%, B occupancy × penetration ÷ 100); ADR = B ADR × penetration ÷ 100. Renovation
-displacement multiplies on top, unchanged. Default ramp: 85% / 95% for S = 3, 85% for S = 2;
-undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4. The default ramp applies to every deal (ramp policy
-"all deals"); your own ramp always wins. Under another policy a deal outside it runs the stabilized
-penetration from Year 1 and each of its ramp years says so.
+displacement multiplies on top, unchanged. The r(y) default: 85% / 95% for S = 3, 85% for S = 2;
+undefined (100%, stated) for Years 3 to S − 1 when S ≥ 4, each step counted from the first full deal year after a
+reopening date (an earlier year runs at the first step). It applies to a new or reopened hotel, and to an
+operating hotel with no index for that metric, flagged; your own ramp always wins. P defaults to 100 against a
+comp set and to the derived index against a submarket or market average, including for a reopened hotel with a
+T-12; a hotel with no T-12 keeps 100, flagged.
 
 <!-- source: apps/worker/app/services/topline_benchmark.py (resolve_benchmark), services/topline.py (build_topline) -->
 Benchmark level, first available unless you force one: competitive set (STR TTM blend = subject

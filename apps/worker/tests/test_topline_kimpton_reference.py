@@ -165,7 +165,7 @@ HELD_FROM = 2029
 def test_exact_reference_path_from_the_keyed_comp_set() -> None:
     build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows())
     subj, comp = REFERENCE["SUBJECT PROPERTY"], REFERENCE["COMPETITIVE SET"]
-    assert out.topline_methodology_version == 3
+    assert out.topline_methodology_version == 4
     assert [d.label for d in out.projection_deal_years] == [f"Jan–Dec {c}" for c in YEARS]
     assert build.status["stabilization_year"] == 3
     for i, cal in enumerate(YEARS):
@@ -272,22 +272,24 @@ def test_documents_path_differs_only_by_the_reference_rounding_of_the_comp_set()
         assert y.revpar == pytest.approx(subj["RevPAR"][k] * occ_ratio * adr_ratio / held, rel=1e-9), cal
 
 
-def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
+def test_defaults_path_is_penetration_100_on_the_straight_line_from_todays_index() -> None:
     rows = [*str_rows(), *costar_rows()]
     bench = resolve_benchmark(rows, class_bucket="luxury_upper_upscale", forced_level=None, policy=TenantDataPolicies())
     build, out = _run(bench, {}, rows)
     status = build.status
     assert status["penetration_occ"] == status["penetration_adr"] == 100.0
     assert status["penetration_occ_source"] == "default"
-    assert status["ramp_by_year"] == [0.85, 0.95] and status["ramp_source"] == "default"
+    assert status["ramp_mode"] == "operating"
+    assert status["ramp_by_year"] == [] and status["ramp_source"] == "straight_line"
     assert status["stabilization_year"] == 3
     # The current STR indices are printed beside the 100 default.
     assert status["current_mpi"]["value"] == pytest.approx(109.793)
     assert "MPI 109.8" in status["current_mpi"]["label"]
-    ramps = [0.85, 0.95, 1, 1, 1, 1, 1]
+    mpi, ari = status["current_mpi"]["value"], status["current_ari"]["value"]
     for i, b in enumerate(build.drivers.benchmark_by_year):
-        assert out.years[i].occupancy == pytest.approx(b.occupancy * ramps[i], rel=1e-12)
-        assert out.years[i].adr == pytest.approx(b.adr * ramps[i], rel=1e-12)
+        t = min(i + 1, 3) / 3
+        assert out.years[i].occupancy == pytest.approx(b.occupancy * (mpi + (100 - mpi) * t) / 100, rel=1e-12)
+        assert out.years[i].adr == pytest.approx(b.adr * (ari + (100 - ari) * t) / 100, rel=1e-12)
     # Document growth only: CoStar 2026–2029, carried forward 2030–2032.
     sources = [g["adr"]["source"] for g in status["growth_by_year"]]
     assert sources == ["costar_submarket_forecast"] * 4 + ["carried_forward"] * 3
@@ -303,10 +305,11 @@ def test_defaults_path_is_penetration_100_with_the_85_95_ramp() -> None:
         assert status["growth_by_year"][i]["adr"]["chip"] == "CoStar p.4"
         assert out.years[i].adr == pytest.approx(out.years[i - 1].adr * 1.025, rel=1e-12)
     # Pinned default path (the comp set grown at CoStar L&UU growth).
-    expected_occ = [0.754959 * 0.988 * 0.85, 0.754959 * 0.988 * 0.95]
+    line = lambda i, y: (i + (100 - i) * y / 3) / 100  # noqa: E731
+    expected_occ = [0.754959 * 0.988 * line(mpi, 1), 0.754959 * 0.988 * line(mpi, 2)]
     assert out.years[0].occupancy == pytest.approx(expected_occ[0], rel=1e-6)
     assert out.years[1].occupancy == pytest.approx(expected_occ[1], rel=1e-6)
-    assert out.years[0].adr == pytest.approx(310.7753 * 1.018 * 0.85, rel=1e-6)
+    assert out.years[0].adr == pytest.approx(310.7753 * 1.018 * line(ari, 1), rel=1e-6)
 
 
 #: FON-121 — Sam's REAL close, 2025-09-30, on her own convention: model years

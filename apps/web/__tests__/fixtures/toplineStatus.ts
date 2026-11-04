@@ -33,7 +33,7 @@ const g = (value: number | null, source: string, label: string, extra: Partial<T
 
 export function toplineStatus(over: Partial<ToplineStatus> = {}): ToplineStatus {
   return {
-    methodology_version: 3,
+    methodology_version: 4,
     benchmark: null,
     benchmark_level: 'comp_set',
     benchmark_label: 'STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx',
@@ -65,7 +65,6 @@ export function toplineStatus(over: Partial<ToplineStatus> = {}): ToplineStatus 
     current_ari: { value: 75.1, label: 'Current ARI 75.1 (STR TTM May 2025)', basis: 'str_published' },
     ramp_by_year: [0.85, 0.95],
     ramp_source: 'default',
-    ramp_policy: 'all_deals',
     ramp_state: 'defined',
     explicit_metrics: [],
     t12_reference: { occupancy: 0.833, adr: 236.09, revpar: 196.66, period_label: 'T-12 Mar 2025', doc_name: 'T12.xlsx' },
@@ -129,7 +128,6 @@ export function growthOnlyStatus(over: Partial<ToplineStatus> = {}): ToplineStat
     current_ari: { value: null, label: 'Not in use', basis: null },
     ramp_by_year: [],
     ramp_source: 'not_applied_growth_only',
-    ramp_policy: null,
     ramp_state: 'not_applied_growth_only',
     year1_sources: { occupancy: 't12_actual', adr: 't12_actual' },
     ...over,
