@@ -183,10 +183,13 @@ class ExpenseEngineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Sam, 2026-11-04 — model year → months open ÷ 12 for a year closed until the
-    # opening. Those years' undistributed and fixed lines are prorated by it, so the
-    # closed months carry no operating costs; departmental lines, fees and reserve
-    # follow the revenue earned. Other years are untouched. Empty = no closure.
+    # opening. Those years' undistributed lines are prorated by it, so the closed
+    # months carry no operating costs; departmental lines, fees and reserve follow
+    # the revenue earned. Other years are untouched. Empty = no closure.
     open_shares_by_year: dict[int, float] = Field(default_factory=dict)
+    # Sam, 2026-11-05: taxes and insurance don't stop when a hotel closes. False for
+    # a new build, whose carry sits in the project budget: prorated by months open.
+    fixed_charges_run_while_closed: bool = True
     # The revenue the deal actually earns (closure and any displacement). Set with
     # the above; ``revenue`` is then the same deal without the closure.
     actual_revenue: FBRevenueOutput | None = None
@@ -481,7 +484,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             line: getattr(row.undistributed, line) * _by_method(line, share) for line in _UNDISTRIBUTED_LINES
         }
         undist = row.undistributed.model_copy(update={**undist_lines, "total": sum(undist_lines.values())})
-        fixed = _prorated(row.fixed_charges, share)
+        fixed = row.fixed_charges if payload.fixed_charges_run_while_closed else _prorated(row.fixed_charges, share)
         gop = actual.total_revenue - dept_total - undist.total
         # An analyst's Year-1 fee or reserve is fixed dollars for a full year: months open.
         mgmt = row.mgmt_fee * (share if row.year == 1 and payload.mgmt_fee_y1_override is not None else revenue_share)

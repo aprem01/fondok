@@ -79,7 +79,7 @@ async def test_documents_deal_runs_the_reference_path_through_the_loader() -> No
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     status = base["__topline_status__"]
-    assert status["methodology_version"] == 5
+    assert status["methodology_version"] == 6
     assert status["benchmark_level"] == "comp_set"
     assert status["benchmark"]["source_id"] == "str_comp_set"
     assert status["class_bucket"] == "luxury_upper_upscale"
@@ -224,7 +224,7 @@ async def test_full_chain_on_the_documents_deal_echoes_the_topline() -> None:
         results = await run_all_engines(s, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
     rev = results["revenue"]["outputs"]
     rev = rev if isinstance(rev, dict) else rev.model_dump(mode="json")
-    assert rev["topline_methodology_version"] == 5
+    assert rev["topline_methodology_version"] == 6
     assert [d["label"] for d in rev["projection_deal_years"]] == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     recs = rev["topline_by_year"]
     assert [r["ari_target"] for r in recs] == pytest.approx([97, 98, 99, 100, 100])

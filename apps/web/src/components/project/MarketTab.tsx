@@ -1764,7 +1764,8 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   const baseYearOccRaw =
     finiteOr(revenueYears?.[0]?.occupancy) ?? finiteOr(occSrc?.value);
   const baseYearOccPct = baseYearOccRaw == null ? null : occPct(baseYearOccRaw);
-  const baseYearAdr = finiteOr(revenueYears?.[0]?.adr) ?? finiteOr(adrSrc?.value);
+  // A year the hotel is closed throughout sells no rooms, so it has no rate.
+  const baseYearAdr = baseYearOccRaw === 0 ? null : finiteOr(revenueYears?.[0]?.adr) ?? finiteOr(adrSrc?.value);
   // ── FON-60 (60.1) — the comp selection lives on the DEAL ────────────────
   //
   // Same ``field_overrides`` channel as the STR seed, and deliberately NOT the

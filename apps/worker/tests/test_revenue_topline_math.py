@@ -158,7 +158,7 @@ def test_s3_default_penetration_and_ramp() -> None:
         assert rec[y].occupancy == out.years[y - 1].occupancy
         assert rec[y].adr == out.years[y - 1].adr
         assert rec[y].rgi_derived == pytest.approx(rec[y].mpi_target * rec[y].ari_target / 100.0)
-    assert out.topline_methodology_version == TOPLINE_METHODOLOGY_VERSION == 5
+    assert out.topline_methodology_version == TOPLINE_METHODOLOGY_VERSION == 6
     # The legacy echo stays empty: nothing legacy drove this run.
     assert out.index_drivers_by_year == []
 
@@ -353,7 +353,7 @@ def test_no_benchmark_at_all_runs_the_subject_level_times_growth_exactly_like_th
         assert rec[y].mpi_target is None and rec[y].ari_target is None
     assert "No benchmark — projecting from the subject's own starting occupancy and ADR as supplied" in (rec[1].reason or "")
     assert "no STR, market study or CBRE Horizons on the deal" in (rec[1].reason or "")
-    assert out.topline_methodology_version == 5
+    assert out.topline_methodology_version == 6
 
 
 def test_missing_growth_for_one_metric_holds_it_flat_for_that_year() -> None:

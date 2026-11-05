@@ -46,7 +46,7 @@ import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
+import { NOT_YET_OPEN, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -635,9 +635,12 @@ export default function InvestmentTab() {
   const pricePerKey = wPricePerKey;
   const purchase = wPurchase
     ?? (has(pricePerKey) && has(keys) ? pricePerKey * keys : undefined);
-  const entryCap = (has(entryNoi) && has(purchase) && purchase > 0)
-    ? entryNoi / purchase
-    : wEntryCap;
+  const notYetOpen = (getEngineField<number>(outputs, 'revenue', 'closed_months') ?? 0) > 0;
+  const entryCap = notYetOpen
+    ? undefined
+    : (has(entryNoi) && has(purchase) && purchase > 0)
+      ? entryNoi / purchase
+      : wEntryCap;
   // W5 "price" — Entry Cap and Price / Key are the LAST RUN's figures. Between
   // a price save and the run that uses it they would silently disagree with
   // the Purchase Price row (which shows the saved price at once), so they say
@@ -850,8 +853,8 @@ export default function InvestmentTab() {
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
-                value: pctv(entryCap, 2),
-                note: [priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap, 2),
+                note: [notYetOpen ? 'See Yield on Cost on Returns' : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
@@ -1425,7 +1428,7 @@ const SU_LABEL_ASSUMPTION: Record<string, { key: string; note: string }> = {
   Renovation: { key: 'renovation_budget', note: 'CAPEX assumption — edit the budget on Deal Summary' },
   'Working Capital': { key: 'working_capital', note: 'Analyst assumption, not a calculated line' },
   'Insurance Reserve': { key: 'insurance_reserve', note: 'Analyst assumption, not a calculated line' },
-  'Soft Costs': { key: 'soft_costs', note: 'Analyst assumption, not a calculated line' },
+  'Soft Costs': { key: 'soft_costs', note: 'Analyst assumption, not a calculated line. Includes pre-opening costs (hiring, training, launch marketing), for now' },
   Contingency: { key: 'contingency', note: 'Analyst assumption, not a calculated line' },
 };
 

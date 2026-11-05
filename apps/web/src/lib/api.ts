@@ -515,6 +515,8 @@ export interface ToplineStatus {
   /** A new hotel with no opening date: the page asks for one. */
   opening_date_missing?: boolean;
   closed_months?: number;
+  /** What taxes and insurance do while closed (worker wording). */
+  closed_fixed_charges_note?: string | null;
   start_index_occ?: number | null;
   start_index_adr?: number | null;
   explicit_metrics: ('occupancy' | 'adr')[];

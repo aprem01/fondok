@@ -106,6 +106,7 @@ import {
   PURCHASE_PRICE_INPUT_FROM,
   PURCHASE_PRICE_KEY,
   entryCapRate,
+  NOT_YET_OPEN,
   resolvePurchasePrice,
 } from '@/lib/purchasePrice';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
@@ -752,9 +753,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // price) and the Entry Cap Rate calculated FROM it.
   const priceInput = resolvePurchasePrice({ overrides, enginePrice: purchase, resolved: priceSource });
   const entryCapCalc = entryCapRate(y1Noi, priceInput.value, outputs?.engines?.expense);
+  const notYetOpen = (getEngineField<number>(outputs, 'revenue', 'closed_months') ?? 0) > 0;
   // The capital engine publishes no entry cap rate: it is always this
   // derivation, so it can never disagree with the price on screen.
-  const entryCap = entryCapCalc.value;
+  const entryCap = notYetOpen ? undefined : entryCapCalc.value;
   // Price / Key follows the same price on screen, so a just-saved price moves
   // it with the Entry Cap Rate rather than leaving it on the last run's price.
   const pricePerKey = has(priceInput.value) && has(keys)
@@ -960,10 +962,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
-      cal('entryCap', 'Entry Cap Rate', pctv(entryCap), {
+      cal('entryCap', 'Entry Cap Rate', notYetOpen ? NOT_YET_OPEN : pctv(entryCap), {
         trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: ENTRY_CAP_FORMULA,
         inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
-        ...(has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
+        ...(notYetOpen
+          ? { sub: 'The hotel earns nothing at purchase, so there is no going-in income. See Yield on Cost on Returns.' }
+          : has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
       }),
       mk({
         id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
@@ -1193,12 +1197,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       awa('hardPerKey', 'Hard Cost / Key'),
       cal('hard', 'Hard Costs', money(hardCosts), { trace: { engine: 'capital', path: 'hard_costs' } }),
       awa('softPct', 'Soft Costs %'),
-      cal('soft', 'Soft Costs', money(softCosts)),
+      cal('soft', 'Soft Costs', money(softCosts), { sub: `Includes pre-opening costs (hiring, training, launch marketing)${dealType === 'development' ? ' and taxes and insurance before opening' : ''}, for now` }),
       awa('ffePerKey', 'FF&E / Key'),
       cal('ffe', 'FF&E', money(ffe)),
       cal('profFees', 'Professional Fees', money(profFees)),
       awa('devFee', 'Development Fee'),
-      awa('preOpen', 'Pre-Opening Costs'),
+      awa('preOpen', 'Pre-Opening Costs', { reason: 'awaiting_analyst', reasonDetail: 'Not a separate line yet. Put hiring, training and launch marketing in Soft Costs.' }),
       awa('contPct', 'Contingency %'),
       cal('contingency', 'Contingency', money(contingency)),
       lnk('loanFees', 'Financing Costs', money(financingCosts), '→ Financing', 'debt'),
@@ -1270,7 +1274,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource, fullRun]);
+  }, [cfg, dealType, notYetOpen, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource, fullRun]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {
@@ -1316,7 +1320,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     if (cfg === 'core') {
       return [
         { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
-        { label: 'Going-In Cap', value: pctv(entryCap) },
+        { label: 'Going-In Cap', value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap), sub: notYetOpen ? 'see Yield on Cost on Returns' : undefined },
         { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         leveredTile,
@@ -1336,7 +1340,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
+  }, [cfg, notYetOpen, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
 
   // ─── R-051 — Asking vs Bidding price ───────────────────────────────────
   // One read-only worker call prices the deal at the seller's asking price and
@@ -1376,6 +1380,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             return { label: k.label, value: mm(s.equity ?? undefined) };
           case 'Going-In Cap': {
             // Entry NOI is price-invariant: entry cap × base price ÷ scenario price.
+            if (notYetOpen) return { label: k.label, value: NOT_YET_OPEN };
             const entryNoi = has(entryCap) && has(purchase) ? entryCap * purchase : undefined;
             return { label: k.label, value: has(entryNoi) && has(price) && price > 0 ? pctv(entryNoi / price) : '—' };
           }
@@ -1603,9 +1608,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(168px,1fr))', gap: '9px 18px' }}>
             {/* Deal Type toggle */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, gridColumn: 'span 2' }}>
               <div style={profileLabel}>Deal Type</div>
-              <div style={{ display: 'inline-flex', background: '#f3f2ee', border: `1px solid ${palette.border}`, borderRadius: 6, padding: 2, width: 'fit-content' }}>
+              <div style={{ display: 'inline-flex', flexWrap: 'wrap', background: '#f3f2ee', border: `1px solid ${palette.border}`, borderRadius: 6, padding: 2, width: 'fit-content', maxWidth: '100%' }}>
                 {DEAL_TYPES.map((d) => {
                   const active = d.id === dealType;
                   return (
@@ -1730,7 +1735,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
               anchorLabel={stabilizationAnchorLabel(stab)}
               fallbackNote={stabilizationAnchorFallbackNote(stab)}
               onSave={(v, note) => persist(
-                v ? { reopening_date: v, reopening_date_note: note ?? '' } : { reopening_date: v },
+                { reopening_date: v, reopening_date_note: note ?? '' },
                 v ? 'Reopening date saved — re-running the model (stabilization re-anchors)…' : 'Reopening date cleared — re-running the model (Year 3 after close)…',
               )}
             />
@@ -2049,11 +2054,13 @@ function ProfileSelect({
 // FON-98 — Reopening / opening date (deals.reopening_date). An analyst input
 // (blue assumption dot). Blank = no reopening → the stabilization default
 // counts Year 3 from the acquisition close; a date → Year 3 from the first
-// full operating year after it. Blur / Enter on a CHANGED date opens the
-// justification row (review I-6 — the date ends the topline ramp); Save sends
-// the date with its note. The × clears (writes null, no note).
+// full operating year after it. Tab / blur / Enter on a CHANGED date, or the ×,
+// opens the justification row (review I-6 — the date ends the topline ramp);
+// Save sends the change with its note.
 // ─────────────────────────────────────────────────────────────────────────
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// A year still being typed reads as 0002: it is not a date yet.
+const isFullDate = (v: string) => ISO_DATE.test(v) && Number(v.slice(0, 4)) >= 1900;
 function ReopeningDateField({
   value, anchorLabel, fallbackNote, onSave,
 }: {
@@ -2069,15 +2076,15 @@ function ReopeningDateField({
   const { toast } = useToast();
   const shown = value && ISO_DATE.test(value) ? value : '';
   const [draft, setDraft] = useState(shown);
-  // Review I-6 — a changed date waits here until the analyst says why.
-  const [pendingDate, setPendingDate] = useState<string | null>(null);
+  // Review I-6 — a changed or cleared date waits here until the analyst says why.
+  const [askingWhy, setAskingWhy] = useState(false);
   const [note, setNote] = useState('');
   // One edit = one save. Enter blurs the input (the TargetField pattern) so
   // the single resulting blur commits; ``pending`` remembers what was sent
   // until the saved value comes back through ``value``, so a blur that lands
   // while the PATCH is in flight cannot send the same edit twice.
   const pending = useRef<string | null>(null);
-  useEffect(() => { setDraft(shown); pending.current = null; setPendingDate(null); setNote(''); }, [shown]);
+  useEffect(() => { setDraft(shown); pending.current = null; setAskingWhy(false); setNote(''); }, [shown]);
   const send = (next: string | null, why?: string) => {
     if (pending.current === (next ?? '')) return;
     pending.current = next ?? '';
@@ -2092,23 +2099,23 @@ function ReopeningDateField({
   const commit = () => {
     const t = draft.trim();
     const next: string | null = t === '' ? null : t;
-    if (next == null && !shown) return;
-    if (next != null && !ISO_DATE.test(next)) { setDraft(shown); return; }
-    if (next === (shown || null)) { setPendingDate(null); return; }
-    if (next == null) { send(null); return; }
-    setPendingDate(next);
+    if (next != null && !isFullDate(next)) { setDraft(shown); return; }
+    setAskingWhy(next !== (shown || null));
   };
+  const clearDate = () => { setDraft(''); setAskingWhy(true); };
   const saveWithNote = () => {
-    if (pendingDate == null) return;
+    const t = draft.trim();
+    if (t !== '' && !isFullDate(t)) return;
+    if (t === shown) { cancelPending(); return; }
     const why = note.trim();
     if (!why) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
-    send(pendingDate, why);
+    send(t === '' ? null : t, why);
   };
-  const cancelPending = () => { setPendingDate(null); setNote(''); setDraft(shown); };
+  const cancelPending = () => { setAskingWhy(false); setNote(''); setDraft(shown); };
   const hint = fallbackNote
     ?? (shown
       ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
-      : 'Optional · only if the hotel closes or is new, leave blank if it stays open: the hotel earns nothing before this date, and the ramp and stabilization default count from it; blank = Year 3 after close');
+      : 'Optional · only if the hotel closes or is new, leave blank if it stays open: the hotel earns nothing before this date (pre-opening costs go in Soft Costs), and the ramp and stabilization default count from it; blank = Year 3 after close');
   return (
     <div data-testid="reopening-date-field" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <div style={{ ...profileLabel, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -2125,6 +2132,8 @@ function ReopeningDateField({
           onKeyDown={(e) => {
             // Enter leaves the field; the blur that follows is the ONE commit.
             if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+            // Chrome's Tab stops on the calendar icon INSIDE the input, so no blur fires.
+            if (e.key === 'Tab' && !e.shiftKey && isFullDate(draft)) commit();
             if (e.key === 'Escape') cancelPending();
           }}
           style={{
@@ -2138,14 +2147,14 @@ function ReopeningDateField({
             type="button"
             aria-label="Clear reopening / opening date"
             title="Clear — the default returns to Year 3 after acquisition close"
-            onClick={() => send(null)}
+            onClick={clearDate}
             style={{ border: 'none', background: 'none', cursor: 'pointer', color: palette.textMuted, fontSize: 13, lineHeight: 1, padding: '0 2px', fontFamily: 'inherit' }}
           >
             ×
           </button>
         )}
       </div>
-      {pendingDate != null && (
+      {askingWhy && (
         <InlineEditControls
           onSave={saveWithNote}
           onCancel={cancelPending}

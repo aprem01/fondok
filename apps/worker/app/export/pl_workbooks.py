@@ -964,6 +964,10 @@ def projection_values(
         for i in range(n):
             y = yrs[i] if i < len(yrs) else None
             values[proj_cell_key(eng, path, i)] = to_number(_get_path(y, path))
+    # A year the hotel is closed throughout sells no rooms, so it has no rate.
+    for i in range(n):
+        if values.get(proj_cell_key("revenue", "occupancy", i)) == 0:
+            values[proj_cell_key("revenue", "adr", i)] = None
     return n, values
 
 

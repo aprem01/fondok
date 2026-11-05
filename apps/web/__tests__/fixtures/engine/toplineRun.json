@@ -315,7 +315,7 @@
     "capped_95": false
    }
   ],
-  "topline_methodology_version": 5,
+  "topline_methodology_version": 6,
   "topline_mode": "benchmark",
   "projection_deal_years": [
    {
@@ -399,7 +399,7 @@
   }
  },
  "topline_status": {
-  "methodology_version": 5,
+  "methodology_version": 6,
   "topline_mode": "benchmark",
   "benchmark": {
    "level": "comp_set",

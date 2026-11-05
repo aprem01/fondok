@@ -3677,7 +3677,13 @@ def _displacement_status(
     # both levers above inside the revenue engine, so it is checked before
     # either. The per-year factors are the engine's own helper's output —
     # the status never re-derives a number.
-    reno_schedule = _coerce_renovation_schedule(base)
+    closed_months = _closed_months_for(base)
+    # Months inside a closure are dropped: the closure already covers them.
+    reno_schedule = [
+        p.model_copy(update={"start_month": max(p.start_month, closed_months + 1)})
+        for p in _coerce_renovation_schedule(base)
+        if p.end_month > closed_months
+    ]
     reno_by_year: dict[int, Any] = {}
     if reno_schedule:
         from ..engines.revenue import renovation_displacement_factors
@@ -3759,11 +3765,17 @@ def _displacement_status(
             _DISPLACEMENT_BUDGET_IS_CAPITAL if budget > 0.0 else ""
         )
 
-    closed_months = _closed_months_for(base)
     if closed_months > 0:
+        from .topline import _displacement_on_top, closure_fixed_charges_note
+
+        if (active or _coerce_renovation_schedule(base)) and not _displacement_on_top(base):
+            active = False
+            state = DISPLACEMENT_OFF_ANALYST
+            detail = "No renovation impact beyond the closure, which already covers the displacement set."
         detail = (
             f"Closed until the opening date: the first {closed_months} months earn nothing and carry "
-            f"no operating costs. {detail}"
+            f"no operating costs. "
+            f"{closure_fixed_charges_note(base)} {detail}"
         )
     return {
         "active": active,
@@ -8899,6 +8911,12 @@ def _closed_months_for(base: dict[str, Any]) -> int:
     return closed_months_for(base)
 
 
+def _fixed_charges_run_while_closed(base: dict[str, Any]) -> bool:
+    from .topline import fixed_charges_run_while_closed
+
+    return fixed_charges_run_while_closed(base)
+
+
 #: The revenue input with every displacement lever and the closure off.
 _UNDISPLACED_REVENUE: dict[str, Any] = {
     "closed_months": 0,
@@ -8929,8 +8947,8 @@ def _expense_revenue_basis(
 
     Sam, 2026-11-04: the closed months before an opening carry no operating costs
     (pre-opening costs are the analyst's input). Costs are priced on the same deal
-    without the closure, with its displacement kept: only a schedule's months inside
-    the closure go, since they describe months that sell nothing. A fully closed Year 1
+    without the closure, with its displacement kept: only a schedule's or PIP's months
+    inside the closure go, since they describe months that sell nothing. A fully closed Year 1
     has no revenue to seed a ratio, so it seeds from the hotel open and undisplaced.
     ``ExpenseEngine._closed_year`` then brings the years the closure touches to what
     they earned. No closure → the accumulated engines as they are.
@@ -8952,7 +8970,7 @@ def _expense_revenue_basis(
     update = (
         _UNDISPLACED_REVENUE | {"renovation_displacement_schedule": open_periods}
         if analyst_schedule
-        else {"closed_months": 0}
+        else {"closed_months": 0, "pip_closed_months": closed}
     )
     revenue = RevenueEngine().run(payload.model_copy(update=update))
     if closed >= MONTHS_PER_YEAR:
@@ -9141,6 +9159,7 @@ def _build_input_for(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
+            fixed_charges_run_while_closed=_fixed_charges_run_while_closed(base),
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             seed_year_one=_seed_year_one(deal_id, base, accumulated),

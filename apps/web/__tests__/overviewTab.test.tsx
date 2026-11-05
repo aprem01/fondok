@@ -1670,11 +1670,55 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)
     expect(screen.queryByLabelText('Reopening date — override justification')).not.toBeInTheDocument();
   });
 
-  it('× clears the date (writes null) so the default returns to Year 3 after close', async () => {
+  it('× asks why, then clears the date (writes null) so the default returns to Year 3 after close', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, reopening_date: '2027-03-15' };
     render(<OverviewTab projectId="deal-uuid-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Clear reopening / opening date' }));
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { reopening_date: null }));
+    expect(updateSpy).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Reopening date — override justification'), {
+      target: { value: 'Hotel stays open' },
+    });
+    fireEvent.click(within(screen.getByTestId('reopening-date-field')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      reopening_date: null, reopening_date_note: 'Hotel stays open',
+    }));
+  });
+
+  it('a half-typed year is never a date, and undoing the edit closes the note row without a PATCH', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByLabelText('Reopening / opening date') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '0002-03-15' } });
+    fireEvent.blur(input);
+    expect(input.value).toBe('');
+    fireEvent.change(input, { target: { value: '2027-03-15' } });
+    fireEvent.blur(input);
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Reopening date — override justification'), { target: { value: 'x' } });
+    fireEvent.click(within(screen.getByTestId('reopening-date-field')).getByRole('button', { name: 'Save' }));
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Reopening date — override justification')).not.toBeInTheDocument();
+  });
+
+  it('a hotel not yet open shows no entry cap and points to yield on cost', () => {
+    const base = OUTPUTS as unknown as { engines: Record<string, unknown> };
+    outputsRef.value = {
+      ...OUTPUTS,
+      engines: { ...base.engines, revenue: { status: 'complete', outputs: { closed_months: 18 } } },
+    } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Entry Cap Rate')).toBe('n/a, not yet open');
+    outputsRef.value = OUTPUTS;
+  });
+
+  it('Tab on a changed date asks why, because Chrome keeps focus inside the input', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const input = screen.getByLabelText('Reopening / opening date');
+    fireEvent.change(input, { target: { value: '0002-03-15' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(screen.queryByLabelText('Reopening date — override justification')).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: '2027-03-15' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(screen.getByLabelText('Reopening date — override justification')).toBeInTheDocument();
   });
 
   it('re-saving the same date is a no-op (no PATCH)', () => {

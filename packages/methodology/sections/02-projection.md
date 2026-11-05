@@ -94,17 +94,17 @@ step the workspace is on. This two-step switch is temporary.
    assumed without a business plan. Today's index is the STR-published MPI / ARI, else the T-12 ÷ the
    benchmark, labelled derived. A new or reopened hotel (Deal Type Development or Adaptive Reuse, or a
    reopening date) runs 85% / 95% / 100% of the target: 85% for the first 12 months after opening, 95% for the
-   next 12, then 100%, a deal year spanning two steps averaging its open months. A reopening whose ramp
+   next 12, then 100%, a year spanning two steps averaging its open months. A reopening whose ramp
    finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
-   before it earn nothing and carry no operating costs (pre-opening costs are your input, in Soft Costs), and the
-   opening year is prorated by whole months open, starting with the first full month. In a year the closure touches,
-   undistributed and fixed lines are prorated by months open, departmental lines, fees and reserve follow the
-   revenue earned, and a fully closed Year 1 seeds the later years' costs from the hotel open. A sale or refinance is still priced
-   on a full year's income if the hotel opens in that year; a hotel still closed at the end of the hold has no
-   exit value and the run stops and says so. Debt service still runs while the hotel is closed. A re-flag with no closure should leave the
-   reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
-   stabilization year the years in between run at 100% until you enter them — no ramp is invented.
-6. **The T-12** — Shown beside the projection as a reference row, not the basis. (Occupancy and ADR ramp over the same years.)
+   before it earn nothing and carry no operating costs (pre-opening costs go in Soft Costs). Fixed
+   charges keep running, except on a new build (Deal Type = Development), whose carry belongs in the project budget.
+   Displacement months inside the closure are dropped; the rest is flagged. The entry cap reads "n/a, not yet open". The
+   opening year is prorated by whole months open, from the first full month. In those years
+   undistributed lines prorate by months open; departmental lines, fees and reserve follow revenue; a fully closed
+   Year 1 seeds later costs from the hotel open. A sale or refinance in the opening year prices a full year's income;
+   a hotel still closed at the end of the hold has no exit value and the run stops. Debt service still runs while closed. A re-flag with no closure leaves the date blank. With no opening date, the page asks and the ramp counts from the close, flagged. For a later
+   stabilization year the years in between run at 100% until you enter them.
+6. **The T-12** — Shown beside the projection as a reference row, not the basis.
 
 :::
 

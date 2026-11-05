@@ -132,6 +132,9 @@ export type EntryCapRate =
  *  - no Entry NOI and the expense row failed → that row's own reason;
  *  - otherwise (it completed without a Year-1 NOI) → `engine_skipped`.
  */
+/** Sam, 2026-11-05: a hotel not yet open has no entry cap; yield on cost is the measure. */
+export const NOT_YET_OPEN = 'n/a, not yet open';
+
 export function entryCapRate(
   entryNoi: number | undefined,
   price: number | undefined,

@@ -202,7 +202,7 @@ beforeEach(() => {
   mockSources = {};
   mockReasons = {};
   mockFieldOverrides = {};
-  OUTPUTS_OVERRIDE = withRevenue({ topline_by_year: TOPLINE_BY_YEAR, topline_methodology_version: 5 });
+  OUTPUTS_OVERRIDE = withRevenue({ topline_by_year: TOPLINE_BY_YEAR, topline_methodology_version: 6 });
   updateSpy.mockClear();
   engineRunSpy.mockClear();
   refreshDealSpy.mockClear();
@@ -258,7 +258,7 @@ describe('Future P&L — FON-116 staged rollout: the growth-only topline (a real
       topline_status: ToplineStatus;
     };
     OUTPUTS_OVERRIDE = withRevenue({
-      topline_by_year: go.revenue.topline_by_year, topline_methodology_version: 5, topline_mode: 'growth_only',
+      topline_by_year: go.revenue.topline_by_year, topline_methodology_version: 6, topline_mode: 'growth_only',
     });
     renderWith(go.topline_status);
     expect(screen.getByTestId('topline-clause-year1')).toHaveTextContent('Year 1: T-12 actual');
@@ -357,7 +357,7 @@ describe('Future P&L — migration notice and the no-revenue-basis state', () =>
     );
   });
 
-  it('a v5 run gets no notice', () => {
+  it('a v6 run gets no notice', () => {
     renderWith(toplineStatus());
     expect(screen.queryByTestId('topline-migration-notice')).toBeNull();
   });

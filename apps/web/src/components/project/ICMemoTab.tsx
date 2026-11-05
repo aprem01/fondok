@@ -80,6 +80,7 @@
  * because keeping the analyst's words does not make their figures current.
  */
 
+import { NOT_YET_OPEN } from '@/lib/purchasePrice';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -126,6 +127,7 @@ interface DealMetrics {
   pricePerKey: number | null;
   noi: number | null;
   capRate: number | null;
+  notYetOpen: boolean;
   revpar: number | null;
   adr: number | null;
   occupancy: number | null;
@@ -177,7 +179,8 @@ function extractMetrics(
   }
 
   const noi = y1exp ? num(y1exp.noi_institutional) ?? num(y1exp.noi) : null;
-  const capRate = noi != null && purchasePrice ? noi / purchasePrice : null;
+  const notYetOpen = (num(g<number>('revenue', 'closed_months')) ?? 0) > 0;
+  const capRate = noi != null && purchasePrice && !notYetOpen ? noi / purchasePrice : null;
 
   // FON-118 — the returns headline through the ONE reader (sentinel-free; the
   // headline is the selected row of the exit schedule). Nothing derived here.
@@ -201,8 +204,9 @@ function extractMetrics(
     pricePerKey,
     noi,
     capRate,
+    notYetOpen,
     revpar,
-    adr: y1rev ? num(y1rev.adr) : null,
+    adr: y1rev && y1rev.occupancy !== 0 ? num(y1rev.adr) : null,
     occupancy: y1rev ? num(y1rev.occupancy) : null,
     leveredIrr,
     unleveredIrr: returnsHead.unleveredIrr,
@@ -1287,7 +1291,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
-    { label: 'Going-In Cap Rate', value: pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
+    { label: 'Going-In Cap Rate', value: metrics.notYetOpen ? NOT_YET_OPEN : pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
     { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Financing', engine: 'debt', path: 'year_one_dscr' },

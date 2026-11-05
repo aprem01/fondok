@@ -88,7 +88,9 @@ DAYS_PER_YEAR = 365
 #: published forecast average when it states one.
 #: 4 (2026-11-04): an operating hotel ramps in a straight line from today's index;
 #: 85 / 95 / 100 is for a new or reopened hotel, counted from the opening.
-TOPLINE_METHODOLOGY_VERSION = 5
+#: 6 (2026-11-05): fixed charges keep running through a closure, except a new
+#: build's; displacement months inside a closure are dropped.
+TOPLINE_METHODOLOGY_VERSION = 6
 LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
 
 #: The occupancy ceiling every projected year is held under — the same 0.95
@@ -401,8 +403,11 @@ def _plan_topline(
                     rec.ramp_pct = r_applied
                 if start is not None:
                     setattr(rec, f"{'mpi' if metric == 'occupancy' else 'ari'}_start_index", start)
+                    label = "Occupancy" if metric == "occupancy" else "ADR"
                     notes.append(
-                        f"{'Occupancy' if metric == 'occupancy' else 'ADR'} penetration is on the straight line from "
+                        f"{label} penetration holds today's index {start:.1f}."
+                        if abs(start - (topline.penetration_occ if metric == "occupancy" else topline.penetration_adr)) < 0.05
+                        else f"{label} penetration is on the straight line from "
                         f"today's index {start:.1f} to the target by Year {topline.stabilization_year}."
                     )
                 setattr(rec, source_attr, "scalar")
@@ -623,7 +628,7 @@ def _y1_pct_schedule(pip: PIPDisplacement) -> list[float]:
     return sched
 
 
-def _y1_revenue_factor_and_adr_drag(pip: PIPDisplacement) -> tuple[float, float]:
+def _y1_revenue_factor_and_adr_drag(pip: PIPDisplacement, closed_months: int = 0) -> tuple[float, float]:
     """Return ``(rooms_revenue_factor_y1, y1_adr_drag)`` for the strategy.
 
     The factor is a single multiplier on what the un-displaced Y1
@@ -639,16 +644,22 @@ def _y1_revenue_factor_and_adr_drag(pip: PIPDisplacement) -> tuple[float, float]
       Y1 ADR drag = 0.95
     * ``none`` → factor = 1.0, drag = 1.0 (PIP object is effectively
       no-op; analyst should leave it None instead).
+
+    Sam, 2026-11-05: months inside a closure are dropped, because the closure
+    already covers them. The factor is the mean over the months left, and with
+    nothing offline in them there is no displacement at all.
     """
     if pip.closure_strategy == "none":
         return 1.0, 1.0
-    sched = _y1_pct_schedule(pip)
+    sched = _y1_pct_schedule(pip)[closed_months:]
+    if closed_months and not any(sched):
+        return 1.0, 1.0
     if pip.closure_strategy == "wing_by_wing":
         sched = [min(0.5, p) for p in sched]
         adr_drag = 0.95
     else:
         adr_drag = 1.0
-    factor = sum(1.0 - p for p in sched) / 12.0
+    factor = sum(1.0 - p for p in sched) / len(sched)
     return factor, adr_drag
 
 
@@ -667,7 +678,7 @@ def _effective_recovery_months(
 
 
 def _y2_occupancy_recovery_factor(
-    pip: PIPDisplacement, brand_recovery_mult: float
+    pip: PIPDisplacement, brand_recovery_mult: float, closed_months: int = 0
 ) -> float:
     """Average Y2 occupancy factor relative to the stabilized baseline.
 
@@ -682,7 +693,7 @@ def _y2_occupancy_recovery_factor(
     """
     if pip.closure_strategy == "none":
         return 1.0
-    y1_factor, _ = _y1_revenue_factor_and_adr_drag(pip)
+    y1_factor, _ = _y1_revenue_factor_and_adr_drag(pip, closed_months)
     effective_recovery_months = _effective_recovery_months(
         pip, brand_recovery_mult
     )
@@ -1219,9 +1230,10 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
             brand_recovery_mult, brand_revpar_mult = _resolve_brand_multipliers(
                 pip_v2.brand
             )
-            y1_revenue_factor, y1_adr_drag = _y1_revenue_factor_and_adr_drag(pip_v2)
+            pip_closed = payload.closed_months or payload.pip_closed_months
+            y1_revenue_factor, y1_adr_drag = _y1_revenue_factor_and_adr_drag(pip_v2, pip_closed)
             y2_occ_recovery_factor = _y2_occupancy_recovery_factor(
-                pip_v2, brand_recovery_mult
+                pip_v2, brand_recovery_mult, pip_closed
             )
             effective_revpar_index = (
                 pip_v2.revpar_index_post_reno * brand_revpar_mult
@@ -1911,6 +1923,7 @@ class RevenueEngine(BaseEngine[RevenueEngineInput, RevenueEngineOutput]):
                 legacy_drivers_by_year[k] for k in sorted(legacy_drivers_by_year)
             ],
             # FON-116 — one record per model year, and the method that ran.
+            closed_months=payload.closed_months,
             topline_by_year=[topline_records[k] for k in sorted(topline_records)],
             topline_mode=payload.topline_mode or ("benchmark" if topline_plan is not None else None),
             topline_methodology_version=(

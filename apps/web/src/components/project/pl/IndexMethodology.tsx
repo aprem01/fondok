@@ -112,7 +112,7 @@ export interface ReconciliationSource {
 
 export interface ReconciliationInput {
   /** ``revenue.years[0]`` — what Projections shows as Base year (Year 1). */
-  baseYear: { occupancy: number; adr: number } | null;
+  baseYear: { occupancy: number; adr: number | null } | null;
   /** ``revenue.projection_deal_years[0].label`` — null with no close date. */
   baseDealYear: string | null;
   /** ``starting_occupancy`` / ``starting_adr`` — the stabilized baseline. */

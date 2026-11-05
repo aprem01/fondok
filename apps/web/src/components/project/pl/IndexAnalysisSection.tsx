@@ -658,7 +658,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
           }
         : null;
     return buildReconciliation({
-      baseYear: { occupancy: y0.occupancy, adr: y0.adr },
+      baseYear: { occupancy: y0.occupancy, adr: y0.occupancy === 0 ? null : y0.adr },
       baseDealYear: baseSpan,
       startingOccupancy: num(occSrc?.value),
       startingAdr: num(adrSrc?.value),

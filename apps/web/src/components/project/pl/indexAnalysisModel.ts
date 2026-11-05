@@ -474,7 +474,7 @@ export function buildSubjectSeries(
     const y = revYears[k];
     if (!y) return;
     series.occupancy[i] = occFraction(y.occupancy);
-    series.adr[i] = posOrNull(y.adr);
+    series.adr[i] = y.occupancy === 0 ? null : posOrNull(y.adr);
     series.revpar[i] = posOrNull(y.revpar);
     sources[i] = {
       kind: 'engine',

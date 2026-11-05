@@ -1,7 +1,8 @@
 """Sam, 2026-11-04 — a new or reopened hotel earns nothing before it opens. Revenue
 starts at the opening date, the opening year is prorated by months open, the ramp's
 Year 1 is the first 12 months after opening, and the closed months carry no operating
-costs (pre-opening costs are the analyst's input).
+costs (pre-opening costs are the analyst's input). Sam, 2026-11-05: fixed charges keep
+running except on a new build, and displacement months inside the closure are dropped.
 """
 
 from __future__ import annotations
@@ -13,12 +14,26 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 from uuid import uuid4
 
 import pytest
-from fondok_schemas.underwriting import RenovationDisplacementPeriod, RevenueEngineInput
+from fondok_schemas.underwriting import PIPDisplacement, RenovationDisplacementPeriod, RevenueEngineInput
 
 from app.engines.expense import ExpenseEngine, ExpenseEngineInput
 from app.engines.fb_revenue import FBRevenueEngine, FBRevenueInput
-from app.engines.revenue import RevenueEngine, default_ramp_by_year, months_open_shares
-from app.services.topline import closed_months_for, opening_offset_for
+from app.engines.revenue import (
+    RevenueEngine,
+    _y1_revenue_factor_and_adr_drag,
+    default_ramp_by_year,
+    months_open_shares,
+)
+from app.export.live_payload import _build_investment
+from app.export.pl_workbooks import proj_cell_key, projection_values
+from app.services.engine_runner import _displacement_status
+from app.services.topline import (
+    _displacement_on_top,
+    closed_months_for,
+    closure_fixed_charges_note,
+    fixed_charges_run_while_closed,
+    opening_offset_for,
+)
 
 
 def _revenue(**kw: object):
@@ -102,7 +117,7 @@ def test_the_schedule_applies_to_the_open_months_only() -> None:
     assert off[1].adr == pytest.approx(closed[1].adr * 0.8)
 
 
-def _expense(as_open, actual=None):
+def _expense(as_open, actual=None, **kw):
     def fb(out):
         return FBRevenueEngine().run(FBRevenueInput(deal_id=uuid4(), revenue=out))
 
@@ -111,6 +126,7 @@ def _expense(as_open, actual=None):
         ffe_reserve_pct=0.04, expense_growth=0.03, grow_opex_independently=True,
         open_shares_by_year=months_open_shares(18, 5) if actual is not None else {},
         actual_revenue=fb(actual) if actual is not None else None,
+        **kw,
     ))
 
 
@@ -118,9 +134,14 @@ def test_the_closed_months_carry_no_costs_and_later_years_keep_theirs() -> None:
     open_hotel = _revenue()
     baseline = _expense(open_hotel)
     closed = _expense(open_hotel, _revenue(closed_months=18))
-    assert closed.years[0].noi == pytest.approx(0.0) and closed.years[0].undistributed.total == 0.0
-    assert closed.years[0].fixed_charges.total == 0.0
-    assert closed.years[1].noi == pytest.approx(baseline.years[1].noi * 0.5)
+    y1_fixed, y2_fixed = (baseline.years[i].fixed_charges.total for i in (0, 1))
+    assert y1_fixed > 0.0
+    assert closed.years[0].undistributed.total == 0.0
+    # Taxes and insurance don't stop when a hotel closes.
+    assert closed.years[0].fixed_charges.total == pytest.approx(y1_fixed)
+    assert closed.years[0].noi == pytest.approx(-y1_fixed)
+    assert closed.years[1].fixed_charges.total == pytest.approx(y2_fixed)
+    assert closed.years[1].noi == pytest.approx((baseline.years[1].noi + y2_fixed) * 0.5 - y2_fixed)
     # A closed Year 1 must not zero the out-years it seeds.
     assert closed.years[2].undistributed.total == pytest.approx(baseline.years[2].undistributed.total)
     assert closed.years[2].noi == pytest.approx(baseline.years[2].noi)
@@ -151,13 +172,14 @@ async def test_the_whole_model_runs_closed_and_the_sale_prices_a_full_year() -> 
     open_hotel = await _model()
     closed = await _model(reopening_date="2027-03-31")
     assert closed["revenue"].years[0].total_revenue == 0.0
-    assert closed["expense"].years[0].noi == 0.0
-    assert closed["expense"].years[1].noi == pytest.approx(open_hotel["expense"].years[1].noi * 0.5)
-    assert closed["returns"].noi_by_year[0] == 0.0
+    y1_fixed = closed["expense"].years[0].fixed_charges.total
+    assert y1_fixed > 0.0 and closed["expense"].years[0].noi == pytest.approx(-y1_fixed)
+    assert closed["returns"].noi_by_year[0] == pytest.approx(-y1_fixed)
     assert closed["returns"].levered_irr < open_hotel["returns"].levered_irr
     # Opening in the sale year: the buyer still caps a full year.
     last = await _model(reopening_date="2030-03-31")
-    assert last["expense"].years[-1].noi == pytest.approx(open_hotel["expense"].years[-1].noi * 0.5)
+    last_fixed = open_hotel["expense"].years[-1].fixed_charges.total
+    assert last["expense"].years[-1].noi == pytest.approx((open_hotel["expense"].years[-1].noi + last_fixed) * 0.5 - last_fixed)
     assert last["returns"].terminal_noi == pytest.approx(open_hotel["returns"].terminal_noi)
 
 
@@ -195,7 +217,7 @@ async def test_a_refinance_in_the_opening_year_sizes_on_a_full_year() -> None:
     open_hotel = await _model()
     closed = await _model(reopening_date="2027-03-31")
     sizing = closed["debt_input"].refi_noi_by_year
-    assert sizing[0] == pytest.approx(0.0)  # fully closed: nothing to lend on
+    assert sizing[0] < 0.0  # fully closed: nothing to lend on
     assert sizing[1] == pytest.approx(open_hotel["expense"].years[1].noi)
     assert open_hotel["debt_input"].refi_noi_by_year == []
 
@@ -253,3 +275,101 @@ async def test_a_displaced_year_1_does_not_lower_later_years_costs(displacement:
 @pytest.mark.asyncio
 async def test_no_displacement_passes_no_seed() -> None:
     assert (await _model())["expense_input"].seed_year_one is None
+
+
+def test_a_new_builds_fixed_charges_sit_in_the_project_budget() -> None:
+    open_hotel = _revenue()
+    baseline = _expense(open_hotel)
+    closed = _expense(open_hotel, _revenue(closed_months=18), fixed_charges_run_while_closed=False)
+    assert closed.years[0].noi == pytest.approx(0.0) and closed.years[0].fixed_charges.total == 0.0
+    assert closed.years[1].noi == pytest.approx(baseline.years[1].noi * 0.5)
+
+
+@pytest.mark.parametrize(
+    "deal_type,runs", [("Development", False), ("adaptive_reuse", True), ("acquisition", True), (None, True)]
+)
+def test_only_a_ground_up_build_moves_its_carry_to_the_budget(deal_type: object, runs: bool) -> None:
+    assert fixed_charges_run_while_closed({"deal_type": deal_type}) is runs
+
+
+def _pip(*offline: float, strategy: str = "rolling") -> PIPDisplacement:
+    return PIPDisplacement(closure_strategy=strategy, pct_rooms_offline_by_month=list(offline))
+
+
+def test_pip_months_inside_the_closure_are_dropped() -> None:
+    # All six offline months are inside the closure: nothing is left to displace.
+    inside = _revenue(closed_months=6, pip_displacement=_pip(*[1.0] * 6))
+    plain = _revenue(closed_months=6)
+    assert inside.years[0].occupancy == pytest.approx(plain.years[0].occupancy)
+    assert inside.years[1].occupancy == pytest.approx(plain.years[1].occupancy)
+    # Three of the six open months at half the rooms: 25% off the open months only.
+    rest = _revenue(closed_months=6, pip_displacement=_pip(*[1.0] * 6, 0.5, 0.5, 0.5))
+    assert rest.years[0].occupancy == pytest.approx(plain.years[0].occupancy * 0.75)
+
+
+def test_no_closure_leaves_the_pip_factor_alone() -> None:
+    assert _y1_revenue_factor_and_adr_drag(_pip(1.0, 1.0, 1.0)) == pytest.approx((0.75, 1.0))
+    assert _y1_revenue_factor_and_adr_drag(_pip(0.8, strategy="wing_by_wing")) == pytest.approx((1 - 0.5 / 12, 0.95))
+    # Wing work wholly inside the closure takes its ADR drag with it.
+    assert _y1_revenue_factor_and_adr_drag(_pip(0.8, strategy="wing_by_wing"), 1) == (1.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    "extra,flagged",
+    [
+        ({}, False),
+        ({"renovation_displacement_schedule": [
+            {"start_month": 1, "end_month": 6, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}]}, False),
+        ({"renovation_displacement_schedule": [
+            {"start_month": 1, "end_month": 24, "rooms_offline_pct": 0.5, "rate_discount_pct": 0.0}]}, True),
+        ({"y1_occupancy_displacement_pct": 0.1}, True),
+    ],
+)
+def test_only_displacement_left_after_the_closure_is_flagged(extra: dict, flagged: bool) -> None:
+    base = {"reopening_date": "2026-06-30", "acquisition_close_date": "2025-09-30", **extra}
+    assert closed_months_for(base) == 9
+    assert _displacement_on_top(base) is flagged
+
+
+def test_a_flat_year_1_percent_has_nothing_to_flag_when_year_1_is_closed() -> None:
+    base = {"reopening_date": "2027-03-31", "acquisition_close_date": "2025-09-30",
+            "y1_occupancy_displacement_pct": 0.1}
+    assert closed_months_for(base) >= 12
+    assert _displacement_on_top(base) is False
+
+
+def test_a_schedule_past_the_hold_or_doing_nothing_is_not_flagged() -> None:
+    base = {"reopening_date": "2026-06-30", "acquisition_close_date": "2025-09-30", "hold_years": 5}
+    past = {"start_month": 70, "end_month": 72, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}
+    nothing = {"start_month": 13, "end_month": 15, "rooms_offline_pct": 0.0, "rate_discount_pct": 0.0}
+    assert _displacement_on_top({**base, "renovation_displacement_schedule": [past]}) is False
+    assert _displacement_on_top({**base, "renovation_displacement_schedule": [nothing]}) is False
+
+
+def test_the_renovation_status_says_when_the_closure_covers_the_displacement() -> None:
+    base = {"reopening_date": "2026-06-30", "acquisition_close_date": "2025-09-30", "hold_years": 5, "renovation_budget": 0}
+    inside = _displacement_status({**base, "renovation_displacement_schedule": [
+        {"start_month": 1, "end_month": 6, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}]}, {}, source_fields={}, analyst_override_paths=set())
+    assert inside["active"] is False and inside["schedule"] == []
+    assert "beyond the closure" in inside["detail"] and "Taxes, insurance" in inside["detail"]
+    rest = _displacement_status({**base, "renovation_displacement_schedule": [
+        {"start_month": 6, "end_month": 12, "rooms_offline_pct": 0.5, "rate_discount_pct": 0.0}]}, {}, source_fields={}, analyst_override_paths=set())
+    assert rest["active"] is True and rest["schedule"][0]["start_month"] == closed_months_for(base) + 1
+
+
+def test_a_new_builds_status_points_taxes_at_the_budget() -> None:
+    assert "project budget" in closure_fixed_charges_note({"deal_type": "development"})
+
+
+def test_exports_say_not_yet_open_instead_of_a_cap_on_a_closed_year_1() -> None:
+    capital = {"uses": [{"label": "Purchase Price", "amount": 50_000_000.0}], "total_capital": 60_000_000.0}
+    closed = _build_investment(capital, 100, -500_000.0, True)
+    assert closed["entry_cap_not_yet_open"] is True and "entry_cap_rate_year1_uw" not in closed
+    assert _build_investment(capital, 100, 500_000.0)["entry_cap_rate_year1_uw"] == pytest.approx(0.01)
+
+
+def test_a_closed_years_adr_is_not_exported() -> None:
+    years = [{"occupancy": 0.0, "adr": 264.0, "revpar": 0.0}, {"occupancy": 0.4, "adr": 270.0, "revpar": 108.0}]
+    _, values = projection_values({"revenue": {"years": years}})
+    assert values[proj_cell_key("revenue", "adr", 0)] is None
+    assert values[proj_cell_key("revenue", "adr", 1)] == 270.0

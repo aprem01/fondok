@@ -31,7 +31,7 @@ export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
 }
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
-export const TOPLINE_METHODOLOGY_VERSION = 5;
+export const TOPLINE_METHODOLOGY_VERSION = 6;
 
 /** Field-override keys the topline reads (worker `services/topline.py`). */
 export const TOPLINE_KEYS = {
@@ -165,6 +165,10 @@ export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone 
     return { text: 'No ramp — stabilized from Year 1', tone: 'ok' };
   }
   if (s.ramp_source === 'straight_line') {
+    if (holdsTodaysIndex(s)) {
+      const classAverage = s.benchmark_level === 'submarket' || s.benchmark_level === 'market';
+      return { text: `Holding today's index${classAverage ? ' (benchmark is a class average)' : ''}`, tone: 'ok' };
+    }
     return { text: `Straight line from today's index to the target by Year ${S}`, tone: 'ok' };
   }
   if (S <= 1 || !s.ramp_by_year?.length) {
@@ -173,6 +177,19 @@ export function rampSummary(s: ToplineStatus): { text: string; tone: ClauseTone 
   const steps = [...s.ramp_by_year.map((r) => (r == null ? '100' : fmtPctWhole(r))), '100'];
   const who = s.ramp_source === 'analyst_override' ? 'your ramp' : 'default';
   return { text: `Ramp ${steps.join('/')} (${who})`, tone: 'ok' };
+}
+
+/** The target is today's index, so the line has nowhere to go. */
+function holdsTodaysIndex(s: ToplineStatus): boolean {
+  const flat = (start?: number | null, target?: number | null) =>
+    start == null || (target != null && Math.abs(start - target) < 0.05);
+  const live = [
+    !s.explicit_metrics.includes('occupancy') && s.start_index_occ != null,
+    !s.explicit_metrics.includes('adr') && s.start_index_adr != null,
+  ];
+  return live.some(Boolean)
+    && (!live[0] || flat(s.start_index_occ, s.penetration_occ))
+    && (!live[1] || flat(s.start_index_adr, s.penetration_adr));
 }
 
 function fmtPctWhole(fraction: number): string {
@@ -240,7 +257,7 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
     out.push({
       id: 'closed',
       tone: 'ok',
-      text: `Closed for the first ${s.closed_months} months: no revenue or operating costs until the opening date`,
+      text: `Closed for the first ${s.closed_months} months: no revenue or operating costs until the opening date.${s.closed_fixed_charges_note ? ` ${s.closed_fixed_charges_note}` : ''}`,
     });
   }
   return out;
@@ -534,7 +551,9 @@ export function toplineYearChain(
   const penText = byYear
     ? `penetration ${pts(pen)} (your Year ${r.year} value — no ramp)`
     : start != null
-      ? `penetration ${pts(pen)} (straight line from today's ${pts(start)})`
+      ? stabilizedPenetration != null && Math.abs(start - stabilizedPenetration) < 0.05
+        ? `penetration ${pts(pen)} (holding today's index)`
+        : `penetration ${pts(pen)} (straight line from today's ${pts(start)})`
     : ramp != null
       ? `penetration ${pts(stabilizedPenetration as number)} × ramp ${fmtPctWhole(ramp)}%`
       : `penetration ${pts(pen)}`;

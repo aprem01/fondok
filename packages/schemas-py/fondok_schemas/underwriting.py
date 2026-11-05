@@ -712,6 +712,9 @@ class RevenueEngineInput(BaseModel):
     #: Sam, 2026-11-04 — months from the first operating month the hotel is
     #: closed until its opening date. They earn nothing. 0 = open from close.
     closed_months: Annotated[int, Field(ge=0)] = 0
+    # The same months for the PIP schedule alone, for pricing costs on the deal
+    # without the closure: its months inside the closure stay dropped.
+    pip_closed_months: Annotated[int, Field(ge=0)] = 0
     keys: Annotated[int, Field(gt=0)]
     starting_occupancy: Annotated[float, Field(ge=0.0, le=1.0)]
     starting_adr: Annotated[float, Field(gt=0)]
@@ -963,6 +966,8 @@ class RevenueEngineOutput(BaseModel):
     # year's growth (legacy / benchmark-less), with every status the Future
     # P&L renders (``capped_95``, ``flat_no_growth``, ``benchmark_unavailable``,
     # the ramp state) and the T-12 reference figures. Always populated.
+    # Months from the first operating month the hotel is closed until its opening.
+    closed_months: int = 0
     topline_by_year: list[IndexDriverYear] = Field(default_factory=list)
     # The topline method THIS run used: 2 when ``RevenueEngineInput.topline``
     # drove it (benchmark × penetration × ramp), 1 for the legacy scalar /

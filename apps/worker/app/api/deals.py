@@ -2181,7 +2181,7 @@ async def update_deal(
         if isinstance(reopening_note_raw, str) and reopening_note_raw.strip()
         else None
     )
-    if "reopening_date" in changes and changes["reopening_date"] is not None and existing_lifecycle != "draft":
+    if "reopening_date" in changes and existing_lifecycle != "draft":
         prior_reopening = _coerce_date_optional(existing._mapping.get("reopening_date"))
         moved = (prior_reopening.isoformat() if prior_reopening else None) != changes["reopening_date"]
         if moved and reopening_note is None:

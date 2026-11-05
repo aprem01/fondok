@@ -33,7 +33,7 @@ const g = (value: number | null, source: string, label: string, extra: Partial<T
 
 export function toplineStatus(over: Partial<ToplineStatus> = {}): ToplineStatus {
   return {
-    methodology_version: 5,
+    methodology_version: 6,
     benchmark: null,
     benchmark_level: 'comp_set',
     benchmark_label: 'STR comp set TTM May 2025 · ANG-20250500-USD-E.xlsx',

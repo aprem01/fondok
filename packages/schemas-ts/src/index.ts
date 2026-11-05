@@ -822,6 +822,7 @@ export const RevenueEngineOutput = z.object({
   provenance: ProvenanceMap.default({}),
   // FON-116 / FON-117 — one record per model year, and the topline method the
   // run used (2 = benchmark × penetration × ramp; 1 = legacy scalar / driver).
+  closed_months: z.number().default(0),
   topline_by_year: z.array(IndexDriverYear).default([]),
   topline_methodology_version: z.number().int().min(1).default(1),
   // FON-116 staged rollout (temporary): the topline mode that ran.

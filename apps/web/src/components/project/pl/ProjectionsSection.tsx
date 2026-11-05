@@ -1085,7 +1085,8 @@ function buildFromWorker(
       availableRooms,
       occupiedRooms,
       occupancy: r.occupancy ?? undefined,
-      adr: r.adr ?? undefined,
+      // A year the hotel is closed throughout sells no rooms, so it has no rate.
+      adr: r.occupancy === 0 ? undefined : r.adr ?? undefined,
       revpar: r.revpar ?? undefined,
       roomsRevenue: f?.rooms_revenue ?? r.rooms_revenue ?? undefined,
       fbRevenue: f?.fb_revenue ?? r.fb_revenue ?? undefined,

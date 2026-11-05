@@ -16,7 +16,7 @@ override. API contract (unchanged shape): 422 ``{"code":
 ``field_overrides`` keys the note rides in the ``{"value", "note"}`` envelope;
 for the ``reopening_date`` column it is the sibling body field
 ``reopening_date_note`` (recorded on the ``deal.updated`` audit row). A clear
-(null) is a revert and needs no note; a draft deal (the wizard's autosave) is
+(null) moves the same numbers and needs one too; a draft deal (the wizard's autosave) is
 not underwritten yet and needs none.
 """
 
@@ -112,10 +112,12 @@ async def test_reopening_date_change_needs_a_note_and_records_it() -> None:
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] == "2027-03-15"
 
-        # The same date again is not a change; a clear is a revert.
+        # The same date again is not a change; a clear needs a note like a move.
         r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": "2027-03-15"})
         assert r.status_code == 200, r.text
         r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": None})
+        assert r.status_code == 422, r.text
+        r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": None, "reopening_date_note": "Stays open"})
         assert r.status_code == 200, r.text
 
     async with get_session_factory()() as s:

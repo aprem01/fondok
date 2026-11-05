@@ -839,7 +839,7 @@ export function PenetrationByYearGrid({
                 </td>
                 <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-disp-${y}`}>{dispCell}</td>
                 <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-final-occ-${y}`}>{pct1(t?.occupancy)}</td>
-                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-final-adr-${y}`}>{usd0(t?.adr)}</td>
+                <td className="py-1 text-right tabular-nums" data-testid={`topline-grid-final-adr-${y}`}>{t?.occupancy === 0 ? '—' : usd0(t?.adr)}</td>
               </tr>
             );
           })}

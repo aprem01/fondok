@@ -138,7 +138,7 @@ def _use_amount(uses: list[dict[str, Any]], *needles: str) -> float | None:
 
 
 def _build_investment(
-    capital: dict[str, Any], keys: int | None, noi_y1: float | None
+    capital: dict[str, Any], keys: int | None, noi_y1: float | None, closed_at_entry: bool = False
 ) -> dict[str, Any]:
     """``investment_engine`` block from the capital engine + a derived cap/yield."""
     out: dict[str, Any] = {}
@@ -172,7 +172,10 @@ def _build_investment(
     # Derived display ratios (two real engine outputs each; not engine math):
     #   entry cap (Y1 UW) = Y1 underwritten NOI / purchase price
     #   Y1 yield on cost   = Y1 underwritten NOI / all-in total capital
-    if noi_y1 is not None and purchase and purchase > 0:
+    # Sam, 2026-11-05: a hotel not yet open has no entry cap (yield on cost is the measure).
+    if closed_at_entry:
+        out["entry_cap_not_yet_open"] = True
+    elif noi_y1 is not None and purchase and purchase > 0:
         out["entry_cap_rate_year1_uw"] = noi_y1 / purchase
     if noi_y1 is not None and total_capital and total_capital > 0:
         out["year1_yield_on_cost"] = noi_y1 / total_capital
@@ -1790,7 +1793,7 @@ async def _assemble_live_payload(
     if city:
         model["location"] = city
 
-    investment = _build_investment(capital, keys, noi_y1)
+    investment = _build_investment(capital, keys, noi_y1, (revenue.get("closed_months") or 0) > 0)
     if investment:
         model["investment_engine"] = investment
     if proforma:

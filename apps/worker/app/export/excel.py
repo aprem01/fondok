@@ -110,6 +110,7 @@ from .refusals import (
 
 # ─────────────────────────── styling helpers ───────────────────────────
 
+NOT_YET_OPEN = "n/a, not yet open: see yield on cost"
 USD_FMT = '$#,##0;[Red]($#,##0)'
 USD_2_FMT = '$#,##0.00'
 PCT_FMT = '0.00%'
@@ -476,7 +477,7 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
         ("Exit Cap Rate", ret.get("exit_cap_rate_pct"), PCT_FMT, "exit_cap_rate",
          "no exit cap rate on the deal's returns engine output"),
         ("Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "entry_cap_rate",
-         "no Year 1 NOI or purchase price to derive the entry cap"),
+         NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no Year 1 NOI or purchase price to derive the entry cap"),
     ]
     benchmark_note = debt.get("benchmark_note")
     for label, val, fmt, concept, missing in metrics:
@@ -542,7 +543,10 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Total Capital", inv, "total_capital_usd", USD_FMT, "All-in", "total_capital", "capital engine"),
                 item("Total Capital / Key", inv, "total_capital_per_key_usd", USD_FMT, "", "total_capital_per_key", "capital engine"),
                 item("Entry Cap (T-12)", inv, "entry_cap_rate_t12", PCT_FMT, "", "entry_cap_rate_t12", "T-12 / capital engine"),
-                item("Entry Cap (Y1 UW)", inv, "entry_cap_rate_year1_uw", PCT_FMT, "", "entry_cap_rate", "capital engine"),
+                (
+                    "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "", "entry_cap_rate",
+                    NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no entry cap (y1 uw) on the deal's capital engine output",
+                ),
                 item("Year 1 Yield on Cost", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
             ],
         ),

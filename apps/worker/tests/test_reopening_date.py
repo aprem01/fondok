@@ -104,7 +104,7 @@ async def test_create_read_list_update_round_trip() -> None:
         assert r.json()["reopening_date"] == "2027-09-01"
 
         # null clears it — the default goes back to Year 3 after close.
-        r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": None})
+        r = await client.patch(f"/deals/{deal_id}", json={"reopening_date": None, "reopening_date_note": "No closure"})
         assert r.status_code == 200, r.text
         assert r.json()["reopening_date"] is None
         assert (await client.get(f"/deals/{deal_id}")).json()["reopening_date"] is None
