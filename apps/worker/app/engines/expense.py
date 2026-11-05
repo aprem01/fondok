@@ -191,6 +191,10 @@ class ExpenseEngineInput(BaseModel):
     # the above; ``revenue`` is then the same deal without the closure.
     actual_revenue: FBRevenueOutput | None = None
     actual_occupancy_by_year: list[float] | None = None
+    # Year 1 without its displacement or closure, set only when Year 1 has one. A
+    # renovation year's revenue must not set the cost level every later year grows
+    # from. Year 1's own figures are unchanged.
+    seed_year_one: FBRevenueYear | None = None
 
     deal_id: UUID
     revenue: FBRevenueOutput
@@ -970,6 +974,29 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                     y1_undist_total = undist_total
                     y1_fixed_lines = dict(fixed_lines)
                     y1_fixed_total = fixed_total
+                    if payload.seed_year_one is not None:
+                        seed = payload.seed_year_one
+                        y1_dept_rooms = _dept_value("rooms_dept_expense", seed.rooms_revenue)
+                        y1_dept_fb = _dept_value("fb_dept_expense", seed.fb_revenue)
+                        y1_dept_other = _dept_value("other_dept_expense", seed.other_revenue)
+                        y1_undist_lines = {
+                            line: _undist_from_actuals_or_share(
+                                line,
+                                seed.total_revenue * defaults["undistributed_pct_revenue"],
+                                category_grounded=undist_grounded,
+                            )
+                            for line in UNDIST_WEIGHTS
+                        }
+                        y1_undist_total = sum(y1_undist_lines.values())
+                        y1_fixed_lines = {
+                            line: _fixed_from_actuals_or_share(
+                                line,
+                                seed.total_revenue * defaults["fixed_pct_revenue"],
+                                category_grounded=fixed_grounded,
+                            )
+                            for line in FIXED_WEIGHTS
+                        }
+                        y1_fixed_total = sum(y1_fixed_lines.values())
 
             if methods:
                 line_values = {

@@ -223,3 +223,33 @@ def test_an_analysts_year_1_fee_prorates_by_months_open() -> None:
         open_shares_by_year=months_open_shares(6, 5), actual_revenue=fb(_revenue(closed_months=6)),
     ))
     assert out.years[0].mgmt_fee == pytest.approx(500_000.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "displacement",
+    [
+        {"y1_occupancy_displacement_pct": 0.5},
+        {"y1_adr_displacement_pct": 0.3},
+        {"renovation_displacement_schedule": [
+            {"start_month": 1, "end_month": 12, "rooms_offline_pct": 1.0, "rate_discount_pct": 0.0}
+        ]},
+        {"renovation_displacement_schedule": [
+            {"start_month": 1, "end_month": 6, "rooms_offline_pct": 0.5, "rate_discount_pct": 0.1}
+        ]},
+    ],
+)
+async def test_a_displaced_year_1_does_not_lower_later_years_costs(displacement: dict) -> None:
+    plain = await _model()
+    displaced = await _model(**displacement)
+    for a, b in zip(plain["expense"].years[1:], displaced["expense"].years[1:], strict=True):
+        assert b.undistributed.total == pytest.approx(a.undistributed.total)
+        assert b.fixed_charges.total == pytest.approx(a.fixed_charges.total)
+        assert b.noi == pytest.approx(a.noi)
+    assert displaced["returns"].terminal_noi == pytest.approx(plain["returns"].terminal_noi)
+    assert displaced["returns"].levered_irr < plain["returns"].levered_irr
+
+
+@pytest.mark.asyncio
+async def test_no_displacement_passes_no_seed() -> None:
+    assert (await _model())["expense_input"].seed_year_one is None

@@ -95,6 +95,7 @@ from ..extraction.field_catalog import (
     T12_REVENUE_FIELD_ALIASES as _CATALOG_T12_REVENUE_FIELD_ALIASES,
 )
 
+from ..engines.fb_revenue import FBRevenueYear
 from ..engines import (
     CapitalEngine,
     CapitalEngineInput,
@@ -8898,6 +8899,29 @@ def _closed_months_for(base: dict[str, Any]) -> int:
     return closed_months_for(base)
 
 
+#: The revenue input with every displacement lever and the closure off.
+_UNDISPLACED_REVENUE: dict[str, Any] = {
+    "closed_months": 0,
+    "renovation_displacement_schedule": [],
+    "y1_occupancy_displacement_pct": 0.0,
+    "y1_adr_displacement_pct": 0.0,
+    "pip_displacement": None,
+}
+
+
+def _seed_year_one(
+    deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
+) -> FBRevenueYear | None:
+    """Year 1 without its displacement or closure (``ExpenseEngineInput.seed_year_one``);
+    ``None`` when Year 1 has neither."""
+    y1 = accumulated["revenue"].years[0]
+    if y1.occupancy_displacement_factor >= 1.0 and y1.adr_displacement_factor >= 1.0:
+        return None
+    payload = _build_input_for("revenue", deal_id, base, accumulated)
+    revenue = RevenueEngine().run(payload.model_copy(update=_UNDISPLACED_REVENUE))
+    return FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue})).years[0]
+
+
 def _expense_revenue_basis(
     deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
 ) -> tuple[dict[str, BaseModel], dict[int, float], BaseModel | None]:
@@ -8918,13 +8942,6 @@ def _expense_revenue_basis(
     if closed <= 0:
         return accumulated, {}, None
     payload = _build_input_for("revenue", deal_id, base, accumulated)
-    undisplaced = {
-        "closed_months": 0,
-        "renovation_displacement_schedule": [],
-        "y1_occupancy_displacement_pct": 0.0,
-        "y1_adr_displacement_pct": 0.0,
-        "pip_displacement": None,
-    }
     analyst_schedule = list(payload.renovation_displacement_schedule or [])
     open_periods = [
         p.model_copy(update={"start_month": max(p.start_month, closed + 1)})
@@ -8933,13 +8950,13 @@ def _expense_revenue_basis(
     ]
     # A schedule switches the other levers off, in the run this prices and the real one.
     update = (
-        undisplaced | {"renovation_displacement_schedule": open_periods}
+        _UNDISPLACED_REVENUE | {"renovation_displacement_schedule": open_periods}
         if analyst_schedule
         else {"closed_months": 0}
     )
     revenue = RevenueEngine().run(payload.model_copy(update=update))
     if closed >= MONTHS_PER_YEAR:
-        seed = RevenueEngine().run(payload.model_copy(update=undisplaced))
+        seed = RevenueEngine().run(payload.model_copy(update=_UNDISPLACED_REVENUE))
         revenue = revenue.model_copy(update={"years": [seed.years[0], *revenue.years[1:]]})
     fb = FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
     return (
@@ -9126,6 +9143,7 @@ def _build_input_for(
             open_shares_by_year=open_shares,
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
+            seed_year_one=_seed_year_one(deal_id, base, accumulated),
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],

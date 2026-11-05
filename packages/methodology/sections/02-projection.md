@@ -94,12 +94,12 @@ step the workspace is on. This two-step switch is temporary.
    assumed without a business plan. Today's index is the STR-published MPI / ARI, else the T-12 ÷ the
    benchmark, labelled derived. A new or reopened hotel (Deal Type Development or Adaptive Reuse, or a
    reopening date) runs 85% / 95% / 100% of the target: 85% for the first 12 months after opening, 95% for the
-   next 12, then 100%, with a deal year that spans two steps averaging its open months. A reopening whose ramp
+   next 12, then 100%, a deal year spanning two steps averaging its open months. A reopening whose ramp
    finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
    before it earn nothing and carry no operating costs (pre-opening costs are your input, in Soft Costs), and the
    opening year is prorated by whole months open, starting with the first full month. In a year the closure touches,
    undistributed and fixed lines are prorated by months open, departmental lines, fees and reserve follow the
-   revenue earned, and a fully closed Year 1 seeds the later years' costs from the hotel open. Later years keep the deal's own displacement. A sale or refinance is still priced
+   revenue earned, and a fully closed Year 1 seeds the later years' costs from the hotel open. A sale or refinance is still priced
    on a full year's income if the hotel opens in that year; a hotel still closed at the end of the hold has no
    exit value and the run stops and says so. Debt service still runs while the hotel is closed. A re-flag with no closure should leave the
    reopening date blank. With no opening date, the page asks for one and the ramp counts from the close, flagged. For a later
@@ -360,7 +360,8 @@ Sources & Uses and the equity requirement, and it never reduces Year-1 occupancy
 Year 1 is displaced only when you set an assumption on CAPEX → Initial Renovation: a Year-1
 rooms-offline and rate displacement (each up to half, with a justification note), a renovation
 displacement schedule, or a structured closure schedule. All default to off, and no document sets
-them. Years the renovation does not fall in grow from the undisplaced baseline.
+them. Years the renovation does not fall in grow from the undisplaced baseline, and so do their
+undistributed and fixed costs.
 
 {testid=methodology-displacement-schedule} **The renovation displacement schedule** is a list of periods, each with a first and last month
 counted from close, the share of rooms offline and the rate discount on the rooms that keep selling.
