@@ -165,7 +165,7 @@ HELD_FROM = 2029
 def test_exact_reference_path_from_the_keyed_comp_set() -> None:
     build, out = _run(_keyed_comp_set(), SCENARIO, costar_rows())
     subj, comp = REFERENCE["SUBJECT PROPERTY"], REFERENCE["COMPETITIVE SET"]
-    assert out.topline_methodology_version == 6
+    assert out.topline_methodology_version == 7
     assert [d.label for d in out.projection_deal_years] == [f"Jan–Dec {c}" for c in YEARS]
     assert build.status["stabilization_year"] == 3
     for i, cal in enumerate(YEARS):

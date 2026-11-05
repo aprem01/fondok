@@ -79,7 +79,7 @@ async def test_documents_deal_runs_the_reference_path_through_the_loader() -> No
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
     status = base["__topline_status__"]
-    assert status["methodology_version"] == 6
+    assert status["methodology_version"] == 7
     assert status["benchmark_level"] == "comp_set"
     assert status["benchmark"]["source_id"] == "str_comp_set"
     assert status["class_bucket"] == "luxury_upper_upscale"
@@ -224,7 +224,7 @@ async def test_full_chain_on_the_documents_deal_echoes_the_topline() -> None:
         results = await run_all_engines(s, deal_id=deal_id, tenant_id=tenant_id, run_id=str(uuid4()))
     rev = results["revenue"]["outputs"]
     rev = rev if isinstance(rev, dict) else rev.model_dump(mode="json")
-    assert rev["topline_methodology_version"] == 6
+    assert rev["topline_methodology_version"] == 7
     assert [d["label"] for d in rev["projection_deal_years"]] == [f"Jan–Dec {c}" for c in (2026, 2027, 2028, 2029, 2030)]
     recs = rev["topline_by_year"]
     assert [r["ari_target"] for r in recs] == pytest.approx([97, 98, 99, 100, 100])
@@ -298,3 +298,32 @@ async def test_exit_growth_follows_the_post_forecast_rule_with_a_cbre_long_run_a
     assert term["value"] == pytest.approx(0.02)
     assert base["revpar_growth"] == pytest.approx(0.02)
     assert base["__sources__"]["revpar_growth"] == "analyst_override"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stated,twelve,expected",
+    [({"noi": 4_000_000.0}, True, 4_000_000.0), ({"noi": 4_000_000.0}, False, None), ({}, True, None)],
+)
+async def test_a_hotel_closing_at_purchase_carries_the_t12s_own_noi(
+    monkeypatch: pytest.MonkeyPatch, stated: dict, twelve: bool, expected: float | None
+) -> None:
+    from types import SimpleNamespace
+
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.topline import closed_months_for
+
+    async def statement(*_a: object, **_k: object) -> SimpleNamespace:
+        return SimpleNamespace(stated=stated, twelve=twelve)
+
+    monkeypatch.setattr(engine_runner, "year_one_actual_lines", statement)
+    deal_id, tenant_id = await _docs_deal()
+    assert "t12_noi_at_entry" not in await _load(deal_id, tenant_id)  # stays open: not read
+
+    async with get_session_factory()() as s:
+        await s.execute(text("UPDATE deals SET reopening_date = '2027-03-31' WHERE id = :id"), {"id": deal_id})
+        await s.commit()
+    base = await _load(deal_id, tenant_id)
+    assert closed_months_for(base) > 0
+    assert base.get("t12_noi_at_entry") == expected

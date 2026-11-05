@@ -46,7 +46,7 @@ import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { NOT_YET_OPEN, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
+import { NOT_YET_OPEN, ON_T12_CLOSING, closedAtEntry, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -635,9 +635,14 @@ export default function InvestmentTab() {
   const pricePerKey = wPricePerKey;
   const purchase = wPurchase
     ?? (has(pricePerKey) && has(keys) ? pricePerKey * keys : undefined);
-  const notYetOpen = (getEngineField<number>(outputs, 'revenue', 'closed_months') ?? 0) > 0;
-  const entryCap = notYetOpen
-    ? undefined
+  const atEntry = closedAtEntry(
+    getEngineField<number>(outputs, 'revenue', 'closed_months'),
+    getEngineField<number>(outputs, 'expense', 't12_noi_at_entry'),
+    purchase,
+  );
+  const { notYetOpen } = atEntry;
+  const entryCap = atEntry.closed
+    ? atEntry.t12Cap
     : (has(entryNoi) && has(purchase) && purchase > 0)
       ? entryNoi / purchase
       : wEntryCap;
@@ -810,7 +815,7 @@ export default function InvestmentTab() {
             // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
-              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : '' },
+              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : '' },
               // FON-101 — the tile names the source the budget is on (OM broker ·
               // PIP / CapEx document · analyst override) after the per-key figure.
               { label: 'Renovation / PIP', value: mm(renoTotal),
@@ -848,13 +853,13 @@ export default function InvestmentTab() {
               },
               {
                 id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
-                value: money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
+                value: atEntry.closed ? (has(atEntry.t12Cap) ? money(atEntry.t12Noi) : NOT_YET_OPEN) : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap, 2),
-                note: [notYetOpen ? 'See Yield on Cost on Returns' : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                note: [notYetOpen ? 'See Yield on Cost on Returns' : has(atEntry.t12Cap) ? ON_T12_CLOSING : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
@@ -1177,7 +1182,7 @@ export default function InvestmentTab() {
             }[] = [
               {
                 title: 'Acquisition', note: `${TAB_LABEL.investment} owns these assumptions`, rows: acquisition,
-                formula: (has(entryNoi) && has(entryCap) && has(purchase))
+                formula: (!atEntry.closed && has(entryNoi) && has(entryCap) && has(purchase))
                   ? `Entry NOI ${fmtCurrency(entryNoi)} ÷ Entry Cap ${fmtPct(entryCap, 2)} → Purchase Price ${fmtCurrency(purchase)}`
                   : undefined,
               },

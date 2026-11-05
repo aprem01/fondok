@@ -54,6 +54,7 @@ def test_absent_block_key_is_reported() -> None:
         "years": [],
         "noi_cagr": 0.0,
         "sourced_from_t12": [],
+        "t12_noi_at_entry": None,
         "provenance": {},
         "line_methods": {},  # E-016 block, present
         "synthesized_lines": [],  # B3 block, present
@@ -75,6 +76,7 @@ def test_present_null_block_is_not_reported() -> None:
         "years": [],
         "noi_cagr": 0.0,
         "sourced_from_t12": [],
+        "t12_noi_at_entry": None,
         "provenance": {},
         "line_methods": {},  # E-016 block, present
         "synthesized_lines": [],  # B3 block, present
@@ -102,6 +104,7 @@ def test_nested_field_absent_from_a_present_block_is_reported_by_path() -> None:
         "years": [],
         "noi_cagr": 0.0,
         "sourced_from_t12": [],
+        "t12_noi_at_entry": None,
         "provenance": {},
         "line_methods": {},  # E-016 block, present
         "synthesized_lines": [],  # B3 block, present

@@ -88,9 +88,10 @@ DAYS_PER_YEAR = 365
 #: published forecast average when it states one.
 #: 4 (2026-11-04): an operating hotel ramps in a straight line from today's index;
 #: 85 / 95 / 100 is for a new or reopened hotel, counted from the opening.
-#: 6 (2026-11-05): fixed charges keep running through a closure, except a new
-#: build's; displacement months inside a closure are dropped.
-TOPLINE_METHODOLOGY_VERSION = 6
+#: 6 (2026-11-05): fixed charges keep running through a closure; displacement
+#: months inside a closure are dropped.
+#: 7 (2026-11-05): that holds for every deal type until a carry line exists.
+TOPLINE_METHODOLOGY_VERSION = 7
 LEGACY_TOPLINE_METHODOLOGY_VERSION = 1
 
 #: The occupancy ceiling every projected year is held under — the same 0.95

@@ -107,6 +107,8 @@ import {
   PURCHASE_PRICE_KEY,
   entryCapRate,
   NOT_YET_OPEN,
+  ON_T12_CLOSING,
+  closedAtEntry,
   resolvePurchasePrice,
 } from '@/lib/purchasePrice';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
@@ -753,10 +755,15 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // price) and the Entry Cap Rate calculated FROM it.
   const priceInput = resolvePurchasePrice({ overrides, enginePrice: purchase, resolved: priceSource });
   const entryCapCalc = entryCapRate(y1Noi, priceInput.value, outputs?.engines?.expense);
-  const notYetOpen = (getEngineField<number>(outputs, 'revenue', 'closed_months') ?? 0) > 0;
+  const atEntry = closedAtEntry(
+    getEngineField<number>(outputs, 'revenue', 'closed_months'),
+    getEngineField<number>(outputs, 'expense', 't12_noi_at_entry'),
+    priceInput.value,
+  );
+  const { notYetOpen } = atEntry;
   // The capital engine publishes no entry cap rate: it is always this
   // derivation, so it can never disagree with the price on screen.
-  const entryCap = notYetOpen ? undefined : entryCapCalc.value;
+  const entryCap = atEntry.closed ? atEntry.t12Cap : entryCapCalc.value;
   // Price / Key follows the same price on screen, so a just-saved price moves
   // it with the Entry Cap Rate rather than leaving it on the last run's price.
   const pricePerKey = has(priceInput.value) && has(keys)
@@ -958,15 +965,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.t12Cap) ? money(atEntry.t12Noi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
       cal('entryCap', 'Entry Cap Rate', notYetOpen ? NOT_YET_OPEN : pctv(entryCap), {
-        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: ENTRY_CAP_FORMULA,
+        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.t12Cap) ? 'T-12 NOI ÷ Purchase Price' : ENTRY_CAP_FORMULA,
         inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
         ...(notYetOpen
-          ? { sub: 'The hotel earns nothing at purchase, so there is no going-in income. See Yield on Cost on Returns.' }
+          ? { sub: 'The hotel earns nothing at purchase and there is no T-12 NOI to quote a going-in cap on. See Yield on Cost on Returns.' }
+          : has(atEntry.t12Cap) ? { sub: ON_T12_CLOSING }
           : has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
       }),
       mk({
@@ -1197,7 +1205,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       awa('hardPerKey', 'Hard Cost / Key'),
       cal('hard', 'Hard Costs', money(hardCosts), { trace: { engine: 'capital', path: 'hard_costs' } }),
       awa('softPct', 'Soft Costs %'),
-      cal('soft', 'Soft Costs', money(softCosts), { sub: `Includes pre-opening costs (hiring, training, launch marketing)${dealType === 'development' ? ' and taxes and insurance before opening' : ''}, for now` }),
+      cal('soft', 'Soft Costs', money(softCosts), { sub: 'Includes pre-opening costs (hiring, training, launch marketing), for now' }),
       awa('ffePerKey', 'FF&E / Key'),
       cal('ffe', 'FF&E', money(ffe)),
       cal('profFees', 'Professional Fees', money(profFees)),
@@ -1274,7 +1282,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       { kind: 'timeline', title: 'Transaction Timeline' },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, dealType, notYetOpen, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource, fullRun]);
+  }, [cfg, atEntry, isDev, meta, deal, overrides, keys, brand, proposedBrand, positioningId, timeline, outputs, tracedState, holdDealTypeBadge, dealId, liveMode, refreshDeal, priceSource, fullRun]);
 
   // ─── Review count (real needs-review provenance) ───────────────────────
   const reviewCount = useMemo(() => {
@@ -1319,8 +1327,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     }
     if (cfg === 'core') {
       return [
-        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
-        { label: 'Going-In Cap', value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap), sub: notYetOpen ? 'see Yield on Cost on Returns' : undefined },
+        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : undefined },
+        { label: 'Going-In Cap', value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap), sub: notYetOpen ? 'see Yield on Cost on Returns' : has(atEntry.t12Cap) ? ON_T12_CLOSING : undefined },
         { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         leveredTile,
@@ -1328,7 +1336,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ];
     }
     return [
-      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in` : undefined },
+      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget),
         sub: [
@@ -1340,7 +1348,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, notYetOpen, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
+  }, [cfg, atEntry, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
 
   // ─── R-051 — Asking vs Bidding price ───────────────────────────────────
   // One read-only worker call prices the deal at the seller's asking price and

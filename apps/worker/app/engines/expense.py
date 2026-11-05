@@ -187,9 +187,9 @@ class ExpenseEngineInput(BaseModel):
     # months carry no operating costs; departmental lines, fees and reserve follow
     # the revenue earned. Other years are untouched. Empty = no closure.
     open_shares_by_year: dict[int, float] = Field(default_factory=dict)
-    # Sam, 2026-11-05: taxes and insurance don't stop when a hotel closes. False for
-    # a new build, whose carry sits in the project budget: prorated by months open.
-    fixed_charges_run_while_closed: bool = True
+    # The T-12 statement's own NOI when a hotel with one closes at purchase, for the
+    # going-in cap. Moves no number here.
+    t12_noi_at_entry: float | None = None
     # The revenue the deal actually earns (closure and any displacement). Set with
     # the above; ``revenue`` is then the same deal without the closure.
     actual_revenue: FBRevenueOutput | None = None
@@ -397,13 +397,6 @@ class SynthesizedLine(BaseModel):
     reason: str
 
 
-def _prorated(model: BaseModel, share: float) -> BaseModel:
-    """A copy of a dollar-lines record with every field × ``share``."""
-    return model.model_copy(
-        update={name: v * share for name in type(model).model_fields if (v := getattr(model, name)) is not None}
-    )
-
-
 def _ratio(actual: float, as_if_open: float) -> float:
     return actual / as_if_open if as_if_open else 0.0
 
@@ -425,6 +418,7 @@ class ExpenseEngineOutput(BaseModel):
     # The web app surfaces this list as a footnote on the Operating
     # Statement so reviewers know which numbers are real vs synthesized.
     sourced_from_t12: list[str] = Field(default_factory=list)
+    t12_noi_at_entry: float | None = None
     # B3 (go-live audit) — the Year-1 lines the T-12 does NOT carry and the
     # engine synthesized at a ratio, each with its provenance and reason.
     # Empty when every line is an actual (or folded into a grounded category).
@@ -484,7 +478,9 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
             line: getattr(row.undistributed, line) * _by_method(line, share) for line in _UNDISTRIBUTED_LINES
         }
         undist = row.undistributed.model_copy(update={**undist_lines, "total": sum(undist_lines.values())})
-        fixed = row.fixed_charges if payload.fixed_charges_run_while_closed else _prorated(row.fixed_charges, share)
+        # Sam, 2026-11-05: taxes and insurance don't stop when a hotel closes, on any
+        # deal type until a carry line exists: left out, they would overstate returns.
+        fixed = row.fixed_charges
         gop = actual.total_revenue - dept_total - undist.total
         # An analyst's Year-1 fee or reserve is fixed dollars for a full year: months open.
         mgmt = row.mgmt_fee * (share if row.year == 1 and payload.mgmt_fee_y1_override is not None else revenue_share)
@@ -1508,6 +1504,7 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 ).strip()
 
         return ExpenseEngineOutput(
+            t12_noi_at_entry=payload.t12_noi_at_entry,
             deal_id=payload.deal_id,
             synthesized_lines=synthesized,
             line_methods=line_methods,

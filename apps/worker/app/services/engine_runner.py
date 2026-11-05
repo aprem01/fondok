@@ -2838,6 +2838,13 @@ async def _load_engine_inputs(
     # FON-121 review I1 — deal years govern Returns timing too.
     _apply_deal_year_timing(base, reasons)
 
+    # Sam, 2026-11-05 — a hotel with a T-12 that closes at purchase quotes its going-in
+    # cap on the T-12 NOI: the statement's own, over twelve months, or none.
+    if _closed_months_for(base) > 0:
+        year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=effective_tenant)
+        if year_one is not None and year_one.twelve:
+            base["t12_noi_at_entry"] = year_one.stated.get("noi")
+
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
     # An analyst override, a deals-row entry or a derived value does not come
     # off an extraction row, so pointing at one would mis-badge it.
@@ -3766,7 +3773,7 @@ def _displacement_status(
         )
 
     if closed_months > 0:
-        from .topline import _displacement_on_top, closure_fixed_charges_note
+        from .topline import _displacement_on_top
 
         if (active or _coerce_renovation_schedule(base)) and not _displacement_on_top(base):
             active = False
@@ -3774,8 +3781,7 @@ def _displacement_status(
             detail = "No renovation impact beyond the closure, which already covers the displacement set."
         detail = (
             f"Closed until the opening date: the first {closed_months} months earn nothing and carry "
-            f"no operating costs. "
-            f"{closure_fixed_charges_note(base)} {detail}"
+            f"no operating costs. Taxes, insurance and other fixed charges keep running. {detail}"
         )
     return {
         "active": active,
@@ -6257,6 +6263,8 @@ class YearOneActuals(NamedTuple):
     #: ADR) × keys × the period's days when the statement states no
     #: full-period rooms revenue line.
     derived: dict[str, str] = {}
+    #: The statement covers twelve months.
+    twelve: bool = False
 
 
 #: Profit lines read off the basis statement itself (concept registry ids).
@@ -6363,7 +6371,7 @@ def year_one_actuals_from_shims(
         if not contradicted:
             stated["total_revenue"] = total
     return YearOneActuals(
-        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated, derived
+        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated, derived, chosen.twelve
     )
 
 
@@ -8911,12 +8919,6 @@ def _closed_months_for(base: dict[str, Any]) -> int:
     return closed_months_for(base)
 
 
-def _fixed_charges_run_while_closed(base: dict[str, Any]) -> bool:
-    from .topline import fixed_charges_run_while_closed
-
-    return fixed_charges_run_while_closed(base)
-
-
 #: The revenue input with every displacement lever and the closure off.
 _UNDISPLACED_REVENUE: dict[str, Any] = {
     "closed_months": 0,
@@ -9159,7 +9161,7 @@ def _build_input_for(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
-            fixed_charges_run_while_closed=_fixed_charges_run_while_closed(base),
+            t12_noi_at_entry=base.get("t12_noi_at_entry"),
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             seed_year_one=_seed_year_one(deal_id, base, accumulated),

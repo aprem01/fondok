@@ -50,7 +50,7 @@ from ..engines.stabilization import (
     reopening_stabilized_index,
 )
 from ..engines.timeline import parse_iso_date
-from .deal_type import is_development_like, normalize_deal_type
+from .deal_type import is_development_like
 from .index_methodology import (
     KEY_ARI_TARGET,
     KEY_ARI_TARGET_BY_YEAR,
@@ -156,20 +156,6 @@ def closed_months_for(base: Mapping[str, Any]) -> int:
     return max(0, opening_offset_for(base) or 0)
 
 
-def fixed_charges_run_while_closed(base: Mapping[str, Any]) -> bool:
-    """Sam, 2026-11-05: taxes and insurance keep running through a closure. A new
-    build's carry sits in the project budget instead."""
-    return normalize_deal_type(base.get("deal_type")) != "development"
-
-
-def closure_fixed_charges_note(base: Mapping[str, Any]) -> str:
-    return (
-        "Taxes, insurance and other fixed charges keep running."
-        if fixed_charges_run_while_closed(base)
-        else "Taxes and insurance before opening belong in the project budget (Soft Costs)."
-    )
-
-
 def _displacement_on_top(base: Mapping[str, Any]) -> bool:
     """Displacement is left after dropping its months inside the closure."""
     from .engine_runner import _build_pip_displacement, _coerce_renovation_schedule
@@ -214,8 +200,6 @@ class ToplineInputs:
     opening_offset: int | None = None
     #: Displacement is left once its months inside the closure are dropped.
     displacement_on_top: bool = False
-    #: Sentence on what taxes and insurance do while closed.
-    closed_fixed_charges_note: str | None = None
 
 
 def coerce_ramp_list(raw: Any) -> tuple[list[float | None], list[str]]:
@@ -482,7 +466,6 @@ def read_topline_inputs(
         opening_date_missing=ramp_mode == RAMP_MODE_NEW and opening is None,
         opening_offset=opening_offset_for(base) if placed else None,
         displacement_on_top=_displacement_on_top(base),
-        closed_fixed_charges_note=closure_fixed_charges_note(base),
     )
 
 
@@ -1143,7 +1126,6 @@ def _status(
         "growth_by_year": growth_rows,
         "stabilization_year": s,
         "closed_months": max(0, drivers.opening_offset or 0),
-        "closed_fixed_charges_note": inputs.closed_fixed_charges_note,
         "stabilization_source": inputs.stabilization_source,
         "penetration_occ": drivers.penetration_occ,
         "penetration_adr": drivers.penetration_adr,
@@ -1220,7 +1202,6 @@ def _growth_only_status(
         "methodology_version": TOPLINE_METHODOLOGY_VERSION,
         "topline_mode": "growth_only",
         "closed_months": max(0, inputs.opening_offset or 0),
-        "closed_fixed_charges_note": inputs.closed_fixed_charges_note,
         "benchmark": None,
         "benchmark_level": "none",
         "benchmark_label": GROWTH_ONLY_BENCHMARK_LABEL,

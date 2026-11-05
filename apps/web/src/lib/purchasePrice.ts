@@ -132,8 +132,34 @@ export type EntryCapRate =
  *  - no Entry NOI and the expense row failed → that row's own reason;
  *  - otherwise (it completed without a Year-1 NOI) → `engine_skipped`.
  */
-/** Sam, 2026-11-05: a hotel not yet open has no entry cap; yield on cost is the measure. */
+/**
+ * Sam, 2026-11-05: a hotel closed at purchase quotes its going-in cap on the T-12 NOI
+ * when it states one. Without that it has no entry cap; yield on cost is the measure.
+ */
 export const NOT_YET_OPEN = 'n/a, not yet open';
+export const ON_T12_CLOSING = 'on T-12 (closing for renovation)';
+
+export interface ClosedAtEntry {
+  /** The hotel is closed at purchase. */
+  closed: boolean;
+  /** The T-12 statement's own NOI, when there is one. */
+  t12Noi: number | undefined;
+  /** T-12 NOI ÷ price. */
+  t12Cap: number | undefined;
+  /** Closed with no T-12 NOI to quote a cap on. */
+  notYetOpen: boolean;
+}
+
+export function closedAtEntry(
+  closedMonths: number | null | undefined,
+  t12Noi: number | null | undefined,
+  price: number | null | undefined,
+): ClosedAtEntry {
+  const closed = (closedMonths ?? 0) > 0;
+  const noi = closed && typeof t12Noi === 'number' && Number.isFinite(t12Noi) ? t12Noi : undefined;
+  const t12Cap = noi !== undefined && price != null && price > 0 ? noi / price : undefined;
+  return { closed, t12Noi: noi, t12Cap, notYetOpen: closed && t12Cap === undefined };
+}
 
 export function entryCapRate(
   entryNoi: number | undefined,

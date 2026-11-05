@@ -31,7 +31,7 @@ export function isGrowthOnly(s: ToplineStatus | null | undefined): boolean {
 }
 
 /** The topline method this web build explains (worker `TOPLINE_METHODOLOGY_VERSION`). */
-export const TOPLINE_METHODOLOGY_VERSION = 6;
+export const TOPLINE_METHODOLOGY_VERSION = 7;
 
 /** Field-override keys the topline reads (worker `services/topline.py`). */
 export const TOPLINE_KEYS = {
@@ -257,7 +257,7 @@ export function toplineBasisClauses(s: ToplineStatus | null | undefined): Toplin
     out.push({
       id: 'closed',
       tone: 'ok',
-      text: `Closed for the first ${s.closed_months} months: no revenue or operating costs until the opening date.${s.closed_fixed_charges_note ? ` ${s.closed_fixed_charges_note}` : ''}`,
+      text: `Closed for the first ${s.closed_months} months: no revenue or operating costs until the opening date. Taxes, insurance and other fixed charges keep running.`,
     });
   }
   return out;

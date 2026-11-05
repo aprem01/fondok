@@ -80,7 +80,7 @@
  * because keeping the analyst's words does not make their figures current.
  */
 
-import { NOT_YET_OPEN } from '@/lib/purchasePrice';
+import { NOT_YET_OPEN, ON_T12_CLOSING, closedAtEntry } from '@/lib/purchasePrice';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -128,6 +128,7 @@ interface DealMetrics {
   noi: number | null;
   capRate: number | null;
   notYetOpen: boolean;
+  capOnT12: boolean;
   revpar: number | null;
   adr: number | null;
   occupancy: number | null;
@@ -179,8 +180,10 @@ function extractMetrics(
   }
 
   const noi = y1exp ? num(y1exp.noi_institutional) ?? num(y1exp.noi) : null;
-  const notYetOpen = (num(g<number>('revenue', 'closed_months')) ?? 0) > 0;
-  const capRate = noi != null && purchasePrice && !notYetOpen ? noi / purchasePrice : null;
+  const atEntry = closedAtEntry(g<number>('revenue', 'closed_months'), g<number>('expense', 't12_noi_at_entry'), purchasePrice);
+  const { notYetOpen } = atEntry;
+  const capOnT12 = atEntry.t12Cap != null;
+  const capRate = atEntry.closed ? atEntry.t12Cap ?? null : noi != null && purchasePrice ? noi / purchasePrice : null;
 
   // FON-118 — the returns headline through the ONE reader (sentinel-free; the
   // headline is the selected row of the exit schedule). Nothing derived here.
@@ -205,6 +208,7 @@ function extractMetrics(
     noi,
     capRate,
     notYetOpen,
+    capOnT12,
     revpar,
     adr: y1rev && y1rev.occupancy !== 0 ? num(y1rev.adr) : null,
     occupancy: y1rev ? num(y1rev.occupancy) : null,
@@ -296,7 +300,9 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
   } else if (irr != null) {
     thesisBits.push(`the deal underwrites to a ${fmtPct(irr, 1)} levered IRR over a ${hold}-year hold`);
   }
-  if (m.noi != null && m.capRate != null) {
+  if (m.capOnT12 && m.capRate != null) {
+    thesisBits.push(`entering on a ${fmtPct(m.capRate, 1)} going-in cap ${ON_T12_CLOSING}`);
+  } else if (m.noi != null && m.capRate != null) {
     thesisBits.push(
       `entering on a ${fmtPct(m.capRate, 1)} going-in cap against ${fmtCurrency(m.noi, { compact: true })} of Year-1 NOI`,
     );
@@ -1291,7 +1297,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
-    { label: 'Going-In Cap Rate', value: metrics.notYetOpen ? NOT_YET_OPEN : pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
+    { label: metrics.capOnT12 ? `Going-In Cap Rate ${ON_T12_CLOSING}` : 'Going-In Cap Rate', value: metrics.notYetOpen ? NOT_YET_OPEN : pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
     { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Financing', engine: 'debt', path: 'year_one_dscr' },

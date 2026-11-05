@@ -208,8 +208,8 @@ describe('toplineMigrationNotice — runs that predate topline v2', () => {
     expect(toplineMigrationNotice({ hasRevenueRun: true, version: 1 })).not.toBeNull();
   });
   it('v5 (closed until opening) or no run at all → nothing; a v4 run predates it', () => {
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 6 })).toBeNull();
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 5 })).not.toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 7 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 6 })).not.toBeNull();
     expect(toplineMigrationNotice({ hasRevenueRun: false, version: undefined })).toBeNull();
   });
 });
@@ -404,7 +404,7 @@ describe('FON-116 staged rollout — the growth-only topline', () => {
     const { growthOnlyStatus } = await import('./fixtures/toplineStatus');
     expect(growthBanner(growthOnlyStatus())).toBeNull();
     expect(growthBanner(growthOnlyStatus({ growth_state: 'unavailable', suggestions: [SUGGESTION_45] }))?.suggestion).toEqual(SUGGESTION_45);
-    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 6 })).toBeNull();
+    expect(toplineMigrationNotice({ hasRevenueRun: true, version: 7 })).toBeNull();
   });
 });
 
@@ -412,7 +412,7 @@ describe('closed until the opening date', () => {
   it('says so beside the ramp, and says nothing for a hotel open from close', async () => {
     const { toplineStatus } = await import('./fixtures/toplineStatus');
     const closed = toplineBasisClauses(toplineStatus({ closed_months: 18 })).find((c) => c.id === 'closed');
-    expect(closed?.text).toBe('Closed for the first 18 months: no revenue or operating costs until the opening date.');
+    expect(closed?.text).toBe('Closed for the first 18 months: no revenue or operating costs until the opening date. Taxes, insurance and other fixed charges keep running.');
     expect(toplineBasisClauses(toplineStatus({ closed_months: 0 })).some((c) => c.id === 'closed')).toBe(false);
   });
 });
@@ -425,7 +425,7 @@ describe('FON-116 staged rollout — a REAL growth-only engine run (fixtures/eng
     };
     const s = run.topline_status;
     expect(run.revenue.topline_mode).toBe('growth_only');
-    expect(run.revenue.topline_methodology_version).toBe(6);
+    expect(run.revenue.topline_methodology_version).toBe(7);
     const c = toplineBasisClauses(s);
     expect(c.map((x) => x.id)).toEqual(['year1', 'growth', 'stabilization']);
     expect(c[0].text).toBe('Year 1: T-12 actual');

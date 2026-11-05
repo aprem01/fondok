@@ -210,6 +210,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
+import { closedAtEntry } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 import { calDealYears, calExitYear } from './fixtures/dealYears';
@@ -1708,6 +1709,12 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(rowValue('Entry Cap Rate')).toBe('n/a, not yet open');
     outputsRef.value = OUTPUTS;
+  });
+
+  it('a closed hotel with a T-12 quotes the cap on it, not on the closed Year 1', () => {
+    expect(closedAtEntry(9, 4_000_000, 50_000_000)).toEqual({ closed: true, t12Noi: 4_000_000, t12Cap: 0.08, notYetOpen: false });
+    expect(closedAtEntry(9, null, 50_000_000).notYetOpen).toBe(true);
+    expect(closedAtEntry(0, 4_000_000, 50_000_000)).toEqual({ closed: false, t12Noi: undefined, t12Cap: undefined, notYetOpen: false });
   });
 
   it('Tab on a changed date asks why, because Chrome keeps focus inside the input', () => {

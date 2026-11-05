@@ -30,8 +30,6 @@ from app.services.engine_runner import _displacement_status
 from app.services.topline import (
     _displacement_on_top,
     closed_months_for,
-    closure_fixed_charges_note,
-    fixed_charges_run_while_closed,
     opening_offset_for,
 )
 
@@ -277,21 +275,6 @@ async def test_no_displacement_passes_no_seed() -> None:
     assert (await _model())["expense_input"].seed_year_one is None
 
 
-def test_a_new_builds_fixed_charges_sit_in_the_project_budget() -> None:
-    open_hotel = _revenue()
-    baseline = _expense(open_hotel)
-    closed = _expense(open_hotel, _revenue(closed_months=18), fixed_charges_run_while_closed=False)
-    assert closed.years[0].noi == pytest.approx(0.0) and closed.years[0].fixed_charges.total == 0.0
-    assert closed.years[1].noi == pytest.approx(baseline.years[1].noi * 0.5)
-
-
-@pytest.mark.parametrize(
-    "deal_type,runs", [("Development", False), ("adaptive_reuse", True), ("acquisition", True), (None, True)]
-)
-def test_only_a_ground_up_build_moves_its_carry_to_the_budget(deal_type: object, runs: bool) -> None:
-    assert fixed_charges_run_while_closed({"deal_type": deal_type}) is runs
-
-
 def _pip(*offline: float, strategy: str = "rolling") -> PIPDisplacement:
     return PIPDisplacement(closure_strategy=strategy, pct_rooms_offline_by_month=list(offline))
 
@@ -357,8 +340,11 @@ def test_the_renovation_status_says_when_the_closure_covers_the_displacement() -
     assert rest["active"] is True and rest["schedule"][0]["start_month"] == closed_months_for(base) + 1
 
 
-def test_a_new_builds_status_points_taxes_at_the_budget() -> None:
-    assert "project budget" in closure_fixed_charges_note({"deal_type": "development"})
+def test_exports_quote_a_closed_hotels_cap_on_its_t12() -> None:
+    capital = {"uses": [{"label": "Purchase Price", "amount": 50_000_000.0}], "total_capital": 60_000_000.0}
+    on_t12 = _build_investment(capital, 100, -500_000.0, True, 4_000_000.0)
+    assert on_t12["entry_cap_rate_t12"] == pytest.approx(0.08)
+    assert "entry_cap_rate_year1_uw" not in on_t12 and "entry_cap_not_yet_open" not in on_t12
 
 
 def test_exports_say_not_yet_open_instead_of_a_cap_on_a_closed_year_1() -> None:
@@ -373,3 +359,11 @@ def test_a_closed_years_adr_is_not_exported() -> None:
     _, values = projection_values({"revenue": {"years": years}})
     assert values[proj_cell_key("revenue", "adr", 0)] is None
     assert values[proj_cell_key("revenue", "adr", 1)] == 270.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deal_type", ["development", "adaptive_reuse", "acquisition"])
+async def test_fixed_charges_run_on_every_deal_type(deal_type: str) -> None:
+    closed = await _model(reopening_date="2027-03-31", deal_type=deal_type)
+    y1 = closed["expense"].years[0]
+    assert y1.fixed_charges.total > 0.0 and y1.noi == pytest.approx(-y1.fixed_charges.total)

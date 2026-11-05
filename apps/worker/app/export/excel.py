@@ -476,8 +476,12 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
          "no hold period on the deal's returns engine output"),
         ("Exit Cap Rate", ret.get("exit_cap_rate_pct"), PCT_FMT, "exit_cap_rate",
          "no exit cap rate on the deal's returns engine output"),
-        ("Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "entry_cap_rate",
-         NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no Year 1 NOI or purchase price to derive the entry cap"),
+        (
+            "Entry Cap (on T-12, closing for renovation)" if inv.get("entry_cap_rate_t12") is not None else "Entry Cap (Y1 UW)",
+            inv.get("entry_cap_rate_t12") if inv.get("entry_cap_rate_t12") is not None else inv.get("entry_cap_rate_year1_uw"),
+            PCT_FMT, "entry_cap_rate",
+         NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no Year 1 NOI or purchase price to derive the entry cap",
+        ),
     ]
     benchmark_note = debt.get("benchmark_note")
     for label, val, fmt, concept, missing in metrics:

@@ -97,8 +97,8 @@ step the workspace is on. This two-step switch is temporary.
    next 12, then 100%, a year spanning two steps averaging its open months. A reopening whose ramp
    finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
    before it earn nothing and carry no operating costs (pre-opening costs go in Soft Costs). Fixed
-   charges keep running, except on a new build (Deal Type = Development), whose carry belongs in the project budget.
-   Displacement months inside the closure are dropped; the rest is flagged. The entry cap reads "n/a, not yet open". The
+   charges keep running on every deal type until a carry line exists. Displacement months inside the closure are
+   dropped; the rest is flagged. The going-in cap reads on the T-12's NOI if there is one, else "n/a, not yet open". The
    opening year is prorated by whole months open, from the first full month. In those years
    undistributed lines prorate by months open; departmental lines, fees and reserve follow revenue; a fully closed
    Year 1 seeds later costs from the hotel open. A sale or refinance in the opening year prices a full year's income;
