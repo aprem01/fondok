@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@clerk/testing": "^2.2.34",
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "1.61.1",
     "@testing-library/jest-dom": "^6",
     "@testing-library/react": "^16",
     "@testing-library/user-event": "^14",
