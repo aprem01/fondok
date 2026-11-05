@@ -340,15 +340,17 @@ class Settings(BaseSettings):
     #   * https://fondok-<hash>-fondok.vercel.app, https://fondok-drab.vercel.app
     #     and https://fondok-fondok.vercel.app — the Fondok-Final deployment in
     #     the "fondok" Vercel team (2026-10-22). Additive: the first pattern is
-    #     unchanged.
+    #     unchanged;
+    #   * https://app.fondok.ai — the production domain (FON-111).
     ALLOWED_CORS_ORIGIN_REGEX: str | None = Field(
         default=(
-            r"https://("
+            r"https://(?:("
             r"fondok-[a-z0-9]+-aprem01s-projects"
             r"|fondok-[a-z0-9]+-fondok"
             r"|fondok-drab"
             r"|fondok-fondok"
             r")\.vercel\.app"
+            r"|app\.fondok\.ai)"
         )
     )
 

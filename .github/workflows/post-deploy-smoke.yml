@@ -211,7 +211,7 @@ jobs:
         id: web
         env:
           TARGET: ${{ steps.target.outputs.sha }}
-          VERSION_URL: https://fondok-app.vercel.app/api/version
+          VERSION_URL: ${{ vars.FONDOK_WEB_URL || 'https://fondok-app.vercel.app' }}/api/version
         run: |
           set -u
           serving=$(curl -s --max-time 20 "$VERSION_URL" | python3 -c '
@@ -241,7 +241,7 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.sha }}
           REQUIRED: ${{ steps.web.outputs.required }}
-          VERSION_URL: https://fondok-app.vercel.app/api/version
+          VERSION_URL: ${{ vars.FONDOK_WEB_URL || 'https://fondok-app.vercel.app' }}/api/version
           POLL_ATTEMPTS: "40"
           POLL_SLEEP: "30"
         run: |
@@ -356,7 +356,7 @@ jobs:
           set -u
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
-                     --max-time 20 https://fondok-app.vercel.app/ || echo 000)
+                     --max-time 20 "${{ vars.FONDOK_WEB_URL || 'https://fondok-app.vercel.app' }}/" || echo 000)
             if [ "$code" = "200" ]; then
               echo "fondok-app.vercel.app answered 200 on attempt $i."
               exit 0
@@ -374,7 +374,7 @@ jobs:
           # `prod` project out of the config entirely and this command fails
           # with "Project(s) 'prod' not found" rather than silently passing.
           FONDOK_E2E_PROD: "1"
-          PLAYWRIGHT_BASE_URL: https://fondok-app.vercel.app
+          PLAYWRIGHT_BASE_URL: ${{ vars.FONDOK_WEB_URL || 'https://fondok-app.vercel.app' }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           FONDOK_SMOKE_EMAIL: ${{ secrets.FONDOK_SMOKE_EMAIL }}

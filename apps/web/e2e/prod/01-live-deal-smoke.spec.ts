@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { clerk, setupClerkTestingToken } from '@clerk/testing/playwright';
-import { PROD_HOSTNAME, prodSmokeSkipReason, smokeDealId } from './guard';
+import { PROD_HOSTNAMES, prodSmokeSkipReason, smokeDealId } from './guard';
 
 /**
  * Post-deploy production smoke — FON-76.
@@ -294,6 +294,6 @@ test.describe('@prod live deal smoke', () => {
     // bundle no analyst is served, which would make this whole file a
     // reassuring lie. Assert what we actually talked to.
     await openDeal(page, '?tab=overview');
-    expect(new URL(page.url()).hostname).toBe(PROD_HOSTNAME);
+    expect(PROD_HOSTNAMES).toContain(new URL(page.url()).hostname);
   });
 });

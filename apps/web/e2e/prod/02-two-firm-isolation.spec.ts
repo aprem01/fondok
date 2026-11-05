@@ -1,6 +1,6 @@
 import { test, expect, type Browser, type Page } from '@playwright/test';
 import { clerk, setupClerkTestingToken } from '@clerk/testing/playwright';
-import { PROD_HOSTNAME, smokeDealId, twoFirmSkipReason } from './guard';
+import { PROD_HOSTNAMES, smokeDealId, twoFirmSkipReason } from './guard';
 
 /**
  * Two-firm workspace isolation, through the deployed app — FON-93 Phase 3.
@@ -173,7 +173,7 @@ test.describe('@prod two-firm isolation', () => {
     const pageA = await signIn(browser, A);
     const errorA = await settleDealPage(pageA, dealId);
     expect(errorA, 'firm A can open its own deal (precondition for the rest)').toBe(false);
-    expect(new URL(pageA.url()).hostname).toBe(PROD_HOSTNAME);
+    expect(PROD_HOSTNAMES).toContain(new URL(pageA.url()).hostname);
 
     const rowsA = await projectRows(pageA);
     expect(
@@ -205,7 +205,7 @@ test.describe('@prod two-firm isolation', () => {
     expect(sharedIds, 'no deal id appears in both firms’ lists').toEqual([]);
     const sharedNames = rowsB.map((r) => r.name).filter((n) => namesA.includes(n));
     expect(sharedNames, 'no firm-A deal name appears in firm B’s list').toEqual([]);
-    expect(new URL(pageB.url()).hostname).toBe(PROD_HOSTNAME);
+    expect(PROD_HOSTNAMES).toContain(new URL(pageB.url()).hostname);
     await pageB.context().close();
   });
 });

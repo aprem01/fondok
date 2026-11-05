@@ -46,3 +46,10 @@ def test_allowed_origins(pattern, origin):
 )
 def test_rejected_origins(pattern, origin):
     assert not pattern.fullmatch(origin)
+
+
+def test_the_production_domain_is_allowed_and_lookalikes_are_not() -> None:
+    pattern = re.compile(Settings.model_fields["ALLOWED_CORS_ORIGIN_REGEX"].default)
+    assert pattern.fullmatch("https://app.fondok.ai")
+    for origin in ("https://evil-app.fondok.ai", "https://app.fondok.ai.example.test", "http://app.fondok.ai", "https://appxfondok.ai"):
+        assert not pattern.fullmatch(origin)

@@ -27,8 +27,12 @@
  * analyst sees. Pinning the host here makes that structural.
  */
 
-/** The one hostname the smoke is allowed to run against. */
+/** The hostname the smoke runs against today. */
 export const PROD_HOSTNAME = 'fondok-app.vercel.app';
+
+/** Every hostname the smoke may run against: the alias and, from the Clerk
+ *  production cutover (FON-111), the Fondok-owned domain. */
+export const PROD_HOSTNAMES: readonly string[] = [PROD_HOSTNAME, 'app.fondok.ai'];
 
 /** The explicit opt-in flag. */
 export const OPT_IN_FLAG = 'FONDOK_E2E_PROD';
@@ -106,11 +110,11 @@ export function twoFirmSkipReason(env: NodeJS.ProcessEnv = process.env): string 
   return `Two-firm isolation needs a second firm — set ${missing.join(', ')}.`;
 }
 
-/** True when `raw` is a URL whose host is exactly the production alias. */
+/** True when `raw` is a URL whose host is exactly a production hostname. */
 export function baseUrlIsProd(raw: string | undefined): boolean {
   if (!raw) return false;
   try {
-    return new URL(raw).hostname.toLowerCase() === PROD_HOSTNAME;
+    return PROD_HOSTNAMES.includes(new URL(raw).hostname.toLowerCase());
   } catch {
     return false;
   }

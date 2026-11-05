@@ -201,12 +201,15 @@ out into CORS, the e2e host guard and the alias workflow.
 
 Steps, in order. "Verify" lines are read-only.
 
-1. **Domain (Prem).** Add the production hostname to the Vercel project
+1. **Domain (Prem).** The production hostname is `app.fondok.ai`. `fondok.ai`
+   is already on the Vercel team, and its DNS is at GoDaddy; add records there
+   and never move the nameservers. Add the hostname to the Vercel project
    (`aprem01s-projects/fondok`); keep `fondok-app.vercel.app` as a secondary
-   alias during the transition.
+   alias during the transition. Once it serves, set the repo variable
+   `FONDOK_WEB_URL=https://app.fondok.ai` so the post-deploy smoke follows it.
    Verify: `curl -sI https://<host>/ | head -1` → 200, or 307 to sign-in.
-2. **CORS (code/config).** `CORS_ORIGINS=https://<host>` on Railway — the
-   default regex only knows `*.vercel.app` hosts.
+2. **CORS.** The default regex already allows `https://app.fondok.ai`; a
+   different host needs `CORS_ORIGINS=https://<host>` on Railway.
    Verify: `curl -s -o /dev/null -w '%{http_code}' -H "Origin: https://<host>" -X OPTIONS -H "Access-Control-Request-Method: GET" https://fondok-worker-production.up.railway.app/health`
    and inspect `access-control-allow-origin` with `-D -`.
 3. **Clerk (Prem).** Create the production instance with the same settings
