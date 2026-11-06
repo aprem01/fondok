@@ -2231,6 +2231,11 @@ async def update_deal(
                     ),
                 },
             )
+        # The current tier re-sent with no note changes nothing: it must not erase
+        # the note on record, or make an OM-suggested tier the analyst's unjustified.
+        # With a note it is a real act: the analyst confirms the tier as theirs.
+        if next_tier == prior_tier and positioning_note is None:
+            changes.pop("positioning")
     # Sam #6 / FON-96 — market / submarket and their taxonomy keys.
     market_fields_touched = any(col in changes for col in _MARKET_COLUMNS)
     if "market" in changes and "str_market_id" not in changes:

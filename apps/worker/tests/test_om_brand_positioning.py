@@ -353,6 +353,9 @@ async def test_analyst_override_replaces_om_suggestion_and_default_clears() -> N
         # The current tier re-sent moves nothing, so it asks for nothing.
         r = await client.patch(f"/deals/{deal['id']}", json={"positioning": "luxury"})
         assert r.status_code == 200, r.text
+        # ...and it keeps the justification on record.
+        assert r.json()["positioning_source"] == "analyst"
+        assert r.json()["positioning_source_detail"] == {"note": "Rebrand to a luxury flag."}
 
         # A later OM never takes it back.
         await _sync(deal, "Kimpton", "OM", await _insert_document(deal))
@@ -362,6 +365,30 @@ async def test_analyst_override_replaces_om_suggestion_and_default_clears() -> N
         r = await client.patch(f"/deals/{deal['id']}", json={"positioning": "default"})
         assert r.status_code == 200, r.text
         assert (r.json()["positioning"], r.json()["positioning_source"]) == ("default", None)
+
+
+
+@pytest.mark.asyncio
+async def test_resending_an_om_tier_needs_a_note_to_become_the_analysts() -> None:
+    """FON-107 — without a note the OM tier stays a suggestion; with one it is theirs."""
+    deal = await _create_deal()
+    await _sync(deal, "Kimpton", "OM", await _insert_document(deal))
+    row = await _get(deal["id"])
+    assert row["positioning_source"] == "om_brand_str_scale"
+    tier = row["positioning"]
+
+    async with _client() as client:
+        r = await client.patch(f"/deals/{deal['id']}", json={"positioning": tier})
+        assert r.status_code == 200, r.text
+        assert r.json()["positioning_source"] == "om_brand_str_scale"
+
+        r = await client.patch(
+            f"/deals/{deal['id']}",
+            json={"positioning": tier, "positioning_note": "Confirmed against the flag."},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["positioning_source"] == "analyst"
+        assert r.json()["positioning_source_detail"] == {"note": "Confirmed against the flag."}
 
 
 @pytest.mark.asyncio
