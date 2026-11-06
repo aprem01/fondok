@@ -334,11 +334,25 @@ async def test_analyst_override_replaces_om_suggestion_and_default_clears() -> N
     assert (await _get(deal["id"]))["positioning_source"] == "om_brand_str_scale"
 
     async with _client() as client:
+        # FON-107 — choosing a tier without a justification is refused.
         r = await client.patch(f"/deals/{deal['id']}", json={"positioning": "luxury"})
+        assert r.status_code == 422, r.text
+        assert r.json()["detail"]["code"] == "override_note_required"
+        assert r.json()["detail"]["keys"] == ["positioning"]
+        assert (await _get(deal["id"]))["positioning_source"] == "om_brand_str_scale"
+
+        r = await client.patch(
+            f"/deals/{deal['id']}",
+            json={"positioning": "luxury", "positioning_note": "  Rebrand to a luxury flag.  "},
+        )
         assert r.status_code == 200, r.text
         body = r.json()
         assert (body["positioning"], body["positioning_source"]) == ("luxury", "analyst")
-        assert body["positioning_source_detail"] is None
+        assert body["positioning_source_detail"] == {"note": "Rebrand to a luxury flag."}
+
+        # The current tier re-sent moves nothing, so it asks for nothing.
+        r = await client.patch(f"/deals/{deal['id']}", json={"positioning": "luxury"})
+        assert r.status_code == 200, r.text
 
         # A later OM never takes it back.
         await _sync(deal, "Kimpton", "OM", await _insert_document(deal))

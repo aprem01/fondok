@@ -42,7 +42,12 @@ export function positioningSourceChip(
     };
   }
   if (source === 'analyst') {
-    return { kind: 'analyst', text: 'Analyst', title: 'Positioning chosen by the analyst (wizard or Overview).' };
+    const note = deal.positioning_source_detail?.note?.trim();
+    return {
+      kind: 'analyst',
+      text: 'Analyst',
+      title: note ? `Positioning chosen by the analyst: ${note}` : 'Positioning chosen by the analyst (wizard or Overview).',
+    };
   }
   if (!tier || tier.toLowerCase() === 'default') return null;
   return {

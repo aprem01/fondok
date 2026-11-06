@@ -90,8 +90,7 @@ not a forecast. Runs before 2 November 2026 could seed the Base Year from it thr
 
 ::: badge {source=str_comp_set name="STR Comp-Set Rates"}
 The comp set's blended occupancy and ADR shown on the Market Comps tab — the competitive set's
-performance, not the subject's own. Since topline methodology v2 it is the model's benchmark by
-default: every projected year is this level grown at the market growth × the hotel's penetration.
+performance, not the subject's own. It is the model's benchmark by default.
 
 :::
 
@@ -109,9 +108,8 @@ STR rates were requested but could not populate (runs before 2 November 2026, wh
 :::
 
 ::: badge {source=topline_benchmark name="Benchmark × penetration"}
-The year's occupancy or ADR is the benchmark for that year × the hotel's penetration ÷ 100, with
-the pre-stabilization ramp (topline methodology v2). The benchmark's own badge, report and period
-are named beside it.
+The year's occupancy or ADR is read from the benchmark and the hotel's penetration of it, with the
+ramp before stabilization. The benchmark's own badge, report and period are named beside it.
 
 :::
 
@@ -161,8 +159,8 @@ keeps growing. Only an occupancy growth you enter for that specific year moves i
 
 ::: badge {source=market_forecast_unavailable name="No Market Forecast"}
 No market forecast and no figure of yours covers the year: the rate is held flat (growth 0 is the
-absence of growth, not a rate) and the Future P&L asks you to set growth. The 4.5% figure is offered
-as a labelled suggestion and is applied only if you choose it.
+absence of growth, not a rate) and the Future P&L asks you to set growth. A RevPAR growth figure is
+offered as a labelled suggestion and is applied only if you choose it.
 
 :::
 
@@ -177,7 +175,7 @@ withheld until the licence covers the workspace. Nothing is shared between works
 Parity with the competitive set (index 100) at stabilization, or the hotel's derived index held flat
 against a submarket or market average — a labelled suggestion; the hotel's current index is shown
 beside it. An operating hotel gets there in a straight line from today's index; a new or reopened
-hotel by the 85% / 95% ramp counted from opening.
+hotel by the ramp counted from opening.
 
 :::
 
@@ -195,17 +193,16 @@ the transient channel split when the report's channel-mix block carries it, or a
 
 ::: badge {source=platform_default_segmentation name="Platform default — no segmentation data on file"}
 A segment-model figure the STR Segmentation report does not state, filled by a platform default:
-every channel cost (BAR 2%, OTA 20%, corporate 8%, group 5%, contract 2%), the 60/30/10 BAR / OTA /
-corporate split of transient demand when the report has no channel-mix block, and a segment ADR at
-its ratio to the property ADR (corporate 90%, group 92%, contract 65%). A suggestion, never labelled
+channel costs, the split of transient demand when the report has no channel-mix block, and a segment
+ADR at its ratio to the property ADR. A suggestion, never labelled
 as STR data; the Revenue Mix sheet and the memo name these figures under the table. Runs saved
 before 30 October 2026 carry the older “Segment default” badge on every segment figure.
 
 :::
 
 ::: badge {source=platform_default_renovation_split name="Platform default split"}
-The renovation budget's breakdown into hard costs, soft costs and professional fees at the platform
-default 75% / 15% / 10% — no itemized renovation budget is on file.
+The renovation budget's breakdown into hard costs, soft costs and professional fees at a platform
+default split — no itemized renovation budget is on file.
 
 :::
 
@@ -216,9 +213,8 @@ model's penetration at stabilization (all years) and per year, applied on every 
 a per-year entry beats the stabilized target for that year, and the ramp applies before the
 stabilization year. The market growth assumptions became the per-year growth of the Future P&L; a
 value stored under the old names is read as your all-years growth and says so. \
-**Target units.** A target is index points from 25 to 250 (100 is parity) or a ratio from 0.25 to
-2.5 (1.0 is parity); the two bands do not overlap, so a value names its own unit. A stored target
-outside both bands is ignored by the model and the panel says so, with a prompt to re-enter it.
+**Target units.** A target is entered as index points (100 is parity) or as a ratio (1.0 is parity),
+and the value names its own unit. A stored target outside the accepted range is ignored by the model and the panel says so, with a prompt to re-enter it.
 
 :::
 
@@ -282,8 +278,9 @@ integration — can record an unexplained number. The justification is never wri
 
 **What is exempt, and why.** Edits that change no modelled number need no note: the Historical P&L's
 row layout, the Property Name, the completion-guarantee status, the number of promote tiers, and the
-IC memo's prose. The Stabilization Year, the topline benchmark level and the reopening date DO need
-one: they move where the penetration ramp ends or which benchmark Year 1 is set from. Clearing an
+IC memo's prose. The Stabilization Year, the topline benchmark level, the reopening date and the positioning tier DO
+need one: they move where the penetration ramp ends, which benchmark Year 1 is set from, or the class
+the benchmark and forecast are read for. Going back to Default positioning is a return to source. Clearing an
 override is a return to source and needs no note either.
 
 **Target levered IRR, target equity multiple and target stabilized yield on cost are not
@@ -539,6 +536,12 @@ derives a cap rate and the model stays on its labelled default.
 Platform default 1.50% of the senior loan, accepted range 0–10%, editable on Financing. The fee is
 one line: senior loan fee = senior loan amount × fee rate, read by Sources & Uses, total uses,
 required equity and LTC.
+
+<!-- source: apps/worker/app/services/engine_runner.py (_PLATFORM_CHANNEL_COST_DEFAULTS, _PLATFORM_SEGMENT_ADR_RATIO, _PLATFORM_TRANSIENT_CHANNEL_SPLIT) -->
+Segment defaults, used only where the STR Segmentation report does not state the figure: channel cost
+BAR 2%, OTA 20%, corporate 8%, group 5%, contract 2%; a 60/30/10 BAR / OTA / corporate split of
+transient demand when the report has no channel-mix block; segment ADR as a ratio of property ADR at
+corporate 90%, group 92%, contract 65%.
 
 :::
 

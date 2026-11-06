@@ -28,97 +28,90 @@ anchors:
 <!-- section 2: How the Future P&L is built — from page.tsx lines 117-415 -->
 ::: conceptual {title="How the Future P&L is built"}
 ::: intro
-Year 1 is anchored on the deal's own statements whenever they exist; later years grow from an
-undisplaced baseline, so a renovation year does not permanently depress the curve. The order of
-precedence for each input is below.
+Occupancy and ADR are projected from the hotel's market and the share of it the hotel should win;
+every other line builds from there. The order of precedence for each input is below.
 :::
 
 ::: card
-#### How occupancy and ADR are projected
+#### How Fondok projects a hotel's topline
 
-**Today: growth by year on the hotel's own Year 1.** The new topline is being switched on in two
-steps. In the first step, which is live, Year 1 is the hotel's own rates and every later year grows
-them at the market growth for that year:
+Fondok projects occupancy and ADR in three layers: the market the hotel competes in, the share of
+that market the hotel should win once it's established, and how quickly it gets there. A Year-1
+occupancy or ADR you enter yourself, with a note, is used as typed.
 
-::: chain
-1. **Year 1** — Your Year-1 occupancy or ADR (entered with a note) is used as typed; else the
-   hotel's own T-12; else, when the deal still has the retired "Use STR rates" switch on, the
-   hotel's own STR trailing twelve months (the switch is listed with the retired settings, and
-   "Clear legacy keys" removes it); else, for ADR only, the first forecast year of a CBRE
-   Hotel Horizons report. With none of them the projection refuses and asks for the rates — there
-   is no default Year-1 rate.
-2. **Market growth, year by year** — the same chain as below (your growth, CBRE, the CoStar
-   submarket forecast for the hotel's class), applied from Year 2.
-3. **After stabilization** — Occupancy holds at its stabilized-year level; ADR keeps growing. Only an
-   occupancy growth you enter for a specific year still moves it.
-4. **After the forecast ends** — ADR grows at the average of the forecast's years (the label names
-   them, for example "2025–2029 forecast average (+2.4%)"); occupancy holds.
+**Benchmark: who the hotel competes against.** The benchmark is the group of hotels this property is
+measured against. By default it's the competitive set from the STR reports uploaded to the deal, or
+a CoStar comp set. If there's no comp set, Fondok uses the hotel's submarket, then its full market,
+from the market report, for the hotel's class where the report shows it. The Future P&L names the
+level in use, its report and period, and why a higher level was not available.
 
-:::
+The benchmark's future performance follows the market forecast: growth you set yourself first, then
+CBRE Hotel Horizons if uploaded, otherwise the CoStar submarket forecast for the hotel's class. If
+neither is available, Fondok flags the gap so you can set growth yourself, and the rate holds until
+you do. Past the end of a forecast, ADR continues at the forecast's average and occupancy holds; both
+are labelled as assumptions. Every document figure shows its page, and a CoStar figure is withheld
+when the workspace's data policy says so, with the policy named.
 
-The benchmark, penetration and ramp below are shown on the Market and Index Analysis tabs for
-reference but do not set any year until the second step is switched on; the Future P&L says which
-step the workspace is on. This two-step switch is temporary.
+**Penetration: the hotel's fair share.** Penetration measures how a hotel performs against its
+benchmark. A hotel exactly matching its competitors has 100% penetration, its "fair share."
 
-**When the benchmark method is switched on**, every projected year's occupancy and ADR is the
-**benchmark** for that year × the hotel's **penetration** of it. The chain, in order:
+- Occupancy penetration compares the hotel's occupancy to the benchmark's.
+- ADR penetration compares its average rate to the benchmark's.
 
-::: chain
-1. **Your override** — A Year-1 occupancy or ADR you enter yourself (with a note) is used as typed.
-   Penetration and the ramp are not applied to it; later years grow it at that year's market growth.
-2. **Benchmark** — The competitive set (the STR comp set, else a CoStar comp set); else the hotel's
-   class in the CoStar submarket report (its latest actual year); else the market. The Future P&L
-   names the level in use, its report and period, and why a higher level was not available. The
-   benchmark describes its own period — an STR trailing twelve months to May 2025 describes 2025 —
-   and is grown into every projected year, Year 1 included, by the market growth below.
-3. **Market growth, year by year** — Your growth for that year; else your all-years growth; else the
-   CBRE Hotel Horizons forecast; else the CoStar submarket forecast for the hotel's class. Forecasts
-   are published by calendar year and each model year runs twelve months from the close, so a
-   year's growth blends the calendar years it spans by their months (Oct 2026–Sep 2027 = 3 months of
-   2026 + 9 months of 2027). Past the last forecast year ADR grows at the report's own published
-   forecast average when it prints one (CoStar's "Forecast Average", labelled as published, with its
-   page), else at the average of the forecast's years (labelled as computed); occupancy holds. Every
-   document figure shows its page ("CoStar p.26"). After the stabilization year occupancy holds at its
-   stabilized level while ADR keeps growing (only your own occupancy growth for a specific year still
-   moves it). With no forecast at all the rate is held flat and the Future P&L says
-   "No market forecast — set growth manually". A 4.5% RevPAR growth is offered as a labelled
-   platform suggestion you can apply; it is never applied for you.
-4. **Penetration at stabilization** — 100 (parity with the benchmark) against a competitive set,
-   unless you set it; the hotel's current STR index (for example an MPI of 110) is printed beside the
-   default so you can change it. Against a submarket or market average, which is not a comp set, the
-   default holds the hotel's derived index flat: an upscale class average is not where the hotel is
-   heading unless you say so. A penetration you set for a specific year beats the formula for that
-   year, so a business plan (a reflag lifting rate in Year 1) goes in as by-year penetration.
-5. **Ramp** — An operating hotel, including one that stays open through displacement, moves in a
-   straight line from today's index to the target at the stabilization year: no repositioning jump is
-   assumed without a business plan. Today's index is the STR-published MPI / ARI, else the T-12 ÷ the
-   benchmark, labelled derived. A new or reopened hotel (Deal Type Development or Adaptive Reuse, or a
-   reopening date) runs 85% / 95% / 100% of the target: 85% for the first 12 months after opening, 95% for the
-   next 12, then 100%, a year spanning two steps averaging its open months. A reopening whose ramp
-   finished before the projection starts is an operating hotel. Revenue starts at the opening date: the months
-   before it earn nothing and carry no operating costs (pre-opening costs go in Soft Costs). Fixed
-   charges keep running on every deal type until a carry line exists. Displacement months inside the closure are
-   dropped; the rest is flagged. The going-in cap reads on the T-12's NOI if there is one, else "n/a, not yet open". The
-   opening year is prorated by whole months open, from the first full month. In those years
-   undistributed lines prorate by months open; departmental lines, fees and reserve follow revenue; a fully closed
-   Year 1 seeds later costs from the hotel open. A sale or refinance in the opening year prices a full year's income;
-   a hotel still closed at the end of the hold has no exit value and the run stops. Debt service still runs while closed. A re-flag with no closure leaves the date blank. With no opening date, the page asks and the ramp counts from the close, flagged. For a later
-   stabilization year the years in between run at 100% until you enter them.
-6. **The T-12** — Shown beside the projection as a reference row, not the basis.
+Above 100% means the hotel outperforms its competitors; below 100% means it underperforms. In Fondok,
+you set the penetration the hotel will achieve once stabilized. Against a competitive set the default
+is 100% for both, with the hotel's current index printed beside it. Set it higher if the hotel will
+lead its market (for example, a luxury hotel among select-service competitors), lower if it will
+trail. Against a submarket or market average, which is not a comp set, the default holds the hotel's
+index where it is today: a class average is not where the hotel is heading unless you say so. A
+penetration you set for a specific year applies to that year, so a business plan goes in year by year.
 
-:::
+**Stabilization: when the hotel reaches steady state.** A hotel is stabilized when it reaches its
+target penetration and performs consistently from then on. The default stabilized year is Year 3.
+From that point, occupancy is held flat: a stabilized hotel has already won its share of the market
+and doesn't keep gaining guests. Revenue continues to grow through ADR, at the market forecast where
+available. The stabilized year is also the reference point for stabilized NOI and yield on cost.
 
-Occupancy stays at or below 95%; a year that would exceed it is held at 95% and says so. With no
-benchmark at all the hotel is projected from its own starting occupancy and ADR (the T-12 actual
-where one is extracted) and that is stated. A CoStar figure is withheld when the workspace's data
-policy says so, and the Future P&L names the policy.
+**Ramp: how fast the hotel gets there.** A new or reopened hotel doesn't win its full share on day
+one: new staff, a new brand and a new reputation take time. The ramp sets what portion of the
+stabilized penetration the hotel achieves in each year before stabilization. The default is 85% in
+the first year after opening, 95% in the second and 100% in the third. Your firm can set its own: a
+fast-recovering market might ramp over one year (90%, then 100%); a ground-up development might take
+longer. A hotel that is already operating, including one that stays open through a renovation or
+rebrand, moves in a straight line from today's index to the target by the stabilized year: no jump is
+assumed without a business plan.
 
-**F&B revenue grows with prices, not only with occupancy.** F&B revenue is F&B dollars per occupied
-room × occupied rooms. The Year-1 dollars per occupied room come from the T-12 (F&B revenue ÷
-occupied rooms) or the default, and inflate each year at the market ADR growth the benchmark grows
-by — not at the penetration ramp, which is the hotel's position in its market rather than a price
-change. A year with no ADR growth figure holds the F&B price flat. A renovation lowers occupied
-rooms, never the F&B price.
+**Hotels that are closed or not yet open.** Set the opening or reopening date on the Overview. Revenue
+and operating costs start at that date, and the opening year counts only the months open. Property
+taxes, insurance and debt service keep running while the hotel is closed, pre-opening costs go in
+Soft Costs, and the going-in cap reads on the T-12 when there is one, otherwise "n/a, not yet open".
+A sale or refinance in the opening year prices a full year's income, and a hotel still closed at the
+end of the hold has no exit value, so the run stops and says why.
+
+**How it shapes the Future P&L.** Each year until stabilization, the hotel's occupancy and ADR are its
+benchmark's forecast, adjusted for target penetration and the ramp. After stabilization, occupancy
+stays flat and ADR grows. Every other revenue and expense line builds from there.
+
+| Year | Benchmark occupancy | Ramp | Hotel occupancy |
+| --- | --- | --- | --- |
+| 1 | 70.0% | 85% | 59.5% |
+| 2 | 71.0% | 95% | 67.5% |
+| 3 (stabilized) | 72.0% | 100% | 72.0% |
+| 4 | — | — | 72.0% (held flat) |
+
+(Illustration of a new or reopened hotel at 100% target penetration; these are not any deal's figures.)
+A slower ramp lowers early-year revenue and NOI; a faster one raises them. Target penetration sets the
+level the hotel settles at for the rest of the hold, so it has the biggest effect on exit value.
+Occupancy stays at or below 95%; a year that would exceed it is held there and says so.
+
+F&B revenue follows occupied rooms and market prices, not the ramp, which is the hotel's position in
+its market rather than a price change. A renovation lowers occupied rooms, never the F&B price.
+
+**The role of the T-12.** The hotel's trailing 12 months of actual results are shown next to the
+projection as a reference point. For a repositioning, such as a rebrand or major renovation, the T-12
+reflects the old business, so the projection is driven by the benchmark for the new product rather
+than by past results. With no benchmark at all, the hotel is projected from its own starting occupancy
+and ADR, and the Future P&L says so.
 
 :::
 
@@ -158,9 +151,8 @@ touched runs exactly as before. Every method change needs a justification note, 
 lists each line's method and value on its Assumptions sheet.
 
 **Departmental expense rides its own department's revenue.** By default Rooms, F&B and Other
-Operated expense are each a cost ratio to that department's revenue, fixed in Year 1 and applied
-every year: the T-12 expense ÷ the T-12 department revenue, else your override, applied benchmark or
-the hotel-type ratio. A renovation-displaced year's departmental expense is displaced with its
+Operated expense each hold a cost ratio to that department's revenue, read from the T-12, else your
+override, an applied benchmark or a ratio for the hotel type. A renovation-displaced year's departmental expense is displaced with its
 revenue. Undistributed lines and fixed charges grow at the expense growth.
 
 **Operating model.** The new-deal wizard records whether the hotel is owner-operated, third-party
@@ -236,13 +228,12 @@ occupancy and ADR run on: the benchmark (level, report and period, and why a hig
 used), the market growth source with the hotel's class, the stabilized year and the ramp actually
 applied, with the mode it follows (Operating hotel or New or reopened hotel) — the straight line from
 today's index, "Ramp 85/95/100 (default)", or your own ramp. Each projected Occupancy and ADR column carries a chip saying whether
-that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the model's chain:
-benchmark × that year's penetration (and ramp, where one applies) = the rate before displacement, then any renovation displacement as
-its own step to the figure in the column (a penetration you set for one year runs with no ramp). Two reference rows sit under RevPAR: the benchmark for
+that year's benchmark is an Actual, a Forecast or an Assumption; hover shows the steps behind the
+figure in the column. Two reference rows sit under RevPAR: the benchmark for
 each year, and the hotel's own T-12 repeated with its period — neither moves a number. When growth
 is missing the Future P&L says "No market forecast — set growth manually" (or that a CoStar forecast
 is withheld by the workspace's data policy, or that the forecast covers only some years) and offers
-the labelled 4.5% RevPAR suggestion with a prefilled note you can edit; nothing is applied until you
+a labelled RevPAR suggestion with a prefilled note you can edit; nothing is applied until you
 save. When a market forecast is on file but the deal has no acquisition close date, the same banner
 asks for the close date first, with the date entry beside it (the same field as the CAPEX tab's
 Acquisition Date), ranked above the suggestion. A CoStar report read by an older extraction says
@@ -266,8 +257,7 @@ benchmark level — and re-imports them under the same justification rule.
 
 {testid=no-revenue-basis-methodology} **No Year-1 rates, no projection.** When a deal has no T-12, no STR or market benchmark and no
 Year-1 occupancy or ADR of yours, the revenue model does not run and the Future P&L and Overview say
-so in the model's own words: "Upload a T-12, or enter Year-1 occupancy and ADR" (while the benchmark
-topline is switched on it also offers "or STR report", since an STR comp set then sets Year 1). The
+so in the model's own words: "Upload a T-12 or STR report, or enter Year-1 occupancy and ADR". The
 entry is right there; your rates are saved with a note and the model re-runs. No placeholder rate is
 ever substituted.
 
@@ -291,10 +281,9 @@ The stabilization year defaults to **Year 3 of operations** (badged “Default �
 shorter hold it is the last projected year, and the card says so. You can override it on the Future
 P&L's Assumptions panel. It selects which year the stabilized figures are read from, and it is
 also the year occupancy stops growing: from the year after it, occupancy holds at the stabilized
-year's level while ADR keeps growing. With the benchmark method switched on it is also the year the
-hotel reaches its stabilized penetration of the benchmark (the ramp runs in the years before it).
-Changing it therefore moves the projected occupancy of the later years (and, with the benchmark
-method, the ramp years) and everything built on them, and an override carries a justification note.
+year's level while ADR keeps growing. It is also the year the hotel reaches its stabilized penetration of the benchmark (the ramp runs in the
+years before it). Changing it therefore moves the ramp years, the projected occupancy of the later
+years and everything built on them, and an override carries a justification note.
 
 {testid=methodology-stabilization-anchor} **What Year 3 counts from.** With no reopening date the default counts from the acquisition close,
 and the Overview reads “Year 3 after close”. For a hotel that closes or is new, set the
@@ -365,10 +354,8 @@ undistributed and fixed costs.
 
 {testid=methodology-displacement-schedule} **The renovation displacement schedule** is a list of periods, each with a first and last month
 counted from close, the share of rooms offline and the rate discount on the rooms that keep selling.
-Fondok turns it into one occupancy factor and one ADR factor per model year — every month weighs one
-twelfth, rooms offline across overlapping periods add up, and the rate discount applies only to the
-rooms that actually sold. Six months at a quarter of rooms offline and ten percent off therefore
-give Year 1 occupancy times 0.875 and ADR times 0.957. When a schedule is set it is the only
+Fondok spreads it across the model years it touches, and the rate discount applies only to the rooms
+that actually sold. When a schedule is set it is the only
 renovation impact applied, so nothing is counted twice.
 
 {testid=methodology-displacement-status} **The model says what it decided.** The CAPEX tab's renovation row and the Future P&L's Year-1 basis
@@ -415,7 +402,7 @@ visible; move it to take it out.
 1. **Your override** — An inline-edited value wins.
 2. **OM comparable sales** — When the OM carries three or more comparable sales with cap rates in a
    sensible band, their median is the anchor.
-3. **Platform default of 7.0%** — Used when no comparable sales are extracted, badged as a default.
+3. **Platform default** — Used when no comparable sales are extracted, badged as a default.
 
 :::
 
@@ -452,11 +439,11 @@ and an analyst override replaces it.
 
 <!-- source: apps/worker/app/config.py (TOPLINE_BENCHMARK_ENABLED), services/topline.py (topline_mode, build_growth_only, _growth_only_status), services/engine_runner.py (_apply_topline, _apply_growth_only_str_seed, CBRE Year-1 ADR), DEPLOY.md (Topline rollout switch) -->
 Staged rollout (temporary). The worker runs one of two topline modes, reported on the health check
-and on the topline status. Growth-only (the default, live): no benchmark, penetration or ramp; Year 1
+and on the topline status; production runs Benchmark. Growth-only (the code's default where the switch is off): no benchmark, penetration or ramp; Year 1
 = your value → the T-12 actual → the STR subject trailing twelve months when the retired "Use STR
 rates" switch is on (no synthetic STR forecast point) → CBRE Hotel Horizons' first forecast year's
 ADR; none → {{reason:no_revenue_basis}}. Year 1 is not grown; growth applies into Years 2..hold from
-the resolver below. Benchmark (switched on per environment): the full method below. The switch is
+the resolver below. Benchmark (switched on per environment, on in production): the full method below. The switch is
 removed once the benchmark method is live everywhere.
 
 <!-- source: apps/worker/app/services/topline.py (ramp_mode_for, _start_index), topline_benchmark.py, topline_growth.py; apps/worker/app/engines/revenue.py (_plan_topline, penetration_for_year, _ramp_for_year) -->

@@ -320,6 +320,11 @@ class UpdateDealBody(BaseModel):
     # recorded on the ``deal.updated`` audit row. A clear (null) or the same
     # date again needs none.
     reopening_date_note: str | None = Field(default=None, max_length=2000)
+    # FON-107 — the analyst's justification for choosing a positioning tier on a
+    # non-draft deal. Positioning sets the hotel's class, which selects the
+    # benchmark series and class forecast, so it moves numbers. Clearing it to
+    # Default is a return to source and needs no note.
+    positioning_note: str | None = Field(default=None, max_length=2000)
     # Sam #6 — STR market / submarket; null clears. Changing ``market``
     # without sending ``str_market_id`` clears the id (a typed market has
     # none), so a stale STR id can never sit under a different market name.
@@ -2197,6 +2202,35 @@ async def update_deal(
                     ),
                 },
             )
+    # FON-107 — a tier the analyst chooses carries a justification. A draft is
+    # still being set up (the wizard), and clearing to Default is a return to
+    # source; neither needs one. Re-sending the current tier moves nothing.
+    positioning_note_raw = changes.pop("positioning_note", None)
+    positioning_note = (
+        positioning_note_raw.strip()
+        if isinstance(positioning_note_raw, str) and positioning_note_raw.strip()
+        else None
+    )
+    if "positioning" in changes and existing_lifecycle != "draft":
+        prior_tier = str(existing._mapping.get("positioning") or "").strip().casefold()
+        next_tier = str(changes["positioning"] or "").strip().casefold()
+        if (
+            next_tier != prior_tier
+            and analyst_positioning_source(changes["positioning"]) is not None
+            and positioning_note is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "override_note_required",
+                    "keys": ["positioning"],
+                    "message": (
+                        "Positioning sets the hotel's class, which selects its benchmark and "
+                        "forecast, so choosing a tier carries an analyst justification. Send it as "
+                        '"positioning_note": "why" beside "positioning".'
+                    ),
+                },
+            )
     # Sam #6 / FON-96 — market / submarket and their taxonomy keys.
     market_fields_touched = any(col in changes for col in _MARKET_COLUMNS)
     if "market" in changes and "str_market_id" not in changes:
@@ -2260,6 +2294,10 @@ async def update_deal(
     if not changes:
         # Nothing to update — return the existing row.
         return _row_to_record(dict(existing._mapping))
+    audit_notes = {
+        **({"reopening_date": reopening_note} if reopening_note and "reopening_date" in changes else {}),
+        **({"positioning": positioning_note} if positioning_note and "positioning" in changes else {}),
+    }
     # om-brand-str-scale — a positioning the analyst sends replaces any OM
     # suggestion and is recorded as theirs (a real tier → ``analyst``, so a
     # later OM can never overwrite it; Default / blank → NULL, "no tier").
@@ -2267,7 +2305,9 @@ async def update_deal(
         changes["positioning_source"] = analyst_positioning_source(
             changes["positioning"]
         )
-        changes["positioning_source_detail"] = None
+        changes["positioning_source_detail"] = (
+            {"note": positioning_note} if positioning_note else None
+        )
 
     # ── FON-74 — the analyst-justification gate ──────────────────────────
     #
@@ -2459,6 +2499,11 @@ async def update_deal(
             else:
                 set_clauses.append(f"{field} = CAST(:{field} AS JSONB)")
             params[field] = json.dumps(value) if value is not None else None
+        elif field == "positioning_source_detail":
+            # FON-107 — carries the analyst's note; a TEXT column holding JSON,
+            # the same shape the OM's suggestion writes.
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = json.dumps(value) if value is not None else None
         else:
             set_clauses.append(f"{field} = :{field}")
             params[field] = value
@@ -2525,7 +2570,7 @@ async def update_deal(
             action="deal.updated",
             payload={
                 "changes": list(changes.keys()),
-                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+                **({"notes": audit_notes} if audit_notes else {}),
             },
         )
     else:
@@ -2537,7 +2582,7 @@ async def update_deal(
             action="deal.updated",
             payload={
                 "changes": _changes_for_audit(changes),
-                **({"notes": {"reopening_date": reopening_note}} if reopening_note and "reopening_date" in changes else {}),
+                **({"notes": audit_notes} if audit_notes else {}),
             },
         )
     await session.commit()

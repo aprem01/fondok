@@ -1847,7 +1847,15 @@ describe('OverviewTab — Current flag vs stored positioning', () => {
   it('"Use <scale>" on the suggestion is the explicit selection — it PATCHes positioning alone', async () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     fireEvent.click(screen.getByTestId('positioning-suggestion-apply'));
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'upper-upscale' }));
+    // FON-107 — nothing is written until the prefilled, editable note is saved.
+    expect(updateSpy).not.toHaveBeenCalled();
+    const note = screen.getByTestId('positioning-note') as HTMLTextAreaElement;
+    expect(note.value).toContain('Kimpton Hotels & Restaurants');
+    fireEvent.click(screen.getByTestId('positioning-save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      positioning: 'upper-upscale',
+      positioning_note: note.value.trim(),
+    }));
   });
 
   it('a stored tier shows no suggestion line', () => {
@@ -1860,7 +1868,24 @@ describe('OverviewTab — Current flag vs stored positioning', () => {
     mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upscale' };
     render(<OverviewTab projectId="deal-uuid-1" />);
     fireEvent.change(selects()[1], { target: { value: 'luxury' } });
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'luxury' }));
+    // FON-107 — the choice waits for its justification.
+    expect(updateSpy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('positioning-save'));
+    expect(updateSpy).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByTestId('positioning-note'), { target: { value: 'Repositioned to a luxury flag.' } });
+    fireEvent.click(screen.getByTestId('positioning-save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      positioning: 'luxury',
+      positioning_note: 'Repositioned to a luxury flag.',
+    }));
+  });
+
+  it('back to Default is a return to source and saves with no note', async () => {
+    mockDealRef.deal = { ...mockDealRef.deal, positioning: 'upscale' };
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    fireEvent.change(selects()[1], { target: { value: 'default' } });
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'default' }));
+    expect(screen.queryByTestId('positioning-note')).toBeNull();
   });
 });
 
@@ -1885,11 +1910,16 @@ describe('OverviewTab — Sam 2026-10-15 positioning source chip', () => {
     expect(within(box).getAllByRole('combobox')[1]).toHaveValue('upper-upscale');
   });
 
-  it('the override is unchanged: choosing another tier PATCHes positioning only', async () => {
+  it('choosing another tier overrides the OM, with a justification', async () => {
     mockDealRef.deal = { ...mockDealRef.deal, ...OM_DEAL };
     render(<OverviewTab projectId="deal-uuid-1" />);
     fireEvent.change(within(screen.getByTestId('brand-and-positioning')).getAllByRole('combobox')[1], { target: { value: 'luxury' } });
-    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', { positioning: 'luxury' }));
+    fireEvent.change(screen.getByTestId('positioning-note'), { target: { value: 'Luxury after the re-flag.' } });
+    fireEvent.click(screen.getByTestId('positioning-save'));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
+      positioning: 'luxury',
+      positioning_note: 'Luxury after the re-flag.',
+    }));
   });
 
   it('an analyst tier reads "Analyst"; Default shows no chip', () => {

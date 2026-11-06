@@ -997,6 +997,8 @@ export interface LineageRecord {
 
 /** Sam 2026-10-15 — evidence for an OM-brand → STR chain scale positioning. */
 export interface PositioningSourceDetail {
+  /** FON-107 — the analyst's justification for a tier they chose. */
+  note?: string | null;
   document_id?: string | null;
   document_filename?: string | null;
   page?: number | null;
@@ -2841,6 +2843,10 @@ export const api = {
          *  stabilization year, which ends the penetration ramp). The worker
          *  answers 422 `override_note_required` without it. */
         reopening_date_note?: string;
+        /** FON-107 — the analyst's justification for choosing a positioning tier
+         *  on a non-draft deal (it sets the class the benchmark is read for).
+         *  The worker answers 422 `override_note_required` without it. */
+        positioning_note?: string;
         /** FON-79 — the wizard's resume payload; 409 ``deal_not_draft`` on an active deal. */
         draft_wizard?: DraftWizardPayload | null;
       },

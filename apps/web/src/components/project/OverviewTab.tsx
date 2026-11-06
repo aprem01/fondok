@@ -470,6 +470,19 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     [dealId, liveMode, toast, refreshDeal, scheduleRun],
   );
 
+  // ─── FON-107 — a tier the analyst chooses carries a justification ───
+  // The select (or "Use <scale>" on the suggestion, prefilled and editable, the
+  // Apply benchmark pattern) holds the choice here until it has a note. Back to
+  // Default is a return to source: no note, saved at once.
+  const [positioningDraft, setPositioningDraft] = useState<{ value: string; note: string } | null>(null);
+  const savePositioning = useCallback(async () => {
+    if (!positioningDraft) return;
+    const why = positioningDraft.note.trim();
+    if (!why) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+    const ok = await persist({ positioning: positioningDraft.value, positioning_note: why });
+    if (ok) setPositioningDraft(null);
+  }, [positioningDraft, persist, toast]);
+
   // ─── Review I-5 — no Year-1 occupancy / ADR basis ───
   // The worker refuses the revenue chain (no T-12, no STR or market benchmark,
   // no analyst rate); Overview prints its sentence and takes the rates — the
@@ -1665,15 +1678,30 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   }}
                 />
                 <ProfileSelect
-                  label="Positioning" hint="Chosen per property · a brand's STR scale is only a suggestion" value={positioningId}
+                  label="Positioning" hint="Chosen per property · a brand's STR scale is only a suggestion" value={positioningDraft?.value ?? positioningId}
                   options={positioningTiers.map((p) => ({ value: p.id, label: p.label }))}
-                  onChange={(v) => void persist({ positioning: v })}
+                  onChange={(v) => {
+                    if (v === positioningId) { setPositioningDraft(null); return; }
+                    if (v === 'default') { setPositioningDraft(null); void persist({ positioning: v }); return; }
+                    setPositioningDraft((d) => ({ value: v, note: d?.note ?? '' }));
+                  }}
                 />
               </div>
+              {positioningDraft && (
+                <InlineEditControls
+                  onSave={() => void savePositioning()}
+                  onCancel={() => setPositioningDraft(null)}
+                  note={positioningDraft.note}
+                  onNote={(note) => setPositioningDraft((d) => (d ? { ...d, note } : d))}
+                  noteTestId="positioning-note"
+                  noteLabel="Positioning — override justification"
+                  saveTestId="positioning-save"
+                />
+              )}
               {/* The current flag's STR chain scale, offered while the deal has no
                   tier. Nothing is written until the analyst selects it. */}
               {(() => {
-                if (positioningId !== 'default') return null;
+                if (positioningId !== 'default' || positioningDraft) return null;
                 const suggested = brandDefaultPositioning(brand);
                 const label = suggested ? positioningTiers.find((p) => p.id === suggested)?.label : null;
                 if (!suggested || !label) return null;
@@ -1686,7 +1714,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                     <button
                       type="button"
                       data-testid="positioning-suggestion-apply"
-                      onClick={() => void persist({ positioning: suggested })}
+                      onClick={() => setPositioningDraft({ value: suggested, note: `${brand} is published in the STR ${label} chain scale.` })}
                       style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: prov.blue, cursor: 'pointer', textDecoration: 'underline' }}
                     >
                       Use {label}
