@@ -5,6 +5,7 @@ import { body, display } from './fonts';
 // The signed-out frame for /sign-in and /sign-up: same look as the home page
 // (white-green ground, evergreen accent), no app chrome.
 export const clerkAppearance = {
+  layout: { unsafe_disableDevelopmentModeWarnings: true },
   variables: { colorPrimary: '#0b5d45', colorText: '#0d1f1a', borderRadius: '8px' },
   elements: {
     rootBox: 'w-full',

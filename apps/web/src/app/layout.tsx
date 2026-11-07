@@ -39,7 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // crashing the entire app tree with React #130.
   const hasClerkProvider = typeof ClerkProvider === 'function';
   return isClerkConfigured && hasClerkProvider ? (
-    <ClerkProvider>{tree}</ClerkProvider>
+    // No "Development mode" ribbon on Clerk components: visitors should not
+    // see it while the site runs on the Clerk development instance.
+    <ClerkProvider appearance={{ layout: { unsafe_disableDevelopmentModeWarnings: true } }}>{tree}</ClerkProvider>
   ) : (
     tree
   );
