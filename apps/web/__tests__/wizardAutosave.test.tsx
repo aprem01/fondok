@@ -553,6 +553,19 @@ describe('FON-79 — Finish and Discard', () => {
     expect(readDraft()).toBeNull();
   });
 
+  it('Discard refreshes the unfinished-drafts count, so the discarded draft is not still counted', async () => {
+    worker.list
+      .mockResolvedValueOnce([{ id: 'd-77', name: 'X', city: null, lifecycle: 'draft' }] as never)
+      .mockResolvedValue([] as never);
+    render(<NewProjectPage />);
+    await waitFor(() => expect(screen.getByText('Review & Finish')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(worker.discardDraft).toHaveBeenCalledWith('d-77'));
+    await waitFor(() => expect(worker.list).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText('Create New Deal')).toBeInTheDocument());
+    expect(screen.queryByTestId('tenant-drafts-chip')).toBeNull();
+  });
+
   it('Discard calls the worker, clears the pointer and resets the wizard', async () => {
     render(<NewProjectPage />);
     await waitFor(() => expect(screen.getByText('Review & Finish')).toBeInTheDocument());

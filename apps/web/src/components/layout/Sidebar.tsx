@@ -10,6 +10,7 @@ import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
 import { isWorkerConnected } from '@/lib/api';
+import { useIsInternalAdmin } from '@/lib/useInternalAdmin';
 import FondokMark from '@/components/brand/FondokMark';
 import { useToast } from '@/components/ui/Toast';
 import { ShowHintsAgainButton } from '@/components/help/HintOptionsMenu';
@@ -42,9 +43,9 @@ const navItems = [
   // to the backed Portfolio Library under Settings.
   { href: '/methodology', label: 'Methodology', icon: BookOpen },
   // FON-120 — the detailed methodology (formulas, defaults, precedence with
-  // values). Hidden from members here; the page re-checks the role and the
-  // worker enforces the stricter internal-admin gate on the content itself.
-  { href: '/methodology/detail', label: 'Methodology · Detail', icon: BookOpen, adminOnly: true },
+  // values). Shown only to admins of an internal workspace; the worker enforces
+  // the same gate on the content itself.
+  { href: '/methodology/detail', label: 'Methodology · Detail', icon: BookOpen, internalAdminOnly: true },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
   // under Settings in concept (it's a tenant-level config surface)
   // but mounted as a top-level nav item so executives who only ever
@@ -92,6 +93,8 @@ export default function Sidebar({
   useEffect(() => {
     setCurrentOrgId(workspace.id);
   }, [workspace.id]);
+  // After the effect above, so the request carries the active org.
+  const isInternalAdmin = useIsInternalAdmin(currentRole, workspace.id);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -241,6 +244,7 @@ export default function Sidebar({
       <nav className="flex-1 px-3 pt-2" data-tour="sidebar">
         {navItems
           .filter(it => !it.adminOnly || currentRole === 'org:admin')
+          .filter(it => !it.internalAdminOnly || isInternalAdmin)
           .filter(it => !it.workerOnly || isWorkerConnected())
           .map(it => {
           // Longest matching href wins, so /methodology/detail lights its own

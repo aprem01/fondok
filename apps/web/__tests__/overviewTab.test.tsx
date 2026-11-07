@@ -1872,7 +1872,10 @@ describe('OverviewTab — Current flag vs stored positioning', () => {
     expect(updateSpy).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('positioning-save'));
     expect(updateSpy).not.toHaveBeenCalled();
+    // Refused where the analyst is looking, and cleared once they start typing.
+    expect(screen.getByTestId('positioning-note-error')).toHaveTextContent('Add a short note');
     fireEvent.change(screen.getByTestId('positioning-note'), { target: { value: 'Repositioned to a luxury flag.' } });
+    expect(screen.queryByTestId('positioning-note-error')).toBeNull();
     fireEvent.click(screen.getByTestId('positioning-save'));
     await waitFor(() => expect(updateSpy).toHaveBeenCalledWith('deal-uuid-1', {
       positioning: 'luxury',

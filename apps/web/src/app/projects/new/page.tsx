@@ -531,6 +531,14 @@ export default function NewProjectPage() {
       try {
         await serverDraftRef.current.discard();
         toast('Draft discarded', { type: 'info' });
+        // FON-79 — the count on screen still includes the draft just discarded.
+        setTenantDraftCount(null);
+        void api.deals
+          .list()
+          .then((deals) => {
+            if (Array.isArray(deals)) setTenantDraftCount(deals.filter(d => d.lifecycle === 'draft').length);
+          })
+          .catch(() => { /* the count is best-effort */ });
       } catch (err) {
         // 409 documents_in_flight — the worker says how many and what to do.
         const msg = userMessage(err);

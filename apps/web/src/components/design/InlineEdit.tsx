@@ -229,6 +229,8 @@ export interface InlineEditControlsProps {
   noteTestId?: string;
   /** Label for the note field (screen readers + the e2e locator). */
   noteLabel?: string;
+  /** Why Save was refused, shown directly under the note field. */
+  noteError?: string | null;
 }
 
 /** The canonical justification input treatment. */
@@ -266,6 +268,7 @@ export function InlineEditControls({
   onNote,
   noteTestId,
   noteLabel = 'Override justification',
+  noteError,
 }: InlineEditControlsProps) {
   const buttons = (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, ...(block ? { width: '100%' } : null), ...(onNote ? null : style) }}>
@@ -326,6 +329,7 @@ export function InlineEditControls({
         placeholder={NOTE_PLACEHOLDER}
         data-testid={noteTestId}
         disabled={saving}
+        aria-invalid={noteError ? true : undefined}
         onChange={(e) => onNote(e.target.value)}
         onKeyDown={(e) => {
           // Same contract as the value field: Enter saves, Esc discards.
@@ -334,6 +338,16 @@ export function InlineEditControls({
         }}
         style={noteInputStyle}
       />
+      {noteError && (
+        <span
+          role="alert"
+          data-testid={noteTestId ? `${noteTestId}-error` : undefined}
+          className="text-danger-700"
+          style={{ fontSize: 10.5, lineHeight: 1.35, overflowWrap: 'anywhere' }}
+        >
+          {noteError}
+        </span>
+      )}
       {buttons}
     </span>
   );

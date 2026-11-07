@@ -474,14 +474,14 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // The select (or "Use <scale>" on the suggestion, prefilled and editable, the
   // Apply benchmark pattern) holds the choice here until it has a note. Back to
   // Default is a return to source: no note, saved at once.
-  const [positioningDraft, setPositioningDraft] = useState<{ value: string; note: string } | null>(null);
+  const [positioningDraft, setPositioningDraft] = useState<{ value: string; note: string; noteMissing?: boolean } | null>(null);
   const savePositioning = useCallback(async () => {
     if (!positioningDraft) return;
     const why = positioningDraft.note.trim();
-    if (!why) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+    if (!why) { setPositioningDraft((d) => (d ? { ...d, noteMissing: true } : d)); return; }
     const ok = await persist({ positioning: positioningDraft.value, positioning_note: why });
     if (ok) setPositioningDraft(null);
-  }, [positioningDraft, persist, toast]);
+  }, [positioningDraft, persist]);
 
   // ─── Review I-5 — no Year-1 occupancy / ADR basis ───
   // The worker refuses the revenue chain (no T-12, no STR or market benchmark,
@@ -1692,7 +1692,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
                   onSave={() => void savePositioning()}
                   onCancel={() => setPositioningDraft(null)}
                   note={positioningDraft.note}
-                  onNote={(note) => setPositioningDraft((d) => (d ? { ...d, note } : d))}
+                  onNote={(note) => setPositioningDraft((d) => (d ? { ...d, note, noteMissing: false } : d))}
+                  noteError={positioningDraft.noteMissing ? NOTE_REQUIRED_MESSAGE : null}
                   noteTestId="positioning-note"
                   noteLabel="Positioning — override justification"
                   saveTestId="positioning-save"
@@ -2109,12 +2110,12 @@ function ReopeningDateField({
    *  `note` is the analyst's justification (always given for a date). */
   onSave: (v: string | null, note?: string) => void | Promise<boolean | void>;
 }) {
-  const { toast } = useToast();
   const shown = value && ISO_DATE.test(value) ? value : '';
   const [draft, setDraft] = useState(shown);
   // Review I-6 — a changed or cleared date waits here until the analyst says why.
   const [askingWhy, setAskingWhy] = useState(false);
   const [note, setNote] = useState('');
+  const [noteMissing, setNoteMissing] = useState(false);
   // One edit = one save. Enter blurs the input (the TargetField pattern) so
   // the single resulting blur commits; ``pending`` remembers what was sent
   // until the saved value comes back through ``value``, so a blur that lands
@@ -2144,10 +2145,10 @@ function ReopeningDateField({
     if (t !== '' && !isFullDate(t)) return;
     if (t === shown) { cancelPending(); return; }
     const why = note.trim();
-    if (!why) { toast(NOTE_REQUIRED_MESSAGE, { type: 'error' }); return; }
+    if (!why) { setNoteMissing(true); return; }
     send(t === '' ? null : t, why);
   };
-  const cancelPending = () => { setAskingWhy(false); setNote(''); setDraft(shown); };
+  const cancelPending = () => { setAskingWhy(false); setNote(''); setNoteMissing(false); setDraft(shown); };
   const hint = fallbackNote
     ?? (shown
       ? `Stabilization default: ${anchorLabel ?? 'Year 3 after reopening'} · saving re-runs the model`
@@ -2195,7 +2196,8 @@ function ReopeningDateField({
           onSave={saveWithNote}
           onCancel={cancelPending}
           note={note}
-          onNote={setNote}
+          onNote={(v) => { setNote(v); setNoteMissing(false); }}
+          noteError={noteMissing ? NOTE_REQUIRED_MESSAGE : null}
           noteTestId="reopening-date-note"
           noteLabel="Reopening date — override justification"
           saveTestId="reopening-date-save"
