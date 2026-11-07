@@ -60,6 +60,7 @@ TENANT_DATA_POLICIES_REQUIRE_INTERNAL_TENANT = "tenant_data_policies_require_int
 TENANT_NOT_REGISTERED = "tenant_not_registered"
 DATA_POLICY_AUDIT_UNAVAILABLE = "data_policy_audit_unavailable"
 DATA_POLICY_CHANGED_ACTION = "tenant.data_policy_changed"
+DATA_POLICY_CHANGE_REQUIRES_FONDOK_WORKSPACE = "data_policy_change_requires_fondok_workspace"
 
 
 class RegisterTenantBody(BaseModel):
@@ -224,6 +225,16 @@ async def patch_tenant_data_policies(
     PATCH that changes nothing writes nothing and is not audited.
     """
     me = await _require_internal_admin(auth)
+    if not (me.is_serving and me.is_internal):
+        # A staff admin may be acting from inside a client workspace. The
+        # audit row below is written under the ACTING tenant (RLS allows no
+        # other) and names the target firm — so writing it from a client
+        # workspace would show one firm's identifiers in another firm's
+        # activity log. Changes therefore require the Fondok workspace.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=DATA_POLICY_CHANGE_REQUIRES_FONDOK_WORKSPACE,
+        )
     target = await get_tenant(tenant_id, use_cache=False)
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TENANT_NOT_REGISTERED)

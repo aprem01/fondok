@@ -454,3 +454,36 @@ async def test_no_fondok_workspace_can_be_demoted_over_http(_rsa_key) -> None:
             headers=h,
         )
         assert r.status_code == 201 and r.json()["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_staff_policy_change_requires_the_fondok_workspace(_rsa_key) -> None:
+    """The audit row for a data-policy change lands in the ACTING workspace's
+    log, so a staff admin inside a client workspace must not write one there
+    (it would name another firm). Reading the policy is fine anywhere."""
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    b = _tid(FIRM_B_ORG)
+    async with await _client() as c:
+        from_client = _token(_rsa_key, FIRM_A_ORG, role="org:admin", **STAFF)
+        assert (await c.get(f"/admin/tenants/{b}/data_policies", headers=from_client)).status_code == 200
+        r = await c.patch(
+            f"/admin/tenants/{b}/data_policies", json={"costar_derived_defaults": "withhold"}, headers=from_client
+        )
+        assert r.status_code == 403 and r.json()["detail"] == "data_policy_change_requires_fondok_workspace"
+        async with get_engine().connect() as conn:
+            leaked = (
+                await conn.execute(
+                    text("SELECT count(*) FROM audit_log WHERE tenant_id = :a AND action = 'tenant.data_policy_changed'"),
+                    {"a": _tid(FIRM_A_ORG)},
+                )
+            ).scalar_one()
+        assert leaked == 0
+        from_fondok = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+        r = await c.patch(
+            f"/admin/tenants/{b}/data_policies", json={"costar_derived_defaults": "withhold"}, headers=from_fondok
+        )
+        assert r.status_code == 200
