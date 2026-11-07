@@ -31,8 +31,19 @@ logger = logging.getLogger(__name__)
 
 SUPPORT_HEADER = "X-Support-Tenant"
 #: 90 days (2160 h) is a temporary onboarding-period option agreed 2026-11-07;
-#: still read-only and logged. Revisit before go-live.
+#: still read-only and logged. New grants longer than a day cannot be OPENED
+#: after ``LONG_GRANT_OPEN_UNTIL`` (Brookfield go-live); grants already open run
+#: to their own expiry. Extend the date deliberately or drop 2160.
 ALLOWED_HOURS = (1, 4, 24, 2160)
+LONG_GRANT_MAX_HOURS = 24
+LONG_GRANT_OPEN_UNTIL = datetime(2026, 12, 15, tzinfo=UTC)
+
+
+def long_grant_allowed(hours: int, now: datetime | None = None) -> bool:
+    """Whether a grant of ``hours`` may be opened now (long ones sunset)."""
+    if hours <= LONG_GRANT_MAX_HOURS:
+        return True
+    return (now or datetime.now(UTC)) < LONG_GRANT_OPEN_UNTIL
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Paths where the header is ignored (managing grants is not done "as" a firm).
 EXEMPT_PREFIXES = ("/admin/support-access",)
@@ -259,6 +270,8 @@ __all__ = [
     "ACTION_VIEWED",
     "ALLOWED_HOURS",
     "EXEMPT_PREFIXES",
+    "LONG_GRANT_MAX_HOURS",
+    "LONG_GRANT_OPEN_UNTIL",
     "READ_METHODS",
     "SUPPORT_HEADER",
     "SupportGrant",
@@ -270,4 +283,5 @@ __all__ = [
     "create_grant",
     "end_grant",
     "get_grant",
+    "long_grant_allowed",
 ]

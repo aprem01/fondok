@@ -793,3 +793,21 @@ async def test_firm_admin_can_see_and_end_support_access_on_their_firm(_rsa_key)
     payload = rows[0][0]
     payload = payload if isinstance(payload, dict) else __import__("json").loads(payload)
     assert payload["metadata"]["ended_by"] == "firm_admin"
+
+
+@pytest.mark.asyncio
+async def test_long_support_grants_sunset(_rsa_key, monkeypatch) -> None:
+    """After LONG_GRANT_OPEN_UNTIL, 90-day grants can't be opened; short ones still can."""
+    from app import support_access
+
+    await _seed_two_firms()
+    assert support_access.long_grant_allowed(24, now=support_access.LONG_GRANT_OPEN_UNTIL + timedelta(days=1))
+    assert not support_access.long_grant_allowed(2160, now=support_access.LONG_GRANT_OPEN_UNTIL)
+    assert support_access.long_grant_allowed(2160, now=support_access.LONG_GRANT_OPEN_UNTIL - timedelta(seconds=1))
+
+    monkeypatch.setattr(support_access, "LONG_GRANT_OPEN_UNTIL", datetime.now(UTC) - timedelta(minutes=1))
+    async with await _client() as c:
+        r = await _open(c, _rsa_key, hours=2160)
+        assert r.status_code == 422
+        assert "long_support_grants_closed" in r.text
+        assert (await _open(c, _rsa_key, hours=24)).status_code == 201

@@ -53,6 +53,11 @@ async def open_support_access(
     user_id = _require_staff(auth)
     if body.hours not in support.ALLOWED_HOURS:
         raise HTTPException(status_code=422, detail=f"hours must be one of {list(support.ALLOWED_HOURS)}")
+    if not support.long_grant_allowed(body.hours):
+        raise HTTPException(
+            status_code=422,
+            detail=f"long_support_grants_closed: grants over {support.LONG_GRANT_MAX_HOURS} h can no longer be opened",
+        )
     reason = " ".join(body.reason.split())
     if len(reason) < 10:
         raise HTTPException(status_code=422, detail="Give a reason of at least 10 characters.")
