@@ -13,6 +13,7 @@ import { useCurrentOrg, useCurrentRole, useOrgActions, useOrgMembers } from '@/l
 import { IntroCard } from '@/components/help/IntroCard';
 import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
 import DataPoliciesCard from '@/components/settings/DataPoliciesCard';
+import SupportSessionsCard from '@/components/settings/SupportSessionsCard';
 import { Sparkles, RotateCcw } from 'lucide-react';
 
 // Notifications and Integrations were tabs over fixtures: toggles that toasted
@@ -229,6 +230,9 @@ export default function SettingsPage() {
               </p>
             </Card>
           )}
+
+          {/* Shown only while Fondok support has live access to this firm. */}
+          <SupportSessionsCard isAdmin={isOrgAdmin} />
 
           <Card>
             <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">

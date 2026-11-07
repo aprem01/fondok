@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
+from ..auth.context import support_access_active
 from ..database import get_session
 from ..services.engine_runner import (
     ENGINE_NAMES,
@@ -894,8 +895,10 @@ async def _compare_scenarios(
             session, scenario_id=sid, deal_id=deal_id, tenant_id=tenant_id
         )
         record = _row_to_record(row)
-        # Auto-run on first compare so columns don't render empty.
-        if record.last_run_id is None:
+        # Auto-run on first compare so columns don't render empty — but never
+        # under Fondok staff support access, which is read-only: the column
+        # then falls back to the deal's latest outputs below, writing nothing.
+        if record.last_run_id is None and not support_access_active():
             run_id = uuid4()
             await run_all_engines(
                 session,

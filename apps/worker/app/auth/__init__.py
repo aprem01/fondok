@@ -30,11 +30,17 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
+from .. import support_access as _support
 from ..config import get_settings
 from .clerk_jwt import verify_clerk_jwt
-from .context import AuthContext, current_tenant_id, normalize_clerk_role
+from .context import (
+    AuthContext,
+    current_support_expires_at,
+    current_tenant_id,
+    normalize_clerk_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +65,12 @@ def _extract_bearer(header: str | None) -> str | None:
 
 
 async def get_current_auth(
+    # FastAPI injects the Request by annotation; direct callers (tests) may
+    # omit it, and then a support header is refused rather than honoured.
+    request: Request = None,  # type: ignore[assignment]
     authorization: Annotated[str | None, Header()] = None,
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+    x_support_tenant: Annotated[str | None, Header(alias="X-Support-Tenant")] = None,
 ) -> AuthContext:
     """Resolve the caller's :class:`AuthContext`.
 
@@ -195,6 +205,16 @@ async def get_current_auth(
                     detail="tenant_not_registered",
                 )
 
+        if x_support_tenant and (request is None or not request.url.path.startswith(_support.EXEMPT_PREFIXES)):
+            return await _support_context(
+                request=request,
+                header_value=x_support_tenant,
+                user_id=str(user_id) if user_id else None,
+                email=str(email) if email else None,
+                fondok_staff=fondok_staff,
+            )
+
+        current_support_expires_at.set(None)
         current_tenant_id.set(str(tenant_id))
         return AuthContext(
             tenant_id=tenant_id,
@@ -255,6 +275,64 @@ async def get_current_auth(
         role="unknown",
         source="default",
         org_id=None,
+    )
+
+
+async def _support_context(
+    *,
+    request: Request | None,
+    header_value: str,
+    user_id: str | None,
+    email: str | None,
+    fondok_staff: bool,
+) -> AuthContext:
+    """Serve this request AS the firm named by ``X-Support-Tenant`` — only for
+    a verified staff admin with a live grant for that firm, read-only, as a
+    ``member``, and logged in the firm's own audit log. Every refusal is a
+    403 with a stable ``detail`` the web app keys on."""
+    from ..tenants import get_tenant
+
+    def refuse(detail: str) -> HTTPException:
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+    if not fondok_staff or not user_id:
+        raise refuse("support_access_requires_staff")
+    if request is None:
+        raise refuse("support_access_read_only")
+    try:
+        target = UUID(header_value.strip())
+    except ValueError:
+        raise refuse("support_access_not_granted") from None
+    if request.method.upper() not in _support.READ_METHODS:
+        raise refuse("support_access_read_only")
+    grant = await _support.active_grant(staff_user_id=user_id, tenant_id=target)
+    if grant is None:
+        raise refuse("support_access_not_granted")
+    firm = await get_tenant(target)
+    if firm is None or not firm.is_serving or firm.is_internal:
+        raise refuse("support_access_not_granted")
+
+    current_tenant_id.set(str(target))
+    current_support_expires_at.set(grant.expires_at)
+    # Fail closed: a page the firm cannot see in its log is not served.
+    logged = await _support.audit_view_once(
+        grant=grant, actor_id=user_id, path=request.url.path, query=request.url.query
+    )
+    if not logged:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="support_access_audit_unavailable",
+            headers={"Retry-After": "2"},
+        )
+    return AuthContext(
+        tenant_id=target,
+        user_id=user_id,
+        role="member",
+        source="jwt",
+        org_id=firm.clerk_org_id,
+        email=email,
+        fondok_staff=fondok_staff,
+        support_grant_id=str(grant.id),
     )
 
 

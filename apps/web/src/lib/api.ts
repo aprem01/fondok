@@ -5,6 +5,7 @@
 // and every data surface renders the "Worker not configured" state
 // (components/WorkerNotConfigured) — there is no fixture fallback.
 
+import { supportHeaderFor } from './supportAccess';
 import type { DealYearSpan } from '@/lib/dealYears';
 import { getCurrentOrgId, getClerkSessionToken, waitForClerkTokenFn } from './auth';
 import type { ReasonCode } from './ontology/reasons.generated';
@@ -2046,6 +2047,8 @@ async function request<T>(
   // request to it. Worker falls back to DEFAULT_TENANT_ID when absent.
   const orgId = getCurrentOrgId();
   if (orgId) headers['X-Tenant-Id'] = orgId;
+  // Fondok staff support access: served as the firm, read-only (lib/supportAccess.ts).
+  Object.assign(headers, supportHeaderFor(path));
 
   // ─── Client-side timeout (Wave 4 reliability fix — Bug #3) ───────
   // Every fetch is wrapped in an AbortController that fires after the
@@ -2141,6 +2144,8 @@ async function requestBlob(
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const orgId = getCurrentOrgId();
   if (orgId) headers['X-Tenant-Id'] = orgId;
+  // Fondok staff support access: served as the firm, read-only (lib/supportAccess.ts).
+  Object.assign(headers, supportHeaderFor(path));
 
   const timeoutMs = opts?.timeoutMs ?? 120_000;
   const ctrl = new AbortController();
@@ -2285,6 +2290,17 @@ export interface TenantDataPoliciesResponse {
 // GET /admin/platform?days=… (apps/worker/app/api/admin_platform.py) —
 // every firm's usage, AI cost, failures and quality. Internal admins only.
 export type PlatformDays = 7 | 30 | 90;
+export interface SupportGrant {
+  id: string;
+  tenant_id: string;
+  staff_user_id: string;
+  reason: string;
+  created_at: string | null;
+  expires_at: string;
+  ended_at: string | null;
+  firm: string | null;
+  reused?: boolean;
+}
 export type DailySeries = Record<string, number>;
 export interface PlatformSignal {
   kind: 'bad' | 'good';
@@ -2746,6 +2762,28 @@ export const api = {
      *  ``org:admin`` role on the worker side (gated via require_role). */
     cost: (signal?: AbortSignal) =>
       request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
+    /** Fondok staff support access: time-limited, read-only, logged in the firm's log. */
+    support: {
+      open: (body: { tenant_id: string; reason: string; hours: 1 | 4 | 24 }) =>
+        request<SupportGrant>('POST', '/admin/support-access', body),
+      list: (signal?: AbortSignal) =>
+        request<{ grants: SupportGrant[] }>('GET', '/admin/support-access', undefined, { signal }),
+      end: (grantId: string) =>
+        request<{ ended: boolean; id: string }>('DELETE', `/admin/support-access/${encodeURIComponent(grantId)}`),
+      /** For a firm's own admins: Fondok's live sessions on their firm, and ending one. */
+      onMyFirm: (signal?: AbortSignal) =>
+        request<{ grants: Omit<SupportGrant, 'staff_user_id' | 'firm'>[] }>(
+          'GET',
+          '/admin/support-access/on-my-firm',
+          undefined,
+          { signal },
+        ),
+      endOnMyFirm: (grantId: string) =>
+        request<{ ended: boolean; id: string }>(
+          'DELETE',
+          `/admin/support-access/on-my-firm/${encodeURIComponent(grantId)}`,
+        ),
+    },
     /** Every firm's usage, AI cost, failures and quality (internal admins only). */
     platform: (days: PlatformDays, signal?: AbortSignal) =>
       request<PlatformOverview>('GET', `/admin/platform?days=${days}`, undefined, { signal }),

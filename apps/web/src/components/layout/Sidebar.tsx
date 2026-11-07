@@ -4,10 +4,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Settings, ChevronDown, Building2,
   Users, UserCog, LogOut, Check, BookOpen, LineChart, History, Library, Bell,
-  DollarSign, Activity,
+  DollarSign, Activity, ShieldCheck,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { OrganizationSwitcher } from '@clerk/nextjs';
+import { OrganizationSwitcher, useClerk } from '@clerk/nextjs';
 import { cn } from '@/lib/format';
 import { isWorkerConnected } from '@/lib/api';
 import { useIsInternalAdmin } from '@/lib/useInternalAdmin';
@@ -357,8 +357,9 @@ export default function Sidebar({
             >
               <Users size={13} className="text-ink-500" /> Team Members
             </button>
-            {/* Account Settings → workspace tab; Clerk's account profile
-                is reachable via the user button when Clerk is configured. */}
+            {/* Your own sign-in: password, two-factor, sessions (Clerk). */}
+            {isClerkConfigured && <SecurityMenuItem onDone={() => setUserOpen(false)} />}
+            {/* Account Settings → workspace tab. */}
             <button
               type="button"
               onClick={() => {
@@ -389,5 +390,24 @@ export default function Sidebar({
       </div>
     </aside>
     </>
+  );
+}
+
+
+/** Opens Clerk's account screen (password, two-factor, active sessions).
+ *  Rendered only when Clerk is configured: ``useClerk`` needs the provider. */
+function SecurityMenuItem({ onDone }: { onDone: () => void }) {
+  const clerk = useClerk();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        onDone();
+        clerk.openUserProfile();
+      }}
+      className="w-full px-3 py-2 flex items-center gap-2 text-[12.5px] hover:bg-ink-300/10 text-left"
+    >
+      <ShieldCheck size={13} className="text-ink-500" /> Sign-in &amp; security
+    </button>
   );
 }

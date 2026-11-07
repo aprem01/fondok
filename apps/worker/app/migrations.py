@@ -1647,6 +1647,31 @@ MIGRATIONS: list[tuple[str, str]] = [
         ON tenants (clerk_org_id)
         """,
     ),
+    # Fondok staff support access: a time-limited, read-only window into one
+    # firm, opened with a reason and logged in that firm's own audit log.
+    # Like ``tenants`` it is read by the auth layer before a tenant is known,
+    # so it is not under RLS; it holds no customer data.
+    (
+        "support_grants.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS support_grants (
+            id              UUID PRIMARY KEY,
+            tenant_id       UUID NOT NULL,
+            staff_user_id   TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at      TIMESTAMPTZ NOT NULL,
+            ended_at        TIMESTAMPTZ
+        )
+        """,
+    ),
+    (
+        "support_grants.idx_staff_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_support_grants_staff_tenant
+        ON support_grants (staff_user_id, tenant_id, expires_at)
+        """,
+    ),
     # FON-116 / FON-96 — per-tenant data policies (the CoStar licensing
     # gate; see ``app.tenants.TenantDataPolicies``). ``{}`` = every policy
     # at its default (``allow``); flipping a tenant is a row write.
@@ -2652,6 +2677,31 @@ SQLITE_MIGRATIONS: list[tuple[str, str]] = [
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_clerk_org_id
         ON tenants (clerk_org_id)
+        """,
+    ),
+    # Fondok staff support access: a time-limited, read-only window into one
+    # firm, opened with a reason and logged in that firm's own audit log.
+    # Like ``tenants`` it is read by the auth layer before a tenant is known,
+    # so it is not under RLS; it holds no customer data.
+    (
+        "support_grants.create_table",
+        """
+        CREATE TABLE IF NOT EXISTS support_grants (
+            id              TEXT PRIMARY KEY,
+            tenant_id       TEXT NOT NULL,
+            staff_user_id   TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at      TEXT NOT NULL,
+            ended_at        TEXT
+        )
+        """,
+    ),
+    (
+        "support_grants.idx_staff_tenant",
+        """
+        CREATE INDEX IF NOT EXISTS idx_support_grants_staff_tenant
+        ON support_grants (staff_user_id, tenant_id, expires_at)
         """,
     ),
     # FON-116 — SQLite twin of ``tenants.add_data_policies`` (JSON as TEXT;

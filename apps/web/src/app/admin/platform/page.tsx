@@ -6,7 +6,7 @@
 // Numbers that cannot be computed render as "—", never as an estimate.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Lock, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye, Lock, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +23,7 @@ import {
 import { useCurrentOrg, useCurrentRole } from '@/lib/auth';
 import { useIsInternalAdmin } from '@/lib/useInternalAdmin';
 import type { PlatformOrgPeople, PlatformPerson } from '@/app/api/admin/platform/people/route';
+import { setSupportSession } from '@/lib/supportAccess';
 
 // ─────────────────────────── formatting ───────────────────────────
 
@@ -192,6 +193,86 @@ function BarList({ rows, valueLabel }: { rows: { key: string; value: number; sub
   );
 }
 
+// ─────────────────────────── support access ───────────────────────────
+
+const SUPPORT_HOURS = [1, 4, 24] as const;
+
+function SupportAccessForm({ firm }: { firm: PlatformFirm }) {
+  const [reason, setReason] = useState('');
+  const [hours, setHours] = useState<(typeof SUPPORT_HOURS)[number]>(1);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const open = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const g = await api.admin.support.open({ tenant_id: firm.tenant_id, reason: reason.trim(), hours });
+      setSupportSession({ grantId: g.id, tenantId: g.tenant_id, firm: g.firm ?? firm.name, expiresAt: g.expires_at });
+      // Full navigation so nothing from your own workspace stays in memory.
+      window.location.assign('/projects');
+    } catch (err) {
+      const msg = userMessage(err);
+      setError(
+        /support_access_requires_staff/.test(String((err as { body?: unknown })?.body ?? msg))
+          ? 'Support access needs your Fondok staff sign-in with two-factor turned on. Sign out and in again after setting it up.'
+          : msg,
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={open} className="rounded-md border border-border bg-white p-4">
+      <div className="flex items-center gap-2">
+        <Eye size={14} className="text-ink-500" aria-hidden="true" />
+        <h3 className="text-[13px] font-semibold text-ink-900">Open support access</h3>
+      </div>
+      <p className="mt-1 text-[12px] text-ink-500">
+        See {firm.name}&apos;s deals read-only for a limited time. The start, each page you open and the end are
+        recorded in {firm.name}&apos;s own activity log, which its admins can see.
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <label className="block">
+          <span className="sr-only">Reason</span>
+          <input
+            className="h-9 w-full rounded-md border border-border bg-white px-3 text-[13px] text-ink-900 placeholder:text-ink-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            placeholder="Reason, e.g. investigating a failed T-12 extraction"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            minLength={10}
+            maxLength={500}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="sr-only">Duration</span>
+          <select
+            className="h-9 rounded-md border border-border bg-white px-2 text-[13px] text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            value={hours}
+            onChange={(e) => setHours(Number(e.target.value) as (typeof SUPPORT_HOURS)[number])}
+          >
+            {SUPPORT_HOURS.map((h) => (
+              <option key={h} value={h}>
+                {h === 1 ? '1 hour' : `${h} hours`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button type="submit" variant="primary" size="sm" loading={busy} disabled={busy || reason.trim().length < 10}>
+          Open read-only view
+        </Button>
+      </div>
+      {error && (
+        <p className="mt-2 text-[12px] text-danger-700" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
 // ─────────────────────────── firm detail ───────────────────────────
 
 function FirmDetail({
@@ -217,6 +298,12 @@ function FirmDetail({
 
   return (
     <div className="grid gap-5 bg-ink-50/60 px-5 py-5 lg:grid-cols-3">
+      {firm.kind === 'external' && firm.status === 'active' && (
+        <section className="lg:col-span-3">
+          <SupportAccessForm firm={firm} />
+        </section>
+      )}
+
       <section className="lg:col-span-2">
         <h3 className={sectionTitle}>
           Team{people && !people.error ? ` (${members.length})` : ''}{people?.pendingInvitations ? ` · ${people.pendingInvitations} invitation(s) pending` : ''}

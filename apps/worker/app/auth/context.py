@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -39,6 +40,19 @@ current_tenant_id: ContextVar[str | None] = ContextVar(
 # Sources the worker recognizes. ``Literal`` is not enforced by the
 # dataclass — Python dataclasses don't validate — but it keeps mypy
 # honest and gives call sites a hint via IDE completion.
+#: When this request is served under Fondok staff support access, the grant's
+#: expiry; ``None`` otherwise. Lets read handlers stay read-only (skip
+#: first-view materialisation) and cap link lifetimes to the grant.
+current_support_expires_at: ContextVar[datetime | None] = ContextVar(
+    "fondok_current_support_expires_at", default=None
+)
+
+
+def support_access_active() -> bool:
+    """True while serving a request under a live support grant."""
+    return current_support_expires_at.get() is not None
+
+
 AuthSource = Literal["jwt", "header", "default"]
 
 # Role vocabulary the worker consumes. ``admin`` gates the destructive
@@ -91,6 +105,9 @@ class AuthContext:
     #: two-factor on, unless FONDOK_STAFF_REQUIRE_2FA is off). Grants the
     #: Fondok-admin views from any workspace; never widens deal-data access.
     fondok_staff: bool = False
+    #: Set while a Fondok staff admin is reading a firm under a support grant
+    #: (``X-Support-Tenant``): the request is served as that firm, read-only.
+    support_grant_id: str | None = None
 
 
 def normalize_clerk_role(raw: str | None) -> str:
@@ -128,4 +145,12 @@ def normalize_clerk_role(raw: str | None) -> str:
     return stripped.lower()
 
 
-__all__ = ["AuthContext", "AuthSource", "Role", "current_tenant_id", "normalize_clerk_role"]
+__all__ = [
+    "AuthContext",
+    "AuthSource",
+    "Role",
+    "current_support_expires_at",
+    "current_tenant_id",
+    "normalize_clerk_role",
+    "support_access_active",
+]

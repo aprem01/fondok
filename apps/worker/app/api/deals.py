@@ -21,7 +21,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4, uuid5
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import text
@@ -122,8 +122,10 @@ def coerce_org_tenant_id(org_id: str | None) -> UUID | None:
 
 
 async def get_tenant_id(
+    request: Request = None,  # type: ignore[assignment]
     authorization: Annotated[str | None, Header()] = None,
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+    x_support_tenant: Annotated[str | None, Header(alias="X-Support-Tenant")] = None,
 ) -> UUID:
     """Resolve the tenant for this request.
 
@@ -144,8 +146,14 @@ async def get_tenant_id(
     # ``app.auth`` — auth resolves ``_coerce_tenant_id`` at call time.
     from ..auth import get_current_auth
 
+    # Forward the request + support header so a support-access request is
+    # served as the firm (and held read-only) on every route, whichever of
+    # the two tenant dependencies it uses.
     auth = await get_current_auth(
-        authorization=authorization, x_tenant_id=x_tenant_id
+        request=request,
+        authorization=authorization,
+        x_tenant_id=x_tenant_id,
+        x_support_tenant=x_support_tenant,
     )
     return auth.tenant_id
 

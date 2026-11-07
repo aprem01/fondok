@@ -102,7 +102,7 @@ async def _fresh_db(monkeypatch):
     async with get_engine().begin() as conn:
         for table in (
             "tenants", "model_calls", "engine_outputs", "audit_log", "memo_edits",
-            "cell_comments", "verification_reports", "critic_findings", "documents", "deals",
+            "cell_comments", "verification_reports", "critic_findings", "documents", "deals", "support_grants",
         ):
             await conn.execute(text(f"DELETE FROM {table}"))
     yield
@@ -487,3 +487,303 @@ async def test_staff_policy_change_requires_the_fondok_workspace(_rsa_key) -> No
             f"/admin/tenants/{b}/data_policies", json={"costar_derived_defaults": "withhold"}, headers=from_fondok
         )
         assert r.status_code == 200
+
+
+# ─────────────────────── support access (time-limited, read-only, logged) ───────────────────────
+
+
+async def _audit_actions(org: str) -> list[str]:
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    async with get_engine().connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT action FROM audit_log WHERE tenant_id = :t AND action LIKE 'support.%' ORDER BY created_at"),
+                {"t": _tid(org)},
+            )
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+async def _open(c, rsa_key, org: str = FIRM_A_ORG, *, hours: int = 1, headers: dict | None = None):
+    return await c.post(
+        "/admin/support-access",
+        json={"tenant_id": _tid(org), "reason": "Checking a failed T-12 extraction", "hours": hours},
+        headers=headers or _token(rsa_key, INTERNAL_ORG, role="org:member", **STAFF),
+    )
+
+
+def _deal_ids(body: Any) -> set[str]:
+    rows = body if isinstance(body, list) else body.get("deals", body.get("items", []))
+    return {str(d.get("id")) for d in rows}
+
+
+@pytest.mark.asyncio
+async def test_support_access_reads_the_firm_and_logs_it_there(_rsa_key) -> None:
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    async with get_engine().connect() as conn:
+        a_deals = {str(r[0]) for r in (await conn.execute(text("SELECT id FROM deals WHERE tenant_id = :t"), {"t": _tid(FIRM_A_ORG)})).fetchall()}
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    async with await _client() as c:
+        opened = await _open(c, _rsa_key)
+        assert opened.status_code == 201, opened.text
+        grant = opened.json()
+        assert grant["firm"] == "Harbor Point" and grant["ended_at"] is None
+
+        as_firm = {**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)}
+        r = await c.get("/deals", headers=as_firm)
+        assert r.status_code == 200
+        assert _deal_ids(r.json()) == a_deals
+        # Without the header the same person sees their own workspace, not the firm.
+        assert not (_deal_ids((await c.get("/deals", headers=staff)).json()) & a_deals)
+        # Polling the same page again is not logged twice.
+        await c.get("/deals", headers=as_firm)
+
+        listed = (await c.get("/admin/support-access", headers=staff)).json()["grants"]
+        assert [g["id"] for g in listed] == [grant["id"]]
+
+        assert (await c.delete(f"/admin/support-access/{grant['id']}", headers=staff)).status_code == 200
+        r = await c.get("/deals", headers=as_firm)
+        assert r.status_code == 403 and r.json()["detail"] == "support_access_not_granted"
+
+    assert await _audit_actions(FIRM_A_ORG) == ["support.access_started", "support.viewed", "support.access_ended"]
+    assert await _audit_actions(INTERNAL_ORG) == []
+    assert await _audit_actions(FIRM_B_ORG) == []
+
+
+@pytest.mark.asyncio
+async def test_support_access_is_read_only(_rsa_key) -> None:
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:admin", **STAFF)
+    async with await _client() as c:
+        assert (await _open(c, _rsa_key)).status_code == 201
+        as_firm = {**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)}
+        for method, path, body in (
+            ("POST", "/deals", {"name": "Should not exist"}),
+            ("PATCH", f"/deals/{uuid.uuid4()}", {"name": "x"}),
+            ("DELETE", f"/deals/{uuid.uuid4()}", None),
+        ):
+            r = await c.request(method, path, json=body, headers=as_firm)
+            assert r.status_code == 403 and r.json()["detail"] == "support_access_read_only", (method, r.text)
+
+
+@pytest.mark.asyncio
+async def test_support_header_without_a_live_grant_is_refused(_rsa_key) -> None:
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    as_firm = {**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)}
+    async with await _client() as c:
+        assert (await c.get("/deals", headers=as_firm)).json()["detail"] == "support_access_not_granted"
+        # Someone else's grant does not work for me.
+        other = _sign(_rsa_key, {"sub": "user_other_staff", "org_id": INTERNAL_ORG, "org_role": "org:member", **STAFF})
+        assert (await _open(c, _rsa_key, headers={"Authorization": f"Bearer {other}"})).status_code == 201
+        assert (await c.get("/deals", headers=as_firm)).json()["detail"] == "support_access_not_granted"
+        # An expired grant stops matching.
+        assert (await _open(c, _rsa_key)).status_code == 201
+        async with get_engine().begin() as conn:
+            await conn.execute(
+                text("UPDATE support_grants SET expires_at = :past WHERE staff_user_id = 'user_x'"),
+                {"past": datetime.now(UTC) - timedelta(minutes=1)},
+            )
+        assert (await c.get("/deals", headers=as_firm)).json()["detail"] == "support_access_not_granted"
+        # A malformed header is refused too.
+        bad = {**staff, "X-Support-Tenant": "not-a-uuid"}
+        assert (await c.get("/deals", headers=bad)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_only_two_factor_staff_can_open_or_use_support_access(_rsa_key) -> None:
+    await _seed_two_firms()
+    async with await _client() as c:
+        for headers in (
+            _token(_rsa_key, INTERNAL_ORG, role="org:admin"),  # Fondok workspace admin, no staff flag
+            _token(_rsa_key, INTERNAL_ORG, role="org:admin", fondok_staff="admin"),  # staff without 2FA
+            _token(_rsa_key, FIRM_B_ORG, role="org:admin"),  # a client admin
+        ):
+            r = await _open(c, _rsa_key, headers=headers)
+            assert r.status_code == 403 and r.json()["detail"] == "support_access_requires_staff"
+            r = await c.get("/deals", headers={**headers, "X-Support-Tenant": _tid(FIRM_A_ORG)})
+            assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_support_access_only_for_approved_client_firms(_rsa_key) -> None:
+    await _seed_two_firms()  # North Bay is pending_review
+    async with await _client() as c:
+        assert (await _open(c, _rsa_key, INTERNAL_ORG)).status_code == 404
+        assert (await _open(c, _rsa_key, FIRM_B_ORG)).status_code == 404
+        r = await _open(c, _rsa_key, hours=3)
+        assert r.status_code == 422
+        r = await c.post(
+            "/admin/support-access",
+            json={"tenant_id": _tid(FIRM_A_ORG), "reason": "   short   ", "hours": 1},
+            headers=_token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF),
+        )
+        assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_support_page_that_cannot_be_logged_is_not_served(_rsa_key, monkeypatch) -> None:
+    from app import support_access
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    async with await _client() as c:
+        assert (await _open(c, _rsa_key)).status_code == 201
+
+        async def broken(**kw):
+            return False
+
+        monkeypatch.setattr(support_access, "audit_in_firm", broken)
+        support_access._VIEWED.clear()
+        r = await c.get("/deals", headers={**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)})
+        assert r.status_code == 503 and r.json()["detail"] == "support_access_audit_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_grant_is_cancelled_when_its_start_cannot_be_logged(_rsa_key, monkeypatch) -> None:
+    from app import support_access
+
+    await _seed_two_firms()
+
+    async def broken(**kw):
+        return False
+
+    monkeypatch.setattr(support_access, "audit_in_firm", broken)
+    async with await _client() as c:
+        r = await _open(c, _rsa_key)
+        assert r.status_code == 503
+    assert await support_access.active_grant(staff_user_id="user_x", tenant_id=uuid.UUID(_tid(FIRM_A_ORG))) is None
+
+
+@pytest.mark.asyncio
+async def test_each_search_is_logged_separately(_rsa_key) -> None:
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    as_firm = {**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)}
+    async with await _client() as c:
+        assert (await _open(c, _rsa_key)).status_code == 201
+        await c.get("/deals?q=marriott", headers=as_firm)
+        await c.get("/deals?q=hilton", headers=as_firm)
+        await c.get("/deals?q=hilton", headers=as_firm)
+    async with get_engine().connect() as conn:
+        n = (
+            await conn.execute(
+                text("SELECT count(*) FROM audit_log WHERE tenant_id = :t AND action = 'support.viewed'"),
+                {"t": _tid(FIRM_A_ORG)},
+            )
+        ).scalar_one()
+    assert n == 2
+
+
+@pytest.mark.asyncio
+async def test_download_links_do_not_outlive_the_grant() -> None:
+    from app.api.documents import _DOWNLOAD_URL_TTL_S, _download_ttl_s
+    from app.auth.context import current_support_expires_at
+
+    assert _download_ttl_s() == _DOWNLOAD_URL_TTL_S
+    token = current_support_expires_at.set(datetime.now(UTC) + timedelta(seconds=90))
+    try:
+        assert 1 <= _download_ttl_s() <= 90
+        current_support_expires_at.set(datetime.now(UTC) - timedelta(seconds=5))
+        assert _download_ttl_s() == 1
+    finally:
+        current_support_expires_at.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_compare_view_runs_nothing_under_support_access(_rsa_key, monkeypatch) -> None:
+    """Scenarios compare normally runs a never-run scenario on first view (a
+    write). Under support access it must not."""
+    from sqlalchemy import text
+
+    from app.api import scenarios as scenarios_api
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    async with get_engine().connect() as conn:
+        deal = (
+            await conn.execute(text("SELECT id FROM deals WHERE tenant_id = :t LIMIT 1"), {"t": _tid(FIRM_A_ORG)})
+        ).scalar_one()
+    async with await _client() as c:
+        created = await c.post(
+            f"/deals/{deal}/scenarios", json={"name": "Downside"}, headers=_token(_rsa_key, FIRM_A_ORG)
+        )
+        assert created.status_code in (200, 201), created.text
+        sid = created.json()["id"]
+
+        calls: list[str] = []
+
+        async def spy(*a, **kw):
+            calls.append(kw.get("scenario_id", "?"))
+
+        monkeypatch.setattr(scenarios_api, "run_all_engines", spy)
+        assert (await _open(c, _rsa_key)).status_code == 201
+        staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+        r = await c.get(
+            f"/deals/{deal}/scenarios/compare?scenario_ids={sid}",
+            headers={**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)},
+        )
+        assert r.status_code == 200, r.text
+        assert calls == []
+        # The firm's own view still materialises as before.
+        r = await c.get(f"/deals/{deal}/scenarios/compare?scenario_ids={sid}", headers=_token(_rsa_key, FIRM_A_ORG))
+        assert r.status_code == 200 and calls == [sid]
+
+
+@pytest.mark.asyncio
+async def test_firm_admin_can_see_and_end_support_access_on_their_firm(_rsa_key) -> None:
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    firm_admin = _token(_rsa_key, FIRM_A_ORG, role="org:admin")
+    firm_member = _token(_rsa_key, FIRM_A_ORG, role="org:member")
+    other_firm_admin = _token(_rsa_key, FIRM_B_ORG, role="org:admin")
+    async with await _client() as c:
+        grant = (await _open(c, _rsa_key)).json()
+        as_firm = {**staff, "X-Support-Tenant": _tid(FIRM_A_ORG)}
+        assert (await c.get("/deals", headers=as_firm)).status_code == 200
+
+        # The firm's admin sees it (without the staff member's id); a member and another firm do not.
+        mine = (await c.get("/admin/support-access/on-my-firm", headers=firm_admin)).json()["grants"]
+        assert [g["id"] for g in mine] == [grant["id"]] and "staff_user_id" not in mine[0]
+        assert mine[0]["reason"] == "Checking a failed T-12 extraction"
+        assert (await c.get("/admin/support-access/on-my-firm", headers=firm_member)).status_code == 403
+        assert (await c.get("/admin/support-access/on-my-firm", headers=other_firm_admin)).json()["grants"] == []
+        # Another firm's admin cannot end it; the staff header cannot be used to pose as the firm here.
+        assert (await c.delete(f"/admin/support-access/on-my-firm/{grant['id']}", headers=other_firm_admin)).status_code == 404
+        assert (await c.delete(f"/admin/support-access/on-my-firm/{grant['id']}", headers=as_firm)).status_code in (403, 404)
+
+        assert (await c.delete(f"/admin/support-access/on-my-firm/{grant['id']}", headers=firm_admin)).status_code == 200
+        r = await c.get("/deals", headers=as_firm)
+        assert r.status_code == 403 and r.json()["detail"] == "support_access_not_granted"
+        assert (await c.get("/admin/support-access", headers=staff)).json()["grants"] == []
+
+    async with get_engine().connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT payload FROM audit_log WHERE tenant_id = :t AND action = 'support.access_ended'"),
+                {"t": _tid(FIRM_A_ORG)},
+            )
+        ).fetchall()
+    assert len(rows) == 1
+    payload = rows[0][0]
+    payload = payload if isinstance(payload, dict) else __import__("json").loads(payload)
+    assert payload["metadata"]["ended_by"] == "firm_admin"

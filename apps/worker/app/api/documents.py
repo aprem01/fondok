@@ -5586,6 +5586,18 @@ async def download_document(
 # bearer credentials: never log or echo them.
 
 _DOWNLOAD_URL_TTL_S = 300
+
+
+def _download_ttl_s() -> int:
+    """Link lifetime: ``_DOWNLOAD_URL_TTL_S``, but never past a Fondok staff
+    support grant's expiry — a link minted under support must not outlive it."""
+    from ..auth.context import current_support_expires_at
+
+    expires = current_support_expires_at.get()
+    if expires is None:
+        return _DOWNLOAD_URL_TTL_S
+    left = int((expires - datetime.now(UTC)).total_seconds())
+    return max(1, min(_DOWNLOAD_URL_TTL_S, left))
 _DOWNLOAD_URL_KINDS = Literal["s3_presigned", "signed_path"]
 
 # Per-process fallback key for non-production workers without an explicit
@@ -5747,13 +5759,14 @@ async def get_document_download_url(
         )
     content_type = _media_type_for(filename)
 
+    ttl = _download_ttl_s()
     settings = get_settings()
     store = get_raw_store(settings)
     if isinstance(store, S3RawStore):
         try:
             url = await store.presigned_get_url(
                 storage_key,
-                expires_in=_DOWNLOAD_URL_TTL_S,
+                expires_in=ttl,
                 content_disposition=_inline_content_disposition(filename),
                 content_type=content_type,
             )
@@ -5770,14 +5783,14 @@ async def get_document_download_url(
             ) from exc
         return DocumentDownloadUrl(
             url=url,
-            expires_in=_DOWNLOAD_URL_TTL_S,
+            expires_in=ttl,
             kind="s3_presigned",
             filename=filename,
             content_type=content_type,
         )
 
     key = _download_signing_key()
-    exp = int(time.time()) + _DOWNLOAD_URL_TTL_S
+    exp = int(time.time()) + ttl
     token = _download_token(deal_id, doc_id, exp, key)
     path = (
         f"/deals/{deal_id}/documents/{doc_id}/download/signed?"
@@ -5785,7 +5798,7 @@ async def get_document_download_url(
     )
     return DocumentDownloadUrl(
         url=path,
-        expires_in=_DOWNLOAD_URL_TTL_S,
+        expires_in=ttl,
         kind="signed_path",
         filename=filename,
         content_type=content_type,

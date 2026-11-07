@@ -483,3 +483,31 @@ async def test_platform_overview_reads_every_firm_under_rls(rls_db, caplog) -> N
         assert data["engines"]["outputs"] == 1 and data["engines"]["failed"] == 0
         assert data["ai"]["calls"] == 1 and data["ai"]["cost_usd"] == pytest.approx(0.25)
         assert sum(data["ai"]["daily_cost_usd"].values()) == pytest.approx(0.25)
+
+
+async def test_support_grant_and_firm_audit_work_as_the_app_role(rls_db) -> None:
+    """As ``fondok_app`` with the GUC on: the support_grants table (not under
+    RLS, like the registry) is writable and readable, and the support audit
+    row lands in the FIRM's log — not the caller's, not another firm's."""
+    from app import support_access as support
+    from app.auth.context import current_tenant_id
+
+    await _owner_exec("DELETE FROM support_grants")
+    await _owner_exec("DELETE FROM audit_log WHERE action LIKE 'support.%'")
+    caller = current_tenant_id.set(TENANT_B)  # the staff member is "in" another workspace
+    try:
+        grant = await support.create_grant(
+            tenant_id=UUID(TENANT_A), staff_user_id="user_staff", reason="RLS support check", hours=1
+        )
+        assert await support.active_grant(staff_user_id="user_staff", tenant_id=UUID(TENANT_A)) is not None
+        assert await support.active_grant(staff_user_id="user_staff", tenant_id=UUID(TENANT_B)) is None
+        await support.audit_in_firm(
+            tenant_id=UUID(TENANT_A), actor_id="user_staff", action=support.ACTION_STARTED, grant=grant
+        )
+        assert current_tenant_id.get() == TENANT_B  # restored
+        await support.end_grant(grant.id)
+        assert await support.active_grant(staff_user_id="user_staff", tenant_id=UUID(TENANT_A)) is None
+    finally:
+        current_tenant_id.reset(caller)
+    rows = await _owner_fetch("SELECT tenant_id::text FROM audit_log WHERE action = 'support.access_started'")
+    assert [r[0] for r in rows] == [TENANT_A]

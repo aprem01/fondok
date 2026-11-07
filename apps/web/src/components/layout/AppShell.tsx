@@ -8,6 +8,7 @@ import { ToastProvider } from '@/components/ui/Toast';
 import SourceDocPane from '@/components/citations/SourceDocPane';
 import { LineageDrawerHost } from '@/components/project/LineageDrawer';
 import { ClerkTokenBridge } from '@/lib/auth';
+import SupportBanner from './SupportBanner';
 
 const CHROMELESS = ['/sign-in', '/sign-up'];
 
@@ -53,6 +54,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </button>
           <FondokMark size="sm" />
         </div>
+        <SupportBanner />
         <div className="flex-1 min-w-0">{children}</div>
       </main>
       {/* Globally mounted citation viewer — listens for fondok:citation-focus
