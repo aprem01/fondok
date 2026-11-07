@@ -22,7 +22,16 @@ export async function requireInternalAdmin(req: Request): Promise<InternalAdmin 
   }
   const { userId, getToken } = await auth();
   if (!userId) return NextResponse.json({ error: 'not_signed_in' }, { status: 401 });
-  const token = await getToken();
+  // Same token the browser sends the worker: the `worker` JWT template,
+  // falling back to the plain session token where the template is not set up
+  // (mirrors ClerkTokenBridge in lib/auth.ts).
+  let token: string | null = null;
+  try {
+    token = await getToken({ template: 'worker' });
+  } catch {
+    token = null;
+  }
+  if (!token) token = await getToken();
   const base = workerUrl();
   if (!token || !base) return NextResponse.json({ error: 'not_available' }, { status: 503 });
   let res: Response;
