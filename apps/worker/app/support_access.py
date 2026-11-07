@@ -280,10 +280,14 @@ async def audit_staff_membership(
 ) -> bool:
     """Record that a Fondok person joined or left the firm's organization as a
     standing admin (pre-launch only). Written to the FIRM's log so its admins
-    see who from Fondok is in their workspace and since when."""
+    see who from Fondok is in their workspace and since when. When the actor
+    records it for someone else (the launch-day removal script), the row says
+    so: ``on_behalf`` is true and the actor stays the caller."""
     meta: dict[str, Any] = {"member_user_id": member_user_id, "pre_launch_until": FULL_LAUNCH.isoformat()}
     if member_email:
         meta["member_email"] = member_email
+    if actor_id is not None and member_user_id != actor_id:
+        meta["on_behalf"] = True
     return await _audit_firm_row(
         tenant_id=tenant_id,
         actor_id=actor_id,

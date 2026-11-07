@@ -38,8 +38,14 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
+const FIRM = { id: TENANT, clerk_org_id: 'org_a', name: 'Acme Hotels', kind: 'external', status: 'active' };
+const INTERNAL = { id: '99999999-2222-4333-8444-555555555555', clerk_org_id: 'org_f', name: 'Fondok', kind: 'internal', status: 'active' };
 const workerScope = (scope: string) =>
-  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ scope, tenants: [] }), { status: 200 }));
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ scope, tenants: [FIRM, INTERNAL] }), { status: 200 }));
+const staffOk = () => fetchMock.mockResolvedValueOnce(new Response('{"grants":[]}', { status: 200 }));
+const staffNo = () => fetchMock.mockResolvedValueOnce(new Response('{"detail":"support_access_requires_staff"}', { status: 403 }));
+const logged = () => fetchMock.mockResolvedValueOnce(new Response('{"logged":true}', { status: 201 }));
+const capError = { errors: [{ code: 'organization_membership_quota_exceeded', longMessage: 'quota' }] };
 
 describe('/api/admin/firms/membership', () => {
   it('GET reports the window and the caller’s memberships', async () => {
@@ -57,71 +63,110 @@ describe('/api/admin/firms/membership', () => {
   it('refuses a non-Fondok admin', async () => {
     workerScope('own');
     const { POST } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'org_a', tenantId: TENANT }));
+    const res = await POST(req('POST', { tenantId: TENANT }));
     expect(res.status).toBe(403);
     expect(createOrganizationMembership).not.toHaveBeenCalled();
   });
 
-  it('joins as org:admin and logs it in the firm’s audit log', async () => {
+  it('refuses a Fondok admin who is not staff (no 2FA) before touching Clerk', async () => {
     workerScope('all');
-    fetchMock.mockResolvedValueOnce(new Response('{"logged":true}', { status: 201 }));
+    staffNo();
+    const { POST } = await import('@/app/api/admin/firms/membership/route');
+    const res = await POST(req('POST', { tenantId: TENANT }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: 'requires_staff' });
+    expect(createOrganizationMembership).not.toHaveBeenCalled();
+  });
+
+  it('joins the org from the server-side registry and logs it in the firm’s audit log', async () => {
+    workerScope('all');
+    staffOk();
+    logged();
     createOrganizationMembership.mockResolvedValue({});
     const { POST } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'org_a', tenantId: TENANT }));
+    const res = await POST(req('POST', { tenantId: TENANT, orgId: 'org_evil' }));
     expect(res.status).toBe(201);
     expect(createOrganizationMembership).toHaveBeenCalledWith({ organizationId: 'org_a', userId: 'user_1', role: 'org:admin' });
-    const [url, init] = fetchMock.mock.calls[1];
+    const [url, init] = fetchMock.mock.calls[2];
     expect(url).toBe('https://worker.example/admin/support-access/membership-event');
-    expect(JSON.parse(init.body)).toEqual({ tenant_id: TENANT, joined: true, user_id: 'user_1', email: 'prem@fondok.ai' });
+    expect(JSON.parse(init.body)).toEqual({ tenant_id: TENANT, joined: true, email: 'prem@fondok.ai' });
   });
 
-  it('undoes the join when the firm’s audit log cannot record it', async () => {
+  it('never joins an internal or unregistered tenant', async () => {
     workerScope('all');
+    const { POST } = await import('@/app/api/admin/firms/membership/route');
+    expect((await POST(req('POST', { tenantId: INTERNAL.id }))).status).toBe(404);
+    workerScope('all');
+    expect((await POST(req('POST', { tenantId: '00000000-0000-4000-8000-000000000000' }))).status).toBe(404);
+    expect(createOrganizationMembership).not.toHaveBeenCalled();
+  });
+
+  it('undoes the join when the firm’s audit log cannot record it, and says so if the undo fails', async () => {
+    workerScope('all');
+    staffOk();
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
     createOrganizationMembership.mockResolvedValue({});
-    deleteOrganizationMembership.mockResolvedValue({});
+    deleteOrganizationMembership.mockResolvedValueOnce({});
     const { POST } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'org_a', tenantId: TENANT }));
+    let res = await POST(req('POST', { tenantId: TENANT }));
     expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: 'audit_unavailable' });
     expect(deleteOrganizationMembership).toHaveBeenCalledWith({ organizationId: 'org_a', userId: 'user_1' });
+
+    workerScope('all');
+    staffOk();
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    deleteOrganizationMembership.mockRejectedValueOnce(new Error('clerk down'));
+    res = await POST(req('POST', { tenantId: TENANT }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: 'audit_unavailable_rollback_failed' });
   });
 
-  it('lifts a member cap once and retries', async () => {
+  it('lifts the member cap only on a dev Clerk instance', async () => {
+    vi.stubEnv('CLERK_SECRET_KEY', 'sk_test_abc');
     workerScope('all');
-    fetchMock.mockResolvedValueOnce(new Response('{"logged":true}', { status: 201 }));
-    createOrganizationMembership
-      .mockRejectedValueOnce({ errors: [{ longMessage: 'The maximum number of memberships has been reached.' }] })
-      .mockResolvedValueOnce({});
+    staffOk();
+    logged();
+    createOrganizationMembership.mockRejectedValueOnce(capError).mockResolvedValueOnce({});
     updateOrganization.mockResolvedValue({});
     const { POST } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'org_a', tenantId: TENANT }));
+    let res = await POST(req('POST', { tenantId: TENANT }));
     expect(res.status).toBe(201);
     expect(updateOrganization).toHaveBeenCalledWith('org_a', { maxAllowedMemberships: 0 });
-    expect(createOrganizationMembership).toHaveBeenCalledTimes(2);
+
+    vi.stubEnv('CLERK_SECRET_KEY', 'sk_live_abc');
+    updateOrganization.mockClear();
+    workerScope('all');
+    staffOk();
+    createOrganizationMembership.mockRejectedValueOnce(capError);
+    res = await POST(req('POST', { tenantId: TENANT }));
+    expect(res.status).toBe(502);
+    expect(updateOrganization).not.toHaveBeenCalled();
   });
 
   it('refuses to join once the pre-launch window is closed, but still allows leaving', async () => {
     vi.stubEnv('PRE_LAUNCH_STAFF_MEMBERSHIP', '0');
     workerScope('all');
     const { POST, DELETE } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'org_a', tenantId: TENANT }));
+    const res = await POST(req('POST', { tenantId: TENANT }));
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: 'pre_launch_closed' });
     expect(createOrganizationMembership).not.toHaveBeenCalled();
 
     workerScope('all');
-    fetchMock.mockResolvedValueOnce(new Response('{"logged":true}', { status: 201 }));
+    logged();
     deleteOrganizationMembership.mockResolvedValue({});
-    const left = await DELETE(req('DELETE', { orgId: 'org_a', tenantId: TENANT }));
+    const left = await DELETE(req('DELETE', { tenantId: TENANT }));
     expect(left.status).toBe(200);
     expect(await left.json()).toEqual({ left: true, logged: true });
+    expect(deleteOrganizationMembership).toHaveBeenCalledWith({ organizationId: 'org_a', userId: 'user_1' });
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ joined: false });
   });
 
   it('rejects malformed ids before touching Clerk', async () => {
     workerScope('all');
     const { POST } = await import('@/app/api/admin/firms/membership/route');
-    const res = await POST(req('POST', { orgId: 'nope', tenantId: 'bad' }));
+    const res = await POST(req('POST', { tenantId: 'bad' }));
     expect(res.status).toBe(422);
     expect(createOrganizationMembership).not.toHaveBeenCalled();
   });

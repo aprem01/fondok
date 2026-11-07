@@ -852,3 +852,36 @@ async def test_staff_membership_event_is_logged_in_the_firm(_rsa_key) -> None:
     payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
     assert payload["metadata"]["member_email"] == "prem@fondok.ai"
     assert payload["metadata"]["pre_launch_until"].startswith("2027-06-27")
+
+
+@pytest.mark.asyncio
+async def test_staff_membership_event_on_behalf_only_for_removal(_rsa_key) -> None:
+    from app import support_access
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    async with await _client() as c:
+        base = {"tenant_id": _tid(FIRM_A_ORG), "user_id": "user_other", "email": "sam@fondok.ai"}
+        r = await c.post("/admin/support-access/membership-event", json={**base, "joined": True}, headers=staff)
+        assert r.status_code == 422
+        r = await c.post("/admin/support-access/membership-event", json={**base, "joined": False}, headers=staff)
+        assert r.status_code == 201, r.text
+    import json
+
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    async with get_engine().connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT actor_id, payload FROM audit_log WHERE tenant_id = :t AND action = :a"),
+                {"t": _tid(FIRM_A_ORG), "a": support_access.ACTION_STAFF_LEFT},
+            )
+        ).fetchall()
+    assert len(rows) == 1
+    actor, payload = rows[0]
+    payload = payload if isinstance(payload, dict) else json.loads(payload)
+    assert str(actor) != "user_other"
+    assert payload["metadata"]["member_user_id"] == "user_other"
+    assert payload["metadata"]["on_behalf"] is True

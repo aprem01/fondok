@@ -7,7 +7,8 @@ import { NextResponse } from 'next/server';
  * second part (`GET /admin/tenants` answers `scope: "all"` only for that
  * caller), so there is one rule for "Fondok admin", not two.
  */
-export type InternalAdmin = { userId: string; token: string; workerUrl: string };
+export type RegistryTenant = { id: string; clerk_org_id: string; name: string; kind: 'internal' | 'external'; status: string };
+export type InternalAdmin = { userId: string; token: string; workerUrl: string; tenants: RegistryTenant[] };
 
 export const workerUrl = () => (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
@@ -44,9 +45,9 @@ export async function requireInternalAdmin(req: Request): Promise<InternalAdmin 
     return NextResponse.json({ error: 'worker_unreachable' }, { status: 502 });
   }
   if (!res.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const body = (await res.json().catch(() => null)) as { scope?: string } | null;
+  const body = (await res.json().catch(() => null)) as { scope?: string; tenants?: RegistryTenant[] } | null;
   if (body?.scope !== 'all') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  return { userId, token, workerUrl: base };
+  return { userId, token, workerUrl: base, tenants: Array.isArray(body.tenants) ? body.tenants : [] };
 }
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

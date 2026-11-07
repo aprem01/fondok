@@ -80,7 +80,7 @@ export default function FirmsPage() {
     try {
       const { ok, data } = await postJson(
         '/api/admin/firms/membership',
-        { orgId: firm.clerk_org_id, tenantId: firm.id },
+        { tenantId: firm.id },
         join ? 'POST' : 'DELETE',
       );
       if (!ok) throw new Error(typeof data.error === 'string' ? data.error : 'Request failed');

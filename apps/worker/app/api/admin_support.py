@@ -111,7 +111,14 @@ async def record_membership_event(
     firm = await get_tenant(body.tenant_id, use_cache=False)
     if firm is None or firm.is_internal:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="firm_not_available_for_support")
-    member = body.user_id or user_id
+    # The subject defaults to the caller. Another user may be named only when
+    # recording a REMOVAL (the launch-day script); a join is always one's own,
+    # and a row recorded for someone else is marked ``on_behalf`` by the helper.
+    member = user_id
+    if body.user_id and body.user_id != user_id:
+        if body.joined:
+            raise HTTPException(status_code=422, detail="membership_join_must_be_own")
+        member = body.user_id
     logged = await support.audit_staff_membership(
         tenant_id=firm.id, actor_id=user_id, joined=body.joined, member_user_id=member, member_email=body.email
     )
