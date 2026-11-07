@@ -14,7 +14,10 @@ Endpoints (mounted under ``/admin`` beside :mod:`app.api.admin_cost`)
   Clerk webhook parked as ``pending_review``) updates its name / kind /
   status, which is how an internal admin approves a new institution.
 
-Both are behind ``require_role("admin")``: a ``member`` of an internal
+Fondok staff admins (an account-level role carried on the verified JWT —
+see ``FONDOK_STAFF_REQUIRE_2FA``) may call every route here from any
+workspace. Otherwise the routes are behind ``require_role("admin")``: a
+``member`` of an internal
 org still cannot administer tenants.
 
 Bootstrapping: the very first internal tenant cannot be created through
@@ -33,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit import log_audit
-from ..auth import AuthContext, require_role
+from ..auth import AuthContext, require_role_or_staff
 from ..database import get_session
 from ..tenants import (
     KINDS,
@@ -41,6 +44,7 @@ from ..tenants import (
     DataPolicyChoice,
     Tenant,
     TenantDataPolicies,
+    caller_is_fondok_admin,
     get_tenant,
     list_tenants,
     reset_tenant_cache,
@@ -73,11 +77,11 @@ async def _caller_tenant(auth: AuthContext) -> Tenant | None:
 
 @router.get("/tenants")
 async def list_registered_tenants(
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
 ) -> dict[str, Any]:
-    """List registry rows — all of them for an internal tenant, else own row."""
+    """List registry rows — all of them for a Fondok admin, else own row."""
     me = await _caller_tenant(auth)
-    if me is not None and me.is_serving and me.is_internal:
+    if await caller_is_fondok_admin(auth):
         rows = await list_tenants()
         scope = "all"
     else:
@@ -93,11 +97,10 @@ async def list_registered_tenants(
 @router.post("/tenants", status_code=status.HTTP_201_CREATED)
 async def register_tenant(
     body: RegisterTenantBody,
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
 ) -> dict[str, Any]:
-    """Register a Clerk organization as a tenant (internal callers only)."""
-    me = await _caller_tenant(auth)
-    if me is None or not me.is_serving or not me.is_internal:
+    """Register a Clerk organization as a tenant (Fondok admins only)."""
+    if not await caller_is_fondok_admin(auth):
         # 403, not 404: the route's existence is not a secret, the
         # registry's contents are (and we return none of them here).
         raise HTTPException(
@@ -130,6 +133,20 @@ async def register_tenant(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="cannot_demote_own_internal_tenant",
+        )
+    existing = await get_tenant(tenant_id)
+    if (
+        existing is not None
+        and existing.is_internal
+        and (body.kind != "internal" or body.status != "active")
+    ):
+        # No Fondok workspace is demoted or suspended over HTTP — a staff
+        # admin can call this from inside a client workspace, where the
+        # own-tenant guard above does not cover the internal row. The
+        # shell script (scripts/register_tenant.py) remains the way.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="cannot_demote_internal_tenant",
         )
     stored = await upsert_tenant(
         tenant_id=tenant_id,
@@ -165,7 +182,7 @@ class DataPoliciesPatchBody(BaseModel):
 
 async def _require_internal_admin(auth: AuthContext) -> Tenant:
     me = await _caller_tenant(auth)
-    if me is None or not me.is_serving or not me.is_internal:
+    if me is None or not await caller_is_fondok_admin(auth):
         # 403, not 404: the route is not a secret; the target's policy is.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -181,7 +198,7 @@ def _policy_response(target: Tenant) -> dict[str, Any]:
 @router.get("/tenants/{tenant_id}/data_policies")
 async def get_tenant_data_policies(
     tenant_id: UUID,
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
 ) -> dict[str, Any]:
     """The data policies of one registered tenant (internal admins only)."""
     await _require_internal_admin(auth)
@@ -196,7 +213,7 @@ async def patch_tenant_data_policies(
     tenant_id: UUID,
     body: DataPoliciesPatchBody,
     session: Annotated[AsyncSession, Depends(get_session)],
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
 ) -> dict[str, Any]:
     """Change one registered tenant's data policies (internal admins only).
 

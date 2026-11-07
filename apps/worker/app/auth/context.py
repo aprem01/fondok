@@ -87,6 +87,10 @@ class AuthContext:
     source: str
     org_id: str | None = None
     email: str | None = None
+    #: True only for a verified JWT carrying ``fondok_staff == "admin"`` (and
+    #: two-factor on, unless FONDOK_STAFF_REQUIRE_2FA is off). Grants the
+    #: Fondok-admin views from any workspace; never widens deal-data access.
+    fondok_staff: bool = False
 
 
 def normalize_clerk_role(raw: str | None) -> str:

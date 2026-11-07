@@ -307,6 +307,21 @@ async def is_internal(tenant_id: UUID | str) -> bool:
     return tenant is not None and tenant.is_serving and tenant.is_internal
 
 
+async def caller_is_fondok_admin(auth: Any) -> bool:
+    """May this caller use the Fondok-admin views?
+
+    Yes for a verified Fondok staff admin (account-level role, any
+    workspace) — and, as before, for a caller whose ACTIVE workspace is a
+    registered, active ``internal`` tenant (the role gate on the route has
+    already required ``admin`` there). ``auth`` is an
+    :class:`app.auth.context.AuthContext`; typed loosely to keep this module
+    free of an import cycle with ``app.auth``.
+    """
+    if getattr(auth, "source", None) == "jwt" and getattr(auth, "fondok_staff", False):
+        return True
+    return await is_internal(auth.tenant_id)
+
+
 async def list_tenants(*, raise_on_error: bool = False) -> list[Tenant]:
     """Every registry row, oldest first.
 
@@ -529,6 +544,7 @@ __all__ = [
     "Tenant",
     "TenantDataPolicies",
     "TenantRegistryUnavailable",
+    "caller_is_fondok_admin",
     "data_policies_posture",
     "get_tenant",
     "is_internal",

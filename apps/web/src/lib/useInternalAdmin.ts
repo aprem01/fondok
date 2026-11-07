@@ -5,10 +5,11 @@ import { api, isWorkerConnected } from '@/lib/api';
 import type { AuthRole } from '@/lib/auth';
 
 /**
- * Is the caller an admin of an internal workspace? The worker answers:
- * `GET /admin/tenants` has scope `all` only for a serving internal tenant, the
- * same rule that gates the detailed methodology. For hiding a link only; the
- * worker still enforces access to the content.
+ * Is the caller a Fondok admin? The worker answers: `GET /admin/tenants` has
+ * scope `all` for a Fondok staff admin (an account-level role, in any
+ * workspace and whatever their role there) or for an admin of a serving
+ * internal workspace — the same rule that gates every Fondok-admin view. For
+ * hiding a link only; the worker still enforces access to the content.
  *
  * Fails closed: false until a yes arrives, on any error, and from the moment
  * the workspace changes. The yes is stored against the org it was asked for.
@@ -17,7 +18,9 @@ export function useIsInternalAdmin(role: AuthRole, orgId: string | null): boolea
   const [internalOrgId, setInternalOrgId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (role !== 'org:admin' || !orgId || !isWorkerConnected()) return;
+    // Ask whatever the workspace role: a staff admin may be a plain member of
+    // the client workspace they are in. `unknown` = not loaded yet.
+    if (role === 'unknown' || !orgId || !isWorkerConnected()) return;
     const ctl = new AbortController();
     api.admin.tenants
       .list(ctl.signal)
@@ -30,5 +33,5 @@ export function useIsInternalAdmin(role: AuthRole, orgId: string | null): boolea
     return () => ctl.abort();
   }, [role, orgId]);
 
-  return role === 'org:admin' && orgId != null && internalOrgId === orgId;
+  return role !== 'unknown' && orgId != null && internalOrgId === orgId;
 }

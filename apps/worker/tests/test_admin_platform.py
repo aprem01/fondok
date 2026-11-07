@@ -58,8 +58,9 @@ def _sign(rsa_key: Any, claims: dict[str, Any]) -> str:
     return pyjwt.encode(payload, pem, algorithm="RS256", headers={"kid": _TEST_KID})
 
 
-def _token(rsa_key: Any, org: str, role: str = "org:admin") -> dict[str, str]:
-    return {"Authorization": f"Bearer {_sign(rsa_key, {'sub': 'user_x', 'org_id': org, 'org_role': role})}"}
+def _token(rsa_key: Any, org: str, role: str = "org:admin", **extra: Any) -> dict[str, str]:
+    claims = {"sub": "user_x", "org_id": org, "org_role": role, **extra}
+    return {"Authorization": f"Bearer {_sign(rsa_key, claims)}"}
 
 
 @pytest.fixture(autouse=True)
@@ -354,3 +355,102 @@ async def test_fondok_workspace_gets_no_adoption_warning(_rsa_key) -> None:
     async with await _client() as c:
         body = (await c.get("/admin/platform", headers=_token(_rsa_key, INTERNAL_ORG))).json()
     assert not [s for s in body["signals"] if s["firm"] == "Fondok Internal" and s["area"] == "adoption"]
+
+
+# ─────────────────────── Fondok staff admin (account-level role) ───────────────────────
+
+STAFF = {"fondok_staff": "admin", "two_factor": "true"}
+
+
+@pytest.mark.asyncio
+async def test_staff_admin_sees_platform_from_a_client_workspace(_rsa_key) -> None:
+    """A verified staff admin with two-factor on is a Fondok admin in ANY
+    workspace — even as a plain member of a client firm."""
+    await _seed_two_firms()
+    async with await _client() as c:
+        for role in ("org:member", "org:admin"):
+            r = await c.get("/admin/platform", headers=_token(_rsa_key, FIRM_A_ORG, role=role, **STAFF))
+            assert r.status_code == 200, (role, r.text)
+            assert {f["name"] for f in r.json()["firms"]} == {"Fondok Internal", "Harbor Point", "North Bay"}
+        r = await c.get("/admin/tenants", headers=_token(_rsa_key, FIRM_A_ORG, role="org:member", **STAFF))
+        assert r.status_code == 200 and r.json()["scope"] == "all"
+        r = await c.get("/admin/health", headers=_token(_rsa_key, FIRM_A_ORG, role="org:member", **STAFF))
+        assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"fondok_staff": "admin"},  # no two-factor claim
+        {"fondok_staff": "admin", "two_factor": "false"},
+        {"fondok_staff": "admin", "two_factor": ""},
+        {"fondok_staff": "", "two_factor": "true"},  # template renders empty metadata as ""
+        {"fondok_staff": "member", "two_factor": "true"},
+        {"fondok_staff": ["admin"], "two_factor": "true"},
+        {"two_factor": "true"},
+    ],
+)
+async def test_staff_claim_fails_closed(_rsa_key, claims) -> None:
+    await _seed_two_firms()
+    async with await _client() as c:
+        r = await c.get("/admin/platform", headers=_token(_rsa_key, FIRM_A_ORG, role="org:admin", **claims))
+        assert r.status_code == 403
+        r = await c.get("/admin/tenants", headers=_token(_rsa_key, FIRM_A_ORG, role="org:admin", **claims))
+        assert r.json()["scope"] == "own"
+
+
+@pytest.mark.asyncio
+async def test_two_factor_requirement_can_be_switched_off(_rsa_key, monkeypatch) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setenv("FONDOK_STAFF_REQUIRE_2FA", "0")
+    get_settings.cache_clear()
+    await _seed_two_firms()
+    async with await _client() as c:
+        r = await c.get("/admin/platform", headers=_token(_rsa_key, FIRM_A_ORG, role="org:member", fondok_staff="admin"))
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_staff_admin_still_cannot_reach_another_firms_deals(_rsa_key) -> None:
+    """The staff role opens the Fondok-admin views only. Deal data stays
+    scoped to the active workspace."""
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    await _seed_two_firms()
+    async with get_engine().connect() as conn:
+        b_deal = (
+            await conn.execute(text("SELECT id FROM deals WHERE tenant_id = :t"), {"t": _tid(FIRM_B_ORG)})
+        ).scalar_one()
+    async with await _client() as c:
+        h = _token(_rsa_key, FIRM_A_ORG, role="org:admin", **STAFF)
+        listed = (await c.get("/deals", headers=h)).json()
+        rows = listed if isinstance(listed, list) else listed.get("deals", listed.get("items", []))
+        assert str(b_deal) not in {str(d.get("id")) for d in rows}
+        assert (await c.get(f"/deals/{b_deal}", headers=h)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_no_fondok_workspace_can_be_demoted_over_http(_rsa_key) -> None:
+    """A staff admin calling from a client workspace is not covered by the
+    own-tenant guard, so the internal row is protected on its own."""
+    await _seed_two_firms()
+    async with await _client() as c:
+        h = _token(_rsa_key, FIRM_A_ORG, role="org:member", **STAFF)
+        for kind, status in (("external", "active"), ("internal", "suspended")):
+            r = await c.post(
+                "/admin/tenants",
+                json={"clerk_org_id": INTERNAL_ORG, "name": "Fondok Internal", "kind": kind, "status": status},
+                headers=h,
+            )
+            assert r.status_code == 409 and r.json()["detail"] == "cannot_demote_internal_tenant"
+        # Approving a client firm still works for staff.
+        r = await c.post(
+            "/admin/tenants",
+            json={"clerk_org_id": FIRM_B_ORG, "name": "North Bay", "kind": "external", "status": "active"},
+            headers=h,
+        )
+        assert r.status_code == 201 and r.json()["status"] == "active"

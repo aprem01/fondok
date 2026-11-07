@@ -42,10 +42,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import AuthContext, require_role
+from ..auth import AuthContext, require_role_or_staff
 from ..auth.context import current_tenant_id
 from ..database import get_session
-from ..tenants import data_policies_posture, get_tenant
+from ..tenants import caller_is_fondok_admin, data_policies_posture
 from .health import ops_snapshot, public_snapshot
 
 logger = logging.getLogger(__name__)
@@ -202,13 +202,12 @@ async def failure_counts_last_hour(
 @router.get("/health")
 async def admin_health(
     session: Annotated[AsyncSession, Depends(get_session)],
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
 ) -> dict[str, Any]:
     """Public probe fields + the operator blocks (``raw_store``, ``auth``,
     ``semantic_search``, ``extraction_cache``, ``llm_provider``) + the
     last-hour failure counters. Internal tenants only."""
-    me = await get_tenant(auth.tenant_id)
-    if me is None or not me.is_serving or not me.is_internal:
+    if not await caller_is_fondok_admin(auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=ADMIN_HEALTH_REQUIRES_INTERNAL_TENANT,

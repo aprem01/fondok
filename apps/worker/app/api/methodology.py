@@ -26,9 +26,9 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..auth import AuthContext, get_current_auth, require_role
+from ..auth import AuthContext, get_current_auth, is_fondok_staff, require_role
 from ..methodology import get_package, load_error
-from ..tenants import get_tenant
+from ..tenants import caller_is_fondok_admin
 
 router = APIRouter()
 
@@ -71,9 +71,10 @@ async def _gate_internal_admin(auth: AuthContext) -> None:
     """``require_role("admin")`` (JWT members → 403; header/default paths are
     trusted callers, as everywhere) and then the internal-tenant check the
     operator health view uses."""
+    if is_fondok_staff(auth):
+        return  # account-level Fondok staff admin, any workspace
     await _require_admin(auth)
-    me = await get_tenant(auth.tenant_id)
-    if me is None or not me.is_serving or not me.is_internal:
+    if not await caller_is_fondok_admin(auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=METHODOLOGY_REQUIRES_INTERNAL_ADMIN,

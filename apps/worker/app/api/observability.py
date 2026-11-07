@@ -50,7 +50,7 @@ from sqlalchemy import text
 from ..auth import AuthContext, get_current_auth
 from ..budget import _price_for
 from ..database import get_engine
-from ..tenants import is_internal
+from ..tenants import caller_is_fondok_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -80,7 +80,7 @@ async def _resolve_scope(auth: AuthContext, all_tenants: bool) -> str | None:
     """
     if not all_tenants:
         return str(auth.tenant_id)
-    if auth.source != "jwt" or await is_internal(auth.tenant_id):
+    if auth.source != "jwt" or await caller_is_fondok_admin(auth):
         return None
     raise HTTPException(
         status_code=403,

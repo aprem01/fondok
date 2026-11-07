@@ -121,6 +121,7 @@ async def get_current_auth(
         org_role_raw = claims.get("org_role") or org_claims.get("rol")
         email = claims.get("email")
         role = normalize_clerk_role(org_role_raw)
+        fondok_staff = _staff_claim(claims, require_2fa=settings.FONDOK_STAFF_REQUIRE_2FA)
 
         # Tenant resolution — FON-93: the JWT's ``org_id`` is the ONLY
         # tenant source on this path. Before 2026-10-14 a personal-account
@@ -202,6 +203,7 @@ async def get_current_auth(
             source="jwt",
             org_id=str(org_id),
             email=str(email) if email else None,
+            fondok_staff=fondok_staff,
         )
 
     # No JWT. Before 2026-10-06 the request fell through to the header
@@ -254,6 +256,51 @@ async def get_current_auth(
         source="default",
         org_id=None,
     )
+
+
+def _truthy_claim(value: object) -> bool:
+    """Clerk JWT templates render shortcodes as strings (``"true"``) or, for
+    booleans, as JSON booleans; accept exactly those, nothing looser."""
+    return value is True or (isinstance(value, str) and value.strip().lower() == "true")
+
+
+def _staff_claim(claims: dict, *, require_2fa: bool) -> bool:
+    """``fondok_staff == "admin"`` from a VERIFIED token, plus two-factor
+    when required. The claim comes from the user's public metadata (only
+    Clerk's backend can write it — never unsafe metadata). Fail closed:
+    anything missing or unexpected is "not staff"."""
+    raw = claims.get("fondok_staff")
+    if not isinstance(raw, str) or raw.strip().lower() != "admin":
+        return False
+    if require_2fa and not _truthy_claim(claims.get("two_factor")):
+        logger.warning(
+            "get_current_auth: fondok_staff claim on sub=%s ignored — two-factor "
+            "sign-in is not on for the account (FONDOK_STAFF_REQUIRE_2FA)",
+            claims.get("sub"),
+        )
+        return False
+    return True
+
+
+def is_fondok_staff(auth: AuthContext) -> bool:
+    """Verified Fondok staff admin (account-level role, any workspace)."""
+    return auth.source == "jwt" and auth.fondok_staff
+
+
+def require_role_or_staff(*required: str):
+    """``require_role(*required)``, except a Fondok staff admin passes in any
+    workspace whatever their role there. For the Fondok-admin views only —
+    each such route still checks :func:`app.tenants.caller_is_fondok_admin`."""
+    role_dep = require_role(*required)
+
+    async def dep(
+        auth: Annotated[AuthContext, Depends(get_current_auth)],
+    ) -> AuthContext:
+        if is_fondok_staff(auth):
+            return auth
+        return await role_dep(auth)
+
+    return dep
 
 
 def require_role(*required: str):
@@ -322,5 +369,7 @@ __all__ = [
     "current_tenant_id",
     "get_current_actor_id",
     "get_current_auth",
+    "is_fondok_staff",
     "require_role",
+    "require_role_or_staff",
 ]

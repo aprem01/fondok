@@ -89,12 +89,19 @@ describe('Methodology · Detail link', () => {
     expect(screen.queryByText(LINK)).toBeNull();
   });
 
-  it('is hidden for a member, who never asks the worker', async () => {
+  it('is hidden for a workspace member the worker does not call a Fondok admin', async () => {
     h.role = 'org:member';
+    h.list.mockRejectedValueOnce(new Error('403'));
     render(<Sidebar />);
     await act(async () => {});
     expect(screen.queryByText(LINK)).toBeNull();
-    expect(h.list).not.toHaveBeenCalled();
+  });
+
+  it('is shown for a Fondok staff admin who is only a member of this workspace', async () => {
+    h.role = 'org:member';
+    h.list.mockResolvedValueOnce({ scope: 'all', caller_tenant_id: 't', tenants: [] });
+    render(<Sidebar />);
+    await waitFor(() => expect(screen.getByText(LINK)).toBeInTheDocument());
   });
 
   it('disappears at once on switching to an external workspace', async () => {

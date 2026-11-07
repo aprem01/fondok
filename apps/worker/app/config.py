@@ -382,6 +382,16 @@ class Settings(BaseSettings):
     # seeded (``scripts/register_tenant.py``) and Prem flips it on Railway.
     REQUIRE_REGISTERED_TENANT: bool = Field(default=False)
 
+    # Fondok staff admins — an account-level role, not workspace membership.
+    # A verified Clerk JWT whose ``fondok_staff`` claim is ``"admin"`` (from
+    # the user's PUBLIC metadata, which only Clerk's backend can write) may
+    # use the Fondok-admin views (Firms, Platform, operator health, detailed
+    # methodology, tenant data policies) from ANY workspace. It never widens
+    # data access: deal data stays scoped to the active workspace. When this
+    # is True (default) the token must ALSO say the account has two-factor
+    # sign-in on (``two_factor`` claim); fail closed when the claim is absent.
+    FONDOK_STAFF_REQUIRE_2FA: bool = Field(default=True)
+
     # Postgres row-level security readiness. When True, every request
     # session runs ``set_config('app.tenant_id', <caller tenant>, true)``
     # at the start of each transaction so the RLS policies in

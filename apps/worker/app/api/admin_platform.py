@@ -7,9 +7,10 @@ failures and stuck documents, verification quality, and who is active.
 
 Access
 ------
-Only an admin of a registered, active ``internal`` tenant (the Fondok
-Internal workspace) may call it — the same rule as ``GET /admin/tenants``
-answering ``scope: "all"``. Everyone else gets 403, so an external firm can
+Only a Fondok admin may call it: a Fondok staff admin (account-level role
+on the verified JWT, any workspace) or an admin of a registered, active
+``internal`` tenant — the same rule as ``GET /admin/tenants`` answering
+``scope: "all"``. Everyone else gets 403, so an external firm can
 never learn that another firm exists, let alone its numbers.
 
 Isolation
@@ -34,11 +35,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import AuthContext, require_role
+from ..auth import AuthContext, require_role_or_staff
 from ..auth.context import current_tenant_id
 from ..budget import _price_for
 from ..database import get_session_factory
-from ..tenants import Tenant, get_tenant, list_tenants
+from ..tenants import Tenant, caller_is_fondok_admin, list_tenants
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -505,11 +506,9 @@ def _signals(tenant: Tenant, firm: dict[str, Any], now: datetime, days: int) -> 
 # ─────────────────────────── endpoint ───────────────────────────
 
 
-async def _require_internal(auth: AuthContext) -> Tenant:
-    me = await get_tenant(auth.tenant_id)
-    if me is None or not me.is_serving or not me.is_internal:
+async def _require_internal(auth: AuthContext) -> None:
+    if not await caller_is_fondok_admin(auth):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="internal_admin_only")
-    return me
 
 
 def _sum_daily(firms: list[dict[str, Any]], path: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, float]:
@@ -545,7 +544,7 @@ async def _collect(
 
 @router.get("/platform")
 async def admin_platform(
-    auth: Annotated[AuthContext, Depends(require_role("admin"))],
+    auth: Annotated[AuthContext, Depends(require_role_or_staff("admin"))],
     days: Annotated[int, Query()] = 30,
 ) -> dict[str, Any]:
     """Every firm's usage, cost, failures and quality over the last ``days``."""
