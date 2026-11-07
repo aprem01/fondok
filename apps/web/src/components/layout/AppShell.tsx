@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
 import FondokMark from '@/components/brand/FondokMark';
@@ -8,8 +9,28 @@ import SourceDocPane from '@/components/citations/SourceDocPane';
 import { LineageDrawerHost } from '@/components/project/LineageDrawer';
 import { ClerkTokenBridge } from '@/lib/auth';
 
+const CHROMELESS = ['/sign-in', '/sign-up'];
+
+export function isChromelessPath(pathname: string | null): boolean {
+  if (!pathname || pathname === '/') return true;
+  return CHROMELESS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // Signed-out pages (the marketing home, sign-in, sign-up) never show the
+  // app's sidebar: nothing about the app is visible until a person has signed
+  // in to a firm's workspace.
+  if (isChromelessPath(pathname)) {
+    return (
+      <ToastProvider>
+        <ClerkTokenBridge />
+        {children}
+      </ToastProvider>
+    );
+  }
 
   return (
     <ToastProvider>

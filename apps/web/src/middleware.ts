@@ -19,13 +19,28 @@ const isClerkConfigured =
 
 const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
+// Fail closed in production: if the Clerk key is ever missing or wrong on
+// the production deploy, nothing but the public pages is served. Demo mode
+// (no auth) is for local development only.
+const isProductionDeploy = process.env.VERCEL_ENV === 'production';
+
+const lockedOut = (request: NextRequest) => {
+  if (isPublicRoute(request)) return NextResponse.next();
+  return new NextResponse('Sign-in is unavailable. Please try again shortly.', {
+    status: 503,
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+  });
+};
+
 const middleware = isClerkConfigured
   ? clerkMiddleware(async (auth, request) => {
       if (isPublicRoute(request)) return;
       const { userId, redirectToSignIn } = await auth();
       if (!userId) return redirectToSignIn({ returnBackUrl: request.url });
     })
-  : (_req: NextRequest) => NextResponse.next();
+  : isProductionDeploy
+    ? lockedOut
+    : (_req: NextRequest) => NextResponse.next();
 
 export default middleware;
 

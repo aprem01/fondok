@@ -5,7 +5,7 @@ import AppShell from '@/components/layout/AppShell';
 
 export const metadata: Metadata = {
   title: 'Fondok AI — Hotel Acquisition Underwriting',
-  description: 'AI-powered hotel acquisition underwriting. From OM to IC memo in 17 minutes.',
+  description: 'Hotel acquisition underwriting. Every figure traces to the page it came from.',
   icons: {
     icon: [
       { url: '/icon.svg', type: 'image/svg+xml' },

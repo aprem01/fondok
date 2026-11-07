@@ -1,20 +1,19 @@
-import Hero from '@/components/landing/Hero';
-import Features from '@/components/landing/Features';
-import VarianceSnapshot from '@/components/landing/VarianceSnapshot';
-import AgentStack from '@/components/landing/AgentStack';
-import LandingFooter from '@/components/landing/LandingFooter';
+import type { Metadata } from 'next';
+import Landing from '@/components/landing/Hero';
+import { body, display, mono } from '@/components/landing/fonts';
 
-// Public landing page. /dashboard remains the demo entry for first-click users.
-// AppShell (sidebar + chrome) wraps this — the landing renders inside the main
-// content area, so the sidebar stays available for one-click navigation to /dashboard.
+export const metadata: Metadata = {
+  title: 'Fondok | Hotel acquisition underwriting, cited to the source page',
+  description:
+    'Fondok reads the OM, T-12 and STR reports, builds the hotel model and drafts the IC memo. Every figure traces to the page it came from.',
+};
+
+// Public marketing page: a single screen on desktop. AppShell renders `/`
+// without the app sidebar, so this page owns the full viewport.
 export default function Home() {
   return (
-    <div className="bg-bg">
-      <Hero />
-      <Features />
-      <VarianceSnapshot />
-      <AgentStack />
-      <LandingFooter />
+    <div className={`home-page ${display.variable} ${body.variable} ${mono.variable} antialiased`}>
+      <Landing />
     </div>
   );
 }

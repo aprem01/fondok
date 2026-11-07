@@ -193,3 +193,37 @@ select {
    styles). No global `.cl-*` override lives here: Clerk flags structural
    `.cl-*` CSS in the console, and the dashboard toggle ("Allow users to
    create organizations" → off) is the backstop. */
+
+/* ── Public home page (src/app/page.tsx) ───────────────────────────────── */
+.home-page {
+  font-family: var(--font-home-body), 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+.home-page .home-display {
+  font-family: var(--font-home-display), 'Source Serif Pro', Georgia, serif;
+  font-optical-sizing: auto;
+}
+.home-page .home-mono {
+  font-family: var(--font-home-mono), 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes home-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes home-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.home-page .home-progress {
+  animation-name: home-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+.home-page .home-enter {
+  animation: home-enter 0.45s ease both;
+}
+/* Reduced motion: no slide-in, and no autoplay (the progress bar drives it). */
+@media (prefers-reduced-motion: reduce) {
+  .home-page .home-enter { animation: none; }
+  .home-page .home-progress { animation: none; transform: scaleX(1); }
+}

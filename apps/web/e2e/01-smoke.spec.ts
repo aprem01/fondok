@@ -7,9 +7,11 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('smoke', () => {
   test('app loads and the Projects route renders', async ({ page }) => {
-    await page.goto('/');
-    // The "Projects" link lives in the sidebar (AppShell), which renders on
-    // every route. Exact match so we don't catch "Back to Projects".
+    // `/` is the public marketing page and has no app sidebar; start from
+    // the dashboard. The "Projects" link lives in the sidebar (AppShell),
+    // which renders on every app route. Exact match so we don't catch
+    // "Back to Projects".
+    await page.goto('/dashboard');
     const projectsLink = page
       .getByRole('link', { name: 'Projects', exact: true })
       .first();

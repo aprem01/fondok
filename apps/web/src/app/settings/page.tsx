@@ -9,7 +9,7 @@ import KebabMenu from '@/components/ui/KebabMenu';
 import { cn } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { api, isWorkerConnected, userMessage } from '@/lib/api';
-import { useCurrentOrg, useOrgActions, useOrgMembers } from '@/lib/auth';
+import { useCurrentOrg, useCurrentRole, useOrgActions, useOrgMembers } from '@/lib/auth';
 import { IntroCard } from '@/components/help/IntroCard';
 import { useHintsEnabled, resetAllCoachMarks } from '@/components/help/useHintsEnabled';
 import DataPoliciesCard from '@/components/settings/DataPoliciesCard';
@@ -40,6 +40,8 @@ export default function SettingsPage() {
   const org = useCurrentOrg();
   const { members, loading: membersLoading, demo: membersDemo } = useOrgMembers();
   const { inviteMember, openOrganizationProfile } = useOrgActions();
+  // Only a firm's admins add people to it (Clerk enforces the same rule).
+  const isOrgAdmin = useCurrentRole() === 'org:admin';
   const [confirmReset, setConfirmReset] = useState<{ count: number } | null>(null);
   const [resetting, setResetting] = useState(false);
   const workerConnected = isWorkerConnected();
@@ -182,7 +184,7 @@ export default function SettingsPage() {
               </>
             }
           />
-          {inviteMember ? (
+          {inviteMember && isOrgAdmin ? (
             <Card className="p-5" data-testid="settings-invite">
               <h3 className="text-[14px] font-semibold text-ink-900 mb-1">Invite Team Member</h3>
               <p className="text-[12px] text-ink-500 mb-4">Add a colleague to your workspace. They receive an email invitation from Fondok.</p>
@@ -221,7 +223,9 @@ export default function SettingsPage() {
               <p className="text-[12px] text-ink-500">
                 {membersDemo
                   ? 'Team invitations are sent through your organization once you sign in.'
-                  : 'Invitations are available once your workspace is active.'}
+                  : inviteMember && !isOrgAdmin
+                    ? 'Only your workspace admins can invite people. Ask one of them to add a colleague.'
+                    : 'Invitations are available once your workspace is active.'}
               </p>
             </Card>
           )}
