@@ -4,7 +4,7 @@ import { EMAIL_RE, clerkErrorMessage, requireInternalAdmin } from '@/lib/server/
 
 /** POST /api/admin/firms/invite — invite an admin into a firm (Fondok admins only). */
 export async function POST(req: Request) {
-  const gate = await requireInternalAdmin();
+  const gate = await requireInternalAdmin(req);
   if (gate instanceof NextResponse) return gate;
 
   const body = (await req.json().catch(() => null)) as { orgId?: unknown; email?: unknown } | null;

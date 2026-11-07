@@ -16,7 +16,7 @@ import { EMAIL_RE, clerkErrorMessage, requireInternalAdmin } from '@/lib/server/
  * instead of leaving a half-made firm nobody knows about.
  */
 export async function POST(req: Request) {
-  const gate = await requireInternalAdmin();
+  const gate = await requireInternalAdmin(req);
   if (gate instanceof NextResponse) return gate;
 
   const body = (await req.json().catch(() => null)) as { name?: unknown; adminEmail?: unknown } | null;

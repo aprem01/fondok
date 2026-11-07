@@ -10,8 +10,9 @@ vi.mock('@clerk/nextjs/server', () => ({
   clerkClient: async () => ({ organizations: { createOrganization, createOrganizationInvitation } }),
 }));
 
-const req = (body: unknown) =>
-  new Request('https://app.example/api/admin/firms', { method: 'POST', body: JSON.stringify(body) });
+const JSON_SAME_ORIGIN = { origin: 'https://app.example', 'content-type': 'application/json' };
+const req = (body: unknown, headers: Record<string, string> = JSON_SAME_ORIGIN) =>
+  new Request('https://app.example/api/admin/firms', { method: 'POST', body: JSON.stringify(body), headers });
 
 const fetchMock = vi.fn();
 
@@ -38,6 +39,22 @@ describe('POST /api/admin/firms', () => {
     const { POST } = await import('@/app/api/admin/firms/route');
     const res = await POST(req({ name: 'Acme', adminEmail: 'a@acme.com' }));
     expect(res.status).toBe(401);
+    expect(createOrganization).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-site or non-JSON request before checking anything else', async () => {
+    signedIn();
+    const { POST } = await import('@/app/api/admin/firms/route');
+    for (const headers of <Record<string, string>[]>[
+      { origin: 'https://evil.example', 'content-type': 'application/json' },
+      { origin: 'https://app.example', 'content-type': 'text/plain' },
+      { 'content-type': 'application/json' },
+      { ...JSON_SAME_ORIGIN, 'sec-fetch-site': 'cross-site' },
+    ]) {
+      const res = await POST(req({ name: 'Acme', adminEmail: 'a@acme.com' }, headers));
+      expect(res.status).toBe(403);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(createOrganization).not.toHaveBeenCalled();
   });
 
@@ -98,6 +115,7 @@ describe('POST /api/admin/firms/invite', () => {
     const res = await POST(
       new Request('https://app.example/api/admin/firms/invite', {
         method: 'POST',
+        headers: JSON_SAME_ORIGIN,
         body: JSON.stringify({ orgId: 'org_abc', email: 'a@acme.com' }),
       }),
     );

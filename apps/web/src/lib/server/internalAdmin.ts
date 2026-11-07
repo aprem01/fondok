@@ -11,7 +11,15 @@ export type InternalAdmin = { userId: string; token: string; workerUrl: string }
 
 export const workerUrl = () => (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
 
-export async function requireInternalAdmin(): Promise<InternalAdmin | NextResponse> {
+export async function requireInternalAdmin(req: Request): Promise<InternalAdmin | NextResponse> {
+  // These routes are authenticated by the session cookie, so refuse anything
+  // that is not a same-origin JSON request from this app (CSRF).
+  const origin = req.headers.get('origin');
+  const fetchSite = req.headers.get('sec-fetch-site');
+  const isJson = (req.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json');
+  if (!isJson || origin !== new URL(req.url).origin || (fetchSite && fetchSite !== 'same-origin')) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
   const { userId, getToken } = await auth();
   if (!userId) return NextResponse.json({ error: 'not_signed_in' }, { status: 401 });
   const token = await getToken();
