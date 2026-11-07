@@ -9,6 +9,13 @@ For the FIRM's own admins (any workspace admin, no staff flag needed):
 * ``GET    /admin/support-access/on-my-firm``            — live grants on their firm
 * ``DELETE /admin/support-access/on-my-firm/{grant_id}`` — end one; logged as ended by the firm
 
+Pre-launch standing membership (until :data:`app.support_access.FULL_LAUNCH`):
+
+* ``POST /admin/support-access/membership-event`` — ``{tenant_id, joined, user_id?, email?}``;
+  records in the FIRM's audit log that a Fondok person joined/left its
+  organization as an admin. The membership itself is changed in Clerk by the
+  web app, which calls this first-class so no standing access goes unlogged.
+
 Only a verified Fondok staff admin (``fondok_staff`` claim with two-factor on)
 may use these — not the older "admin of the Fondok workspace" rule, because
 reading a client's deals is the most sensitive thing a Fondok person can do.
@@ -37,6 +44,15 @@ class OpenSupportBody(BaseModel):
     tenant_id: UUID
     reason: str = Field(min_length=10, max_length=500)
     hours: int
+
+
+class MembershipEventBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID
+    joined: bool
+    user_id: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=320)
 
 
 def _require_staff(auth: AuthContext) -> str:
@@ -84,6 +100,28 @@ async def open_support_access(
             headers={"Retry-After": "2"},
         )
     return {**grant.as_dict(), "firm": firm.name, "reused": False}
+
+
+@router.post("/support-access/membership-event", status_code=status.HTTP_201_CREATED)
+async def record_membership_event(
+    body: MembershipEventBody,
+    auth: Annotated[AuthContext, Depends(get_current_auth)],
+) -> dict[str, Any]:
+    user_id = _require_staff(auth)
+    firm = await get_tenant(body.tenant_id, use_cache=False)
+    if firm is None or firm.is_internal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="firm_not_available_for_support")
+    member = body.user_id or user_id
+    logged = await support.audit_staff_membership(
+        tenant_id=firm.id, actor_id=user_id, joined=body.joined, member_user_id=member, member_email=body.email
+    )
+    if not logged:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="support_access_audit_unavailable",
+            headers={"Retry-After": "2"},
+        )
+    return {"logged": True, "action": support.ACTION_STAFF_JOINED if body.joined else support.ACTION_STAFF_LEFT}
 
 
 @router.get("/support-access")

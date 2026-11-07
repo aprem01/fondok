@@ -811,3 +811,44 @@ async def test_long_support_grants_sunset(_rsa_key, monkeypatch) -> None:
         assert r.status_code == 422
         assert "long_support_grants_closed" in r.text
         assert (await _open(c, _rsa_key, hours=24)).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_staff_membership_event_is_logged_in_the_firm(_rsa_key) -> None:
+    """Pre-launch: joining/leaving a firm as a standing admin is written to the
+    FIRM's audit log; only staff may record it, never for an internal tenant."""
+    from app import support_access
+
+    await _seed_two_firms()
+    staff = _token(_rsa_key, INTERNAL_ORG, role="org:member", **STAFF)
+    firm_admin = _token(_rsa_key, FIRM_A_ORG, role="org:admin")
+    async with await _client() as c:
+        body = {"tenant_id": _tid(FIRM_A_ORG), "joined": True, "email": "prem@fondok.ai"}
+        assert (await c.post("/admin/support-access/membership-event", json=body, headers=firm_admin)).status_code == 403
+        r = await c.post(
+            "/admin/support-access/membership-event", json={**body, "tenant_id": _tid(INTERNAL_ORG)}, headers=staff
+        )
+        assert r.status_code == 404
+        r = await c.post("/admin/support-access/membership-event", json=body, headers=staff)
+        assert r.status_code == 201, r.text
+        assert r.json() == {"logged": True, "action": support_access.ACTION_STAFF_JOINED}
+        r = await c.post("/admin/support-access/membership-event", json={**body, "joined": False}, headers=staff)
+        assert r.status_code == 201
+    assert await _audit_actions(FIRM_A_ORG) == [support_access.ACTION_STAFF_JOINED, support_access.ACTION_STAFF_LEFT]
+    assert await _audit_actions(FIRM_B_ORG) == []
+    import json
+
+    from sqlalchemy import text
+
+    from app.database import get_engine
+
+    async with get_engine().connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT payload FROM audit_log WHERE tenant_id = :t AND action = :a"),
+                {"t": _tid(FIRM_A_ORG), "a": support_access.ACTION_STAFF_JOINED},
+            )
+        ).fetchone()
+    payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+    assert payload["metadata"]["member_email"] == "prem@fondok.ai"
+    assert payload["metadata"]["pre_launch_until"].startswith("2027-06-27")

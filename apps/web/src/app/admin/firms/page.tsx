@@ -5,7 +5,7 @@
 // worker and the /api/admin/firms routes enforce the same rule server-side.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Building2, Lock, Mail, RefreshCw } from 'lucide-react';
+import { Building2, Lock, LogIn, LogOut, Mail, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -22,9 +22,19 @@ const STATUS_LABEL: Record<RegisteredTenant['status'], string> = {
 };
 const STATUS_TONE = { active: 'green', pending_review: 'amber', suspended: 'red' } as const;
 
-async function postJson(url: string, body: unknown): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+interface MembershipState {
+  open: boolean;
+  until: string;
+  memberOf: string[];
+}
+
+async function postJson(
+  url: string,
+  body: unknown,
+  method: 'POST' | 'DELETE' = 'POST',
+): Promise<{ ok: boolean; data: Record<string, unknown> }> {
   const res = await fetch(url, {
-    method: 'POST',
+    method,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -49,6 +59,44 @@ export default function FirmsPage() {
 
   const [inviteFor, setInviteFor] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
+  // Pre-launch: which firms the caller is a standing admin of, and whether
+  // joining is still open (closes by code at full launch).
+  const [membership, setMembership] = useState<MembershipState | null>(null);
+
+  const loadMembership = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/firms/membership', {
+        method: 'GET',
+        headers: { 'content-type': 'application/json' },
+      });
+      if (res.ok) setMembership((await res.json()) as MembershipState);
+    } catch {
+      /* buttons simply stay hidden */
+    }
+  }, []);
+
+  const toggleMembership = async (firm: RegisteredTenant, join: boolean) => {
+    setBusy(firm.id);
+    try {
+      const { ok, data } = await postJson(
+        '/api/admin/firms/membership',
+        { orgId: firm.clerk_org_id, tenantId: firm.id },
+        join ? 'POST' : 'DELETE',
+      );
+      if (!ok) throw new Error(typeof data.error === 'string' ? data.error : 'Request failed');
+      toast(
+        join
+          ? `You're an admin in ${firm.name}. It now shows in your workspace switcher; recorded in its activity log.`
+          : `You left ${firm.name}. Recorded in its activity log.`,
+        { type: 'success' },
+      );
+      await loadMembership();
+    } catch (e) {
+      toast(userMessage(e), { type: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const load = useCallback(async () => {
     setError(null);
@@ -61,8 +109,11 @@ export default function FirmsPage() {
   }, []);
 
   useEffect(() => {
-    if (isInternalAdmin) void load();
-  }, [isInternalAdmin, load]);
+    if (isInternalAdmin) {
+      void load();
+      void loadMembership();
+    }
+  }, [isInternalAdmin, load, loadMembership]);
 
   if (!isInternalAdmin) {
     return (
@@ -138,7 +189,9 @@ export default function FirmsPage() {
         <h2 className="text-[14px] font-semibold text-ink-900">Add a firm</h2>
         <p className="mt-1 text-[12px] text-ink-500">
           Creates the firm&apos;s workspace, approves it and emails its first admin an invitation. Nobody from
-          Fondok is a member of the firm; to look at its deals, open time-limited support access from Platform.
+          Fondok is added automatically; until launch you can join a firm as an admin from the list below (recorded
+          in its activity log), and after launch you look at its deals through time-limited support access from
+          Platform.
         </p>
         <form onSubmit={createFirm} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <label className="block">
@@ -217,6 +270,27 @@ export default function FirmsPage() {
                     <Button size="sm" variant="secondary" onClick={() => setInviteFor(inviteFor === f.id ? null : f.id)}>
                       <Mail size={13} aria-hidden="true" /> Invite admin
                     </Button>
+                    {membership?.memberOf.includes(f.clerk_org_id) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        loading={busy === f.id}
+                        title="Remove yourself from this firm's workspace"
+                        onClick={() => void toggleMembership(f, false)}
+                      >
+                        <LogOut size={13} aria-hidden="true" /> Leave
+                      </Button>
+                    ) : membership?.open ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={busy === f.id}
+                        title={`Pre-launch only (until ${new Date(membership.until).toLocaleDateString()}): become an admin in this firm's workspace. Recorded in its activity log.`}
+                        onClick={() => void toggleMembership(f, true)}
+                      >
+                        <LogIn size={13} aria-hidden="true" /> Join as admin
+                      </Button>
+                    ) : null}
                   </div>
                 )}
               </div>

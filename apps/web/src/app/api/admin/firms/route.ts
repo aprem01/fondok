@@ -5,9 +5,11 @@ import { EMAIL_RE, clerkErrorMessage, requireInternalAdmin } from '@/lib/server/
 /**
  * POST /api/admin/firms — set up a new firm (Fondok admins only).
  *
- *   1. Create the firm's Clerk organization with NO members: Fondok staff
- *      are never standing members of a client firm. Reading a firm's deals
- *      goes through time-limited, logged support access (Platform page).
+ *   1. Create the firm's Clerk organization with NO members. Until full
+ *      launch, Fondok staff may join a firm as admins from the Firms list
+ *      (logged in the firm's audit log; see ./membership/route.ts). After
+ *      launch, reading a firm's deals goes through time-limited, logged
+ *      support access (Platform page).
  *   2. Register it with the worker as an active external tenant.
  *   3. Invite the firm's first admin by email (org:admin).
  *

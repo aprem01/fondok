@@ -56,3 +56,16 @@ export function clerkErrorMessage(err: unknown, fallback: string): string {
   const e = err as { errors?: { longMessage?: string; message?: string }[] };
   return e?.errors?.[0]?.longMessage ?? e?.errors?.[0]?.message ?? fallback;
 }
+
+/**
+ * Full launch (Prem, 2026-11-07). Until then Fondok staff may hold standing
+ * admin memberships in client firms ("Join as admin" on the Firms page). The
+ * window closes by code on this date; `PRE_LAUNCH_STAFF_MEMBERSHIP=0` closes
+ * it early. Mirrors `FULL_LAUNCH` in apps/worker/app/support_access.py.
+ */
+export const FULL_LAUNCH = new Date('2027-06-27T00:00:00Z');
+
+export function preLaunchMembershipOpen(now: Date = new Date()): boolean {
+  if (process.env.PRE_LAUNCH_STAFF_MEMBERSHIP === '0') return false;
+  return now.getTime() < FULL_LAUNCH.getTime();
+}

@@ -30,13 +30,17 @@ from .database import get_engine
 logger = logging.getLogger(__name__)
 
 SUPPORT_HEADER = "X-Support-Tenant"
-#: 90 days (2160 h) is a temporary onboarding-period option agreed 2026-11-07;
-#: still read-only and logged. New grants longer than a day cannot be OPENED
-#: after ``LONG_GRANT_OPEN_UNTIL`` (Brookfield go-live); grants already open run
-#: to their own expiry. Extend the date deliberately or drop 2160.
+#: Full launch (Prem, 2026-11-07). Until then Fondok staff may hold standing
+#: admin memberships in client firms (Firms page "Join as admin", logged in the
+#: firm's audit log) and may open 90-day read-only grants. Both close on this
+#: date by code; moving it is a deliberate change.
+FULL_LAUNCH = datetime(2027, 6, 27, tzinfo=UTC)
+#: 90 days (2160 h): pre-launch option; still read-only and logged. New grants
+#: longer than a day cannot be OPENED after ``LONG_GRANT_OPEN_UNTIL``; grants
+#: already open run to their own expiry.
 ALLOWED_HOURS = (1, 4, 24, 2160)
 LONG_GRANT_MAX_HOURS = 24
-LONG_GRANT_OPEN_UNTIL = datetime(2026, 12, 15, tzinfo=UTC)
+LONG_GRANT_OPEN_UNTIL = FULL_LAUNCH
 
 
 def long_grant_allowed(hours: int, now: datetime | None = None) -> bool:
@@ -51,6 +55,9 @@ EXEMPT_PREFIXES = ("/admin/support-access",)
 ACTION_STARTED = "support.access_started"
 ACTION_VIEWED = "support.viewed"
 ACTION_ENDED = "support.access_ended"
+#: Pre-launch standing membership (a Fondok person joined/left the firm's org).
+ACTION_STAFF_JOINED = "support.staff_joined"
+ACTION_STAFF_LEFT = "support.staff_left"
 
 
 @dataclass(frozen=True)
@@ -201,13 +208,14 @@ _VIEWED: set[tuple[str, str]] = set()
 _VIEWED_MAX = 20_000
 
 
-async def audit_in_firm(
+async def _audit_firm_row(
     *,
     tenant_id: UUID,
     actor_id: str | None,
     action: str,
-    grant: SupportGrant,
-    metadata: dict[str, Any] | None = None,
+    resource_type: str,
+    resource_id: UUID | str | None,
+    metadata: dict[str, Any],
 ) -> bool:
     """Write one audit row under the FIRM's tenant (publishing it so the RLS
     GUC allows the insert), then restore the caller's tenant. Never raises;
@@ -224,14 +232,9 @@ async def audit_in_firm(
                 tenant_id=tenant_id,
                 actor_id=actor_id,
                 action=action,
-                resource_type="support_access",
-                resource_id=grant.id,
-                metadata={
-                    "by": "Fondok support",
-                    "reason": grant.reason,
-                    "expires_at": grant.expires_at.isoformat(),
-                    **(metadata or {}),
-                },
+                resource_type=resource_type,
+                resource_id=resource_id,
+                metadata={"by": "Fondok support", **metadata},
                 tags=["support"],
                 raise_on_error=True,
             )
@@ -242,6 +245,53 @@ async def audit_in_firm(
     finally:
         current_tenant_id.reset(token)
     return True
+
+
+async def audit_in_firm(
+    *,
+    tenant_id: UUID,
+    actor_id: str | None,
+    action: str,
+    grant: SupportGrant,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    """Audit a support-grant event in the firm's own log (see :func:`_audit_firm_row`)."""
+    return await _audit_firm_row(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        action=action,
+        resource_type="support_access",
+        resource_id=grant.id,
+        metadata={
+            "reason": grant.reason,
+            "expires_at": grant.expires_at.isoformat(),
+            **(metadata or {}),
+        },
+    )
+
+
+async def audit_staff_membership(
+    *,
+    tenant_id: UUID,
+    actor_id: str | None,
+    joined: bool,
+    member_user_id: str,
+    member_email: str | None = None,
+) -> bool:
+    """Record that a Fondok person joined or left the firm's organization as a
+    standing admin (pre-launch only). Written to the FIRM's log so its admins
+    see who from Fondok is in their workspace and since when."""
+    meta: dict[str, Any] = {"member_user_id": member_user_id, "pre_launch_until": FULL_LAUNCH.isoformat()}
+    if member_email:
+        meta["member_email"] = member_email
+    return await _audit_firm_row(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        action=ACTION_STAFF_JOINED if joined else ACTION_STAFF_LEFT,
+        resource_type="staff_membership",
+        resource_id=member_user_id,
+        metadata=meta,
+    )
 
 
 async def audit_view_once(*, grant: SupportGrant, actor_id: str | None, path: str, query: str = "") -> bool:
@@ -266,10 +316,13 @@ async def audit_view_once(*, grant: SupportGrant, actor_id: str | None, path: st
 
 __all__ = [
     "ACTION_ENDED",
+    "ACTION_STAFF_JOINED",
+    "ACTION_STAFF_LEFT",
     "ACTION_STARTED",
     "ACTION_VIEWED",
     "ALLOWED_HOURS",
     "EXEMPT_PREFIXES",
+    "FULL_LAUNCH",
     "LONG_GRANT_MAX_HOURS",
     "LONG_GRANT_OPEN_UNTIL",
     "READ_METHODS",
@@ -279,6 +332,7 @@ __all__ = [
     "active_grants_for",
     "active_grants_on",
     "audit_in_firm",
+    "audit_staff_membership",
     "audit_view_once",
     "create_grant",
     "end_grant",
