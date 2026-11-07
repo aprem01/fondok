@@ -29,7 +29,7 @@ export default function SignInPage() {
   return (
     <AuthFrame subtitle="Sign in to Fondok">
       {/* No sign-up link: accounts are created by invitation only. */}
-      <SignIn appearance={{ ...clerkAppearance, elements: { ...clerkAppearance.elements, footerAction: 'hidden', header: 'hidden' } }} />
+      <SignIn appearance={{ ...clerkAppearance, elements: { ...clerkAppearance.elements, footerAction: 'hidden', header: 'hidden' } }} fallbackRedirectUrl="/dashboard" />
     </AuthFrame>
   );
 }

@@ -34,6 +34,16 @@ const lockedOut = (request: NextRequest) => {
 
 const middleware = isClerkConfigured
   ? clerkMiddleware(async (auth, request) => {
+      // A signed-in person never sees the marketing page or the sign-in
+      // form again: `/`, /sign-in and /sign-up send them into the app.
+      // (/sign-up keeps working for invitation links: Clerk's ticket flow
+      // signs the invitee up before they have a session.)
+      const path = request.nextUrl.pathname;
+      if (path === '/' || path === '/sign-in' || path.startsWith('/sign-in/')) {
+        const { userId } = await auth();
+        if (userId) return NextResponse.redirect(new URL('/dashboard', request.url));
+        return;
+      }
       if (isPublicRoute(request)) return;
       const { userId, redirectToSignIn } = await auth();
       if (!userId) return redirectToSignIn({ returnBackUrl: request.url });

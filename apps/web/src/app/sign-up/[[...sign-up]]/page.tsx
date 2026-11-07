@@ -28,7 +28,7 @@ export default function SignUpPage() {
 
   return (
     <AuthFrame subtitle="Join your firm on Fondok">
-      <SignUp appearance={{ ...clerkAppearance, elements: { ...clerkAppearance.elements, header: 'hidden' } }} signInUrl="/sign-in" />
+      <SignUp appearance={{ ...clerkAppearance, elements: { ...clerkAppearance.elements, header: 'hidden' } }} signInUrl="/sign-in" fallbackRedirectUrl="/dashboard" />
       <p className="px-6 pb-5 text-center text-[12.5px] text-[#6b7c76]">
         Accounts are by invitation. No invitation?{' '}
         <a href={REQUEST_ACCESS_HREF} className="font-medium text-[#0b5d45] hover:underline">
