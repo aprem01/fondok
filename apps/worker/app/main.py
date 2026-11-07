@@ -14,6 +14,7 @@ from . import __version__
 from .alerting import init_sentry
 from .api import admin_cost as admin_cost_router
 from .api import admin_health as admin_health_router
+from .api import admin_platform as admin_platform_router
 from .api import admin_tenants as admin_tenants_router
 from .api import analysis as analysis_router
 from .api import audit as audit_router
@@ -444,6 +445,13 @@ def create_app() -> FastAPI:
         admin_health_router.router,
         prefix="/admin",
         tags=["admin-health"],
+    )
+    # Platform overview: every firm's usage, AI cost, failures and quality,
+    # for Fondok's internal admins only (app/api/admin_platform.py).
+    app.include_router(
+        admin_platform_router.router,
+        prefix="/admin",
+        tags=["admin-platform"],
     )
     # FON-93 — Clerk → worker webhook. Deliberately NO tenant dependency:
     # Clerk authenticates with the Svix signature, not a session JWT.

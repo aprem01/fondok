@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid, FolderKanban, Settings, ChevronDown, Building2,
   Users, UserCog, LogOut, Check, BookOpen, LineChart, History, Library, Bell,
-  DollarSign,
+  DollarSign, Activity,
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { OrganizationSwitcher } from '@clerk/nextjs';
@@ -46,6 +46,7 @@ const navItems = [
   // values). Shown only to admins of an internal workspace; the worker enforces
   // the same gate on the content itself.
   { href: '/methodology/detail', label: 'Methodology · Detail', icon: BookOpen, internalAdminOnly: true },
+  { href: '/admin/platform', label: 'Platform', icon: Activity, internalAdminOnly: true },
   { href: '/admin/firms', label: 'Firms', icon: Building2, internalAdminOnly: true },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
   // under Settings in concept (it's a tenant-level config surface)

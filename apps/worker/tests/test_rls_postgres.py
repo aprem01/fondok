@@ -420,3 +420,66 @@ async def test_owner_distinct_discovery_when_enforcement_is_off(rls_db, monkeypa
     assert plans and plans[0].source == "owner_distinct"
     assert plans[0].tenants == (TENANT_A, TENANT_B)
     assert analyst_batch is not None
+
+
+async def test_platform_overview_reads_every_firm_under_rls(rls_db, caplog) -> None:
+    """``/admin/platform``'s per-firm rollup, as ``fondok_app`` with the GUC
+    on: each firm sees exactly its own seeded rows (1 deal, 1 stuck or
+    timed-out document, 1 engine output, 1 AI call, 1 activity event) — not zero
+    (GUC missing) and not two (tenant predicate missing) — and no query
+    falls back to the "unavailable" path on Postgres."""
+    import logging
+
+    from app.api.admin_platform import _collect
+    from app.auth.context import current_tenant_id
+    from app.tenants import list_tenants
+
+    # model_calls is not in the fixture's TRUNCATE list (and not under RLS).
+    await _owner_exec("DELETE FROM model_calls WHERE tenant_id IN ($1, $2)", UUID(TENANT_A), UUID(TENANT_B))
+    for t in (TENANT_A, TENANT_B):
+        deal = rls_db["ids"][t]["deal"]
+        await _owner_exec(
+            "INSERT INTO model_calls (id, deal_id, tenant_id, agent_name, model, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd, latency_ms, status, created_at) "
+            "VALUES ($1, $2, $3, 'extractor', 'claude-sonnet-4-6', 1000, 100, 0, 0, 0.25, 900, 'ok', now())",
+            uuid4(),
+            UUID(deal),
+            UUID(t),
+        )
+        await _owner_exec(
+            "INSERT INTO audit_log (id, tenant_id, deal_id, actor_id, action, resource_type, created_at) "
+            "VALUES ($1, $2, $3, 'user_rls', 'deal.updated', 'deal', now())",
+            uuid4(),
+            UUID(t),
+            UUID(deal),
+        )
+
+    caplog.set_level(logging.INFO, logger="app.api.admin_platform")
+    tenants = await list_tenants()
+    now = datetime.now(UTC)
+    token = current_tenant_id.set(None)
+    try:
+        collected = await _collect(tenants, now - timedelta(days=30), now)
+    finally:
+        current_tenant_id.reset(token)
+
+    unavailable = [r.getMessage() for r in caplog.records if "unavailable" in r.getMessage()]
+    assert unavailable == []
+    by_tenant = {str(t.id): data for t, data in collected}
+    assert sorted(by_tenant) == [TENANT_A, TENANT_B]
+    for tid, data in by_tenant.items():
+        # Ground truth read as the owner (bypasses RLS) for THIS tenant only.
+        events, people = (
+            await _owner_fetch(
+                "SELECT count(*), count(DISTINCT actor_id) FROM audit_log WHERE tenant_id = $1", UUID(tid)
+            )
+        )[0]
+        assert events >= 1
+        assert data["activity"]["events"] == events and data["activity"]["active_people"] == people
+        assert data["deals"]["total"] == 1
+        # The watchdog test above times the seeded document out (FAILED);
+        # either way exactly one document per firm, never the other firm's.
+        assert data["documents"]["stuck"] + data["documents"]["failed"] == 1
+        assert data["engines"]["outputs"] == 1 and data["engines"]["failed"] == 0
+        assert data["ai"]["calls"] == 1 and data["ai"]["cost_usd"] == pytest.approx(0.25)
+        assert sum(data["ai"]["daily_cost_usd"].values()) == pytest.approx(0.25)

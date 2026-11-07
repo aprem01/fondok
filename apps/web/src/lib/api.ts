@@ -2281,6 +2281,114 @@ export interface TenantDataPoliciesResponse {
   data_policies: TenantDataPolicies;
 }
 
+// ─────────────────────────── platform overview ───────────────────────────
+// GET /admin/platform?days=… (apps/worker/app/api/admin_platform.py) —
+// every firm's usage, AI cost, failures and quality. Internal admins only.
+export type PlatformDays = 7 | 30 | 90;
+export type DailySeries = Record<string, number>;
+export interface PlatformSignal {
+  kind: 'bad' | 'good';
+  area: 'access' | 'extraction' | 'model' | 'ai' | 'quality' | 'adoption' | 'collaboration';
+  tenant_id: string;
+  firm: string;
+  text: string;
+}
+export interface PlatformFirm {
+  tenant_id: string;
+  clerk_org_id: string;
+  name: string;
+  kind: RegisteredTenant['kind'];
+  status: RegisteredTenant['status'];
+  created_at: string | null;
+  attention: number;
+  deals: {
+    total: number;
+    created: number;
+    touched: number;
+    by_status: { status: string; count: number }[];
+    daily: DailySeries;
+  };
+  documents: {
+    uploaded: number;
+    extracted: number;
+    failed: number;
+    stuck: number;
+    pages: number;
+    failure_rate: number | null;
+    by_type: { doc_type: string; count: number; failed: number }[];
+  };
+  ai: {
+    calls: number;
+    errors: number;
+    error_rate: number | null;
+    cost_usd: number;
+    cost_per_deal_usd: number | null;
+    deals_with_ai: number;
+    cache_hit_rate: number | null;
+    avg_latency_ms: number | null;
+    tokens: { input: number; cache_read: number; cache_creation: number; output: number };
+    by_agent: { agent: string; calls: number; errors: number; cost_usd: number }[];
+    by_model: { model: string; calls: number; cost_usd: number }[];
+    daily_cost_usd: DailySeries;
+    daily_calls: DailySeries;
+  };
+  engines: {
+    model_runs: number;
+    outputs: number;
+    failed: number;
+    failure_rate: number | null;
+    by_engine: { engine: string; runs: number; failed: number; avg_runtime_ms: number | null; last_failed_at: string | null }[];
+  };
+  activity: {
+    events: number;
+    active_people: number;
+    last_activity_at: string | null;
+    top_actions: { action: string; count: number }[];
+    daily_events: DailySeries;
+    daily_people: DailySeries;
+    people: { actor_id: string; events: number; last_at: string | null }[];
+  };
+  collaboration: { memo_edits: number; comments_created: number; comments_open: number };
+  quality: {
+    verification_reports: number;
+    avg_pass_rate: number | null;
+    min_pass_rate: number | null;
+    critic_findings: Record<string, number>;
+  };
+}
+export interface PlatformOverview {
+  generated_at: string;
+  days: PlatformDays;
+  since: string;
+  totals: {
+    firms: number;
+    firms_active: number;
+    firms_pending: number;
+    deals_total: number;
+    deals_created: number;
+    documents_uploaded: number;
+    documents_failed: number;
+    documents_stuck: number;
+    document_failure_rate: number | null;
+    pages_processed: number;
+    ai_calls: number;
+    ai_errors: number;
+    ai_error_rate: number | null;
+    ai_cost_usd: number;
+    model_runs: number;
+    engine_failure_rate: number | null;
+    active_people: number;
+    events: number;
+    memo_edits: number;
+    comments_created: number;
+  };
+  daily: { cost_usd: DailySeries; events: DailySeries; deals_created: DailySeries };
+  cost_by_model: { model: string; calls: number; cost_usd: number }[];
+  cost_by_agent: { agent: string; calls: number; errors: number; cost_usd: number }[];
+  signals: PlatformSignal[];
+  firms: PlatformFirm[];
+}
+
 export interface AdminCostResponse {
   tenant_id: string;
   generated_at: string;
@@ -2638,6 +2746,9 @@ export const api = {
      *  ``org:admin`` role on the worker side (gated via require_role). */
     cost: (signal?: AbortSignal) =>
       request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
+    /** Every firm's usage, AI cost, failures and quality (internal admins only). */
+    platform: (days: PlatformDays, signal?: AbortSignal) =>
+      request<PlatformOverview>('GET', `/admin/platform?days=${days}`, undefined, { signal }),
     /** FON-93 / FON-116 tenant registry (apps/worker/app/api/admin_tenants.py).
      *  ``list`` returns every row for an internal tenant's admin, only the
      *  caller's own row otherwise; ``setDataPolicies`` is internal-admin only
