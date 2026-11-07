@@ -195,7 +195,14 @@ function BarList({ rows, valueLabel }: { rows: { key: string; value: number; sub
 
 // ─────────────────────────── support access ───────────────────────────
 
-const SUPPORT_HOURS = [1, 4, 24] as const;
+// 2160 h = 90 days: temporary onboarding-period option (2026-11-07), to revisit before go-live.
+const SUPPORT_HOURS = [1, 4, 24, 2160] as const;
+const SUPPORT_HOURS_LABEL: Record<(typeof SUPPORT_HOURS)[number], string> = {
+  1: '1 hour',
+  4: '4 hours',
+  24: '24 hours',
+  2160: '90 days',
+};
 
 function SupportAccessForm({ firm }: { firm: PlatformFirm }) {
   const [reason, setReason] = useState('');
@@ -255,7 +262,7 @@ function SupportAccessForm({ firm }: { firm: PlatformFirm }) {
           >
             {SUPPORT_HOURS.map((h) => (
               <option key={h} value={h}>
-                {h === 1 ? '1 hour' : `${h} hours`}
+                {SUPPORT_HOURS_LABEL[h]}
               </option>
             ))}
           </select>

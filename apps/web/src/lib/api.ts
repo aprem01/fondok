@@ -2764,7 +2764,7 @@ export const api = {
       request<AdminCostResponse>('GET', '/admin/cost', undefined, { signal }),
     /** Fondok staff support access: time-limited, read-only, logged in the firm's log. */
     support: {
-      open: (body: { tenant_id: string; reason: string; hours: 1 | 4 | 24 }) =>
+      open: (body: { tenant_id: string; reason: string; hours: 1 | 4 | 24 | 2160 }) =>
         request<SupportGrant>('POST', '/admin/support-access', body),
       list: (signal?: AbortSignal) =>
         request<{ grants: SupportGrant[] }>('GET', '/admin/support-access', undefined, { signal }),

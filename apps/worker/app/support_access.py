@@ -30,7 +30,9 @@ from .database import get_engine
 logger = logging.getLogger(__name__)
 
 SUPPORT_HEADER = "X-Support-Tenant"
-ALLOWED_HOURS = (1, 4, 24)
+#: 90 days (2160 h) is a temporary onboarding-period option agreed 2026-11-07;
+#: still read-only and logged. Revisit before go-live.
+ALLOWED_HOURS = (1, 4, 24, 2160)
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Paths where the header is ignored (managing grants is not done "as" a firm).
 EXEMPT_PREFIXES = ("/admin/support-access",)

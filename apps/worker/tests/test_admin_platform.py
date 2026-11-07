@@ -624,6 +624,12 @@ async def test_support_access_only_for_approved_client_firms(_rsa_key) -> None:
         assert (await _open(c, _rsa_key, FIRM_B_ORG)).status_code == 404
         r = await _open(c, _rsa_key, hours=3)
         assert r.status_code == 422
+        assert (await _open(c, _rsa_key, hours=48)).status_code == 422
+        # 90-day onboarding-period grant: accepted, expires ~90 days out.
+        r = await _open(c, _rsa_key, hours=2160)
+        assert r.status_code == 201, r.text
+        expires = datetime.fromisoformat(r.json()["expires_at"])
+        assert timedelta(days=89, hours=23) < expires - datetime.now(UTC) <= timedelta(days=90)
         r = await c.post(
             "/admin/support-access",
             json={"tenant_id": _tid(FIRM_A_ORG), "reason": "   short   ", "hours": 1},
