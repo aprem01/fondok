@@ -46,6 +46,7 @@ const navItems = [
   // values). Shown only to admins of an internal workspace; the worker enforces
   // the same gate on the content itself.
   { href: '/methodology/detail', label: 'Methodology · Detail', icon: BookOpen, internalAdminOnly: true },
+  { href: '/admin/firms', label: 'Firms', icon: Building2, internalAdminOnly: true },
   // Wave 4 W4.5 — recurring Slack/email pipeline summaries. Grouped
   // under Settings in concept (it's a tenant-level config surface)
   // but mounted as a top-level nav item so executives who only ever

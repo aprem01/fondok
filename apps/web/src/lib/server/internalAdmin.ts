@@ -1,0 +1,41 @@
+import { auth } from '@clerk/nextjs/server';
+import { NextResponse } from 'next/server';
+
+/**
+ * Server-side gate for the Firms admin routes: the caller must be signed in
+ * AND be an admin of a serving internal tenant. The worker decides the
+ * second part (`GET /admin/tenants` answers `scope: "all"` only for that
+ * caller), so there is one rule for "Fondok admin", not two.
+ */
+export type InternalAdmin = { userId: string; token: string; workerUrl: string };
+
+export const workerUrl = () => (process.env.NEXT_PUBLIC_WORKER_URL ?? '').replace(/\/+$/, '');
+
+export async function requireInternalAdmin(): Promise<InternalAdmin | NextResponse> {
+  const { userId, getToken } = await auth();
+  if (!userId) return NextResponse.json({ error: 'not_signed_in' }, { status: 401 });
+  const token = await getToken();
+  const base = workerUrl();
+  if (!token || !base) return NextResponse.json({ error: 'not_available' }, { status: 503 });
+  let res: Response;
+  try {
+    res = await fetch(`${base}/admin/tenants`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+  } catch {
+    return NextResponse.json({ error: 'worker_unreachable' }, { status: 502 });
+  }
+  if (!res.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const body = (await res.json().catch(() => null)) as { scope?: string } | null;
+  if (body?.scope !== 'all') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  return { userId, token, workerUrl: base };
+}
+
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Clerk errors carry `errors[0].longMessage`; anything else gets a generic line. */
+export function clerkErrorMessage(err: unknown, fallback: string): string {
+  const e = err as { errors?: { longMessage?: string; message?: string }[] };
+  return e?.errors?.[0]?.longMessage ?? e?.errors?.[0]?.message ?? fallback;
+}

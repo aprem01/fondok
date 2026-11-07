@@ -2645,6 +2645,13 @@ export const api = {
     tenants: {
       list: (signal?: AbortSignal) =>
         request<AdminTenantsResponse>('GET', '/admin/tenants', undefined, { signal }),
+      /** Approve, suspend or rename a firm (internal admins only; upsert). */
+      register: (body: {
+        clerk_org_id: string;
+        name: string;
+        kind: RegisteredTenant['kind'];
+        status: RegisteredTenant['status'];
+      }) => request<RegisteredTenant>('POST', '/admin/tenants', body),
       setDataPolicies: (tenantId: string, patch: Partial<TenantDataPolicies>) =>
         request<TenantDataPoliciesResponse>(
           'PATCH',
