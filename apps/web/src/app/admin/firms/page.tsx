@@ -137,8 +137,8 @@ export default function FirmsPage() {
       <Card className="p-5">
         <h2 className="text-[14px] font-semibold text-ink-900">Add a firm</h2>
         <p className="mt-1 text-[12px] text-ink-500">
-          Creates the firm&apos;s workspace, approves it and emails its first admin an invitation. You are added
-          to the firm as a member, so you can open its workspace to support it; the firm sees you in its team list.
+          Creates the firm&apos;s workspace, approves it and emails its first admin an invitation. Nobody from
+          Fondok is a member of the firm; to look at its deals, open time-limited support access from Platform.
         </p>
         <form onSubmit={createFirm} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <label className="block">

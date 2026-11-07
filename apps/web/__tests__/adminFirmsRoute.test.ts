@@ -76,7 +76,8 @@ describe('POST /api/admin/firms', () => {
     const { POST } = await import('@/app/api/admin/firms/route');
     const res = await POST(req({ name: ' Acme Hotels ', adminEmail: 'Ann@Acme.com' }));
     expect(res.status).toBe(201);
-    expect(createOrganization).toHaveBeenCalledWith({ name: 'Acme Hotels', createdBy: 'user_1' });
+    // No creator: Fondok staff are never standing members of a client firm.
+    expect(createOrganization).toHaveBeenCalledWith({ name: 'Acme Hotels' });
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe('https://worker.example/admin/tenants');
     expect(JSON.parse(init.body)).toEqual({ clerk_org_id: 'org_abc', name: 'Acme Hotels', kind: 'external', status: 'active' });

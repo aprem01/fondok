@@ -5,9 +5,9 @@ import { EMAIL_RE, clerkErrorMessage, requireInternalAdmin } from '@/lib/server/
 /**
  * POST /api/admin/firms — set up a new firm (Fondok admins only).
  *
- *   1. Create the firm's Clerk organization. The Fondok admin doing this is
- *      its creator, so they are a member (visible in the firm's team list)
- *      and can open the firm's workspace to support it.
+ *   1. Create the firm's Clerk organization with NO members: Fondok staff
+ *      are never standing members of a client firm. Reading a firm's deals
+ *      goes through time-limited, logged support access (Platform page).
  *   2. Register it with the worker as an active external tenant.
  *   3. Invite the firm's first admin by email (org:admin).
  *
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   // 1. Organization
   let orgId: string;
   try {
-    const org = await clerk.organizations.createOrganization({ name, createdBy: gate.userId });
+    const org = await clerk.organizations.createOrganization({ name });
     orgId = org.id;
   } catch (err) {
     return NextResponse.json(
