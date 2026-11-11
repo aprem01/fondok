@@ -35,6 +35,13 @@ override (the same rule ``engine_runner._is_shadow_override`` applies to every
 scalar assumption). Stabilized NOI here is the operating NOI of that year; the
 exit NOI (the year hold+1 reversion) is a separate concept owned by Returns.
 
+FON-82 (Sam, 2026-11-11). The headline **Stabilized NOI** — and the yield on
+cost built on it — is the stabilized year's Cash NOI **after** the FF&E
+reserve (``stabilized_cash_noi``), the same basis as the exit NOI and how a
+lender reads it. ``stabilized_noi_before_reserve`` / ``stabilized_noi_margin``
+stay on the block, byte-identical, for the entry-cap basis and older readers;
+``stabilized_cash_noi_margin`` is the headline margin.
+
 FON-98 (Rani + Eshan, 2026-10). The anchor is resolved, not a constant:
 
 * **No reopening date** — Year 3 counted from the **acquisition close**
@@ -306,13 +313,23 @@ class StabilizedYear(BaseModel):
     stabilized_occupancy: float | None = None
     stabilized_adr: float | None = None
     stabilized_revenue: float | None = None
-    # NOI BEFORE the FF&E reserve — the bare word "NOI" in Fondok
-    # (``expense.years[].noi_institutional``). See apps/web/src/lib/engines/noi.ts.
+    # NOI BEFORE the FF&E reserve (``expense.years[].noi_institutional``) —
+    # after property tax and insurance, before the reserve; the entry-cap
+    # numerator. Kept on the block so nothing downstream loses it, but it is
+    # NOT the headline "Stabilized NOI" (FON-82). See apps/web/src/lib/engines/noi.ts.
     stabilized_noi_before_reserve: float | None = None
-    # Cash NOI (after the FF&E reserve) of the same year, so a surface that
-    # needs the after-reserve basis does not go read another year to get it.
+    # Cash NOI (AFTER the FF&E reserve) of the same year. FON-82 (Sam,
+    # 2026-11-11): this is THE "Stabilized NOI" every surface prints and the
+    # yield-on-cost numerator — the same basis as the exit NOI and the way a
+    # lender reads it.
     stabilized_cash_noi: float | None = None
+    # Margin on the BEFORE-reserve NOI (``stabilized_noi_before_reserve`` ÷
+    # ``stabilized_revenue``). Kept byte-identical for older readers; not the
+    # headline margin since FON-82.
     stabilized_noi_margin: float | None = None
+    # FON-82 — margin on the headline basis: ``stabilized_cash_noi`` ÷
+    # ``stabilized_revenue``, the same year index as everything else here.
+    stabilized_cash_noi_margin: float | None = None
 
 
 def build_stabilized_year(
@@ -394,6 +411,13 @@ def build_stabilized_year(
         if (noi_before is not None and revenue and revenue > 0)
         else None
     )
+    cash_noi = cash_noi_by_year[index] if index < len(cash_noi_by_year) else None
+    # FON-82 — the headline margin is on the after-reserve basis, same index.
+    cash_margin = (
+        (cash_noi / revenue)
+        if (cash_noi is not None and revenue and revenue > 0)
+        else None
+    )
     return StabilizedYear(
         stabilized_year_index=index,
         stabilized_year=index + 1,
@@ -424,10 +448,9 @@ def build_stabilized_year(
         ),
         stabilized_revenue=revenue,
         stabilized_noi_before_reserve=noi_before,
-        stabilized_cash_noi=(
-            cash_noi_by_year[index] if index < len(cash_noi_by_year) else None
-        ),
+        stabilized_cash_noi=cash_noi,
         stabilized_noi_margin=margin,
+        stabilized_cash_noi_margin=cash_margin,
     )
 
 

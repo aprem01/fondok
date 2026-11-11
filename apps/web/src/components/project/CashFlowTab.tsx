@@ -14,6 +14,7 @@ import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
 import { RETURNS_VIEWS, returnsHref } from '@/lib/returnsSection';
 import { EXIT_SCHEDULE_TITLE } from '@/lib/engines/returns';
+import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
@@ -635,6 +636,9 @@ interface SummaryRowSpec {
   /** Label shown when the engine emitted none of ``labels`` (the row then
    *  reads "—" in every period so the gap is visible, never zero). */
   display: string;
+  /** Hover text for the row label when the worker line carries no note —
+   *  a one-line basis definition (FON-44). */
+  title?: string;
   /** Emphasised bottom line (the worker's ``calc`` rows). */
   total?: boolean;
   /** Deal-conditional worker line (refinance, junior debt, key money, deferred
@@ -648,7 +652,8 @@ const SUMMARY_ROWS: SummaryRowSpec[] = [
   // Property (unlevered)
   { section: 'unlevered', labels: ['Acquisition Uses at Close'], display: 'Acquisition Uses at Close' },
   { section: 'unlevered', labels: ['Deferred Capital Held at Close'], display: 'Deferred Capital Held at Close', optional: true },
-  { section: 'unlevered', labels: ['NOI (before FF&E reserve)', 'Net Operating Income'], display: 'NOI (before FF&E reserve)' },
+  // FON-44 — the headline NOI states its basis on hover; Methodology has the full definition.
+  { section: 'unlevered', labels: ['NOI (before FF&E reserve)', 'Net Operating Income'], display: 'NOI (before FF&E reserve)', title: NOI_BEFORE_RESERVE_DEFINITION },
   { section: 'unlevered', labels: ['FF&E Reserve'], display: 'FF&E Reserve / CapEx' },
   { section: 'unlevered', labels: ['Deferred Capital Deployed'], display: 'Deferred Capital Deployed' },
   { section: 'unlevered', labels: ['Gross Sale Proceeds'], display: 'Gross Sale Proceeds' },
@@ -712,7 +717,7 @@ function summaryStatementRows(
       // Display-only canonical relabel; provenance + lookups key off the
       // worker's own ``line.label``.
       label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
-      title: line.note ?? undefined,
+      title: line.note ?? spec.title,
       state: rowState(cf, spec.section, line),
       total,
       bg: total ? palette.surfaceTint : undefined,

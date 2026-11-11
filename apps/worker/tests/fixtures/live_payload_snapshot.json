@@ -95,6 +95,7 @@
       "scenario_outputs",
       "sensitivity_engine",
       "sources",
+      "stabilization",
       "uses"
     ]
   }

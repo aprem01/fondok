@@ -70,7 +70,8 @@ penetration you set for a specific year applies to that year, so a business plan
 target penetration and performs consistently from then on. The default stabilized year is Year 3.
 From that point, occupancy is held flat: a stabilized hotel has already won its share of the market
 and doesn't keep gaining guests. Revenue continues to grow through ADR, at the market forecast where
-available. The stabilized year is also the reference point for stabilized NOI and yield on cost.
+available. The stabilized year is also the reference point for stabilized NOI and yield on cost,
+both struck on NOI after the FF&E reserve.
 
 **Ramp: how fast the hotel gets there.** A new or reopened hotel doesn't win its full share on day
 one: new staff, a new brand and a new reputation take time. The ramp sets what portion of the
@@ -268,8 +269,15 @@ ever substituted.
 incentive fee when one is modelled), then fixed charges — property taxes, insurance, rent, other —
 to **NOI (before FF&E reserve)**, then the FF&E reserve, to **Cash NOI (after FF&E reserve)**. Each
 line is labelled with its basis, and the two NOI figures differ by exactly the reserve. Where the
-product says simply “NOI” it means the before-reserve figure, the numerator of the entry cap rate.
-The after-reserve figure is what debt coverage and the exit valuation use.
+product says simply “NOI” it means the before-reserve figure — **after property tax and insurance**
+(they sit in fixed charges, above the line) and before the FF&E reserve — the numerator of the entry
+cap rate; wherever it is a headline, that definition is stated beside it. This is the same basis as
+the reference model's NOI line, so the two compare like for like. The after-reserve figure is what
+debt coverage, the exit valuation, the **stabilized NOI** and the **yield on cost** use.
+
+A note on an older pass criterion: the “$2.5–4M Year-1 NOI (~25% margin)” band used in an earlier
+regression pass was struck *before* property tax and insurance, so it was never comparable to
+Fondok's NOI line; it is retired, and NOI is labelled clearly instead.
 
 :::
 
@@ -279,6 +287,13 @@ The after-reserve figure is what debt coverage and the exit valuation use.
 “Stabilized” names one projection year, and every stabilized figure on every screen — occupancy,
 ADR, revenue, NOI, NOI margin, yield on cost, the IC memo's scenario summary and Scenario Analysis'
 comparison row — is read from that year, published once so two screens cannot disagree.
+
+**Stabilized NOI is after the FF&E reserve.** The headline “Stabilized NOI (after FF&E reserve)”
+is that year's Cash NOI, the same basis as the exit NOI the sale is valued on and the way a lender
+reads it. The stabilized NOI margin and the yield on cost — “Yield on Cost (on
+NOI after FF&E reserve)”, stabilized NOI ÷ total development cost — follow the same basis, and
+every label says so. The before-reserve figure for that year is still published beside it, for the
+entry-cap comparison.
 
 The stabilization year defaults to **Year 3 of operations** (badged “Default — confirm”); on a
 shorter hold it is the last projected year, and the card says so. You can override it on the Future
@@ -317,9 +332,9 @@ final year is grown at the RevPAR growth rate because no later year is projected
 (analyst-entered) terminal NOI applies to the selected exit only; every row names its own basis and
 period beside its exit NOI.
 
-The entry cap rate is struck on NOI *before* the reserve while the exit is struck on Cash NOI
-*after* it. Both are defensible conventions; Fondok keeps both and names each one wherever it prints
-it, never a bare “NOI”.
+The entry cap rate is struck on NOI *before* the reserve while the exit — and, with it, the
+stabilized NOI and the yield on cost — is struck on Cash NOI *after* it. Both are defensible
+conventions; Fondok keeps both and names each one wherever it prints it, never a bare “NOI”.
 
 :::
 
@@ -611,9 +626,17 @@ fee, computed each year as max(0, GOP − base fee) × rate; the USALI check not
 above 20% of GOP.
 
 <!-- source: apps/worker/app/engines/expense.py (noi_institutional, noi) -->
-NOI (before FF&E reserve) = GOP − base management fee − incentive fee − fixed charges. Cash NOI
-(after FF&E reserve) = NOI (before reserve) − FF&E reserve. The entry cap rate is struck on the
-before-reserve figure; debt coverage and the exit valuation use the after-reserve figure.
+NOI (before FF&E reserve) = GOP − base management fee − incentive fee − fixed charges. Fixed
+charges are property taxes, insurance, rent and other non-operating expense, so this NOI is **after
+property tax and insurance** and before the FF&E reserve (FON-44, Sam 2026-11-11: the same basis
+as the reference model's NOI line — "keep ours"; the earlier "$2.5–4M Year-1 NOI (~25% margin)"
+pass band was struck before tax and insurance and is retired). Cash NOI (after FF&E reserve) =
+NOI (before reserve) − FF&E reserve. The entry cap rate is struck on the before-reserve figure;
+debt coverage, the exit valuation, the stabilized NOI and the yield on cost (FON-82) use the
+after-reserve figure. Wherever the before-reserve NOI is a headline — Overview's Entry NOI row, the
+Future P&L and Cash Flow NOI rows, CAPEX's Entry NOI, the workbook cover, the memo's NOI (Y1)
+tile — it is labelled "NOI (before FF&E reserve)" and carries the one-line definition "After
+property tax and insurance, before the FF&E reserve" (`NOI_BEFORE_RESERVE_DEFINITION`).
 
 :::
 
@@ -1021,12 +1044,25 @@ Year 3 after reopening (Mar 2027) (default)", with that exception note when the 
 appears wherever a stabilized figure is printed: the Overview's Stabilization section, the Future
 P&L's Stabilization Year note, CAPEX's Exit NOI basis row when the basis is Stabilized NOI,
 Financing's stabilized Debt Yield and DSCR cards, and Returns' Yield on Cost. Stabilized NOI stays a
-separate figure from exit NOI: the Overview prints "Stabilized NOI" (the stabilized year's NOI
-before the FF&E reserve) in its Stabilization section and "Exit NOI (\<basis and period\>)" in its
-Exit section, and Returns' Yield on Cost names "Stabilized NOI (Year N, before FF&E reserve)" while
+separate figure from exit NOI: the Overview prints "Stabilized NOI (after FF&E reserve)" (the
+stabilized year's Cash NOI) in its Stabilization section and "Exit NOI (\<basis and period\>)" in its
+Exit section, and Returns' Yield on Cost names "Stabilized NOI (Year N, after FF&E reserve)" while
 its Exit Value names the exit NOI it capitalises ("Exit NOI (\<period\>)", or forward NOI on an
 older run) — never one number under both labels. The analyst's override wins over either anchor, and
 the debt engine's stabilized DSCR and debt yield follow the same resolved year.
+
+<!-- source: apps/worker/app/engines/stabilization.py (stabilized_cash_noi, stabilized_cash_noi_margin), apps/web/src/lib/engines/noi.ts (stabilizedNoiAfterReserve, STABILIZED_NOI_LABEL, YIELD_ON_COST_LABEL), apps/worker/app/export/live_payload.py (_build_stabilization, stabilized_yield_on_cost) -->
+**Basis (FON-82, Sam 2026-11-11).** The headline Stabilized NOI is the block's `stabilized_cash_noi`
+— the stabilized year's NOI **after** the FF&E reserve, the same basis as the exit NOI and how a
+lender reads it. Its margin is `stabilized_cash_noi_margin` (Cash NOI ÷ that year's revenue; a run
+made before the field existed forms the same ratio from the block's own Cash NOI and revenue, never
+from another year). Yield on cost — the Overview's Opening row and YoC benchmark, Returns' tile, the
+workbook's "Stabilized Yield on Cost (on NOI after FF&E reserve)" — is `stabilized_cash_noi` ÷
+`capital.total_capital`; the workbook's Year-1 yield on cost is Year-1 Cash NOI ÷ total capital on
+the same basis. The IC memo's Scenario Summary, Scenario Analysis' comparison row, the workbook
+cover and Named Scenarios sheet, and the pipeline's stabilized NOI all read `stabilized_cash_noi`.
+`stabilized_noi_before_reserve` and `stabilized_noi_margin` stay on the block, byte-identical, for
+the entry-cap basis; the Kimpton golden carries no move from this change, only the added margin field.
 
 The Stabilization Year is a **reporting** assumption: it selects which projected year the stabilized
 figures are read from. It moves no cash flow. Setting or changing it leaves the gross sale price,
@@ -1049,8 +1085,9 @@ year's own NOI when stabilization falls after the exit. Returns names the basis 
 "Forward 12-month NOI (Year 6)" or "Stabilized NOI (Year 3, grown to Year 5)" — and a
 `terminal_noi_override` still beats either basis.
 
-This matters because the entry cap rate is struck on NOI *before* the reserve while the exit is
-struck on Cash NOI *after* it. Both are defensible conventions and Fondok keeps both, but it names
+This matters because the entry cap rate is struck on NOI *before* the reserve while the exit — and,
+since FON-82, the stabilized NOI and yield on cost — is struck on Cash NOI *after* it. Both are
+defensible conventions and Fondok keeps both, but it names
 each one wherever it prints it — the Overview's Exit row reads "Exit NOI (forward 12-month, after
 FF&E reserve)" and the Future P&L row "Forward 12-Month Cash NOI (after FF&E reserve)", never a bare
 "NOI". Modelling a real year hold+1 through the waterfall instead would move the gross sale price,

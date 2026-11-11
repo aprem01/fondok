@@ -163,8 +163,15 @@ def _build_investment(
     run_rate_noi: float | None = None,
     t12_period_end: str | None = None,
     t12_months_before_close: int | None = None,
+    cash_noi_y1: float | None = None,
+    stabilized_cash_noi: float | None = None,
 ) -> dict[str, Any]:
-    """``investment_engine`` block from the capital engine + a derived cap/yield."""
+    """``investment_engine`` block from the capital engine + a derived cap/yield.
+
+    ``noi_y1`` is Year-1 NOI BEFORE the FF&E reserve (the entry-cap basis);
+    ``cash_noi_y1`` / ``stabilized_cash_noi`` are AFTER it — the yield-on-cost
+    basis since FON-82 (Sam, 2026-11-11: "same for yield on cost").
+    """
     out: dict[str, Any] = {}
     uses = capital.get("uses") if isinstance(capital.get("uses"), list) else []
 
@@ -195,7 +202,11 @@ def _build_investment(
 
     # Derived display ratios (two real engine outputs each; not engine math):
     #   entry cap (Y1 UW) = Y1 underwritten NOI / purchase price
-    #   Y1 yield on cost   = Y1 underwritten NOI / all-in total capital
+    #   Y1 yield on cost         = Y1 Cash NOI (after FF&E reserve) / all-in total capital
+    #   stabilized yield on cost = stabilized-year Cash NOI (after FF&E reserve) / total capital
+    # FON-82 (Sam, 2026-11-11): yield on cost rides on NOI AFTER the FF&E
+    # reserve — the exit-NOI basis and how a lender reads it. The entry cap
+    # keeps the before-reserve basis (FON-59 #1).
     # FON-122 (Sam, 2026-11-05): a hotel closing at purchase quotes its cap on
     # the same normalized entry / run-rate NOI an open hotel does (Year 1
     # priced without the closure), never on its closed Year 1. A T-12 that
@@ -212,8 +223,48 @@ def _build_investment(
             out["entry_cap_not_yet_open"] = True
     elif noi_y1 is not None and purchase and purchase > 0:
         out["entry_cap_rate_year1_uw"] = noi_y1 / purchase
-    if noi_y1 is not None and total_capital and total_capital > 0:
-        out["year1_yield_on_cost"] = noi_y1 / total_capital
+    if cash_noi_y1 is not None and total_capital and total_capital > 0:
+        out["year1_yield_on_cost"] = cash_noi_y1 / total_capital
+    if stabilized_cash_noi is not None and total_capital and total_capital > 0:
+        out["stabilized_yield_on_cost"] = stabilized_cash_noi / total_capital
+    return out
+
+
+def _year_one_cash_noi(expense: dict[str, Any]) -> float | None:
+    """Year-1 Cash NOI (AFTER the FF&E reserve) — ``expense.years[0].noi``."""
+    years = expense.get("years") if isinstance(expense.get("years"), list) else []
+    first = next(
+        (y for y in years if isinstance(y, dict) and _num(y.get("year")) == 1),
+        years[0] if years and isinstance(years[0], dict) else None,
+    )
+    return _num(first.get("noi")) if first else None
+
+
+def _build_stabilization(expense: dict[str, Any]) -> dict[str, Any]:
+    """``stabilization`` block for the exports, in USD, from the expense
+    engine's published stabilized-year block (FON-41 / FON-59 #3).
+
+    FON-82: ``stabilized_cash_noi_usd`` (after the FF&E reserve) is THE
+    Stabilized NOI the workbook / memo print; the before-reserve figure rides
+    along, labelled, so nothing downstream loses it. Empty when the run
+    published no block — the builders then print a reasoned "not available",
+    never a figure borrowed from another year.
+    """
+    block = expense.get("stabilization")
+    if not isinstance(block, dict):
+        return {}
+    out: dict[str, Any] = {}
+    year = block.get("stabilized_year")
+    if isinstance(year, int) and not isinstance(year, bool):
+        out["stabilized_year"] = year
+    _set(out, "stabilized_cash_noi_usd", _num(block.get("stabilized_cash_noi")))
+    _set(
+        out,
+        "stabilized_noi_before_reserve_usd",
+        _num(block.get("stabilized_noi_before_reserve")),
+    )
+    _set(out, "stabilized_cash_noi_margin", _num(block.get("stabilized_cash_noi_margin")))
+    _set(out, "stabilized_revenue_usd", _num(block.get("stabilized_revenue")))
     return out
 
 
@@ -1081,9 +1132,12 @@ async def _comp_sales(
 def _scenario_kpis(engines: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Named-Scenarios KPI row from one run's engine envelopes.
 
-    Year-1 NOI is the first projected year's ``noi``; stabilized NOI is the
-    hold-year's ``noi`` (last projected year when the hold exceeds the
-    projection) — the same rows the Operating Proforma sheet prints.
+    Year-1 NOI is the first projected year's ``noi`` (Cash NOI, after the
+    FF&E reserve). Stabilized NOI is the stabilized year's Cash NOI off the
+    expense engine's published block (``expense.stabilization``, FON-41 /
+    FON-59 #3; after the FF&E reserve per FON-82) — the same figure the
+    Overview, IC memo and Scenario Analysis print. A run with no block
+    carries no stabilized KPI (a reasoned dash), never another year's NOI.
     """
     returns = _outputs(engines, "returns")
     expense = _outputs(engines, "expense")
@@ -1101,9 +1155,9 @@ def _scenario_kpis(engines: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 continue
     if by_year:
         _set(kpis, "year1_noi_usd", _num(by_year[min(by_year)].get("noi")))
-        hold = int(_num(returns.get("hold_years")) or 0)
-        stab_year = hold if hold in by_year else max(by_year)
-        _set(kpis, "stabilized_noi_usd", _num(by_year[stab_year].get("noi")))
+    stab = expense.get("stabilization")
+    if isinstance(stab, dict):
+        _set(kpis, "stabilized_noi_usd", _num(stab.get("stabilized_cash_noi")))
     _set(kpis, "exit_cap_pct", _num(returns.get("exit_cap_rate")))
     _set(kpis, "year1_dscr", _num(debt.get("year_one_dscr")))
     return kpis
@@ -1829,6 +1883,9 @@ async def _assemble_live_payload(
         model["location"] = city
 
     t12_months = expense.get("t12_months_before_close")
+    # FON-82 — the stabilized-year block (after-reserve Stabilized NOI) and the
+    # Year-1 Cash NOI feed both yields on cost; the entry cap keeps ``noi_y1``.
+    stabilization = _build_stabilization(expense)
     investment = _build_investment(
         capital,
         keys,
@@ -1837,9 +1894,13 @@ async def _assemble_live_payload(
         _num(expense.get("run_rate_noi_at_entry")),
         expense.get("t12_period_end") if isinstance(expense.get("t12_period_end"), str) else None,
         int(t12_months) if isinstance(t12_months, (int, float)) and not isinstance(t12_months, bool) else None,
+        cash_noi_y1=_year_one_cash_noi(expense),
+        stabilized_cash_noi=stabilization.get("stabilized_cash_noi_usd"),
     )
     if investment:
         model["investment_engine"] = investment
+    if stabilization:
+        model["stabilization"] = stabilization
     if proforma:
         model["p_and_l_engine_proforma"] = proforma
     # FON-121 — every export names each model year's span (twelve months

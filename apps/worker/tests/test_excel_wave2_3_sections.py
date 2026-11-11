@@ -429,9 +429,11 @@ def test_named_scenarios_compare_sheet_present_when_scenarios_exist(
     ws = wb["Named Scenarios"]
     # Column A holds the KPI labels — the 6 we care about are present.
     col_a = {ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)}
+    # FON-82 / FON-44 — both NOI KPIs name their basis (Cash NOI, after the
+    # FF&E reserve); the stabilized one is the published stabilized-year block.
     expected = {
-        "Levered IRR", "Equity Multiple", "Year 1 NOI",
-        "Stabilized NOI", "Exit Cap Rate", "Year 1 DSCR",
+        "Levered IRR", "Equity Multiple", "Year 1 Cash NOI (after FF&E reserve)",
+        "Stabilized NOI (after FF&E reserve)", "Exit Cap Rate", "Year 1 DSCR",
     }
     assert expected.issubset(col_a), f"missing KPI rows: {expected - col_a}"
     # Header row has scenario names.

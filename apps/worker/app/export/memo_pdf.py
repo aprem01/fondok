@@ -1537,7 +1537,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 
 <div class="metrics">
   <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
-  <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
+  <div class="metric"><div class="k">NOI (Y1, before FF&amp;E reserve)</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
   <div class="metric"><div class="k">Cap Rate{_entry_cap_basis(inv)}</div><div class="v">{_entry_cap_cell(inv)}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>

@@ -53,7 +53,7 @@ import {
 } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
-import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
+import { stabilizedNoiAfterReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { ProvenanceDot } from '@/components/design';
 import {
@@ -136,8 +136,8 @@ const KPI_ROWS: KpiRow[] = [
     // block (`expense.stabilization`), read off ITS stabilized year index.
     // Not the last hold year, not the exit reversion. Overview and the IC
     // memo read the same block, so the three cannot print three numbers.
-    // `null` (no block on this run) renders the row's dash.
-    pick: (e) => stabilizedNoiBeforeReserve(e),
+    // FON-82 — after the FF&E reserve. `null` (no block) renders the dash.
+    pick: (e) => stabilizedNoiAfterReserve(e),
   },
   {
     key: 'exit_value',

@@ -133,13 +133,18 @@ import { positioningSourceChip } from '@/lib/positioningSource';
 import {
   noiBeforeReserveLabel,
   stabilizedYearBlock,
+  stabilizedCashNoiMargin,
   stabilizationBadge,
   stabilizationDetectedHint,
   stabilizationSignalNote,
   stabilizationYearLabel,
   stabilizationAnchorLabel,
   stabilizationAnchorFallbackNote,
+  NOI_BEFORE_RESERVE_DEFINITION,
   STABILIZED_NOI_LABEL,
+  STABILIZED_NOI_MARGIN_LABEL,
+  YIELD_ON_COST_LABEL,
+  YIELD_ON_COST_FORMULA,
   EXIT_NOI_LABEL,
   exitNoiLabel,
   type StabilizedYearBlock,
@@ -828,12 +833,13 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
   // The stabilized figures, ALL off `stab.stabilized_year_index`. Each is
   // undefined (→ '—') rather than 0 when the block did not publish it.
-  const stabNoi = has(stab?.stabilized_noi_before_reserve ?? undefined)
-    ? (stab!.stabilized_noi_before_reserve as number)
+  // FON-82 (Sam, 2026-11-11): Stabilized NOI — and the margin and yield on
+  // cost built on it — is the stabilized year's Cash NOI AFTER the FF&E
+  // reserve, the same basis as the exit NOI and how a lender reads it.
+  const stabNoi = has(stab?.stabilized_cash_noi ?? undefined)
+    ? (stab!.stabilized_cash_noi as number)
     : undefined;
-  const stabMargin = has(stab?.stabilized_noi_margin ?? undefined)
-    ? (stab!.stabilized_noi_margin as number)
-    : undefined;
+  const stabMargin = stabilizedCashNoiMargin(stab) ?? undefined;
   const stabRevPar =
     has(stab?.stabilized_occupancy ?? undefined) && has(stab?.stabilized_adr ?? undefined)
       ? (stab!.stabilized_occupancy as number) * (stab!.stabilized_adr as number)
@@ -844,8 +850,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const mm = (v: number | undefined): string => (has(v) ? fmtMillions(v, 2) : '—');
   const pctv = (v: number | undefined, d = 2): string => (has(v) ? fmtPct(v, d) : '—');
   const perKey = (v: number | undefined): string => (has(v) && has(keys) ? fmtCurrency(v / keys) : '—');
-  // Yield on Cost — the stabilized year's NOI over total development cost.
-  // Same numerator as the Stabilized NOI row; undefined until both exist.
+  // Yield on Cost — the stabilized year's Cash NOI (after the FF&E reserve)
+  // over total development cost. Same numerator as the Stabilized NOI row;
+  // undefined until both exist.
   const yieldOnCost =
     has(stabNoi) && has(totalCapital) && totalCapital > 0 ? stabNoi / totalCapital : undefined;
 
@@ -981,7 +988,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
+      // FON-44 — the headline NOI says what it is: after property tax and
+      // insurance, before the FF&E reserve (the full definition is in Methodology).
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}.` }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
@@ -1111,20 +1120,21 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       lnk('stabRev', 'Stabilized Revenue', money(stab?.stabilized_revenue ?? undefined),
         '→ Future P&L', 'pl', { linkSub: 'projections' });
     // FON-59 #1 / #3 — NOT `returns.terminal_noi`: that is the reversion NOI of
-    // year hold+1, a different year on a different basis. This is the
-    // stabilized year's NOI before the FF&E reserve, straight off the block.
+    // year hold+1, a different year. FON-82: this is the stabilized year's
+    // Cash NOI AFTER the FF&E reserve, straight off the block — the same
+    // basis as the exit NOI, so the two differ only by year, never by basis.
     const stabNoiRow = (): RowDef =>
       stabNoi != null
         ? lnk('stabNOI', STABILIZED_NOI_LABEL, money(stabNoi),
             '→ Future P&L', 'pl',
             {
               bold: true, linkSub: 'projections',
-              sub: `NOI before the FF&E reserve, from projection Year ${stab?.stabilized_year}.`,
+              sub: `Cash NOI after the FF&E reserve, from projection Year ${stab?.stabilized_year}.`,
             })
         : awa('stabNOI', STABILIZED_NOI_LABEL, { bold: true, reason: 'awaiting_analyst' });
     const stabMarginRow = (): RowDef =>
-      cal('stabMargin', 'Stabilized NOI Margin', pctv(stabMargin, 1), {
-        formula: 'Stabilized NOI ÷ Stabilized Revenue',
+      cal('stabMargin', STABILIZED_NOI_MARGIN_LABEL, pctv(stabMargin, 1), {
+        formula: 'Stabilized NOI (after FF&E reserve) ÷ Stabilized Revenue',
         formulaNumbers:
           stabNoi != null && has(stab?.stabilized_revenue ?? undefined)
             ? `${fmtCurrency(stabNoi)} ÷ ${fmtCurrency(stab!.stabilized_revenue as number)}`
@@ -1258,10 +1268,11 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       stabRevRow(),
       stabNoiRow(),
       // Yield on Cost reads the SAME stabilized NOI the row above prints —
-      // one year, one numerator. A dash with a reason until the block exists.
+      // one year, one numerator (after the FF&E reserve, FON-82). A dash
+      // with a reason until the block exists.
       yieldOnCost != null
-        ? cal('yieldOnCost', 'Yield on Cost', pctv(yieldOnCost), { formula: 'Stabilized NOI ÷ Total Development Cost' })
-        : awa('yieldOnCost', 'Yield on Cost', { reason: 'awaiting_analyst', formula: 'Stabilized NOI ÷ Total Development Cost' }),
+        ? cal('yieldOnCost', YIELD_ON_COST_LABEL, pctv(yieldOnCost), { formula: YIELD_ON_COST_FORMULA })
+        : awa('yieldOnCost', YIELD_ON_COST_LABEL, { reason: 'awaiting_analyst', formula: YIELD_ON_COST_FORMULA }),
     ];
 
     // FON-59 R-056 — Sources & Uses sits directly under the Property /
@@ -1835,7 +1846,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
 
         {/* R-050 — stabilized yield on cost vs target (Pass / Short). */}
         <div data-testid="yoc-benchmark" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: palette.surfaceTint, border: `1px solid ${palette.border}`, borderRadius: 7, padding: '8px 12px' }}>
-          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase' }}>Yield on cost benchmark</span>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color: palette.eyebrow, textTransform: 'uppercase' }}>Yield on cost benchmark (on NOI after FF&E reserve)</span>
           <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Target stabilized YoC <b data-testid="yoc-target" style={{ color: prov.blue }}>{targetYoc != null ? fmtPct(targetYoc, 2) : '—'}</b></span>
           <span style={{ fontSize: 11.5, color: palette.textSecondary }}>Actual{stab ? ` (${stabYearLabel})` : ''}: <b data-testid="yoc-actual" style={{ color: prov.green }}>{yocBenchmark.actual != null ? fmtPct(yocBenchmark.actual, 2) : '—'}</b></span>
           <span data-testid="yoc-status" style={{
@@ -2546,7 +2557,8 @@ function FuturePLSummaryCard({
                 })}
               </tr>
               <tr data-testid="overview-future-pl-noi">
-                <td style={tdLabel}>{noiLabel}</td>
+                {/* FON-44 — the headline NOI states its basis on hover; Methodology has the full definition. */}
+                <td style={tdLabel} title={NOI_BEFORE_RESERVE_DEFINITION}>{noiLabel}</td>
                 {cols.map((i) => {
                   const y = expYears[i];
                   const v = num(y?.noi_institutional) ?? num(y?.noi);

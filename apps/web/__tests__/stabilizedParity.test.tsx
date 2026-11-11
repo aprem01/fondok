@@ -17,6 +17,8 @@ import React from 'react';
 import type { ScenarioRecord } from '@/lib/api';
 import {
   STABILIZED_NOI_LABEL,
+  STABILIZED_NOI_MARGIN_LABEL,
+  YIELD_ON_COST_LABEL,
   stabilizationDetectedHint,
   stabilizationYearLabel,
   type StabilizedYearBlock,
@@ -27,9 +29,10 @@ const STAB_INDEX = 1;
 const STAB_OCC = 0.771;
 const STAB_ADR = 401.25;
 const STAB_REVENUE = 12_840_000;
-const STAB_NOI = 4_355_000; // before the FF&E reserve
-const STAB_CASH_NOI = 3_802_387;
+const STAB_NOI = 4_355_000; // before the FF&E reserve — published, NOT the headline (FON-82)
+const STAB_CASH_NOI = 3_802_387; // after the FF&E reserve — THE Stabilized NOI every surface prints
 const STAB_MARGIN = STAB_NOI / STAB_REVENUE;
+const STAB_CASH_MARGIN = STAB_CASH_NOI / STAB_REVENUE; // the headline margin, same basis
 // Figures from OTHER years that must never be printed as "stabilized".
 const YEAR_ONE_NOI = 2_001_056;
 const TERMINAL_NOI = 3_640_000; // returns.terminal_noi — the year hold+1 reversion
@@ -47,6 +50,7 @@ const STABILIZATION_BLOCK = {
   stabilized_noi_before_reserve: STAB_NOI,
   stabilized_cash_noi: STAB_CASH_NOI,
   stabilized_noi_margin: STAB_MARGIN,
+  stabilized_cash_noi_margin: STAB_CASH_MARGIN,
 };
 
 function expenseOutputs(withBlock: boolean) {
@@ -224,8 +228,9 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
     // Overview — the Stabilization section row.
     const overview = render(<OverviewTab projectId="deal-uuid-1" />);
     const sectionRow = rowFor(STABILIZED_NOI_LABEL);
-    expect(sectionRow.textContent).toContain('$4,355,000');
-    // …and NOT the year-1 NOI or the exit-year reversion.
+    expect(sectionRow.textContent).toContain('$3,802,387');
+    // …and NOT the before-reserve figure, the year-1 NOI or the exit-year reversion.
+    expect(sectionRow!.textContent).not.toContain('$4,355,000');
     expect(sectionRow!.textContent).not.toContain('$2,001,056');
     expect(sectionRow!.textContent).not.toContain('$3,640,000');
     overview.unmount();
@@ -234,14 +239,14 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
     // IC Memo — the Scenario Summary row.
     const memo = render(<ICMemoTab project={PROJECT} />);
     const memoValue = baseCellText(await screen.findByText(STABILIZED_NOI_LABEL));
-    expect(memoValue).toContain('$4.36M'); // 4,355,000 → $4.36M
+    expect(memoValue).toContain('$3.80M'); // 3,802,387 → $3.80M
     memo.unmount();
     cleanup();
 
     // Scenario Analysis — the `stab_noi` row.
     render(<ScenarioComparePanel dealId="deal-uuid-1" scenarios={RECORDS} />);
     const panelValue = baseCellText(await screen.findByText(STABILIZED_NOI_LABEL));
-    expect(panelValue).toContain('$4.36M');
+    expect(panelValue).toContain('$3.80M');
     expect(panelValue).toBe(memoValue);
   });
 
@@ -253,13 +258,13 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
     expect(rowValue('Stabilized Occupancy')).toBe('77.1%');
     expect(rowValue('Stabilized ADR')).toBe('$401');
     expect(rowValue('Stabilized Revenue')).toBe('$12,840,000');
-    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$4,355,000');
+    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$3,802,387');
   });
 
-  it('the margin is stabilized NOI ÷ stabilized revenue, same index', () => {
+  it('the margin is stabilized NOI (after FF&E reserve) ÷ stabilized revenue, same index', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    const shown = rowValue('Stabilized NOI Margin');
-    const expected = `${(STAB_MARGIN * 100).toFixed(1)}%`;
+    const shown = rowValue(STABILIZED_NOI_MARGIN_LABEL);
+    const expected = `${(STAB_CASH_MARGIN * 100).toFixed(1)}%`;
     expect(shown).toBe(expected);
     // Cross-check against the two rows actually on screen — not against a
     // ratio of one year's NOI to another year's revenue.
@@ -270,7 +275,7 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
 
   it('the KPI tile reads the block, not the reversion', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
-    expect(screen.getByText('$4.36M')).toBeInTheDocument();
+    expect(screen.getByText('$3.80M')).toBeInTheDocument();
     expect(screen.getByText(/Stabilization: Year 2/)).toBeInTheDocument();
     expect(screen.queryByText('stabilization year not set')).toBeNull();
   });
@@ -283,6 +288,31 @@ describe('one stabilized NOI across Overview, IC Memo and Scenario Analysis', ()
   it('Renovation Impact is gone from the Stabilization section (Sam, MVP)', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.queryByText('Renovation Impact')).toBeNull();
+  });
+
+  // FON-82 (Sam, 2026-11-11) — "Stabilized NOI: switch to AFTER FF&E reserve,
+  // to match the ticket, the exit NOI and how lenders read it. Same for yield
+  // on cost." Every label says so, and the figures are the Cash NOI.
+  it('Stabilized NOI, its margin and Yield on Cost say "after FF&E reserve" and read the Cash NOI', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(STABILIZED_NOI_LABEL).toBe('Stabilized NOI (after FF&E reserve)');
+    expect(STABILIZED_NOI_MARGIN_LABEL).toBe('Stabilized NOI Margin (after FF&E reserve)');
+    expect(YIELD_ON_COST_LABEL).toBe('Yield on Cost (on NOI after FF&E reserve)');
+    // Yield on Cost = 3,802,387 ÷ 43,000,000 = 8.84% — not the before-reserve
+    // 4,355,000 ÷ 43,000,000 = 10.13%. (The Yield on Cost ROW sits in the
+    // development deal's Opening section; a value-add deal shows the figure
+    // on the YoC benchmark and the Returns tile.)
+    expect(screen.queryByText('10.13%')).toBeNull();
+    expect(rowValue(STABILIZED_NOI_MARGIN_LABEL)).toBe(`${(STAB_CASH_MARGIN * 100).toFixed(1)}%`);
+    expect(screen.getByText('Yield on cost benchmark (on NOI after FF&E reserve)')).toBeInTheDocument();
+    expect(screen.getByTestId('yoc-actual')).toHaveTextContent('8.84%');
+    // The Returns tile on this page names the same basis and year.
+    expect(screen.getByText('Stabilized NOI (Year 2, after FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    // No surface prints the old basis-less labels or the before-reserve basis.
+    expect(screen.queryByText('Stabilized NOI')).toBeNull();
+    expect(screen.queryByText('Stabilized NOI Margin')).toBeNull();
+    expect(screen.queryByText('Yield on Cost')).toBeNull();
+    expect(screen.queryByText(/Stabilized NOI \(Year \d+, before FF&E reserve\)/)).toBeNull();
   });
 });
 
@@ -299,7 +329,7 @@ describe('with no stabilization block every row is a dash, and no row is $0', ()
       'Stabilized ADR',
       'Stabilized Revenue',
       STABILIZED_NOI_LABEL,
-      'Stabilized NOI Margin',
+      STABILIZED_NOI_MARGIN_LABEL,
     ]) {
       const value = rowValue(label);
       expect(value, `${label} must be a dash`).toBe('—');
@@ -391,7 +421,7 @@ describe('Overview Stabilization card copy (default / override / clamped)', () =
     // The model-detected year sits directly beneath, as a hint.
     expect(rowValue('Model-detected Year')).toBe('Year 1 — hint only');
     // Stabilized NOI is the block's figure for that year.
-    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$4,355,000');
+    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$3,802,387');
   });
 
   it('override: "Year N (your override)"', () => {
@@ -440,12 +470,12 @@ describe('Overview — reopening-before-projection fallback note and stabilized 
     const stabRow = rowFor(STABILIZED_NOI_LABEL);
     const exitRow = rowFor('Exit NOI (forward 12-month, after FF&E reserve)');
     expect(stabRow).not.toBe(exitRow);
-    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$4,355,000'); // the stabilized year, before reserve
+    expect(rowValue(STABILIZED_NOI_LABEL)).toBe('$3,802,387'); // the stabilized year, after the FF&E reserve (FON-82)
     expect(rowValue('Exit NOI (forward 12-month, after FF&E reserve)')).toBe('$3,640,000'); // returns.terminal_noi
     expect(within(screen.getByTestId('overview-section-stabilization')).queryByText(/^Exit NOI/)).toBeNull();
     expect(within(screen.getByTestId('overview-section-exit')).queryByText(STABILIZED_NOI_LABEL)).toBeNull();
     // Neither figure is printed under the other's label.
     expect(stabRow.textContent).not.toContain('$3,640,000');
-    expect(exitRow.textContent).not.toContain('$4,355,000');
+    expect(exitRow.textContent).not.toContain('$3,802,387');
   });
 });

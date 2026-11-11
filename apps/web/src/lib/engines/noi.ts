@@ -4,9 +4,13 @@
  * The bare word "NOI" means NOI **before** the FF&E replacement reserve
  * (founder decision — FON-59 #1 / FON-67 #2). That is the engine field
  * `expense.years[].noi_institutional` and the registry concept `ebitda`.
+ * FON-44 (Sam, 2026-11-11): it is after property tax and insurance — the
+ * same basis as the reference model's NOI line — and before the reserve;
+ * wherever it is a headline it says so (`NOI_BEFORE_RESERVE_DEFINITION`).
  * The after-reserve figure `expense.years[].noi` (registry concept `noi`) is
- * "Cash NOI"; it is what the Debt engine uses for DSCR / debt yield and what
- * the Returns engine capitalises at the exit cap.
+ * "Cash NOI"; it is what the Debt engine uses for DSCR / debt yield, what
+ * the Returns engine capitalises at the exit cap and — FON-82 (Sam,
+ * 2026-11-11) — the basis of the headline Stabilized NOI and yield on cost.
  *
  * Every label below is the canonical display string. Nothing here changes an
  * engine value — these are display selectors only.
@@ -14,6 +18,13 @@
 
 /** NOI before the FF&E reserve — `expense.years[].noi_institutional`. */
 export const NOI_BEFORE_RESERVE_LABEL = 'NOI (before FF&E reserve)';
+
+/**
+ * FON-44 — the one-line definition a headline "NOI" carries (tooltip /
+ * sub-label). The full definition lives in Methodology.
+ */
+export const NOI_BEFORE_RESERVE_DEFINITION =
+  'After property tax and insurance, before the FF&E reserve';
 
 /** Cash NOI — `expense.years[].noi`, i.e. net of the FF&E reserve. */
 export const CASH_NOI_LABEL = 'Cash NOI (after FF&E reserve)';
@@ -129,11 +140,17 @@ export interface StabilizedYearBlock {
   stabilized_occupancy?: number | null;
   stabilized_adr?: number | null;
   stabilized_revenue?: number | null;
-  /** NOI before the FF&E reserve — the bare word "NOI" in Fondok. */
+  /** NOI before the FF&E reserve (after property tax and insurance) — the
+   *  entry-cap basis. Still published; NOT the headline since FON-82. */
   stabilized_noi_before_reserve?: number | null;
-  /** Cash NOI (after the FF&E reserve) of the SAME year. */
+  /** Cash NOI (after the FF&E reserve) of the SAME year — FON-82: THE
+   *  Stabilized NOI every surface prints and the yield-on-cost numerator. */
   stabilized_cash_noi?: number | null;
+  /** Margin on the before-reserve NOI (kept for older readers). */
   stabilized_noi_margin?: number | null;
+  /** FON-82 — margin on the headline (after-reserve) basis, same year. A run
+   *  made before the field existed omits it; see `stabilizedCashNoiMargin`. */
+  stabilized_cash_noi_margin?: number | null;
 }
 
 const isFiniteNum = (v: unknown): v is number =>
@@ -164,10 +181,11 @@ export function stabilizedYearFromEngines(
 }
 
 /**
- * Stabilized NOI **before** the FF&E reserve, from the stabilized year — the
- * figure Overview, the IC memo and Scenario Analysis all print. `null` when the
- * run published no stabilization block, or published one whose projection
- * never carried `noi_institutional`.
+ * Stabilized NOI **before** the FF&E reserve, from the stabilized year. Kept
+ * for the entry-cap basis; since FON-82 it is NOT what the headline prints
+ * (see `stabilizedNoiAfterReserve`). `null` when the run published no
+ * stabilization block, or one whose projection never carried
+ * `noi_institutional`.
  */
 export function stabilizedNoiBeforeReserve(
   engines: Record<string, EngineOutputsLike | undefined> | null | undefined,
@@ -177,8 +195,45 @@ export function stabilizedNoiBeforeReserve(
   return isFiniteNum(v) ? v : null;
 }
 
-/** Display label for the figure above. "NOI" unqualified = before the reserve. */
-export const STABILIZED_NOI_LABEL = 'Stabilized NOI';
+/**
+ * FON-82 (Sam, 2026-11-11) — Stabilized NOI **after** the FF&E reserve
+ * (`stabilized_cash_noi`), from the stabilized year: the figure Overview,
+ * Returns' yield on cost, the IC memo and Scenario Analysis all print. The
+ * same basis as the exit NOI and how a lender reads it. `null` when the run
+ * published no stabilization block — never a figure borrowed from another
+ * year or the other basis.
+ */
+export function stabilizedNoiAfterReserve(
+  engines: Record<string, EngineOutputsLike | undefined> | null | undefined,
+): number | null {
+  const block = stabilizedYearFromEngines(engines);
+  const v = block?.stabilized_cash_noi;
+  return isFiniteNum(v) ? v : null;
+}
+
+/**
+ * FON-82 — the stabilized NOI margin on the headline (after-reserve) basis.
+ * Reads the worker's `stabilized_cash_noi_margin`; a run made before that
+ * field existed still carries `stabilized_cash_noi` and `stabilized_revenue`
+ * on the SAME block (same year index), so the ratio is formed from those —
+ * never from another year. `null` without both.
+ */
+export function stabilizedCashNoiMargin(block: StabilizedYearBlock | null): number | null {
+  if (!block) return null;
+  if (isFiniteNum(block.stabilized_cash_noi_margin)) return block.stabilized_cash_noi_margin;
+  const noi = block.stabilized_cash_noi;
+  const rev = block.stabilized_revenue;
+  return isFiniteNum(noi) && isFiniteNum(rev) && rev > 0 ? noi / rev : null;
+}
+
+/** Display label for the headline stabilized figure — FON-82: after the reserve. */
+export const STABILIZED_NOI_LABEL = 'Stabilized NOI (after FF&E reserve)';
+/** The headline stabilized margin, same basis. */
+export const STABILIZED_NOI_MARGIN_LABEL = 'Stabilized NOI Margin (after FF&E reserve)';
+/** Yield on cost — stabilized NOI after the FF&E reserve ÷ total capital. */
+export const YIELD_ON_COST_LABEL = 'Yield on Cost (on NOI after FF&E reserve)';
+/** The formula every Yield on Cost surface states. */
+export const YIELD_ON_COST_FORMULA = 'Stabilized NOI (after FF&E reserve) ÷ Total Development Cost';
 
 /**
  * How the stabilized year was arrived at, for the badge next to it.

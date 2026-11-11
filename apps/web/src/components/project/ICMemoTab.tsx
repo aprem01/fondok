@@ -87,7 +87,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { History, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { fmtCurrency, fmtPct } from '@/lib/format';
-import { stabilizedNoiBeforeReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
+import { stabilizedNoiAfterReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { EXIT_SCHEDULE_MISSING, EXIT_SCHEDULE_TITLE, headlineReturns } from '@/lib/engines/returns';
 import { ExitScheduleTable } from '@/components/project/ExitScheduleCard';
 import { scenarioReturnsIssue, SCENARIO_ISSUE_LABEL, SCENARIO_NEEDS_RERUN } from '@/lib/scenarioGuards';
@@ -2229,7 +2229,8 @@ function ScenarioSummary({ dealId, isMock, onLoaded }: { dealId: string; isMock:
             // `stab_noi` row uses: the worker's published stabilization block,
             // read off its own stabilized year. IC Memo, Scenario Analysis and
             // Overview therefore cannot print different "stabilized" numbers.
-            noi: stabilizedNoiBeforeReserve(e),
+            // FON-82 — after the FF&E reserve, like every other surface.
+            noi: stabilizedNoiAfterReserve(e),
             exit: pathNum(e.returns?.outputs, ['gross_sale_price']),
             dscr: pathNum(e.debt?.outputs, ['year_one_dscr']),
           };

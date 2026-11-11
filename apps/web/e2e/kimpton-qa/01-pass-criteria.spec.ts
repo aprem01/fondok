@@ -13,7 +13,12 @@ import { kimptonSmokeSkipReason } from './guard';
  *
  *   1. Historicals match the source EXACTLY: Revenue $12.94M, ADR $247.08,
  *      RevPAR $203.57.
- *   2. NOI is $2.5–4M (~25% margin).
+ *   2. RETIRED (FON-44, Sam 2026-11-11). The "$2.5–4M Year-1 NOI (~25%
+ *      margin)" band was Sam's original pass criterion, struck BEFORE
+ *      property tax and insurance. Fondok's NOI line is after property tax
+ *      and insurance (and before the FF&E reserve) — the reference model's
+ *      own NOI basis — so the band no longer applies; NOI is labelled
+ *      clearly instead and the definition lives in Methodology.
  *   3. Year 1 ADR is $275–290.
  *
  * All three run against the DUPLICATE Kimpton Angler deal
@@ -98,19 +103,15 @@ test.describe('@kimpton-qa Pass Criteria 2 & 3 — Year 1 projections', () => {
     await clerk.signIn({ page, signInParams: { strategy: 'password', identifier: EMAIL, password: PASSWORD } });
   });
 
-  test('Projections — Year 1 NOI is $2.5–4M, ~25% margin (TC: PASS-CRITERIA-2)', async ({ page }) => {
+  // PASS-CRITERIA-2 ("Year 1 NOI is $2.5–4M, ~25% margin") is RETIRED —
+  // FON-44, Sam 2026-11-11: the band was struck before property tax and
+  // insurance, Fondok's NOI line is after them (before the FF&E reserve), so
+  // the two were never comparable. What remains checkable is that the NOI row
+  // names its basis, never a bare "NOI".
+  test('Projections — the Year 1 NOI row names its basis; the retired $2.5–4M band is not asserted (TC: PASS-CRITERIA-2, retired)', async ({ page }) => {
     await openDeal(page, '?tab=pl&sub=projections');
-    // Projections renders its own layout (not the Historicals worksheet
-    // table), so try the KPI-tile sibling pattern first; fall back to a
-    // worksheet-style row/column read if the page turns out to use a table
-    // here too. Whichever succeeds, we still assert the pinned range.
-    const body = page.locator('body');
-    const label = page.getByText(/^Net Operating Income \(NOI\)$|^NOI$/i).first();
-    if (await label.count() > 0) {
-      await expectFigureInRange(body, await label.innerText(), 2_500_000, 4_000_000);
-    } else {
-      await expectWorksheetColumnInRange(page, 'Net Operating Income (NOI)', /year ?1/i, 2_500_000, 4_000_000);
-    }
+    await expect(page.getByText('NOI (before FF&E reserve)').first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText('Cash NOI (after FF&E reserve)').first()).toBeVisible();
     await expectNoEngineFailures(page);
   });
 

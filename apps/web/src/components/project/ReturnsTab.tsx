@@ -45,6 +45,7 @@ import { asDealYears } from '@/lib/dealYears';
 import {
   stabilizedYearBlock,
   stabilizationAnchorCaption,
+  YIELD_ON_COST_LABEL,
   stabilizationAnchorFallbackNote,
   exitNoiLabel,
 } from '@/lib/engines/noi';
@@ -722,20 +723,22 @@ function ReturnsSummary({
           : 'Equity IRR after debt service';
 
   // Yield on Cost — DERIVED (no stored field): stabilized NOI ÷ total cost
-  // basis. Stabilized NOI is THE stabilized year's NOI before the FF&E reserve,
-  // off the ONE block the expense engine publishes (`expense.stabilization`,
-  // FON-41 / FON-59 #3) — the same year and basis the Overview's Stabilized NOI
-  // row, its Yield on Cost row and its YoC benchmark print. It used to be the
-  // LAST hold year's after-reserve cash NOI (`returns.noi_by_year[-1]`), so the
-  // same page showed two different "Yield on Cost" figures under one caption.
+  // basis. Stabilized NOI is THE stabilized year's Cash NOI AFTER the FF&E
+  // reserve (FON-82, Sam 2026-11-11 — the exit-NOI basis and how a lender
+  // reads it), off the ONE block the expense engine publishes
+  // (`expense.stabilization`, FON-41 / FON-59 #3) — the same year and basis
+  // the Overview's Stabilized NOI row, its Yield on Cost row and its YoC
+  // benchmark print. It used to be the LAST hold year's cash NOI
+  // (`returns.noi_by_year[-1]`), so the same page showed two different
+  // "Yield on Cost" figures under one caption.
   // Total cost basis = `capital.total_capital`. Either unsourceable → '—' with
   // the reason, never a borrowed year. A sandbox preview carries no
   // stabilization block, so the tile is withheld while one is active rather
   // than printing a canonical figure under a "Sandbox" chip.
   const stab = stabilizedYearBlock(getEngineField<unknown>(outputs, 'expense'));
   const stabilizedNoi =
-    stab?.stabilized_noi_before_reserve != null && Number.isFinite(stab.stabilized_noi_before_reserve)
-      ? stab.stabilized_noi_before_reserve
+    stab?.stabilized_cash_noi != null && Number.isFinite(stab.stabilized_cash_noi)
+      ? stab.stabilized_cash_noi
       : undefined;
   const totalCapital = getEngineField<number>(outputs, 'capital', 'total_capital');
   const yieldOnCost =
@@ -748,7 +751,7 @@ function ReturnsSummary({
       : sandboxOn
         ? 'Sandbox case — Yield on Cost reads the canonical run’s stabilized year (expense.stabilization); reset to base to see it'
         : stabilizedNoi == null
-          ? awaitingRun('expense.stabilization.stabilized_noi_before_reserve')
+          ? awaitingRun('expense.stabilization.stabilized_cash_noi')
           : awaitingRun('capital.total_capital');
 
   // ── Secondary row (3 white cards). Equity Profit + Initial Equity read off
@@ -856,15 +859,15 @@ function ReturnsSummary({
           />
           <ReturnsKpi
             variant="navy"
-            label="Yield on Cost"
+            label={YIELD_ON_COST_LABEL}
             sandbox={sandboxOn}
             flashKey={yieldOnCost}
             sub={
               <>
                 <span>
                   {stab
-                    ? `Stabilized NOI (Year ${stab.stabilized_year}, before FF&E reserve) ÷ total capital`
-                    : 'Stabilized NOI (before FF&E reserve) ÷ total capital'}
+                    ? `Stabilized NOI (Year ${stab.stabilized_year}, after FF&E reserve) ÷ total capital`
+                    : 'Stabilized NOI (after FF&E reserve) ÷ total capital'}
                 </span>
                 {yocAnchor && (
                   <span data-testid="yoc-anchor" style={{ display: 'block', marginTop: 3 }}>
