@@ -12,6 +12,8 @@ import EngineRunHistory from './EngineRunHistory';
 import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
+import { RETURNS_VIEWS, returnsHref } from '@/lib/returnsSection';
+import { EXIT_SCHEDULE_TITLE } from '@/lib/engines/returns';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
@@ -186,6 +188,18 @@ export default function CashFlowTab() {
     if (!dealId) return;
     router.push(`/projects/${dealId}?tab=${tabId}${sub ? `&sub=${sub}` : ''}`, { scroll: false });
   };
+  // Returns lives on Overview (R-061); every "View Returns →" link builds its
+  // URL through `returnsHref` so the Returns Summary view opens and scrolls.
+  const goReturnsByExitYear = () => {
+    if (!dealId) return;
+    router.push(returnsHref(dealId, 'returns-summary'), { scroll: false });
+  };
+  // B5 — why the LP / GP / Total Distribution rows are empty on this run, if
+  // the worker said (the partnership engine's own ``not_applicable`` sentence,
+  // else the statement's ``distributions_unavailable``); null otherwise.
+  const distributionsUnavailable = cf
+    ? distributionsUnavailableReason(cf, outputs?.engines?.partnership)
+    : null;
 
   // Fallback: a deal whose saved run predates the cash-flow statement has none
   // to show — even when Overview and the IC memo already carry returns from
@@ -306,7 +320,15 @@ export default function CashFlowTab() {
         />
 
         <div className={cn(computing && 'relative pointer-events-none opacity-60')}>
-          {tab === 'summary' && <SummaryView cf={cf} returns={returns} />}
+          {tab === 'summary' && (
+            <SummaryView
+              cf={cf}
+              returns={returns}
+              distributionsUnavailable={distributionsUnavailable}
+              onNavigate={go}
+              onViewReturnsByExitYear={goReturnsByExitYear}
+            />
+          )}
           {tab === 'unlevered' && (
             <CashFlowStatement
               cf={cf}
@@ -477,7 +499,13 @@ function EquityFundingReference({ cf }: { cf: CashFlowStatementOutput }) {
   );
 }
 
-function SummaryView({ cf, returns }: { cf: CashFlowStatementOutput; returns: ReturnsFigures }) {
+function SummaryView({
+  cf,
+  returns,
+  distributionsUnavailable,
+  onNavigate,
+  onViewReturnsByExitYear,
+}: SummaryStatementProps) {
   const { kpis, bridge } = buildSummary(cf);
   const headers = periodHeaders(cf);
 
@@ -507,7 +535,13 @@ function SummaryView({ cf, returns }: { cf: CashFlowStatementOutput; returns: Re
           P&L lines, debt, equity cash flow and the partner distributions in one
           grid, with the whole-hold IRR figures beside it. The Bridge below is
           the three-line reconciliation of the same series. */}
-      <SummaryStatement cf={cf} returns={returns} />
+      <SummaryStatement
+        cf={cf}
+        returns={returns}
+        distributionsUnavailable={distributionsUnavailable}
+        onNavigate={onNavigate}
+        onViewReturnsByExitYear={onViewReturnsByExitYear}
+      />
 
       <SectionCard
         variant="title"
@@ -550,13 +584,47 @@ function SummaryView({ cf, returns }: { cf: CashFlowStatementOutput; returns: Re
 // ``cash_flow`` sections — nothing is re-derived in the browser except the
 // cumulative levered cash flow, which is labelled "calculated" — and sets the
 // whole-hold IRR / equity multiple from the ``returns`` engine beside it,
-// once. A per-year IRR is not an engine output and is not invented here.
+// once. IRR by exit year IS an engine output (FON-118, ``returns.exit_schedule``)
+// but it lives on Returns → Returns Summary → "Returns by exit year"; the
+// footnote links there instead of restating a per-column IRR here.
+//
+// FON-67 (Sam, 2026-11-11) — the three distribution rows read "—" on a deal
+// whose partnership engine reported ``not_applicable`` (B5: no partnership
+// terms on the deal, so the waterfall never ran). The worker says why in
+// ``cash_flow.distributions_unavailable``; the rows carry that reason and a
+// note under the table links to Partnership → Waterfall, where the terms are
+// entered. Never "not emitted" when the engine told us the real reason.
 
 /** Whole-hold return figures from the ``returns`` engine (null → "—"). */
 interface ReturnsFigures {
   leveredIrr: number | null;
   unleveredIrr: number | null;
   equityMultiple: number | null;
+}
+
+/** Where the Partnership terms are entered (GP / LP split, preferred return,
+ *  promote tiers) — the Waterfall sub-tab, the same target the Partnership
+ *  tab's own "Partnership terms" banner opens. */
+const PARTNERSHIP_TERMS_LINK = { tab: 'partnership', sub: 'waterfall' } as const;
+
+/** The Returns view that holds the FON-118 schedule by exit year. */
+const RETURNS_SUMMARY_LABEL =
+  RETURNS_VIEWS.find((v) => v.id === 'returns-summary')?.label ?? 'Returns Summary';
+
+/** The sentence the distribution rows and their note carry when the waterfall
+ *  did not run. Prefers the partnership engine row's own ``not_applicable``
+ *  message (it names what is missing / half-entered), else the cash-flow
+ *  statement's ``distributions_unavailable``. ``null`` when lines were emitted
+ *  or no reason is known (the rows then read "not emitted", as before). */
+function distributionsUnavailableReason(
+  cf: CashFlowStatementOutput,
+  partnershipRow: { status?: string; not_applicable?: { message?: string } | null } | undefined,
+): string | null {
+  if ((cf.distributions ?? []).length > 0) return null;
+  const fromRow =
+    partnershipRow?.status === 'not_applicable' ? partnershipRow.not_applicable?.message : undefined;
+  const reason = fromRow || cf.distributions_unavailable;
+  return reason ? String(reason) : null;
 }
 
 interface SummaryRowSpec {
@@ -604,7 +672,11 @@ const SUMMARY_ROWS: SummaryRowSpec[] = [
 /** Map the row specs onto StatementTable rows, reading each worker line by
  *  label. Distribution lines are indexed by operating period (Year 1..N), so
  *  they are shifted one column right of the close column. */
-function summaryStatementRows(cf: CashFlowStatementOutput, n: number): StatementRow[] {
+function summaryStatementRows(
+  cf: CashFlowStatementOutput,
+  n: number,
+  distributionsUnavailable: string | null = null,
+): StatementRow[] {
   const absentCells = (): StatementCell[] =>
     Array.from({ length: n }, () => ({ text: '—', color: prov.muted }));
 
@@ -618,9 +690,15 @@ function summaryStatementRows(cf: CashFlowStatementOutput, n: number): Statement
     }
     if (!line) {
       if (spec.optional) continue;
+      // A distribution row on a deal whose waterfall did not run carries the
+      // worker's reason, not "not emitted" — the engine ran and said why.
+      const title =
+        spec.section === 'distributions' && distributionsUnavailable
+          ? `Awaiting partnership terms — ${distributionsUnavailable}`
+          : 'Not emitted by the cash_flow engine for this deal';
       rows.push({
         label: spec.display,
-        title: 'Not emitted by the cash_flow engine for this deal',
+        title,
         state: 'awaiting_data',
         total: spec.total,
         bg: spec.total ? palette.surfaceTint : undefined,
@@ -653,7 +731,39 @@ function summaryStatementRows(cf: CashFlowStatementOutput, n: number): Statement
   return rows;
 }
 
-function SummaryStatement({ cf, returns }: { cf: CashFlowStatementOutput; returns: ReturnsFigures }) {
+interface SummaryStatementProps {
+  cf: CashFlowStatementOutput;
+  returns: ReturnsFigures;
+  /** Why the distribution rows are empty (B5 ``not_applicable``), else null. */
+  distributionsUnavailable: string | null;
+  /** Cross-tab navigation (the output-only banner's own `go`). */
+  onNavigate: (tab: string, sub?: string) => void;
+  /** Returns → Returns Summary, where the FON-118 schedule by exit year is. */
+  onViewReturnsByExitYear: () => void;
+}
+
+/** The banner-chip link treatment (OutputOnlyBanner), reused inline. */
+function LinkChip({ label, onClick, testId }: { label: string; onClick: () => void; testId?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className="font-semibold whitespace-nowrap cursor-pointer"
+      style={{ color: '#2f4a8c' }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SummaryStatement({
+  cf,
+  returns,
+  distributionsUnavailable,
+  onNavigate,
+  onViewReturnsByExitYear,
+}: SummaryStatementProps) {
   const headers = periodHeaders(cf);
   const n = headers.length;
   const linkedSub = (
@@ -681,9 +791,42 @@ function SummaryStatement({ cf, returns }: { cf: CashFlowStatementOutput; return
             lineItemHeader="LINE ITEM"
             columns={headers}
             gridTemplateColumns={statementGridCols(n)}
-            rows={summaryStatementRows(cf, n)}
+            rows={summaryStatementRows(cf, n, distributionsUnavailable)}
             footnote="Every row is a line of the Cash Flow engine's statement, read by label — a line the engine did not publish shows —. Nothing is re-derived here except the cumulative levered cash flow, which is labelled calculated. Distributions are the Partnership allocation of Net Cash Flow to Equity."
           />
+          {distributionsUnavailable && (
+            <div
+              role="status"
+              data-testid="cash-flow-distributions-unavailable"
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 10,
+                margin: '10px 14px 4px',
+                padding: '10px 14px',
+                border: `1px solid ${palette.border}`,
+                borderLeft: `3px solid ${prov.amber}`,
+                borderRadius: 9,
+                background: palette.surfaceTint,
+                fontSize: 11.5,
+                color: palette.textSecondary,
+                lineHeight: 1.5,
+              }}
+            >
+              <span>
+                <span style={{ fontWeight: 600, color: palette.ink }}>LP / GP / Total Distributions are awaiting data</span>
+                {' — the partnership waterfall did not run on this deal: '}
+                {distributionsUnavailable}
+                {'. Enter the GP / LP split, preferred return and promote tiers in Partnership → Waterfall and re-run the model; the rows then read the Partnership allocation of Net Cash Flow to Equity.'}
+              </span>
+              <LinkChip
+                label="Partnership → Waterfall →"
+                testId="cash-flow-distributions-partnership-link"
+                onClick={() => onNavigate(PARTNERSHIP_TERMS_LINK.tab, PARTNERSHIP_TERMS_LINK.sub)}
+              />
+            </div>
+          )}
         </div>
         <div
           data-testid="cash-flow-irr-block"
@@ -705,9 +848,18 @@ function SummaryStatement({ cf, returns }: { cf: CashFlowStatementOutput; return
               sub={linkedSub}
             />
           ))}
-          <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.5 }}>
-            IRR is a whole-hold figure — the Returns engine reports one levered and one unlevered IRR
-            for the hold period. There is no per-year IRR output, so none is shown.
+          <div
+            data-testid="cash-flow-irr-footnote"
+            style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.5 }}
+          >
+            IRR is a whole-hold figure, shown once for the hold period — the Returns engine reports one
+            levered and one unlevered IRR. IRR by exit year is on Returns → {RETURNS_SUMMARY_LABEL} →{' '}
+            {EXIT_SCHEDULE_TITLE}.{' '}
+            <LinkChip
+              label={`${EXIT_SCHEDULE_TITLE} →`}
+              testId="cash-flow-irr-exit-year-link"
+              onClick={onViewReturnsByExitYear}
+            />
           </div>
         </div>
       </div>
