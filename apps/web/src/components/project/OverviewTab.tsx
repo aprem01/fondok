@@ -107,7 +107,7 @@ import {
   PURCHASE_PRICE_KEY,
   entryCapRate,
   NOT_YET_OPEN,
-  ON_T12_CLOSING,
+  ON_RUN_RATE_CLOSING,
   closedAtEntry,
   resolvePurchasePrice,
 } from '@/lib/purchasePrice';
@@ -770,13 +770,16 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   const entryCapCalc = entryCapRate(y1Noi, priceInput.value, outputs?.engines?.expense);
   const atEntry = closedAtEntry(
     getEngineField<number>(outputs, 'revenue', 'closed_months'),
-    getEngineField<number>(outputs, 'expense', 't12_noi_at_entry'),
+    getEngineField<number>(outputs, 'expense', 'run_rate_noi_at_entry'),
     priceInput.value,
+    getEngineField<string>(outputs, 'expense', 't12_period_end'),
+    getEngineField<number>(outputs, 'expense', 't12_months_before_close'),
   );
-  const { notYetOpen } = atEntry;
+  // FON-122 — "n/a, …" when a closed-at-purchase hotel has no cap to print.
+  const { na: capNa } = atEntry;
   // The capital engine publishes no entry cap rate: it is always this
   // derivation, so it can never disagree with the price on screen.
-  const entryCap = atEntry.closed ? atEntry.t12Cap : entryCapCalc.value;
+  const entryCap = atEntry.closed ? atEntry.cap : entryCapCalc.value;
   // Price / Key follows the same price on screen, so a just-saved price moves
   // it with the Entry Cap Rate rather than leaving it on the last run's price.
   const pricePerKey = has(priceInput.value) && has(keys)
@@ -978,16 +981,18 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     ];
 
     const entryRows = (): RowDef[] => [
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.t12Cap) ? money(atEntry.t12Noi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals' }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
-      cal('entryCap', 'Entry Cap Rate', notYetOpen ? NOT_YET_OPEN : pctv(entryCap), {
-        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.t12Cap) ? 'T-12 NOI ÷ Purchase Price' : ENTRY_CAP_FORMULA,
+      cal('entryCap', 'Entry Cap Rate', capNa ?? pctv(entryCap), {
+        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.cap) ? 'Run-rate NOI (Year 1 priced without the closure) ÷ Purchase Price' : ENTRY_CAP_FORMULA,
         inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
-        ...(notYetOpen
-          ? { sub: 'The hotel earns nothing at purchase and there is no T-12 NOI to quote a going-in cap on. See Yield on Cost on Returns.' }
-          : has(atEntry.t12Cap) ? { sub: ON_T12_CLOSING }
+        ...(atEntry.outOfDate
+          ? { sub: `The T-12 is out of date for a going-in cap (${atEntry.outOfDate}). See Yield on Cost on Returns.` }
+          : atEntry.notYetOpen
+          ? { sub: 'The hotel earns nothing at purchase and no entry NOI could be built to quote a going-in cap on. See Yield on Cost on Returns.' }
+          : has(atEntry.cap) ? { sub: ON_RUN_RATE_CLOSING }
           : has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
       }),
       mk({
@@ -1340,8 +1345,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     }
     if (cfg === 'core') {
       return [
-        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : undefined },
-        { label: 'Going-In Cap', value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap), sub: notYetOpen ? 'see Yield on Cost on Returns' : has(atEntry.t12Cap) ? ON_T12_CLOSING : undefined },
+        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : undefined },
+        { label: 'Going-In Cap', value: capNa ?? pctv(entryCap), sub: capNa ? 'see Yield on Cost on Returns' : has(atEntry.cap) ? ON_RUN_RATE_CLOSING : undefined },
         { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         leveredTile,
@@ -1349,7 +1354,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ];
     }
     return [
-      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : undefined },
+      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget),
         sub: [
@@ -1401,7 +1406,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
             return { label: k.label, value: mm(s.equity ?? undefined) };
           case 'Going-In Cap': {
             // Entry NOI is price-invariant: entry cap × base price ÷ scenario price.
-            if (notYetOpen) return { label: k.label, value: NOT_YET_OPEN };
+            if (capNa) return { label: k.label, value: capNa };
             const entryNoi = has(entryCap) && has(purchase) ? entryCap * purchase : undefined;
             return { label: k.label, value: has(entryNoi) && has(price) && price > 0 ? pctv(entryNoi / price) : '—' };
           }

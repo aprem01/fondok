@@ -11,6 +11,7 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -24,7 +25,8 @@ from app.engines.revenue import (
     default_ramp_by_year,
     months_open_shares,
 )
-from app.export.live_payload import _build_investment
+from app.engines.timeline import whole_months_between
+from app.export.live_payload import _build_investment, t12_out_of_date
 from app.export.pl_workbooks import proj_cell_key, projection_values
 from app.services.engine_runner import _displacement_status
 from app.services.topline import (
@@ -340,18 +342,94 @@ def test_the_renovation_status_says_when_the_closure_covers_the_displacement() -
     assert rest["active"] is True and rest["schedule"][0]["start_month"] == closed_months_for(base) + 1
 
 
-def test_exports_quote_a_closed_hotels_cap_on_its_t12() -> None:
-    capital = {"uses": [{"label": "Purchase Price", "amount": 50_000_000.0}], "total_capital": 60_000_000.0}
-    on_t12 = _build_investment(capital, 100, -500_000.0, True, 4_000_000.0)
-    assert on_t12["entry_cap_rate_t12"] == pytest.approx(0.08)
-    assert "entry_cap_rate_year1_uw" not in on_t12 and "entry_cap_not_yet_open" not in on_t12
+_CAPITAL = {"uses": [{"label": "Purchase Price", "amount": 50_000_000.0}], "total_capital": 60_000_000.0}
+_NO_CAP_KEYS = {"entry_cap_rate_year1_uw", "entry_cap_rate_run_rate", "entry_cap_not_yet_open", "entry_cap_t12_out_of_date"}
 
 
-def test_exports_say_not_yet_open_instead_of_a_cap_on_a_closed_year_1() -> None:
-    capital = {"uses": [{"label": "Purchase Price", "amount": 50_000_000.0}], "total_capital": 60_000_000.0}
-    closed = _build_investment(capital, 100, -500_000.0, True)
-    assert closed["entry_cap_not_yet_open"] is True and "entry_cap_rate_year1_uw" not in closed
-    assert _build_investment(capital, 100, 500_000.0)["entry_cap_rate_year1_uw"] == pytest.approx(0.01)
+def test_exports_quote_a_closed_hotels_cap_on_its_run_rate_noi() -> None:
+    """FON-122 (Sam, 2026-11-05): the same normalized entry NOI an open hotel quotes —
+    Year 1 priced without the closure — never the closed Year 1 (-500k here)."""
+    on_run_rate = _build_investment(_CAPITAL, 100, -500_000.0, True, 4_000_000.0, "2025-06-30", 3)
+    assert on_run_rate["entry_cap_rate_run_rate"] == pytest.approx(0.08)
+    assert _NO_CAP_KEYS & on_run_rate.keys() == {"entry_cap_rate_run_rate"}
+    # An undated current T-12, or no close date: nothing says it is stale, so the cap reads.
+    undated = _build_investment(_CAPITAL, 100, -500_000.0, True, 4_000_000.0)
+    assert undated["entry_cap_rate_run_rate"] == pytest.approx(0.08)
+    assert t12_out_of_date(None, None) is None and t12_out_of_date("2025-03-31", None) is None
+
+
+def test_exports_say_not_yet_open_only_when_no_entry_noi_can_be_built() -> None:
+    closed = _build_investment(_CAPITAL, 100, -500_000.0, True)
+    assert closed["entry_cap_not_yet_open"] is True
+    assert _NO_CAP_KEYS & closed.keys() == {"entry_cap_not_yet_open"}
+    # Closed with a run-rate NOI but no purchase price: still nothing to strike it on.
+    assert _build_investment({"uses": []}, 100, -500_000.0, True, 4_000_000.0)["entry_cap_not_yet_open"] is True
+    # An open hotel is untouched: Year-1 UW NOI ÷ price.
+    assert _build_investment(_CAPITAL, 100, 500_000.0)["entry_cap_rate_year1_uw"] == pytest.approx(0.01)
+
+
+def test_a_t12_older_than_a_year_at_the_close_prints_a_dated_flag_instead_of_a_cap() -> None:
+    stale = _build_investment(_CAPITAL, 100, -500_000.0, True, 4_000_000.0, "2025-03-31", 14)
+    assert stale["entry_cap_t12_out_of_date"] == "T-12 ends Mar 2025, 14 months before close"
+    assert _NO_CAP_KEYS & stale.keys() == {"entry_cap_t12_out_of_date"}
+    assert t12_out_of_date("2025-03-31", 13) == "T-12 ends Mar 2025, 13 months before close"
+    # The flag names the month the loader has; a T-12 whose end is unreadable still says its age.
+    assert t12_out_of_date("not a date", 13) == "T-12 ends, 13 months before close"
+
+
+def test_a_t12_exactly_twelve_months_before_the_close_still_strikes_the_cap() -> None:
+    """Boundary, decided: the rule is "MORE than twelve months". A June 2026 close on a
+    T-12 to June 2025 holds the newest full year a seller can hand over at that close,
+    so twelve is current and thirteen is out of date."""
+    assert t12_out_of_date("2025-06-30", 12) is None
+    on_time = _build_investment(_CAPITAL, 100, -500_000.0, True, 4_000_000.0, "2025-06-30", 12)
+    assert on_time["entry_cap_rate_run_rate"] == pytest.approx(0.08)
+    assert t12_out_of_date("2025-06-30", 13) == "T-12 ends Jun 2025, 13 months before close"
+    # Whole months: a month counts once its day is reached; a month-end to a shorter
+    # month's end is a full month.
+    assert whole_months_between(date(2025, 6, 30), date(2026, 6, 30)) == 12
+    assert whole_months_between(date(2025, 6, 30), date(2026, 7, 1)) == 12
+    assert whole_months_between(date(2025, 6, 30), date(2026, 7, 30)) == 13
+    assert whole_months_between(date(2025, 3, 31), date(2026, 5, 31)) == 14
+    assert whole_months_between(date(2025, 3, 31), date(2026, 4, 30)) == 13
+    assert whole_months_between(date(2025, 3, 31), date(2026, 5, 15)) == 13
+    assert whole_months_between(date(2025, 3, 31), date(2025, 1, 31)) == -2
+
+
+def test_the_expense_engine_publishes_the_open_hotels_year_1_noi_for_a_closed_year_1() -> None:
+    """FON-122: the run-rate NOI the cap is struck on is the open hotel's Year 1 — the
+    figure the closed Year 1 was priced from before it was brought to its months open."""
+    open_hotel = _revenue()
+    baseline = _expense(open_hotel)
+    closed = _expense(open_hotel, _revenue(closed_months=18))
+    assert closed.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
+    assert closed.years[0].noi_institutional != pytest.approx(closed.run_rate_noi_at_entry)
+    assert baseline.run_rate_noi_at_entry is None
+    assert closed.t12_period_end is None and closed.t12_months_before_close is None
+    dated = _expense(open_hotel, _revenue(closed_months=18), t12_period_end="2025-03-31", t12_months_before_close=14)
+    assert dated.t12_period_end == "2025-03-31" and dated.t12_months_before_close == 14
+
+
+def test_the_loader_dates_the_t12_and_the_runner_measures_it_against_the_close() -> None:
+    from app.services.engine_runner import _t12_months_before_close, year_one_actuals_from_shims
+
+    assert _t12_months_before_close("2025-03-31", "2026-05-31") == 14
+    assert _t12_months_before_close("2025-03-31", date(2026, 3, 31)) == 12
+    assert _t12_months_before_close("2025-03-31", None) is None
+    assert _t12_months_before_close(None, "2026-05-31") is None
+    fy = {
+        "document_id": "fy", "doc_type": "PNL", "filename": "FY2024.xlsx",
+        "fields": [{"field_name": "p_and_l_usali.period_ending", "value": "2024-12-31"},
+                   {"field_name": "noi_usd", "value": 4_000_000.0}],
+    }
+    out = year_one_actuals_from_shims([fy], keys=100)
+    assert out is not None and out.twelve and out.period_end == "2024-12-31"
+    ytd = {**fy, "document_id": "ytd", "doc_type": "PNL_YTD", "fields": [
+        {"field_name": "p_and_l_usali.period_type", "value": "ytd"},
+        {"field_name": "p_and_l_usali.period_ending", "value": "2025-06-30"},
+    ]}
+    out = year_one_actuals_from_shims([ytd], keys=100)
+    assert out is not None and not out.twelve and out.period_end == "2025-06-30"
 
 
 def test_a_closed_years_adr_is_not_exported() -> None:

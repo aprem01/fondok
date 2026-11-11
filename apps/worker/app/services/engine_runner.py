@@ -2854,12 +2854,18 @@ async def _load_engine_inputs(
     # FON-121 review I1 — deal years govern Returns timing too.
     _apply_deal_year_timing(base, reasons)
 
-    # Sam, 2026-11-05 — a hotel with a T-12 that closes at purchase quotes its going-in
-    # cap on the T-12 NOI: the statement's own, over twelve months, or none.
+    # FON-122 (Sam, 2026-11-05) — a hotel that closes at purchase quotes its
+    # going-in cap on the same normalized entry NOI an open hotel does (the
+    # expense engine's Year 1 priced without the closure). What is read here is
+    # only WHEN its T-12 ends: one that ends more than twelve months before the
+    # close is out of date, and the export says so instead of a cap.
     if _closed_months_for(base) > 0:
         year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=effective_tenant)
-        if year_one is not None and year_one.twelve:
-            base["t12_noi_at_entry"] = year_one.stated.get("noi")
+        if year_one is not None and year_one.twelve and year_one.period_end:
+            base["t12_period_end"] = year_one.period_end
+            base["t12_months_before_close"] = _t12_months_before_close(
+                year_one.period_end, base.get("acquisition_close_date")
+            )
 
     # ── Phase 2.1 — a source field only survives on a DOCUMENT-backed key.
     # An analyst override, a deals-row entry or a derived value does not come
@@ -6281,6 +6287,10 @@ class YearOneActuals(NamedTuple):
     derived: dict[str, str] = {}
     #: The statement covers twelve months.
     twelve: bool = False
+    #: FON-122 — the day the basis statement's period ends (ISO ``YYYY-MM-DD``):
+    #: its stated period end (a year column counts as its Dec 31). ``None``
+    #: for an undated current T-12.
+    period_end: str | None = None
 
 
 #: Profit lines read off the basis statement itself (concept registry ids).
@@ -6386,8 +6396,14 @@ def year_one_actuals_from_shims(
         )
         if not contradicted:
             stated["total_revenue"] = total
+    period_end = (
+        _iso_sortkey(chosen.recency)
+        if chosen.recency and chosen.recency != CURRENT_PERIOD_SORTKEY
+        else None
+    )
     return YearOneActuals(
-        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated, derived, chosen.twelve
+        basis, _statement_label(shim), chosen.period_words, revenue, expense, stated, derived, chosen.twelve,
+        period_end,
     )
 
 
@@ -8935,6 +8951,18 @@ def _closed_months_for(base: dict[str, Any]) -> int:
     return closed_months_for(base)
 
 
+def _t12_months_before_close(period_end: str | None, close_date: Any) -> int | None:
+    """FON-122 — whole months from the T-12's period end to the acquisition
+    close; ``None`` without both dates."""
+    from ..engines.timeline import parse_iso_date, whole_months_between
+
+    end = parse_iso_date(period_end)
+    close = parse_iso_date(_iso_date_or_none(close_date))
+    if end is None or close is None:
+        return None
+    return whole_months_between(end, close)
+
+
 #: The revenue input with every displacement lever and the closure off.
 _UNDISPLACED_REVENUE: dict[str, Any] = {
     "closed_months": 0,
@@ -9177,7 +9205,8 @@ def _build_input_for(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
-            t12_noi_at_entry=base.get("t12_noi_at_entry"),
+            t12_period_end=base.get("t12_period_end"),
+            t12_months_before_close=base.get("t12_months_before_close"),
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             seed_year_one=_seed_year_one(deal_id, base, accumulated),

@@ -62,6 +62,7 @@ from fondok_schemas.reasons import REASON_META, ReasonCode
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..engines.timeline import parse_iso_date
 from .labels import (
     BENCHMARK_DEFAULT_NOTE,
     CASH_NOI,
@@ -136,13 +137,32 @@ def _use_amount(uses: list[dict[str, Any]], *needles: str) -> float | None:
 
 # ─────────────────────────── model assembly ───────────────────────────
 
+#: FON-122 — a T-12 that ends more than this many whole months before the
+#: close is out of date for a going-in cap. Exactly twelve months is NOT:
+#: a close in June 2026 on a T-12 to June 2025 is the newest full year a
+#: seller can hand over, and the rule is "more than twelve months".
+T12_MAX_MONTHS_BEFORE_CLOSE = 12
+
+
+def t12_out_of_date(period_end: str | None, months_before_close: int | None) -> str | None:
+    """FON-122 — the dated flag for a T-12 older than a year at the close
+    ("T-12 ends Mar 2025, 14 months before close"); ``None`` when it is
+    current, or when either date is unknown."""
+    if months_before_close is None or months_before_close <= T12_MAX_MONTHS_BEFORE_CLOSE:
+        return None
+    end = parse_iso_date(period_end)
+    ends = f"ends {end.strftime('%b %Y')}" if end is not None else "ends"
+    return f"T-12 {ends}, {months_before_close} months before close"
+
 
 def _build_investment(
     capital: dict[str, Any],
     keys: int | None,
     noi_y1: float | None,
     closed_at_entry: bool = False,
-    t12_noi: float | None = None,
+    run_rate_noi: float | None = None,
+    t12_period_end: str | None = None,
+    t12_months_before_close: int | None = None,
 ) -> dict[str, Any]:
     """``investment_engine`` block from the capital engine + a derived cap/yield."""
     out: dict[str, Any] = {}
@@ -176,12 +196,20 @@ def _build_investment(
     # Derived display ratios (two real engine outputs each; not engine math):
     #   entry cap (Y1 UW) = Y1 underwritten NOI / purchase price
     #   Y1 yield on cost   = Y1 underwritten NOI / all-in total capital
-    # Sam, 2026-11-05: a hotel closing at purchase quotes its cap on the T-12; with no
-    # T-12 it has no entry cap (yield on cost is the measure).
-    if closed_at_entry and t12_noi is not None and purchase and purchase > 0:
-        out["entry_cap_rate_t12"] = t12_noi / purchase
-    elif closed_at_entry:
-        out["entry_cap_not_yet_open"] = True
+    # FON-122 (Sam, 2026-11-05): a hotel closing at purchase quotes its cap on
+    # the same normalized entry / run-rate NOI an open hotel does (Year 1
+    # priced without the closure), never on its closed Year 1. A T-12 that
+    # ends more than twelve months before the close is out of date: "n/a"
+    # with the dated flag. With no entry NOI at all it has no entry cap
+    # (yield on cost is the measure).
+    if closed_at_entry:
+        out_of_date = t12_out_of_date(t12_period_end, t12_months_before_close)
+        if out_of_date is not None:
+            out["entry_cap_t12_out_of_date"] = out_of_date
+        elif run_rate_noi is not None and purchase and purchase > 0:
+            out["entry_cap_rate_run_rate"] = run_rate_noi / purchase
+        else:
+            out["entry_cap_not_yet_open"] = True
     elif noi_y1 is not None and purchase and purchase > 0:
         out["entry_cap_rate_year1_uw"] = noi_y1 / purchase
     if noi_y1 is not None and total_capital and total_capital > 0:
@@ -1800,7 +1828,16 @@ async def _assemble_live_payload(
     if city:
         model["location"] = city
 
-    investment = _build_investment(capital, keys, noi_y1, (revenue.get("closed_months") or 0) > 0, _num(expense.get("t12_noi_at_entry")))
+    t12_months = expense.get("t12_months_before_close")
+    investment = _build_investment(
+        capital,
+        keys,
+        noi_y1,
+        (revenue.get("closed_months") or 0) > 0,
+        _num(expense.get("run_rate_noi_at_entry")),
+        expense.get("t12_period_end") if isinstance(expense.get("t12_period_end"), str) else None,
+        int(t12_months) if isinstance(t12_months, (int, float)) and not isinstance(t12_months, bool) else None,
+    )
     if investment:
         model["investment_engine"] = investment
     if proforma:

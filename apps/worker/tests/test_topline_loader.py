@@ -302,12 +302,14 @@ async def test_exit_growth_follows_the_post_forecast_rule_with_a_cbre_long_run_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "stated,twelve,expected",
-    [({"noi": 4_000_000.0}, True, 4_000_000.0), ({"noi": 4_000_000.0}, False, None), ({}, True, None)],
+    "period_end,twelve,expected",
+    [("2025-03-31", True, "2025-03-31"), ("2025-03-31", False, None), (None, True, None)],
 )
-async def test_a_hotel_closing_at_purchase_carries_the_t12s_own_noi(
-    monkeypatch: pytest.MonkeyPatch, stated: dict, twelve: bool, expected: float | None
+async def test_a_hotel_closing_at_purchase_dates_its_t12_against_the_close(
+    monkeypatch: pytest.MonkeyPatch, period_end: str | None, twelve: bool, expected: str | None
 ) -> None:
+    """FON-122 — the loader reads only WHEN the T-12 ends (twelve months, dated);
+    the going-in cap itself is struck on the expense engine's run-rate NOI."""
     from types import SimpleNamespace
 
     from app.database import get_session_factory
@@ -315,15 +317,20 @@ async def test_a_hotel_closing_at_purchase_carries_the_t12s_own_noi(
     from app.services.topline import closed_months_for
 
     async def statement(*_a: object, **_k: object) -> SimpleNamespace:
-        return SimpleNamespace(stated=stated, twelve=twelve)
+        return SimpleNamespace(stated={"noi": 4_000_000.0}, twelve=twelve, period_end=period_end)
 
     monkeypatch.setattr(engine_runner, "year_one_actual_lines", statement)
     deal_id, tenant_id = await _docs_deal()
-    assert "t12_noi_at_entry" not in await _load(deal_id, tenant_id)  # stays open: not read
+    assert "t12_period_end" not in await _load(deal_id, tenant_id)  # stays open: not read
 
     async with get_session_factory()() as s:
         await s.execute(text("UPDATE deals SET reopening_date = '2027-03-31' WHERE id = :id"), {"id": deal_id})
         await s.commit()
     base = await _load(deal_id, tenant_id)
     assert closed_months_for(base) > 0
-    assert base.get("t12_noi_at_entry") == expected
+    assert base.get("t12_period_end") == expected
+    assert base.get("t12_months_before_close") == engine_runner._t12_months_before_close(
+        expected, base.get("acquisition_close_date")
+    )
+    if expected is not None and base.get("acquisition_close_date"):
+        assert isinstance(base["t12_months_before_close"], int)

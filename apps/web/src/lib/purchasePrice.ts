@@ -133,32 +133,66 @@ export type EntryCapRate =
  *  - otherwise (it completed without a Year-1 NOI) → `engine_skipped`.
  */
 /**
- * Sam, 2026-11-05: a hotel closed at purchase quotes its going-in cap on the T-12 NOI
- * when it states one. Without that it has no entry cap; yield on cost is the measure.
+ * FON-122 (Sam, 2026-11-05): a hotel closed at purchase quotes its going-in cap on
+ * the same normalized entry / run-rate NOI an open hotel does — Year 1 priced
+ * without the closure (the expense engine's `run_rate_noi_at_entry`) — never on
+ * its closed Year 1. A T-12 that ends more than twelve months before the close is
+ * out of date: "n/a" with the dated flag. With no entry NOI at all it has no
+ * entry cap; yield on cost is the measure.
  */
 export const NOT_YET_OPEN = 'n/a, not yet open';
-export const ON_T12_CLOSING = 'on T-12 (closing for renovation)';
+export const ON_RUN_RATE_CLOSING = 'on run-rate NOI (closing for renovation)';
+/** Exactly twelve months is still current — the rule is "more than twelve". */
+export const T12_MAX_MONTHS_BEFORE_CLOSE = 12;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * The dated flag for a T-12 older than a year at the close
+ * ("T-12 ends Mar 2025, 14 months before close"); undefined when it is current
+ * or either date is unknown. Mirrors the worker's `t12_out_of_date`.
+ */
+export function t12OutOfDate(
+  periodEnd: string | null | undefined,
+  monthsBeforeClose: number | null | undefined,
+): string | undefined {
+  if (typeof monthsBeforeClose !== 'number' || !Number.isFinite(monthsBeforeClose)) return undefined;
+  if (monthsBeforeClose <= T12_MAX_MONTHS_BEFORE_CLOSE) return undefined;
+  const m = typeof periodEnd === 'string' ? /^(\d{4})-(\d{2})/.exec(periodEnd) : null;
+  const month = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  const ends = month ? `ends ${month} ${m![1]}` : 'ends';
+  return `T-12 ${ends}, ${monthsBeforeClose} months before close`;
+}
 
 export interface ClosedAtEntry {
   /** The hotel is closed at purchase. */
   closed: boolean;
-  /** The T-12 statement's own NOI, when there is one. */
-  t12Noi: number | undefined;
-  /** T-12 NOI ÷ price. */
-  t12Cap: number | undefined;
-  /** Closed with no T-12 NOI to quote a cap on. */
+  /** Year 1 priced without the closure — the entry NOI the cap is struck on. */
+  entryNoi: number | undefined;
+  /** Entry NOI ÷ price, when the T-12 is current. */
+  cap: number | undefined;
+  /** The dated flag when the T-12 ends more than twelve months before the close. */
+  outOfDate: string | undefined;
+  /** Closed with no entry NOI (or no price) to quote a cap on. */
   notYetOpen: boolean;
+  /** What prints instead of the cap, when it does not read; undefined when it does. */
+  na: string | undefined;
 }
 
 export function closedAtEntry(
   closedMonths: number | null | undefined,
-  t12Noi: number | null | undefined,
+  runRateNoi: number | null | undefined,
   price: number | null | undefined,
+  t12PeriodEnd?: string | null,
+  t12MonthsBeforeClose?: number | null,
 ): ClosedAtEntry {
   const closed = (closedMonths ?? 0) > 0;
-  const noi = closed && typeof t12Noi === 'number' && Number.isFinite(t12Noi) ? t12Noi : undefined;
-  const t12Cap = noi !== undefined && price != null && price > 0 ? noi / price : undefined;
-  return { closed, t12Noi: noi, t12Cap, notYetOpen: closed && t12Cap === undefined };
+  const entryNoi = closed && typeof runRateNoi === 'number' && Number.isFinite(runRateNoi) ? runRateNoi : undefined;
+  const outOfDate = closed ? t12OutOfDate(t12PeriodEnd, t12MonthsBeforeClose) : undefined;
+  const cap = outOfDate === undefined && entryNoi !== undefined && price != null && price > 0 ? entryNoi / price : undefined;
+  const notYetOpen = closed && outOfDate === undefined && cap === undefined;
+  const na = outOfDate !== undefined ? `n/a, ${outOfDate}` : notYetOpen ? NOT_YET_OPEN : undefined;
+  return { closed, entryNoi, cap, outOfDate, notYetOpen, na };
 }
 
 export function entryCapRate(

@@ -187,9 +187,11 @@ class ExpenseEngineInput(BaseModel):
     # months carry no operating costs; departmental lines, fees and reserve follow
     # the revenue earned. Other years are untouched. Empty = no closure.
     open_shares_by_year: dict[int, float] = Field(default_factory=dict)
-    # The T-12 statement's own NOI when a hotel with one closes at purchase, for the
-    # going-in cap. Moves no number here.
-    t12_noi_at_entry: float | None = None
+    # FON-122 — when a hotel closes at purchase, the day its T-12 ends (ISO) and
+    # how many whole months before the close that is; the export calls a T-12
+    # older than twelve months out of date. Move no number here.
+    t12_period_end: str | None = None
+    t12_months_before_close: int | None = None
     # The revenue the deal actually earns (closure and any displacement). Set with
     # the above; ``revenue`` is then the same deal without the closure.
     actual_revenue: FBRevenueOutput | None = None
@@ -418,7 +420,14 @@ class ExpenseEngineOutput(BaseModel):
     # The web app surfaces this list as a footnote on the Operating
     # Statement so reviewers know which numbers are real vs synthesized.
     sourced_from_t12: list[str] = Field(default_factory=list)
-    t12_noi_at_entry: float | None = None
+    # FON-122 — a hotel closed at purchase: Year 1's NOI before the FF&E reserve
+    # priced on the same deal WITHOUT the closure — the normalized entry /
+    # run-rate NOI an open hotel quotes its going-in cap on. ``None`` when
+    # Year 1 is not closed (then ``years[0].noi_institutional`` is that figure).
+    run_rate_noi_at_entry: float | None = None
+    # FON-122 — the T-12's period end and its age at the close (input echoes).
+    t12_period_end: str | None = None
+    t12_months_before_close: int | None = None
     # B3 (go-live audit) — the Year-1 lines the T-12 does NOT carry and the
     # engine synthesized at a ratio, each with its provenance and reason.
     # Empty when every line is an actual (or folded into a grounded category).
@@ -1344,6 +1353,11 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
 
         # NOI CAGR above stays the open hotel's: a closed Year 1 has no growth to report.
         open_shares = payload.open_shares_by_year
+        # FON-122 — before Year 1 is brought to its months open, its NOI is the
+        # open hotel's: the entry NOI a closed-at-purchase deal strikes its cap on.
+        run_rate_noi_at_entry: float | None = None
+        if payload.actual_revenue is not None and 1 in open_shares and years:
+            run_rate_noi_at_entry = years[0].noi_institutional
         if payload.actual_revenue is not None:
             actual_by_year = {row.year: row for row in payload.actual_revenue.years}
             open_by_year = {row.year: row for row in payload.revenue.years}
@@ -1504,7 +1518,9 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
                 ).strip()
 
         return ExpenseEngineOutput(
-            t12_noi_at_entry=payload.t12_noi_at_entry,
+            run_rate_noi_at_entry=run_rate_noi_at_entry,
+            t12_period_end=payload.t12_period_end,
+            t12_months_before_close=payload.t12_months_before_close,
             deal_id=payload.deal_id,
             synthesized_lines=synthesized,
             line_methods=line_methods,

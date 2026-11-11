@@ -98,6 +98,32 @@ _fmt_usd_m = fmt_usd_m
 _fmt_pct = fmt_pct
 _fmt_mult = fmt_mult
 _fmt_int = fmt_int
+
+
+def _entry_cap_basis(inv: dict[str, Any]) -> str:
+    """The Executive Summary cap-rate label suffix: the run-rate basis of a hotel
+    closed at purchase (FON-122); a payload's own ``entry_cap_rate_t12`` (the
+    Kimpton reference states one) as before; else nothing."""
+    if inv.get("entry_cap_rate_run_rate") is not None:
+        return " on run-rate NOI (closing for renovation)"
+    if inv.get("entry_cap_rate_t12") is not None:
+        return " on T-12 (closing for renovation)"
+    return ""
+
+
+def _entry_cap_cell(inv: dict[str, Any]) -> str:
+    """The Executive Summary cap-rate cell. FON-122: a hotel closed at purchase
+    strikes it on the run-rate NOI; an out-of-date T-12 prints its dated flag,
+    and with no entry NOI at all it is "n/a, not yet open"."""
+    out_of_date = inv.get("entry_cap_t12_out_of_date")
+    if isinstance(out_of_date, str) and out_of_date:
+        return html.escape(f"n/a, {out_of_date}")
+    if inv.get("entry_cap_not_yet_open"):
+        return "n/a, not yet open"
+    for key in ("entry_cap_rate_run_rate", "entry_cap_rate_t12"):
+        if inv.get(key) is not None:
+            return _fmt_pct(inv.get(key), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
+    return _fmt_pct(inv.get("entry_cap_rate_year1_uw"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
 _as_float = as_float
 _sum_strict = sum_strict
 
@@ -1512,7 +1538,7 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 <div class="metrics">
   <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
   <div class="metric"><div class="k">NOI (Y1)</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
-  <div class="metric"><div class="k">Cap Rate{' on T-12 (closing for renovation)' if inv.get('entry_cap_rate_t12') is not None else ''}</div><div class="v">{'n/a, not yet open' if inv.get('entry_cap_not_yet_open') else _fmt_pct(inv.get('entry_cap_rate_t12'), code=ReasonCode.ENGINE_SKIPPED, concept='entry_cap_rate') if inv.get('entry_cap_rate_t12') is not None else _fmt_pct(inv.get('entry_cap_rate_year1_uw'), code=ReasonCode.ENGINE_SKIPPED, concept='entry_cap_rate')}</div></div>
+  <div class="metric"><div class="k">Cap Rate{_entry_cap_basis(inv)}</div><div class="v">{_entry_cap_cell(inv)}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
 
