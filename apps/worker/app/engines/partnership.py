@@ -741,39 +741,63 @@ class PartnershipEngine(BaseEngine[PartnershipInputExt, PartnershipOutputExt]):
                     alloc_catchup += cu
                     promote_total += cu  # catch-up is promote to the GP
 
-            # Promote tiers — climb tiers as cumulative LP IRR clears hurdles
+            # Promote tiers — climb tiers as cumulative LP IRR clears hurdles.
+            #
+            # FON-66 (Sam, 9-14 — MVP blocker): each band is paid only until
+            # the cumulative LP IRR reaches the band's hurdle, then the split
+            # steps to the next band; the residual above the top hurdle lands
+            # in the top band. The previous loop tested a single slice
+            # (remaining ÷ tier count) and then poured the ENTIRE residual
+            # through the first band that slice did not clear — the exit year
+            # never climbed past one band, so a stack whose first promote band
+            # sits at the ownership split (20 / 80) paid no promote at all and
+            # GP IRR == LP IRR. Byte-identical for a deal that never reaches
+            # the promote tiers (the Kimpton golden: all return of capital).
             for tier in tiers_sorted:
                 if remaining <= 0:
                     break
-                # Estimate LP IRR if we add a tiny bit to this tier
-                trial_lp = lp_take
-                # Conservative step: pour a slice and check IRR
-                slice_size = min(remaining, max(1.0, remaining / max(1, len(tiers_sorted))))
-                lp_slice = slice_size * tier.lp_split
-                gp_slice = slice_size * tier.gp_split
-                # Project cumulative LP IRR if this slice is paid
-                projected_lp_dist = list(lp_distributions)
-                # The current year's distribution-in-progress
-                # — append working year LP take + slice to test
-                if len(projected_lp_dist) < len(payload.cash_flows):
-                    # Pad the in-progress year
-                    # (net of this year's capital call, which the LP funded)
-                    in_progress = lp_take + lp_slice - lp_call if lp_call else lp_take + lp_slice
-                    projected_lp_dist.append(in_progress)
-                trial_irr = _lp_irr_to_date(lp_eq, projected_lp_dist)
 
-                if trial_irr <= tier.hurdle_rate + 1e-6:
-                    # Pour the entire remaining cash through this tier
-                    gp_share = remaining * tier.gp_split
-                    lp_share = remaining * tier.lp_split
-                    promote_share = max(0.0, gp_share - remaining * payload.gp_equity_pct)
-                    promote_total += promote_share
-                    gp_take += gp_share
-                    lp_take += lp_share
+                def _lp_irr_if(dist: float, _tier=tier, _lp_take=lp_take) -> float:
+                    """Cumulative LP IRR to date if ``dist`` more dollars run
+                    through this band this year (net of this year's capital
+                    call, which the LP funded)."""
+                    in_progress = _lp_take + dist * _tier.lp_split
+                    if lp_call:
+                        in_progress -= lp_call
+                    return _lp_irr_to_date(lp_eq, list(lp_distributions) + [in_progress])
+
+                hurdle = tier.hurdle_rate
+                if _lp_irr_if(remaining) <= hurdle + 1e-6:
+                    # The whole residual does not clear this hurdle: it all
+                    # runs through this band and no higher band is reached.
+                    dist = remaining
+                elif _lp_irr_if(0.0) >= hurdle - 1e-9:
+                    # Already past this hurdle before any dollar — skip up.
+                    continue
+                else:
+                    # Bisection on the band's dollars for the point where the
+                    # LP IRR meets the hurdle (IRR is monotone in ``dist``).
+                    lo, hi = 0.0, remaining
+                    for _ in range(200):
+                        mid = (lo + hi) / 2.0
+                        if _lp_irr_if(mid) < hurdle:
+                            lo = mid
+                        else:
+                            hi = mid
+                        if hi - lo <= 0.005:
+                            break
+                    dist = hi
+                gp_share = dist * tier.gp_split
+                lp_share = dist * tier.lp_split
+                promote_total += max(0.0, gp_share - dist * payload.gp_equity_pct)
+                gp_take += gp_share
+                lp_take += lp_share
+                remaining -= dist
+                _slot = alloc_promote.setdefault(tier.label, [0.0, 0.0])
+                _slot[0] += gp_share
+                _slot[1] += lp_share
+                if remaining <= 1e-9:
                     remaining = 0.0
-                    _slot = alloc_promote.setdefault(tier.label, [0.0, 0.0])
-                    _slot[0] += gp_share
-                    _slot[1] += lp_share
                     break
 
             # If we still have residual, it goes to the highest tier
