@@ -210,7 +210,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import { closedAtEntry } from '@/lib/purchasePrice';
+import { NOT_YET_OPEN, closedAtEntry, t12OutOfDate } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 import { calDealYears, calExitYear } from './fixtures/dealYears';
@@ -1711,10 +1711,33 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)
     outputsRef.value = OUTPUTS;
   });
 
-  it('a closed hotel with a T-12 quotes the cap on it, not on the closed Year 1', () => {
-    expect(closedAtEntry(9, 4_000_000, 50_000_000)).toEqual({ closed: true, t12Noi: 4_000_000, t12Cap: 0.08, notYetOpen: false });
-    expect(closedAtEntry(9, null, 50_000_000).notYetOpen).toBe(true);
-    expect(closedAtEntry(0, 4_000_000, 50_000_000)).toEqual({ closed: false, t12Noi: undefined, t12Cap: undefined, notYetOpen: false });
+  it('a closed hotel quotes the cap on its run-rate NOI, not on the closed Year 1 (FON-122)', () => {
+    expect(closedAtEntry(9, 4_000_000, 50_000_000, '2025-06-30', 3)).toEqual({
+      closed: true, entryNoi: 4_000_000, cap: 0.08, outOfDate: undefined, notYetOpen: false, na: undefined,
+    });
+    // An undated current T-12 says nothing about staleness: the cap reads.
+    expect(closedAtEntry(9, 4_000_000, 50_000_000).cap).toBe(0.08);
+    // "n/a, not yet open" only when no entry NOI can be built at all.
+    expect(closedAtEntry(9, null, 50_000_000)).toMatchObject({ notYetOpen: true, na: NOT_YET_OPEN, cap: undefined });
+    expect(closedAtEntry(0, 4_000_000, 50_000_000)).toEqual({
+      closed: false, entryNoi: undefined, cap: undefined, outOfDate: undefined, notYetOpen: false, na: undefined,
+    });
+  });
+
+  it('a T-12 ending more than twelve months before the close is n/a with the date; exactly twelve still reads', () => {
+    const stale = closedAtEntry(9, 4_000_000, 50_000_000, '2025-03-31', 14);
+    expect(stale.outOfDate).toBe('T-12 ends Mar 2025, 14 months before close');
+    expect(stale.na).toBe('n/a, T-12 ends Mar 2025, 14 months before close');
+    expect(stale.cap).toBeUndefined();
+    expect(stale.notYetOpen).toBe(false);
+    expect(stale.entryNoi).toBe(4_000_000);
+    // Boundary, same side as the worker: twelve is the newest full year a seller hands over at that close.
+    expect(closedAtEntry(9, 4_000_000, 50_000_000, '2025-06-30', 12)).toMatchObject({ cap: 0.08, outOfDate: undefined, na: undefined });
+    expect(t12OutOfDate('2025-06-30', 13)).toBe('T-12 ends Jun 2025, 13 months before close');
+    expect(t12OutOfDate('2025-06-30', 12)).toBeUndefined();
+    expect(t12OutOfDate(null, 13)).toBe('T-12 ends, 13 months before close');
+    // An open hotel never carries the flag.
+    expect(closedAtEntry(0, 4_000_000, 50_000_000, '2025-03-31', 14).na).toBeUndefined();
   });
 
   it('Tab on a changed date asks why, because Chrome keeps focus inside the input', () => {

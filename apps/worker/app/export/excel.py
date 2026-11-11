@@ -111,6 +111,31 @@ from .refusals import (
 # ─────────────────────────── styling helpers ───────────────────────────
 
 NOT_YET_OPEN = "n/a, not yet open: see yield on cost"
+#: FON-122 — a hotel closed at purchase strikes its cap on the run-rate NOI
+#: (Year 1 priced without the closure).
+ENTRY_CAP_RUN_RATE_LABEL = "Entry Cap (on run-rate NOI, closing for renovation)"
+
+
+def _entry_cap_headline(inv: dict[str, Any]) -> tuple[str, Any]:
+    """``(label, value)`` for the cover's entry-cap row: the run-rate cap of a
+    hotel closed at purchase (FON-122); else a payload's own ``entry_cap_rate_t12``
+    (the Kimpton reference payload states one); else the Year-1 UW cap."""
+    if inv.get("entry_cap_rate_run_rate") is not None:
+        return ENTRY_CAP_RUN_RATE_LABEL, inv.get("entry_cap_rate_run_rate")
+    if inv.get("entry_cap_rate_t12") is not None:
+        return "Entry Cap (on T-12, closing for renovation)", inv.get("entry_cap_rate_t12")
+    return "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw")
+
+
+def _entry_cap_missing(inv: dict[str, Any], default: str) -> str:
+    """Why a closed-at-purchase hotel prints no entry cap: its T-12 is out of
+    date (the dated flag, FON-122) or it has no entry NOI; else ``default``."""
+    out_of_date = inv.get("entry_cap_t12_out_of_date")
+    if isinstance(out_of_date, str) and out_of_date:
+        return f"n/a, {out_of_date}"
+    if inv.get("entry_cap_not_yet_open"):
+        return NOT_YET_OPEN
+    return default
 USD_FMT = '$#,##0;[Red]($#,##0)'
 USD_2_FMT = '$#,##0.00'
 PCT_FMT = '0.00%'
@@ -477,10 +502,9 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
         ("Exit Cap Rate", ret.get("exit_cap_rate_pct"), PCT_FMT, "exit_cap_rate",
          "no exit cap rate on the deal's returns engine output"),
         (
-            "Entry Cap (on T-12, closing for renovation)" if inv.get("entry_cap_rate_t12") is not None else "Entry Cap (Y1 UW)",
-            inv.get("entry_cap_rate_t12") if inv.get("entry_cap_rate_t12") is not None else inv.get("entry_cap_rate_year1_uw"),
+            *_entry_cap_headline(inv),
             PCT_FMT, "entry_cap_rate",
-         NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no Year 1 NOI or purchase price to derive the entry cap",
+            _entry_cap_missing(inv, "no Year 1 NOI or purchase price to derive the entry cap"),
         ),
     ]
     benchmark_note = debt.get("benchmark_note")
@@ -546,10 +570,14 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Loan Costs", inv, "loan_costs_usd", USD_FMT, "", "loan_costs", "capital engine"),
                 item("Total Capital", inv, "total_capital_usd", USD_FMT, "All-in", "total_capital", "capital engine"),
                 item("Total Capital / Key", inv, "total_capital_per_key_usd", USD_FMT, "", "total_capital_per_key", "capital engine"),
-                item("Entry Cap (T-12)", inv, "entry_cap_rate_t12", PCT_FMT, "", "entry_cap_rate_t12", "T-12 / capital engine"),
+                # FON-122 — a hotel closed at purchase: its run-rate cap; else the
+                # payload's own T-12 cap row, as before (the Kimpton reference states one).
+                item("Entry Cap (run-rate NOI)", inv, "entry_cap_rate_run_rate", PCT_FMT, "", "entry_cap_rate_run_rate", "P&L / capital engine")
+                if inv.get("entry_cap_rate_run_rate") is not None
+                else item("Entry Cap (T-12)", inv, "entry_cap_rate_t12", PCT_FMT, "", "entry_cap_rate_t12", "T-12 / capital engine"),
                 (
                     "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "", "entry_cap_rate",
-                    NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no entry cap (y1 uw) on the deal's capital engine output",
+                    _entry_cap_missing(inv, "no entry cap (y1 uw) on the deal's capital engine output"),
                 ),
                 item("Year 1 Yield on Cost", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
             ],

@@ -84,7 +84,10 @@ assumed without a business plan.
 **Hotels that are closed or not yet open.** Set the opening or reopening date on the Overview. Revenue
 and operating costs start at that date, and the opening year counts only the months open. Property
 taxes, insurance and debt service keep running while the hotel is closed, pre-opening costs go in
-Soft Costs, and the going-in cap reads on the T-12 when there is one, otherwise "n/a, not yet open".
+Soft Costs, and the going-in cap reads on the same entry NOI an open hotel's does — Year 1 priced
+without the closure — never on the closed year; it is "n/a, not yet open" only when no entry NOI can
+be built at all. A T-12 that ends more than twelve months before the close is out of date, and the
+cap reads "n/a" with the date instead ("T-12 ends Mar 2025, 14 months before close").
 A sale or refinance in the opening year prices a full year's income, and a hotel still closed at the
 end of the hold has no exit value, so the run stops and says why.
 

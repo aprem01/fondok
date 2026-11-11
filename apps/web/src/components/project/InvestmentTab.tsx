@@ -46,7 +46,7 @@ import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { NOT_YET_OPEN, ON_T12_CLOSING, closedAtEntry, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
+import { NOT_YET_OPEN, ON_RUN_RATE_CLOSING, closedAtEntry, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -637,12 +637,15 @@ export default function InvestmentTab() {
     ?? (has(pricePerKey) && has(keys) ? pricePerKey * keys : undefined);
   const atEntry = closedAtEntry(
     getEngineField<number>(outputs, 'revenue', 'closed_months'),
-    getEngineField<number>(outputs, 'expense', 't12_noi_at_entry'),
+    getEngineField<number>(outputs, 'expense', 'run_rate_noi_at_entry'),
     purchase,
+    getEngineField<string>(outputs, 'expense', 't12_period_end'),
+    getEngineField<number>(outputs, 'expense', 't12_months_before_close'),
   );
-  const { notYetOpen } = atEntry;
+  // FON-122 — "n/a, …" when a closed-at-purchase hotel has no cap to print.
+  const { na: capNa } = atEntry;
   const entryCap = atEntry.closed
-    ? atEntry.t12Cap
+    ? atEntry.cap
     : (has(entryNoi) && has(purchase) && purchase > 0)
       ? entryNoi / purchase
       : wEntryCap;
@@ -815,7 +818,7 @@ export default function InvestmentTab() {
             // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
-              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.t12Cap) ? ` ${ON_T12_CLOSING}` : ''}` : '' },
+              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : '' },
               // FON-101 — the tile names the source the budget is on (OM broker ·
               // PIP / CapEx document · analyst override) after the per-key figure.
               { label: 'Renovation / PIP', value: mm(renoTotal),
@@ -853,13 +856,13 @@ export default function InvestmentTab() {
               },
               {
                 id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
-                value: atEntry.closed ? (has(atEntry.t12Cap) ? money(atEntry.t12Noi) : NOT_YET_OPEN) : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
+                value: atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
-                value: notYetOpen ? NOT_YET_OPEN : pctv(entryCap, 2),
-                note: [notYetOpen ? 'See Yield on Cost on Returns' : has(atEntry.t12Cap) ? ON_T12_CLOSING : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                value: capNa ?? pctv(entryCap, 2),
+                note: [capNa ? 'See Yield on Cost on Returns' : has(atEntry.cap) ? ON_RUN_RATE_CLOSING : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,

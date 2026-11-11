@@ -61,6 +61,25 @@ def _add_months(d: date, months: int) -> date:
     return date(year, month, min(d.day, last_day))
 
 
+def whole_months_between(earlier: date, later: date) -> int:
+    """Whole calendar months from ``earlier`` to ``later`` (negative when
+    ``later`` comes first). A month counts only once its day is reached:
+    Mar 31 → Apr 30 is 0, Mar 31 → May 1 is 1 (the first month-end after
+    a month-end is the next month-end, and the 31st→30th clamp counts as it).
+
+    FON-122 — the age of a T-12 at the close: Mar 2025 → May 2026 is 14.
+    """
+    if later < earlier:
+        return -whole_months_between(later, earlier)
+    months = (later.year - earlier.year) * 12 + (later.month - earlier.month)
+    # A month-end to a shorter month's end (Mar 31 → Apr 30) is a full month.
+    last_day = calendar.monthrange(later.year, later.month)[1]
+    day_reached = later.day >= earlier.day or later.day == last_day
+    if months > 0 and not day_reached:
+        months -= 1
+    return months
+
+
 def _iso(d: date | None) -> str | None:
     return d.isoformat() if d is not None else None
 
