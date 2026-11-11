@@ -48,7 +48,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     },
   };
 });
-vi.mock('@/lib/auth', () => ({ useCurrentRole: () => 'org:member' }));
+vi.mock('@/lib/auth', () => ({
+  useCurrentRole: () => 'org:member',
+  useOrgMembers: () => ({ members: [], loading: false, demo: true }),
+}));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/help/GetStartedHero', () => ({
@@ -110,28 +113,34 @@ describe('Projects list — a wizard deal before extraction', () => {
     expect(container.textContent).not.toMatch(/\b0 keys/);
   });
 
-  it('an unscored (null) confidence renders no bar; a measured 0 is a value and prints 0%', () => {
+  // FON-80 — "AI Confidence" became Model/Data Readiness: a processing step
+  // read from the worker's facts. An unscored deal is "Documents uploaded"
+  // with no percentage; a measured 0 is a value and reads "extraction 0%".
+  it('an unscored (null) confidence prints no percentage; a measured 0 is a value and prints "extraction 0%"', () => {
     hoisted.deals = [deal({ id: 'a', name: 'Unscored', ai_confidence: null, document_count: 2 })];
     const first = render(<ProjectsPage />);
     expect(first.container.textContent).not.toMatch(/\b0%/);
-    expect(screen.queryByText('AI Confidence')).toBeNull();
+    expect(screen.getByText('Model/Data Readiness')).toBeInTheDocument();
+    expect(screen.getByTestId('readiness-label')).toHaveTextContent('Documents uploaded');
+    expect(screen.getByTestId('readiness-label').textContent).not.toContain('%');
     cleanup();
     hoisted.deals = [deal({ id: 'b', name: 'Scored zero', ai_confidence: 0, document_count: 2 })];
     render(<ProjectsPage />);
-    expect(screen.getByText('AI Confidence')).toBeInTheDocument();
-    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByTestId('readiness-label')).toHaveTextContent('Extracted · extraction 0%');
   });
 
-  it('a null confidence renders no bar, while a real score still renders', () => {
+  it('a null confidence prints no percentage, while a real score still renders beside its step', () => {
     hoisted.deals = [
       deal({ id: 'a', name: 'Unscored', ai_confidence: null, document_count: 2 }),
       deal({ id: 'b', name: 'Scored', ai_confidence: 0.87, keys: 132, document_count: 4 }),
     ];
     const { container } = render(<ProjectsPage />);
-    expect(screen.getAllByText('AI Confidence')).toHaveLength(1);
-    expect(container.textContent).toContain('87%');
+    expect(screen.getAllByText('Model/Data Readiness')).toHaveLength(2);
+    const labels = screen.getAllByTestId('readiness-label').map((el) => el.textContent);
+    expect(labels).toEqual(['Documents uploaded', 'Extracted · extraction 87%']);
     expect(container.textContent).toContain('132 keys');
     expect(container.textContent).not.toMatch(/\b0%/);
+    expect(container.textContent).not.toContain('AI Confidence');
   });
 
   it('a worker that does not report a document count shows "— docs", not "0 docs", and no missing-docs warning', () => {

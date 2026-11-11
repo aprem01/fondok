@@ -671,6 +671,77 @@ async def _extracted_property_meta(
     return out
 
 
+#: The extractor field paths that carry the property's name — the OM's
+#: ``property_overview.name`` or the STR report's subject name.
+_PROPERTY_NAME_FIELDS: frozenset[str] = frozenset(
+    {"property_overview.name", "ttm_performance.subject.name"}
+)
+
+
+def _first_property_name(raw: Any) -> str | None:
+    """The first non-blank name field in one extraction's ``fields`` blob."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, list):
+        return None
+    for f in raw:
+        if not isinstance(f, dict):
+            continue
+        fn = (f.get("field_name") or "").strip().lower()
+        val = f.get("value")
+        if fn in _PROPERTY_NAME_FIELDS and isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+async def extracted_property_names(
+    session: AsyncSession, *, tenant_id: UUID | str, deal_ids: list[str]
+) -> dict[str, str]:
+    """FON-80 — the extracted property name for MANY deals in one query, for
+    the deal list. Per deal it is the same answer ``_extracted_property_meta``
+    gives (OM first, then STR, then any other document; newest extraction
+    first within a document type). Deals with no extracted name are absent
+    from the result — the caller leaves ``property_name`` NULL, never the
+    project name."""
+    if not deal_ids:
+        return {}
+    placeholders = ", ".join(f":id_{i}" for i in range(len(deal_ids)))
+    params: dict[str, Any] = {f"id_{i}": d for i, d in enumerate(deal_ids)}
+    params["tenant"] = str(tenant_id)
+    rows = await session.execute(
+        text(
+            f"""
+            SELECT er.deal_id, er.fields
+              FROM extraction_results er
+              JOIN documents d ON d.id = er.document_id
+             WHERE er.deal_id IN ({placeholders})
+               AND er.tenant_id = :tenant
+               AND d.tenant_id = :tenant
+             ORDER BY er.deal_id,
+                      CASE UPPER(COALESCE(d.doc_type, ''))
+                        WHEN 'OM' THEN 0
+                        WHEN 'STR_TREND' THEN 1
+                        WHEN 'STR' THEN 1
+                        ELSE 2 END,
+                      er.created_at DESC
+            """
+        ),
+        params,
+    )
+    out: dict[str, str] = {}
+    for r in rows.fetchall():
+        deal_key = str(r._mapping["deal_id"])
+        if deal_key in out:
+            continue
+        name = _first_property_name(r._mapping.get("fields"))
+        if name:
+            out[deal_key] = name
+    return out
+
+
 # FON-59 — the field_overrides key the Overview writes for a Property Name
 # override. Mirrors the extractor path so the override and the extracted
 # value are addressed by the same name.

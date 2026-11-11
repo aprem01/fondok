@@ -465,6 +465,18 @@ class DealRecord(BaseModel):
     lifecycle: str = "active"
     activated_at: datetime | None = None
     draft_wizard: dict[str, Any] | None = None
+    # FON-80 — who started the deal: the ``actor_id`` (Clerk user id) of its
+    # ``deal.created`` / ``deal.draft_created`` / ``deal.duplicated`` audit
+    # row. ``deals`` has no creator column (``assignee_id`` exists but nothing
+    # writes it); the audit trail is the record. NULL for a header-only /
+    # default-tenant create, whose actor is ``system``. Carried by list, get
+    # and the create response.
+    created_by: str | None = None
+    # FON-80 — the hotel's name as its documents call it: the analyst's
+    # ``property_overview.name`` override, else the OM's extracted name. It is
+    # distinct from the confidential project ``name`` and never falls back to
+    # it. NULL until a document carries one. Carried by list and get.
+    property_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1074,6 +1086,46 @@ def analyst_positioning_source(positioning: object) -> str | None:
     return "analyst"
 
 
+#: FON-80 — the creator, read off the deal's first create-style audit row.
+#: ``audit_log.deal_id`` is filled for every ``resource_type='deal'`` action
+#: (``app.audit.log_audit``). Scalar subquery: one row, oldest first.
+_CREATED_BY_SUBQUERY = (
+    "(SELECT a.actor_id FROM audit_log a "
+    "WHERE a.tenant_id = deals.tenant_id AND a.deal_id = deals.id "
+    "AND a.action IN ('deal.created', 'deal.draft_created', 'deal.duplicated') "
+    "ORDER BY a.created_at ASC LIMIT 1) AS created_by"
+)
+
+
+def _creator_or_none(value: Any) -> str | None:
+    """``audit_log.actor_id`` as a creator: a user id, or None for the
+    ``system`` stand-in a header-only request writes."""
+    if not isinstance(value, str):
+        return None
+    actor = value.strip()
+    return actor if actor and actor != "system" else None
+
+
+async def _attach_property_names(
+    session: AsyncSession, *, tenant_id: UUID | str, records: list[DealRecord]
+) -> list[DealRecord]:
+    """FON-80 — fill ``property_name`` on each record: the analyst override
+    in ``field_overrides`` wins, else the extracted (OM-first) name, in ONE
+    query across the deals. Same resolution as ``GET /market/{id}/overview``."""
+    from .market import _property_name_override, extracted_property_names
+
+    if not records:
+        return records
+    extracted = await extracted_property_names(
+        session, tenant_id=tenant_id, deal_ids=[str(r.id) for r in records]
+    )
+    for r in records:
+        r.property_name = (
+            _property_name_override(r.field_overrides) or extracted.get(str(r.id))
+        )
+    return records
+
+
 def _row_to_record(row: dict[str, Any]) -> DealRecord:
     return DealRecord(
         id=UUID(str(row["id"])),
@@ -1118,6 +1170,7 @@ def _row_to_record(row: dict[str, Any]) -> DealRecord:
         lifecycle=row.get("lifecycle") or "active",
         activated_at=_coerce_dt_optional(row.get("activated_at")),
         draft_wizard=_coerce_draft_wizard(row.get("draft_wizard")),
+        created_by=_creator_or_none(row.get("created_by")),
         created_at=_coerce_dt(row.get("created_at")),
         updated_at=_coerce_dt(row.get("updated_at")),
     )
@@ -1692,7 +1745,8 @@ async def list_deals(
             SELECT {await _deal_columns(session)},
                    (SELECT COUNT(*) FROM documents d
                      WHERE d.deal_id = deals.id
-                       AND d.tenant_id = deals.tenant_id) AS document_count
+                       AND d.tenant_id = deals.tenant_id) AS document_count,
+                   {_CREATED_BY_SUBQUERY}
               FROM deals
              WHERE tenant_id = :tenant{lifecycle_clause}
              ORDER BY created_at DESC
@@ -1700,7 +1754,8 @@ async def list_deals(
         ),
         params,
     )
-    return [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+    records = [_row_to_record(dict(r._mapping)) for r in rows.fetchall()]
+    return await _attach_property_names(session, tenant_id=tenant_id, records=records)
 
 
 @router.post("", response_model=DealRecord, status_code=status.HTTP_201_CREATED)
@@ -1955,6 +2010,7 @@ async def create_deal(
         positioning_source=positioning_source,
         lifecycle=body.lifecycle,
         draft_wizard=body.draft_wizard,
+        created_by=_creator_or_none(auth.user_id),
         created_at=now,
         updated_at=now,
     )
@@ -2100,7 +2156,8 @@ async def get_deal(
         await session.execute(
             text(
                 f"""
-                SELECT {await _deal_columns(session, include_draft_wizard="draft_wizard" in wanted)}
+                SELECT {await _deal_columns(session, include_draft_wizard="draft_wizard" in wanted)},
+                       {_CREATED_BY_SUBQUERY}
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                 """
@@ -2113,7 +2170,10 @@ async def get_deal(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"deal {deal_id} not found",
         )
-    return _row_to_record(dict(row._mapping))
+    (record,) = await _attach_property_names(
+        session, tenant_id=tenant_id, records=[_row_to_record(dict(row._mapping))]
+    )
+    return record
 
 
 def _changes_for_audit(changes: dict[str, Any]) -> dict[str, Any]:

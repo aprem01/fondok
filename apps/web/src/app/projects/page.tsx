@@ -12,14 +12,14 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { projectStatuses } from '@/lib/catalogs';
-import { displayConfidence } from '@/lib/project';
+import { modelDataReadiness, Readiness, READINESS_STEPS } from '@/lib/project';
 import { formatKeys } from '@/lib/formatKeys';
 import { cn, fmtDate, fmtCurrency } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
 import { WorkerDeal, PipelineDealRow, api, userMessage } from '@/lib/api';
 import { staleDraftNote } from '@/lib/wizardDraft';
 import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
-import { useCurrentRole } from '@/lib/auth';
+import { OrgMember, useCurrentRole, useOrgMembers } from '@/lib/auth';
 import { useToast } from '@/components/ui/Toast';
 import { GetStartedHero, useGetStartedHeroVisible } from '@/components/help/GetStartedHero';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -112,9 +112,16 @@ const buildProjectMenu = (
   ];
 };
 
+/** FON-80 — the tooltip on the Model/Data Readiness column and card row. */
+const READINESS_TIP =
+  'Where this deal is in Fondok’s pipeline, read from its processing state — not a score: ' +
+  'No documents → Documents uploaded → Extracted (with the extraction confidence) → Model run → Validated.';
+
 interface DisplayDeal {
   id: string;
   name: string;
+  /** FON-80 — the hotel's name from its documents (search matches it); null until extracted. */
+  propertyName: string | null;
   city: string;
   /** Room count, or null until the OM extraction fills it — rendered "—", never 0. */
   keys: number | null;
@@ -122,14 +129,19 @@ interface DisplayDeal {
   /** Null when the row carries none → no badge, never an invented "Draft" / "Teaser". */
   status: string | null;
   dealStage: string | null;
+  /** FON-80 — purchase price from the latest Base Case run (the IC Memo's figure), else null. */
+  purchasePrice: number | null;
   /** Acquisition basis per key, from the pipeline payload (the same figure the dashboard prints). */
   pricePerKey: number | null;
   /** Levered IRR in PERCENT (15.7 = 15.7%), from the pipeline payload. */
   irr: number | null;
+  /** FON-80 — equity multiple as a raw ratio (2.1 = 2.1x) from the latest Base Case run. */
+  equityMultiple: number | null;
   noi: number | null;
-  /** 0–100, or null when Fondok has not scored the deal — rendered "—", never 0%. */
-  aiConfidence: number | null;
-  assignee: string;
+  /** FON-80 — processing step from the worker's facts, or null when none is known → "—". */
+  readiness: Readiness | null;
+  /** FON-80 — the creator's user id from the deal's create audit row; null when unknown. */
+  ownerId: string | null;
   /** Document count as text, or "—" on a worker that does not report it. */
   docs: string;
   updatedAt: string;
@@ -148,26 +160,50 @@ interface DisplayDeal {
  * $/Key, so the two surfaces cannot disagree about one deal.
  */
 function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
+  const isDraft = d.lifecycle === 'draft';
   return {
     id: d.id,
     name: d.name,
+    propertyName: d.property_name?.trim() || null,
     city: d.city ?? '—',
     keys: d.keys,
     service: d.service ?? '—',
     status: d.status || null,
     dealStage: d.deal_stage || null,
+    purchasePrice: row?.purchase_price != null && row.purchase_price > 0 ? row.purchase_price : null,
     pricePerKey: row?.price_per_key ?? null,
     irr: row?.levered_irr != null ? row.levered_irr * 100 : null,
+    equityMultiple: row?.equity_multiple ?? null,
     noi: row?.noi_y1 ?? null,
-    aiConfidence: displayConfidence(d.ai_confidence),
-    assignee: '—',
+    // A draft has no model and no readiness — the card says "Setup not finished".
+    readiness: isDraft
+      ? null
+      : modelDataReadiness({
+          documentCount: d.document_count,
+          aiConfidence: d.ai_confidence,
+          lastEngineRunAt: row?.last_engine_run_at ?? null,
+          state: d.state ?? row?.state ?? null,
+        }),
+    ownerId: d.created_by?.trim() || null,
     docs: d.document_count != null ? String(d.document_count) : '—',
     updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
     noDocs: d.document_count === 0,
-    isDraft: d.lifecycle === 'draft',
-    staleNote: d.lifecycle === 'draft' ? staleDraftNote(d.updated_at) : null,
+    isDraft,
+    staleNote: isDraft ? staleDraftNote(d.updated_at) : null,
   };
 }
+
+/** FON-80 — the owner filter's "no recorded creator" entry (header-only creates, older rows). */
+const OWNER_UNKNOWN = '__unknown__';
+
+/** The workspace member a deal's creator id resolves to, or null when the
+ *  roster does not carry them (left the workspace, personal workspace, demo). */
+const ownerOf = (ownerId: string | null, members: OrgMember[]): OrgMember | null =>
+  ownerId ? members.find((m) => m.userId === ownerId) ?? null : null;
+
+/** The one-line search index: project name, extracted property name, city. */
+const searchText = (p: DisplayDeal) =>
+  [p.name, p.propertyName ?? '', p.city].join('\n').toLowerCase();
 
 export default function ProjectsPage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
@@ -182,11 +218,17 @@ export default function ProjectsPage() {
   }, []);
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
+  // FON-80 — the owner filter: a creator's user id, OWNER_UNKNOWN, or all.
+  const [ownerFilter, setOwnerFilter] = useState<string>('All Owners');
+  const [ownerOpen, setOwnerOpen] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   // Wave 5 RBAC — hard-delete admin gate.
   const currentRole = useCurrentRole();
   const isAdmin = currentRole === 'org:admin';
+  // FON-80 — the workspace roster names each deal's creator (`created_by`
+  // is a Clerk user id); the same source the deal header's Collaborators use.
+  const { members } = useOrgMembers();
 
   const { deals, loading, error, workerConfigured, refresh } = useDeals();
   const heroVisible = useGetStartedHeroVisible();
@@ -226,9 +268,32 @@ export default function ProjectsPage() {
       : filter === 'Draft'
         ? p.isDraft
         : !p.isDraft && p.status === filter;
+  // FON-80 — the owner filter exists only when some deal's creator the
+  // roster can name; "Unknown" joins it for rows whose creator it cannot
+  // (left the workspace, header-only create). No creators → no filter.
+  const ownerOptions = useMemo(() => {
+    const named = new Map<string, string>();
+    let unknown = false;
+    for (const p of display) {
+      const m = ownerOf(p.ownerId, members);
+      if (m) named.set(m.userId, m.name);
+      else unknown = true;
+    }
+    const opts = [...named.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([id, name]) => ({ id, name }));
+    if (unknown && opts.length > 0) opts.push({ id: OWNER_UNKNOWN, name: 'Unknown' });
+    return opts;
+  }, [display, members]);
+  const matchesOwner = (p: DisplayDeal) => {
+    if (ownerFilter === 'All Owners') return true;
+    const m = ownerOf(p.ownerId, members);
+    return ownerFilter === OWNER_UNKNOWN ? m == null : m?.userId === ownerFilter;
+  };
+  // Search matches the project name, the extracted property name and the city.
+  const needle = search.trim().toLowerCase();
   const filtered = display.filter((p) =>
-    matchesFilter(p) &&
-    (!search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.city || '').toLowerCase().includes(search.toLowerCase()))
+    matchesFilter(p) && matchesOwner(p) && (!needle || searchText(p).includes(needle))
   );
 
   return (
@@ -248,11 +313,12 @@ export default function ProjectsPage() {
         title="Your deal pipeline"
         body={
           <>
-            Each card below is one hotel deal you&apos;re evaluating. The
-            <span className="font-semibold"> AI Confidence</span> score (0–100) tells you
-            how complete our model is — green means we&apos;ve extracted enough data to be
-            confident in the numbers, red means we&apos;re still missing key documents.
-            Click any deal to open its full underwriting.
+            Each card below is one hotel deal you&apos;re evaluating. Purchase price,
+            $/Key, levered IRR and equity multiple come from the deal&apos;s latest Base
+            Case run — the same figures its IC Memo prints — and read &ldquo;—&rdquo; until
+            the model has run. <span className="font-semibold">Model/Data Readiness</span> is
+            where the deal is in Fondok&apos;s pipeline (documents → extraction → model run →
+            validated), not a score. Click any deal to open its full underwriting.
           </>
         }
       />
@@ -263,7 +329,7 @@ export default function ProjectsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
           <input
             value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search projects..."
+            placeholder="Search by project, property or city…"
             className="w-full pl-9 pr-3 py-2 text-[13px] bg-white border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-500"
           />
         </div>
@@ -284,6 +350,30 @@ export default function ProjectsPage() {
             </div>
           )}
         </div>
+
+        {ownerOptions.length > 0 && (
+          <div className="relative">
+            <button onClick={() => setOwnerOpen(!ownerOpen)} data-testid="owner-filter"
+              className="flex items-center gap-2 px-3 py-2 text-[12.5px] bg-white border border-border rounded-md hover:bg-ink-300/10">
+              Owner: {ownerFilter === 'All Owners' ? 'Any' : ownerOptions.find((o) => o.id === ownerFilter)?.name ?? 'Any'}
+              <ChevronDown size={13} className="text-ink-400" />
+            </button>
+            {ownerOpen && (
+              <div data-testid="owner-filter-menu" className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg py-1 z-10 min-w-[160px]">
+                <button onClick={() => { setOwnerFilter('All Owners'); setOwnerOpen(false); }}
+                  className="w-full px-3 py-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+                  Any owner
+                </button>
+                {ownerOptions.map((o) => (
+                  <button key={o.id} onClick={() => { setOwnerFilter(o.id); setOwnerOpen(false); }}
+                    className="w-full px-3 py-2 text-[12.5px] hover:bg-ink-300/10 text-left">
+                    {o.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center bg-white border border-border rounded-md p-0.5">
           <button onClick={() => setView('grid')}
@@ -404,37 +494,27 @@ export default function ProjectsPage() {
                   </>
                 ) : (
                   <>
+                    {/* FON-80 — the four decision metrics from the latest
+                        Base Case run; each "—" until the model has run. */}
                     <div className="grid grid-cols-2 gap-2 mb-4">
-                      <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">$/Key</div>
-                        <div className="text-[14px] font-semibold tabular-nums" title={p.pricePerKey == null ? 'Available after the model runs' : undefined}>
-                          {p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-ink-500 uppercase tracking-wide">Levered IRR</div>
-                        <div className="text-[14px] font-semibold tabular-nums" title={p.irr == null ? 'Available after the model runs' : undefined}>
-                          {p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}
-                        </div>
-                      </div>
+                      <CardMetric label="Purchase Price" value={p.purchasePrice != null ? fmtCurrency(p.purchasePrice, { compact: true }) : null} />
+                      <CardMetric label="$/Key" value={p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : null} />
+                      <CardMetric label="Levered IRR" value={p.irr != null ? `${p.irr.toFixed(1)}%` : null} />
+                      <CardMetric label="Equity Multiple" value={p.equityMultiple != null ? `${p.equityMultiple.toFixed(2)}x` : null} />
                     </div>
-                    {p.aiConfidence != null && (
-                      <div>
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[11px] text-ink-500">AI Confidence</span>
-                          <span className="text-[11.5px] font-semibold tabular-nums">{p.aiConfidence}%</span>
-                        </div>
-                        <div className="h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                          <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
-                        </div>
+                    <div data-testid="readiness">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[11px] text-ink-500" title={READINESS_TIP}>Model/Data Readiness</span>
+                        <ReadinessText readiness={p.readiness} />
                       </div>
-                    )}
+                      <ReadinessSteps readiness={p.readiness} />
+                    </div>
                   </>
                 )}
 
                 <div className="flex items-center justify-between pt-4 mt-3 border-t border-border">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
+                    <OwnerAvatar owner={ownerOf(p.ownerId, members)} ownerId={p.ownerId} size="sm" />
                     <span className="text-[11px] text-ink-500">{p.updatedAt}</span>
                   </div>
                   <span className="text-[11px] text-ink-500">{p.docs} docs</span>
@@ -454,6 +534,9 @@ export default function ProjectsPage() {
               <MetricLabel label="Stage" tip="Where this deal is in the acquisition process. Teaser → Under NDA → LOI → PSA → Closed." />
             </div>
             <div className="w-20 flex justify-end">
+              <MetricLabel label="Price" tip="Purchase price from the latest Base Case run — the figure the IC Memo's Sources & Uses prints. Reads — until the model has run." />
+            </div>
+            <div className="w-20 flex justify-end">
               <MetricLabel label="$/Key" tip="Acquisition basis per hotel room from the latest model run — the yardstick for whether you are buying cheap or rich versus replacement cost." />
             </div>
             <div className="w-24 flex justify-end">
@@ -462,8 +545,11 @@ export default function ProjectsPage() {
             <div className="w-16 flex justify-end">
               <MetricLabel label="IRR" tip="Internal Rate of Return — the annualized return on equity over the hold period. The headline return metric." />
             </div>
-            <div className="w-24 flex justify-end">
-              <MetricLabel label="AI Conf." tip="How confident the AI is in the model, based on document completeness and extraction quality. Climbs toward 100% as you upload the full doc set." />
+            <div className="w-14 flex justify-end">
+              <MetricLabel label="EM" tip="Equity multiple from the latest Base Case run — total distributions ÷ equity invested (2.0x = money doubled). The IC Memo's figure." />
+            </div>
+            <div className="w-28 flex justify-end">
+              <MetricLabel label="Readiness" tip={READINESS_TIP} />
             </div>
             <div className="w-14 flex justify-end">
               <MetricLabel label="Docs" tip="Number of documents uploaded vs. the underwriting checklist (OM, T-12, STR report, rent roll, PIP estimate, etc.)." />
@@ -496,31 +582,24 @@ export default function ProjectsPage() {
                 {p.dealStage ? <StatusBadge value={p.dealStage} /> : <span className="text-[11px] text-ink-500">—</span>}
               </div>
               {p.isDraft ? (
-                // No $/Key · NOI · IRR · AI Conf. for a draft — one span across
-                // the four return columns says why.
-                <div className="w-[21rem] text-right text-[11.5px] text-ink-500 pr-1">Setup not finished — no model outputs</div>
+                // No Price · $/Key · NOI · IRR · EM · Readiness for a draft —
+                // one span across the six model columns says why.
+                <div className="w-[34.25rem] text-right text-[11.5px] text-ink-500 pr-1">Setup not finished — no model outputs</div>
               ) : (
                 <>
+                  <div className="text-[12.5px] tabular-nums w-20 text-right">{p.purchasePrice != null ? fmtCurrency(p.purchasePrice, { compact: true }) : '—'}</div>
                   <div className="text-[12.5px] tabular-nums w-20 text-right">{p.pricePerKey != null ? fmtCurrency(p.pricePerKey) : '—'}</div>
                   <div className="text-[12.5px] tabular-nums w-24 text-right">{p.noi != null ? `$${(p.noi / 1e6).toFixed(2)}M` : '—'}</div>
                   <div className="text-[12.5px] tabular-nums w-16 text-right font-medium">{p.irr != null ? `${p.irr.toFixed(1)}%` : '—'}</div>
-                  <div className="w-24">
-                    {p.aiConfidence != null ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex-1 h-1.5 bg-ink-300/30 rounded-full overflow-hidden">
-                          <div className="h-full bg-brand-500" style={{ width: `${p.aiConfidence}%` }} />
-                        </div>
-                        <span className="text-[11px] tabular-nums text-ink-700 w-7 text-right">{p.aiConfidence}%</span>
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-ink-500">—</span>
-                    )}
+                  <div className="text-[12.5px] tabular-nums w-14 text-right">{p.equityMultiple != null ? `${p.equityMultiple.toFixed(2)}x` : '—'}</div>
+                  <div className="w-28 flex justify-end" data-testid="readiness">
+                    <ReadinessText readiness={p.readiness} />
                   </div>
                 </>
               )}
               <div className="text-[12px] tabular-nums w-14 text-right text-ink-700">{p.docs}</div>
               <div className="text-[11.5px] w-16 text-right text-ink-500">{p.updatedAt}</div>
-              <div className="w-7 h-7 rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold">{p.assignee}</div>
+              <OwnerAvatar owner={ownerOf(p.ownerId, members)} ownerId={p.ownerId} />
               <KebabMenu
                 items={p.isDraft
                   ? buildDraftMenu(p.id, p.name, toast, refresh, router.push)
@@ -536,6 +615,69 @@ export default function ProjectsPage() {
           <Loader2 size={11} className="animate-spin" /> Refreshing…
         </div>
       )}
+    </div>
+  );
+}
+
+/** FON-80 — one card metric: its value, or "—" with a tooltip saying why. */
+function CardMetric({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div>
+      <div className="text-[10px] text-ink-500 uppercase tracking-wide">{label}</div>
+      <div className="text-[14px] font-semibold tabular-nums" title={value == null ? 'Available after the model runs' : undefined}>
+        {value ?? '—'}
+      </div>
+    </div>
+  );
+}
+
+/** FON-80 — the readiness step as words, with the extraction confidence
+ *  beside it once a document has been scored. "—" when nothing is known. */
+function ReadinessText({ readiness }: { readiness: Readiness | null }) {
+  if (!readiness) return <span className="text-[11px] text-ink-500" title={READINESS_TIP}>—</span>;
+  return (
+    <span className="text-[11px] text-ink-700 whitespace-nowrap" title={READINESS_TIP} data-testid="readiness-label">
+      <span className="font-semibold">{readiness.label}</span>
+      {readiness.extractionConfidence != null && (
+        <span className="text-ink-500 tabular-nums"> · extraction {readiness.extractionConfidence}%</span>
+      )}
+    </span>
+  );
+}
+
+/** FON-80 — a five-segment step indicator (never a percentage bar). */
+function ReadinessSteps({ readiness }: { readiness: Readiness | null }) {
+  return (
+    <div className="flex gap-0.5" aria-hidden="true">
+      {Array.from({ length: READINESS_STEPS }, (_, i) => (
+        <div
+          key={i}
+          className={cn('h-1.5 flex-1 rounded-full', readiness && i <= readiness.index ? 'bg-brand-500' : 'bg-ink-300/30')}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** FON-80 — the creator's initials from the workspace roster; "—" when the
+ *  deal records no creator or the roster cannot name them. Never invented. */
+function OwnerAvatar({ owner, ownerId, size = 'md' }: { owner: OrgMember | null; ownerId: string | null; size?: 'sm' | 'md' }) {
+  const title = owner
+    ? `Owner: ${owner.name}`
+    : ownerId
+      ? 'Owner: not in this workspace’s roster'
+      : 'Owner: not recorded';
+  return (
+    <div
+      className={cn(
+        'rounded-full bg-ink-300/30 flex items-center justify-center text-[10px] font-semibold text-ink-700',
+        size === 'sm' ? 'w-6 h-6' : 'w-7 h-7',
+      )}
+      title={title}
+      aria-label={title}
+      data-testid="deal-owner"
+    >
+      {owner ? owner.initials : '—'}
     </div>
   );
 }

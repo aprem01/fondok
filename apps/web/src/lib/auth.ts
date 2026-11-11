@@ -250,7 +250,11 @@ export function useOrgActions(): OrgActions {
 }
 
 export interface OrgMember {
+  /** The membership id (``orgmem_…``). */
   id: string;
+  /** The Clerk user id (``user_…``) — what the worker's audit trail records
+   *  as ``actor_id`` / a deal's ``created_by``. Empty when Clerk omits it. */
+  userId: string;
   name: string;
   email: string;
   initials: string;
@@ -304,6 +308,7 @@ export function useOrgMembers(): OrgMembersState {
     const name = [first, last].filter(Boolean).join(' ') || email || 'Member';
     return {
       id: m.id,
+      userId: pud?.userId ?? '',
       name,
       email,
       initials: deriveInitials(first, last, email),

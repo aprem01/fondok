@@ -29,8 +29,8 @@ describe('DealCollaborators', () => {
       loading: false,
       demo: false,
       members: [
-        { id: 'm1', name: 'Prem K', email: 'p@x.co', initials: 'PK', role: 'org:admin', pending: false },
-        { id: 'm2', name: 'Sam Analyst', email: 's@x.co', initials: 'SA', role: 'org:member', pending: false },
+        { id: 'm1', userId: 'user_m1', name: 'Prem K', email: 'p@x.co', initials: 'PK', role: 'org:admin', pending: false },
+        { id: 'm2', userId: 'user_m2', name: 'Sam Analyst', email: 's@x.co', initials: 'SA', role: 'org:member', pending: false },
       ],
     };
     const { container } = render(<DealCollaborators />);
@@ -72,7 +72,7 @@ describe('DealCollaborators', () => {
       loading: false,
       demo: false,
       total: 130,
-      members: [{ id: 'm1', name: 'Prem K', email: 'p@x.co', initials: 'PK', role: 'org:admin', pending: false }],
+      members: [{ id: 'm1', userId: 'user_m1', name: 'Prem K', email: 'p@x.co', initials: 'PK', role: 'org:admin', pending: false }],
     };
     render(<DealCollaborators />);
     expect(screen.getByTestId('collaborators-more')).toHaveTextContent('+129 more');
