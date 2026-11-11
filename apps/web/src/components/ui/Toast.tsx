@@ -121,16 +121,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Make calls outside the provider survive — useful during SSR / tests. ONE
+// stable object: a fresh pair per render changed `toast`'s identity every
+// render, and any effect listing it as a dependency (ScenarioComparePanel's
+// compare fetch) re-ran in a loop wherever no provider was mounted.
+const NO_PROVIDER: ToastContextValue = {
+  toast: () => -1,
+  dismiss: () => {},
+};
+
 export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
-  if (!ctx) {
-    // Make calls outside the provider survive — useful during SSR / tests.
-    return {
-      toast: () => -1,
-      dismiss: () => {},
-    };
-  }
-  return ctx;
+  return ctx ?? NO_PROVIDER;
 }
 
 function ToastViewport({

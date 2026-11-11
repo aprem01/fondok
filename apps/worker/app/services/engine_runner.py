@@ -1536,6 +1536,7 @@ async def _load_engine_inputs(
     *,
     tenant_id: str | None = None,
     assumptions: Mapping[str, Any] | None = None,
+    scenario_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve the underwriting assumptions for ``deal_id``.
 
@@ -1597,6 +1598,15 @@ async def _load_engine_inputs(
     ``scenario_id`` the path is unchanged — running with the deal's
     base scenario id is byte-identical to running with no scenario_id
     at all (the base scenario carries an empty override list).
+
+    ``scenario_overrides`` (FON-69, Sam 9-14 #2) — an UNSAVED scenario's
+    override map, applied at exactly the points a persisted scenario's
+    (``scenario_id``) would be: same precedence over the deal's
+    ``field_overrides``, same routing loop (PIP / segment / capex paths,
+    the RevPAR→ADR derivation). It is how the Scenario editor's pre-save
+    Preview runs the full model on the overrides being typed, so the
+    preview and the saved run cannot disagree. When given it replaces the
+    ``scenario_id`` read; pass one or the other.
     """
     base = dict(assumptions) if assumptions is not None else _default_assumptions()
     # Every key starts marked as a seed; later steps overwrite the
@@ -1684,17 +1694,27 @@ async def _load_engine_inputs(
     # such key the whole gate is inert and every loader behaves as today.
     # B7 (2026-10-30): a failed override read propagates — the run fails
     # ``load_error``; the gate is never silently switched off.
+    # The scenario overlay: the persisted scenario's overrides, or the unsaved
+    # map the caller handed in (``scenario_overrides``). One reader for the
+    # three places below that layer a scenario on the deal.
+    has_scenario = bool(scenario_id) or scenario_overrides is not None
+
+    async def _scenario_overlay() -> dict[str, Any]:
+        if scenario_overrides is not None:
+            return dict(scenario_overrides)
+        if scenario_id:
+            return await _load_scenario_overrides(
+                session, scenario_id=scenario_id, tenant_id=effective_tenant
+            )
+        return {}
+
     as_of_overrides: dict[str, Any] = _normalize_override_shape(
         await _load_deal_overrides_raw(
             session, deal_id=deal_id, tenant_id=effective_tenant
         )
     )
-    if scenario_id:
-        as_of_overrides.update(
-            await _load_scenario_overrides(
-                session, scenario_id=scenario_id, tenant_id=effective_tenant
-            )
-        )
+    if has_scenario:
+        as_of_overrides.update(await _scenario_overlay())
     if overrides:
         as_of_overrides.update(overrides)
     underwriting_as_of = _underwriting_as_of_from(as_of_overrides)
@@ -2318,13 +2338,11 @@ async def _load_engine_inputs(
         pre_load_seg_overrides_raw = await _load_deal_overrides(
             session, deal_id=deal_id, tenant_id=effective_tenant
         )
-        if scenario_id:
+        if has_scenario:
             # Wave 3 W3.2 — scenario overrides win over deal-level
             # overrides on conflicts (same precedence model as the
             # below ``persisted_overrides`` merge).
-            scenario_overrides_pre = await _load_scenario_overrides(
-                session, scenario_id=scenario_id, tenant_id=effective_tenant
-            )
+            scenario_overrides_pre = await _scenario_overlay()
             pre_load_seg_overrides_raw = {
                 **pre_load_seg_overrides_raw,
                 **scenario_overrides_pre,
@@ -2400,16 +2418,14 @@ async def _load_engine_inputs(
     )
     persisted_overrides = _normalize_override_shape(raw_deal_overrides)
     override_notes = _override_notes(raw_deal_overrides)
-    scenario_overrides: dict[str, Any] = {}
-    if scenario_id:
+    scenario_overlay: dict[str, Any] = {}
+    if has_scenario:
         # Wave 3 W3.2 — overlay the scenario's overrides on top of the
         # deal's persisted overrides; scenario values win on conflict
         # so the analyst can flex any base assumption inside a what-if.
-        scenario_overrides = await _load_scenario_overrides(
-            session, scenario_id=scenario_id, tenant_id=effective_tenant
-        )
-        if scenario_overrides:
-            persisted_overrides = {**persisted_overrides, **scenario_overrides}
+        scenario_overlay = await _scenario_overlay()
+        if scenario_overlay:
+            persisted_overrides = {**persisted_overrides, **scenario_overlay}
     if persisted_overrides:
         for path, value in persisted_overrides.items():
             # UI state the analyst persists on the deal, never engine input.
@@ -2784,7 +2800,7 @@ async def _load_engine_inputs(
     str_noted_keys: set[str] = {
         key
         for key in _STR_SEEDED_KEYS
-        if key not in scenario_overrides
+        if key not in scenario_overlay
         and (
             sources.get(key) == SOURCE_ANALYST_OVERRIDE
             or key in analyst_override_paths
@@ -10434,6 +10450,7 @@ async def run_returns_preview(
     tenant_id: str,
     overrides: dict[str, Any] | None = None,
     include_sensitivity: bool = False,
+    scenario_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the engine chain in-memory with sandbox overrides; persist NOTHING.
 
@@ -10450,6 +10467,16 @@ async def run_returns_preview(
     :data:`RETURNS_PREVIEW_KEYS` are applied; any other keys in ``overrides``
     are ignored so a sandbox request can't reach unrelated engine inputs.
 
+    ``scenario_overrides`` (FON-69, Sam 9-14 #2) is the other, full-model
+    seam: the Scenario editor's unsaved override map, handed to
+    :func:`_load_engine_inputs` exactly as a saved scenario's overrides are
+    (same precedence, same routing — every catalog key, not just the five
+    slider keys). The preview then equals what ``POST /scenarios/{id}/run``
+    would persist for the same overrides against the same Base, which the
+    five-key sandbox could not promise (a ``starting_occupancy`` or
+    ``purchase_price`` override was silently dropped: 25.7% preview vs 12.1%
+    run). Still persists nothing.
+
     Raises :class:`MissingIdentityInputsError` when the deal lacks an
     identity input, and :class:`EngineInputsLoadError` (carrying the typed
     ``load_error`` :class:`EngineFailure`, after ``report_alert``) when the
@@ -10457,7 +10484,12 @@ async def run_returns_preview(
     no row to mark failed; ``app.main`` turns both into the client answer.
     """
     try:
-        base = await _load_engine_inputs(session, deal_id, tenant_id=tenant_id)
+        base = await _load_engine_inputs(
+            session,
+            deal_id,
+            tenant_id=tenant_id,
+            scenario_overrides=scenario_overrides,
+        )
     except Exception as exc:  # surfaced as the typed load_error
         await session.rollback()
         _report_load_error(exc, deal_id=deal_id, tenant_id=tenant_id, run_id=None)

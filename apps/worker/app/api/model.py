@@ -388,11 +388,18 @@ class ReturnsPreviewBody(BaseModel):
     revpar_growth, hold_years, ltv, interest_rate). Only those recognized keys
     are applied server-side; everything else is ignored. Empty body == the
     deal's canonical base case.
+
+    ``scenario_overrides`` (FON-69) is the Scenario editor's seam: an unsaved
+    scenario's ``{field_path: value}`` map, applied through the SAME override
+    routing a saved scenario's run uses — every catalog key, not just the five
+    slider keys — so the editor's Preview equals the full run for the same
+    overrides. Still computed in memory; still persists nothing.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     overrides: dict[str, Any] | None = None
+    scenario_overrides: dict[str, Any] | None = None
     include_sensitivity: bool = False
 
 
@@ -475,6 +482,7 @@ async def preview_returns(
         tenant_id=str(tenant_id),
         overrides=body.overrides,
         include_sensitivity=body.include_sensitivity,
+        scenario_overrides=body.scenario_overrides,
     )
     return ReturnsPreviewResponse(deal_id=deal_id, **result)
 

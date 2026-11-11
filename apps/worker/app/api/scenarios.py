@@ -147,6 +147,14 @@ class CompareCell(BaseModel):
     scenario_name: str
     is_base: bool
     last_run_id: UUID | None = None
+    # FON-69 (Sam 9-14 #1) — when the run this column reads was started, and
+    # whether that run predates the deal's current Base run (``stale``). A
+    # saved scenario is computed against the Base as it stood at run time; a
+    # Base re-run leaves the saved figures where they were, so the column
+    # says so instead of sitting silently beside fresh Base numbers. Never
+    # set on the Base column (it IS the current run).
+    run_started_at: datetime | None = None
+    stale: bool = False
     engines: dict[str, dict[str, Any]]
 
 
@@ -155,6 +163,11 @@ class CompareResponse(BaseModel):
 
     deal_id: UUID
     base_scenario_id: UUID | None = None
+    # FON-69 — the deal's CURRENT Base run (the canonical run, or the base
+    # scenario's own run before a full chain exists) every column is dated
+    # against. ``None`` when the deal has never run.
+    base_run_id: UUID | None = None
+    base_run_started_at: datetime | None = None
     scenarios: list[CompareCell]
 
 
@@ -176,6 +189,30 @@ def _coerce_dt(value: Any) -> datetime:
         except ValueError:
             pass
     return _now()
+
+
+def _parse_started_at(value: Any) -> datetime | None:
+    """A persisted ``started_at`` (TIMESTAMPTZ on Postgres, ISO text on
+    SQLite — both as ``_coerce_iso`` serializes them) as an aware datetime,
+    or ``None`` when it cannot be read. Never substitutes "now": a stamp that
+    cannot be parsed must not make a column look fresh."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _earliest_started_at(rows: list[dict[str, Any]]) -> datetime | None:
+    """When a run started: the earliest ``started_at`` across its engine rows."""
+    stamps = [
+        dt for dt in (_parse_started_at(r.get("started_at")) for r in rows) if dt
+    ]
+    return min(stamps) if stamps else None
 
 
 def _coerce_overrides(value: Any) -> list[dict[str, Any]]:
@@ -889,6 +926,19 @@ async def _compare_scenarios(
     ).first()
     base_id = UUID(str(base_row._mapping["id"])) if base_row else None
 
+    # FON-69 (Sam 9-14 #1) — the deal's CURRENT Base run, resolved once. The
+    # Base column reads it (see the note in the loop), and every saved
+    # scenario's own run is dated against it below: a run that started before
+    # the current Base run did was computed against an older Base, and its
+    # column carries ``stale`` so the analyst re-runs it rather than reading
+    # old figures beside fresh Base ones. Resolved BEFORE the loop so a
+    # scenario auto-run by this very call is dated after the Base it ran on.
+    canonical_run = await get_canonical_run_id(
+        session, deal_id=str(deal_id), tenant_id=str(tenant_id)
+    )
+    base_run_id: UUID | None = UUID(str(canonical_run)) if canonical_run else None
+    base_run_started_at: datetime | None = None
+
     cells: list[CompareCell] = []
     for sid in scenario_ids:
         row = await _load_scenario(
@@ -948,12 +998,9 @@ async def _compare_scenarios(
         # Falls back to the base scenario's own run when no full chain exists.
         scoped: dict[str, dict[str, Any]] = {}
         run_id_to_read = record.last_run_id
-        if record.is_base:
-            canonical_run = await get_canonical_run_id(
-                session, deal_id=str(deal_id), tenant_id=str(tenant_id)
-            )
-            if canonical_run:
-                run_id_to_read = UUID(str(canonical_run))
+        if record.is_base and base_run_id is not None:
+            run_id_to_read = base_run_id
+        run_started_at: datetime | None = None
         if run_id_to_read is not None:
             run_rows = await get_run_status(
                 session,
@@ -965,24 +1012,56 @@ async def _compare_scenarios(
                 name = entry.get("engine")
                 if name in ENGINE_NAMES:
                     scoped[name] = entry
+            run_started_at = _earliest_started_at(run_rows)
         else:
             # No run for this scenario yet — fall back to the deal's latest.
             engines = await get_latest_outputs(
                 session, deal_id=str(deal_id), tenant_id=str(tenant_id)
             )
             scoped = {n: e for n, e in engines.items() if n in ENGINE_NAMES}
+        if record.is_base and run_id_to_read is not None:
+            # The Base column's run IS the current Base run — the canonical
+            # one, or (no full chain yet) the base scenario's own fresh run.
+            base_run_id = run_id_to_read
+            base_run_started_at = run_started_at
         cells.append(
             CompareCell(
                 scenario_id=record.id,
                 scenario_name=record.name,
                 is_base=record.is_base,
                 last_run_id=record.last_run_id,
+                run_started_at=run_started_at,
                 engines=scoped,
             )
         )
 
+    # Base not among the compared columns: date the current Base run anyway so
+    # the saved columns are still flagged against it.
+    if base_run_started_at is None and base_run_id is not None:
+        base_run_started_at = _earliest_started_at(
+            await get_run_status(
+                session,
+                deal_id=str(deal_id),
+                run_id=str(base_run_id),
+                tenant_id=str(tenant_id),
+            )
+        )
+    if base_run_started_at is not None:
+        cells = [
+            cell.model_copy(update={"stale": True})
+            if (
+                not cell.is_base
+                and cell.run_started_at is not None
+                and cell.run_started_at < base_run_started_at
+            )
+            else cell
+            for cell in cells
+        ]
+
     return CompareResponse(
         deal_id=deal_id,
         base_scenario_id=base_id,
+        base_run_id=base_run_id,
+        base_run_started_at=base_run_started_at,
         scenarios=cells,
     )

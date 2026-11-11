@@ -78,6 +78,9 @@ interface Props {
   /** Canonical per-row "Remove this override" ✕ (Scenarios Tab.dc.html:200).
    *  The parent persists it (api.scenarios.update) and refreshes the list. */
   onRemoveOverride?: (scenario: ScenarioRecord, fieldPath: string) => void;
+  /** FON-69 — fired after the panel's own "Stale · re-run" re-ran a scenario,
+   *  so the host can refresh the scenario list (its `last_run_id` moved). */
+  onRan?: (scenario: ScenarioRecord) => void;
 }
 
 // Canonical palette (Scenarios Tab.dc.html).
@@ -168,6 +171,7 @@ export default function ScenarioComparePanel({
   onDuplicate,
   onDelete,
   onRemoveOverride,
+  onRan,
 }: Props) {
   const { toast } = useToast();
   const { outputs } = useEngineOutputs(dealId);
@@ -286,6 +290,31 @@ export default function ScenarioComparePanel({
 
   const canCompare = scenarios.length >= 2;
 
+  // FON-69 (Sam 9-14 #1) — a saved scenario's figures are the run it was
+  // computed on; a Base re-run leaves them where they were. The worker dates
+  // every column against the current Base run and flags the older ones
+  // (`stale`); the badge in the table header re-runs that one scenario and
+  // re-reads the comparison. Nothing re-runs on its own.
+  const [rerunningId, setRerunningId] = useState<string | null>(null);
+  const [compareTick, setCompareTick] = useState(0);
+
+  async function rerunScenario(scenario: ScenarioRecord) {
+    if (rerunningId) return;
+    setRerunningId(scenario.id);
+    try {
+      await api.scenarios.run(dealId, scenario.id);
+      setCompareTick((t) => t + 1);
+      onRan?.(scenario);
+      toast(`Re-ran “${scenario.name}” against the current Base.`, { type: 'success' });
+    } catch (e) {
+      toast(`Re-run failed: ${e instanceof Error ? e.message : 'Unknown error'}`, {
+        type: 'error',
+      });
+    } finally {
+      setRerunningId(null);
+    }
+  }
+
   useEffect(() => {
     if (!canCompare || selectedIds.length === 0) {
       setData(null);
@@ -303,7 +332,7 @@ export default function ScenarioComparePanel({
       })
       .finally(() => setLoading(false));
     return () => ac.abort();
-  }, [dealId, selectedIds, canCompare, toast]);
+  }, [dealId, selectedIds, canCompare, toast, compareTick]);
 
   return (
     <div className="space-y-4">
@@ -490,6 +519,8 @@ export default function ScenarioComparePanel({
                 memoIds={memoIds}
                 scenarios={scenarios}
                 onToggleMemo={toggleMemo}
+                onRerun={rerunScenario}
+                rerunningId={rerunningId}
               />
             )}
           </Card>
@@ -763,8 +794,9 @@ function renderBaseCase(groups: BaseCaseGroup[]) {
           lineHeight: 1.5,
         }}
       >
-        Base Case is read-only here. Update assumptions in their source tabs; saved
-        scenarios automatically re-run against the updated Base.
+        Base Case is read-only here. Update assumptions in their source tabs. A saved
+        scenario keeps the figures of its last run — once the Base is re-run, the
+        comparison flags it “Stale · re-run” until you re-run it.
       </div>
     </>
   );
@@ -1001,9 +1033,25 @@ interface TableProps {
   memoIds: string[];
   scenarios: ScenarioRecord[];
   onToggleMemo: (scenario: ScenarioRecord) => void;
+  /** FON-69 — re-run one stale scenario against the current Base. */
+  onRerun: (scenario: ScenarioRecord) => void;
+  rerunningId: string | null;
 }
 
-function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: TableProps) {
+/** FON-69 — the stale badge's label and its explanation (title + test hook). */
+export const SCENARIO_STALE_LABEL = 'Stale · re-run';
+export const SCENARIO_STALE_EXPLANATION =
+  'Computed against an older Base run — re-run this scenario to refresh it against the current Base.';
+
+function CompareTable({
+  response,
+  baseId,
+  memoIds,
+  scenarios,
+  onToggleMemo,
+  onRerun,
+  rerunningId,
+}: TableProps) {
   const baseCell = response.scenarios.find((c) => c.scenario_id === baseId);
   const byId = new Map(scenarios.map((s) => [s.id, s]));
 
@@ -1045,6 +1093,22 @@ function CompareTable({ response, baseId, memoIds, scenarios, onToggleMemo }: Ta
                     >
                       {SCENARIO_NEEDS_RERUN}
                     </span>
+                  )}
+                  {cell.stale && !cell.is_base && (
+                    <button
+                      type="button"
+                      title={SCENARIO_STALE_EXPLANATION}
+                      aria-label={`${SCENARIO_STALE_LABEL} ${cell.scenario_name}`}
+                      data-testid={`scenario-stale-${cell.scenario_id}`}
+                      disabled={!byId.get(cell.scenario_id) || rerunningId !== null}
+                      onClick={() => {
+                        const s = byId.get(cell.scenario_id);
+                        if (s) onRerun(s);
+                      }}
+                      className="text-[9px] uppercase tracking-wide bg-warn-50 text-warn-700 px-1 rounded font-semibold hover:underline disabled:opacity-60 disabled:cursor-wait"
+                    >
+                      {rerunningId === cell.scenario_id ? 'Re-running…' : SCENARIO_STALE_LABEL}
+                    </button>
                   )}
                   {memoIds.includes(cell.scenario_id) && (
                     <span

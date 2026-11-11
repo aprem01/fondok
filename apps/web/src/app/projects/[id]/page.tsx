@@ -875,6 +875,9 @@ export default function ProjectDetailPage() {
                       onDelete: (s: ScenarioRecord) => void handleDeleteScenario(s),
                       onRemoveOverride: (s: ScenarioRecord, fieldPath: string) =>
                         void handleRemoveScenarioOverride(s, fieldPath),
+                      // FON-69 — the panel's "Stale · re-run" moved a
+                      // scenario's last_run_id; refresh the list to match.
+                      onRan: () => void refreshScenarios(),
                     }
                   : {})}
               />
