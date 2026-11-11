@@ -24,6 +24,7 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { IntroCard } from '@/components/help/IntroCard';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
+import { allocationPreviewRows, type AllocationPreviewRow } from '@/lib/partnershipAllocation';
 import {
   SectionCard,
   SubTabNav,
@@ -575,6 +576,15 @@ export default function PartnershipTab() {
   const hasCatchUp = (has(catchUpAmount) && catchUpAmount > 0)
     || !!tierAllocations?.some((t) => t.kind === 'catch_up');
 
+  // FON-66 (Sam, 9-14) — the allocation preview lists EVERY configured promote
+  // tier, in stack order: the engine's row where the waterfall paid dollars
+  // through the band, a $0 "not reached" row where it did not (the engine
+  // reports only the rows that carry cash, so its output is unchanged), and
+  // an "incomplete" row for a half-entered band the engine omits.
+  // (Plain derivations — at most MAX_TIERS bands, so no memo is needed.)
+  const configuredTiers = visibleTierIndices.map((i) => ({ hurdle: tierHurdleAt(i), gp: tierGpAt(i) }));
+  const allocationRows = allocationPreviewRows(tierAllocations, configuredTiers);
+
   // Dollar-waterfall totals (sum the tier rows; total prefers the engine field).
   const lpAllocTotal = tierAllocations?.reduce((s, t) => s + (t.lp_amount || 0), 0);
   const gpAllocTotal = tierAllocations?.reduce((s, t) => s + (t.gp_amount || 0), 0);
@@ -927,7 +937,7 @@ export default function PartnershipTab() {
                 }
               >
                 <AllocationTable
-                  allocations={tierAllocations}
+                  allocations={allocationRows}
                   lpTotal={lpAllocTotal}
                   gpTotal={gpAllocTotal}
                   total={allocTotal}
@@ -1012,7 +1022,7 @@ export default function PartnershipTab() {
                 note="Calculated from the tiers above and the modeled deal cash flow"
               >
                 <AllocationTable
-                  allocations={tierAllocations}
+                  allocations={allocationRows}
                   lpTotal={lpAllocTotal}
                   gpTotal={gpAllocTotal}
                   total={allocTotal}
@@ -1344,7 +1354,7 @@ const ALLOC_GRID = 'minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minm
 // hurdle suffix (e.g. " (to 25%)") and every amount/kind/order. The first
 // Tier-numbered row keeps its base number; later ones increment from it, so a
 // deck that starts at "Tier 2" (after the Preferred row) still reads 2,3,4…
-function renumberTierLabels(rows: TierAllocation[]): TierAllocation[] {
+function renumberTierLabels<T extends TierAllocation>(rows: T[]): T[] {
   let n: number | null = null;
   return rows.map((a) => {
     const m = /^Tier\s+(\d+)(.*)$/i.exec(a.label ?? '');
@@ -1357,7 +1367,9 @@ function renumberTierLabels(rows: TierAllocation[]): TierAllocation[] {
 function AllocationTable({
   allocations, lpTotal, gpTotal, total, reconciles, footnote,
 }: {
-  allocations: TierAllocation[] | undefined;
+  /** FON-66 — every configured tier (see `allocationPreviewRows`), not only
+   *  the rows the engine reported dollars for. */
+  allocations: AllocationPreviewRow[] | undefined;
   lpTotal: number | undefined;
   gpTotal: number | undefined;
   total: number | undefined;
@@ -1376,6 +1388,20 @@ function AllocationTable({
       {money(v)}
     </span>
   );
+  // A band the engine never ran (half-entered) has no amount to show — "—",
+  // never a fabricated $0. A band it ran but never reached is a true $0.
+  const dash = (): ReactNode => (
+    <span style={{ textAlign: 'right', color: palette.textFaint, fontVariantNumeric: 'tabular-nums' }}>—</span>
+  );
+  const caption = (status: AllocationPreviewRow['status']): ReactNode => {
+    if (status === 'reached') return null;
+    const text = status === 'incomplete' ? 'incomplete — set hurdle and split' : 'not reached';
+    return (
+      <span style={{ fontSize: 10.5, color: status === 'incomplete' ? prov.amber : palette.textFaint, whiteSpace: 'nowrap' }}>
+        {text}
+      </span>
+    );
+  };
   return (
     <>
       <div style={{
@@ -1388,22 +1414,28 @@ function AllocationTable({
         <span style={{ textAlign: 'right' }}>GP</span>
         <span style={{ textAlign: 'right' }}>Allocated proceeds</span>
       </div>
-      {renumberTierLabels(allocations).map((a, i) => (
-        <div key={`${a.label}-${i}`} style={{
-          display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
-          borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
-        }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-            <ProvenanceDot state="calculated" size={8} />
-            <span style={{ color: palette.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {a.label}
+      {renumberTierLabels(allocations).map((a, i) => {
+        const reached = a.status === 'reached';
+        const incomplete = a.status === 'incomplete';
+        const amountColor = reached ? prov.gray : palette.textFaint;
+        return (
+          <div key={`${a.label}-${i}`} data-testid="allocation-row" data-status={a.status} style={{
+            display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
+            borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+              <ProvenanceDot state={incomplete ? 'assumption' : 'calculated'} size={8} />
+              <span style={{ color: incomplete ? prov.amber : reached ? palette.ink : palette.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {a.label}
+              </span>
+              {caption(a.status)}
             </span>
-          </span>
-          {cell(a.lp_amount, prov.gray, 400)}
-          {cell(a.gp_amount, prov.gray, 400)}
-          {cell(a.total_amount, prov.gray, 400)}
-        </div>
-      ))}
+            {incomplete ? dash() : cell(a.lp_amount, amountColor, 400)}
+            {incomplete ? dash() : cell(a.gp_amount, amountColor, 400)}
+            {incomplete ? dash() : cell(a.total_amount, amountColor, 400)}
+          </div>
+        );
+      })}
       <div style={{
         display: 'grid', gridTemplateColumns: ALLOC_GRID, fontSize: 12.5, padding: '7px 0',
         borderBottom: `1px solid ${palette.hairlineRow}`, alignItems: 'center',

@@ -528,41 +528,53 @@ def test_tombstone_path_not_parsed_as_numeric_field() -> None:
 # year is funded by a dated pro-rata draw (by ownership split), added to
 # unreturned capital (pref accrues on it) — mirroring ``_run_monthly``.
 #
-# The all-positive pins below are the EXACT floats the engine produced before
-# this change (captured from the pre-change code on the same inputs), so any
-# arithmetic drift on the default (all-positive) path fails loudly.
+# The all-positive pins below are the EXACT floats the engine produces on the
+# default (all-positive) path, so any arithmetic drift fails loudly.
+#
+# Re-pinned for FON-66 (Sam, 9-14 — MVP blocker): the previous pins captured
+# the broken promote loop, which poured the ENTIRE exit-year residual through
+# the first band a one-slice test did not clear ("Tier 2 (to 15%)" took every
+# residual dollar; the preferred band and Tier 3 never appeared). The loop
+# now pays each band only until the cumulative LP IRR reaches its hurdle and
+# steps up, so the Year-5 residual walks Preferred (to 10%) → Tier 2 (to 15%)
+# → Tier 3 (to 20%), where the LP IRR (19.7%) lands. Years 1–4 (all return
+# of capital) and the structural rows are unchanged from the old pins.
 
 _PIN_ALL_POSITIVE_PREF_08 = {
-    "gp_irr": 0.2987531735702786,
-    "lp_irr": 0.1956282012702891,
-    "gp_em": 3.12,
-    "lp_em": 2.097777777777778,
-    "gp_dist": 3120000.0,
-    "lp_dist": 18880000.0,
-    "promote": 920000.0,
-    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2420000.0],
-    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12580000.0],
+    "gp_irr": 0.2909951246245746,
+    "lp_irr": 0.19685731394332207,
+    "gp_em": 3.0294951361782654,
+    "lp_em": 2.1078338737579703,
+    "gp_dist": 3029495.1361782653,
+    "lp_dist": 18970504.863821734,
+    "promote": 980200.136377643,
+    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2329495.1361782653],
+    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12670504.863821734],
     "tiers": [
         ("Return of Capital", 1000000.0, 9000000.0),
         ("Preferred Return", 280000.0, 2520000.0),
-        ("Tier 2 (to 15%)", 1840000.0, 7360000.0),
+        ("Preferred (to 10%)", 0.0, 1507050.0019937754),
+        ("Tier 2 (to 15%)", 694969.4532931626, 2779877.8131726505),
+        ("Tier 3 (to 20%)", 1054525.682885103, 3163577.048655309),
     ],
 }
 
 _PIN_KIMPTON_REF_PREF_10 = {
-    "gp_irr": 0.2927709062032841,
-    "lp_irr": 0.19657934678188843,
-    "gp_em": 3.05,
-    "lp_em": 2.1055555555555556,
-    "gp_dist": 3050000.0,
-    "lp_dist": 18950000.0,
-    "promote": 850000.0,
-    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2350000.0],
-    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12650000.0],
+    "gp_irr": 0.2955204044917759,
+    "lp_irr": 0.19614502941165612,
+    "gp_em": 3.0819951363837634,
+    "lp_em": 2.102000540401804,
+    "gp_dist": 3081995.1363837635,
+    "lp_dist": 18918004.863616236,
+    "promote": 969700.1365011849,
+    "gp_cf": [100000.0, 150000.0, 200000.0, 250000.0, 2381995.1363837635],
+    "lp_cf": [900000.0, 1350000.0, 1800000.0, 2250000.0, 12618004.863616236],
     "tiers": [
         ("Return of Capital", 1000000.0, 9000000.0),
         ("Preferred Return", 350000.0, 3150000.0),
-        ("Tier 2 (to 15%)", 1700000.0, 6800000.0),
+        ("Preferred (to 10%)", 0.0, 877050.0011742115),
+        ("Tier 2 (to 15%)", 694969.453290734, 2779877.813162936),
+        ("Tier 3 (to 20%)", 1037025.6830930298, 3111077.049279089),
     ],
 }
 
