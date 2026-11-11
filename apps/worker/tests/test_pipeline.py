@@ -692,3 +692,62 @@ async def test_target_irr_met_null_when_no_target() -> None:
         s = r.json()["summary"]
         assert s["deals_with_target_irr"] == 1
         assert s["deals_meeting_target_irr"] == 1
+
+
+# ─────────────────────────── FON-80 — purchase price ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_purchase_price_is_the_capital_runs_figure_then_the_deal_row_never_zero() -> None:
+    """FON-80 — the Projects list prints the IC Memo's purchase price: the
+    latest capital run's "Purchase Price" use beats the deal row; a run with
+    no uses falls back to its ``purchase_price`` input; a deal with no run
+    reads its row; a zero is not a price (NULL → the UI dashes it)."""
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        ran = await _seed_deal_with_engines(
+            session, name="Ran", irr=0.15, purchase_price=30_000_000.0
+        )
+        # A newer capital row whose Sources & Uses carries the price the
+        # engine actually used (an override moved it off the deal row).
+        await _insert_engine_output(
+            session,
+            deal_id=ran,
+            engine_name="capital",
+            outputs={
+                **_capital_outputs(),
+                "uses": [
+                    {"label": "Purchase Price", "amount": 31_500_000.0},
+                    {"label": "Closing Costs", "amount": 630_000.0},
+                ],
+            },
+            inputs={**_capital_inputs(), "purchase_price": 31_500_000.0},
+            started_at=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        inputs_only = await _insert_deal(session, name="Inputs only", purchase_price=25_000_000.0)
+        await _insert_engine_output(
+            session,
+            deal_id=inputs_only,
+            engine_name="capital",
+            outputs=_capital_outputs(),  # uses: [] — the legacy shape
+            inputs={**_capital_inputs(), "purchase_price": 29_000_000.0},
+        )
+        await _insert_deal(session, name="No run", purchase_price=28_000_000.0)
+        await _insert_deal(session, name="Zero", purchase_price=0.0)
+        await _insert_deal(session, name="Unpriced", purchase_price=None)
+
+    async with _client() as client:
+        r = await client.get("/deals/pipeline", params={"limit": 50})
+        assert r.status_code == 200, r.text
+    by_name = {d["name"]: d for d in r.json()["deals"]}
+    assert by_name["Ran"]["purchase_price"] == 31_500_000.0
+    assert by_name["Inputs only"]["purchase_price"] == 29_000_000.0
+    assert by_name["No run"]["purchase_price"] == 28_000_000.0
+    assert by_name["Zero"]["purchase_price"] is None
+    assert by_name["Unpriced"]["purchase_price"] is None
+    # The equity multiple is the returns engine's top-level figure — the one
+    # ``headlineReturns`` (the IC Memo) reads.
+    assert by_name["Ran"]["equity_multiple"] == 2.0
+    assert by_name["No run"]["equity_multiple"] is None

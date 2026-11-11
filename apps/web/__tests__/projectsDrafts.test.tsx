@@ -93,7 +93,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
     },
   };
 });
-vi.mock('@/lib/auth', () => ({ useCurrentRole: () => 'org:admin' }));
+vi.mock('@/lib/auth', () => ({
+  useCurrentRole: () => 'org:admin',
+  useOrgMembers: () => ({ members: [], loading: false, demo: true }),
+}));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('@/components/help/IntroCard', () => ({ IntroCard: () => null }));
 vi.mock('@/components/help/GetStartedHero', () => ({
@@ -148,7 +151,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Projects list — a draft card', () => {
-  it('wears a DRAFT badge instead of the status badge and shows no $/Key, IRR or AI Confidence cell', () => {
+  it('wears a DRAFT badge instead of the status badge and shows no $/Key, IRR, price, multiple or readiness cell', () => {
     hoisted.deals = [DRAFT];
     const { container } = render(<ProjectsPage />);
     const card = screen.getByTestId('draft-card');
@@ -156,7 +159,9 @@ describe('Projects list — a draft card', () => {
     expect(within(card).queryByText('In Progress')).toBeNull();
     expect(within(card).queryByText('$/Key')).toBeNull();
     expect(within(card).queryByText('Levered IRR')).toBeNull();
-    expect(within(card).queryByText('AI Confidence')).toBeNull();
+    expect(within(card).queryByText('Purchase Price')).toBeNull();
+    expect(within(card).queryByText('Equity Multiple')).toBeNull();
+    expect(within(card).queryByText('Model/Data Readiness')).toBeNull();
     expect(within(card).getByTestId('draft-panel')).toHaveTextContent('Setup not finished');
     // Not the "No documents uploaded" nudge either — it has one.
     expect(within(card).queryByText('No documents uploaded')).toBeNull();
@@ -184,7 +189,7 @@ describe('Projects list — a draft card', () => {
     expect(screen.queryByTestId('deal-draft-badge')).toBeNull();
     expect(screen.getByText('In Progress')).toBeInTheDocument();
     expect(screen.getByText('$/Key')).toBeInTheDocument();
-    expect(screen.getByText('AI Confidence')).toBeInTheDocument();
+    expect(screen.getByText('Model/Data Readiness')).toBeInTheDocument();
   });
 
   it('counts drafts and archived beside active in the subtitle — the parts add up to the total', () => {

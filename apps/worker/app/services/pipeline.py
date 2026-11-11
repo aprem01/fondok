@@ -122,6 +122,32 @@ def _coerce_dt(value: Any) -> datetime | None:
     return None
 
 
+def _positive_or_none(value: float | None) -> float | None:
+    return value if value is not None and value > 0 else None
+
+
+def _purchase_price_from_capital(
+    capital_out: Any, capital_in: Any
+) -> float | None:
+    """The latest capital run's purchase price: the ``uses`` line labelled
+    "Purchase Price" (what the IC Memo's Sources & Uses reads), else the
+    run's ``purchase_price`` input. ``None`` without a run or a positive
+    figure — the caller falls back to the deal row."""
+    if isinstance(capital_out, dict):
+        uses = capital_out.get("uses")
+        if isinstance(uses, list):
+            for line in uses:
+                if not isinstance(line, dict):
+                    continue
+                if "purchase" in str(line.get("label") or "").lower():
+                    amount = _positive_or_none(_coerce_float(line.get("amount")))
+                    if amount is not None:
+                        return amount
+    if isinstance(capital_in, dict):
+        return _positive_or_none(_coerce_float(capital_in.get("purchase_price")))
+    return None
+
+
 def _row_from_deal(
     deal_row: dict[str, Any],
     engines_by_name: dict[str, dict[str, Any]],
@@ -186,7 +212,13 @@ def _row_from_deal(
     # includes closing/PIP in some configurations); falls back to a
     # simple ``purchase_price / keys`` divide when the engine hasn't run.
     keys = deal_row.get("keys")
-    purchase_price = _coerce_float(deal_row.get("purchase_price"))
+    # FON-80 — the purchase price the Projects list prints is the one the
+    # IC Memo prints: the latest capital run's "Purchase Price" use (the
+    # engine input after field overrides), then that run's input, then the
+    # deal row for a deal with no run. Never 0 — a zero price is not a price.
+    purchase_price = _purchase_price_from_capital(capital_out, capital_in)
+    if purchase_price is None:
+        purchase_price = _positive_or_none(_coerce_float(deal_row.get("purchase_price")))
     price_per_key: float | None = None
     if capital_out:
         price_per_key = _coerce_float(capital_out.get("price_per_key"))

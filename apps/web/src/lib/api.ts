@@ -123,6 +123,18 @@ export interface WorkerDeal {
    *  and by ``GET /deals/{id}?include=draft_wizard`` only; null / absent
    *  everywhere else and on an active deal. */
   draft_wizard?: DraftWizardPayload | null;
+  /** Onboarding lifecycle (Eshan): ``ONBOARDING`` → ``VALIDATING`` →
+   *  ``READY``. Absent on older workers. */
+  state?: string;
+  /** FON-80 — who started the deal: the Clerk user id on its create audit
+   *  row. Null for a header-only create (no signed-in user); absent on older
+   *  workers. Resolved to a name through the workspace roster. */
+  created_by?: string | null;
+  /** FON-80 — the hotel's name as its documents call it (analyst override,
+   *  else the OM's extracted name). Distinct from the project ``name`` and
+   *  never a fallback to it. Null until a document carries one; absent on
+   *  older workers. */
+  property_name?: string | null;
   created_at: string;
   updated_at: string;
 }
