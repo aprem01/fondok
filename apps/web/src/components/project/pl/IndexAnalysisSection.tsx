@@ -58,7 +58,7 @@ import {
   buildCompSeries,
   buildMarketSeries,
   buildSubjectSeries,
-  COMP_FORECAST_GROWN_LABEL,
+  type CompForecastBasisMix,
   computePenetration,
   daysForColumn,
   emptySeries,
@@ -86,6 +86,13 @@ import {
 } from './indexAnalysisModel';
 
 export type { ForecastBoundary } from './indexAnalysisModel';
+
+/** FON-60 — the caption's phrase for each comp-set forecast basis mix. */
+const COMP_GROWN_AT: Record<CompForecastBasisMix, string> = {
+  forecast: 'the market forecast for every year',
+  mixed: 'the market forecast for the years the report covers, then the growth assumption',
+  assumption: 'the market growth assumption',
+};
 
 const NOTES_TEXT =
   'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are the benchmark the model runs on (the topline): that level grown by the market growth for each year — the CBRE or CoStar forecast, your override, or carried forward — each column labelled with its basis, and blank with the reason when the model’s benchmark is another level. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (a market forecast for that calendar year, with document and page) or Assumption (a growth carried forward), so reported history is never read as a projected benchmark.';
@@ -706,7 +713,10 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
     ? `Market / ${market.forecastProvenance}`
     : 'no market forecast source';
   const subjectBand = 'Fondok underwriting (revenue engine)';
-  const compBand = comp.forecastFilled ? COMP_FORECAST_GROWN_LABEL : 'no comp-set forecast source';
+  // FON-60 (Sam, 2026-11-11) — the band says what the columns are: grown at
+  // the market forecast, at the forecast then an assumption, or at the growth
+  // assumption alone — read from the per-year basis chips, never assumed.
+  const compBand = comp.forecastBand ?? 'no comp-set forecast source';
   // The table is the STR comp set (comp = subject ÷ STR index) — never titled
   // as a CoStar market table.
   const compTitle = 'STR Competitive Set';
@@ -717,7 +727,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   const compBoundary: ForecastBoundary = comp.forecastFilled
     ? {
         comparable: false,
-        note: 'Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level itself (the Year-1 benchmark the index method uses), so there is no growth step from the TTM column. Later years grow at the market growth assumption.',
+        note: `Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level itself (the Year-1 benchmark the index method uses), so there is no growth step from the TTM column. Later years grow at ${COMP_GROWN_AT[comp.forecastBasisMix ?? 'assumption']}.`,
       }
     : { comparable: true };
   const marketBoundary: ForecastBoundary =
@@ -730,7 +740,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
       : { comparable: true };
 
   const compCaption = comp.forecastFilled
-    ? 'the comp-set forecast is the STR TTM level grown at the market growth assumption (labelled as an assumption, with its source on hover).'
+    ? `the comp-set forecast is the STR TTM level grown at ${COMP_GROWN_AT[comp.forecastBasisMix ?? 'assumption']} (each column labelled with its basis, with its source on hover).`
     : 'the comp set has no growth value to carry it forward, so its forecast is blank with the reason on hover.';
   const forecastCaption = market.forecastProvenance
     ? `Market forecast columns are the uploaded ${market.forecastProvenance} projection, placed by the report’s own calendar years; the subject forecast is the underwriting projection; ${compCaption}`

@@ -13,6 +13,9 @@ import {
   buildMarketSeries,
   buildSubjectSeries,
   computePenetration,
+  COMP_FORECAST_GROWN_LABEL,
+  COMP_FORECAST_MARKET_LABEL,
+  COMP_FORECAST_MIXED_LABEL,
   COMP_FORECAST_NONE_REASON,
   daysForColumn,
   deriveIndexColumns,
@@ -446,5 +449,60 @@ describe('compSetKeys — active roster keys only', () => {
     expect(compSetKeys({ compset: [], total_keys: 419 })).toBe(419);
     expect(compSetKeys({ compset: [{ name: 'X', keys: 0 }], total_keys: null })).toBeNull();
     expect(compSetKeys(null)).toBeNull();
+  });
+});
+
+describe('comp-set forecast band (FON-60, Sam 2026-11-11)', () => {
+  const fig = (value: number | null, basis?: 'actual' | 'forecast' | 'assumption', label?: string) => ({
+    value, source: value == null ? null : ('computed' as const), inputs: [], detail: label ?? null, basis: basis ?? null, basis_label: label ?? null,
+  });
+  const y1 = { year: 1, deal_year: null, occupancy: fig(0.694, 'actual', 'Actual · STR TTM May 2025'), adr: fig(305.7, 'actual', 'Actual · STR TTM May 2025') };
+
+  it('every grown year a market forecast → "grown at market forecast"', () => {
+    const r = buildCompSeries(cols2025, STR, [
+      y1,
+      { year: 2, deal_year: null, occupancy: fig(0.70, 'forecast', 'Forecast · CoStar 2026'), adr: fig(315, 'forecast', 'Forecast · CoStar 2026') },
+      { year: 3, deal_year: null, occupancy: fig(0.71, 'forecast', 'Forecast · CoStar 2027'), adr: fig(325, 'forecast', 'Forecast · CoStar 2027') },
+    ]);
+    expect(r.forecastFilled).toBe(true);
+    expect(r.forecastBasisMix).toBe('forecast');
+    expect(r.forecastBand).toBe(COMP_FORECAST_MARKET_LABEL);
+    expect(r.forecastBand).toBe('comp set grown at market forecast');
+  });
+
+  it('forecast years then an assumption → "grown at market forecast, then assumption"', () => {
+    const r = buildCompSeries(cols2025, STR, [
+      y1,
+      { year: 2, deal_year: null, occupancy: fig(0.70, 'forecast', 'Forecast · CoStar 2026'), adr: fig(315, 'forecast', 'Forecast · CoStar 2026') },
+      { year: 3, deal_year: null, occupancy: fig(0.70, 'assumption', 'Assumption · carried forward'), adr: fig(325, 'assumption', 'Assumption · carried forward') },
+    ]);
+    expect(r.forecastBasisMix).toBe('mixed');
+    expect(r.forecastBand).toBe(COMP_FORECAST_MIXED_LABEL);
+    expect(r.forecastBand).toBe('comp set grown at market forecast, then assumption');
+  });
+
+  it('no forecast year (assumption chips, or an older worker with no basis) → "grown at market growth (assumption)"', () => {
+    const chips = buildCompSeries(cols2025, STR, [
+      y1,
+      { year: 2, deal_year: null, occupancy: fig(0.70, 'assumption', 'Assumption · grown at market growth'), adr: fig(315, 'assumption', 'Assumption · grown at market growth') },
+      { year: 3, deal_year: null, occupancy: fig(0.71, 'assumption', 'Assumption · grown at market growth'), adr: fig(325, 'assumption', 'Assumption · grown at market growth') },
+    ]);
+    expect(chips.forecastBasisMix).toBe('assumption');
+    expect(chips.forecastBand).toBe(COMP_FORECAST_GROWN_LABEL);
+    expect(chips.forecastBand).toBe('comp set grown at market growth (assumption)');
+    // An older worker sends no basis: the ordinal says Year 2+ is grown → assumption.
+    const older = buildCompSeries(cols2025, STR, [
+      { year: 1, deal_year: null, occupancy: fig(0.694), adr: fig(305.7) },
+      { year: 2, deal_year: null, occupancy: fig(0.70), adr: fig(315) },
+    ]);
+    expect(older.forecastBasisMix).toBe('assumption');
+    expect(older.forecastBand).toBe(COMP_FORECAST_GROWN_LABEL);
+  });
+
+  it('nothing filled → no band (the section says "no comp-set forecast source")', () => {
+    const r = buildCompSeries(cols2025, STR);
+    expect(r.forecastFilled).toBe(false);
+    expect(r.forecastBasisMix).toBeNull();
+    expect(r.forecastBand).toBeNull();
   });
 });

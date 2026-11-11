@@ -223,8 +223,12 @@ The Index Analysis year columns follow the acquisition close calendar — the sa
 P&L prints. The six columns before Year 1 are history; the forecast columns are exactly the model
 horizon, and nothing is carried beyond it. Each benchmark value names its kind with a worded chip —
 **Actual** with its period and document, **Forecast** with the report and year, or **Assumption**
-for a comp set grown at market growth — never colour alone. STR publishes no comp-set forecast, so
-comp-set out-years are always an assumption and say so. Penetration rows print a target only when
+for a comp set grown at market growth — never colour alone. STR publishes no comp-set forecast: the
+comp-set out-years are the STR TTM level grown at the market growth for each year, and the band
+over them reads from those chips — "comp set grown at market forecast" when every grown year is a
+CoStar / CBRE forecast, "comp set grown at market forecast, then assumption" when the forecast
+covers the first years and an assumption (carried forward, or your override) carries the rest, and
+"comp set grown at market growth (assumption)" when no year is a market forecast. Penetration rows print a target only when
 the subject rows actually run on it; otherwise the published index is held flat with a note. Every
 cell shows its formula and inputs on hover; a cell with no reported input is a dash.
 
