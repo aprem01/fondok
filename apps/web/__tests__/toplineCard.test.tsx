@@ -15,7 +15,7 @@ import {
   ToplineGrowthBanner,
   ToplineNotices,
 } from '@/components/project/pl/Topline';
-import { toplineStatus, unavailableGrowth, SUGGESTION_45 } from './fixtures/toplineStatus';
+import { toplineStatus, unavailableGrowth, SUGGESTION_45, calSpan } from './fixtures/toplineStatus';
 import engineRun from './fixtures/engine/toplineRun.json';
 import type { ToplineStatus } from '@/lib/api';
 import type { ToplineYearRecord } from '@/lib/topline';
@@ -418,3 +418,33 @@ describe('FON-116 staged rollout — growth-only topline', () => {
     expect(screen.queryByTestId('topline-clause-benchmark')).toBeNull();
   });
 });
+
+describe('GrowthByYearTable — FON-116 a class-bucket year with no figure is flagged', () => {
+  it('prints No figure with the class + year chip, and the full reason on hover', () => {
+    const label =
+      'No 2027 ADR figure in the CoStar Miami Beach submarket Luxury & Upper Upscale table — the report’s overall-submarket 2027 figure is not used for a class — held flat; set growth manually';
+    const status = toplineStatus({
+      growth_state: 'partially_sourced',
+      growth_by_year: [
+        { year: 1, deal_year: calSpan(2026), applied: true, occupancy: g0(0, 'costar_submarket_forecast', 'x', 'CoStar p.26'), adr: g0(-0.02, 'costar_submarket_forecast', 'x', 'CoStar p.26') },
+        {
+          year: 2, deal_year: calSpan(2027), applied: true,
+          occupancy: g0(-0.006, 'costar_submarket_forecast', 'Forecast · CoStar 2027', 'CoStar p.26'),
+          adr: { ...g0(null, 'unavailable', label, 'no Luxury & Upper Upscale figure for 2027'), reason: 'no_market_forecast', bucket: 'luxury_upper_upscale', bucket_label: 'Luxury & Upper Upscale' },
+        },
+      ],
+    });
+    render(<GrowthByYearTable status={status} overrides={{}} onSave={ok()} running={false} />);
+    const row2 = screen.getByTestId('topline-growth-row-2');
+    expect(row2).toHaveTextContent('No figure');
+    expect(row2).toHaveTextContent('no Luxury & Upper Upscale figure for 2027');
+    expect(within(row2).getByTitle(label)).toBeInTheDocument();
+    // The sibling metric of the same year keeps its CoStar figure and chip.
+    expect(row2).toHaveTextContent('−0.6%');
+    expect(within(row2).getAllByTestId('topline-growth-chip').map((c) => c.textContent)).toEqual(['CoStar p.26', 'no Luxury & Upper Upscale figure for 2027']);
+  });
+});
+
+function g0(value: number | null, source: string, label: string, chip: string | null) {
+  return { value, source, label, chip, page: value == null ? null : 26, doc_name: value == null ? null : 'Miami Beach.pdf' };
+}

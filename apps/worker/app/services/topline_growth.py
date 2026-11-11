@@ -557,6 +557,8 @@ def resolve_growth_by_year(
                 reason=ReasonCode.REEXTRACT_NEEDED,
                 calendar_year=c,
             )
+        chip: str | None = None
+        bucket: str | None = None
         if detail is None:
             if market_gated:
                 detail = (
@@ -564,12 +566,51 @@ def resolve_growth_by_year(
                     + (f" for {c}" if c else "")
                     + " — set growth manually"
                 )
+            elif c is not None and _bucket_gap(metric, c):
+                # FON-116 (Sam, accepted for MVP): a year the report's class
+                # table lacks stays blank — never patched from the overall
+                # series — AS LONG AS the year says so. This is that flag:
+                # the class, the year, what was not used, and what applies.
+                overall = _overall_has(metric, c)
+                detail = (
+                    f"No {c} {noun} figure in the {costar_report} {bucket_label} table"
+                    + (
+                        f" — the report's overall-submarket {c} figure is not used for a class"
+                        if overall else ""
+                    )
+                    + " — held flat; set growth manually"
+                )
+                chip = f"no {bucket_label} figure for {c}"
+                bucket = series.bucket
             else:
                 detail = f"No market {noun} forecast" + (f" for {c}" if c else "") + " — set growth manually"
         return MetricGrowth(
             value=None, source="unavailable", label=detail,
             reason=ReasonCode.NOT_KNOWABLE_AS_OF if market_gated else ReasonCode.NO_MARKET_FORECAST,
-            calendar_year=c,
+            calendar_year=c, chip=chip, bucket=bucket,
+        )
+
+    def _bucket_gap(metric: str, c: int) -> bool:
+        """True when the CoStar table served for the deal's bucket covers
+        years on both sides of ``c`` (or the year row itself) yet has no
+        ``metric`` change figure for ``c`` — a blank cell or a missing row
+        inside the series, not a year past its end (that is carry-forward)
+        and not a report with no class table at all."""
+        if not series.years or costar_withhold:
+            return False
+        first, last = series.first_year, series.last_year
+        if first is None or last is None or not (first <= c <= last):
+            return False
+        return costar[metric].get(c) is None
+
+    def _overall_has(metric: str, c: int) -> bool:
+        """The report's overall-submarket series carries ``metric`` for ``c``."""
+        if series.bucket == "all":
+            return False
+        attr = "occupancy_change_pct" if metric == "occupancy" else "adr_change_pct"
+        return any(
+            y.year == c and getattr(y, attr) is not None
+            for y in costar_reading.buckets.get("all", ())
         )
 
     def _past_series(metric: str, c: int, prev: MetricGrowth) -> MetricGrowth:
@@ -671,7 +712,9 @@ def resolve_growth_by_year(
         parts = [(cy, m, doc_by_cal.get((metric, cy)) or _unavailable(metric, cy)) for cy, m in dy.calendar_months]
         if len(parts) == 1:
             g = parts[0][2]
-            return replace(g, deal_year=dy, parts=tuple(parts), chip=_pages_chip(g.vendor, [g.page]))
+            # A document figure's chip is its vendor + page; a figure with no
+            # vendor keeps its own chip (FON-116: the class-gap flag).
+            return replace(g, deal_year=dy, parts=tuple(parts), chip=_pages_chip(g.vendor, [g.page]) or g.chip)
         missing = [(cy, m, g) for cy, m, g in parts if g.value is None]
         first_doc = next((g for _cy, _m, g in parts if g.doc_name), None)
         if missing:

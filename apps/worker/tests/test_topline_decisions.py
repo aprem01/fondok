@@ -205,3 +205,67 @@ def test_revpar_override_after_stabilization_puts_the_whole_rate_on_adr() -> Non
     g = _g([], GrowthOverrides(revpar_all_years=0.04, occupancy_all_years=0.01), cal=[2026, 2027, 2028, 2029], s=2)
     assert g.year(2, "adr").value == pytest.approx(1.04 / 1.01 - 1)
     assert g.year(3, "adr").value == pytest.approx(0.04)
+
+
+# ───────────────── FON-116 — a class-bucket year with no figure is flagged ─────────────────
+#
+# Sam (accepted for MVP, 2026-11-11): a year the deal's CoStar class table
+# lacks stays blank — never patched from the overall submarket series — AS
+# LONG AS THAT YEAR IS CLEARLY FLAGGED. The flag names the class, the year,
+# that the overall figure was not used, and that the year is held flat.
+
+
+def _without_luxury_2027(metrics: tuple[str, ...] = ("occupancy_change_pct", "adr_change_pct")) -> list:
+    drop = {f"market_study.class.luxury_upper_upscale.2027.{m}" for m in metrics}
+    return [r for r in costar_rows() if r.lname not in drop]
+
+
+def test_a_bucket_year_with_no_figure_is_flagged_by_class_and_year_and_held_flat() -> None:
+    from app.services.topline_growth import growth_year
+
+    res = _g(_without_luxury_2027())  # CAL7: Year 2 = Jan–Dec 2027
+    for metric, noun in (("occupancy", "occupancy"), ("adr", "ADR")):
+        g = res.year(2, metric)
+        assert g.value is None and g.source == "unavailable"
+        assert g.label == (
+            f"No 2027 {noun} figure in the CoStar Miami Beach submarket Luxury & Upper Upscale table"
+            " — the report's overall-submarket 2027 figure is not used for a class"
+            " — held flat; set growth manually"
+        )
+        assert g.chip == "no Luxury & Upper Upscale figure for 2027"
+        assert g.bucket == "luxury_upper_upscale"
+        assert g.reason is not None and g.reason.value == "no_market_forecast"
+    # The engine's per-year record carries the same flag (what the UI prints).
+    gy = growth_year(res, 2)
+    assert gy.chip == "no Luxury & Upper Upscale figure for 2027"
+    assert gy.occupancy_growth is None and gy.adr_growth is None
+    assert "Luxury & Upper Upscale" in gy.label and "2027" in gy.label
+    # The neighbouring years are untouched: 2026 and 2028 still read the bucket.
+    assert res.year(1, "adr").source == "costar_submarket_forecast"
+    assert res.year(3, "adr").source == "costar_submarket_forecast"
+    assert res.year(3, "adr").value == LUU_ADR_FORECAST[2028]
+
+
+def test_only_the_missing_metric_is_flagged_the_other_keeps_its_figure() -> None:
+    res = _g(_without_luxury_2027(("adr_change_pct",)))
+    assert res.year(2, "occupancy").source == "costar_submarket_forecast"
+    adr = res.year(2, "adr")
+    assert adr.value is None and adr.source == "unavailable"
+    assert adr.label.startswith("No 2027 ADR figure in the CoStar Miami Beach submarket Luxury & Upper Upscale table")
+    assert adr.chip == "no Luxury & Upper Upscale figure for 2027"
+
+
+def test_a_year_past_the_series_is_carried_forward_not_flagged_as_a_class_gap() -> None:
+    res = _g(costar_rows())
+    past = res.year(5, "adr")  # 2030: the report ends 2029
+    assert past.source == "carried_forward"
+    assert past.chip != "no Luxury & Upper Upscale figure for 2030"
+
+
+def test_no_class_table_at_all_keeps_the_generic_no_forecast_label() -> None:
+    rows = [r for r in costar_rows() if not r.lname.startswith("market_study.class.") and not r.lname.startswith("market_study.trend.")]
+    res = _g(rows)
+    g = res.year(2, "adr")
+    assert g.value is None and g.source == "unavailable"
+    assert g.label == "No market ADR forecast for 2027 — set growth manually"
+    assert g.chip is None
