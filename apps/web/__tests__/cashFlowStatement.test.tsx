@@ -488,6 +488,23 @@ describe('CashFlowTab — Summary statement (FON-67 / R-072)', () => {
     expect(within(grid).queryByText(/IRR/)).toBeNull();
   });
 
+  it('the IRR footnote says IRR is shown once for the hold and links to Returns → Returns Summary → Returns by exit year (FON-118)', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, { levered_irr: 0.198, unlevered_irr: 0.123, equity_multiple: 1.66 });
+    render(<CashFlowTab />);
+    const note = screen.getByTestId('cash-flow-irr-footnote');
+    expect(note.textContent).toMatch(/IRR is a whole-hold figure, shown once for the hold period/);
+    expect(note.textContent).toMatch(/IRR by exit year is on Returns → Returns Summary → Returns by exit year/);
+    // The stale sentence is gone — FON-118 made IRR by exit year an engine output.
+    expect(note.textContent).not.toMatch(/no per-year IRR/);
+    // The chip deep-links the way every cross-tab "View Returns →" link does
+    // (Returns lives on Overview, R-061): ?tab=overview&sub=returns-summary.
+    fireEvent.click(screen.getByTestId('cash-flow-irr-exit-year-link'));
+    expect(nav.push).toHaveBeenLastCalledWith(
+      '/projects/deal-1?tab=overview&sub=returns-summary',
+      { scroll: false },
+    );
+  });
+
   it('reads — for the IRR figures when the returns engine has not run', () => {
     hoisted.outputs = envelopeWithReturns(CF_WORKER, null);
     render(<CashFlowTab />);
@@ -555,5 +572,106 @@ describe('CashFlowTab — negative-NOI strip (FON-63)', () => {
     hoisted.outputs = withDebt({ year_one_dscr: 1.3 });
     render(<CashFlowTab />);
     expect(screen.queryByTestId('noi-warning-strip')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-67 (Sam, 2026-11-11) — LP / GP / Total Distributions read "—" on the
+// Kimpton QA deal. Verified cause: the deal carries no partnership terms, so
+// since B5 (2026-10-30) the partnership engine reports `not_applicable` and
+// the cash_flow engine emits `distributions: []` with
+// `distributions_unavailable` naming why. The web used to drop that reason
+// and title the rows "Not emitted by the cash_flow engine" — misleading, the
+// engine ran and said why. Now the rows carry the reason and a note links to
+// Partnership → Waterfall, where the terms are entered.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('CashFlowTab — distributions when the partnership waterfall did not run (FON-67 / B5)', () => {
+  const REASON = 'no partnership waterfall: the deal does not carry a complete set of partnership terms';
+  const CF_NO_WATERFALL: CashFlowStatementOutput = {
+    ...CF_WORKER,
+    distributions: [],
+    distributions_unavailable: REASON,
+  };
+
+  beforeEach(() => {
+    cleanup();
+    nav.params = new URLSearchParams('');
+  });
+
+  it('the three rows read — with the worker reason as their title, and a note links to Partnership → Waterfall', () => {
+    hoisted.outputs = envelopeWithReturns(CF_NO_WATERFALL, { levered_irr: 0.066, unlevered_irr: 0.068, equity_multiple: 1.36 });
+    render(<CashFlowTab />);
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    for (const label of ['LP Distributions', 'GP Distributions', 'Total Distributions']) {
+      expect(statementRowCells(card, label)).toEqual(['—', '—', '—']);
+      expect(statementRowHeader(card, label)).toHaveAttribute('title', `Awaiting partnership terms — ${REASON}`);
+    }
+    // Every other row is untouched — the statement itself ran.
+    expect(statementRowCells(card, 'Net Cash Flow to Equity')).toEqual(['($400)', '$40', '$938']);
+
+    const note = screen.getByTestId('cash-flow-distributions-unavailable');
+    expect(note.textContent).toContain('the partnership waterfall did not run on this deal');
+    expect(note.textContent).toContain(REASON);
+    expect(note.textContent).toContain('Partnership → Waterfall');
+    fireEvent.click(screen.getByTestId('cash-flow-distributions-partnership-link'));
+    expect(nav.push).toHaveBeenLastCalledWith(
+      '/projects/deal-1?tab=partnership&sub=waterfall',
+      { scroll: false },
+    );
+  });
+
+  it('prefers the partnership engine row’s own not_applicable sentence (it names what is missing)', () => {
+    const env = envelopeWithReturns(CF_NO_WATERFALL, null);
+    env.engines.partnership = {
+      deal_id: 'deal-1',
+      engine: 'partnership',
+      status: 'not_applicable',
+      summary: '',
+      outputs: {},
+      inputs: null,
+      error: null,
+      runtime_ms: 1,
+      started_at: null,
+      completed_at: null,
+      run_id: null,
+      not_applicable: {
+        engine: 'partnership',
+        reason: 'not_applicable',
+        message: 'no partnership terms on this deal',
+        missing: ['split', 'pref_rate', 'tiers'],
+        incomplete: [],
+      },
+    };
+    hoisted.outputs = env;
+    render(<CashFlowTab />);
+    const note = screen.getByTestId('cash-flow-distributions-unavailable');
+    expect(note.textContent).toContain('no partnership terms on this deal');
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    expect(statementRowHeader(card, 'LP Distributions')).toHaveAttribute(
+      'title',
+      'Awaiting partnership terms — no partnership terms on this deal',
+    );
+  });
+
+  it('an older run with empty distributions and no reason keeps the "not emitted" title and shows no note', () => {
+    const legacy = { ...CF_WORKER, distributions: [] } as CashFlowStatementOutput;
+    hoisted.outputs = envelopeWithReturns(legacy, null);
+    render(<CashFlowTab />);
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    expect(statementRowCells(card, 'LP Distributions')).toEqual(['—', '—', '—']);
+    expect(statementRowHeader(card, 'LP Distributions')).toHaveAttribute(
+      'title',
+      'Not emitted by the cash_flow engine for this deal',
+    );
+    expect(screen.queryByTestId('cash-flow-distributions-unavailable')).toBeNull();
+  });
+
+  it('a run that emitted the distribution lines shows no note', () => {
+    hoisted.outputs = envelopeWithReturns(CF_WORKER, null);
+    render(<CashFlowTab />);
+    expect(screen.queryByTestId('cash-flow-distributions-unavailable')).toBeNull();
+    const card = screen.getByTestId('cash-flow-summary-statement');
+    expect(statementRowCells(card, 'Total Distributions')).toEqual(['—', '$40', '$938']);
   });
 });

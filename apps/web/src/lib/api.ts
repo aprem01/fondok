@@ -1406,6 +1406,12 @@ export interface CashFlowStatementOutput {
   unlevered: CashFlowStatementLine[];
   levered: CashFlowStatementLine[];
   distributions: CashFlowStatementLine[];
+  /** B5 — the worker's own sentence for why ``distributions`` is empty: the
+   *  partnership engine reported ``not_applicable`` (the deal carries no
+   *  complete set of partnership terms), so the statement ran without LP /
+   *  GP / Total Distribution lines. ``null`` when they were emitted; absent
+   *  on a run from before the field existed. */
+  distributions_unavailable?: string | null;
   unlevered_cash_flow: number[];
   levered_cash_flow: number[];
   provenance: Record<string, ValueTrace>;
