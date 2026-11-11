@@ -207,6 +207,11 @@ export default function ScenarioEditor({
   const [running, setRunning] = useState(false);
   // Pre-save Preview (FON-53 canonical) — projected metric deltas vs Base,
   // computed by the NON-persisting returns/preview endpoint. Never writes.
+  // FON-69 (Sam 9-14 #2) — the overrides go up as `scenario_overrides`, which
+  // the worker routes exactly as a saved scenario's run routes them (every
+  // catalog key), so the preview equals the full run for the same overrides.
+  // The old five-key sandbox (`overrides`) dropped e.g. starting_occupancy
+  // and purchase_price on the floor: 25.7% preview vs 12.1% full run.
   const [preview, setPreview] = useState<{
     base: ReturnsPreviewResponse | null;
     scenario: ReturnsPreviewResponse | null;
@@ -242,30 +247,35 @@ export default function ScenarioEditor({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // The recognized, numeric override map to preview. Serialized so the effect
-  // only re-runs when the actual values change (not on every keystroke object).
+  // The override map to preview — every row with an assumption and a value,
+  // in the SAME canonical shape Save persists (so what is previewed is what
+  // is saved). Serialized so the effect only re-runs when the actual values
+  // change (not on every keystroke object).
   const previewKey = useMemo(() => {
-    const o: Record<string, number> = {};
+    const o: Record<string, unknown> = {};
     for (const r of rows) {
       const path = r.field_path.trim();
       if (!path) continue;
       const val = fromDisplay(path, r.value);
-      if (typeof val === 'number' && Number.isFinite(val)) o[path] = val;
+      if (val === '') continue;
+      if (typeof val === 'number' && !Number.isFinite(val)) continue;
+      o[path] = val;
     }
     return JSON.stringify(o);
   }, [rows]);
 
-  // Debounced dual preview: Base (no overrides) + this scenario's overrides.
+  // Debounced dual preview: Base (no overrides) + this scenario's overrides,
+  // both through the full model in memory.
   useEffect(() => {
     if (!open) return;
     if (!isWorkerConnected()) return;
-    const overrides = JSON.parse(previewKey) as Record<string, number>;
+    const overrides = JSON.parse(previewKey) as Record<string, unknown>;
     const ac = new AbortController();
     const t = setTimeout(() => {
       setPreviewLoading(true);
       Promise.all([
-        api.engines.returnsPreview(dealId, { overrides: {} }, ac.signal),
-        api.engines.returnsPreview(dealId, { overrides }, ac.signal),
+        api.engines.returnsPreview(dealId, {}, ac.signal),
+        api.engines.returnsPreview(dealId, { scenario_overrides: overrides }, ac.signal),
       ])
         .then(([base, scenario]) => setPreview({ base, scenario }))
         .catch(() => {
@@ -606,10 +616,10 @@ export default function ScenarioEditor({
               ))}
             </div>
             <span
+              data-testid="scenario-preview-note"
               style={{ fontSize: 10.5, color: PV.muted, lineHeight: 1.5 }}
             >
-              Projected live from the model — returns drivers (exit cap, growth,
-              hold, LTV, rate) move the preview; other overrides apply on Save.
+              {PREVIEW_NOTE}
             </span>
           </div>
         </div>
@@ -655,6 +665,14 @@ export default function ScenarioEditor({
     </>
   );
 }
+
+// FON-69 (Sam 9-14 #2) — what the Preview is, stated plainly: the full model,
+// in memory, against the current Base, through the same override routing a
+// saved run uses. Exported so the test pins the copy to the behaviour.
+export const PREVIEW_NOTE =
+  'Full model, run in memory against the current Base — the same engine chain ' +
+  'and override routing a saved run uses, so “Run with these overrides” lands on ' +
+  'these figures. Nothing is written until you Save.';
 
 // Canonical Preview palette (Scenarios Tab.dc.html).
 const PV = {

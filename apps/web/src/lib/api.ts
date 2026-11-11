@@ -1670,12 +1670,20 @@ export interface ScenarioCompareCell {
   scenario_name: string;
   is_base: boolean;
   last_run_id: string | null;
+  /** FON-69 — when this column's run started, and whether it predates the
+   *  deal's current Base run (a saved scenario computed against an older
+   *  Base). Absent on a worker build that predates it. */
+  run_started_at?: string | null;
+  stale?: boolean;
   engines: Record<string, EngineOutputResponse>;
 }
 
 export interface ScenarioCompareResponse {
   deal_id: string;
   base_scenario_id: string | null;
+  /** FON-69 — the current Base run every column is dated against. */
+  base_run_id?: string | null;
+  base_run_started_at?: string | null;
   scenarios: ScenarioCompareCell[];
 }
 
@@ -3970,6 +3978,10 @@ export interface ReturnsPreviewBody {
   /** Slider overrides: exit_cap_rate, revpar_growth, hold_years, ltv,
    *  interest_rate. Only recognized keys are applied server-side. */
   overrides?: Record<string, number>;
+  /** FON-69 — an unsaved scenario's full override map, routed server-side
+   *  exactly as a saved scenario's run routes it (every catalog key), so the
+   *  editor's Preview equals the full run for the same overrides. */
+  scenario_overrides?: Record<string, unknown>;
   include_sensitivity?: boolean;
 }
 

@@ -95,6 +95,11 @@ not an edit. It answers “what would this deal do if…” without changing wha
 - **It survives navigation, and only that.** Held in your browser session, per deal. Reset to base
   case, opening a different deal or a fresh model run clears it. It is never shared, bookmarked or
   seen by anyone else, and the Max Price Solver and the pricing grid do not consume it.
+- **The Scenario editor's Preview is the same chain, on every override.** Editing a saved scenario
+  previews its whole override list through the same in-memory run a saved scenario uses, so the
+  preview equals the full run for the same overrides against the same Base. A saved scenario keeps
+  the figures of its last run: once the Base is re-run, the Scenario comparison flags it
+  “Stale · re-run” until you re-run it. Nothing re-runs on its own.
 
 :::
 
@@ -183,6 +188,12 @@ Five inputs — exit cap rate, RevPAR growth, hold period, LTV and interest rate
 engine chain in memory through a preview call. Nothing is written: no run, no change to the deal's
 assumptions. Each slider starts at the value the saved run recorded; a run that did not record one
 of the five shows "Awaiting model run".
+
+The Scenario editor's Preview is the same in-memory chain run on the scenario's whole override list
+— every assumption the editor offers, routed exactly as a saved scenario run routes it — so the
+preview equals the full run for the same overrides against the same Base. A saved scenario keeps the
+figures of its last run: once the Base is re-run, the Scenario comparison flags that scenario
+"Stale · re-run" until you re-run it. Nothing re-runs on its own.
 
 :::
 
@@ -358,6 +369,18 @@ not an edit. It answers “what would this deal do if…” without changing wha
   written: no `engine_outputs` row, no run id, no advance of the canonical run, and no change to the
   deal's `field_overrides`. CAPEX and Financing keep showing the canonical case throughout — that is
   the point, not a bug.
+- **The Scenario editor's Preview is the same chain (FON-69).** `scenario_overrides` on the same
+  call carries an unsaved scenario's `{field_path: value}` map into `_load_engine_inputs` at the
+  points a persisted scenario's overrides enter — same precedence over `field_overrides`, same
+  routing (every catalog key, not the five slider keys) — so the drawer's Preview equals
+  `POST /deals/{id}/scenarios/{id}/run` for the same overrides against the same Base. The five-key
+  `overrides` sandbox dropped everything else (a Year-1 occupancy override read 25.7% in the preview
+  and 12.1% in the run); it remains for the Returns tab's sliders only.
+- **Saved scenarios are dated against the Base (FON-69).** `GET|POST /deals/{id}/scenarios/compare`
+  returns the current Base run (`base_run_id`, `base_run_started_at` — the canonical run) and, per
+  column, `run_started_at` and `stale`: true when the scenario's run started before the current Base
+  run did. The Base column is never stale. Nothing re-runs by itself; the “Stale · re-run” badge
+  re-runs that one scenario and re-reads the comparison.
 - **The LTV lever is honest.** The Financing tab writes both “Senior Loan Amount” and “LTV” as the
   same pinned senior principal. When the sandbox flexes LTV, that pin is released *on the in-memory
   copy only*, so the flexed LTV resizes the senior end-to-end — interest, principal, debt service and

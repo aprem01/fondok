@@ -1102,3 +1102,156 @@ async def test_no_growth_override_is_byte_identical() -> None:
         no_scenario["returns"]["outputs"]["levered_irr"]
         == with_base["returns"]["outputs"]["levered_irr"]
     )
+
+
+# ─────────────── FON-69 (Sam 9-14) — stale scenarios + preview reconciliation ───────────────
+#
+# #1 A saved scenario's figures are the run it was computed on. Re-running
+#    the Base leaves them where they were; compare now dates every column
+#    against the current Base run and flags the older ones ``stale``.
+# #2 The editor's Preview used the five-key sandbox, which dropped every
+#    other override (25.7% preview vs 12.1% full run). ``scenario_overrides``
+#    routes the map exactly as a saved run does, so the two reconcile.
+
+
+@pytest.mark.asyncio
+async def test_compare_flags_scenario_stale_after_base_rerun() -> None:
+    """A saved scenario computed before the current Base run is ``stale``;
+    re-running it clears the flag. The Base column is never stale."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client)
+        base_id = (await client.get(f"/deals/{deal_id}/scenarios")).json()[0]["id"]
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios",
+            json={
+                "name": "downside",
+                "overrides": [{"field_path": "exit_cap_rate", "value": 0.085}],
+            },
+        )
+        downside_id = r.json()["id"]
+
+        # First view: both columns are materialised by this call, the
+        # scenario after the Base it ran on — nothing is stale.
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios/compare",
+            json={"scenario_ids": [base_id, downside_id]},
+        )
+        assert r.status_code == 200, r.text
+        payload = r.json()
+        cells = {c["scenario_name"]: c for c in payload["scenarios"]}
+        assert payload["base_run_id"] is not None
+        assert payload["base_run_started_at"] is not None
+        assert cells["downside"]["stale"] is False
+        assert cells["downside"]["run_started_at"] is not None
+        first_base_run = payload["base_run_id"]
+
+        # The Base is re-run (deal-level "run model" == the base scenario run).
+        r = await client.post(f"/deals/{deal_id}/scenarios/{base_id}/run")
+        assert r.status_code == 200, r.text
+        new_base_run = r.json()["run_id"]
+        assert new_base_run != first_base_run
+
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios/compare",
+            json={"scenario_ids": [base_id, downside_id]},
+        )
+        payload = r.json()
+        cells = {c["scenario_name"]: c for c in payload["scenarios"]}
+        assert payload["base_run_id"] == new_base_run
+        assert cells["downside"]["stale"] is True, cells["downside"]
+        base_cell = next(c for c in cells.values() if c["is_base"])
+        assert base_cell["stale"] is False
+        # The scenario's own run did NOT move — its column still reads it.
+        assert cells["downside"]["last_run_id"] == (
+            await client.get(f"/deals/{deal_id}/scenarios/{downside_id}")
+        ).json()["last_run_id"]
+
+        # Base absent from the compared columns: still dated against it.
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios/compare",
+            json={"scenario_ids": [downside_id]},
+        )
+        assert r.json()["base_run_id"] == new_base_run
+        assert r.json()["scenarios"][0]["stale"] is True
+
+        # One-click re-run clears it.
+        r = await client.post(f"/deals/{deal_id}/scenarios/{downside_id}/run")
+        assert r.status_code == 200, r.text
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios/compare",
+            json={"scenario_ids": [base_id, downside_id]},
+        )
+        cells = {c["scenario_name"]: c for c in r.json()["scenarios"]}
+        assert cells["downside"]["stale"] is False
+
+
+@pytest.mark.asyncio
+async def test_preview_with_scenario_overrides_reconciles_to_full_run() -> None:
+    """``scenario_overrides`` on the returns preview equals the persisted
+    scenario run for the same overrides (keys beyond the five slider keys
+    included), and still writes nothing."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+
+    overrides = [
+        {"field_path": "starting_occupancy", "value": 0.55},
+        {"field_path": "purchase_price", "value": 30_000_000},
+        {"field_path": "exit_cap_rate", "value": 0.085},
+    ]
+    as_map = {o["field_path"]: o["value"] for o in overrides}
+
+    async def _rows(deal_id: str) -> int:
+        factory = get_session_factory()
+        async with factory() as session:
+            return (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM engine_outputs WHERE deal_id = :d"),
+                    {"d": deal_id},
+                )
+            ).scalar_one()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        deal_id = await _create_deal_via_api(client)
+        r = await client.post(
+            f"/deals/{deal_id}/scenarios",
+            json={"name": "stress", "overrides": overrides},
+        )
+        sid = r.json()["id"]
+        r = await client.post(f"/deals/{deal_id}/scenarios/{sid}/run")
+        assert r.status_code == 200, r.text
+        full = r.json()["engines"]["returns"]["outputs"]
+        rows_before = await _rows(deal_id)
+
+        r = await client.post(
+            f"/deals/{deal_id}/engines/returns/preview",
+            json={"scenario_overrides": as_map},
+        )
+        assert r.status_code == 200, r.text
+        preview = r.json()
+        assert preview["levered_irr"] == pytest.approx(full["levered_irr"], rel=1e-9)
+        assert preview["equity_multiple"] == pytest.approx(
+            full["equity_multiple"], rel=1e-9
+        )
+        assert preview["exit_value"] == pytest.approx(full["gross_sale_price"], rel=1e-9)
+
+        # The five-key sandbox (``overrides``) drops starting_occupancy and
+        # purchase_price — the divergence Sam saw. Kept as-is for the Returns
+        # tab's sliders; the editor no longer uses it.
+        r = await client.post(
+            f"/deals/{deal_id}/engines/returns/preview",
+            json={"overrides": as_map},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["levered_irr"] != pytest.approx(full["levered_irr"], rel=1e-9)
+
+        assert await _rows(deal_id) == rows_before
