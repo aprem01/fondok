@@ -275,7 +275,7 @@ describe('OverviewTab — engine-sourced KPI tiles (value-add)', () => {
     expect(screen.getByText('14.2%')).toBeInTheDocument();         // returns.unlevered_irr
     // KPI labels also appear elsewhere → assert at least one match.
     expect(screen.getAllByText('Purchase Price').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Stabilized NOI').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Stabilized NOI (after FF&E reserve)').length).toBeGreaterThan(0);
 
     // Values are the $M engine figures, not prototype placeholders.
     expect(screen.getByText('$34.00M')).toBeInTheDocument(); // purchase price
@@ -742,7 +742,7 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(screen.getAllByText('$3,640,000')).toHaveLength(1);
     // The KPI tile shares the label, so pick the section row by its reasoned dash.
     const rows = screen
-      .getAllByText('Stabilized NOI')
+      .getAllByText('Stabilized NOI (after FF&E reserve)')
       .filter((el) => !el.closest('[role="dialog"]'))
       .map((el) => el.parentElement!.parentElement!);
     const stabRow = rows.find((r) => r.querySelector('[data-refused]'));
@@ -1371,7 +1371,8 @@ describe('OverviewTab — R-049 one Target LIRR control', () => {
 
 // ── R-050 — Target Stabilized Yield on Cost ──────────────────────────────
 describe('OverviewTab — R-050 Target Stabilized Yield on Cost', () => {
-  /** OUTPUTS plus a published stabilization block: stabilized NOI $4.3M over
+  /** OUTPUTS plus a published stabilization block: stabilized Cash NOI $4.3M (after
+   *  the FF&E reserve; $4.8M before it — FON-82 reads the after-reserve figure) over
    *  the fixture's $43.0M total capital → a 10.00% stabilized yield on cost. */
   const withStab = (): EngineOutputsResponse => {
     const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
@@ -1383,7 +1384,7 @@ describe('OverviewTab — R-050 Target Stabilized Yield on Cost', () => {
           ...base.engines.expense,
           outputs: {
             ...base.engines.expense.outputs,
-            stabilization: { stabilized_year_index: 0, stabilized_year: 1, stabilized_noi_before_reserve: 4_300_000 },
+            stabilization: { stabilized_year_index: 0, stabilized_year: 1, stabilized_noi_before_reserve: 4_800_000, stabilized_cash_noi: 4_300_000 },
           },
         },
       },
@@ -1588,7 +1589,7 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)
         ...base.engines,
         expense: {
           ...base.engines.expense,
-          outputs: { ...base.engines.expense.outputs, stabilization: { stabilized_noi_before_reserve: 4_300_000, ...block } },
+          outputs: { ...base.engines.expense.outputs, stabilization: { stabilized_noi_before_reserve: 4_800_000, stabilized_cash_noi: 4_300_000, ...block } },
         },
       },
     } as unknown as EngineOutputsResponse;

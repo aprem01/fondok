@@ -184,6 +184,50 @@ async def test_the_block_reads_every_figure_off_the_same_year_index() -> None:
 
 
 @pytest.mark.asyncio
+async def test_headline_stabilized_noi_and_yield_on_cost_are_after_the_ffe_reserve() -> None:
+    """FON-82 (Sam, 2026-11-11): "Stabilized NOI: switch to AFTER FF&E
+    reserve, to match the ticket, the exit NOI and how lenders read it. Same
+    for yield on cost." The block's headline margin and the export's yields
+    on cost all ride on the stabilized year's Cash NOI (``years[i].noi``),
+    not ``noi_institutional``; the before-reserve figures stay published."""
+    from app.export.live_payload import _build_investment, _build_stabilization
+
+    results = await _run()
+    expense = results["expense"]["outputs"]
+    capital = results["capital"]["outputs"]
+    stab = expense["stabilization"]
+    i = stab["stabilized_year_index"]
+    cash_noi = expense["years"][i]["noi"]
+    before = expense["years"][i]["noi_institutional"]
+    assert cash_noi < before, "the reserve must separate the two bases"
+
+    # The headline figure and its margin — after the reserve, same index.
+    assert stab["stabilized_cash_noi"] == pytest.approx(cash_noi)
+    assert stab["stabilized_cash_noi_margin"] == pytest.approx(
+        cash_noi / stab["stabilized_revenue"]
+    )
+    # The before-reserve pair is still there, unchanged in meaning.
+    assert stab["stabilized_noi_before_reserve"] == pytest.approx(before)
+    assert stab["stabilized_noi_margin"] == pytest.approx(before / stab["stabilized_revenue"])
+
+    # The export payload: Stabilized NOI = Cash NOI; both yields on cost on
+    # the after-reserve basis; the entry cap keeps the before-reserve basis.
+    block = _build_stabilization(expense)
+    assert block["stabilized_year"] == stab["stabilized_year"]
+    assert block["stabilized_cash_noi_usd"] == pytest.approx(cash_noi)
+    inv = _build_investment(
+        capital, 132, before_y1 := expense["years"][0]["noi_institutional"],
+        cash_noi_y1=expense["years"][0]["noi"],
+        stabilized_cash_noi=block["stabilized_cash_noi_usd"],
+    )
+    total_capital = capital["total_capital"]
+    assert inv["stabilized_yield_on_cost"] == pytest.approx(cash_noi / total_capital)
+    assert inv["year1_yield_on_cost"] == pytest.approx(expense["years"][0]["noi"] / total_capital)
+    purchase = next(u["amount"] for u in capital["uses"] if u["label"] == "Purchase Price")
+    assert inv["entry_cap_rate_year1_uw"] == pytest.approx(before_y1 / purchase)
+
+
+@pytest.mark.asyncio
 async def test_stabilized_noi_is_not_the_exit_reversion() -> None:
     """The old Overview read ``returns.terminal_noi`` — the year hold+1
     reversion — and called it "Stabilized NOI"."""

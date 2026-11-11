@@ -391,14 +391,19 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     ret = model.get("returns_engine", {})
     debt = model.get("debt_engine", {})
     pl_lines = (model.get("p_and_l_engine_proforma") or {}).get("lines", [])
-    # The headline NOI row is the BEFORE-FF&E-reserve basis (FON-59 #1); the
+    # The Year-1 NOI headline is the BEFORE-FF&E-reserve basis (FON-59 #1 /
+    # FON-44: after property tax and insurance, before the reserve); the
     # proforma also carries a "Cash NOI (after FF&E reserve)" row below the
-    # reserve line, which the cover deliberately does NOT use.
+    # reserve line, which this cell deliberately does NOT use.
     noi_row = next((row for row in pl_lines if row.get("label") in NOI_HEADLINE_LABELS), None)
     noi_y1 = _as_float(noi_row.get("y1")) if noi_row else None
-    noi_stab = _as_float(noi_row.get("y5")) if noi_row else None
     noi_y1 = noi_y1 * 1000 if noi_y1 is not None else None
-    noi_stab = noi_stab * 1000 if noi_stab is not None else None
+    # FON-82 — Stabilized NOI is the stabilized year's Cash NOI (AFTER the
+    # FF&E reserve) off the published stabilization block, never "Year 5" of
+    # the proforma. Absent block → a reasoned "not available".
+    stab = model.get("stabilization") or {}
+    noi_stab = _as_float(stab.get("stabilized_cash_noi_usd"))
+    stab_year = stab.get("stabilized_year")
 
     # Title ribbon
     ws.merge_cells("A1:F1")
@@ -439,10 +444,13 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
          "no purchase price on the deal's capital engine output"),
         ("$ / Key", inv.get("price_per_key_usd"), USD_FMT, "price_per_key",
          "no price per key on the deal's capital engine output"),
-        ("Year 1 NOI", noi_y1, USD_FMT, "noi",
+        ("Year 1 NOI (before FF&E reserve)", noi_y1, USD_FMT, "noi",
          "no Year 1 NOI on the deal's proforma"),
-        ("Stabilized NOI", noi_stab, USD_FMT, "noi_stabilized",
-         "no Year 5 NOI on the deal's proforma"),
+        (
+            f"Stabilized NOI (after FF&E reserve{f', Year {stab_year}' if isinstance(stab_year, int) else ''})",
+            noi_stab, USD_FMT, "noi_stabilized",
+            "no stabilized year on the deal's canonical run — run the model again",
+        ),
         ("Levered IRR", ret.get("levered_irr"), PCT_FMT, "levered_irr",
          "no levered IRR on the deal's returns engine output"),
         ("Equity Multiple", ret.get("equity_multiple"), MULT_FMT, "equity_multiple",
@@ -551,7 +559,9 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                     "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "", "entry_cap_rate",
                     NOT_YET_OPEN if inv.get("entry_cap_not_yet_open") else "no entry cap (y1 uw) on the deal's capital engine output",
                 ),
-                item("Year 1 Yield on Cost", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
+                # FON-82 — both yields on cost ride on NOI AFTER the FF&E reserve.
+                item("Year 1 Yield on Cost (on NOI after FF&E reserve)", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
+                item("Stabilized Yield on Cost (on NOI after FF&E reserve)", inv, "stabilized_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
             ],
         ),
         (
@@ -2106,8 +2116,10 @@ def _build_named_scenarios(
     kpis = (
         ("levered_irr", "Levered IRR", PCT_FMT),
         ("equity_multiple", "Equity Multiple", MULT_FMT),
-        ("year1_noi_usd", "Year 1 NOI", USD_FMT),
-        ("stabilized_noi_usd", "Stabilized NOI", USD_FMT),
+        # Both scenario NOI KPIs are Cash NOI (after the FF&E reserve); the
+        # stabilized one is the published stabilized-year block (FON-82).
+        ("year1_noi_usd", "Year 1 Cash NOI (after FF&E reserve)", USD_FMT),
+        ("stabilized_noi_usd", "Stabilized NOI (after FF&E reserve)", USD_FMT),
         ("exit_cap_pct", "Exit Cap Rate", PCT_FMT),
         ("year1_dscr", "Year 1 DSCR", MULT_FMT),
     )

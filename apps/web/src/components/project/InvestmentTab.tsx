@@ -32,6 +32,7 @@ import {
   stabilizedYearBlock,
   stabilizationAnchorCaption,
   stabilizationAnchorFallbackNote,
+  NOI_BEFORE_RESERVE_DEFINITION,
 } from '@/lib/engines/noi';
 import { useDeal } from '@/lib/hooks/useDeal';
 import { useEngineRun } from '@/lib/hooks/useEngineRun';
@@ -854,6 +855,8 @@ export default function InvestmentTab() {
               {
                 id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
                 value: atEntry.closed ? (has(atEntry.t12Cap) ? money(atEntry.t12Noi) : NOT_YET_OPEN) : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
+                // FON-44 — the headline NOI states its basis (full definition in Methodology).
+                note: wEntryNoi.basisConfirmed ? NOI_BEFORE_RESERVE_DEFINITION : undefined,
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',

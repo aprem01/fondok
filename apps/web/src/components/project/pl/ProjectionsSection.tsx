@@ -70,6 +70,7 @@ import { cn } from '@/lib/format';
 import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 import {
   CASH_NOI_LABEL,
+  NOI_BEFORE_RESERVE_DEFINITION,
   noiBeforeReserveLabel,
   stabilizedYearBlock,
   stabilizationBadge,
@@ -2027,6 +2028,8 @@ function ProjectionsTable({
               <SectionBand label="Net Operating Income" span={bandSpan} />
               <FullRow
                 label={noiLabel}
+                // FON-44 — the headline NOI states its basis on hover.
+                labelTitle={NOI_BEFORE_RESERVE_DEFINITION}
                 indexLabel=""
                 unit="$"
                 years={years}
@@ -2603,6 +2606,7 @@ function SimpleRow({
 // Full Amount/%Rev/PAR/POR row — used for revenue + expense lines.
 function FullRow({
   label,
+  labelTitle,
   indexLabel,
   unit,
   years,
@@ -2622,6 +2626,8 @@ function FullRow({
   benchmarkKey,
 }: {
   label: string;
+  /** Hover text on the label cell — a one-line basis definition (FON-44). */
+  labelTitle?: string;
   indexLabel: string;
   unit: string;
   years: ProjYear[];
@@ -2669,6 +2675,7 @@ function FullRow({
           'px-3 py-2 text-[11px] border-r border-border bg-bg/30',
           bold ? 'text-ink-900 font-semibold' : 'text-ink-700 font-medium',
         )}
+        title={labelTitle}
       >
         {label}
         {methodLine && <MethodChip line={methodLine} />}

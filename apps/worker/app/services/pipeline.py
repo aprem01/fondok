@@ -153,8 +153,11 @@ def _row_from_deal(
     if debt_out and isinstance(debt_out.get("schedule"), list) and debt_out["schedule"]:
         dscr_y1 = _coerce_float(debt_out["schedule"][0].get("dscr"))
 
-    # NOI Y1 + stabilized — Y1 is the first projected year; stabilized
-    # is the final hold year (Year N). Both come from the expense engine.
+    # NOI Y1 + stabilized — both from the expense engine. Y1 is the first
+    # projected year's NOI before the FF&E reserve (the entry-cap basis).
+    # Stabilized is the stabilized year's Cash NOI AFTER the reserve off the
+    # published block (FON-41 / FON-59 #3; after-reserve per FON-82) — never
+    # the final hold year, and None (not a borrowed year) without a block.
     noi_y1: float | None = None
     noi_stabilized: float | None = None
     if expense_out and isinstance(expense_out.get("years"), list) and expense_out["years"]:
@@ -162,14 +165,13 @@ def _row_from_deal(
         # Prefer ``noi_institutional`` (cap-rate basis) when present —
         # legacy rows fall back to ``noi``.
         first = years[0]
-        last = years[-1]
         noi_y1 = (
             _coerce_float(first.get("noi_institutional"))
             or _coerce_float(first.get("noi"))
         )
-        noi_stabilized = (
-            _coerce_float(last.get("noi_institutional"))
-            or _coerce_float(last.get("noi"))
+    if expense_out and isinstance(expense_out.get("stabilization"), dict):
+        noi_stabilized = _coerce_float(
+            expense_out["stabilization"].get("stabilized_cash_noi")
         )
 
     # Exit cap rate is an INPUT to the returns engine — surface it from

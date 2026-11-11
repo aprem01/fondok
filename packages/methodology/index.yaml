@@ -126,4 +126,9 @@ atlas:
   # `projection` copy they need; that selection now needs 51,251 characters
   # (+1,000 headroom = 52,251). Raised per the rule above — the projection
   # split (topline vs exit / refi) is still the structural fix.
-  max_chars: 55000
+  # 57000, was 55000 (FON-82 / FON-44): Stabilized NOI and yield on cost move
+  # to the after-FF&E-reserve basis and the NOI line states its definition
+  # (after property tax and insurance, before the reserve); the `projection`
+  # selection now needs 54,296 characters (+1,000 headroom = 55,296). Raised
+  # per the rule above — the projection split is still the structural fix.
+  max_chars: 57000

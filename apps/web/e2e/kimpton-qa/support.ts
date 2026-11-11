@@ -75,7 +75,8 @@ export async function expectExactFigure(scope: Locator, label: string, expectedT
 
 /**
  * `label` renders a figure that PARSES into [min, max] inclusive. Use for
- * tolerance/range pass-criteria (NOI $2.5–4M, Year 1 ADR $275–290).
+ * tolerance/range pass-criteria (Year 1 ADR $275–290; the $2.5–4M NOI band
+ * was retired under FON-44).
  */
 export async function expectFigureInRange(
   scope: Locator,

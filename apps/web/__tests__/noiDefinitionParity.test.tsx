@@ -42,6 +42,10 @@ import {
 const NOI_BEFORE = 2_001_056; // expense.years[0].noi_institutional
 const CASH_NOI = 1_448_443; // expense.years[0].noi
 const FFE_RESERVE = 552_613; // …and the gap between them, to the dollar.
+// The stabilized YEAR's two bases — distinct from every projected year's
+// figures so a borrowed year or basis is detectable (FON-82).
+const STAB_CASH_NOI = 1_650_000; // after the FF&E reserve — the headline
+const STAB_NOI_BEFORE = STAB_CASH_NOI + FFE_RESERVE; // 2,202,613 before it
 
 const TOTAL_REVENUE = 13_600_000;
 const GOP = 5_400_000;
@@ -166,10 +170,11 @@ const OUTPUTS = {
       outputs: {
         years: YEARS.map(expYear),
         noi_cagr: 0.05,
-        // FON-41 / FON-59 #3 — the published stabilized year. Every year in
-        // this fixture carries the same figures, so the stabilized NOI is the
-        // before-reserve $2,001,056 — NOT the after-reserve $1,448,443 the
-        // Scenario Summary used to print under a "stabilized" label.
+        // FON-41 / FON-59 #3 — the published stabilized year. FON-82: the
+        // Stabilized NOI printed is the block's Cash NOI AFTER the FF&E reserve
+        // ($1,650,000) — not its before-reserve $2,202,613, and not the Year-1
+        // Cash NOI $1,448,443 the Scenario Summary used to print under a
+        // "stabilized" label.
         stabilization: {
           stabilized_year_index: 1,
           stabilized_year: 2,
@@ -179,9 +184,10 @@ const OUTPUTS = {
           stabilized_occupancy: 0.76,
           stabilized_adr: 385,
           stabilized_revenue: TOTAL_REVENUE,
-          stabilized_noi_before_reserve: NOI_BEFORE,
-          stabilized_cash_noi: CASH_NOI,
-          stabilized_noi_margin: NOI_BEFORE / TOTAL_REVENUE,
+          stabilized_noi_before_reserve: STAB_NOI_BEFORE,
+          stabilized_cash_noi: STAB_CASH_NOI,
+          stabilized_noi_margin: STAB_NOI_BEFORE / TOTAL_REVENUE,
+          stabilized_cash_noi_margin: STAB_CASH_NOI / TOTAL_REVENUE,
         },
       },
       inputs: {}, error: null, runtime_ms: 1, started_at: null, completed_at: null, run_id: 'r1',
@@ -407,10 +413,11 @@ describe('IC Memo — the stabilized figures name their basis', () => {
     // The Scenario Summary is a CSS grid, not a table — the row is the
     // label's parent.
     const row = label.parentElement!;
-    // The stabilized YEAR's NOI before the reserve — not the last element of
-    // returns.noi_by_year ($1.45M), which is a different year on a different
-    // basis (FON-41 / FON-59 #3).
-    expect(within(row).getByText('$2.00M')).toBeInTheDocument();
+    // The stabilized YEAR's Cash NOI after the FF&E reserve (FON-82) — not
+    // its before-reserve figure ($2.20M), and not the last element of
+    // returns.noi_by_year ($1.45M), a different year (FON-41 / FON-59 #3).
+    expect(within(row).getByText('$1.65M')).toBeInTheDocument();
+    expect(within(row).queryByText('$2.20M')).not.toBeInTheDocument();
     expect(within(row).queryByText('$1.45M')).not.toBeInTheDocument();
     expectNoBareNoiLabel();
   });

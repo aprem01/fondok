@@ -24,9 +24,9 @@ them from the deal — there is no hidden default hurdle anywhere in the pricing
 - **Benchmark only.** Saving a target never re-runs the model. The Overview compares the calculated
   levered IRR against the target: below it is *Below target*, at or up to two points over is *Within
   target*, and more than two points over is *Above target*. Display only.
-- **Target stabilized yield on cost.** Compared against the stabilized year's NOI divided by total
-  capital, both from the model run — Pass at or above the target, Short below it. With no stabilized
-  year or no total capital the actual is a dash, never estimated.
+- **Target stabilized yield on cost.** Compared against the stabilized year's NOI *after the FF&E
+  reserve* divided by total capital, both from the model run — Pass at or above the target, Short
+  below it. With no stabilized year or no total capital the actual is a dash, never estimated.
 
 :::
 
@@ -134,7 +134,8 @@ applied only by an explicit choice; nothing auto-fills a target.
 Levered IRR against the target: below the target is "Below target"; at the target or up to 2.0
 percentage points over is "Within target"; more than 2.0 points over is "Above target". Display
 only — saving a target never re-runs the model. Stabilized yield on cost = the stabilized year's
-NOI ÷ total capital, both from the run; "Pass" at or above the target, "Short" below it; with no
+Cash NOI (after the FF&E reserve, `expense.stabilization.stabilized_cash_noi` — FON-82) ÷
+`capital.total_capital`, both from the run; "Pass" at or above the target, "Short" below it; with no
 stabilized year or no total capital the actual is a dash.
 
 :::
@@ -206,9 +207,9 @@ the pricing path.
   the target is *Below target*, at or above it up to 200bp over is *Within target*, and more than
   200bp over is *Above target*. It is display only and does not drive any engine.
 - **Target Stabilized Yield on Cost.** The Overview's Yield on cost benchmark compares the analyst's
-  target against the stabilized year's yield on cost — stabilized-year NOI ÷ total capital, both from
-  the model run — and reads *Pass* at or above the target, *Short* below it. With no stabilized year
-  or no total capital the actual is “—”, never estimated.
+  target against the stabilized year's yield on cost — stabilized-year NOI *after the FF&E reserve* ÷
+  total capital, both from the model run (FON-82) — and reads *Pass* at or above the target, *Short*
+  below it. With no stabilized year or no total capital the actual is “—”, never estimated.
 
 :::
 

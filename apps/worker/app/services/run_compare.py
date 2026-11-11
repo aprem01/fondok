@@ -153,8 +153,10 @@ _STABILIZATION_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("stabilized_adr", "Stabilized ADR", "usd"),
     ("stabilized_revenue", "Stabilized revenue", "usd"),
     ("stabilized_noi_before_reserve", "Stabilized NOI (before FF&E reserve)", "usd"),
-    ("stabilized_cash_noi", "Stabilized Cash NOI (after FF&E reserve)", "usd"),
-    ("stabilized_noi_margin", "Stabilized NOI margin", "pct"),
+    # FON-82 — the headline Stabilized NOI / yield-on-cost basis.
+    ("stabilized_cash_noi", "Stabilized NOI (after FF&E reserve)", "usd"),
+    ("stabilized_noi_margin", "Stabilized NOI margin (before FF&E reserve)", "pct"),
+    ("stabilized_cash_noi_margin", "Stabilized NOI margin (after FF&E reserve)", "pct"),
 )
 
 # (engine, path, provenance key or None, label, unit, group)

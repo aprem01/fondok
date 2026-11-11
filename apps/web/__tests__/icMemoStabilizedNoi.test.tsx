@@ -20,8 +20,10 @@ import React from 'react';
 import type { ScenarioRecord } from '@/lib/api';
 import { STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 
-// The stabilized YEAR's NOI before the FF&E reserve — what both panels print.
+// The stabilized YEAR's NOI before the FF&E reserve — published, not printed (FON-82).
 const STABILIZED_NOI = 2_460_000;
+// The stabilized YEAR's Cash NOI after the FF&E reserve — what both panels print.
+const STABILIZED_CASH_NOI = 1_900_000;
 // The last hold year's Cash NOI — what Scenario Analysis used to show.
 const TERMINAL_CASH_NOI = 2_604_118;
 // Year-1 Cash NOI — what IC Memo used to show under the same label.
@@ -44,7 +46,7 @@ const BASE_ENGINES = {
     outputs: {
       years: [
         { year: 1, noi: YEAR_ONE_CASH_NOI, noi_institutional: 2_001_056, ffe_reserve: 552_613 },
-        { year: 2, noi: 1_900_000, noi_institutional: STABILIZED_NOI, ffe_reserve: 560_000 },
+        { year: 2, noi: STABILIZED_CASH_NOI, noi_institutional: STABILIZED_NOI, ffe_reserve: 560_000 },
       ],
       // The worker's published block — projection Year 2 is the stabilized one.
       stabilization: {
@@ -57,8 +59,9 @@ const BASE_ENGINES = {
         stabilized_adr: 401.0,
         stabilized_revenue: 12_300_000,
         stabilized_noi_before_reserve: STABILIZED_NOI,
-        stabilized_cash_noi: 1_900_000,
+        stabilized_cash_noi: STABILIZED_CASH_NOI,
         stabilized_noi_margin: STABILIZED_NOI / 12_300_000,
+        stabilized_cash_noi_margin: STABILIZED_CASH_NOI / 12_300_000,
       },
     },
   },
@@ -159,8 +162,9 @@ describe('FON-54 #1 — one stabilized-NOI definition across IC Memo and Scenari
     const { unmount } = render(<ICMemoTab project={PROJECT} />);
     const memoLabel = await screen.findByText(STABILIZED_NOI_LABEL);
     const memoValue = baseCellText(memoLabel);
-    // $2.46M — the STABILIZED year (2), before the FF&E reserve.
-    expect(memoValue).toContain('$2.46M');
+    // $1.90M — the STABILIZED year (2), after the FF&E reserve (FON-82).
+    expect(memoValue).toContain('$1.90M');
+    expect(memoValue).not.toContain('$2.46M'); // the before-reserve figure
     expect(memoValue).not.toContain('$1.45M'); // year one
     expect(memoValue).not.toContain('$2.60M'); // last hold year
     unmount();
@@ -170,15 +174,18 @@ describe('FON-54 #1 — one stabilized-NOI definition across IC Memo and Scenari
     const panelLabel = await screen.findByText(STABILIZED_NOI_LABEL);
     const panelValue = baseCellText(panelLabel);
 
-    expect(panelValue).toContain('$2.46M');
+    expect(panelValue).toContain('$1.90M');
     // The whole point: identical, off one payload.
     expect(memoValue).toBe(panelValue);
   });
 
   it('the shared selector reads the published block, not a year picked by position', async () => {
-    const { stabilizedNoiBeforeReserve, stabilizedYearFromEngines } =
+    const { stabilizedNoiBeforeReserve, stabilizedNoiAfterReserve, stabilizedYearFromEngines } =
       await import('@/lib/engines/noi');
 
+    // FON-82 — the headline selector is the after-reserve one.
+    expect(stabilizedNoiAfterReserve(BASE_ENGINES)).toBe(STABILIZED_CASH_NOI);
+    expect(stabilizedNoiAfterReserve({ returns: BASE_ENGINES.returns })).toBeNull();
     expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).toBe(STABILIZED_NOI);
     expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).not.toBe(YEAR_ONE_CASH_NOI);
     expect(stabilizedNoiBeforeReserve(BASE_ENGINES)).not.toBe(TERMINAL_CASH_NOI);

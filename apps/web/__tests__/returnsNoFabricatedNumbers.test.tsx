@@ -82,7 +82,7 @@ function fullRun(): EngineOutputsResponse {
       }, { assumptions: { ...FULL_ASSUMPTIONS } }),
       capital: row('capital', { total_capital: 44_000_000 }),
       // THE stabilized year (expense.stabilization) — the Yield on Cost tile
-      // reads this block's before-reserve NOI, the same figure the Overview's
+      // reads this block's Cash NOI after the FF&E reserve (FON-82), the same figure the Overview's
       // Stabilized NOI row prints; never `returns.noi_by_year[-1]`.
       expense: row('expense', {
         stabilization: {
@@ -212,7 +212,7 @@ describe('Returns Summary — a complete run shows only engine figures', () => {
     expect(screen.getAllByText('23.01%').length).toBeGreaterThanOrEqual(1);   // returns.levered_irr
     expect(screen.getAllByText('2.37x').length).toBeGreaterThanOrEqual(1);    // returns.equity_multiple
     expect(screen.getByText('8.12%')).toBeInTheDocument();    // returns.avg_coc
-    expect(screen.getByText('7.73%')).toBeInTheDocument();    // YoC = 3.4M ÷ 44M
+    expect(screen.getByText('7.27%')).toBeInTheDocument();    // YoC = 3.2M (Cash NOI, after FF&E reserve) ÷ 44M
     expect(screen.getAllByText('$52.00M').length).toBeGreaterThanOrEqual(1);  // returns.gross_sale_price
     expect(screen.getByText('$19.00M')).toBeInTheDocument();  // initial equity = −cash_flows[0]
     expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
@@ -246,9 +246,9 @@ describe('Returns Summary — a run missing a headline field names it instead of
     delete run.engines.expense;
     outputsRef.value = run;
     render(<ReturnsTab />);
-    expect(screen.queryByText('7.73%')).not.toBeInTheDocument();
+    expect(screen.queryByText('7.27%')).not.toBeInTheDocument();
     expect(
-      screen.getByText('Awaiting model run — expense.stabilization.stabilized_noi_before_reserve is not on this run'),
+      screen.getByText('Awaiting model run — expense.stabilization.stabilized_cash_noi is not on this run'),
     ).toBeInTheDocument();
   });
 
@@ -257,13 +257,13 @@ describe('Returns Summary — a run missing a headline field names it instead of
     // 3.0M ÷ 44M = 6.82%, and the caption names the year and basis.
     const run = fullRun() as unknown as { engines: Record<string, EngineRow> };
     run.engines.expense.outputs = {
-      stabilization: { ...(run.engines.expense.outputs.stabilization as Record<string, unknown>), stabilized_noi_before_reserve: 3_000_000 },
+      stabilization: { ...(run.engines.expense.outputs.stabilization as Record<string, unknown>), stabilized_cash_noi: 3_000_000 },
     };
     outputsRef.value = run;
     render(<ReturnsTab />);
     expect(screen.getByText('6.82%')).toBeInTheDocument();
-    expect(screen.queryByText('7.73%')).not.toBeInTheDocument();
-    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.queryByText('7.27%')).not.toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 3, after FF&E reserve) ÷ total capital')).toBeInTheDocument();
   });
 
   it('cash_flows absent → Equity Profit and Initial Equity are "—" and name returns.cash_flows', () => {
@@ -501,10 +501,10 @@ describe('Returns — stabilized NOI and exit NOI stay separate figures with sep
       exit_noi_period_label: 'Forward 12-month NOI (Year 6)',
     });
     render(<ReturnsTab />);
-    // 3.4M ÷ 44M = 7.73% — the stabilized figure, not 3.64M ÷ 44M = 8.27%.
-    expect(screen.getByText('7.73%')).toBeInTheDocument();
+    // 3.2M ÷ 44M = 7.27% — the stabilized Cash NOI (after FF&E reserve), not 3.64M ÷ 44M = 8.27%.
+    expect(screen.getByText('7.27%')).toBeInTheDocument();
     expect(screen.queryByText('8.27%')).not.toBeInTheDocument();
-    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 3, after FF&E reserve) ÷ total capital')).toBeInTheDocument();
     expect(screen.getByText('7.00% exit cap · Exit NOI (Forward 12-month NOI (Year 6))')).toBeInTheDocument();
     // Neither caption borrows the other's name.
     expect(screen.queryByText(/Stabilized NOI.*exit cap/)).not.toBeInTheDocument();
@@ -551,7 +551,7 @@ describe('Returns — Yield on Cost carries the stabilization anchor caption', (
   it('close anchor → "Year 3 after close (default)", no exception note', () => {
     withStabilization({ default_year: 3, clamped: false, reopening_date: null, anchor_fallback_reason: null });
     render(<ReturnsTab />);
-    expect(screen.getByText('Stabilized NOI (Year 3, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 3, after FF&E reserve) ÷ total capital')).toBeInTheDocument();
     expect(screen.getByTestId('yoc-anchor')).toHaveTextContent('Stabilized year: Year 3 after close (default)');
     expect(screen.queryByTestId('yoc-anchor-note')).toBeNull();
   });
@@ -562,7 +562,7 @@ describe('Returns — Yield on Cost carries the stabilization anchor caption', (
       anchor: 'reopening', default_year: 3, reopening_date: '2027-03-15', anchor_fallback_reason: null,
     });
     render(<ReturnsTab />);
-    expect(screen.getByText('Stabilized NOI (Year 6, before FF&E reserve) ÷ total capital')).toBeInTheDocument();
+    expect(screen.getByText('Stabilized NOI (Year 6, after FF&E reserve) ÷ total capital')).toBeInTheDocument();
     expect(screen.getByTestId('yoc-anchor')).toHaveTextContent(
       'Stabilized year: Year 6 — Year 3 after reopening (Mar 2027) (default)',
     );
