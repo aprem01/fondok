@@ -164,6 +164,7 @@ export const METHODOLOGY_SECTIONS: readonly MethodologySection[] = [
       "market-submarket-methodology",
       "market-data-policy-methodology",
       "market-tab-methodology",
+      "methodology-index-reference-differences",
       "property-type-methodology"
     ],
     "keywords": [

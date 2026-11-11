@@ -8,6 +8,7 @@ anchors:
   - market-submarket-methodology
   - market-data-policy-methodology
   - market-tab-methodology
+  - methodology-index-reference-differences
   - property-type-methodology
 ---
 <!-- section 3: Where market assumptions come from — from page.tsx lines 418-725 -->
@@ -253,6 +254,33 @@ then the deal record, then the OM's asking price; a price is never inferred from
 :::
 
 :::
+
+:::
+
+<!-- FON-61 — the intentional differences between Index Analysis and the reference Index Analysis tab.
+     Sources: apps/worker/tests/test_topline_kimpton_reference.py (occupancy flat after stabilization, decision 1b;
+     comp-set level keyed rounded in the reference), commits 86581268 / 005e3eb0 §3 / f28470d8 / 12811287,
+     apps/web/src/components/project/pl/indexAnalysisModel.ts (blank-not-zero, boundary N/A, closed keys),
+     evals/golden-set/kimpton-angler/expected/index_analysis_reference.json (fixed 2019–2032 columns, zero cells). -->
+::: card {testid=methodology-index-reference-differences}
+#### Where this differs from the reference model
+
+Index Analysis reproduces the reference spreadsheet's arithmetic; it departs from it only where a
+product decision says so.
+
+- **Occupancy is flat after stabilization.** The reference keeps growing occupancy past the
+  stabilized year; Fondok holds it there.
+- **The comp-set level is read, not keyed.** It is the STR subject figures divided by the published
+  indices, at full precision, never a rounded figure typed in.
+- **The columns are the model's.** Forecast columns are the hold on the acquisition close calendar,
+  not a fixed calendar window, and nothing is carried past the horizon.
+- **The first forecast year shows no growth rate** when the last historical column is a
+  calendar-year or fiscal-year actual: the Base Year is a trailing-twelve-month window, a different
+  basis.
+- **Every forecast band says whose it is**: the subject is the underwriting projection, the comp set
+  the benchmark the model runs on, the market the uploaded forecast on its own calendar.
+- **A comp-set hotel marked closed is listed and excluded** from the key count.
+- **A cell with no reported input is blank, never zero.**
 
 :::
 
