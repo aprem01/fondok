@@ -519,7 +519,19 @@ export interface CompSeriesResult {
   /** True when at least one forecast column carries the comp set grown at the
    *  market growth assumption. */
   forecastFilled: boolean;
+  /** FON-60 (Sam, 2026-11-11) — what the filled forecast columns are grown
+   *  at, read from their per-year basis chips: ``forecast`` when every grown
+   *  year is a market forecast (CoStar / CBRE), ``mixed`` when the market
+   *  forecast covers the first years and an assumption carries the rest,
+   *  ``assumption`` when no year is a market forecast. Null when no forecast
+   *  column is filled. */
+  forecastBasisMix: CompForecastBasisMix | null;
+  /** The forecast band title for that mix (``COMP_FORECAST_*_LABEL``), or
+   *  null when no forecast column is filled. */
+  forecastBand: string | null;
 }
+
+export type CompForecastBasisMix = 'forecast' | 'mixed' | 'assumption';
 
 /** Why the comp-set forecast columns are blank — not a number re-scaled off
  *  the subject's growth (FON-95). */
@@ -527,9 +539,50 @@ export const COMP_FORECAST_NONE_REASON =
   'No comp-set forecast source: STR publishes the comp set for the trailing twelve months only, and CBRE Horizons forecasts the market, not this comp set. The comp set is not carried forward at the subject’s growth.';
 
 /** The comp-set forecast band when it is filled (Sam #3): the STR TTM level
- *  grown at the market occupancy / ADR growth assumption — an ASSUMPTION, the
- *  same series the ``str_comp_set`` index method runs on. */
+ *  grown at the market occupancy / ADR growth — by year, the same series the
+ *  topline runs on. FON-60 (Sam, 2026-11-11): the band must say what the
+ *  columns actually are. When every grown year is a market forecast (CoStar /
+ *  CBRE) it is a forecast; when the forecast covers the first years and an
+ *  assumption carries the rest, it says so; only with no forecast year at all
+ *  is the whole band an assumption. Derived from the per-year basis chips
+ *  (``compForecastBasisMix``), never hard-coded. */
 export const COMP_FORECAST_GROWN_LABEL = 'comp set grown at market growth (assumption)';
+export const COMP_FORECAST_MARKET_LABEL = 'comp set grown at market forecast';
+export const COMP_FORECAST_MIXED_LABEL = 'comp set grown at market forecast, then assumption';
+
+export const COMP_FORECAST_BAND_LABEL: Record<CompForecastBasisMix, string> = {
+  forecast: COMP_FORECAST_MARKET_LABEL,
+  mixed: COMP_FORECAST_MIXED_LABEL,
+  assumption: COMP_FORECAST_GROWN_LABEL,
+};
+
+/**
+ * FON-60 — the basis mix of the filled comp-set forecast columns. Year 1 is
+ * the STR TTM level itself (basis ``actual``) and says nothing about how the
+ * later years were grown, so only ``forecast`` / ``assumption`` chips count:
+ * all forecast → ``forecast``; forecast and assumption → ``mixed``; no
+ * forecast chip (assumption only, or an older worker that sends no basis) →
+ * ``assumption``. Null when no forecast column is filled.
+ */
+export function compForecastBasisMix(
+  cols: IaColumns,
+  sources: readonly (CellSource | null)[],
+): CompForecastBasisMix | null {
+  let filled = 0;
+  let forecast = 0;
+  let assumption = 0;
+  cols.columns.forEach((col, i) => {
+    if (col.kind !== 'forecast') return;
+    const s = sources[i];
+    if (!s) return;
+    filled++;
+    if (s.basis === 'forecast') forecast++;
+    else if (s.basis === 'assumption') assumption++;
+  });
+  if (filled === 0) return null;
+  if (forecast > 0) return assumption > 0 ? 'mixed' : 'forecast';
+  return 'assumption';
+}
 
 const figureDocs = (f: IndexFigure | null | undefined): string => {
   const docs: string[] = [];
@@ -630,7 +683,16 @@ export function buildCompSeries(
       : filled < forecastCount
         ? firstBlankReason
         : null;
-  return { series, sources, anchorIndex, forecastReason, forecastFilled: filled > 0 };
+  const forecastBasisMix = compForecastBasisMix(cols, sources);
+  return {
+    series,
+    sources,
+    anchorIndex,
+    forecastReason,
+    forecastFilled: filled > 0,
+    forecastBasisMix,
+    forecastBand: forecastBasisMix ? COMP_FORECAST_BAND_LABEL[forecastBasisMix] : null,
+  };
 }
 
 export function strPeriodLabel(str: StrTrendAPI | null | undefined): string | null {
