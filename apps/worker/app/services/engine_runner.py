@@ -68,6 +68,7 @@ from .financial_source_rank import (
     FULL_YEAR_PERIOD_TYPES as _SHARED_FULL_YEAR_PERIOD_TYPES,
     date_sortkey,
     financial_source_sort_key,
+    is_trailing_twelve,
     period_recency,
     period_tier,
     year_sortkey,
@@ -5957,14 +5958,21 @@ def _period_choices(
     for fields, doc_type, shim in ranked:
         is_full, (_tier, recency) = _pnl_period_identity(fields, doc_type, shim)
         identities.append((is_full, recency))
-        if is_full:
+        # FON-22 (b67bfdee, 2026-11-11): only ANNUAL statements speak to the
+        # deal's year-end. A trailing twelve months ends whenever its last
+        # month does — the March 2025 T-12 (period_ending 2025-03-31) vetoed
+        # the Dec-31 inference, so the FY2024 Detailed P&L (dated only by its
+        # year) keyed ``("fiscal_year", 2024)`` while the FY2024 Summary CSV
+        # (stated end 2024-12-31) keyed ``("full", 20241231)``: two periods,
+        # two columns, no supplemental.
+        if is_full and not is_trailing_twelve(_extract_period_type(fields), doc_type):
             stated = date_sortkey(_extract_period_ending(fields)) or date_sortkey(
                 shim.get("report_as_of")
             )
             if stated:
                 stated_full_ends.append(stated)
     # The deal's year-end is known to be Dec 31 when every dated annual
-    # statement on it ends Dec 31.
+    # statement on it ends Dec 31 (a trailing-twelve's end is not a year-end).
     december = bool(stated_full_ends) and all(e % 10_000 == 1231 for e in stated_full_ends)
 
     statements: list[_Statement] = []

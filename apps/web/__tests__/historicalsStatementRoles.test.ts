@@ -103,6 +103,73 @@ describe('buildHistoricalYears — the worker statement choice (FON-22)', () => 
     expect(y24.filled ?? {}).toEqual({});
   });
 
+  it('b67bfdee 2026-11-11: the whole deal — one FY2024 column beside the T12 Mar 2025 column', () => {
+    // The worker payload after the year-end fix (read-only probe through
+    // ``statement_roles_from_shims`` on the production rows): the March 2025
+    // T-12 is the Year-1 basis, FY2024 is ONE period whose chosen statement
+    // is the Detailed P&L and whose Summary CSV is supplemental, and the
+    // 2023 / 2019 P&Ls are each their own period.
+    const T12 = 'Copy of The Angler_s - March 2025 Financials.xlsx';
+    const t12Fields = [
+      f('p_and_l_usali.period_type', 'trailing_twelve'),
+      f('p_and_l_usali.period_ending', '2025-03-31'),
+      f('ttm_performance.subject.occupancy_pct', 0.832109),
+      f('ttm_performance.subject.adr_usd', 232.773),
+      f('ttm_performance.subject.revpar_usd', 193.692),
+      f('p_and_l_usali.operating_revenue.rooms_revenue', 9_332_099.92),
+      f('p_and_l_usali.operating_revenue.food_beverage_revenue', 3_171_000),
+      f('p_and_l_usali.operating_revenue.total_revenue', 13_815_324),
+    ];
+    const fy = (year: number, rooms: number) => [
+      f('p_and_l_usali.period_ending', `${year}-12-31`),
+      f('ttm_performance.subject.occupancy_pct', 0.7),
+      f('ttm_performance.subject.adr_usd', 200),
+      f('p_and_l_usali.operating_revenue.rooms_revenue', rooms),
+      f('p_and_l_usali.operating_revenue.food_beverage_revenue', rooms / 4),
+      f('p_and_l_usali.operating_revenue.total_revenue', rooms * 1.4),
+    ];
+    const t12 = doc('t12', {
+      filename: T12, doc_type: 'T12', extracted_period_year: 2025, uploaded_at: '2026-10-19T18:46:53Z',
+      ...role('year_one_primary', 0, 't12', 'full:20250331', 'the year ending 2025-03-31'),
+    });
+    const detailed = doc('det', {
+      filename: DETAILED, extracted_period_year: 2024, uploaded_at: '2026-10-19T18:46:52Z',
+      ...role('period_primary', 0, 'det'),
+    });
+    const csv = doc('csv', {
+      filename: CSV, extracted_period_year: 2024, uploaded_at: '2026-10-20T17:52:18Z',
+      ...role('supplemental', 1, 'det'),
+    });
+    const fy23 = doc('fy23', {
+      filename: 'Copy of Angler_s 2023 P&L.xlsx', extracted_period_year: 2023, uploaded_at: '2026-10-19T18:46:51Z',
+      ...role('period_primary', 0, 'fy23', 'full:20231231', 'FY2023'),
+    });
+    const fy19 = doc('fy19', {
+      filename: 'Copy of Angler_s 2019 P&L.xlsx', extracted_period_year: 2019, uploaded_at: '2026-10-19T18:46:50Z',
+      ...role('period_primary', 0, 'fy19', 'full:20191231', 'FY2019'),
+    });
+    const years = buildHistoricalYears(
+      [csv, t12, detailed, fy23, fy19],
+      {
+        t12: ex('t12', t12Fields), det: ex('det', detailedFields), csv: ex('csv', csvFields),
+        fy23: ex('fy23', fy(2023, 9_807_990)), fy19: ex('fy19', fy(2019, 5_600_000)),
+      },
+      KEYS,
+    ).filter(histHasData);
+    expect(years.map((y) => y.year)).toEqual(['2019', '2023', '2024', 'T-12']);
+    const y24 = years.find((y) => y.year === '2024')!;
+    expect(y24.docId).toBe('det');
+    expect(y24.periodLabel).toBe('FY2024');
+    expect(y24.occupancyPct).toBeCloseTo(0.832567, 6);
+    expect(y24.adr).toBeCloseTo(236.094, 3);
+    expect(y24.supplementalDocs).toEqual([{ docId: 'csv', filename: CSV, fields: csvFields.length }]);
+    const t12Col = years.find((y) => y.year === 'T-12')!;
+    expect(t12Col.docId).toBe('t12');
+    expect(t12Col.periodBasis).toBe('T12');
+    expect(t12Col.periodLabel).toBe('T12 Mar 2025');
+    expect(t12Col.supplementalDocs ?? []).toEqual([]);
+  });
+
   it('the period rank decides, never the field count or upload order', () => {
     // The worker chose the SMALLER, OLDER statement (e.g. the footing switch).
     const small = doc('small', { fiscal_year: 2024, uploaded_at: '2026-01-01T00:00:00Z', ...role('year_one_primary', 0, 'small') });

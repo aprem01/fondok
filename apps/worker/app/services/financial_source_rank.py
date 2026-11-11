@@ -65,10 +65,12 @@ __all__ = [
     "CURRENT_PERIOD_SORTKEY",
     "FULL_YEAR_DOC_TYPES",
     "FULL_YEAR_PERIOD_TYPES",
+    "TRAILING_TWELVE_PERIOD_TYPES",
     "UNKNOWN_PERIOD_RANK",
     "date_sortkey",
     "doc_type_preference",
     "financial_source_sort_key",
+    "is_trailing_twelve",
     "period_recency",
     "period_tier",
     "year_sortkey",
@@ -87,6 +89,14 @@ FULL_YEAR_PERIOD_TYPES: frozenset[str] = frozenset(
         "t12",
         "rolling_twelve",
     }
+)
+
+#: The full-year labels that name a TRAILING twelve months rather than a
+#: fiscal year. A trailing-twelve is a complete operating year (it ranks in
+#: the full-year tier), but its period end is NOT a year-end: a T-12 ending
+#: March 31 says nothing about when the deal's fiscal year closes.
+TRAILING_TWELVE_PERIOD_TYPES: frozenset[str] = frozenset(
+    {"trailing_twelve", "ttm", "t12", "rolling_twelve"}
 )
 
 #: doc_types that are full-year statements by definition (used when the
@@ -141,6 +151,31 @@ def period_tier(period_type: Any, doc_type: Any) -> int:
     if partial is not None:
         return PERIOD_TYPE_RANK.get(partial, UNKNOWN_PERIOD_RANK)
     return UNKNOWN_PERIOD_RANK
+
+
+def is_trailing_twelve(period_type: Any, doc_type: Any) -> bool:
+    """The statement is a trailing twelve months, not a fiscal-year statement.
+
+    A recognised trailing label (``trailing_twelve`` / ``ttm`` / ``t12`` /
+    ``rolling_twelve``) says so whatever the document is typed; with no
+    recognised label a ``T12``-typed document is trailing by definition
+    (the same reading :func:`period_tier` makes). An ``annual`` label on a
+    ``T12``-typed document is an annual statement.
+
+    FON-22 (b67bfdee, 2026-11-11): the loader inferred the deal's year-end
+    from "every dated full-year statement ends Dec 31", and the March 2025
+    T-12 (``period_ending`` 2025-03-31) vetoed it — so the FY2024 Detailed
+    P&L, dated only by its year, could not join the FY2024 Summary CSV's
+    Dec-31 period and the Historical P&L showed two FY2024 columns. A
+    trailing-twelve's end never speaks to the fiscal year-end.
+    """
+    pt = _norm_period_type(period_type)
+    if pt:
+        if pt in TRAILING_TWELVE_PERIOD_TYPES:
+            return True
+        if pt in FULL_YEAR_PERIOD_TYPES or PERIOD_TYPE_RANK.get(pt) is not None:
+            return False
+    return _norm_doc_type(doc_type) == "T12"
 
 
 def date_sortkey(value: Any) -> int:

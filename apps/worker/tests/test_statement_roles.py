@@ -12,6 +12,10 @@ Real deals (read-only probe, 2026-11-03):
   and the FY2024 Summary CSV (17 fields, uploaded a day later). Both score
   ``structural_pnl_score`` 1.0, so the old badge key tied on completeness and
   the newer CSV took the badge, while the model ran on the Detailed P&L.
+  Re-probed 2026-11-11 (Sam's QA: two FY2024 columns): the deal also holds
+  the March 2025 T-12 (the Year-1 basis) and 2023 / 2019 P&Ls —
+  :func:`_insert_b67bfdee` is that whole shape; the pair alone is
+  :func:`_insert_fy2024_pair`.
 * 7a9928e0 — the T-12 ranks first but its revenue lines do not foot; the
   December 2024 Financials of the same year foot and take the whole period.
   The old badge sat on the top-ranked T-12.
@@ -190,7 +194,11 @@ def summary_csv_fields() -> list[dict[str, object]]:
     ]
 
 
-async def _insert_b67bfdee(deal_id: UUID) -> tuple[UUID, UUID]:
+async def _insert_fy2024_pair(deal_id: UUID) -> tuple[UUID, UUID]:
+    """The two FY2024 statements of b67bfdee ALONE — the subset the 11-03
+    probe pinned. With no other statement on the deal the CSV's stated
+    Dec-31 end is the only dated year-end, so the pair shares one period.
+    The whole deal is :func:`_insert_b67bfdee`."""
     base = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
     # The ``documents`` columns as prod holds them: the Detailed P&L dates
     # itself by ``extracted_period_year``; the CSV also by ``report_as_of``.
@@ -204,6 +212,122 @@ async def _insert_b67bfdee(deal_id: UUID) -> tuple[UUID, UUID]:
         fields=summary_csv_fields(), structural_pnl_score=1.0,
     )
     return detailed, summary
+
+
+_MARCH_2025_T12 = "Copy of The Angler_s - March 2025 Financials.xlsx"
+
+
+def march_2025_t12_fields() -> list[dict[str, object]]:
+    """The March 2025 Financials of b67bfdee (doc_type ``T12``, read-only
+    probe 2026-11-11): ``period_type`` trailing_twelve, ``period_ending``
+    2025-03-31, the trailing-twelve KPIs and revenue lines."""
+    return [
+        {"field_name": "p_and_l_usali.period_type", "value": "trailing_twelve"},
+        {"field_name": "property_overview.period_ending", "value": "2025-03-31"},
+        {"field_name": "ttm_performance.period_ending", "value": "2025-03-31"},
+        {"field_name": "ttm_performance.occupancy", "value": 0.832109},
+        {"field_name": "ttm_performance.adr", "value": 232.773},
+        {"field_name": "ttm_performance.revpar", "value": 193.692},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_332_099.92},
+        {"field_name": "p_and_l_usali.operating_revenue.food_beverage_revenue", "value": 3_171_000.0},
+        {"field_name": "p_and_l_usali.operating_revenue.other_revenue", "value": 24_000.0},
+        {"field_name": "p_and_l_usali.operating_revenue.misc_revenue", "value": 1_288_224.08},
+        {"field_name": "p_and_l_usali.operating_revenue.total_revenue", "value": 13_815_324.0},
+        {"field_name": "p_and_l_usali.operational_kpis.occupancy_pct", "value": 0.832109},
+        {"field_name": "p_and_l_usali.operational_kpis.adr_usd", "value": 232.773},
+        {"field_name": "p_and_l_usali.operational_kpis.revpar_usd", "value": 193.692},
+        {"field_name": "p_and_l_usali.fixed_charges.insurance", "value": 1_382_496.0},
+    ]
+
+
+async def _insert_b67bfdee(deal_id: UUID) -> dict[str, UUID]:
+    """Deal b67bfdee as production holds it (read-only probe 2026-11-11, the
+    rows ``_read_pnl_shims`` reads), newest extraction first:
+
+    * ``t12`` — March 2025 Financials, doc_type ``T12``, ``period_type``
+      trailing_twelve, ``period_ending`` 2025-03-31,
+      ``extracted_period_year`` 2025, no ``report_as_of``; two extraction
+      rows (re-extracted 2026-11-03).
+    * ``summary`` — FY2024 Summary CSV: ``period_type`` annual,
+      ``period_ending`` 2024-12-31, ``report_as_of`` 2024-12-31, 17 numeric
+      lines, no occupancy / ADR.
+    * ``detailed`` — FY2024 Detailed P&L: NO ``period_type``, NO
+      ``period_ending``, NO ``report_as_of``; dated only by
+      ``extracted_period_year`` 2024; 1,031 numeric lines.
+    * ``fy23`` / ``fy19`` — 2023 and 2019 P&Ls, each with ``report_as_of``
+      Dec 31 of its year.
+
+    Sam's QA (2026-11-11) saw TWO FY2024 columns on this deal: the T-12's
+    March end vetoed the "every dated annual ends Dec 31" inference, so the
+    Detailed P&L keyed ``fiscal_year:20241231`` and the CSV
+    ``full:20241231`` — two periods. The 11-03 fixture had no T-12.
+    """
+    base = datetime(2026, 10, 19, 18, 46, 51, tzinfo=UTC)
+    fy19 = await _insert_statement(
+        deal_id, doc_type="PNL", filename="Copy of Angler_s 2019 P&L.xlsx", ts=base,
+        extracted_period_year=2019, report_as_of="2019-12-31", structural_pnl_score=1.0,
+        fields=[
+            {"field_name": "property_overview.statement_period", "value": "2019-12-31"},
+            {"field_name": "ttm_performance.subject.occupancy", "value": 0.675882},
+            {"field_name": "ttm_performance.subject.adr", "value": 194.692},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 5_600_000.0},
+            {"field_name": "p_and_l_usali.total_revenue", "value": 8_385_990.0},
+        ],
+    )
+    fy23 = await _insert_statement(
+        deal_id, doc_type="PNL", filename="Copy of Angler_s 2023 P&L.xlsx",
+        ts=base + timedelta(seconds=1), extracted_period_year=2023, report_as_of="2023-12-31",
+        structural_pnl_score=1.0,
+        fields=[
+            {"field_name": "property_overview.statement_period", "value": "2023-12-31"},
+            {"field_name": "ttm_summary_per_om.occupancy_pct", "value": 0.82391},
+            {"field_name": "ttm_summary_per_om.adr_usd", "value": 247.078},
+            {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 9_807_990.0},
+            {"field_name": "p_and_l_usali.total_revenue_usd", "value": 12_940_200.0},
+        ],
+    )
+    detailed = await _insert_statement(
+        deal_id, doc_type="PNL", filename=_DETAILED_PNL, ts=base + timedelta(seconds=2),
+        extracted_period_year=2024, fields=detailed_pnl_fields(), structural_pnl_score=1.0,
+    )
+    t12 = await _insert_statement(
+        deal_id, doc_type="T12", filename=_MARCH_2025_T12, ts=base + timedelta(seconds=3),
+        extracted_period_year=2025, fields=march_2025_t12_fields(), structural_pnl_score=1.0,
+    )
+    summary = await _insert_statement(
+        deal_id, doc_type="PNL", filename=_SUMMARY_CSV, ts=base + timedelta(days=1),
+        extracted_period_year=2024, report_as_of="2024-12-31",
+        fields=summary_csv_fields(), structural_pnl_score=1.0,
+    )
+    # The T-12 was re-extracted on 2026-11-03: a second, newer row for the
+    # same document (``_read_pnl_shims`` returns both).
+    await _insert_extraction_row(
+        deal_id, t12, fields=march_2025_t12_fields(), ts=datetime(2026, 11, 3, 22, 38, tzinfo=UTC)
+    )
+    return {"t12": t12, "detailed": detailed, "summary": summary, "fy23": fy23, "fy19": fy19}
+
+
+async def _insert_extraction_row(
+    deal_id: UUID, doc_id: UUID, *, fields: list[dict[str, object]], ts: datetime
+) -> None:
+    from app.database import get_session_factory
+
+    async with get_session_factory()() as session:
+        await session.execute(
+            text(
+                """
+                INSERT INTO extraction_results (
+                    id, document_id, deal_id, tenant_id, fields,
+                    confidence_report, agent_version, created_at
+                ) VALUES (:id, :doc, :deal, :tenant, :fields, '{}', 'test', :ts)
+                """
+            ),
+            {
+                "id": str(uuid4()), "doc": str(doc_id), "deal": str(deal_id),
+                "tenant": _TENANT, "fields": json.dumps(fields), "ts": ts,
+            },
+        )
+        await session.commit()
 
 
 async def _insert_7a9928e0(deal_id: UUID) -> tuple[UUID, UUID]:
@@ -261,10 +385,10 @@ def _badged(records) -> list[str]:
 
 # (1) ─────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_badge_is_the_detailed_pnl_the_loader_uses_on_b67bfdee() -> None:
+async def test_badge_is_the_detailed_pnl_the_loader_uses_on_the_fy2024_pair() -> None:
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    detailed, summary = await _insert_b67bfdee(deal_id)
+    detailed, summary = await _insert_fy2024_pair(deal_id)
 
     records = await _list(deal_id)
     assert _badged(records) == [str(detailed)]
@@ -274,6 +398,110 @@ async def test_badge_is_the_detailed_pnl_the_loader_uses_on_b67bfdee() -> None:
     assert by_id[str(summary)].statement_role == "supplemental"
     assert by_id[str(summary)].period_primary_document_id == detailed
     assert by_id[str(summary)].statement_period == by_id[str(detailed)].statement_period
+
+
+# (1b) ────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_b67bfdee_has_one_fy2024_period_beside_the_march_2025_t12() -> None:
+    """Sam's QA 2026-11-11: the whole deal. The March 2025 T-12 is the Year-1
+    basis (the badge). FY2024 is ONE period — the Detailed P&L (dated only by
+    its year) and the Summary CSV (stated end Dec 31) share it; the Detailed
+    P&L is its ``period_primary`` and the CSV is ``supplemental``. The T-12's
+    March end never vetoes the deal's Dec-31 year-end."""
+    deal_id = uuid4()
+    await _insert_deal(deal_id)
+    ids = await _insert_b67bfdee(deal_id)
+
+    records = await _list(deal_id)
+    by_id = {str(r.id): r for r in records}
+    assert _badged(records) == [str(ids["t12"])]
+    assert await _loader_primary(deal_id) == str(ids["t12"])
+    assert by_id[str(ids["t12"])].statement_role == "year_one_primary"
+    assert by_id[str(ids["t12"])].statement_period_words == "the year ending 2025-03-31"
+
+    detailed, summary = by_id[str(ids["detailed"])], by_id[str(ids["summary"])]
+    assert detailed.statement_role == "period_primary"
+    assert detailed.statement_period_words == "FY2024"
+    assert detailed.statement_period_rank == 0
+    assert summary.statement_role == "supplemental", (
+        "the Summary CSV must be listed on the FY2024 column, not given its own"
+    )
+    assert summary.statement_period == detailed.statement_period == "full:20241231"
+    assert summary.statement_period_rank == 1
+    assert summary.period_primary_document_id == ids["detailed"]
+
+    assert by_id[str(ids["fy23"])].statement_role == "period_primary"
+    assert by_id[str(ids["fy23"])].statement_period == "full:20231231"
+    assert by_id[str(ids["fy19"])].statement_role == "period_primary"
+    assert by_id[str(ids["fy19"])].statement_period == "full:20191231"
+    # Five statements, four periods: nothing else is FY2024.
+    periods = {r.statement_period for r in records if r.statement_period}
+    assert periods == {"full:20250331", "full:20241231", "full:20231231", "full:20191231"}
+
+
+def test_a_trailing_twelve_end_never_vetoes_the_dec_31_year_end() -> None:
+    """Pure: the b67bfdee shape as ``_read_pnl_shims`` returns it. Before the
+    fix the T-12 (period_ending 2025-03-31) sat among the "dated full-year
+    ends", so the year-only Detailed P&L keyed ``fiscal_year:20241231``
+    against the CSV's ``full:20241231``."""
+    from app.services.engine_runner import statement_roles_from_shims
+
+    shims = [
+        {"document_id": "t12", "doc_type": "T12", "filename": _MARCH_2025_T12,
+         "extracted_period_year": 2025, "fields": march_2025_t12_fields()},
+        {"document_id": "csv", "doc_type": "PNL", "filename": _SUMMARY_CSV,
+         "extracted_period_year": 2024, "report_as_of": "2024-12-31", "fields": summary_csv_fields()},
+        {"document_id": "det", "doc_type": "PNL", "filename": _DETAILED_PNL,
+         "extracted_period_year": 2024, "fields": detailed_pnl_fields()},
+    ]
+    roles = statement_roles_from_shims(shims)
+    assert roles["t12"].role == "year_one_primary"
+    assert roles["det"] == roles["det"]._replace(role="period_primary", period_key="full:20241231",
+                                                 period_words="FY2024", period_rank=0,
+                                                 primary_document_id="det")
+    assert roles["csv"].role == "supplemental"
+    assert roles["csv"].period_key == "full:20241231"
+    assert roles["csv"].primary_document_id == "det"
+
+
+def test_a_non_december_annual_still_keeps_a_year_only_statement_apart() -> None:
+    """The conservative rule stands: when an ANNUAL statement on the deal is
+    stated to end on a date other than Dec 31, a statement dated only by its
+    fiscal year is not assumed to close Dec 31 and does not join the Dec-31
+    statement's period."""
+    from app.services.engine_runner import statement_roles_from_shims
+
+    june = [
+        {"field_name": "p_and_l_usali.period_type", "value": "annual"},
+        {"field_name": "p_and_l_usali.period_ending", "value": "2023-06-30"},
+        {"field_name": "p_and_l_usali.operating_revenue.rooms_revenue", "value": 7_000_000.0},
+    ]
+    shims = [
+        {"document_id": "csv", "doc_type": "PNL", "filename": _SUMMARY_CSV,
+         "extracted_period_year": 2024, "fields": summary_csv_fields()},
+        {"document_id": "det", "doc_type": "PNL", "filename": _DETAILED_PNL,
+         "extracted_period_year": 2024, "fields": detailed_pnl_fields()},
+        {"document_id": "jun", "doc_type": "PNL", "filename": "FY ending June 2023.xlsx", "fields": june},
+    ]
+    roles = statement_roles_from_shims(shims)
+    assert roles["det"].period_key == "fiscal_year:20241231"
+    assert roles["csv"].period_key == "full:20241231"
+    # Two periods, each with its own chosen statement; neither is supplemental.
+    assert roles["det"].role == "year_one_primary"  # it ranks first (completeness)
+    assert roles["csv"].role == "period_primary"
+    assert roles["csv"].primary_document_id == "csv"
+
+
+def test_is_trailing_twelve_reads_the_label_then_the_doc_type() -> None:
+    from app.services.financial_source_rank import is_trailing_twelve
+
+    assert is_trailing_twelve("trailing_twelve", "PNL")
+    assert is_trailing_twelve("TTM", "PNL_MONTHLY")
+    assert is_trailing_twelve("", "T12")
+    assert is_trailing_twelve(None, "t12")
+    assert not is_trailing_twelve("annual", "T12")
+    assert not is_trailing_twelve("", "PNL")
+    assert not is_trailing_twelve("monthly", "T12")
 
 
 # (2) ─────────────────────────────────────────────────────────────────────────
@@ -302,7 +530,7 @@ async def test_ledger_link_fallback_names_the_year_one_primary() -> None:
 
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    detailed, _summary = await _insert_b67bfdee(deal_id)
+    detailed, _summary = await _insert_fy2024_pair(deal_id)
     async with get_session_factory()() as session:
         links = await _load_source_documents(
             session,
@@ -321,7 +549,7 @@ async def test_every_financial_document_carries_its_role_and_period_primary() ->
     with no extraction is not a statement; a non-financial one has no role."""
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    detailed, summary = await _insert_b67bfdee(deal_id)
+    detailed, summary = await _insert_fy2024_pair(deal_id)
     base = datetime(2026, 10, 1, tzinfo=UTC)
     fy23_full = await _insert_statement(
         deal_id, doc_type="PNL", filename="Angler_s 2023 P&L.xlsx", fiscal_year=2023, ts=base,
@@ -364,7 +592,7 @@ _LOAN_FIELDS: list[dict[str, object]] = [
 async def test_a_debt_document_typed_as_a_pnl_is_not_a_statement() -> None:
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    detailed, _summary = await _insert_b67bfdee(deal_id)
+    detailed, _summary = await _insert_fy2024_pair(deal_id)
     loan = await _insert_statement(
         deal_id, doc_type="T12", filename="Loan terms.pdf",
         ts=datetime(2026, 10, 25, tzinfo=UTC),
@@ -387,7 +615,7 @@ async def test_badge_falls_back_to_the_shared_key_when_rows_cannot_be_read(monke
 
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    detailed, summary = await _insert_b67bfdee(deal_id)
+    detailed, summary = await _insert_fy2024_pair(deal_id)
 
     async def _boom(*_a, **_k):
         raise RuntimeError("extraction rows unavailable")
@@ -523,7 +751,7 @@ async def test_list_endpoint_reads_the_statement_rows_once_while_the_deal_is_unc
     monkeypatch.setattr(er, "_read_pnl_shims", _counting)
     deal_id = uuid4()
     await _insert_deal(deal_id)
-    _detailed, summary = await _insert_b67bfdee(deal_id)
+    _detailed, summary = await _insert_fy2024_pair(deal_id)
     await _list(deal_id)
     await _list(deal_id)
     assert calls["n"] == 1

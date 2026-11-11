@@ -575,7 +575,8 @@ end (else its fiscal year; an undated T-12 is the current trailing twelve months
 period identified by a stated end and its period type; a partial statement with no stated end stands
 alone, and no date is ever inferred into a note. A fiscal year known only by its year is the
 calendar year ending Dec 31 only when the deal's dated annual statements all end Dec 31 or its
-monthly block runs January to December. Within a period the chosen statement is: the best-ranked
+monthly block runs January to December; a trailing-twelve statement's end (a T-12 ending
+March 31, say) is not a year-end and never counts against that. Within a period the chosen statement is: the best-ranked
 one whose rooms + F&B + other + miscellaneous + resort-fee revenue foots to its stated total
 revenue (to the half-units the figures were read at, as on the Historical P&L) when the top-ranked
 one fails — no full-year rooms line, or lines that miss the total; a statement with no stated total
@@ -1156,7 +1157,8 @@ analyst uploads a T-12 as the latest statement. Older annual P&Ls never blend in
 neither does a second statement of the same period (two uploads of one T-12, or a summary and a
 detailed P&L of one year): `_choose_period_statements` groups by exact period
 (`_statement_period`: full year by stated end, else fiscal year — calendar only when the deal's
-dated annuals all end Dec 31 or the monthly block is Jan–Dec — else current T-12; partial only by
+dated annuals all end Dec 31 (a trailing-twelve's end is not a year-end; `is_trailing_twelve`) or
+the monthly block is Jan–Dec — else current T-12; partial only by
 stated end + period type) and picks one statement per period — the footing one
 (`_revenue_footing`: `fails` / `foots` / `unverifiable`, `statement_lines.half_unit` tolerance)
 when the top-ranked fails, else the 3+-statement median outlier switch, else the top-ranked.
