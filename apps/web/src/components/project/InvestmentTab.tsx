@@ -740,7 +740,18 @@ export default function InvestmentTab() {
   // the two engine outputs (`selling_costs = gross_sale_price ×
   // selling_costs_pct`, returns.py:484) on a run whose provenance sidecar
   // predates the trace. Never a hard-coded 2%.
+  //
+  // FON-69 (Sam, 2026-11-16) — the analyst's SAVED override is read FIRST,
+  // under the one key the editor writes and the engine consumes
+  // (`selling_costs_pct`). The provenance graph behind `returnsTrace` is
+  // fetched once per deal (ValueTraceProvider), so after a save → re-run the
+  // dollar figure below moved to 2.5% of the exit while this row kept
+  // echoing the previous run's 2.00% and the editor opened at 2.00 — a value
+  // the analyst could neither see nor revert. Same guard `hold_years`
+  // (E-022) and the Y1 displacement inputs already carry on this tab.
   const sellingPct = ((): number | undefined => {
+    const saved = numericOverride(invOverrides, 'selling_costs_pct');
+    if (saved != null) return saved;
     const traced = returnsTrace
       .get('selling_costs')
       ?.inputs?.find((i) => i.assumption_key === 'selling_costs_pct' || i.name === 'selling_costs_pct');

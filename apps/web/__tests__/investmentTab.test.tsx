@@ -478,6 +478,43 @@ describe('InvestmentTab — Disposition Cost % (FON-44 §1)', () => {
     });
   });
 
+  // FON-69 (Sam, 2026-11-16, QA copy d0bfe816) — override 2.00% → 2.5% with a
+  // note; the model re-ran and Disposition Costs moved to 2.5% of the exit,
+  // but the % row kept showing 2.00% and the editor opened at 2.00, so the
+  // override could not be reverted through the UI. The provenance graph is
+  // fetched once per deal, so it still carried the PREVIOUS run's 0.02 while
+  // `field_overrides` and the engine outputs carried 0.025. The saved override
+  // is the analyst's own number, under the key the editor writes: read it
+  // first.
+  it('shows the SAVED override, and opens the editor at it, even while the trace still carries the previous run', () => {
+    mockOverrides = {
+      selling_costs_pct: { value: 0.025, note: 'QA test FON-69 — base input change' },
+    };
+    // The stale once-per-deal provenance sidecar (pre-override run).
+    mockTraces = {
+      returns: {
+        selling_costs: {
+          value: 1_040_000,
+          inputs: [
+            { name: 'gross_sale_price', value: 52_000_000 },
+            { name: 'selling_costs_pct', value: 0.02, assumption_key: 'selling_costs_pct' },
+          ],
+        },
+      },
+    };
+    render(<InvestmentTab />);
+    const cell = rowValueCell('Disposition Cost %');
+    expect(cell.textContent).toContain('2.50%');
+    expect(cell.textContent).not.toContain('2.00%');
+    expect(rowDot('Disposition Cost %').getAttribute('aria-label')).toBe('Assumption');
+
+    // The inline editor's initial value is the override, so a revert to a
+    // different number is a real edit (not a no-op against the stale 2.00).
+    fireEvent.click(screen.getByText('2.50%'));
+    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(input.value).toBe('2.50');
+  });
+
   it('says on the row that this is the EXIT-side cost, not the acquisition one', () => {
     // Sam asked explicitly that the two 2.00%s not read as the same number.
     render(<InvestmentTab />);
