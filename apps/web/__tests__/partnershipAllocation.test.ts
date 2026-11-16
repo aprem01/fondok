@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import {
   allocationPreviewRows,
   pct0,
+  promoteTierHurdleCell,
   promoteTierLabel,
+  promoteTierName,
   type ConfiguredTier,
   type TierAllocationRow,
 } from '@/lib/partnershipAllocation';
@@ -31,6 +33,32 @@ describe('promoteTierLabel mirrors the worker', () => {
     expect(promoteTierLabel(3, 0.20, 0.4, 0.15, true)).toBe('Tier 4 (>15%)');
     // A single-band stack is its own top: no previous hurdle → "to".
     expect(promoteTierLabel(0, 0.10, 0.3, undefined, true)).toBe('Tier 1 (to 10%)');
+  });
+
+  // FON-66 (Sam, 2026-11-16) — the Promote Waterfall row name carries the SAME
+  // number as the worker's label for the band, and the same number as the
+  // hurdle cell beside it for every capped band. A one-tier stack read
+  // "above 12%" next to "Until 12%" before this.
+  it('promoteTierName carries the same hurdle as the worker label and the hurdle cell', () => {
+    const stack = SAM.slice(1) as { hurdle: number; gp: number }[]; // the promote bands: 12 / 15 / 20
+    stack.forEach((t, pos) => {
+      const isTop = pos === stack.length - 1;
+      const prev = pos > 0 ? stack[pos - 1].hurdle : undefined;
+      const worker = promoteTierLabel(pos, t.hurdle, t.gp, prev, isTop && stack.length > 1);
+      const name = promoteTierName(pos, t.hurdle, prev, isTop);
+      const pctOf = (s: string) => /(\d+)%/.exec(s)?.[1];
+      expect(pctOf(name)).toBe(pctOf(worker));
+      if (!(isTop && pos > 0)) {
+        expect(name).toBe(`Promote — to ${pct0(t.hurdle)} LP IRR`);
+        expect(promoteTierHurdleCell(t.hurdle)).toBe(`Until ${pct0(t.hurdle)} LP IRR`);
+      } else {
+        expect(name).toBe(`Promote — above ${pct0(prev as number)} LP IRR`);
+      }
+    });
+    // Sam's one-tier entry (12% hurdle): "to 12%" beside "Until 12%".
+    expect(promoteTierName(0, 0.12, undefined, true)).toBe('Promote — to 12% LP IRR');
+    expect(promoteTierHurdleCell(0.12)).toBe('Until 12% LP IRR');
+    expect(promoteTierLabel(0, 0.12, 0.2, undefined, false)).toBe('Tier 1 (to 12%)');
   });
 
   it('rounds like Python .0% (ties to even)', () => {

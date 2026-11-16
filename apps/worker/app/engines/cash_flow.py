@@ -545,7 +545,18 @@ class CashFlowStatementEngine(
             dist_lines.append(
                 CashFlowStatementLine(
                     label="Total Distributions", values=total, kind="calc",
-                    note="LP + GP distributions per period.",
+                    # FON-66 (Sam, 2026-11-16) — this row is the partners' NET
+                    # cash flow: a negative period is a pro-rata capital call
+                    # (a contribution the waterfall returns first), so the row
+                    # ties to Net Cash Flow to Equity and sits below the
+                    # Partnership tab's gross Total distributions by the calls.
+                    note=(
+                        "LP + GP distributions per period. A negative period is "
+                        "a pro-rata capital call (a contribution, returned first "
+                        "through Return of Capital), so this row ties to Net "
+                        "Cash Flow to Equity; the Partnership tab's Total "
+                        "distributions is gross of those calls."
+                    ),
                 )
             )
 

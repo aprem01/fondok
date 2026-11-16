@@ -76,6 +76,33 @@ export function promoteTierLabel(
   return `Tier ${position + 1} (to ${pct0(hurdle)})`;
 }
 
+/**
+ * FON-66 (Sam, 2026-11-16) — the Promote Waterfall row NAME, on the same
+ * semantics as the worker's tier label (``promoteTierLabel``): a band is paid
+ * only until the cumulative LP IRR reaches its hurdle ("to 12% LP IRR"), and
+ * the top band of a multi-tier stack is open-ended above the PREVIOUS hurdle
+ * ("above 12% LP IRR") — its own entered hurdle is not a cap in the engine.
+ * The hurdle cell beside the name reads ``promoteTierHurdleCell`` ("Until 12%
+ * LP IRR"), so for every capped band the two carry the same number. The old
+ * name said "above <own hurdle>" for the top band, which contradicted the
+ * hurdle cell on a one-tier stack ("above 12%" next to "Until 12%").
+ */
+export function promoteTierName(
+  position: number,
+  hurdle: number,
+  prevHurdle: number | undefined,
+  isTop: boolean,
+): string {
+  if (isTop && position > 0 && prevHurdle != null) return `Promote — above ${pct0(prevHurdle)} LP IRR`;
+  return `Promote — to ${pct0(hurdle)} LP IRR`;
+}
+
+/** The hurdle cell of a promote band — the entered hurdle, as the engine
+ *  applies it: the band's split runs until the LP IRR reaches it. */
+export function promoteTierHurdleCell(hurdle: number): string {
+  return `Until ${pct0(hurdle)} LP IRR`;
+}
+
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /**

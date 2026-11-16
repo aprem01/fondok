@@ -24,7 +24,12 @@ import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { IntroCard } from '@/components/help/IntroCard';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
-import { allocationPreviewRows, type AllocationPreviewRow } from '@/lib/partnershipAllocation';
+import {
+  allocationPreviewRows,
+  promoteTierHurdleCell,
+  promoteTierName,
+  type AllocationPreviewRow,
+} from '@/lib/partnershipAllocation';
 import {
   SectionCard,
   SubTabNav,
@@ -308,6 +313,22 @@ export default function PartnershipTab() {
     },
     [draft, note, onSaveOverride, toast],
   );
+  // FON-66 (Sam, 2026-11-16) — "Clear override": drop the key(s) from
+  // `field_overrides` (a null patch deletes; the API treats a key leaving the
+  // blob as a revert to source, so no justification is asked). Complementary
+  // pairs (GP% + LP%, GP split + LP split) clear together so the engine never
+  // sees half a term. Sam's workaround — clearing the input and saving — only
+  // closes the editor (an empty draft is a no-op), which is why 10% stuck.
+  const onClearOverride = useCallback(
+    (keys: string[]) => {
+      editStartRef.current = null; setEditing(null); setDraft(''); setNote('');
+      const patch: Record<string, null> = {};
+      for (const k of keys) patch[k] = null;
+      void onSaveOverride(patch);
+    },
+    [onSaveOverride],
+  );
+  const hasOverride = useCallback((key: string) => overrides[key] != null, [overrides]);
   const startEdit = useCallback((id: string, currentFraction: number | null) => {
     editStartRef.current = currentFraction;
     setNote('');
@@ -755,6 +776,7 @@ export default function PartnershipTab() {
                     editing={editing === 'gpPct-sum'}
                     draft={draft}
                     onStart={() => startEdit('gpPct-sum', gpPct ?? null)}
+                    onClear={hasOverride('gp_equity_pct') || hasOverride('lp_equity_pct') ? () => onClearOverride(['gp_equity_pct', 'lp_equity_pct']) : undefined}
                     onDraft={setDraft}
                     onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
                     onCancel={cancelEdit}
@@ -797,6 +819,7 @@ export default function PartnershipTab() {
                     editing={editing === 'pref-sum'}
                     draft={draft}
                     onStart={() => startEdit('pref-sum', prefRate ?? null)}
+                    onClear={hasOverride('pref_rate') ? () => onClearOverride(['pref_rate']) : undefined}
                     onDraft={setDraft}
                     onCommit={() => commitPct('pref_rate')}
                     onCancel={cancelEdit}
@@ -881,6 +904,7 @@ export default function PartnershipTab() {
                   startEdit={startEdit}
                   cancelEdit={cancelEdit}
                   commitPct={commitPct}
+                  onClearOverride={onClearOverride}
                   tierCount={tierCount}
                   tierIndices={visibleTierIndices}
                   onAddTier={onAddTier}
@@ -963,6 +987,7 @@ export default function PartnershipTab() {
                     editing={editing === 'gpPct-wf'}
                     draft={draft}
                     onStart={() => startEdit('gpPct-wf', gpPct ?? null)}
+                    onClear={hasOverride('gp_equity_pct') || hasOverride('lp_equity_pct') ? () => onClearOverride(['gp_equity_pct', 'lp_equity_pct']) : undefined}
                     onDraft={setDraft}
                     onCommit={() => commitPct('gp_equity_pct', 'lp_equity_pct')}
                     onCancel={cancelEdit}
@@ -980,6 +1005,7 @@ export default function PartnershipTab() {
                     editing={editing === 'pref-wf'}
                     draft={draft}
                     onStart={() => startEdit('pref-wf', prefRate ?? null)}
+                    onClear={hasOverride('pref_rate') ? () => onClearOverride(['pref_rate']) : undefined}
                     onDraft={setDraft}
                     onCommit={() => commitPct('pref_rate')}
                     onCancel={cancelEdit}
@@ -1009,6 +1035,7 @@ export default function PartnershipTab() {
                   startEdit={startEdit}
                   cancelEdit={cancelEdit}
                   commitPct={commitPct}
+                  onClearOverride={onClearOverride}
                   tierCount={tierCount}
                   tierIndices={visibleTierIndices}
                   onAddTier={onAddTier}
@@ -1170,6 +1197,8 @@ interface KeyRowProps {
   onDraft?: (v: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
+  /** FON-66 (Sam, 2026-11-16) — set only while the row carries an override. */
+  onClear?: () => void;
   /** FON-74 — the analyst justification for this row's override. */
   requireNote?: boolean;
   justification?: string;
@@ -1202,6 +1231,7 @@ function KeyRow(p: KeyRowProps) {
             onDraft={p.onDraft}
             onCommit={p.onCommit}
             onCancel={p.onCancel}
+            onClear={p.onClear}
             requireNote={p.requireNote}
             note={p.justification}
             onNote={p.onJustification}
@@ -1262,13 +1292,18 @@ function CompoundingRow({ value, onChange }: { value: string; onChange: (v: stri
 // FON-66 §1: Esc, Cancel and a click anywhere outside all discard the draft
 // without a network call; Save runs the no-op guard in `commitPct` first.
 function InlineEditor({
-  draft, width, onDraft, onCommit, onCancel, requireNote, note, onNote, noteTestId,
+  draft, width, onDraft, onCommit, onCancel, onClear, requireNote, note, onNote, noteTestId,
 }: {
   draft: string;
   width: number;
   onDraft?: (v: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
+  /** FON-66 (Sam, 2026-11-16) — present only while the field carries an
+   *  analyst override: "Clear override" reverts it to the sourced term.
+   *  Clearing the input and saving is NOT a clear (an empty draft just closes
+   *  the editor), which is what Sam ran into. */
+  onClear?: () => void;
   /** FON-74 — this key routes into engine input, so Save needs a reason. */
   requireNote?: boolean;
   note?: string;
@@ -1297,6 +1332,21 @@ function InlineEditor({
         onNote={requireNote ? onNote : undefined}
         noteTestId={noteTestId}
       />
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Clear override"
+          title="Clear override — revert this term to the value the deal carries (none → awaiting input)"
+          style={{
+            background: 'transparent', border: `1px solid ${palette.border}`, borderRadius: radius.control,
+            padding: '4px 8px', fontSize: 11, fontWeight: 600, color: palette.textMuted,
+            cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+          }}
+        >
+          Clear override
+        </button>
+      )}
     </span>
   );
 }
@@ -1491,7 +1541,7 @@ const TIER_GRID = '38px minmax(180px,1.5fr) minmax(120px,1fr) 90px 90px minmax(1
 
 function PromoteWaterfall({
   prefRate, carriedTierList, hasCatchUp, liveMode: liveModeProp, readOnly = false, overrides, editing, draft, setDraft, note, setNote,
-  startEdit, cancelEdit, commitPct,
+  startEdit, cancelEdit, commitPct, onClearOverride,
   tierCount, tierIndices, onAddTier, onRemoveTier,
 }: {
   /** Undefined → "—" (no override, no engine pref, no term the deal carries). */
@@ -1513,6 +1563,10 @@ function PromoteWaterfall({
   note: string;
   setNote: (v: string) => void;
   commitPct: (primaryKey: string, complementKey?: string) => void;
+  /** FON-66 (Sam, 2026-11-16) — drop the analyst override on these keys so the
+   *  field reverts to the term the deal carries (or to "—" when it carries
+   *  none). Same PATCH as a save: the key leaves `field_overrides`. */
+  onClearOverride: (keys: string[]) => void;
   // FON-66 Part A — variable tier count + add/remove controls. `tierCount` is
   // the index-space bound (the +Add cap); `tierIndices` are the surviving
   // (non-tombstoned) indices actually rendered, in index order.
@@ -1595,11 +1649,22 @@ function PromoteWaterfall({
     // FON-66 follow-up — EVERY promote tier is removable (mid-stack included),
     // as long as one survives.
     const removable = liveMode && visibleCount > 1;
+    // FON-66 (Sam, 2026-11-16) — the name and the hurdle cell say the same
+    // thing, on the engine's semantics: a band's split runs UNTIL the LP IRR
+    // reaches its hurdle, and the top band of a multi-tier stack is open-ended
+    // above the PREVIOUS hurdle (the worker labels it "Tier N (>prev%)"; its
+    // own entered hurdle is not a cap). A one-tier stack reads "to 12%" /
+    // "Until 12%" — it used to read "above 12%" next to "Until 12%".
+    const prevIdx = pos > 0 ? tierIndices[pos - 1] : undefined;
+    const prevHurdleFrac = prevIdx == null
+      ? undefined
+      : readOverrideNum(overrides, `partnership.waterfall.${prevIdx}.hurdle_rate`, carriedTierList[prevIdx]?.hurdle ?? NaN);
+    const openEnded = last && pos > 0 && Number.isFinite(prevHurdleFrac);
     const name = incomplete
       ? `Promote — tier ${pos + 1} · incomplete`
-      : last
-        ? `Promote — above ${fmtPct(hurdleFrac, 0)} LP IRR`
-        : `Promote — to ${fmtPct(hurdleFrac, 0)} LP IRR`;
+      : promoteTierName(pos, hurdleFrac, Number.isFinite(prevHurdleFrac) ? prevHurdleFrac : undefined, last);
+    const hurdleOverridden = overrides[hurdlePath] != null;
+    const splitOverridden = overrides[gpPath] != null || overrides[`partnership.waterfall.${i}.lp_split`] != null;
     const hurdleId = `t${i}-h`;
     const splitId = `t${i}-s`;
     return (
@@ -1627,6 +1692,7 @@ function PromoteWaterfall({
               onDraft={setDraft}
               onCommit={() => commitPct(hurdlePath)}
               onCancel={cancelEdit}
+              onClear={hurdleOverridden ? () => onClearOverride([hurdlePath]) : undefined}
               requireNote={requiresNote(hurdlePath)}
               note={note}
               onNote={setNote}
@@ -1640,7 +1706,7 @@ function PromoteWaterfall({
                 cursor: liveMode ? 'pointer' : 'default', fontVariantNumeric: 'tabular-nums',
               }}
             >
-              {hurdleComplete ? `Until ${fmtPct(hurdleFrac, 0)} LP IRR` : 'Set hurdle'}
+              {hurdleComplete ? promoteTierHurdleCell(hurdleFrac) : 'Set hurdle'}
             </span>
           )}
         </span>
@@ -1652,6 +1718,7 @@ function PromoteWaterfall({
               onDraft={setDraft}
               onCommit={() => commitPct(gpPath, `partnership.waterfall.${i}.lp_split`)}
               onCancel={cancelEdit}
+              onClear={splitOverridden ? () => onClearOverride([gpPath, `partnership.waterfall.${i}.lp_split`]) : undefined}
               requireNote={requiresNote(gpPath)}
               note={note}
               onNote={setNote}
@@ -1676,7 +1743,11 @@ function PromoteWaterfall({
           <span style={{ color: incomplete ? prov.amber : palette.textFaint, lineHeight: 1.4, fontSize: 11, minWidth: 0 }}>
             {incomplete
               ? 'Set the hurdle and GP split to activate this tier'
-              : last ? 'All remaining proceeds above the final hurdle' : 'Residual split until LP IRR reaches the hurdle'}
+              : openEnded
+                ? 'All remaining proceeds above the previous hurdle'
+                : last
+                  ? 'Residual split — a single tier takes all remaining proceeds'
+                  : 'Residual split until LP IRR reaches the hurdle'}
           </span>
           {removable && (
             <button
