@@ -158,17 +158,24 @@ def _envelope_keys(records: list[dict[str, Any]]) -> tuple[int | None, int | Non
 def test_index_analysis_and_market_overview_read_the_same_roster_on_the_live_deal() -> None:
     """Sam 2026-11-16: 344 (Index Analysis) vs 978 (Market Overview). Both
     endpoints now derive from ``derive_comp_set_union`` over the same
-    records, so hotel count and keys agree — here INCLUDING the mis-tagged
-    Business Plan, which is FON-123's problem, not a second roster."""
+    records, so hotel count and keys agree. With FON-123 merged the
+    mis-tagged Business Plan (no STR id on any comp row) is not an STR
+    roster: ``build_str_inputs`` skips it on BOTH surfaces, so the live
+    deal reads 4 hotels · 344 keys everywhere and the Overview names the
+    skipped document instead of unioning its 5 hotels into 978."""
     records = [*_live_str_records()]
     records.insert(1, _business_plan_docx())  # created 18:48:23 — between the May trend and the Dec trend
     block = _overview_comp_set(records)
     total_keys, roster_sum, active_count = _envelope_keys(records)
 
-    assert block.active_keys == 978 and block.active_count == 7
-    assert total_keys == block.active_keys == 978
+    assert block.active_keys == 344 and block.active_count == 4
+    assert total_keys == block.active_keys == 344
     assert roster_sum == block.active_keys
-    assert active_count == block.active_count == 7
+    assert active_count == block.active_count == 4
+    assert [(sk.doc_name, sk.hotels_listed, sk.reason) for sk in block.skipped_documents] == [
+        ("Copy of 2024 Business Plan.docx", 5, "no_str_identifiers")
+    ]
+    assert "1 document skipped: no STR identifiers" in (block.note or "")
 
 
 def test_retagged_deal_reads_344_keys_four_hotels_one_closed_on_both_surfaces() -> None:

@@ -55,6 +55,9 @@ STR_STAMP = "template:str_trend:v1;ps=959bc26b;reg=2;pv=v8"
 def _record(flat: dict[str, Any], compset: dict[int, dict[str, Any]], *, filename: str = "ANG-20250500-USD-E.xlsx") -> dict[str, Any]:
     fields: list[dict[str, Any]] = [{"field_name": k, "value": v} for k, v in flat.items()]
     for idx, row in compset.items():
+        # The STR template emits a property id per competitor; a roster with
+        # none is not an STR roster and never joins the union (FON-123).
+        row = {"str_id": str(10000 + idx), **row}
         for attr, value in row.items():
             fields.append({"field_name": f"ttm_performance.compset.{idx}.{attr}", "value": value})
     return {
