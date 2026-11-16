@@ -420,6 +420,11 @@ no occupancy, ADR or RevPAR, the figure is read from another statement of the sa
 full-year lines only — and the cell says so: “Occupancy is not on the Summary P&L; read from the
 Detailed P&L (the same period, FY2024)”. A figure is never taken from another period, a monthly
 slice, an STR report or an offering memorandum; with no same-period statement the cell shows “—”.
+A column exists only for a period one of the deal's statements is tagged to. The operating history
+an offering memorandum reproduces for earlier years is comparative data inside another document, not
+a statement: it never stands as a column of its own, and a year no statement covers is the same gap
+on the Historical P&L as in the Data Room's coverage strip (“Missing 2021 financials”) — the two
+screens never disagree about which years the deal has.
 
 :::
 
@@ -1287,6 +1292,12 @@ Provenance runs on two levels, and every figure on the platform carries one or t
   items) — chooses one per period (the footing check can pass the top-ranked over), and badges the
   Year-1 statement “Primary source” in the Data Room. The badge, the Historical P&L column, the
   Future P&L base-period label, the document links and the variance actuals all read that one choice.
+  A Historical P&L column exists only for a period a P&L-family statement is tagged to — the same
+  documents `statement_roles` ranks and `coverage_audit` counts (`_PNL_DOC_TYPES`). An OM's reproduced
+  prior-year block (`p_and_l_usali.<YYYY>.*`) is never a column: `buildHistoricalYears` used to
+  backfill gap years from it, and on deal b67bfdee (2026-11-16) that put FY2021 / FY2022 columns with
+  full revenue and NOI beside a coverage strip saying “Missing 2021 financials”, from a document no
+  screen named. A year without a statement is a gap on both surfaces.
 - **Cross-checked across statements, never blended.** When more than one statement covers the same
   period, Year-1 takes its lines from one statement: the footing one when the top-ranked does not
   foot to its stated total (deal 7a9928e0: a $96,528 F&B misread), else the median outlier switch

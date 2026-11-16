@@ -170,6 +170,95 @@ describe('buildHistoricalYears — the worker statement choice (FON-22)', () => 
     expect(t12Col.supplementalDocs ?? []).toEqual([]);
   });
 
+  it('b67bfdee 2026-11-16: the OM’s own FY2021 / FY2022 table never stands as a column', () => {
+    // Sam's QA after Run #2: FY2019, FY2021, FY2022, FY2023, FY2024, T12 — six
+    // columns, "All periods · 6" — while the Data Room said "Missing 2021
+    // financials" and "Missing 2022 financials" and no statement is tagged to
+    // either year. The 2021 / 2022 figures (rooms $9.39M / $11.29M, NOI
+    // $2.67M / $3.31M) are the Offering Memorandum's comparative P&L (page
+    // 40), extracted as `p_and_l_usali.2021.*` / `p_and_l_usali.2022.*` —
+    // not a statement, no worker role, no coverage. The expected set is the
+    // four tagged statements: FY2019, FY2023, FY2024 and T12 Mar 2025.
+    const omLine = (year: number, line: string, value: number) => f(`p_and_l_usali.${year}.${line}`, value);
+    const omYear = (year: number, rooms: number, noi: number) => [
+      omLine(year, 'rooms_revenue_usd', rooms),
+      omLine(year, 'fb_revenue_usd', rooms / 4),
+      omLine(year, 'total_revenue_usd', rooms * 1.27),
+      omLine(year, 'total_undistributed_expense_usd', rooms * 0.3),
+      omLine(year, 'gop_usd', rooms * 0.5),
+      omLine(year, 'noi_usd', noi),
+      omLine(year, 'occupancy_pct', 0.834),
+      omLine(year, 'adr_usd', 233.75),
+      omLine(year, 'revpar_usd', 194.88),
+    ];
+    const om = doc('om', {
+      filename: 'Copy of Miami Beach Anglers Offering Memorandum.pdf', doc_type: 'OM',
+      uploaded_at: '2026-10-19T18:46:41Z',
+    });
+    const t12 = doc('t12', {
+      filename: 'Copy of The Angler_s - March 2025 Financials.xlsx', doc_type: 'T12',
+      extracted_period_year: 2025, uploaded_at: '2026-10-19T18:46:53Z',
+      ...role('year_one_primary', 0, 't12', 'full:20250331', 'the year ending 2025-03-31'),
+    });
+    const detailed = doc('det', {
+      filename: DETAILED, extracted_period_year: 2024, uploaded_at: '2026-10-19T18:46:52Z',
+      ...role('period_primary', 0, 'det'),
+    });
+    const csv = doc('csv', {
+      filename: CSV, extracted_period_year: 2024, uploaded_at: '2026-10-20T17:52:18Z',
+      ...role('supplemental', 1, 'det'),
+    });
+    const fyFields = (year: number, rooms: number) => [
+      f('p_and_l_usali.period_ending', `${year}-12-31`),
+      f('ttm_performance.subject.occupancy_pct', 0.7),
+      f('ttm_performance.subject.adr_usd', 200),
+      f('p_and_l_usali.operating_revenue.rooms_revenue', rooms),
+      f('p_and_l_usali.operating_revenue.total_revenue', rooms * 1.4),
+    ];
+    const fy23 = doc('fy23', {
+      filename: 'Copy of Angler_s 2023 P&L.xlsx', extracted_period_year: 2023, uploaded_at: '2026-10-19T18:46:51Z',
+      ...role('period_primary', 0, 'fy23', 'full:20231231', 'FY2023'),
+    });
+    const fy19 = doc('fy19', {
+      filename: 'Copy of Angler_s 2019 P&L.xlsx', extracted_period_year: 2019, uploaded_at: '2026-10-19T18:46:50Z',
+      ...role('period_primary', 0, 'fy19', 'full:20191231', 'FY2019'),
+    });
+    const t12Fields = [
+      f('p_and_l_usali.period_type', 'trailing_twelve'),
+      f('p_and_l_usali.period_ending', '2025-03-31'),
+      f('ttm_performance.subject.occupancy_pct', 0.832109),
+      f('ttm_performance.subject.adr_usd', 232.773),
+      f('p_and_l_usali.operating_revenue.rooms_revenue', 9_332_099.92),
+      f('p_and_l_usali.operating_revenue.total_revenue', 13_815_324),
+    ];
+    const extractions = {
+      om: ex('om', [...omYear(2021, 9_389_255, 2_673_539), ...omYear(2022, 11_290_523, 3_307_921)]),
+      t12: ex('t12', t12Fields), det: ex('det', detailedFields), csv: ex('csv', csvFields),
+      fy23: ex('fy23', fyFields(2023, 9_807_990)), fy19: ex('fy19', fyFields(2019, 5_600_000)),
+    };
+    const all = buildHistoricalYears([om, csv, t12, detailed, fy23, fy19], extractions, KEYS);
+    const years = all.filter(histHasData);
+    expect(years.map((y) => y.year)).toEqual(['2019', '2023', '2024', 'T-12']);
+    // Every column names the statement it was built from; none is the OM.
+    for (const y of years) {
+      expect(y.docId).toBeDefined();
+      expect(y.docId).not.toBe('om');
+    }
+    // A padded 2021 / 2022 header, if the skeleton emits one, holds no number.
+    for (const yr of ['2021', '2022']) {
+      const padded = all.find((y) => y.year === yr);
+      if (padded) {
+        expect(padded.populated).toBe(false);
+        expect([padded.rooms, padded.noi]).toEqual([0, null]);
+      }
+    }
+    // Without the OM the columns are identical: it contributes nothing.
+    const { om: _om, ...rest } = extractions;
+    expect(
+      buildHistoricalYears([csv, t12, detailed, fy23, fy19], rest, KEYS).filter(histHasData),
+    ).toEqual(years);
+  });
+
   it('the period rank decides, never the field count or upload order', () => {
     // The worker chose the SMALLER, OLDER statement (e.g. the footing switch).
     const small = doc('small', { fiscal_year: 2024, uploaded_at: '2026-01-01T00:00:00Z', ...role('year_one_primary', 0, 'small') });

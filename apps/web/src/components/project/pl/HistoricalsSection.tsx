@@ -123,7 +123,7 @@ export interface HistYear {
   /** FON-41 Part B — the fixed-charge parts behind ``fixed_expenses``, kept
    *  individually so the worksheet's Management Fee / Property Taxes /
    *  Insurance cells can render (and flag) the extracted line. Optional:
-   *  absent on OM-embedded years and older payloads. */
+   *  absent on older payloads. */
   mgmt_fee?: number | null;
   property_tax?: number | null;
   insurance?: number | null;
@@ -136,9 +136,9 @@ export interface HistYear {
    *  $12.3M). Its meta never adds a "to review" count — see
    *  ``reviewState.buildReviewState``. */
   total_revenue_stated?: number | null;
-  /** The statement this column was built from (absent for OM-embedded years).
-   *  Lets a Data Room deep-link (?doc=<id>) pin the column without scanning
-   *  meta. */
+  /** The statement this column was built from (absent only on a padded,
+   *  unpopulated column). Lets a Data Room deep-link (?doc=<id>) pin the
+   *  column without scanning meta. */
   docId?: string;
   /** Design rewire: per-line source metadata for review flagging — worksheet
    *  line id → { extraction confidence 0..1, matched field name, source doc
