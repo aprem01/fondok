@@ -260,8 +260,9 @@ const COVER_TITLE: Record<CoverState, string> = {
 };
 
 // Build the ordered year → status list from the deal's financial docs, folding
-// in years already populated in the worksheet (incl. OM-embedded history) and
-// filling interior gaps so a missing middle year reads as "not uploaded".
+// in years already populated in the worksheet (a column always has a statement
+// behind it — FON-22) and filling interior gaps so a missing middle year reads
+// as "not uploaded".
 function buildCoverage(
   docs: WorkerDocument[],
   populatedYears: HistYear[],
@@ -279,8 +280,8 @@ function buildCoverage(
     if (!yr) continue;
     bump(yr, coverStateFromStatus(d.status));
   }
-  // A year that made it into the grid is uploaded regardless of doc source
-  // (an OM-embedded P&L has no standalone financial doc of its own).
+  // A year that made it into the grid is uploaded (its column's statement
+  // may be typed outside ``isFinancialPnlDoc`` — the worker's chosen role).
   for (const y of populatedYears) {
     const base = baseYearLabel(y.year); // "2023 (2)" still counts as 2023 coverage
     if (/^\d{4}$/.test(base) || base === 'T-12') bump(base, 'uploaded');

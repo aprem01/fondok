@@ -3,9 +3,21 @@
 /**
  * useHistoricals — multi-year historical P&L columns for a deal.
  *
- * One column per EXTRACTED P&L / T-12 document (plus OM-embedded prior years),
- * labelled by fiscal year — the multi-doc logic HistoricalsSection shipped and
- * QA'd (Sam 2026-05-14), kept as the pure `buildHistoricalYears` below.
+ * One column per EXTRACTED P&L / T-12 document, labelled by fiscal year — the
+ * multi-doc logic HistoricalsSection shipped and QA'd (Sam 2026-05-14), kept as
+ * the pure `buildHistoricalYears` below.
+ *
+ * FON-22 (Sam's QA 2026-11-16, deal b67bfdee): a column exists for a period
+ * ONLY when a statement tagged to that period backs it — the worker's
+ * statement roles and the Data Room's coverage gaps both read the P&L-family
+ * documents alone. This hook used to backfill "prior years" from the
+ * operating history an Offering Memorandum reproduces (its
+ * `p_and_l_usali.<YYYY>.*` block): FY2021 and FY2022 columns with full
+ * revenue / GOP / NOI appeared beside a Data Room that said "Missing 2021
+ * financials", from a document no screen named. An OM's comparative table is
+ * not a statement, is never the model's basis and never carries review
+ * cells, so it no longer stands as a column; a year with no statement is a
+ * coverage gap on both screens.
  *
  * FON-41 (Sam's deal, 2026-09-09): this hook used to fetch its OWN copy of the
  * document list and every extraction — serially, and only once the Financials
@@ -43,11 +55,12 @@ const isPnlDoc = (d: WorkerDocument) => {
   const dt = (d.doc_type ?? '').toUpperCase();
   return (dt.includes('T12') || dt === 'T-12' || dt === 'PNL' || dt === 'P&L' || dt.includes('PROFIT'));
 };
-const isOmDoc = (d: WorkerDocument) => (d.doc_type ?? '').toUpperCase() === 'OM';
 
-/** A document whose extraction feeds the historical columns. */
+/** A document whose extraction feeds the historical columns: an EXTRACTED
+ *  P&L-family statement. An OM never does (FON-22) — its reproduced history
+ *  is not a statement. */
 export const isHistoricalSourceDoc = (d: WorkerDocument): boolean =>
-  d.status === 'EXTRACTED' && (isPnlDoc(d) || isOmDoc(d));
+  d.status === 'EXTRACTED' && isPnlDoc(d);
 
 const isAnnualLabel = (label: string) => /^\d{4}$/.test(baseYearLabel(label));
 
@@ -101,8 +114,8 @@ const rankOf = (e: ColumnEntry): number =>
 const isT12Label = (label: string) => baseYearLabel(label) === 'T-12';
 
 /**
- * Pure column builder — one HistYear per EXTRACTED P&L / T-12 document (plus
- * OM-embedded prior years that no statement covers). Same-label collisions
+ * Pure column builder — one HistYear per EXTRACTED P&L / T-12 document; no
+ * other document type adds a column (FON-22). Same-label collisions
  * keep BOTH columns ("2023", "2023 (2)") instead of silently overwriting.
  * Returns [] until `keys` is known (the rooms fallback needs it).
  */
@@ -125,8 +138,7 @@ export function buildHistoricalYears(
       && (isPnlDoc(d) || (!!d.statement_period && shownPeriods.has(d.statement_period))),
   );
   const pnlDocs = [...shown, ...chosenExtra];
-  const omDocs = extracted.filter(isOmDoc);
-  if (pnlDocs.length === 0 && omDocs.length === 0) return [];
+  if (pnlDocs.length === 0) return [];
 
   const byLabel = new Map<string, HistYear>();
   const sorted = [...pnlDocs].sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''));
@@ -254,19 +266,11 @@ export function buildHistoricalYears(
       byLabel.set(label, built);
     }
   }
-  // OM-embedded prior years fill gaps a standalone statement doesn't cover
-  // (e.g. an OM's own 2021-2023 P&L). Actual statements always win on a
-  // shared year — the OM only backfills missing history.
-  for (const doc of omDocs) {
-    const ext = extractions[doc.id];
-    if (!ext?.fields) continue;
-    const embedded = extractEmbeddedYears(ext.fields);
-    for (const [yr, vals] of Object.entries(embedded)) {
-      if (!byLabel.has(yr) && Object.keys(vals).length >= 6) {
-        byLabel.set(yr, omYearToHistYear(vals, yr));
-      }
-    }
-  }
+  // FON-22: no other document adds a column. The operating history an OM
+  // reproduces (`p_and_l_usali.<YYYY>.*`) is comparative data inside another
+  // document, not a statement tagged to that period — the Data Room's
+  // coverage gaps and the worker's statement roles never count it, so a year
+  // it alone covers stays a gap here too.
   if (byLabel.size === 0) return [];
 
   const byOrdinal = (a: string, b: string) => {
@@ -370,75 +374,5 @@ function blankYear(year: string): HistYear {
     rooms_dept_expense: null, fb_dept_expense: null, other_dept_expense: null,
     undistributed: null, gop: null, fixed_expenses: null, noi: null,
     populated: false,
-  };
-}
-
-// Pull multi-year P&L blocks embedded in a document's extraction, keyed
-// `p_and_l_usali.<YYYY>.<line>` — an OM typically reproduces the property's own
-// 2-3 year operating history this way. Returns { year: { line: value } }.
-function extractEmbeddedYears(
-  fields: { field_name?: string; value?: unknown }[],
-): Record<string, Record<string, number>> {
-  const out: Record<string, Record<string, number>> = {};
-  const re = /^p_and_l_usali\.((?:19|20)\d\d)\.(.+)$/;
-  for (const f of fields) {
-    const m = re.exec(f.field_name ?? '');
-    if (!m) continue;
-    const v = f.value;
-    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-    (out[m[1]] ??= {})[m[2]] = v;
-  }
-  return out;
-}
-
-/** Σ of the stated parts; ``null`` when none is stated (a dash, never $0). */
-function sumStated(...parts: (number | null)[]): number | null {
-  const xs = parts.filter((x): x is number => x != null);
-  return xs.length ? xs.reduce((a, b) => a + b, 0) : null;
-}
-
-// Map one OM-embedded year's USALI lines (all `*_usd`, in dollars) to a HistYear.
-function omYearToHistYear(v: Record<string, number>, year: string): HistYear {
-  const n = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
-  const num = (x: unknown): number => n(x) ?? 0;
-  return {
-    year,
-    // An OM's embedded historical-year block is annual by construction
-    // (``concepts.yaml`` tags those aliases ``scope: annual``); the OM does
-    // not publish the period end, so none is claimed.
-    periodBasis: 'FY',
-    periodEnd: null,
-    periodLabel: `FY${year}`,
-    days: 365,
-    occupancyPct: num(v.occupancy_pct),
-    adr: num(v.adr_usd),
-    revpar: num(v.revpar_usd),
-    rooms: num(v.rooms_revenue_usd),
-    fb: num(v.fb_revenue_usd),
-    // Wave 5 (Sam #3) — Other Operated + Misc. Income, each when stated; a
-    // dash (null) when the OM states neither.
-    misc: sumStated(n(v.other_operated_depts_revenue_usd), n(v.miscellaneous_revenue_usd)),
-    other_operated_revenue: n(v.other_operated_depts_revenue_usd),
-    misc_income: n(v.miscellaneous_revenue_usd),
-    // E-012 — the OM's own stated total for that year, when it prints one.
-    total_revenue_stated: n(v.total_revenue_usd),
-    rooms_dept_expense: n(v.rooms_dept_expense_usd),
-    fb_dept_expense: n(v.fb_dept_expense_usd),
-    other_dept_expense: n(v.other_operated_depts_expense_usd),
-    undistributed: n(v.total_undistributed_expense_usd),
-    gop: n(v.gop_usd),
-    // Fees & fixed = mgmt + FF&E + property tax + insurance + rent (matches the
-    // worksheet's Model "Total Fees & Fixed" so the columns reconcile).
-    fixed_expenses: sumStated(
-      n(v.management_fee_usd), n(v.ffe_reserve_usd), n(v.property_tax_usd),
-      n(v.insurance_expense_usd), n(v.rent_usd),
-    ),
-    mgmt_fee: n(v.management_fee_usd),
-    ffe_reserve: n(v.ffe_reserve_usd),
-    property_tax: n(v.property_tax_usd),
-    insurance: n(v.insurance_expense_usd),
-    rent: n(v.rent_usd),
-    noi: n(v.noi_usd),
-    populated: true,
   };
 }

@@ -32,12 +32,13 @@ import { WORKSHEET_ROWS } from '@/components/project/pl/GroundedWorksheet';
 
 // ─────────────────────── the OM (embedded prior years) ───────────────────────
 // The FON-41 capture is four P&L-family statements — Sam's deal had no OM
-// extraction to capture. `buildHistoricalYears` backfills gap years from an
-// OM's own reproduced operating history, keyed `p_and_l_usali.<YYYY>.<line>`
-// (see `extractEmbeddedYears`), so an OM is constructed here to exercise that
-// leg. Field NAMES are the real ontology paths the builder reads; the VALUES
-// are synthetic placeholders (SYNTH) — the test only needs them present,
-// numeric, and distinguishable per year.
+// extraction to capture. An OM reproduces the property's operating history
+// keyed `p_and_l_usali.<YYYY>.<line>` (deal b67bfdee: FY2021 / FY2022 on
+// page 40). `buildHistoricalYears` used to backfill gap years from it; since
+// FON-22 (2026-11-16) it never does, so an OM is constructed here to prove
+// that leg is closed. Field NAMES are the real ontology paths; the VALUES are
+// synthetic placeholders (SYNTH) — the test only needs them present, numeric,
+// and distinguishable per year.
 const OM_YEARS = ['2021', '2022'] as const;
 const omField = (year: string, line: string, value: number): ExtractionField => ({
   field_name: `p_and_l_usali.${year}.${line}`,
@@ -186,55 +187,47 @@ describe('evidence ablation — removing the T-12 statement', () => {
   });
 });
 
-// ═══════════ 2. drop the OM — its embedded prior-year columns go ═════════════
+// ═══════ 2. the OM — its reproduced prior years are never a column (FON-22) ═══
 
-describe('evidence ablation — removing the OM', () => {
-  it('backfills 2021 + 2022 from the OM before the ablation (positive control)', () => {
+describe('evidence ablation — the OM adds nothing to ablate', () => {
+  it('never backfills 2021 + 2022 from the OM: a year no statement covers stays a gap', () => {
+    // Sam's QA 2026-11-16 (deal b67bfdee): FY2021 / FY2022 columns with full
+    // revenue, GOP and NOI appeared beside a Data Room saying "Missing 2021
+    // financials". They came from the OM's own comparative P&L table, which
+    // no screen named. A column exists only for a statement-backed period.
     const { years } = surfaces(DOCS_WITH_OM, EX_WITH_OM);
     const labels = years.map((y) => y.year);
-    for (const y of OM_YEARS) expect(labels).toContain(y);
-    // OM-embedded columns carry no docId — they are not a standalone statement.
+    for (const y of OM_YEARS) expect(labels).not.toContain(y);
+    expect(labels).toEqual(['2019', '2023', '2024', 'T-12']);
+    // The skeleton may still pad the header; it must hold no numbers.
     for (const y of OM_YEARS) {
-      const col = years.find((c) => c.year === y);
-      expect(col?.populated).toBe(true);
-      expect(col?.docId).toBeUndefined();
-      expect(col?.noi).toBeGreaterThan(0);
-    }
-  });
-
-  it('makes the embedded prior-year columns vanish', () => {
-    const gone = without(DOCS_WITH_OM, EX_WITH_OM, DOC_OM.id);
-    const { years } = surfaces(gone.docs, gone.extractions);
-    const labels = years.map((y) => y.year);
-    for (const y of OM_YEARS) {
-      expect(labels).not.toContain(y);
-      // The skeleton may still pad the header; it must hold no numbers.
-      const padded = buildHistoricalYears(gone.docs, gone.extractions, LIVE_KEYS)
-        .find((c) => c.year === y);
+      const padded = buildHistoricalYears(DOCS_WITH_OM, EX_WITH_OM, LIVE_KEYS).find((c) => c.year === y);
       if (padded) {
         expect(padded.populated).toBe(false);
+        expect(padded.docId).toBeUndefined();
         expect([padded.rooms, padded.fb, padded.noi]).toEqual([0, 0, null]);
       }
     }
+    // Every populated column names the statement it was built from.
+    for (const col of years) expect(col.docId).toBeDefined();
   });
 
-  it('leaves the four real statements exactly as they were', () => {
+  it('removing the OM changes no column and no review count', () => {
     const withOm = surfaces(DOCS_WITH_OM, EX_WITH_OM);
     const gone = without(DOCS_WITH_OM, EX_WITH_OM, DOC_OM.id);
     const after = surfaces(gone.docs, gone.extractions);
 
+    expect(after.years.map((y) => y.year)).toEqual(withOm.years.map((y) => y.year));
     for (const doc of LIVE_DOCS) {
       expect(after.years.find((y) => y.docId === doc.id))
         .toEqual(withOm.years.find((y) => y.docId === doc.id));
       expect(after.review.byDoc.get(doc.id) ?? 0).toBe(withOm.review.byDoc.get(doc.id) ?? 0);
     }
-    // An OM never contributes review cells (no per-cell meta on embedded years),
-    // so the badge total is identical either way.
     expect(after.review.total).toBe(withOm.review.total);
     expect(after.years).not.toBe(withOm.years);
   });
 
-  it('never carries an OM-embedded cell into the review state', () => {
+  it('never carries an OM cell into the review state', () => {
     const { review } = surfaces(DOCS_WITH_OM, EX_WITH_OM);
     expect(review.byDoc.has(DOC_OM.id)).toBe(false);
     for (const cell of review.byCell.values()) {

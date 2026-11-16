@@ -256,13 +256,29 @@ async def _insert_b67bfdee(deal_id: UUID) -> dict[str, UUID]:
       ``extracted_period_year`` 2024; 1,031 numeric lines.
     * ``fy23`` / ``fy19`` — 2023 and 2019 P&Ls, each with ``report_as_of``
       Dec 31 of its year.
+    * ``om`` — the Offering Memorandum (doc_type ``OM``, uploaded first, 392
+      fields in prod), whose page 40 reproduces the property's FY2021 / FY2022
+      P&L as ``p_and_l_usali.2021.*`` / ``p_and_l_usali.2022.*`` (rooms
+      $9,389,255 / $11,290,523, NOI $2,673,539 / $3,307,921). No statement on
+      the deal is tagged 2021 or 2022.
 
     Sam's QA (2026-11-11) saw TWO FY2024 columns on this deal: the T-12's
     March end vetoed the "every dated annual ends Dec 31" inference, so the
     Detailed P&L keyed ``fiscal_year:20241231`` and the CSV
     ``full:20241231`` — two periods. The 11-03 fixture had no T-12.
+
+    Sam's QA (2026-11-16, Run #2) then saw FY2021 and FY2022 columns with full
+    revenue / GOP / NOI beside a Data Room saying "Missing 2021 financials":
+    the web's Historical P&L backfilled them from the OM's block above. The
+    worker never gave the OM a statement role — it is not a statement — and
+    the coverage audit never counted it; the fixture carries it so that
+    stays pinned.
     """
     base = datetime(2026, 10, 19, 18, 46, 51, tzinfo=UTC)
+    om = await _insert_statement(
+        deal_id, doc_type="OM", filename="Copy of Miami Beach Anglers Offering Memorandum.pdf",
+        ts=base - timedelta(seconds=10), fields=om_embedded_history_fields(),
+    )
     fy19 = await _insert_statement(
         deal_id, doc_type="PNL", filename="Copy of Angler_s 2019 P&L.xlsx", ts=base,
         extracted_period_year=2019, report_as_of="2019-12-31", structural_pnl_score=1.0,
@@ -304,7 +320,30 @@ async def _insert_b67bfdee(deal_id: UUID) -> dict[str, UUID]:
     await _insert_extraction_row(
         deal_id, t12, fields=march_2025_t12_fields(), ts=datetime(2026, 11, 3, 22, 38, tzinfo=UTC)
     )
-    return {"t12": t12, "detailed": detailed, "summary": summary, "fy23": fy23, "fy19": fy19}
+    return {
+        "t12": t12, "detailed": detailed, "summary": summary, "fy23": fy23, "fy19": fy19, "om": om,
+    }
+
+
+def om_embedded_history_fields() -> list[dict[str, object]]:
+    """The OM's comparative P&L (b67bfdee, page 40): the lines the web's
+    former OM backfill read, under the real ``p_and_l_usali.<YYYY>.*`` paths,
+    with the figures Sam saw on the phantom FY2021 / FY2022 columns."""
+    years = {
+        2021: {"rooms_revenue_usd": 9_389_255, "fb_revenue_usd": 1_583_945,
+               "total_revenue_usd": 11_906_524, "gop_usd": 4_851_106,
+               "total_undistributed_expense_usd": 2_919_386, "noi_usd": 2_673_539,
+               "occupancy_pct": 0.834, "adr_usd": 233.75, "revpar_usd": 194.88},
+        2022: {"rooms_revenue_usd": 11_290_523, "fb_revenue_usd": 2_460_440,
+               "total_revenue_usd": 14_732_739, "gop_usd": 5_855_511,
+               "total_undistributed_expense_usd": 3_594_175, "noi_usd": 3_307_921,
+               "occupancy_pct": 0.85, "adr_usd": 275.6, "revpar_usd": 234.34},
+    }
+    return [
+        {"field_name": f"p_and_l_usali.{year}.{line}", "value": value, "source_page": 40}
+        for year, lines in years.items()
+        for line, value in lines.items()
+    ]
 
 
 async def _insert_extraction_row(
@@ -437,6 +476,17 @@ async def test_b67bfdee_has_one_fy2024_period_beside_the_march_2025_t12() -> Non
     # Five statements, four periods: nothing else is FY2024.
     periods = {r.statement_period for r in records if r.statement_period}
     assert periods == {"full:20250331", "full:20241231", "full:20231231", "full:20191231"}
+    # 2026-11-16: the OM's own FY2021 / FY2022 table is not a statement — no
+    # role, no period — so the deal has NO 2021 or 2022 period for any
+    # surface to build a column on (the Data Room says those years are
+    # missing, and the Historical P&L now agrees).
+    om = by_id[str(ids["om"])]
+    assert om.statement_role is None
+    assert om.statement_period is None
+    assert not om.primary_financial_source
+    assert not any(p.endswith(("2021", "20211231", "2022", "20221231")) for p in periods)
+    words = {r.statement_period_words for r in records if r.statement_period_words}
+    assert words == {"the year ending 2025-03-31", "FY2024", "FY2023", "FY2019"}
 
 
 def test_a_trailing_twelve_end_never_vetoes_the_dec_31_year_end() -> None:
