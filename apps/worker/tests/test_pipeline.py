@@ -280,10 +280,17 @@ async def _seed_deal_with_engines(
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     tenant: str = _DEFAULT_TENANT,
+    run_at: datetime | None = None,
 ) -> str:
     """Seed a deal + the four engines (returns / debt / expense / capital)
     so the pipeline aggregator finds every metric populated.
+
+    FON-80 — the engine rows are dated ``run_at``, defaulting to the deal's
+    own ``updated_at`` / ``created_at`` (not "now"), so a test that pins
+    ``updated_at`` is not outrun by its own seed data: ``last_activity_at``
+    is the later of the row and the run.
     """
+    run_ts = run_at or updated_at or created_at
     deal_id = await _insert_deal(
         session,
         name=name,
@@ -304,6 +311,7 @@ async def _seed_deal_with_engines(
         outputs=_returns_outputs(irr=irr, em=em),
         inputs=_returns_inputs(exit_cap_rate=exit_cap),
         tenant=tenant,
+        started_at=run_ts,
     )
     await _insert_engine_output(
         session,
@@ -311,6 +319,7 @@ async def _seed_deal_with_engines(
         engine_name="debt",
         outputs=_debt_outputs(dscr_y1=dscr_y1),
         tenant=tenant,
+        started_at=run_ts,
     )
     await _insert_engine_output(
         session,
@@ -318,6 +327,7 @@ async def _seed_deal_with_engines(
         engine_name="expense",
         outputs=_expense_outputs(noi_y1=noi_y1, noi_stab=noi_stab),
         tenant=tenant,
+        started_at=run_ts,
     )
     await _insert_engine_output(
         session,
@@ -326,6 +336,7 @@ async def _seed_deal_with_engines(
         outputs=_capital_outputs(price_per_key=price_per_key),
         inputs=_capital_inputs(renovation_budget=renovation_budget),
         tenant=tenant,
+        started_at=run_ts,
     )
     return deal_id
 
@@ -491,6 +502,46 @@ async def test_sort_by_last_activity_desc_default() -> None:
         r = await client.get("/deals/pipeline")
         names = [d["name"] for d in r.json()["deals"]]
         assert names == ["Fresh", "Middle", "Old"]
+
+
+@pytest.mark.asyncio
+async def test_last_activity_is_the_later_of_deal_row_and_latest_run() -> None:
+    """FON-80 (QA 2026-11-16, gap 4) — a model re-run leaves ``deals.updated_at``
+    alone (lineage reads it as "inputs changed"), so ``last_activity_at`` and
+    the last-activity sort take the later of the row and the latest engine
+    completion. Before: the row's stale ``updated_at`` won outright."""
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+    base = datetime.now(UTC)
+    async with factory() as session:
+        # Row edited 2 days ago, model re-run 10 minutes ago → activity = the run.
+        rerun_id = await _seed_deal_with_engines(
+            session, name="Re-run", irr=0.18,
+            created_at=base - timedelta(days=12),
+            updated_at=base - timedelta(days=2),
+            run_at=base - timedelta(minutes=10),
+        )
+        # Row edited 1 day ago, run 3 days ago → activity = the row edit.
+        edited_id = await _seed_deal_with_engines(
+            session, name="Edited", irr=0.18,
+            created_at=base - timedelta(days=12),
+            updated_at=base - timedelta(days=1),
+            run_at=base - timedelta(days=3),
+        )
+
+    async with _client() as client:
+        r = await client.get("/deals/pipeline")
+        assert r.status_code == 200, r.text
+        rows = {d["deal_id"]: d for d in r.json()["deals"]}
+        rerun = rows[rerun_id]
+        edited = rows[edited_id]
+        rerun_activity = datetime.fromisoformat(rerun["last_activity_at"].replace("Z", "+00:00"))
+        edited_activity = datetime.fromisoformat(edited["last_activity_at"].replace("Z", "+00:00"))
+        rerun_run = datetime.fromisoformat(rerun["last_engine_run_at"].replace("Z", "+00:00"))
+        assert rerun_activity == rerun_run, "the newer run is the activity"
+        assert edited_activity > datetime.fromisoformat(edited["last_engine_run_at"].replace("Z", "+00:00"))
+        assert [d["name"] for d in r.json()["deals"]] == ["Re-run", "Edited"]
 
 
 @pytest.mark.asyncio

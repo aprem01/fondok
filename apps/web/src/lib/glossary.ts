@@ -191,7 +191,7 @@ export const GLOSSARY_DEFINITIONS: Record<
   },
   ai_confidence: {
     definition:
-      'AI confidence — Critic-verified field accuracy. Verified numbers float at 0.98; un-grounded extractions drop to 0.50.',
+      'Extraction confidence — Critic-verified field accuracy, shown beside the deal’s Model/Data Readiness step. Verified numbers float at 0.98; un-grounded extractions drop to 0.50.',
     learnMoreAnchor: '/methodology#extraction',
   },
 

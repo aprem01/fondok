@@ -249,7 +249,9 @@ describe('Projects list — Owner', () => {
     const owners = screen.getAllByTestId('deal-owner');
     expect(owners.map((o) => o.textContent)).toEqual(['AR', '—', '—']);
     expect(owners.map((o) => o.getAttribute('title'))).toEqual([
-      'Owner: Ana Ruiz', 'Owner: not recorded', 'Owner: not in this workspace’s roster',
+      'Owner: Ana Ruiz',
+      'Owner: not recorded — created before Fondok recorded who creates a deal',
+      'Owner: not in this workspace’s roster',
     ]);
   });
 

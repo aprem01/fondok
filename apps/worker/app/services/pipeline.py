@@ -32,7 +32,7 @@ import json
 import logging
 import statistics
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -120,6 +120,19 @@ def _coerce_dt(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _later(a: datetime | None, b: datetime | None) -> datetime | None:
+    """The later of two timestamps, either of which may be unknown. A naive
+    value (SQLite hands them back without a zone) is read as UTC so it can
+    be compared with an aware one; nothing is invented when both are None."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    def _aware(t: datetime) -> datetime:
+        return t if t.tzinfo is not None else t.replace(tzinfo=UTC)
+    return b if _aware(b) > _aware(a) else a
 
 
 def _positive_or_none(value: float | None) -> float | None:
@@ -248,9 +261,15 @@ def _row_from_deal(
         if last_engine_run_at is None or ts > last_engine_run_at:
             last_engine_run_at = ts
 
+    # FON-80 (QA 2026-11-16, gap 4) — "last activity" is the LATER of the
+    # deal row's ``updated_at`` and its latest engine completion. A model
+    # re-run writes ``engine_outputs`` only and leaves ``deals.updated_at``
+    # alone on purpose (``services/lineage.py`` reads ``updated_at`` as "the
+    # deal's inputs changed" to flag a stale run), so the two are combined
+    # here rather than the run touching the row. Before this the row's
+    # timestamp won even when a run was newer (``or`` short-circuited).
     last_activity_at = (
-        _coerce_dt(deal_row.get("updated_at"))
-        or last_engine_run_at
+        _later(_coerce_dt(deal_row.get("updated_at")), last_engine_run_at)
         or _coerce_dt(deal_row.get("created_at"))
         or datetime.utcnow()
     )
