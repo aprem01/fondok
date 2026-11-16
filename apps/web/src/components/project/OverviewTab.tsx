@@ -230,6 +230,9 @@ interface RowDef {
   where?: string;
   /** Popover sub-line under the value — what this field is and how it behaves. */
   sub?: string;
+  /** Visible secondary line under the row LABEL (small, muted) — a one-line
+   *  basis definition the row carries without hover (FON-44 / FON-82). */
+  labelSub?: string;
   /**
    * FON-59 — the `deal.field_overrides` key this row's worker read honors.
    * Declaring it enables Override / Restore on the row. Wire it ONLY to rows
@@ -990,7 +993,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     const entryRows = (): RowDef[] => [
       // FON-44 — the headline NOI says what it is: after property tax and
       // insurance, before the FF&E reserve (the full definition is in Methodology).
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}.` }),
+      // FON-44 / FON-82 — the definition sits under the label in plain sight
+      // (`labelSub`) as well as in the popover (`sub`).
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}.`, labelSub: NOI_BEFORE_RESERVE_DEFINITION }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
@@ -2058,8 +2063,18 @@ function OverviewRow({ row, onClick }: { row: RowDef; onClick: (e: React.MouseEv
         padding: '7px 0', cursor: interactive ? 'pointer' : 'default', borderBottom: `1px solid ${palette.hairlineRow}`,
       }}
     >
-      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+      {/* The label span stays a direct child of this wrapper (tests walk
+          label → wrapper → row); a `labelSub` stacks beneath it. */}
+      <span style={row.labelSub
+        ? { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, minWidth: 0 }
+        : { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}
+      >
         <span style={{ color: palette.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</span>
+        {row.labelSub && (
+          <span data-testid="overview-row-label-sub" style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.3, whiteSpace: 'normal' }}>
+            {row.labelSub}
+          </span>
+        )}
       </span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {showDot && <ProvenanceDot state={row.state} size={8} review={row.state === 'needs_review'} />}
@@ -2557,8 +2572,14 @@ function FuturePLSummaryCard({
                 })}
               </tr>
               <tr data-testid="overview-future-pl-noi">
-                {/* FON-44 — the headline NOI states its basis on hover; Methodology has the full definition. */}
-                <td style={tdLabel} title={NOI_BEFORE_RESERVE_DEFINITION}>{noiLabel}</td>
+                {/* FON-44 / FON-82 — the headline NOI states its basis in plain sight under
+                    the label (and on hover); Methodology has the full definition. */}
+                <td style={tdLabel} title={NOI_BEFORE_RESERVE_DEFINITION}>
+                  {noiLabel}
+                  <div data-testid="overview-future-pl-noi-sub" style={{ fontSize: 10.5, color: palette.textMuted, lineHeight: 1.3, marginTop: 1, whiteSpace: 'normal' }}>
+                    {NOI_BEFORE_RESERVE_DEFINITION}
+                  </div>
+                </td>
                 {cols.map((i) => {
                   const y = expYears[i];
                   const v = num(y?.noi_institutional) ?? num(y?.noi);

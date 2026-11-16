@@ -12,9 +12,9 @@ import EngineRunHistory from './EngineRunHistory';
 import NoiWarningStrip from './NoiWarningStrip';
 import { fmtCurrency, fmtMillions, fmtPct, cn } from '@/lib/format';
 import { TAB_LABEL } from '@/lib/projectTabs';
-import { RETURNS_VIEWS, returnsHref } from '@/lib/returnsSection';
+import { EXIT_SCHEDULE_ANCHOR_ID, RETURNS_VIEWS, returnsHref } from '@/lib/returnsSection';
 import { EXIT_SCHEDULE_TITLE } from '@/lib/engines/returns';
-import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
+import { NOI_BEFORE_RESERVE_DEFINITION, NOI_BEFORE_RESERVE_LABEL } from '@/lib/engines/noi';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
 import { EngineFailuresBanner, TAB_OWNED_ENGINES, engineFailures } from './EngineFailuresBanner';
 import { EngineOutputsError } from './EngineOutputsError';
@@ -191,9 +191,11 @@ export default function CashFlowTab() {
   };
   // Returns lives on Overview (R-061); every "View Returns →" link builds its
   // URL through `returnsHref` so the Returns Summary view opens and scrolls.
+  // FON-67 — this one carries the "Returns by exit year" card's anchor, so
+  // the page lands on the table rather than at the top of the section.
   const goReturnsByExitYear = () => {
     if (!dealId) return;
-    router.push(returnsHref(dealId, 'returns-summary'), { scroll: false });
+    router.push(returnsHref(dealId, 'returns-summary', EXIT_SCHEDULE_ANCHOR_ID), { scroll: false });
   };
   // B5 — why the LP / GP / Total Distribution rows are empty on this run, if
   // the worker said (the partnership engine's own ``not_applicable`` sentence,
@@ -639,6 +641,9 @@ interface SummaryRowSpec {
   /** Hover text for the row label when the worker line carries no note —
    *  a one-line basis definition (FON-44). */
   title?: string;
+  /** Visible secondary line under the label — the same definition in plain
+   *  sight, not only on hover (FON-44 / FON-82, Sam 2026-11-16). */
+  sub?: string;
   /** Emphasised bottom line (the worker's ``calc`` rows). */
   total?: boolean;
   /** Deal-conditional worker line (refinance, junior debt, key money, deferred
@@ -652,8 +657,9 @@ const SUMMARY_ROWS: SummaryRowSpec[] = [
   // Property (unlevered)
   { section: 'unlevered', labels: ['Acquisition Uses at Close'], display: 'Acquisition Uses at Close' },
   { section: 'unlevered', labels: ['Deferred Capital Held at Close'], display: 'Deferred Capital Held at Close', optional: true },
-  // FON-44 — the headline NOI states its basis on hover; Methodology has the full definition.
-  { section: 'unlevered', labels: ['NOI (before FF&E reserve)', 'Net Operating Income'], display: 'NOI (before FF&E reserve)', title: NOI_BEFORE_RESERVE_DEFINITION },
+  // FON-44 / FON-82 — the headline NOI states its basis in plain sight under the
+  // label (and on hover); Methodology has the full definition.
+  { section: 'unlevered', labels: ['NOI (before FF&E reserve)', 'Net Operating Income'], display: 'NOI (before FF&E reserve)', title: NOI_BEFORE_RESERVE_DEFINITION, sub: NOI_BEFORE_RESERVE_DEFINITION },
   { section: 'unlevered', labels: ['FF&E Reserve'], display: 'FF&E Reserve / CapEx' },
   { section: 'unlevered', labels: ['Deferred Capital Deployed'], display: 'Deferred Capital Deployed' },
   { section: 'unlevered', labels: ['Gross Sale Proceeds'], display: 'Gross Sale Proceeds' },
@@ -718,6 +724,7 @@ function summaryStatementRows(
       // worker's own ``line.label``.
       label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
       title: line.note ?? spec.title,
+      sub: spec.sub,
       state: rowState(cf, spec.section, line),
       total,
       bg: total ? palette.surfaceTint : undefined,
@@ -911,11 +918,15 @@ function sectionRows(
 ): StatementRow[] {
   return cf[section].map((line: CashFlowStatementLine) => {
     const total = line.kind === 'calc';
+    // FON-44 / FON-82 — the headline NOI row carries its definition in plain
+    // sight under the label (and on hover) on the Unlevered statement too.
+    const headlineNoi = line.label === NOI_BEFORE_RESERVE_LABEL;
     return {
       // Display-only canonical relabel (NOI basis / FF&E Reserve / CapEx); provenance + footing below
       // still key off the worker's original ``line.label``.
       label: STATEMENT_LABEL_CANONICAL[line.label] ?? line.label,
-      title: line.note ?? undefined,
+      title: line.note ?? (headlineNoi ? NOI_BEFORE_RESERVE_DEFINITION : undefined),
+      sub: headlineNoi ? NOI_BEFORE_RESERVE_DEFINITION : undefined,
       state: rowState(cf, section, line),
       total,
       bg: total ? palette.surfaceTint : undefined,

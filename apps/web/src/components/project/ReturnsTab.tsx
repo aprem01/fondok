@@ -14,7 +14,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { TrendingUp } from 'lucide-react';
 import NoiWarningStrip from './NoiWarningStrip';
-import { RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, type ReturnsViewId } from '@/lib/returnsSection';
+import { RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, returnsAnchorFromHash, type ReturnsViewId } from '@/lib/returnsSection';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
 import { fmtPct, cn } from '@/lib/format';
@@ -120,9 +120,25 @@ export function ReturnsSection() {
   const internalNav = useRef(false);
   const requestedSub = searchParams?.get('sub') ?? null;
   const query = searchParams?.toString() ?? '';
+  // FON-67 — a `#returns-by-exit-year` fragment on the URL asks for one card
+  // inside the section (the Cash Flow IRR footnote's "Returns by exit year →").
+  // The card renders only once the Returns engine outputs are in, so a
+  // fragment that cannot be honoured yet is parked here and finished below.
+  const pendingAnchor = useRef<string | null>(null);
+  const scrollToAnchor = (id: string): boolean => {
+    const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
+    if (!el) return false;
+    el.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    return true;
+  };
   useEffect(() => {
     if (internalNav.current) { internalNav.current = false; return; }
     if (!isReturnsView(requestedSub)) return;
+    const anchor = typeof window !== 'undefined' ? returnsAnchorFromHash(window.location.hash) : null;
+    if (anchor) {
+      pendingAnchor.current = scrollToAnchor(anchor) ? null : anchor;
+      if (pendingAnchor.current == null) return;
+    }
     sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
@@ -131,6 +147,13 @@ export function ReturnsSection() {
   // render the placeholder or the live UI.
   const wReturnsIrr = getEngineField<number>(outputs, 'returns', 'levered_irr');
   const hasWorkerReturns = wReturnsIrr != null;
+  // Finish a parked fragment scroll once the data (and so the card) has rendered.
+  useEffect(() => {
+    const anchor = pendingAnchor.current;
+    if (!anchor || !hasWorkerReturns) return;
+    if (scrollToAnchor(anchor)) pendingAnchor.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasWorkerReturns, query]);
   // D1 / D4 — with no returns on screen, say WHY before saying "unavailable":
   // the read failed (Retry), or one of THIS section's engines failed (the
   // banner names it and the reason; the page-level banner leaves these

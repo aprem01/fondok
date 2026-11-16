@@ -34,6 +34,7 @@ import {
   exitRowReasonTitle,
   irrValue,
 } from '@/lib/engines/returns';
+import { EXIT_SCHEDULE_ANCHOR_ID } from '@/lib/returnsSection';
 import { Traced } from '@/components/help/Traced';
 import { SectionCard, palette, prov } from '@/components/design';
 
@@ -286,6 +287,9 @@ export function ExitScheduleCard({
   const missing = rows == null ? (sandbox ? EXIT_SCHEDULE_SANDBOX_MISSING : EXIT_SCHEDULE_MISSING) : null;
   return (
     <SectionCard
+      // FON-67 — the Cash Flow IRR footnote deep-links straight to this card.
+      id={EXIT_SCHEDULE_ANCHOR_ID}
+      style={{ scrollMarginTop: 16 }}
       title={EXIT_SCHEDULE_TITLE}
       note={
         sandbox

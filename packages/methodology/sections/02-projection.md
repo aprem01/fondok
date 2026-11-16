@@ -636,7 +636,9 @@ debt coverage, the exit valuation, the stabilized NOI and the yield on cost (FON
 after-reserve figure. Wherever the before-reserve NOI is a headline — Overview's Entry NOI row, the
 Future P&L and Cash Flow NOI rows, CAPEX's Entry NOI, the workbook cover, the memo's NOI (Y1)
 tile — it is labelled "NOI (before FF&E reserve)" and carries the one-line definition "After
-property tax and insurance, before the FF&E reserve" (`NOI_BEFORE_RESERVE_DEFINITION`).
+property tax and insurance, before the FF&E reserve" (`NOI_BEFORE_RESERVE_DEFINITION`) in plain
+sight as a secondary line under the label (and in the hover / source popover), never only on hover
+(Sam, 2026-11-16).
 
 :::
 

@@ -18,7 +18,7 @@
  *  5. The hold period badged "Default for development deals — confirm" when
  *     its `assumption_sources` tag is `deal_type_default`.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, ReturnsExitScheduleRow, ScenarioRecord } from '@/lib/api';
@@ -42,6 +42,7 @@ import {
   SELECTED_EXIT_MISSING,
 } from '@/lib/engines/returns';
 import { REASONS } from '@/lib/ontology/reasons.generated';
+import { EXIT_SCHEDULE_ANCHOR_ID, returnsHref } from '@/lib/returnsSection';
 
 // ── Fixture: a five-year hold sold at month 60, peak levered IRR in Year 3 ──
 const SELECTED_LEVERED = 0.2301;
@@ -574,5 +575,73 @@ describe('Overview and IC Memo read headlineReturns', () => {
     const strip = await screen.findByTestId('ic-memo-exit-schedule');
     expect(within(strip).getByText(EXIT_SCHEDULE_MISSING)).toBeInTheDocument();
     expect(scheduleRows(strip)).toHaveLength(0);
+  });
+});
+
+// ── FON-67 — the Cash Flow IRR footnote lands ON the exit-year table ─────
+// `returnsHref(dealId, 'returns-summary', EXIT_SCHEDULE_ANCHOR_ID)` carries a
+// `#returns-by-exit-year` fragment; the Returns section honours it by
+// scrolling the card itself into view (not the section top), and finishes the
+// scroll once the Returns outputs — and so the card — have rendered.
+describe('FON-67 — "Returns by exit year →" lands on the table', () => {
+  type ScrollCall = { el: Element; opts: unknown };
+  let calls: ScrollCall[];
+  const original = Element.prototype.scrollIntoView;
+  beforeEach(() => {
+    calls = [];
+    Element.prototype.scrollIntoView = function (this: Element, opts?: unknown) { calls.push({ el: this, opts }); };
+    window.location.hash = '';
+  });
+  afterEach(() => {
+    Element.prototype.scrollIntoView = original;
+    window.location.hash = '';
+  });
+
+  it('the card carries the stable anchor id and the href carries it as a fragment', () => {
+    render(<ReturnsTab />);
+    expect(screen.getByTestId('exit-schedule-card')).toHaveAttribute('id', EXIT_SCHEDULE_ANCHOR_ID);
+    expect(EXIT_SCHEDULE_ANCHOR_ID).toBe('returns-by-exit-year');
+    expect(returnsHref('deal-1', 'returns-summary', EXIT_SCHEDULE_ANCHOR_ID)).toBe(
+      '/projects/deal-1?tab=overview&sub=returns-summary#returns-by-exit-year',
+    );
+    // The plain section link is unchanged.
+    expect(returnsHref('deal-1', 'returns-summary')).toBe('/projects/deal-1?tab=overview&sub=returns-summary');
+  });
+
+  it('with ?sub=returns-summary and the fragment, the CARD is scrolled into view — not the section', () => {
+    nav.params = new URLSearchParams('tab=overview&sub=returns-summary');
+    window.location.hash = `#${EXIT_SCHEDULE_ANCHOR_ID}`;
+    render(<ReturnsTab />);
+    const card = screen.getByTestId('exit-schedule-card');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].el).toBe(card);
+    expect(calls[0].opts).toEqual({ behavior: 'smooth', block: 'start' });
+  });
+
+  it('without the fragment the section scrolls as before', () => {
+    nav.params = new URLSearchParams('tab=overview&sub=returns-summary');
+    render(<ReturnsTab />);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].el).toBe(screen.getByTestId('overview-returns'));
+  });
+
+  it('a fragment that arrives before the Returns outputs is honoured once they render', () => {
+    nav.params = new URLSearchParams('tab=overview&sub=returns-summary');
+    window.location.hash = `#${EXIT_SCHEDULE_ANCHOR_ID}`;
+    outputsRef.value = null; // no run yet → no card to land on
+    const { rerender } = render(<ReturnsTab />);
+    expect(screen.queryByTestId('exit-schedule-card')).toBeNull();
+    expect(calls.map((c) => c.el)).toEqual([screen.getByTestId('overview-returns')]);
+
+    outputsRef.value = fullRun();
+    rerender(<ReturnsTab />);
+    const card = screen.getByTestId('exit-schedule-card');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].el).toBe(card);
+    expect(calls[1].opts).toEqual({ behavior: 'smooth', block: 'start' });
+
+    // Done once — a later re-render does not scroll again.
+    rerender(<ReturnsTab />);
+    expect(calls).toHaveLength(2);
   });
 });

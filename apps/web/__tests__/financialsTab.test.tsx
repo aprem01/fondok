@@ -657,11 +657,12 @@ function withProjection(patch: { calendar?: number[]; rev?: RevPatch; exp?: ExpP
 
 const header = (i: number) => screen.getByTestId(`projection-col-header-${i}`);
 const basis = (i: number) => screen.getByTestId(`projection-col-basis-${i}`);
-/** A label cell's own text — without the E-016 projection-method chip. */
+/** A label cell's own text — without the E-016 projection-method chip or the
+ *  FON-44 definition sub-line under the NOI label. */
 function labelText(cell: HTMLTableCellElement | undefined): string {
   if (!cell) return '';
   const copy = cell.cloneNode(true) as HTMLElement;
-  copy.querySelectorAll('[data-method-chip]').forEach((n) => n.remove());
+  copy.querySelectorAll('[data-method-chip], [data-label-sub]').forEach((n) => n.remove());
   return (copy.textContent ?? '').trim();
 }
 /** The statement row whose label cell reads exactly `label` (nth match). */

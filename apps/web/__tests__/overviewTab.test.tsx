@@ -213,6 +213,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
 import { NOT_YET_OPEN, closedAtEntry, t12OutOfDate } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
+import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
 import { calDealYears, calExitYear } from './fixtures/dealYears';
 
 beforeEach(() => {
@@ -756,6 +757,17 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(screen.queryByText('NOI')).toBeNull();
   });
 
+  it('FON-44 / FON-82 — the Entry NOI row carries its definition in the DOM, under the label (not only on hover)', () => {
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const row = rowFor('Run-Rate / Entry NOI (before FF&E reserve)');
+    const sub = within(row).getByTestId('overview-row-label-sub');
+    expect(sub).toHaveTextContent(NOI_BEFORE_RESERVE_DEFINITION);
+    expect(NOI_BEFORE_RESERVE_DEFINITION).toBe('After property tax and insurance, before the FF&E reserve');
+    // It is the only row that carries one, and the value is untouched.
+    expect(screen.getAllByTestId('overview-row-label-sub')).toHaveLength(1);
+    expect(rowValue('Run-Rate / Entry NOI (before FF&E reserve)')).toBe('$3,100,000');
+  });
+
   it('the Stabilization section\'s "View Future P&L →" routes to ?tab=pl&sub=projections', () => {
     render(<OverviewTab projectId="deal-uuid-1" />);
 
@@ -1167,6 +1179,9 @@ describe('OverviewTab — Future P&L summary card (R-060)', () => {
     expect(within(card).getByTestId('overview-future-pl-revenue')).toHaveTextContent(FUTURE_PL_REVENUE_LABEL);
     expect(futurePlCells('overview-future-pl-revenue').map((c) => c.textContent)).toEqual(['—']);
     expect(within(card).getByTestId('overview-future-pl-noi')).toHaveTextContent('NOI (before FF&E reserve)');
+    // FON-44 / FON-82 — the definition is rendered under the label, not only in the title.
+    expect(within(card).getByTestId('overview-future-pl-noi-sub')).toHaveTextContent(NOI_BEFORE_RESERVE_DEFINITION);
+    expect(within(card).getByText(NOI_BEFORE_RESERVE_DEFINITION)).toBeInTheDocument();
     const noi = futurePlCells('overview-future-pl-noi');
     expect(noi.map((c) => c.textContent)).toEqual(['$3,100,000']);
     // E-025 — the full value rides the title too.

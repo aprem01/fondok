@@ -91,6 +91,7 @@ from .labels import (
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
     EXIT_SCHEDULE_STALE_NOTE,
     EXIT_SCHEDULE_TITLE,
+    NOI_BEFORE_RESERVE_DEFINITION,
     NOI_HEADLINE_LABELS,
     SOLVER_STATUS_NOTE,
     exit_row_label,
@@ -481,10 +482,17 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
         ("Equity Multiple", ret.get("equity_multiple"), MULT_FMT, "equity_multiple",
          "no equity multiple on the deal's returns engine output"),
     ]
+    # FON-44 / FON-82 — the headline NOI carries its definition in plain
+    # sight, in the cell beside the value (not only in a comment).
+    quick_notes = {"noi": NOI_BEFORE_RESERVE_DEFINITION}
     row = 11
     for label, val, fmt, concept, missing in quick:
         ws.cell(row=row, column=1, value=label).font = Font(bold=True)
         _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
+        if concept in quick_notes:
+            ws.cell(row=row, column=3, value=quick_notes[concept]).font = Font(
+                italic=True, color="6B7280"
+            )
         row += 1
 
     # ── Key Metrics block (existing) ────────────────────────────────

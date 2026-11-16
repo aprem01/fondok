@@ -24,6 +24,12 @@ from typing import Any
 #: NOI before the FF&E reserve — the headline / entry-cap basis.
 NOI_BEFORE_RESERVE = "NOI (before FF&E reserve)"
 
+#: FON-44 / FON-82 (Sam, 2026-11-16) — the one-line definition every headline
+#: before-reserve NOI carries IN PLAIN SIGHT beside its label (not only on
+#: hover / in a comment). Same string as the web's
+#: ``NOI_BEFORE_RESERVE_DEFINITION`` (apps/web/src/lib/engines/noi.ts).
+NOI_BEFORE_RESERVE_DEFINITION = "After property tax and insurance, before the FF&E reserve"
+
 #: NOI net of the FF&E reserve.
 CASH_NOI = "Cash NOI (after FF&E reserve)"
 

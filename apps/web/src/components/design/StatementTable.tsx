@@ -67,6 +67,9 @@ export interface StatementRow {
   bg?: string;
   /** Hover title on the label. */
   title?: string;
+  /** Visible secondary line under the label (small, muted) — a one-line
+   *  basis definition the row must carry without hover (FON-44 / FON-82). */
+  sub?: string;
 }
 
 export interface StatementTableProps {
@@ -183,7 +186,17 @@ export function StatementTable({
                   }}
                 >
                   {showDots && row.state && <ProvenanceDot state={row.state} size={8} />}
-                  <span style={{ minWidth: 0 }}>{row.label}</span>
+                  <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <span>{row.label}</span>
+                    {row.sub && (
+                      <span
+                        data-testid="statement-row-sub"
+                        style={{ fontSize: 10.5, fontWeight: 400, color: palette.textMuted, lineHeight: 1.3 }}
+                      >
+                        {row.sub}
+                      </span>
+                    )}
+                  </span>
                 </div>
                 {row.cells.map((c, ci) => {
                   const color =

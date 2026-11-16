@@ -33,6 +33,7 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-li
 import React from 'react';
 import type { EngineOutputsResponse } from '@/lib/api';
 import {
+  NOI_BEFORE_RESERVE_DEFINITION,
   NOI_BEFORE_RESERVE_LABEL,
   CASH_NOI_LABEL,
   STABILIZED_NOI_LABEL,
@@ -366,6 +367,10 @@ describe('Financials — the P&L / Projections surfaces name the basis', () => {
     const cells = Array.from(row!.cells).map((c) => (c.textContent ?? '').trim());
     expect(cells.some((c) => c.includes('2,001,056'))).toBe(true);
     expect(cells.some((c) => c.includes(CASH_NOI.toLocaleString('en-US')))).toBe(false);
+    // FON-44 / FON-82 (Sam 2026-11-16) — the definition is in the rendered
+    // label cell, under the label, not only in its hover title.
+    expect(within(row!.cells[0]).getByText(NOI_BEFORE_RESERVE_DEFINITION)).toBeInTheDocument();
+    expect(row!.cells[0]).toHaveAttribute('title', NOI_BEFORE_RESERVE_DEFINITION);
     expectNoBareNoiLabel();
   });
 
@@ -384,6 +389,11 @@ describe('Cash Flow — the unlevered statement keeps the qualifier', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Unlevered' }));
 
     expect(screen.getByText(NOI_BEFORE_RESERVE_LABEL)).toBeInTheDocument();
+    // FON-44 / FON-82 — the row carries its definition visibly, under the label.
+    expect(
+      within(screen.getByText(NOI_BEFORE_RESERVE_LABEL).closest('[role="rowheader"]') as HTMLElement)
+        .getByText(NOI_BEFORE_RESERVE_DEFINITION),
+    ).toBeInTheDocument();
     expect(screen.getAllByText('$2,001,056').length).toBeGreaterThan(0);
     // FON-67 #3 — the reserve row names both what it is and what it funds.
     expect(screen.getByText('FF&E Reserve / CapEx')).toBeInTheDocument();
