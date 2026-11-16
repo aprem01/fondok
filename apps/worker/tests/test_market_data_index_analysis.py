@@ -155,7 +155,7 @@ def test_str_subject_annual_history_and_report_year() -> None:
         # A year with only non-positive cells is not a year.
         "ttm_performance.subject.annual.2022.occupancy_pct": 0,
     }
-    block = _build_str_trend_block(flat, {}, doc_name="STR Trend May 2025.xlsx")
+    block = _build_str_trend_block(flat, [], doc_name="STR Trend May 2025.xlsx")
     assert block is not None
     assert block.report_year == 2025
     assert block.doc_name == "STR Trend May 2025.xlsx"

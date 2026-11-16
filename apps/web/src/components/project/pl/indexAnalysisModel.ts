@@ -584,6 +584,19 @@ export function compForecastBasisMix(
   return 'assumption';
 }
 
+/** The Source-row subtext of a comp-set forecast column, from its basis
+ *  (the same value the chip above it renders): the TTM level itself, or the
+ *  level grown at the market forecast / the growth assumption. */
+export function compGrownLabel(basis: BenchmarkBasis, ordinal: number | null): string {
+  if (basis === 'actual') return ordinal === 1 ? 'STR TTM (Y1)' : 'STR TTM';
+  return basis === 'forecast' ? 'Grown (forecast)' : 'Grown (assumption)';
+}
+
+function compGrownDetail(basis: BenchmarkBasis, ordinal: number | null): string {
+  if (basis === 'actual') return ordinal === 1 ? 'TTM level as the Year-1 benchmark' : 'TTM level';
+  return basis === 'forecast' ? 'grown at the market forecast' : 'grown at the market growth assumption';
+}
+
 const figureDocs = (f: IndexFigure | null | undefined): string => {
   const docs: string[] = [];
   for (const r of f?.inputs ?? []) {
@@ -667,12 +680,15 @@ export function buildCompSeries(
     // ordinal says it (Year 1 = the TTM level itself, later years = grown).
     const wb = figureBasis(r?.occupancy) ?? figureBasis(r?.adr);
     const basis: BenchmarkBasis = wb?.basis ?? (col.ordinal === 1 ? 'actual' : 'assumption');
+    // FON-60 (Sam 2026-11-16) — the chip, the subtext and the hover all read
+    // the ONE per-year basis: a year grown at the CoStar / CBRE forecast says
+    // "forecast", never "assumption" under a FORECAST chip.
     sources[i] = {
       basis,
       basisLabel: wb?.label ?? (basis === 'actual' ? strTtmBasisLabel(str) : ASSUMPTION_GROWN_BASIS_LABEL),
       kind: 'comp_grown',
-      label: col.ordinal === 1 ? 'STR TTM (Y1)' : 'Grown (assumption)',
-      detail: `STR comp set ${col.ordinal === 1 ? 'TTM level as the Year-1 benchmark' : 'grown at the market growth assumption'} — the same series the STR comp-set index method runs on. ${parts.join(' · ')}`,
+      label: compGrownLabel(basis, col.ordinal),
+      detail: `STR comp set ${compGrownDetail(basis, col.ordinal)} — the same series the STR comp-set index method runs on. ${parts.join(' · ')}`,
     };
     filled++;
   });

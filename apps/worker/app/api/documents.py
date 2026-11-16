@@ -85,7 +85,14 @@ from ..services.financial_source_rank import (
 from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
-from ..services.market_comp_set import closed_roster_indices, resolve_report_period_end
+from ..services.market_comp_set import (
+    CompSetDerivation,
+    StrMarketInputs,
+    build_str_inputs,
+    derive_comp_set_from_inputs,
+    normalized_hotel_name,
+    resolve_report_period_end,
+)
 from ..services.market_fields import extraction_lane, parse_extraction_records
 from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
@@ -4074,11 +4081,12 @@ def _aggregate_market_data(
     market_study_fields: dict[str, Any] = {}
     # Per-field provenance (page + document) keyed like the flat dicts.
     meta: dict[str, _FieldMeta] = {}
-    # Comp-set rows are keyed by their numeric index (1..7).
-    compset_rows: dict[int, dict[str, Any]] = {}
-    # Every STR-lane roster on the deal (newest extraction first) — only for
-    # the closed-hotel rule, which reads closures from ANY report.
-    all_rosters: list[dict[int, dict[str, Any]]] = []
+    # FON-60 / FON-61 (E-009) — every STR-lane extraction on the deal, as
+    # records for the Market tab's ONE comp-set derivation
+    # (``market_comp_set.build_str_inputs`` → ``derive_comp_set_from_inputs``):
+    # the roster Index Analysis reads is the same union, in the same report-
+    # period order, as the "N hotels · N keys" headline of Market Overview.
+    str_records: list[dict[str, Any]] = []
     sources: dict[str, list[UUID]] = {}
     doc_names: dict[str, str] = {}
     # Sam #6 — the reporting period of the extraction that supplied the
@@ -4128,13 +4136,18 @@ def _aggregate_market_data(
         if doc_name and doc_type not in doc_names:
             doc_names[doc_type] = doc_name
 
-        # The comp-set roster must come from ONE report (the newest
-        # extraction that lists one), never a by-index merge of two: with a
-        # 2024 and a 2025 STR Trend on the deal, ``compset.1.keys`` from the
-        # older report must not overwrite the newer report's row. Bucket this
-        # extraction's roster separately and adopt it only when no newer
-        # extraction already supplied one.
-        row_compset: dict[int, dict[str, Any]] = {}
+        if doc_type == "STR_TREND":
+            # The roster is read by the comp-set union below, never by a
+            # by-index merge of two reports (``compset.1.keys`` of a 2024
+            # report must not overwrite a 2025 report's row). An in-process
+            # caller may pass records without an extraction id; each record
+            # is still one extraction, so give it a per-record id.
+            rec = dict(row)
+            rec["doc_type"] = "STR_TREND"
+            rec["fields"] = raw_fields
+            if rec.get("extraction_id") is None:
+                rec["extraction_id"] = f"record-{len(str_records) + 1}"
+            str_records.append(rec)
         for f in raw_fields:
             if not isinstance(f, dict):
                 continue
@@ -4144,7 +4157,7 @@ def _aggregate_market_data(
             value = f.get("value")
             page = _coerce_int(f.get("source_page") or f.get("page_number") or f.get("page"))
             if doc_type == "STR_TREND":
-                _bucket_str_trend(name, value, str_trend_fields, row_compset)
+                _bucket_str_trend(name, value, str_trend_fields)
             elif doc_type == "CBRE_HORIZONS":
                 _bucket_cbre(name, value, cbre_fields)
             elif doc_type == "PNL_BENCHMARK":
@@ -4154,21 +4167,21 @@ def _aggregate_market_data(
             key = f"{doc_type}:{name.lower()}"
             if key not in meta:
                 meta[key] = _FieldMeta(page=page, doc_name=doc_name, doc_type=doc_type)
-        if row_compset:
-            all_rosters.append(row_compset)
-        if row_compset and not compset_rows:
-            compset_rows.update(row_compset)
         if doc_type == "STR_TREND" and ttm_period is None and _carries_subject_ttm(raw_fields):
             ttm_period = _str_ttm_period(row, raw_fields, doc_name)
 
+    # ONE derivation for the comp set (FON-60 / E-009): the union of every
+    # STR-lane roster, closed hotels excluded — the exact function behind the
+    # Market Overview ``comp_set`` block, so the two can never disagree.
+    str_inputs = build_str_inputs(parse_extraction_records(str_records)) if str_records else None
+    comp_set = derive_comp_set_from_inputs(str_inputs) if str_inputs is not None else None
     str_trend = _build_str_trend_block(
         str_trend_fields,
-        compset_rows,
+        _union_compset_entries(str_inputs, comp_set) if str_inputs is not None and comp_set is not None else [],
         meta=meta,
         doc_name=doc_names.get("STR_TREND"),
-        closed_indices=(
-            closed_roster_indices(compset_rows, all_rosters) if compset_rows else set()
-        ),
+        active_keys=comp_set.active_keys if comp_set is not None else None,
+        active_count=comp_set.active_count if comp_set is not None else None,
     )
     if str_trend is not None and ttm_period is not None:
         str_trend.ttm_period_end, str_trend.ttm_period_end_basis, str_trend.ttm_doc_name = ttm_period
@@ -4278,26 +4291,12 @@ def _meta_of(meta: Mapping[str, _FieldMeta] | None, doc_type: str, lname: str) -
     return meta.get(f"{doc_type}:{lname}")
 
 
-def _bucket_str_trend(
-    name: str,
-    value: Any,
-    flat: dict[str, Any],
-    compset: dict[int, dict[str, Any]],
-) -> None:
-    """Sort STR_TREND field paths into the flat block or one of the
-    indexed compset rows."""
+def _bucket_str_trend(name: str, value: Any, flat: dict[str, Any]) -> None:
+    """Sort STR_TREND field paths into the flat block. The indexed compset
+    rows (``ttm_performance.compset.<n>.<attr>``) are NOT bucketed here —
+    the roster is the comp-set union (``_union_compset_entries``)."""
     lname = name.lower()
-    # Compset rows look like ``ttm_performance.compset.<n>.<attr>``.
     if lname.startswith("ttm_performance.compset."):
-        rest = lname[len("ttm_performance.compset.") :]
-        try:
-            idx_str, attr = rest.split(".", 1)
-            idx = int(idx_str)
-        except (ValueError, IndexError):
-            return
-        # First value seen wins (chunks of one extraction arrive in order;
-        # across extractions the caller keeps only the newest roster).
-        compset.setdefault(idx, {}).setdefault(attr, value)
         return
     # Subject + indices + rollups land in the flat dict so the most
     # recent extraction's value wins (don't overwrite if already set
@@ -4349,56 +4348,70 @@ def _build_subject_annual(
     ]
 
 
+def _union_compset_entries(inputs: StrMarketInputs, derived: CompSetDerivation) -> list[CompSetEntry]:
+    """The comp-set union as envelope rows — one per unioned hotel, in the
+    union's order, with its status and its keys exactly as the Market
+    Overview block carries them. Per-hotel performance (where an extraction
+    lists any — STR anonymises it) is read from the roster rows of the most
+    recent report that carries it, matched by STR id, then by name."""
+    perf_by_id: dict[str, dict[str, Any]] = {}
+    perf_by_name: dict[str, dict[str, Any]] = {}
+    for snap in inputs.rosters:  # most recent report period first
+        for _idx, entry in sorted(snap.rows.items()):
+            perf = {k: entry.get(k) for k in ("occupancy_pct", "adr_usd", "revpar_usd")}
+            if all(v is None for v in perf.values()):
+                continue
+            sid = entry.get("str_id")
+            if sid is not None and str(sid).strip():
+                perf_by_id.setdefault(str(sid).strip(), perf)
+            raw_name = entry.get("name")
+            if raw_name is not None and str(raw_name).strip():
+                perf_by_name.setdefault(normalized_hotel_name(str(raw_name)), perf)
+
+    def _perf_of(h: Any) -> dict[str, Any]:
+        if h.str_id and h.str_id in perf_by_id:
+            return perf_by_id[h.str_id]
+        for n in (h.name, h.name_as_reported, *h.merged_names):
+            hit = perf_by_name.get(normalized_hotel_name(n)) if n else None
+            if hit is not None:
+                return hit
+        return {}
+
+    out: list[CompSetEntry] = []
+    for h in derived.hotels:
+        perf = _perf_of(h)
+        out.append(
+            CompSetEntry(
+                name=h.name or None,
+                keys=h.keys,
+                occupancy_pct=_coerce_float(perf.get("occupancy_pct")),
+                adr_usd=_coerce_float(perf.get("adr_usd")),
+                revpar_usd=_coerce_float(perf.get("revpar_usd")),
+                status=h.status,
+            )
+        )
+    return out
+
+
 def _build_str_trend_block(
     flat: dict[str, Any],
-    compset: dict[int, dict[str, Any]],
+    compset_entries: list[CompSetEntry],
     *,
     meta: Mapping[str, _FieldMeta] | None = None,
     doc_name: str | None = None,
-    closed_indices: set[int] | frozenset[int] = frozenset(),
+    active_keys: int | None = None,
+    active_count: int | None = None,
 ) -> StrTrendBlock | None:
-    if not flat and not compset:
+    """``compset_entries`` is the comp-set union (closed hotels listed, never
+    counted); ``active_keys`` / ``active_count`` are the union's headline —
+    the active roster's keys and count, or the report's own rollup only when
+    no roster was extracted (``derive_comp_set_union``). Index Analysis's
+    "Keys" row and Market Overview's "N hotels · N keys" read the same
+    numbers (FON-60)."""
+    if not flat and not compset_entries:
         return None
-    compset_entries: list[CompSetEntry] = [
-        CompSetEntry(
-            name=str(compset[i].get("name")) if compset[i].get("name") is not None else None,
-            keys=_coerce_int(compset[i].get("keys")),
-            occupancy_pct=_coerce_float(compset[i].get("occupancy_pct")),
-            adr_usd=_coerce_float(compset[i].get("adr_usd")),
-            revpar_usd=_coerce_float(compset[i].get("revpar_usd")),
-            status="closed" if i in closed_indices else "active",
-        )
-        for i in sorted(compset.keys())
-    ]
-    # Closed hotels (``market_comp_set`` rule) stay listed but never count.
-    active_entries = [e for e in compset_entries if e.status != "closed"]
-
-    # `comp_set.total_keys` is the sum of room counts across every
-    # property in the comp set. STR's "Response" tab carries it as the
-    # last row of the property roster; many older extractions skip the
-    # explicit rollup but DO emit the indexed compset rows. Fall back
-    # to summing the per-property `keys` so the frontend Index-Analysis
-    # table can compute Available Rooms = days × total_keys instead of
-    # rendering a row of zeros. The subject keys live on the deal
-    # record so we leave them out of this comp-set rollup.
-    extracted_total_keys = _coerce_int(flat.get("comp_set.total_keys"))
-    if extracted_total_keys is None or extracted_total_keys <= 0:
-        keys_sum = sum(e.keys for e in active_entries if e.keys and e.keys > 0)
-        derived_total_keys: int | None = keys_sum if keys_sum > 0 else None
-    else:
-        derived_total_keys = extracted_total_keys
-
-    # comp_set_size: prefer the extracted value; otherwise count rows
-    # that have *any* identifying detail (name or keys). An empty
-    # roster correctly stays None.
-    extracted_size = _coerce_int(flat.get("comp_set.comp_set_size"))
-    if extracted_size is None or extracted_size <= 0:
-        derived_size: int | None = (
-            sum(1 for e in active_entries if e.name or (e.keys and e.keys > 0))
-            or None
-        )
-    else:
-        derived_size = extracted_size
+    derived_total_keys = active_keys if active_keys is not None and active_keys > 0 else None
+    derived_size = active_count if active_count is not None and active_count > 0 else None
 
     report_year = _coerce_int(flat.get("str_trend.report_year"))
     if report_year is not None and not (1990 <= report_year <= 2100):
@@ -4743,9 +4756,11 @@ async def load_market_data(
     rows = await session.execute(
         text(
             """
-            SELECT er.fields,
+            SELECT er.id AS extraction_id,
+                   er.fields,
                    er.document_id,
                    er.agent_version,
+                   er.created_at,
                    d.doc_type,
                    d.ai_proposed_doc_type,
                    d.filename,
@@ -4760,7 +4775,7 @@ async def load_market_data(
                    'STR', 'STR_TREND', 'CBRE_HORIZONS', 'PNL_BENCHMARK',
                    'MARKET_STUDY'
                )
-             ORDER BY er.created_at DESC
+             ORDER BY er.created_at DESC, er.id DESC
             """
         ),
         {"deal": str(deal_id), "tenant": str(tenant_id)},

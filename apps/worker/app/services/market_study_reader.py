@@ -279,8 +279,15 @@ class PipelineFilter:
     doc_name: str | None
     note: str | None
     #: Export rows carrying neither a ``market`` nor a ``submarket`` — not
-    #: counted as matched or unmatched (live: 27 of 30).
+    #: counted as matched or unmatched (live: 27 of 30). FON-60: also every
+    #: export row when the export names no market at all — such a row is
+    #: never taken as the deal's supply (no market is invented for it).
     market_unknown_rows: int = 0
+    #: Submarket-report list rows (canonical ``under_construction.<n>`` /
+    #: ``pipeline_hotel_<n>``) that themselves name a market or submarket
+    #: which is not the deal's — never listed. Export rows naming another
+    #: market are the unmatched remainder of ``total`` − ``matched``.
+    other_market_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -687,10 +694,23 @@ def _collect_pipeline_hotels(
 ) -> tuple[list[PipelineHotel], PipelineFilter | None]:
     """Every pipeline project row, with the export narrowed to the market.
 
-    Returns the hotels that count for this deal (canonical rows and the
-    submarket report's list are single-market; export rows must match the
-    deal's market / submarket, or the export must carry no market column at
-    all) plus the filter record for the export.
+    Returns the hotels that count for this deal plus the filter record for
+    the export. Which rows count (FON-61 E-008, FON-60 Sam 2026-11-16):
+
+    * A row that names a market / submarket which is not the deal's is never
+      listed, whatever document it came from (``other_market_rows``).
+    * An EXPORT row counts only when it names the deal's market / submarket.
+      An export is a ``market_study.pipeline.<slug>.*`` row, or any pipeline
+      row extracted from a spreadsheet (the CoStar pipeline workbook — live:
+      "Miami Beach Supply 12.10.25.xlsx" came through as 45
+      ``under_construction.<n>.*`` rows naming no market, among them Home2
+      Suites San Diego, Bally's Chicago and Fairmont Orlando). A row the
+      export names no market for is counted in ``market_unknown_rows`` and
+      the filter note, and is never taken as the deal's supply — no market
+      is invented for it.
+    * A submarket REPORT's own list (``under_construction.<n>.*`` /
+      ``property_overview.pipeline_hotel_<n>_*`` from a non-spreadsheet
+      document) is the submarket's by construction and is listed as it is.
     """
     terms = list(dict.fromkeys(_norm_term(t) for t in market_terms if isinstance(t, str) and t.strip()))
     grouped: dict[tuple[str, str | None], dict[str, object]] = {}
@@ -717,6 +737,8 @@ def _collect_pipeline_hotels(
                 key, attr, kind = (f"property_overview.pipeline_hotel_{m.group(1)}", r.doc_id), m.group(2), "report_list"
         if key is None or attr is None:
             continue
+        if kind != "export" and is_spreadsheet_doc(r.doc_name):
+            kind = "export"
         g = grouped.setdefault(key, {"kind": kind, "doc_name": r.doc_name, "doc_id": r.doc_id, "page": r.page})
         if attr == "name" and isinstance(r.value, str):
             g.setdefault("name", r.value.strip())
@@ -738,13 +760,14 @@ def _collect_pipeline_hotels(
     export_total = 0
     export_matched = 0
     export_unknown = 0
+    other_market = 0
     export_docs: list[str] = []
     export_has_geo = any(
         g["kind"] == "export" and (g.get("market") or g.get("submarket")) for g in grouped.values()
     )
     for (prefix, _doc), g in grouped.items():
         kind = str(g["kind"])
-        default: Bucket | None = "under_construction" if kind == "canonical" else None
+        default: Bucket | None = "under_construction" if kind == "canonical" or prefix.startswith(UNDER_CONSTRUCTION_PREFIX) else None
         hotel = PipelineHotel(
             name=g.get("name"),  # type: ignore[arg-type]
             keys=g.get("keys"),  # type: ignore[arg-type]
@@ -759,48 +782,78 @@ def _collect_pipeline_hotels(
             source_prefix=prefix,
             keys_ref=g.get("keys_ref"),  # type: ignore[arg-type]
         )
+        names_geo = bool(hotel.market or hotel.submarket)
         if kind != "export":
+            # The submarket report's own list — unless the row itself names
+            # another market (then it is not this submarket's project).
+            if names_geo and terms and not _matches_market(hotel.market, hotel.submarket, terms):
+                other_market += 1
+                continue
             hotels.append(hotel)
             continue
         export_total += 1
         if hotel.doc_name and hotel.doc_name not in export_docs:
             export_docs.append(hotel.doc_name)
-        if export_has_geo and not (hotel.market or hotel.submarket):
-            # The export has a market column but this row left it blank —
-            # unknown market, counted neither as matched nor as unmatched.
+        if not names_geo:
+            # The export names no market for this row (a blank cell, or no
+            # market column at all) — unknown market, counted neither as
+            # matched nor as unmatched, and never taken as the deal's supply.
             export_unknown += 1
             continue
-        matched = (not export_has_geo) or _matches_market(hotel.market, hotel.submarket, terms)
-        if matched:
+        if terms and _matches_market(hotel.market, hotel.submarket, terms):
             export_matched += 1
             hotels.append(hotel)
+        # An export row naming another market is simply unmatched — the
+        # "N of M rows … are in <market>" line already says so.
 
     pfilter: PipelineFilter | None = None
-    if export_total:
+    if export_total or other_market:
         doc_label = ", ".join(export_docs) if export_docs else "the pipeline export"
+        deal_market = market_terms[0] if market_terms else "the deal's market"
         unknown_note = (
             f"{export_unknown} of {export_total} rows carry no market or submarket and were not counted"
             if export_unknown
             else None
         )
-        if not export_has_geo:
-            note = f"{doc_label} carries no market column; all {export_total} rows were taken as the deal's market."
-        elif not terms:
+        other_note = (
+            f"{other_market} listed project{'s' if other_market != 1 else ''} name{'' if other_market != 1 else 's'} "
+            f"another market and {'were' if other_market != 1 else 'was'} left out"
+            if other_market
+            else None
+        )
+        if export_total and not export_has_geo:
+            note = (
+                f"{doc_label} names no market for any of its {export_total} pipeline rows; "
+                f"none was counted as {deal_market} supply."
+            )
+        elif export_total and not terms:
             note = f"No deal market to filter {doc_label} by — its {export_total} rows were not summed."
-        elif export_matched == 0:
-            note = f"no pipeline rows for {market_terms[0]} in {doc_label}"
+        elif export_total and export_matched == 0:
+            note = f"no pipeline rows for {deal_market} in {doc_label}"
             if unknown_note:
                 note += f" ({unknown_note})"
         elif unknown_note:
             note = f"{unknown_note} in {doc_label}."
         else:
             note = None
+        if other_note:
+            note = f"{note} {other_note.capitalize()}." if note else f"{other_note.capitalize()}."
         pfilter = PipelineFilter(
             terms=list(terms), matched=export_matched, total=export_total,
             doc_name=export_docs[0] if export_docs else None, note=note,
-            market_unknown_rows=export_unknown,
+            market_unknown_rows=export_unknown, other_market_rows=other_market,
         )
     return hotels, pfilter
+
+
+_SPREADSHEET_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv")
+
+
+def is_spreadsheet_doc(doc_name: str | None) -> bool:
+    """A pipeline workbook (CoStar's multi-market export) rather than a
+    submarket report — by the document's own file type, nothing inferred
+    from its rows."""
+    return isinstance(doc_name, str) and doc_name.strip().lower().endswith(_SPREADSHEET_SUFFIXES)
 
 
 def _sum_by_bucket(hotels: Sequence[PipelineHotel]) -> dict[str, tuple[int, list[FieldRef]]]:

@@ -334,14 +334,16 @@ class PipelineFilterOut(BaseModel):
     doc_name: str | None = None
     note: str | None = None
     # Export rows with neither a market nor a submarket — counted neither
-    # as matched nor as unmatched.
+    # as matched nor as unmatched, never taken as the deal's supply.
     market_unknown_rows: int = 0
+    # FON-60 — rows of any source naming a market that is not the deal's.
+    other_market_rows: int = 0
 
     @classmethod
     def of(cls, f: PipelineFilter) -> PipelineFilterOut:
         return cls(
             terms=list(f.terms), matched=f.matched, total=f.total, doc_name=f.doc_name, note=f.note,
-            market_unknown_rows=f.market_unknown_rows,
+            market_unknown_rows=f.market_unknown_rows, other_market_rows=f.other_market_rows,
         )
 
 

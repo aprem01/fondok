@@ -591,10 +591,14 @@ class ToplineBuild:
     growth_provenance: list[GrowthYear] = field(default_factory=list)
 
 
-def _step_summary(steps: Sequence[MetricGrowth]) -> str:
+def _step_summary(steps: Sequence[tuple[str, MetricGrowth]]) -> str:
+    """FON-60 (Sam 2026-11-16) — each growth step names its METRIC as well as
+    its year: a benchmark year grown by both occupancy and ADR used to read
+    "2026: -1.2%; 2026: +1.8%" with nothing saying which was which."""
     parts: list[str] = []
-    for g in steps:
-        c = g.deal_year.label if g.deal_year is not None else g.calendar_year
+    for metric, g in steps:
+        year = g.deal_year.label if g.deal_year is not None else g.calendar_year
+        c = f"{year} {METRIC_NOUN.get(metric, metric)}"
         if g.value is None:
             parts.append(f"{c}: held flat — no figure")
         else:
@@ -746,7 +750,7 @@ def build_topline(
     for y in range(1, hold + 1):
         dy = growth.deal_year(y)
         values: dict[str, float | None] = {}
-        all_steps: list[MetricGrowth] = []
+        all_steps: list[tuple[str, MetricGrowth]] = []
         for metric in METRICS:
             level = levels[metric]
             if bench.level == "none" or level is None or metric in inputs.explicit_metrics:
@@ -782,7 +786,7 @@ def build_topline(
                 continue
             values[metric] = v
             prev_values[metric] = v
-            all_steps.extend(steps)
+            all_steps.extend((metric, g) for g in steps)
         if values.get("occupancy") is None and values.get("adr") is None:
             continue
         where = dy.label if dy is not None else f"Year {y}"
@@ -790,11 +794,11 @@ def build_topline(
             basis = bench.basis or "actual"
             label = f"{'Forecast' if basis == 'forecast' else 'Actual'} · {bench.label}"
         else:
-            doc_only = all(g.source in ("cbre_horizons", "costar_submarket_forecast") for g in all_steps)
+            doc_only = all(g.source in ("cbre_horizons", "costar_submarket_forecast") for _m, g in all_steps)
             basis = "forecast" if doc_only else "assumption"
             label = (
                 f"{'Forecast' if doc_only else 'Assumption'} · {bench.label}, grown to {where} — "
-                + _step_summary([g for g in all_steps])
+                + _step_summary(all_steps)
             )
         occ_v, adr_v = values.get("occupancy"), values.get("adr")
         bench_years.append(
