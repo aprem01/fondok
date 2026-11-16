@@ -19,7 +19,7 @@
  *  4. UNGATED — the tab renders its content (no "unavailable" dead-end) whenever
  *     the engine output is present.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import type { EngineOutputsResponse } from '@/lib/api';
 
@@ -547,6 +547,114 @@ describe('PartnershipTab — waterfall table polish (FON-66 §2)', () => {
 // other query param (`doc`, `focus`, `reviewField`) intact.
 // ─────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 (Sam's QA, 2026-11-16) — on a one-tier stack the promote row read
+// "Promote — above 12% LP IRR" while its hurdle cell read "Until 12% LP IRR".
+// The engine pays a band until the LP IRR reaches its hurdle, so the name and
+// the hurdle cell must carry the same number; only the top band of a
+// multi-tier stack is open-ended, and then above the PREVIOUS hurdle, which is
+// how the worker labels it ("Tier 2 (>13%)").
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Sam's QA entry on d0bfe816: one promote tier, 12% hurdle, 20% GP. */
+const ONE_TIER_PAYLOAD = {
+  id: 'deal-uuid-1',
+  sources: {
+    'partnership.pref_rate': 'analyst_override',
+    'partnership.gp_equity_pct': 'analyst_override',
+    'partnership.waterfall.tier_count': 'analyst_override',
+    'partnership.waterfall.0.hurdle_rate': 'analyst_override',
+    'partnership.waterfall.0.gp_split': 'analyst_override',
+  },
+  values: {
+    'partnership.pref_rate': 0.08,
+    'partnership.gp_equity_pct': 0.10,
+    'partnership.waterfall.tier_count': 1,
+    'partnership.waterfall.0.hurdle_rate': 0.12,
+    'partnership.waterfall.0.gp_split': 0.2,
+  },
+};
+
+describe('PartnershipTab — promote tier name agrees with its hurdle cell (FON-66, Sam 2026-11-16)', () => {
+  it('a one-tier stack reads "to 12%" beside "Until 12%" — never "above" its own hurdle', async () => {
+    sources.payload = ONE_TIER_PAYLOAD;
+    renderWithSources();
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+    expect(await within(tiers).findByText('Promote — to 12% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Until 12% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).queryByText(/Promote — above/)).toBeNull();
+    // The dollar waterfall keys the same band by the worker's label.
+    expect(within(tiers).getByText('Residual split — a single tier takes all remaining proceeds')).toBeInTheDocument();
+  });
+
+  it('every capped band names the hurdle its cell shows; the open-ended top band names the previous one', async () => {
+    renderWithSources(); // the two-tier carried stack: 13% then 18%
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+    expect(await within(tiers).findByText('Promote — to 13% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Until 13% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Promote — above 13% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).getByText('Until 18% LP IRR')).toBeInTheDocument();
+    expect(within(tiers).queryByText('Promote — above 18% LP IRR')).toBeNull();
+    expect(within(tiers).getByText('All remaining proceeds above the previous hurdle')).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 (Sam's QA, 2026-11-16) — "Clear override". Clearing the input and
+// saving only closed the editor (an empty draft is a no-op), so the 10% stuck
+// and Sam found no way back to the deal's own terms. The editor now carries
+// a Clear override button whenever the field has an analyst override; it
+// drops the key(s) from `field_overrides` in the same PATCH a save uses.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('PartnershipTab — Clear override on the waterfall editors (FON-66, Sam 2026-11-16)', () => {
+  const QA_NOTE = 'QA test FON-66';
+  afterEach(() => { mockDeal.field_overrides = {}; });
+
+  it('a hurdle with an override offers Clear override, and clearing drops the key from field_overrides', async () => {
+    mockDeal.field_overrides = {
+      'partnership.waterfall.0.hurdle_rate': { value: 0.12, note: QA_NOTE },
+      pref_rate: { value: 0.08, note: QA_NOTE },
+    };
+    renderWithSources();
+    fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
+    // The override (12%) wins over the carried 13%.
+    fireEvent.click(await screen.findByText('Until 12% LP IRR'));
+    const clear = await screen.findByRole('button', { name: 'Clear override' });
+    fireEvent.click(clear);
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = (updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }]);
+    expect(body.field_overrides).not.toHaveProperty('partnership.waterfall.0.hurdle_rate');
+    // Only the cleared key leaves; the other override stays.
+    expect(body.field_overrides).toHaveProperty('pref_rate');
+    // Back to the carried term, with no editor left open.
+    expect(await screen.findByText('Until 13% LP IRR')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear override' })).toBeNull();
+  });
+
+  it('GP ownership clears GP and LP together; a field with no override offers no Clear', async () => {
+    mockDeal.field_overrides = {
+      gp_equity_pct: { value: 0.1, note: QA_NOTE },
+      lp_equity_pct: { value: 0.9, note: QA_NOTE },
+    };
+    renderWithSources();
+    fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
+    // The hurdle carries no override → no Clear on its editor.
+    fireEvent.click(await screen.findByText('Until 13% LP IRR'));
+    expect(screen.queryByRole('button', { name: 'Clear override' })).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText('percent'), { key: 'Escape' });
+
+    // The ownership row does.
+    const own = screen.getAllByText('10%').find((el) => el.closest('div')?.textContent?.includes('GP / Sponsor Ownership'));
+    expect(own).toBeTruthy();
+    fireEvent.click(own as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear override' }));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(1));
+    const [, body] = (updateSpy.mock.calls[0] as unknown as [string, { field_overrides: Record<string, unknown> }]);
+    expect(body.field_overrides).toEqual({});
+  });
+});
+
 describe('PartnershipTab — `?tab=partnership&sub=<slug>` routing', () => {
   const tabEl = (name: string) => screen.getByRole('tab', { name });
 
@@ -652,7 +760,9 @@ describe('PartnershipTab — Summary shows the distribution waterfall (FON-66 / 
     expect(within(tiers).getByText('Tier I — Return of Capital')).toBeInTheDocument();
     expect(within(tiers).getByText('Tier II — Preferred Return')).toBeInTheDocument();
     expect(within(tiers).getByText('Tier III — GP Catch-Up')).toBeInTheDocument();
-    expect(within(tiers).getByText('Promote — above 18% LP IRR')).toBeInTheDocument();
+    // FON-66 (Sam, 2026-11-16) — the top band is open-ended above the PREVIOUS
+    // hurdle (the worker's "Tier 2 (>13%)"), not above its own entered hurdle.
+    expect(within(tiers).getByText('Promote — above 13% LP IRR')).toBeInTheDocument();
     expect(within(tiers).getByText('Until 13% LP IRR')).toBeInTheDocument();
     expect(within(tiers).getAllByText('35%').length).toBeGreaterThan(0); // GP split
     expect(within(tiers).getAllByText('65%').length).toBeGreaterThan(0); // LP split = 100% − GP
