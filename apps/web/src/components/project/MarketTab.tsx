@@ -52,6 +52,7 @@ import {
   StatementTable,
 } from '@/components/design';
 import IndexAnalysisSection from './pl/IndexAnalysisSection';
+import { compSetKeys } from './pl/indexAnalysisModel';
 import { PL_SUB_LABEL, TAB_LABEL } from '@/lib/projectTabs';
 
 // ─── worker payload shapes ──────────────────────────────────────────────────
@@ -1737,9 +1738,13 @@ export default function MarketTab({ projectId }: { projectId: number | string })
   // listed and excluded from both). Fallback on an older worker = the roster
   // rows the keys are summed over — never `comp_set_size`, the report's
   // rollup, which counts closed hotels the keys exclude (344 keys / "5 hotels").
+  // FON-60 — the `/market-data` roster IS the same union the worker's block
+  // is derived from, and the fallback sum is the very function Index
+  // Analysis's "Keys" row uses (`compSetKeys`), so the two surfaces cannot
+  // disagree (Sam 2026-11-16: 978 keys on Market Overview, 344 on Index
+  // Analysis, from two rosters).
   const compSetBlock = workerMarket?.comp_set ?? null;
-  const rosterKeySum =
-    strTrend?.compset?.reduce((s, c) => s + (c.status !== 'closed' && c.keys && c.keys > 0 ? c.keys : 0), 0) || null;
+  const rosterKeySum = compSetKeys(strTrend);
   const rosterCount = strTrend?.compset?.filter((c) => c.status !== 'closed').length || null;
   const compKeyCount = compSetBlock?.active_keys ?? rosterKeySum;
   const activeHotelCount = compSetBlock?.active_count ?? rosterCount;

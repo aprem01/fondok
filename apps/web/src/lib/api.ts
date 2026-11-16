@@ -2641,8 +2641,11 @@ export interface MarketPipelineFilter {
   total: number;
   doc_name?: string | null;
   note?: string | null;
-  /** Export rows with neither a market nor a submarket — counted neither way. */
+  /** Export rows with neither a market nor a submarket — counted neither way,
+   *  never taken as the deal's supply (no market is invented for them). */
   market_unknown_rows?: number;
+  /** FON-60 — rows of any source naming a market that is not the deal's. */
+  other_market_rows?: number;
 }
 
 /** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory, or the

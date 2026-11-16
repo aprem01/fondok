@@ -284,7 +284,12 @@ def test_export_is_never_summed_without_a_market_to_filter_by() -> None:
     assert "No deal market to filter" in (s.detail or "")
 
 
-def test_single_market_export_without_geo_columns_counts_every_row() -> None:
+def test_export_without_geo_columns_is_never_taken_as_the_deals_market() -> None:
+    """FON-60 (Sam 2026-11-16) — an export row that names no market is not
+    the deal's supply: nothing is listed or summed, and the filter line
+    says the export names no market for its rows. (Before: "all N rows
+    were taken as the deal's market" — which put Home2 Suites San Diego and
+    Bally's Chicago in Miami Beach's pipeline.)"""
     rows = [
         _row("market_study.pipeline.a.name", "A", doc=DOC_B),
         _row("market_study.pipeline.a.keys", 120, doc=DOC_B),
@@ -297,8 +302,13 @@ def test_single_market_export_without_geo_columns_counts_every_row() -> None:
         _row("market_study.pipeline.c.status", "Completed", doc=DOC_B),
     ]
     s = read_supply_growth(rows, has_documents=True, as_of_year=AS_OF, market_terms=["Miami Beach"])
-    assert s.under_construction_rooms == 120 and s.final_planning_rooms == 80
-    assert s.pipeline_filter is not None and "carries no market column" in (s.pipeline_filter.note or "")
+    assert s.under_construction_rooms is None and s.final_planning_rooms is None
+    assert s.pipeline_hotels == []
+    assert s.pipeline_filter is not None
+    assert s.pipeline_filter.market_unknown_rows == 3 and s.pipeline_filter.matched == 0
+    assert s.pipeline_filter.note == (
+        f"{DOC_B} names no market for any of its 3 pipeline rows; none was counted as Miami Beach supply."
+    )
 
 
 # ─────────────────────────── both documents together ───────────────────────────

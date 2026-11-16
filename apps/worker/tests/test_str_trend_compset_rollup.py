@@ -9,10 +9,13 @@ Response tab. The frontend Index-Analysis table multiplies
 ``days × total_keys`` for the Available-Rooms row — a missing total
 collapses every cell to zero.
 
-This module exercises the fallback path that derives ``total_keys``
-(and ``comp_set_size``) by summing the per-comp roster when the
-explicit rollup is missing, plus the happy path that keeps the
-extracted rollup when both are present.
+FON-60 (Sam QA 2026-11-16) — the envelope's roster, ``total_keys`` and
+``comp_set_size`` are now the Market tab's ONE comp-set derivation
+(``market_comp_set.derive_comp_set_union``): the ACTIVE hotels of the
+roster unioned across every STR-lane extraction. The report's own rollup
+is used only when no roster was extracted at all — it is never preferred
+over the roster (E-009: the rollup counts closed hotels the keys exclude,
+and on the live deal read 419 / 1,011 against a 344-key active roster).
 
 Pure unit test — no DB, no LLM, no I/O.
 """
@@ -23,6 +26,8 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 # Force an isolated SQLite so module import of ``app.api.documents`` —
 # which pulls the whole FastAPI app graph — doesn't touch any shared
@@ -39,9 +44,33 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.api.documents import (  # noqa: E402
+    _aggregate_market_data,
     _bucket_str_trend,
     _build_str_trend_block,
 )
+
+STR_STAMP = "template:str_trend:v1;ps=959bc26b;reg=2;pv=v8"
+
+
+def _record(flat: dict[str, Any], compset: dict[int, dict[str, Any]], *, filename: str = "ANG-20250500-USD-E.xlsx") -> dict[str, Any]:
+    fields: list[dict[str, Any]] = [{"field_name": k, "value": v} for k, v in flat.items()]
+    for idx, row in compset.items():
+        for attr, value in row.items():
+            fields.append({"field_name": f"ttm_performance.compset.{idx}.{attr}", "value": value})
+    return {
+        "document_id": uuid4(),
+        "doc_type": "STR_TREND",
+        "agent_version": STR_STAMP,
+        "ai_proposed_doc_type": "STR_TREND",
+        "filename": filename,
+        "fields": fields,
+    }
+
+
+def _envelope_str(flat: dict[str, Any], compset: dict[int, dict[str, Any]]):
+    env = _aggregate_market_data([_record(flat, compset)], uuid4())
+    assert env.str_trend is not None
+    return env.str_trend
 
 
 def test_total_keys_derived_from_roster_when_rollup_missing() -> None:
@@ -65,9 +94,8 @@ def test_total_keys_derived_from_roster_when_rollup_missing() -> None:
         5: {"name": "Dream South Beach", "keys": 107},
     }
 
-    block = _build_str_trend_block(flat, compset)
+    block = _envelope_str(flat, compset)
 
-    assert block is not None
     # 40 + 75 + 129 + 73 + 107 = 424
     assert block.total_keys == 424
     assert block.comp_set_size == 5
@@ -78,11 +106,11 @@ def test_total_keys_derived_from_roster_when_rollup_missing() -> None:
     assert block.compset[0].keys == 40
 
 
-def test_extracted_total_keys_wins_over_derived_sum() -> None:
-    """When the LLM does emit ``comp_set.total_keys`` we trust it
-    rather than recomputing — the extracted value can legitimately
-    include the subject itself or reflect a numbers-only row on the
-    STR Summary tab that the indexed roster misses."""
+def test_active_roster_wins_over_the_extracted_rollup() -> None:
+    """FON-60 / E-009 — while a roster exists, the headline is the active
+    roster's keys and count; the report's rollup is never preferred (live:
+    ``comp_set.total_keys`` 419 counted the closed Blue Moon the roster
+    excluded, and Index Analysis disagreed with Market Overview)."""
     flat = {
         "comp_set.total_keys": 556,
         "comp_set.comp_set_size": 5,
@@ -92,11 +120,21 @@ def test_extracted_total_keys_wins_over_derived_sum() -> None:
         2: {"name": "Blue Moon", "keys": 75},
     }
 
-    block = _build_str_trend_block(flat, compset)
-    assert block is not None
-    # 556 (extracted) over 115 (sum) — extracted wins.
+    block = _envelope_str(flat, compset)
+    assert block.total_keys == 115
+    assert block.comp_set_size == 2
+
+
+def test_rollup_used_only_when_no_roster_was_extracted() -> None:
+    flat = {
+        "ttm_performance.subject.occupancy_pct": 0.7,
+        "comp_set.total_keys": 556,
+        "comp_set.comp_set_size": 5,
+    }
+    block = _envelope_str(flat, {})
     assert block.total_keys == 556
     assert block.comp_set_size == 5
+    assert block.compset == []
 
 
 def test_empty_roster_with_no_rollup_yields_null_total() -> None:
@@ -106,11 +144,17 @@ def test_empty_roster_with_no_rollup_yields_null_total() -> None:
     flat = {
         "ttm_performance.subject.occupancy_pct": 0.7,
     }
-    block = _build_str_trend_block(flat, {})
-    assert block is not None
+    block = _envelope_str(flat, {})
     assert block.total_keys is None
     assert block.comp_set_size is None
     assert block.compset == []
+
+
+def test_build_block_direct_with_no_roster_and_no_headline() -> None:
+    block = _build_str_trend_block({"ttm_performance.subject.occupancy_pct": 0.7}, [])
+    assert block is not None
+    assert block.total_keys is None and block.comp_set_size is None and block.compset == []
+    assert _build_str_trend_block({}, []) is None
 
 
 def test_partial_keys_in_roster_still_yields_useful_total() -> None:
@@ -123,26 +167,18 @@ def test_partial_keys_in_roster_still_yields_useful_total() -> None:
         2: {"name": "Prop B", "keys": None},
         3: {"name": "Prop C", "keys": 50},
     }
-    block = _build_str_trend_block(flat, compset)
-    assert block is not None
+    block = _envelope_str(flat, compset)
     assert block.total_keys == 150
     assert block.comp_set_size == 3
 
 
-def test_bucket_str_trend_routes_indexed_compset_fields() -> None:
-    """The bucketing step is what feeds ``_build_str_trend_block`` —
-    confirm an indexed compset field lands in the right row, not the
-    flat dict."""
+def test_bucket_str_trend_keeps_indexed_compset_fields_out_of_the_flat_dict() -> None:
+    """The flat dict carries the subject / indices / rollups; the indexed
+    compset rows are read by the comp-set union, never bucketed here."""
     flat: dict[str, object] = {}
-    compset: dict[int, dict[str, object]] = {}
 
-    _bucket_str_trend("ttm_performance.compset.3.keys", 129, flat, compset)
-    _bucket_str_trend(
-        "ttm_performance.compset.3.name", "The Betsy South Beach", flat, compset
-    )
-    _bucket_str_trend("ttm_performance.indices.rgi_revpar_index", 0.86, flat, compset)
+    _bucket_str_trend("ttm_performance.compset.3.keys", 129, flat)
+    _bucket_str_trend("ttm_performance.compset.3.name", "The Betsy South Beach", flat)
+    _bucket_str_trend("ttm_performance.indices.rgi_revpar_index", 0.86, flat)
 
-    assert compset == {
-        3: {"keys": 129, "name": "The Betsy South Beach"},
-    }
     assert flat == {"ttm_performance.indices.rgi_revpar_index": 0.86}

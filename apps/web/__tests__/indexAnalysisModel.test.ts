@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import type { EngineOutputsResponse, HistoricalBaselineResponse } from '@/lib/api';
 import {
   buildCompSeries,
+  compGrownLabel,
   compSetKeys,
   buildMarketSeries,
   buildSubjectSeries,
@@ -504,5 +505,33 @@ describe('comp-set forecast band (FON-60, Sam 2026-11-11)', () => {
     expect(r.forecastFilled).toBe(false);
     expect(r.forecastBasisMix).toBeNull();
     expect(r.forecastBand).toBeNull();
+  });
+
+  // FON-60 (Sam 2026-11-16) — the Source chip said FORECAST while its subtext
+  // read "Grown (assumption)": the subtext was keyed off the year ordinal, not
+  // the basis. Chip, subtext and hover now read the ONE per-year basis.
+  it('the Source subtext and hover follow the per-year basis the chip renders', () => {
+    const r = buildCompSeries(cols2025, STR, [
+      { year: 1, deal_year: null, occupancy: fig(0.69, 'forecast', 'Forecast · STR TTM, grown to Year 1 — 2026 occupancy: -1.2% (CoStar forecast); 2026 ADR: +1.8% (CoStar forecast)'), adr: fig(310, 'forecast', 'Forecast · …') },
+      { year: 2, deal_year: null, occupancy: fig(0.70, 'forecast', 'Forecast · CoStar 2027'), adr: fig(315, 'forecast', 'Forecast · CoStar 2027') },
+      { year: 3, deal_year: null, occupancy: fig(0.70, 'assumption', 'Assumption · carried forward'), adr: fig(325, 'assumption', 'Assumption · carried forward') },
+    ]);
+    const f = cols2025.firstForecastIndex;
+    for (const [offset, basis, label, detail] of [
+      [0, 'forecast', 'Grown (forecast)', 'grown at the market forecast'],
+      [1, 'forecast', 'Grown (forecast)', 'grown at the market forecast'],
+      [2, 'assumption', 'Grown (assumption)', 'grown at the market growth assumption'],
+    ] as const) {
+      const s = r.sources[f + offset];
+      expect(s?.basis).toBe(basis);
+      expect(s?.label).toBe(label);
+      expect(s?.detail).toContain(detail);
+      // Chip text and subtext agree: never FORECAST over "(assumption)".
+      expect(s?.label.includes('assumption')).toBe(basis === 'assumption');
+    }
+    // Year 1 at the TTM level itself keeps its own subtext.
+    expect(compGrownLabel('actual', 1)).toBe('STR TTM (Y1)');
+    expect(compGrownLabel('forecast', 1)).toBe('Grown (forecast)');
+    expect(compGrownLabel('assumption', 2)).toBe('Grown (assumption)');
   });
 });

@@ -657,12 +657,15 @@ or the blend. The same rule governs every other reader of STR data: the `GET
 /deals/{id}/market-data` envelope behind Index Analysis (a market report tagged STR lands in
 `market_history` as the market's actuals, never in `str_trend` as the subject's own history) and the
 STR forward forecast's subject TTM seed and monthly history, which read only extractions that ran in
-the STR lane. The envelope lists the roster of ONE report — the newest STR-lane extraction that
-carries one, never a merge of two reports by row position — and marks a hotel `closed` under the
-same rule as above (an explicit marker in any STR report on the deal); Index Analysis's comp-set
-keys sum only the hotels that are not closed. The STR forward forecast's comp-set RevPAR baseline
-likewise reads one report's roster, and its penetration indices come from the newest extraction.
-Each figure keeps the document and page it was read from.
+the STR lane. The envelope's roster is the *same* union, derived by the same function and in the
+same report-period order as the Market Comps headline — one row per unioned hotel with its status
+and its keys, never a merge of two reports by row position — and its key total and hotel count are
+the union's active keys and active count, so Index Analysis's "Keys" row, the "Subject vs. Comp
+Set" card and the "N hotels · N keys" headline cannot disagree (they did on 2026-11-16: a Business
+Plan mis-filed as STR gave the headline a 7-hotel, 978-key union while Index Analysis read one
+report's 344). The report's rollup is used only when no roster was extracted at all. The STR forward
+forecast's comp-set RevPAR baseline likewise reads one report's roster, and its penetration indices
+come from the newest extraction. Each figure keeps the document and page it was read from.
 
 **“TTM · comp-set blend” is defined on the card.** Market Occupancy, ADR and RevPAR are the comp
 set's blended trailing-twelve-month figures, recovered exactly from the STR penetration indices:
@@ -691,7 +694,16 @@ series), and likewise final-planning rooms ÷ existing. The report's own supply 
 alongside, never substituted. A tile the reports cannot populate shows a dash with
 {{reason:no_document}} when no market study is on the deal and {{reason:no_source}} (“not in the
 uploaded reports”) when the reports are there but the series is not — no growth rate is ever
-assumed.
+assumed. **Which pipeline projects are the subject's.** A submarket report's own "Under
+Construction" list is the submarket's by construction and is listed as it is, except a row that
+itself names another market. A pipeline *export* — a `market_study.pipeline.*` row, or any pipeline
+row extracted from a spreadsheet (CoStar's multi-market pipeline workbook) — counts only when the
+row names the deal's market or submarket (the deal's city plus the submarket the reports name for
+themselves; the export's own header is never a term). A row the export names no market for is
+counted in the filter line (“names no market for … rows; none was counted as … supply”) and is
+never listed or summed as the deal's supply — no market is invented for it. The live Supply workbook
+arrived as 45 rows naming no market (Home2 Suites San Diego, Bally's Chicago, Fairmont Orlando among
+them) and had been listed as Miami Beach's pipeline until 2026-11-16.
 
 :::
 

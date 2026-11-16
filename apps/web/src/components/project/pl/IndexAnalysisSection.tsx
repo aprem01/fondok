@@ -722,12 +722,18 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
   const compTitle = 'STR Competitive Set';
 
   // FON-61 (61.3) — the comp set's own boundary: Year 1 is the STR TTM level
-  // itself (the Year-1 benchmark), so there is no growth step between the
-  // anchor and Year 1 to report; later years grow at the market assumption.
+  // itself (the Year-1 benchmark) or, under the topline, that level grown
+  // INTO the deal year — either way not a reported period, so the step from
+  // the TTM column is not a like-for-like growth. FON-60: the note reads the
+  // Year-1 basis chip rather than assuming the TTM level.
+  const year1Basis = comp.sources[cols.firstForecastIndex]?.basis ?? null;
   const compBoundary: ForecastBoundary = comp.forecastFilled
     ? {
         comparable: false,
-        note: `Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level itself (the Year-1 benchmark the index method uses), so there is no growth step from the TTM column. Later years grow at ${COMP_GROWN_AT[comp.forecastBasisMix ?? 'assumption']}.`,
+        note:
+          year1Basis === 'forecast' || year1Basis === 'assumption'
+            ? `Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level grown into the deal year at ${year1Basis === 'forecast' ? 'the market forecast' : 'the growth assumption'} (the Year-1 benchmark the index method uses), not a reported period, so its step from the TTM column is not a like-for-like growth. Later years grow at ${COMP_GROWN_AT[comp.forecastBasisMix ?? 'assumption']}.`
+            : `Not applicable: Year 1 of the comp set is the STR trailing-twelve-month level itself (the Year-1 benchmark the index method uses), so there is no growth step from the TTM column. Later years grow at ${COMP_GROWN_AT[comp.forecastBasisMix ?? 'assumption']}.`,
       }
     : { comparable: true };
   const marketBoundary: ForecastBoundary =
