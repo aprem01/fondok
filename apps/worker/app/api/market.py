@@ -41,6 +41,8 @@ from ..services.market_comp_set import (
     CompSetDerivation,
     StrReportOrder,
     TtmBlend,
+    SKIP_REASON_TEXT,
+    SkippedRoster,
     build_str_inputs,
     derive_comp_set_from_inputs,
     derive_ttm_blend,
@@ -154,6 +156,26 @@ class StrReportOrderOut(BaseModel):
         )
 
 
+class SkippedRosterOut(BaseModel):
+    """FON-123 — a comp-set roster that reached the STR lane without STR
+    identifiers and was not unioned; the Market tab names it."""
+
+    doc_name: str | None = None
+    doc_id: str | None = None
+    extraction_id: str | None = None
+    hotels_listed: int = 0
+    reason: Literal["no_str_identifiers"] = "no_str_identifiers"
+    reason_text: str = "no STR identifiers"
+
+    @classmethod
+    def of(cls, sk: SkippedRoster) -> SkippedRosterOut:
+        return cls(
+            doc_name=sk.doc_name, doc_id=sk.doc_id, extraction_id=sk.extraction_id,
+            hotels_listed=sk.hotels_listed, reason=sk.reason,
+            reason_text=SKIP_REASON_TEXT.get(sk.reason, sk.reason),
+        )
+
+
 class MarketCompSetBlock(BaseModel):
     """ONE derivation feeds the hotel count and the keys (active hotels)."""
 
@@ -178,6 +200,9 @@ class MarketCompSetBlock(BaseModel):
     # Every STR extraction in the order the union read them, with the period
     # end each resolved to and how — the audit trail for "most recent".
     ordering: list[StrReportOrderOut] = Field(default_factory=list)
+    # FON-123 — documents that reached the STR lane but carried no STR
+    # identifier on any comp row: listed, never counted ("1 document skipped").
+    skipped_documents: list[SkippedRosterOut] = Field(default_factory=list)
 
     @classmethod
     def of(cls, d: CompSetDerivation) -> MarketCompSetBlock:
@@ -195,6 +220,7 @@ class MarketCompSetBlock(BaseModel):
             ],
             documents=list(d.documents),
             ordering=[StrReportOrderOut.of(o) for o in d.ordering],
+            skipped_documents=[SkippedRosterOut.of(sk) for sk in d.skipped_documents],
             active_count=d.active_count,
             active_keys=d.active_keys,
             closed_count=d.closed_count,

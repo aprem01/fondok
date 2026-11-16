@@ -4,13 +4,13 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { BarChart3 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { useToast } from '@/components/ui/Toast';
 import EngineHeader from './EngineHeader';
 import EngineRightRail from './EngineRightRail';
 import EngineRunHistory from './EngineRunHistory';
 import WhatJustHappened from './WhatJustHappened';
 import { cn } from '@/lib/format';
 import { getEngineField, useEngineOutputs } from '@/lib/hooks/useEngineOutputs';
+import { useEngineRun } from '@/lib/hooks/useEngineRun';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { PL_SUB_LABEL } from '@/lib/projectTabs';
 import { IntroCard } from '@/components/help/IntroCard';
@@ -50,7 +50,6 @@ export default function PLTab() {
   // is what made Overview / Market "→ Projections" links land on Historicals.
   const { sub: tab, setSub: setTab } = useSubTab(subTabIds, 'historicals', { legacyParam: 'fin' });
   const params = useParams();
-  const { toast } = useToast();
   const dealId = (params?.id as string | undefined) ?? '';
   const { outputs, previous, settled: outputsSettled } = useEngineOutputs(dealId);
   const { documents, extractions } = useDocuments(dealId);
@@ -119,6 +118,20 @@ export default function PLTab() {
     return period.periodBasis === 'UNKNOWN' ? null : period.periodLabel;
   }, [documents, extractions]);
   const [runToken, setRunToken] = useState<number | null>(null);
+  // FON-123 (Sam, copy d0bfe816): the empty state's "Run Model" button used to
+  // pop an info toast and run nothing, while the engine card's Run button on
+  // the same screen worked. Both now take the same action — the run-all
+  // kickoff + poll the EngineHeader uses — and this one shows its own
+  // progress on the button (the floating strip belongs to the header's
+  // instance). Hooks are unconditional; only the empty-state branch reads it.
+  const emptyStateRun = useEngineRun(dealId, 'expense', {
+    runMode: 'all',
+    onAllComplete: () => {
+      setComputing(false);
+      setRunToken(Date.now());
+    },
+  });
+  const emptyStateRunning = emptyStateRun.status === 'running';
   // The P&L views need a run of the expense engine. Only its PRESENCE gates
   // the tab: the two views (the grounded worksheet and the Future P&L) read
   // their own figures, so nothing here coalesces a missing line to 0.
@@ -192,10 +205,25 @@ export default function PLTab() {
               variant="primary"
               size="sm"
               className="mt-4"
-              onClick={() => toast('Nothing is queued yet — add the missing document in the Data Room and the model runs automatically once extraction finishes', { type: 'info' })}
+              data-testid="pl-empty-run-model"
+              loading={emptyStateRunning}
+              onClick={() => {
+                setComputing(true);
+                void emptyStateRun.run();
+              }}
             >
-              Run Model
+              {emptyStateRunning ? 'Running the model…' : 'Run Model'}
             </Button>
+            {emptyStateRunning && (
+              <p className="text-[12px] text-ink-500 mt-3" role="status" data-testid="pl-empty-run-status">
+                Running every engine — this view fills in when the P&amp;L engine finishes.
+              </p>
+            )}
+            {emptyStateRun.status === 'failed' && emptyStateRun.error && (
+              <p className="text-[12px] text-danger-700 mt-3" role="alert" data-testid="pl-empty-run-error">
+                {emptyStateRun.error}
+              </p>
+            )}
           </Card>
           <EngineRunHistory dealId={dealId} />
         </div>

@@ -307,13 +307,21 @@ async def test_str_history_indices_newest_extraction_wins() -> None:
 # ───────────── market-data envelope: closed comp-set hotels excluded ─────────────
 
 
-def _roster_report(doc_id: Any, roster: list[tuple[str, int]]) -> dict[str, Any]:
+# STR's property ids as the template extracts them (one per competitor,
+# stable across reports — the closed label is a name prefix, not a new id).
+_STR_IDS = {"The Betsy": "44117", "Blue Moon Hotel": "34401", "The Tony": "39070"}
+
+
+def _roster_report(doc_id: Any, roster: list[tuple[str, int]], *, with_ids: bool = True) -> dict[str, Any]:
     fields: list[dict[str, Any]] = [
         {"field_name": "ttm_performance.subject.occupancy_pct", "value": 78.4},
     ]
     for i, (name, keys) in enumerate(roster, start=1):
         fields.append({"field_name": f"ttm_performance.compset.{i}.name", "value": name})
         fields.append({"field_name": f"ttm_performance.compset.{i}.keys", "value": keys})
+        if with_ids:
+            bare = name.split(" - ", 1)[1] if name.startswith("Closed - ") else name
+            fields.append({"field_name": f"ttm_performance.compset.{i}.str_id", "value": _STR_IDS[bare]})
     return {
         "document_id": doc_id,
         "doc_type": "STR_TREND",
@@ -349,3 +357,21 @@ def test_envelope_roster_without_closure_markers_counts_every_hotel() -> None:
     assert all(e.status == "active" for e in env.str_trend.compset)
     assert env.str_trend.total_keys == 130
     assert env.str_trend.comp_set_size == 2
+
+
+def test_envelope_roster_without_str_identifiers_contributes_nothing() -> None:
+    """FON-123 — same rule as the Market tab: comp-set rows that carry no STR
+    id on any row (a narrative's comp list extracted under the STR tag) never
+    reach the Index Analysis roster or its key total. A real report's roster
+    on the same deal is unaffected."""
+    plan = _roster_report(uuid4(), [("The Betsy", 130), ("Blue Moon Hotel", 75), ("The Tony", 214)], with_ids=False)
+    env = _aggregate_market_data([plan], uuid4())
+    assert env.str_trend is not None  # the subject figure still renders
+    assert env.str_trend.compset == []
+    assert not env.str_trend.total_keys
+
+    report = _roster_report(uuid4(), [("The Betsy", 130), ("The Tony", 214)])
+    env = _aggregate_market_data([plan, report], uuid4())
+    assert env.str_trend is not None
+    assert {e.name for e in env.str_trend.compset} == {"The Betsy", "The Tony"}
+    assert env.str_trend.total_keys == 130 + 214

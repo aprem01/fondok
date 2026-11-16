@@ -20,7 +20,10 @@ from typing import Any
 from app.services.market_comp_set import (
     STR_CLOSED_LABEL_RE,
     TTM_BLEND_METHOD,
+    RosterSnapshot,
     build_str_inputs,
+    derive_comp_set_union,
+    roster_has_str_identifiers,
     classify_hotel_status,
     derive_comp_set,
     derive_comp_set_from_inputs,
@@ -151,14 +154,17 @@ def test_rosters_are_kept_per_extraction_and_unioned_by_hotel_not_by_index() -> 
         # Newest extraction: roster with an explicit status field.
         _row("ttm_performance.compset.1.name", "Z Ocean Hotel"),
         _row("ttm_performance.compset.1.keys", 40),
+        _row("ttm_performance.compset.1.str_id", "53909"),
         _row("ttm_performance.compset.2.name", "Blue Moon Hotel"),
         _row("ttm_performance.compset.2.keys", 0),
+        _row("ttm_performance.compset.2.str_id", "34401"),
         _row("ttm_performance.compset.2.status", "closed"),
         _row("comp_set.comp_set_size", 2),
         # An older extraction's row 3 is ANOTHER hotel — it joins the union
-        # as its own hotel (by name), never merged into row 3 of the newest.
+        # as its own hotel (by id / name), never merged into row 3 of the newest.
         _row("ttm_performance.compset.3.name", "Ghost Hotel", ext="e0", doc="old.xlsx"),
         _row("ttm_performance.compset.3.keys", 500, ext="e0", doc="old.xlsx"),
+        _row("ttm_performance.compset.3.str_id", "99001", ext="e0", doc="old.xlsx"),
     ]
     inputs = build_str_inputs(rows)
     assert set(inputs.roster) == {1, 2}  # the newest roster, as before
@@ -268,17 +274,124 @@ def test_union_closed_by_str_label_alone_when_no_status_field_was_extracted() ->
     assert d.active_count == 4 and d.active_keys == 344
 
 
-def test_union_keys_by_normalised_name_when_no_str_id_was_extracted() -> None:
+def _snapshot(doc: str, roster: list[tuple[str | None, str, int, str | None]]) -> RosterSnapshot:
+    """One report's bucketed roster, as ``build_str_inputs`` hands it to the union."""
+    rows = {
+        i: {k: v for k, v in (("name", name), ("keys", keys), ("str_id", sid), ("status", status)) if v is not None}
+        for i, (sid, name, keys, status) in enumerate(roster, start=1)
+    }
+    return RosterSnapshot(rows=rows, doc_name=doc, doc_id=f"doc-{doc}")
+
+
+def test_union_keys_by_normalised_name_when_no_str_id_is_present() -> None:
+    """The union itself still matches by normalised name when rows carry no
+    id (``closed_roster_indices`` relies on it); whether an id-less roster
+    reaches the union at all is decided upstream (FON-123, next test)."""
     may = [(None, name, keys, None) for _, name, keys, _ in MAY_ROSTER]
     july = [(None, name, keys, status) for _, name, keys, status in JULY_ROSTER]
-    rows = [
-        *[r for r in _roster_rows(MAY_DOC, "e-may", may) if not r.field_name.endswith(".str_id")],
-        *[r for r in _roster_rows(JULY_DOC, "e-july", july) if not r.field_name.endswith(".str_id")],
-    ]
-    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    d = derive_comp_set_union([_snapshot(JULY_DOC, july), _snapshot(MAY_DOC, may)])
     assert len(d.hotels) == 5
     assert d.active_count == 4 and d.active_keys == 344
     assert d.closed_names == ["Blue Moon Hotel"]
+
+
+def test_roster_without_any_str_id_is_skipped_with_a_reason() -> None:
+    """FON-123 — a roster that reached the STR lane with no STR id on any
+    row is not an STR roster: it contributes nothing and is named."""
+    may = [(None, name, keys, None) for _, name, keys, _ in MAY_ROSTER]
+    rows = [
+        *[r for r in _roster_rows(MAY_DOC, "e-may", may) if not r.field_name.endswith(".str_id")],
+        _row("comp_set.comp_set_size", 5, ext="e-may", doc=MAY_DOC),
+        _row("comp_set.total_keys", 419, ext="e-may", doc=MAY_DOC),
+    ]
+    inputs = build_str_inputs(rows)
+    assert inputs.rosters == [] and inputs.roster == {}
+    assert [sk.doc_name for sk in inputs.skipped_rosters] == [MAY_DOC]
+    assert inputs.skipped_rosters[0].reason == "no_str_identifiers"
+    assert inputs.skipped_rosters[0].hotels_listed == 5
+    # Its rollups do not become the headline either — nothing of it is read.
+    assert "comp_set.comp_set_size" not in inputs.flat
+    d = derive_comp_set_from_inputs(inputs)
+    assert d.hotels == [] and d.active_count is None and d.active_keys is None
+    assert d.documents == []
+    assert [sk.doc_name for sk in d.skipped_documents] == [MAY_DOC]
+    assert "1 document skipped: no STR identifiers" in d.note
+    assert f"{MAY_DOC} — 5 hotels listed" in d.note
+
+
+def test_roster_has_str_identifiers_needs_one_id_on_any_row() -> None:
+    assert roster_has_str_identifiers({1: {"name": "A", "keys": 10, "str_id": "123"}, 2: {"name": "B"}})
+    assert not roster_has_str_identifiers({1: {"name": "A", "keys": 10}, 2: {"name": "B", "str_id": ""}})
+    assert not roster_has_str_identifiers({1: {"name": "A", "str_id": None}})
+    assert not roster_has_str_identifiers({})
+
+
+# ───────────── FON-123: the live Business Plan .docx on the STR lane ─────────────
+#
+# Live (deal b67bfdee, 2026-11): "Copy of 2024 Business Plan.docx" was pinned
+# STR_TREND by the structural recognizer; the LLM extracted its "HOTEL
+# SUPPLY" table as ``ttm_performance.compset.<n>.*`` rows — five hotels,
+# narrative ``status`` strings ("Rebranded to a Sonesta", "closed"), no
+# ``str_id`` — and the roster read 7 hotels / 978 keys. Expected: the three
+# STR reports' 4 active / 344 keys, Blue Moon closed, and the plan named as
+# skipped.
+
+BUSINESS_PLAN_DOC = "Copy of 2024 Business Plan.docx"
+
+
+def _business_plan_rows() -> list[FieldRow]:
+    plan = [
+        ("Z Ocean", 45, "Rebranded to Sonesta Classico, undergoing soft goods renovation"),
+        ("Dream South Beach", 107, "Rebranding into a Hyatt hotel"),
+        ("The Confidante", 339, "Converting into an Andaz and renovating"),
+        ("Nautilus South Beach", 250, "Rebranded to a Sonesta"),
+        ("Shelborne", 270, "closed"),
+    ]
+    rows = [
+        _row("str_trend.report_year", 2024, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1),
+        _row("comp_set.comp_set_size", 5, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1),
+        _row("comp_set.total_keys", 1011, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1),
+    ]
+    for i, (name, keys, status) in enumerate(plan, start=1):
+        rows.append(_row(f"ttm_performance.compset.{i}.name", name, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1))
+        rows.append(_row(f"ttm_performance.compset.{i}.keys", keys, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1))
+        rows.append(_row(f"ttm_performance.compset.{i}.status", status, ext="e-plan", doc=BUSINESS_PLAN_DOC, page=1))
+    return rows
+
+
+def test_business_plan_on_the_str_lane_does_not_join_the_roster() -> None:
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", LIVE_JULY_ROSTER),
+        *_business_plan_rows(),  # arrives between the reports, as live
+        *_live_rows(MAY_DOC, "e-may", LIVE_MAY_ROSTER),
+        *_live_rows(DEC_2023_DOC, "e-dec", LIVE_DEC_2023_ROSTER),
+    ]
+    inputs = build_str_inputs(rows)
+    d = derive_comp_set_from_inputs(inputs)
+    assert d.active_count == 4 and d.active_keys == 344
+    assert d.closed_names == ["Blue Moon Hotel"]
+    assert len(d.hotels) == 5
+    assert d.documents == [JULY_DOC, MAY_DOC, DEC_2023_DOC]
+    assert BUSINESS_PLAN_DOC not in d.documents
+    assert {h.name for h in d.hotels}.isdisjoint({"Shelborne", "The Confidante", "Nautilus South Beach"})
+    assert [sk.doc_name for sk in d.skipped_documents] == [BUSINESS_PLAN_DOC]
+    assert d.skipped_documents[0].hotels_listed == 5
+    assert d.skipped_documents[0].reason == "no_str_identifiers"
+    assert "1 document skipped: no STR identifiers" in d.note
+    assert BUSINESS_PLAN_DOC in d.note
+    # The plan is out of the report ordering too — it is not an STR report —
+    # and none of its rows (rollups 5 / 1011, report_year) is read.
+    assert [o.doc_name for o in d.ordering] == [JULY_DOC, MAY_DOC, DEC_2023_DOC]
+    assert all(ref.doc_name != BUSINESS_PLAN_DOC for ref in inputs.flat.values())
+    assert "e-plan" not in inputs.fields_by_extraction
+
+
+def test_business_plan_alone_yields_no_comp_set_and_says_why() -> None:
+    d = derive_comp_set_from_inputs(build_str_inputs(_business_plan_rows()))
+    assert d.hotels == [] and d.active_count is None and d.active_keys is None
+    assert d.reported_comp_set_size is None and d.reported_total_keys is None
+    assert [sk.doc_name for sk in d.skipped_documents] == [BUSINESS_PLAN_DOC]
+    assert "1 document skipped: no STR identifiers" in d.note
 
 
 def test_union_zero_rooms_without_a_marker_never_closes_a_hotel() -> None:
@@ -322,13 +435,17 @@ LIVE_MAY_ROSTER = [
     ("39070", "The Tony Hotel of South Beach", 73, None),
     ("33931", "Dream South Beach", 107, None),
 ]
-LIVE_DEC_2023_ROSTER = [  # older extraction: no str_id, the Betsy under its former name
-    (None, "Dream South Beach", 107, None),
-    (None, "Blue Moon Hotel", 75, None),
-    (None, "The Tony Hotel of South Beach", 73, None),
-    (None, "The Betsy Hotel", 129, None),
-    (None, "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+LIVE_DEC_2023_ROSTER = [  # the Betsy under its former name, same STR id
+    ("33931", "Dream South Beach", 107, None),
+    ("34401", "Blue Moon Hotel", 75, None),
+    ("39070", "The Tony Hotel of South Beach", 73, None),
+    ("44117", "The Betsy Hotel", 129, None),
+    ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
 ]
+# The older Dec 2023 extraction before the template emitted ids — the state
+# the alias rule was written for. FON-123: such a roster no longer reaches
+# the union through ``build_str_inputs``; the rule is exercised at the union.
+LIVE_DEC_2023_ROSTER_NO_IDS = [(None, name, keys, status) for _, name, keys, status in LIVE_DEC_2023_ROSTER]
 
 
 def _live_rows(doc: str, ext: str, roster: list[tuple[str | None, str, int, str | None]]) -> list[FieldRow]:
@@ -343,7 +460,7 @@ def _without_ids(roster: list[tuple[str | None, str, int, str | None]]) -> list[
     return [(None, name, keys, status) for _, name, keys, status in roster]
 
 
-def test_union_three_live_rosters_count_the_betsy_once_via_the_alias_rule() -> None:
+def test_union_three_live_rosters_count_the_betsy_once() -> None:
     rows = [
         *_live_rows(JULY_DOC, "e-july", LIVE_JULY_ROSTER),  # newest extraction
         *_live_rows(MAY_DOC, "e-may", LIVE_MAY_ROSTER),
@@ -368,19 +485,48 @@ def test_union_three_live_rosters_count_the_betsy_once_via_the_alias_rule() -> N
     assert bm.status == "closed" and bm.status_doc_name == JULY_DOC and bm.str_id == "34401"
 
 
-def test_union_three_live_rosters_without_any_str_id_still_count_the_betsy_once() -> None:
-    """The live state before the template fix shipped: no str_id anywhere."""
-    rows = [
-        *_live_rows(JULY_DOC, "e-july", _without_ids(LIVE_JULY_ROSTER)),
-        *_live_rows(MAY_DOC, "e-may", _without_ids(LIVE_MAY_ROSTER)),
-        *_live_rows(DEC_2023_DOC, "e-dec", _without_ids(LIVE_DEC_2023_ROSTER)),
-    ]
-    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+def test_union_counts_the_betsy_once_via_the_alias_rule_when_the_older_roster_has_no_ids() -> None:
+    """The alias rule at the union: the Dec 2023 roster without ids still
+    merges "The Betsy Hotel" into "The Betsy South Beach" (same keys, two-
+    token prefix)."""
+    d = derive_comp_set_union([
+        _snapshot(JULY_DOC, LIVE_JULY_ROSTER),
+        _snapshot(MAY_DOC, LIVE_MAY_ROSTER),
+        _snapshot(DEC_2023_DOC, LIVE_DEC_2023_ROSTER_NO_IDS),
+    ])
+    assert d.active_count == 4 and d.active_keys == 344
+    assert d.closed_names == ["Blue Moon Hotel"]
+    assert len(d.hotels) == 5
+    betsy = next(h for h in d.hotels if h.name == "The Betsy South Beach")
+    assert betsy.merged_names == ("The Betsy Hotel",) and betsy.str_id == "44117"
+
+
+def test_union_three_rosters_without_any_str_id_still_count_the_betsy_once_at_the_union() -> None:
+    """No str_id anywhere (the pre-template state): the union's name + alias
+    matching is unchanged — it is ``build_str_inputs`` that now refuses such
+    rosters (FON-123), covered by ``test_rosters_without_ids_are_all_skipped``."""
+    d = derive_comp_set_union([
+        _snapshot(JULY_DOC, _without_ids(LIVE_JULY_ROSTER)),
+        _snapshot(MAY_DOC, _without_ids(LIVE_MAY_ROSTER)),
+        _snapshot(DEC_2023_DOC, LIVE_DEC_2023_ROSTER_NO_IDS),
+    ])
     assert d.active_count == 4 and d.active_keys == 344
     assert d.closed_names == ["Blue Moon Hotel"]
     assert len(d.hotels) == 5
     betsy = next(h for h in d.hotels if h.name == "The Betsy South Beach")
     assert betsy.merged_names == ("The Betsy Hotel",) and betsy.str_id is None
+
+
+def test_rosters_without_ids_are_all_skipped() -> None:
+    rows = [
+        *_live_rows(JULY_DOC, "e-july", _without_ids(LIVE_JULY_ROSTER)),
+        *_live_rows(MAY_DOC, "e-may", _without_ids(LIVE_MAY_ROSTER)),
+        *_live_rows(DEC_2023_DOC, "e-dec", LIVE_DEC_2023_ROSTER_NO_IDS),
+    ]
+    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    assert d.hotels == [] and d.active_count is None
+    assert [sk.doc_name for sk in d.skipped_documents] == [JULY_DOC, MAY_DOC, DEC_2023_DOC]
+    assert "3 documents skipped: no STR identifiers" in d.note
 
 
 def test_alias_rule_is_two_token_prefix_and_same_positive_key_count() -> None:
@@ -389,21 +535,21 @@ def test_alias_rule_is_two_token_prefix_and_same_positive_key_count() -> None:
     assert not names_are_aliases("the tony hotel of south beach", "the betsy south beach")
     assert not names_are_aliases("betsy", "the betsy south beach")  # one-token names never alias
     assert not names_are_aliases("the betsy south beach", "the betsy south beach")  # equality is rule 2
-    # Same prefix but a different key count → two hotels, no alias.
-    rows = [
-        *_live_rows(JULY_DOC, "e-july", [("44117", "The Betsy South Beach", 129, None)]),
-        *_live_rows(DEC_2023_DOC, "e-dec", [(None, "The Betsy Hotel", 100, None)]),
-    ]
-    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    # Same prefix but a different key count → two hotels, no alias. (At the
+    # union: an id-less roster no longer reaches it through build_str_inputs,
+    # FON-123.)
+    d = derive_comp_set_union([
+        _snapshot(JULY_DOC, [("44117", "The Betsy South Beach", 129, None)]),
+        _snapshot(DEC_2023_DOC, [(None, "The Betsy Hotel", 100, None)]),
+    ])
     assert [h.name for h in d.hotels] == ["The Betsy South Beach", "The Betsy Hotel"]
     assert d.active_count == 2 and d.active_keys == 229
     assert all(h.merged_names == () for h in d.hotels)
     # Same key count, same first token only ("the") → two hotels.
-    rows = [
-        *_live_rows(JULY_DOC, "e-july", [("44117", "The Betsy South Beach", 129, None)]),
-        *_live_rows(DEC_2023_DOC, "e-dec", [(None, "The Tony Hotel", 129, None)]),
-    ]
-    d = derive_comp_set_from_inputs(build_str_inputs(rows))
+    d = derive_comp_set_union([
+        _snapshot(JULY_DOC, [("44117", "The Betsy South Beach", 129, None)]),
+        _snapshot(DEC_2023_DOC, [(None, "The Tony Hotel", 129, None)]),
+    ])
     assert d.active_count == 2 and d.active_keys == 258
 
 

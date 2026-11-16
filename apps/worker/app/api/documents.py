@@ -2481,6 +2481,11 @@ async def classify_for_extraction(
          override``, ``source=pre-router-override``). The caller performs
          the early ``UPDATE documents SET doc_type`` side-effect when it
          sees this source — kept OUT of this pure decision function.
+         FON-123 — ``looks_str`` needs STR's TEMPLATE fingerprint (the
+         STAR Report header, "Index (MPI)" / "My Property" row labels,
+         tab names, CoStar footer), not just comp-set vocabulary; a
+         narrative with a comp list (the one-page Business Plan .docx)
+         falls through to the Router like any other document.
       2. Router LLM (``run_router``) — ``route`` from the router, or
          ``extract-fallback`` if the call raises.
       3. filename-hint fallback (``_guess_doc_type``) — when the router
@@ -2505,8 +2510,10 @@ async def classify_for_extraction(
     hint = _guess_doc_type(filename)
 
     # Pre-compute structural text signals on the FULL parsed text BEFORE
-    # the Router runs. If the full document is unambiguously STR-shaped,
-    # bypass the Router entirely and pin doc_type to STR_TREND.
+    # the Router runs. If the full document is unambiguously STR-shaped
+    # (template fingerprint + vocabulary, FON-123), bypass the Router
+    # entirely and pin doc_type to STR_TREND. Vocabulary-only matches are
+    # ambiguous and go to the Router.
     from ..services.structural_recognizer import (
         detect_text_signals as _detect_text_signals,
     )
@@ -2519,12 +2526,25 @@ async def classify_for_extraction(
     if pre_router_text_signals.looks_str:
         pre_router_str_override = "STR_TREND"
         logger.info(
-            "pre-router structural override: doc=%s str_markers=%d pnl_markers=%d "
-            "matched=%s — pinning doc_type=STR_TREND, skipping Router LLM call",
+            "pre-router structural override: doc=%s str_markers=%d "
+            "template_markers=%d pnl_markers=%d matched=%s — pinning "
+            "doc_type=STR_TREND, skipping Router LLM call",
             doc_id,
             pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.template_marker_hits,
             pre_router_text_signals.pnl_marker_hits,
             ", ".join(pre_router_text_signals.str_markers_matched[:5]),
+        )
+    elif pre_router_text_signals.str_marker_hits >= 4:
+        # FON-123 — STR vocabulary without STR's template: ambiguous, so
+        # the Router decides. Logged so a missed real report is findable.
+        logger.info(
+            "pre-router structural override NOT applied: doc=%s str_markers=%d "
+            "template_markers=%d pnl_markers=%d — vocabulary only, Router decides",
+            doc_id,
+            pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.template_marker_hits,
+            pre_router_text_signals.pnl_marker_hits,
         )
 
     if pre_router_str_override is not None:
