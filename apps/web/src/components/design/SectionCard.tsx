@@ -17,6 +17,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import { palette, radius } from './tokens';
 
 export interface SectionCardProps {
+  /** DOM id — a stable scroll / `#` anchor target for deep links. */
+  id?: string;
   title?: ReactNode;
   /** Right-aligned note (eyebrow variant) / caption (title variant). */
   note?: ReactNode;
@@ -31,6 +33,7 @@ export interface SectionCardProps {
 }
 
 export function SectionCard({
+  id,
   title,
   note,
   variant = 'eyebrow',
@@ -50,7 +53,7 @@ export function SectionCard({
   if (variant === 'title') {
     // Title header sits on a full-width bottom divider, body below (table cards).
     return (
-      <div className={className} data-testid={testId} style={{ ...shell, overflow: 'hidden' }}>
+      <div id={id} className={className} data-testid={testId} style={{ ...shell, overflow: 'hidden' }}>
         {(title != null || note != null) && (
           <div
             style={{
@@ -77,6 +80,7 @@ export function SectionCard({
   // Eyebrow header inline with the body (Investment section cards).
   return (
     <div
+      id={id}
       className={className}
       data-testid={testId}
       style={{ ...shell, padding: '16px 18px', display: 'flex', flexDirection: 'column', ...bodyStyle }}

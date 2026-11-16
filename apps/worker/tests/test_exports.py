@@ -69,6 +69,39 @@ def test_excel_builds(tmp_out: Path) -> None:
     wb.close()
 
 
+def test_excel_cover_noi_carries_its_definition_in_plain_sight(tmp_out: Path) -> None:
+    """FON-44 / FON-82 (Sam, 2026-11-16) — the Cover's headline "Year 1 NOI
+    (before FF&E reserve)" row carries the one-line definition in the cell
+    beside its value, not only in a comment / on hover. The value itself is
+    untouched."""
+    from openpyxl import load_workbook
+
+    from app.export import build_excel
+    from app.export.labels import NOI_BEFORE_RESERVE_DEFINITION
+    from tests.fixtures.kimpton_export_payload import kimpton_model
+
+    out = tmp_out / "model.xlsx"
+    build_excel("kimpton-angler-2026", kimpton_model(), out)
+    ws = load_workbook(out, read_only=True)["Cover"]
+    rows = {
+        str(ws.cell(row=r, column=1).value or ""): r
+        for r in range(1, ws.max_row + 1)
+    }
+    r = rows["Year 1 NOI (before FF&E reserve)"]
+    assert ws.cell(row=r, column=3).value == NOI_BEFORE_RESERVE_DEFINITION
+    assert NOI_BEFORE_RESERVE_DEFINITION == (
+        "After property tax and insurance, before the FF&E reserve"
+    )
+    assert isinstance(ws.cell(row=r, column=2).value, (int, float))
+    # Only the NOI row carries the note.
+    notes = [
+        ws.cell(row=rr, column=3).value
+        for rr in range(11, r + 6)
+        if ws.cell(row=rr, column=3).value == NOI_BEFORE_RESERVE_DEFINITION
+    ]
+    assert len(notes) == 1
+
+
 def test_memo_pdf_builds(tmp_out: Path) -> None:
     """WeasyPrint memo PDF is non-empty and has the PDF magic bytes."""
     pytest.importorskip(

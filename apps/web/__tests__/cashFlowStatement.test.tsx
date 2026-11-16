@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import type { EngineOutputsResponse, CashFlowStatementOutput } from '@/lib/api';
 import { getEngineField } from '@/lib/hooks/useEngineOutputs';
+import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
+import { EXIT_SCHEDULE_ANCHOR_ID } from '@/lib/returnsSection';
 import {
   buildSummary,
   cumulativeLevered,
@@ -441,6 +443,13 @@ describe('CashFlowTab — Summary statement (FON-67 / R-072)', () => {
 
     // Property lines, read from `unlevered` by the worker's own label.
     expect(statementRowCells(card, 'NOI (before FF&E reserve)')).toEqual(['—', '$100', '$120']);
+    // FON-44 / FON-82 (Sam 2026-11-16) — the NOI row carries its definition in
+    // the rendered DOM, under the label, not only in the hover title.
+    const noiHeader = statementRowHeader(card, 'NOI (before FF&E reserve)');
+    expect(within(noiHeader).getByText(NOI_BEFORE_RESERVE_DEFINITION)).toBeInTheDocument();
+    expect(noiHeader).toHaveAttribute('title', NOI_BEFORE_RESERVE_DEFINITION);
+    // Only the NOI row carries a sub-line.
+    expect(within(card).getAllByTestId('statement-row-sub')).toHaveLength(1);
     // Canonical display relabel of the worker's "FF&E Reserve" line.
     expect(statementRowCells(card, 'FF&E Reserve / CapEx')).toEqual(['—', '($10)', '($12)']);
     expect(statementRowCells(card, 'Unlevered Cash Flow')).toEqual(['($1,000)', '$90', '$1,548']);
@@ -497,12 +506,15 @@ describe('CashFlowTab — Summary statement (FON-67 / R-072)', () => {
     // The stale sentence is gone — FON-118 made IRR by exit year an engine output.
     expect(note.textContent).not.toMatch(/no per-year IRR/);
     // The chip deep-links the way every cross-tab "View Returns →" link does
-    // (Returns lives on Overview, R-061): ?tab=overview&sub=returns-summary.
+    // (Returns lives on Overview, R-061): ?tab=overview&sub=returns-summary —
+    // and (FON-67) carries the exit-year card's anchor so the page lands on
+    // the table, not at the Stabilization card.
     fireEvent.click(screen.getByTestId('cash-flow-irr-exit-year-link'));
     expect(nav.push).toHaveBeenLastCalledWith(
-      '/projects/deal-1?tab=overview&sub=returns-summary',
+      `/projects/deal-1?tab=overview&sub=returns-summary#${EXIT_SCHEDULE_ANCHOR_ID}`,
       { scroll: false },
     );
+    expect(EXIT_SCHEDULE_ANCHOR_ID).toBe('returns-by-exit-year');
   });
 
   it('reads — for the IRR figures when the returns engine has not run', () => {

@@ -130,6 +130,25 @@ def test_memo_renders_without_wave2_data() -> None:
     assert "Letter of Intent" not in html_str
 
 
+def test_noi_tile_carries_its_definition_in_plain_sight() -> None:
+    """FON-44 / FON-82 (Sam, 2026-11-16) — the memo's "NOI (Y1, before FF&E
+    reserve)" tile prints the one-line definition as a visible subtitle under
+    the label, not only in Methodology."""
+    from app.export.labels import NOI_BEFORE_RESERVE_DEFINITION
+    from app.export.memo_pdf import _render_html
+    from tests.fixtures.kimpton_export_payload import kimpton_memo, kimpton_model
+
+    html_str = _render_html(kimpton_memo(), kimpton_model())
+    tile = (
+        '<div class="k">NOI (Y1, before FF&amp;E reserve)</div>'
+        '<div class="d">After property tax and insurance, before the FF&amp;E reserve</div>'
+    )
+    assert tile in html_str
+    assert NOI_BEFORE_RESERVE_DEFINITION == (
+        "After property tax and insurance, before the FF&E reserve"
+    )
+
+
 def test_segments_section_renders_when_segments_present() -> None:
     """Year-1 segment mix table renders with one row per segment.
 

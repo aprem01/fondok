@@ -25,9 +25,32 @@ export function isReturnsView(sub: string | null | undefined): sub is ReturnsVie
   return sub != null && (RETURNS_VIEW_IDS as readonly string[]).includes(sub);
 }
 
-/** Overview's Returns section, on one of its views. */
-export function returnsHref(dealId: string | number, sub: ReturnsViewId = 'returns-summary'): string {
-  return `/projects/${dealId}?tab=overview&sub=${sub}`;
+/**
+ * DOM id of the "Returns by exit year" card on the Returns Summary view
+ * (FON-67 — the Cash Flow IRR footnote lands on the table, not the section).
+ */
+export const EXIT_SCHEDULE_ANCHOR_ID = 'returns-by-exit-year';
+
+/** Cards inside the Returns section a URL fragment may ask for. */
+const RETURNS_ANCHOR_IDS: readonly string[] = [EXIT_SCHEDULE_ANCHOR_ID];
+
+/**
+ * Overview's Returns section, on one of its views — optionally landing on one
+ * card inside it (`#returns-by-exit-year`). The fragment is read by
+ * `ReturnsSection`, which scrolls the card into view once it has rendered.
+ */
+export function returnsHref(
+  dealId: string | number,
+  sub: ReturnsViewId = 'returns-summary',
+  anchor?: string,
+): string {
+  return `/projects/${dealId}?tab=overview&sub=${sub}${anchor ? `#${anchor}` : ''}`;
+}
+
+/** The Returns card a URL hash asks for (`"#returns-by-exit-year"` → its id), else null. */
+export function returnsAnchorFromHash(hash: string | null | undefined): string | null {
+  const id = (hash ?? '').replace(/^#/, '');
+  return RETURNS_ANCHOR_IDS.includes(id) ? id : null;
 }
 
 /**

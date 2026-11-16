@@ -2028,8 +2028,10 @@ function ProjectionsTable({
               <SectionBand label="Net Operating Income" span={bandSpan} />
               <FullRow
                 label={noiLabel}
-                // FON-44 — the headline NOI states its basis on hover.
+                // FON-44 / FON-82 — the headline NOI states its basis in plain
+                // sight under the label (and on hover).
                 labelTitle={NOI_BEFORE_RESERVE_DEFINITION}
+                labelSub={NOI_BEFORE_RESERVE_DEFINITION}
                 indexLabel=""
                 unit="$"
                 years={years}
@@ -2607,6 +2609,7 @@ function SimpleRow({
 function FullRow({
   label,
   labelTitle,
+  labelSub,
   indexLabel,
   unit,
   years,
@@ -2628,6 +2631,9 @@ function FullRow({
   label: string;
   /** Hover text on the label cell — a one-line basis definition (FON-44). */
   labelTitle?: string;
+  /** Visible secondary line under the label (small, muted) — the definition
+   *  in plain sight, not only on hover (FON-44 / FON-82). */
+  labelSub?: string;
   indexLabel: string;
   unit: string;
   years: ProjYear[];
@@ -2679,6 +2685,11 @@ function FullRow({
       >
         {label}
         {methodLine && <MethodChip line={methodLine} />}
+        {labelSub && (
+          <div className="text-[10px] font-normal text-ink-500 leading-tight mt-0.5" data-testid="row-label-sub" data-label-sub="">
+            {labelSub}
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-[11px] text-ink-500 border-r border-border bg-bg/30">
         {indexLabel || unit}
