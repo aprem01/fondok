@@ -15,7 +15,8 @@ import { useToast } from '@/components/ui/Toast';
 import { isProjectStatus, type DealStage, type Risk } from '@/lib/catalogs';
 import { hasCompletedModelRun } from '@/lib/dealStatus';
 import DealStatusMenu from '@/components/project/DealStatusMenu';
-import { displayConfidence, type Project } from '@/lib/project';
+import DealStageMenu from '@/components/project/DealStageMenu';
+import { displayConfidence, lastActivityAt, modelDataReadiness, readinessText, READINESS_TIP, type Project } from '@/lib/project';
 import DealCollaborators from '@/components/project/DealCollaborators';
 import { WorkerNotConfigured } from '@/components/WorkerNotConfigured';
 import { cn, fmtDate } from '@/lib/format';
@@ -121,7 +122,7 @@ export default function ProjectDetailPage() {
   const workerConnected = isWorkerConnected();
   // Page-level engine outputs — powers the failure banner so a crashed
   // engine is loud on EVERY tab, not silently dashed.
-  const { outputs: pageEngineOutputs } = useEngineOutputs(rawId);
+  const { outputs: pageEngineOutputs, lastRunAt: pageLastRunAt } = useEngineOutputs(rawId);
 
   // A numeric id is not a deal Fondok knows: send the reader to the deal list.
   useEffect(() => {
@@ -255,8 +256,8 @@ export default function ProjectDetailPage() {
     dealStage: (deal.deal_stage as DealStage) || null,
     // The deal's own risk, or null (rendered "—") — never an invented "Medium".
     risk: (deal.risk as Risk) || null,
-    // Null until an extraction has scored the deal — the pill reads "AI
-    // Confidence —"; a number (even 0) is the worker's own rollup.
+    // Null until an extraction has scored the deal — the readiness pill
+    // prints no percentage; a number (even 0) is the worker's own rollup.
     aiConfidence: displayConfidence(deal.ai_confidence),
     assignee: '—',
     // Deterministic (UTC / en-US). ``toLocaleDateString()`` depends on the
@@ -264,9 +265,25 @@ export default function ProjectDetailPage() {
     // the server and the first client render would hydrate-mismatch (React
     // #418 → #423). Today ``deal`` only arrives client-side, but pin it anyway
     // so the header date can never diverge from the server or by viewer zone.
-    updatedAt: deal.updated_at ? fmtDate(deal.updated_at) : '—',
+    // FON-80 (gap 4) — the later of the row's updated_at and the latest
+    // engine run, so a re-run shows as activity (the row is left alone).
+    updatedAt: fmtDate(lastActivityAt(deal.updated_at, pageLastRunAt?.toISOString() ?? null)),
     createdAt: deal.created_at ? fmtDate(deal.created_at) : undefined,
   } : null;
+
+  // FON-80 — Model/Data Readiness, the same facts and wording as the Projects
+  // list (`modelDataReadiness`): the worker's document count, its extraction
+  // rollup, the latest engine completion the outputs hook saw, and the
+  // onboarding state. Null when none is known → "Readiness —".
+  const readiness = deal
+    ? modelDataReadiness({
+        documentCount: deal.document_count,
+        aiConfidence: deal.ai_confidence,
+        lastEngineRunAt: pageLastRunAt?.toISOString() ?? null,
+        state: deal.state ?? null,
+      })
+    : null;
+  const readinessLabel = readinessText(readiness);
 
   // Header pill state — popovers/drawers/tooltips. We keep all four
   // independent so opening one doesn't smash the others. Each closes on
@@ -318,7 +335,7 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // Confidence breakdown — from the worker payload via useDeal; null (no
+  // Readiness breakdown — from the worker payload via useDeal; null (no
   // field scored yet) prints a dash in the breakdown, never 0%.
   const docCount = drawerDocs.length;
   const avgFieldConfidence = projectOrNull?.aiConfidence ?? null;
@@ -604,6 +621,18 @@ export default function ProjectDetailPage() {
               ) : (
                 project.status && <StatusBadge value={project.status} />
               )}
+              {/* FON-80 (gap 2) — the acquisition stage beside the status, settable
+                  here: most deals pre-date the wizard asking for it and read "—"
+                  on the list until an analyst sets one. */}
+              {liveMode ? (
+                <DealStageMenu
+                  dealId={rawId}
+                  stage={project.dealStage}
+                  onChanged={() => void refreshDeal()}
+                />
+              ) : (
+                project.dealStage && <StatusBadge value={project.dealStage} />
+              )}
             </div>
           </div>
 
@@ -630,26 +659,34 @@ export default function ProjectDetailPage() {
                 onMouseLeave={() => setConfidenceOpen(false)}
                 onFocus={() => setConfidenceOpen(true)}
                 onBlur={() => setConfidenceOpen(false)}
-                aria-label={project.aiConfidence == null ? 'AI confidence not available — no extracted document yet' : `AI confidence ${project.aiConfidence}%`}
-                aria-describedby={confidenceOpen ? 'ai-confidence-tooltip' : undefined}
-                title="Average extraction confidence across this deal's extracted documents (each document's latest extraction). A dash until a document has been extracted."
+                aria-label={readiness == null ? 'Model/Data Readiness not known yet' : `Model/Data Readiness: ${readinessLabel}`}
+                aria-describedby={confidenceOpen ? 'readiness-tooltip' : undefined}
+                title={READINESS_TIP}
+                data-testid="deal-readiness"
                 className="h-8 px-2.5 bg-brand-50 hover:bg-brand-100 border border-brand-100 rounded-md text-[12px] inline-flex items-center gap-1.5 text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Sparkles size={12} aria-hidden="true" />
-                {project.aiConfidence == null ? (
-                  <span>AI Confidence —</span>
+                {readiness == null ? (
+                  <span>Readiness —</span>
                 ) : (
-                  <span className="tabular-nums"><span className="font-semibold">{project.aiConfidence}%</span> AI Confidence</span>
+                  <span className="tabular-nums whitespace-nowrap">
+                    Readiness <span className="font-semibold">{readiness.label}</span>
+                    {readiness.extractionConfidence != null && (
+                      <span className="text-brand-700/80"> · extraction {readiness.extractionConfidence}%</span>
+                    )}
+                  </span>
                 )}
               </button>
               {confidenceOpen && (
                 <div
-                  id="ai-confidence-tooltip"
+                  id="readiness-tooltip"
                   role="tooltip"
-                  className="absolute right-0 top-full mt-1.5 z-30 w-64 rounded-md border border-border bg-white p-3 shadow-card text-[11.5px] text-ink-700"
+                  className="absolute right-0 top-full mt-1.5 z-30 w-72 rounded-md border border-border bg-white p-3 shadow-card text-[11.5px] text-ink-700"
                 >
-                  <div className="text-[12px] font-semibold text-ink-900 mb-1.5">AI Confidence Breakdown</div>
+                  <div className="text-[12px] font-semibold text-ink-900 mb-1.5">Model/Data Readiness</div>
+                  <p className="text-[11px] text-ink-500 mb-2 leading-relaxed">{READINESS_TIP}</p>
                   <div className="space-y-1 tabular-nums">
+                    <div className="flex justify-between"><span className="text-ink-500">Step</span><span className="font-medium text-ink-900">{readiness?.label ?? '—'}</span></div>
                     <div className="flex justify-between"><span className="text-ink-500">Doc count</span><span className="font-medium text-ink-900">{docCount}</span></div>
                     <div className="flex justify-between"><span className="text-ink-500">Avg extraction confidence</span><span className="font-medium text-ink-900">{avgFieldConfidence == null ? '—' : `${avgFieldConfidence}%`}</span></div>
                     <div className="flex justify-between"><span className="text-ink-500">Variance flags</span><span className="font-medium text-ink-900">{varianceFlagCount == null ? '—' : varianceFlagCount}</span></div>

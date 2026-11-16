@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge, StatusBadge } from '@/components/ui/Badge';
 import KebabMenu from '@/components/ui/KebabMenu';
 import { projectStatuses } from '@/lib/catalogs';
-import { modelDataReadiness, Readiness, READINESS_STEPS } from '@/lib/project';
+import { lastActivityAt, modelDataReadiness, Readiness, READINESS_STEPS, READINESS_TIP } from '@/lib/project';
 import { formatKeys } from '@/lib/formatKeys';
 import { cn, fmtDate, fmtCurrency } from '@/lib/format';
 import { useDeals } from '@/lib/hooks/useDeals';
@@ -112,10 +112,12 @@ const buildProjectMenu = (
   ];
 };
 
-/** FON-80 — the tooltip on the Model/Data Readiness column and card row. */
-const READINESS_TIP =
-  'Where this deal is in Fondok’s pipeline, read from its processing state — not a score: ' +
-  'No documents → Documents uploaded → Extracted (with the extraction confidence) → Model run → Validated.';
+/** FON-80 — the tooltip on the Stage column: what it is, and why a row may read "—". */
+const STAGE_TIP =
+  'Where this deal is in the acquisition process — Teaser → Under NDA → LOI → PSA. ' +
+  'Set on Step 1 of New Project, or from the deal header. ' +
+  'Deals created before Fondok asked for it read — until an analyst sets it.';
+
 
 interface DisplayDeal {
   id: string;
@@ -144,6 +146,8 @@ interface DisplayDeal {
   ownerId: string | null;
   /** Document count as text, or "—" on a worker that does not report it. */
   docs: string;
+  /** The later of the deal row's `updated_at` and its latest engine run
+   *  (a re-run leaves `deals.updated_at` alone — `lastActivityAt`). */
   updatedAt: string;
   /** True only when the worker REPORTS zero documents — unknown is not zero. */
   noDocs: boolean;
@@ -186,7 +190,7 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
         }),
     ownerId: d.created_by?.trim() || null,
     docs: d.document_count != null ? String(d.document_count) : '—',
-    updatedAt: d.updated_at ? fmtDate(d.updated_at) : '—',
+    updatedAt: fmtDate(lastActivityAt(d.updated_at, row?.last_engine_run_at ?? null)),
     noDocs: d.document_count === 0,
     isDraft,
     staleNote: isDraft ? staleDraftNote(d.updated_at) : null,
@@ -195,6 +199,10 @@ function fromWorkerDeal(d: WorkerDeal, row?: PipelineDealRow): DisplayDeal {
 
 /** FON-80 — the owner filter's "no recorded creator" entry (header-only creates, older rows). */
 const OWNER_UNKNOWN = '__unknown__';
+
+/** FON-80 — the list view's minimum row width: the fixed cells (~810px) plus
+ *  a readable Project cell. Below it the card scrolls sideways (gap 5). */
+const LIST_MIN_WIDTH = 'min-w-[1040px]';
 
 /** The workspace member a deal's creator id resolves to, or null when the
  *  roster does not carry them (left the workspace, personal workspace, demo). */
@@ -376,11 +384,11 @@ export default function ProjectsPage() {
         )}
 
         <div className="flex items-center bg-white border border-border rounded-md p-0.5">
-          <button onClick={() => setView('grid')}
+          <button onClick={() => setView('grid')} aria-label="Grid view" aria-pressed={view === 'grid'}
             className={cn('p-1.5 rounded', view === 'grid' ? 'bg-ink-300/30 text-ink-900' : 'text-ink-400')}>
             <LayoutGrid size={14} />
           </button>
-          <button onClick={() => setView('list')}
+          <button onClick={() => setView('list')} aria-label="List view" aria-pressed={view === 'list'}
             className={cn('p-1.5 rounded', view === 'list' ? 'bg-ink-300/30 text-ink-900' : 'text-ink-400')}>
             <List size={14} />
           </button>
@@ -525,13 +533,19 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : (
-        <Card>
+        // FON-80 (QA 2026-11-16, gap 5) — the row's fixed-width cells add up to
+        // ~950px; below that the flex-1 Project cell collapsed to nothing and
+        // its header slid under STAGE (seen at ~1060px with the sidebar open).
+        // The card scrolls sideways instead: every row keeps the same minimum
+        // width, so the Project cell is never squeezed below LIST_MIN_WIDTH's
+        // remainder, and a phone-width screen pans the table.
+        <Card className="overflow-x-auto" data-testid="projects-list">
           {/* Header row */}
-          <div className="flex items-center gap-3 px-5 py-2.5 border-b border-border bg-ink-100/40 text-[10.5px] font-semibold uppercase tracking-wide text-ink-500">
+          <div className={cn('flex items-center gap-3 px-5 py-2.5 border-b border-border bg-ink-100/40 text-[10.5px] font-semibold uppercase tracking-wide text-ink-500', LIST_MIN_WIDTH)}>
             <div className="w-9 flex-shrink-0" aria-hidden="true" />
-            <div className="flex-1 min-w-0">Project</div>
+            <div className="flex-1 min-w-[140px]">Project</div>
             <div className="w-20 flex justify-end">
-              <MetricLabel label="Stage" tip="Where this deal is in the acquisition process. Teaser → Under NDA → LOI → PSA → Closed." />
+              <MetricLabel label="Stage" tip={STAGE_TIP} />
             </div>
             <div className="w-20 flex justify-end">
               <MetricLabel label="Price" tip="Purchase price from the latest Base Case run — the figure the IC Memo's Sources & Uses prints. Reads — until the model has run." />
@@ -563,12 +577,13 @@ export default function ProjectsPage() {
               data-testid={p.isDraft ? 'draft-row' : undefined}
               className={cn(
                 'flex items-center gap-3 px-5 py-3.5 hover:bg-ink-300/10 transition-colors',
+                LIST_MIN_WIDTH,
                 i < filtered.length - 1 && 'border-b border-border'
               )}>
               <div className="w-9 h-9 rounded-md bg-brand-50 flex items-center justify-center flex-shrink-0">
                 <Building2 size={16} className="text-brand-500" />
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-[140px]">
                 <div className="flex items-center gap-2">
                   <div className="text-[13.5px] font-medium text-ink-900 truncate">{p.name}</div>
                   {p.isDraft ? <DraftBadge /> : p.status && <StatusBadge value={p.status} />}
@@ -578,8 +593,10 @@ export default function ProjectsPage() {
                   {p.staleNote && <span className="text-warn-700"> · {p.staleNote}</span>}
                 </div>
               </div>
-              <div className="w-20 flex justify-end">
-                {p.dealStage ? <StatusBadge value={p.dealStage} /> : <span className="text-[11px] text-ink-500">—</span>}
+              <div className="w-20 flex justify-end" data-testid="deal-stage">
+                {p.dealStage
+                  ? <StatusBadge value={p.dealStage} />
+                  : <span className="text-[11px] text-ink-500" title="Stage not set — set it from the deal header">—</span>}
               </div>
               {p.isDraft ? (
                 // No Price · $/Key · NOI · IRR · EM · Readiness for a draft —
@@ -666,7 +683,7 @@ function OwnerAvatar({ owner, ownerId, size = 'md' }: { owner: OrgMember | null;
     ? `Owner: ${owner.name}`
     : ownerId
       ? 'Owner: not in this workspace’s roster'
-      : 'Owner: not recorded';
+      : 'Owner: not recorded — created before Fondok recorded who creates a deal';
   return (
     <div
       className={cn(

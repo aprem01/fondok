@@ -84,10 +84,16 @@ A second pass re-reads each cited figure against the page it came from. A figure
 a high confidence; one that does not is lowered so it shows as “to review”. The confidence badge
 beside each field is this result.
 
-The deal's **AI Confidence** (deal header and deal list) is the average of these document scores —
-each extracted document's latest extraction, counted once. It updates when a document is extracted,
-a value is corrected, or a document is removed, and reads “—” until a document has been extracted;
-it is never shown as 0% for a deal that has not been scored.
+The deal's **extraction confidence** is the average of these document scores — each extracted
+document's latest extraction, counted once. It updates when a document is extracted, a value is
+corrected, or a document is removed, and reads “—” until a document has been extracted; it is never
+shown as 0% for a deal that has not been scored.
+
+The deal header and the Projects list show it beside the deal's **Model/Data Readiness** — where the
+deal is in Fondok's pipeline, read from its processing state, not a score: No documents → Documents
+uploaded → Extracted (with the extraction confidence) → Model run → Validated. A deal whose
+documents have been extracted but whose model has not run reads “Extracted · extraction 82%”; it
+never reads as a verdict on the deal.
 
 :::
 

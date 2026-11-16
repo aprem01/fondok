@@ -5,8 +5,8 @@
  *
  * Standing rule (no invented data): every numeric field is `number | null`,
  * and `null` means the worker has not produced the value. A null never
- * renders as 0 — the header prints a dash (`formatKeys`, the confidence pill
- * reads "AI Confidence —"). Nothing here is ever built from a fixture.
+ * renders as 0 — the header prints a dash (`formatKeys`, the readiness pill
+ * reads "Readiness —"). Nothing here is ever built from a fixture.
  */
 import type { DealStage, ProjectStatus, Risk } from '@/lib/catalogs';
 
@@ -72,6 +72,12 @@ export interface Readiness {
 
 export const READINESS_STEPS = 5;
 
+/** FON-80 — the one explanation of Model/Data Readiness (list column, card
+ *  row, deal-header pill): a processing step read from facts, not a score. */
+export const READINESS_TIP =
+  'Where this deal is in Fondok’s pipeline, read from its processing state — not a score: ' +
+  'No documents → Documents uploaded → Extracted (with the extraction confidence) → Model run → Validated.';
+
 export function modelDataReadiness(input: {
   documentCount: number | null | undefined;
   aiConfidence: number | null | undefined;
@@ -89,4 +95,39 @@ export function modelDataReadiness(input: {
   if (docs != null && docs > 0) return build('uploaded', 1, 'Documents uploaded');
   if (docs === 0) return build('no_documents', 0, 'No documents');
   return null;
+}
+
+/**
+ * FON-80 (QA 2026-11-16, gap 4) — the "Updated" a list row or the deal header
+ * prints: the later of the deal row's `updated_at` and the latest engine
+ * run's completion. A model re-run writes `engine_outputs` only and leaves
+ * `deals.updated_at` alone on purpose (lineage reads `updated_at` as "the
+ * deal's inputs changed" to flag a stale run — `services/lineage.py`), so the
+ * screen takes the max instead of the worker touching the column. Null when
+ * neither is known → "—"; an unparsable timestamp counts as unknown.
+ */
+export function lastActivityAt(
+  updatedAt: string | null | undefined,
+  lastEngineRunAt: string | null | undefined,
+): string | null {
+  const parse = (v: string | null | undefined): number | null => {
+    if (typeof v !== 'string' || !v) return null;
+    const t = new Date(v).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+  const a = parse(updatedAt);
+  const b = parse(lastEngineRunAt);
+  if (a == null) return b == null ? null : (lastEngineRunAt as string);
+  if (b == null) return updatedAt as string;
+  return b > a ? (lastEngineRunAt as string) : (updatedAt as string);
+}
+
+/** FON-80 — the one wording for the readiness pill / cell: the step's label
+ *  with the extraction confidence beside it once a document has been scored.
+ *  "—" when nothing is known. Shared by the deal header and the list. */
+export function readinessText(readiness: Readiness | null): string {
+  if (!readiness) return '—';
+  return readiness.extractionConfidence == null
+    ? readiness.label
+    : `${readiness.label} · extraction ${readiness.extractionConfidence}%`;
 }

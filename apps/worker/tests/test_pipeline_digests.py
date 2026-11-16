@@ -136,10 +136,14 @@ async def _insert_engine_output(
     outputs: dict,
     inputs: dict | None = None,
     tenant: str = _DEFAULT_TENANT,
+    run_at: datetime | None = None,
 ) -> None:
     from sqlalchemy import text
 
-    ts = datetime.now(UTC).isoformat()
+    # FON-80 — ``run_at`` dates the engine row; a seed that pins a deal's
+    # ``updated_at`` passes it so the run is not newer than the row (the
+    # pipeline's last activity is the later of the two).
+    ts = (run_at or datetime.now(UTC)).isoformat()
     await session.execute(
         text(
             """
@@ -187,6 +191,7 @@ async def _seed_deal_with_irr(
     await _insert_engine_output(
         session,
         deal_id=deal_id,
+        run_at=updated_at,
         engine_name="returns",
         outputs={
             "deal_id": deal_id,
@@ -205,6 +210,7 @@ async def _seed_deal_with_irr(
     await _insert_engine_output(
         session,
         deal_id=deal_id,
+        run_at=updated_at,
         engine_name="capital",
         outputs={
             "deal_id": deal_id,
@@ -221,6 +227,7 @@ async def _seed_deal_with_irr(
     await _insert_engine_output(
         session,
         deal_id=deal_id,
+        run_at=updated_at,
         engine_name="expense",
         outputs={
             "deal_id": deal_id,

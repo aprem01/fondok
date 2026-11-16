@@ -86,8 +86,9 @@ vi.mock('@/lib/auth', () => ({
 
 import ProjectDetailPage from '@/app/projects/[id]/page';
 
-/** The pill's accessible name when no extraction has scored the deal. */
-const NO_CONFIDENCE_LABEL = 'AI confidence not available — no extracted document yet';
+/** FON-80 — the readiness pill's accessible name when nothing is known about
+ *  the deal's processing (no document count, no score, no run, no state). */
+const NO_READINESS_LABEL = 'Model/Data Readiness not known yet';
 
 const DEAL = {
   id: 'fff00000-0000-0000-0000-000000000aaa',
@@ -134,14 +135,56 @@ describe('Deal header — a wizard deal before extraction', () => {
     expect(container.textContent).not.toMatch(/\b0\s*keys/);
   });
 
-  it('an unscored (null) confidence reads "AI Confidence —" and the breakdown "—", never "0%"', () => {
+  it('an unscored (null) confidence reads "Readiness —" and the breakdown "—", never "0%"', () => {
     loaded(DEAL);
     const { container } = render(<ProjectDetailPage />);
-    const pill = screen.getByRole('button', { name: NO_CONFIDENCE_LABEL });
-    expect(pill).toHaveTextContent('AI Confidence —');
+    const pill = screen.getByRole('button', { name: NO_READINESS_LABEL });
+    expect(pill).toHaveTextContent('Readiness —');
     expect(container.textContent).not.toMatch(/\b0%/);
     fireEvent.focus(pill);
     expect(screen.getByRole('tooltip').textContent).toMatch(/Avg extraction confidence—/);
+  });
+
+  // FON-80 (QA 2026-11-16, gap 3) — the header pill is the same Model/Data
+  // Readiness the Projects list shows: the step from the worker's facts, with
+  // the extraction confidence beside it. "AI Confidence" is gone from the page.
+  it('the header pill reads the Model/Data Readiness step and the extraction confidence, and never "AI Confidence"', () => {
+    loaded({ ...DEAL, document_count: 3, ai_confidence: 0.82, state: 'VALIDATING' });
+    const { container } = render(<ProjectDetailPage />);
+    const pill = screen.getByTestId('deal-readiness');
+    expect(pill).toHaveTextContent('Readiness Extracted · extraction 82%');
+    expect(pill).toHaveAttribute('aria-label', 'Model/Data Readiness: Extracted · extraction 82%');
+    expect(container.textContent).not.toMatch(/AI Confidence/i);
+    fireEvent.focus(pill);
+    const tip = screen.getByRole('tooltip');
+    expect(tip.textContent).toContain('Model/Data Readiness');
+    expect(tip.textContent).toMatch(/StepExtracted/);
+    expect(tip.textContent).toMatch(/Avg extraction confidence82%/);
+  });
+
+  it('a validated deal reads "Readiness Validated" — the onboarding state, not a score', () => {
+    loaded({ ...DEAL, document_count: 3, ai_confidence: 0.9, state: 'READY' });
+    render(<ProjectDetailPage />);
+    expect(screen.getByTestId('deal-readiness')).toHaveTextContent('Readiness Validated · extraction 90%');
+  });
+
+  // FON-80 (gap 2) — the acquisition stage is settable from the header; an
+  // unset one says so instead of defaulting to "Teaser".
+  it('the stage control shows the set stage, and "Set stage" (never "Teaser") when none was recorded', () => {
+    loaded(DEAL);
+    render(<ProjectDetailPage />);
+    expect(screen.getByRole('button', { name: 'Deal stage: LOI' })).toBeInTheDocument();
+    cleanup();
+    loaded({ ...DEAL, deal_stage: null });
+    const { container } = render(<ProjectDetailPage />);
+    const control = screen.getByRole('button', { name: 'Deal stage: not set' });
+    expect(control).toHaveTextContent('Set stage');
+    expect(container.textContent).not.toMatch(/\bTeaser\b/);
+    fireEvent.click(control);
+    const menu = screen.getByRole('menu', { name: 'Set deal stage' });
+    expect(within(menu).getAllByRole('menuitemradio').map((b) => b.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining('Teaser'), expect.stringContaining('PSA')]),
+    );
   });
 
   it('a deal with no risk never shows an invented "Medium"', () => {
@@ -161,15 +204,15 @@ describe('Deal header — a wizard deal before extraction', () => {
     expect(within(dialog).getByTestId('collaborators-empty')).toBeInTheDocument();
   });
 
-  it('a scored deal still prints its confidence — and a measured 0 is a value, printed as 0%', () => {
+  it('a scored deal still prints its extraction confidence beside the step — and a measured 0 is a value, printed as 0%', () => {
     loaded({ ...DEAL, ai_confidence: 0.87, keys: 132 });
     const { container } = render(<ProjectDetailPage />);
-    expect(screen.getByRole('button', { name: 'AI confidence 87%' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Model/Data Readiness: Extracted · extraction 87%' })).toBeInTheDocument();
     expect(container.textContent).toMatch(/132\s*keys/);
     cleanup();
     loaded({ ...DEAL, ai_confidence: 0 });
     render(<ProjectDetailPage />);
-    expect(screen.getByRole('button', { name: 'AI confidence 0%' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Model/Data Readiness: Extracted · extraction 0%' })).toBeInTheDocument();
   });
 
   it('never asks the worker for the variance report on mount, while the deal loads, or on the load-error path', () => {
@@ -193,7 +236,7 @@ describe('Deal header — a wizard deal before extraction', () => {
   it('asks for the variance report only once the confidence tooltip opens, and stops when it closes', () => {
     loaded(DEAL);
     render(<ProjectDetailPage />);
-    const pill = screen.getByRole('button', { name: NO_CONFIDENCE_LABEL });
+    const pill = screen.getByRole('button', { name: NO_READINESS_LABEL });
     fireEvent.focus(pill);
     expect(hoisted.varianceIds[hoisted.varianceIds.length - 1]).toBe(DEAL.id);
     fireEvent.blur(pill);
@@ -204,7 +247,7 @@ describe('Deal header — a wizard deal before extraction', () => {
     loaded(DEAL);
     render(<ProjectDetailPage />);
     // The breakdown is the pill's hover/focus tooltip.
-    fireEvent.focus(screen.getByRole('button', { name: NO_CONFIDENCE_LABEL }));
+    fireEvent.focus(screen.getByRole('button', { name: NO_READINESS_LABEL }));
     const tip = screen.getByRole('tooltip');
     expect(tip.textContent).toMatch(/Variance flags—/);
     expect(tip.textContent).not.toMatch(/Variance flags0/);
@@ -212,7 +255,7 @@ describe('Deal header — a wizard deal before extraction', () => {
     hoisted.varianceFlags = [{}, {}, {}];
     loaded(DEAL);
     render(<ProjectDetailPage />);
-    fireEvent.focus(screen.getByRole('button', { name: NO_CONFIDENCE_LABEL }));
+    fireEvent.focus(screen.getByRole('button', { name: NO_READINESS_LABEL }));
     expect(screen.getByRole('tooltip').textContent).toMatch(/Variance flags3/);
   });
 
