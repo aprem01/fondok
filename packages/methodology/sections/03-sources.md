@@ -26,7 +26,14 @@ the same set: the active hotels on the STR roster, combined across every STR rep
 hotel is treated as closed only when a report says so explicitly; closed hotels are listed with a
 “closed · excluded” chip and are left out of both the count and the keys. Which reports count as STR
 is decided by the lane each document was processed in, not by its tag, so a market report filed
-under STR is read as a market study and never feeds the comp set.
+under STR is read as a market study and never feeds the comp set. Within the STR lane, only a
+roster that carries STR's own property identifiers (one per competitor, as the STR report prints
+them) joins the comp set; a document whose comp list has no STR identifier on any row — a business
+plan or memo that names competitors — contributes nothing, and the card says so (“1 document
+skipped: no STR identifiers”). A document is recognised as an STR report before any tag is applied
+only when it carries the STR report template itself (the STAR Report header, the “Index (MPI)” and
+“My Property” row labels, the tab names, the CoStar footer); comp-set vocabulary alone — “competitive
+set”, “RevPAR index” — is not enough, and such a document is classified like any other.
 
 **“TTM · comp-set blend” is defined on the card.** Market occupancy, ADR and RevPAR are the comp
 set's blended trailing-twelve-month figures, recovered exactly from the STR penetration indices:

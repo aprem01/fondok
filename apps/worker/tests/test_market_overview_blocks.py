@@ -38,16 +38,23 @@ STR_FIELDS: list[dict[str, Any]] = [
     {"field_name": "ttm_performance.indices.rgi_revpar_index", "value": 97.2, "source_page": 4},
     {"field_name": "ttm_performance.subject.monthly.2025_07.occupancy_pct", "value": 0.7, "source_page": 8},
     {"field_name": "ttm_performance.subject.monthly.2026_06.occupancy_pct", "value": 0.72, "source_page": 8},
+    # FON-123 — an STR roster carries STR's property id per competitor; a
+    # roster without any is skipped (see test_market_comp_set_derivation).
     {"field_name": "ttm_performance.compset.1.name", "value": "Z Ocean Hotel", "source_page": 22},
     {"field_name": "ttm_performance.compset.1.keys", "value": 40, "unit": "rooms", "source_page": 22},
+    {"field_name": "ttm_performance.compset.1.str_id", "value": "53909", "source_page": 22},
     {"field_name": "ttm_performance.compset.2.name", "value": "Closed - Blue Moon Hotel", "source_page": 22},
     {"field_name": "ttm_performance.compset.2.keys", "value": 0, "unit": "rooms", "source_page": 22},
+    {"field_name": "ttm_performance.compset.2.str_id", "value": "34401", "source_page": 22},
     {"field_name": "ttm_performance.compset.3.name", "value": "The Betsy South Beach", "source_page": 22},
     {"field_name": "ttm_performance.compset.3.keys", "value": 129, "unit": "rooms", "source_page": 22},
+    {"field_name": "ttm_performance.compset.3.str_id", "value": "44117", "source_page": 22},
     {"field_name": "ttm_performance.compset.4.name", "value": "The Tony Hotel of South Beach", "source_page": 22},
     {"field_name": "ttm_performance.compset.4.keys", "value": 68, "unit": "rooms", "source_page": 22},
+    {"field_name": "ttm_performance.compset.4.str_id", "value": "39070", "source_page": 22},
     {"field_name": "ttm_performance.compset.5.name", "value": "Dream South Beach", "source_page": 22},
     {"field_name": "ttm_performance.compset.5.keys", "value": 107, "unit": "rooms", "source_page": 22},
+    {"field_name": "ttm_performance.compset.5.str_id", "value": "33931", "source_page": 22},
     # The report's own rollup counts the closed hotel — the tester's "5 hotels".
     {"field_name": "comp_set.comp_set_size", "value": 5, "source_page": 22},
     {"field_name": "comp_set.total_keys", "value": 344, "unit": "rooms", "source_page": 22},
@@ -503,13 +510,15 @@ async def test_ttm_blend_follows_the_report_period_when_files_were_re_extracted_
             occ=82.391, adr=247.078, revpar=203.57, mpi=1.141, ari=0.836, rgi=0.954,
             first_month=(2022, 7), months=18, report_year=2023, page=2,
         ),
+        # The Dec 2023 trend as the template extracts it today (ids per
+        # competitor; the Betsy under its former name, same id 44117).
         *_roster_fields(
             [
-                ("", "Dream South Beach", 107, None),
-                ("", "Blue Moon Hotel", 75, None),
-                ("", "The Tony Hotel of South Beach", 73, None),
-                ("", "The Betsy Hotel", 129, None),
-                ("", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
+                ("33931", "Dream South Beach", 107, None),
+                ("34401", "Blue Moon Hotel", 75, None),
+                ("39070", "The Tony Hotel of South Beach", 73, None),
+                ("44117", "The Betsy Hotel", 129, None),
+                ("53909", "Z Ocean Hotel, Classico A Sonesta Collection", 35, None),
             ],
             page=22,
         ),

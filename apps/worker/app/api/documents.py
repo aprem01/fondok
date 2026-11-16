@@ -85,7 +85,11 @@ from ..services.financial_source_rank import (
 from ..services.financial_source_rank import (
     financial_source_sort_key,
 )
-from ..services.market_comp_set import closed_roster_indices, resolve_report_period_end
+from ..services.market_comp_set import (
+    closed_roster_indices,
+    resolve_report_period_end,
+    roster_has_str_identifiers,
+)
 from ..services.market_fields import extraction_lane, parse_extraction_records
 from ..services.pnl_benchmark_map import map_benchmark_to_categories
 from ..storage import S3RawStore, StorageError, get_raw_store
@@ -2474,6 +2478,11 @@ async def classify_for_extraction(
          override``, ``source=pre-router-override``). The caller performs
          the early ``UPDATE documents SET doc_type`` side-effect when it
          sees this source — kept OUT of this pure decision function.
+         FON-123 — ``looks_str`` needs STR's TEMPLATE fingerprint (the
+         STAR Report header, "Index (MPI)" / "My Property" row labels,
+         tab names, CoStar footer), not just comp-set vocabulary; a
+         narrative with a comp list (the one-page Business Plan .docx)
+         falls through to the Router like any other document.
       2. Router LLM (``run_router``) — ``route`` from the router, or
          ``extract-fallback`` if the call raises.
       3. filename-hint fallback (``_guess_doc_type``) — when the router
@@ -2498,8 +2507,10 @@ async def classify_for_extraction(
     hint = _guess_doc_type(filename)
 
     # Pre-compute structural text signals on the FULL parsed text BEFORE
-    # the Router runs. If the full document is unambiguously STR-shaped,
-    # bypass the Router entirely and pin doc_type to STR_TREND.
+    # the Router runs. If the full document is unambiguously STR-shaped
+    # (template fingerprint + vocabulary, FON-123), bypass the Router
+    # entirely and pin doc_type to STR_TREND. Vocabulary-only matches are
+    # ambiguous and go to the Router.
     from ..services.structural_recognizer import (
         detect_text_signals as _detect_text_signals,
     )
@@ -2512,12 +2523,25 @@ async def classify_for_extraction(
     if pre_router_text_signals.looks_str:
         pre_router_str_override = "STR_TREND"
         logger.info(
-            "pre-router structural override: doc=%s str_markers=%d pnl_markers=%d "
-            "matched=%s — pinning doc_type=STR_TREND, skipping Router LLM call",
+            "pre-router structural override: doc=%s str_markers=%d "
+            "template_markers=%d pnl_markers=%d matched=%s — pinning "
+            "doc_type=STR_TREND, skipping Router LLM call",
             doc_id,
             pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.template_marker_hits,
             pre_router_text_signals.pnl_marker_hits,
             ", ".join(pre_router_text_signals.str_markers_matched[:5]),
+        )
+    elif pre_router_text_signals.str_marker_hits >= 4:
+        # FON-123 — STR vocabulary without STR's template: ambiguous, so
+        # the Router decides. Logged so a missed real report is findable.
+        logger.info(
+            "pre-router structural override NOT applied: doc=%s str_markers=%d "
+            "template_markers=%d pnl_markers=%d — vocabulary only, Router decides",
+            doc_id,
+            pre_router_text_signals.str_marker_hits,
+            pre_router_text_signals.template_marker_hits,
+            pre_router_text_signals.pnl_marker_hits,
         )
 
     if pre_router_str_override is not None:
@@ -4154,6 +4178,16 @@ def _aggregate_market_data(
             key = f"{doc_type}:{name.lower()}"
             if key not in meta:
                 meta[key] = _FieldMeta(page=page, doc_name=doc_name, doc_type=doc_type)
+        # FON-123 — same rule as the Market tab roster
+        # (``market_comp_set.roster_has_str_identifiers``): a comp list
+        # without STR's property id on any row is not an STR roster and
+        # never feeds the Index Analysis comp-set keys either.
+        if row_compset and not roster_has_str_identifiers(row_compset):
+            logger.info(
+                "market-data: comp-set rows from %s skipped — no STR identifiers (%d rows)",
+                doc_name, len(row_compset),
+            )
+            row_compset = {}
         if row_compset:
             all_rosters.append(row_compset)
         if row_compset and not compset_rows:

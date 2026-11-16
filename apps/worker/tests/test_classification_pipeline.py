@@ -54,6 +54,8 @@ class _FakeTextSignals:
     str_marker_hits: int = 0
     pnl_marker_hits: int = 0
     str_markers_matched: list[str] = field(default_factory=list)
+    template_marker_hits: int = 0
+    template_markers_matched: list[str] = field(default_factory=list)
 
 
 @dataclass

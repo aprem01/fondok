@@ -980,32 +980,73 @@ def canonical_payload_from_signals(
 
 
 # Markers we look for in the RAW parsed text of an uploaded doc — used
-# by the extractor's fail-fast guard (it doesn't have an extracted
-# field tree yet, so the regex-on-key-name classifier above can't run).
+# by the extractor's fail-fast guard and the pre-router STR override
+# (neither has an extracted field tree yet, so the regex-on-key-name
+# classifier above can't run).
 #
-# These are tokens that show up in the actual STR Trend Excel file
-# text (column headers, sheet labels, glossary footers, …) but
-# essentially never appear in a P&L's text dump. The threshold below
-# is intentionally high — only a clear majority of these markers
-# triggers the contradiction guard, so an OM that mentions "comp set"
-# in a single paragraph doesn't get flagged.
-_STR_TEXT_MARKERS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bcomp[\s_-]?set\b", re.IGNORECASE),
-    re.compile(r"\bcompetitive[\s_-]?set\b", re.IGNORECASE),
+# FON-123 — two tiers. A one-page Business Plan .docx ("HOTEL SUPPLY"
+# table of five competitors, goals phrased as "Increase mid-week RevPAR
+# index to 100" / "Exceed 90 in ADR index", "competitive set", "Comp set
+# in closer proximity to the beach") matched FIVE of the old flat marker
+# list and was pinned STR_TREND before the Router ran; its comp list was
+# then unioned into the Market tab roster (7 hotels / 978 keys instead of
+# 4 / 344). Every marker it hit is hotel VOCABULARY any narrative can use.
+# What it never carries is STR's own TEMPLATE: the "STAR Report" /
+# "Property ID 56387" header, "Competitive Set Data Excludes Subject
+# Property", the "Index (MPI)" / "My Property" / "Comp Set" row labels,
+# the tab names, the CoStar / str.com footer. ``looks_str`` now needs
+# both tiers (see ``_STR_TEMPLATE_MIN_HITS``); vocabulary alone falls
+# through to the Router LLM, which is the right judge of a narrative.
+
+# Tier 1 — STR / CoStar TEMPLATE fingerprint: tokens the STR report
+# layout itself prints (headers, row labels, tab names, publisher
+# footer). A narrative hotel document does not reproduce these.
+_STR_TEMPLATE_MARKERS: tuple[re.Pattern[str], ...] = (
+    # Report header: "Weekly STAR Report : <hotel>", "STR Report", "STR Trend".
+    re.compile(r"\b(str|star)[\s_-]?report\b", re.IGNORECASE),
+    re.compile(r"\bstr[\s_-]?trend\b", re.IGNORECASE),
+    re.compile(r"\btrend[\s_-]?report\b", re.IGNORECASE),
+    # "STR # 56387 / Created July 22, 2025" · "Property ID 56387 / Created …"
+    re.compile(r"\bstr\s*#\s*\d{3,}", re.IGNORECASE),
+    re.compile(r"\bproperty[\s_-]?id\s*\d{3,}", re.IGNORECASE),
+    # "Competitive Set Data Excludes Subject Property" (every STR header).
+    re.compile(r"\b(competitive|comp)[\s_-]?set[\s_-]?data[\s_-]?excludes\b", re.IGNORECASE),
+    # Row labels of the STR tables: "Index (MPI)", "My Property" / "My Prop".
+    re.compile(r"\bindex\s*\(\s*(mpi|ari|rgi)\s*\)", re.IGNORECASE),
+    re.compile(r"\bmy[\s_-]?prop(erty)?\b", re.IGNORECASE),
+    # Tab names.
+    re.compile(r"\bstar[\s_-]?summary\b", re.IGNORECASE),
+    re.compile(r"\bcompetitive[\s_-]?set[\s_-]?report\b", re.IGNORECASE),
+    re.compile(r"\bresponse[\s_-]?report\b", re.IGNORECASE),
+    re.compile(r"\bperformance[\s_-]?at[\s_-]?a[\s_-]?glance\b", re.IGNORECASE),
     re.compile(r"\bweekly[\s_-]?performance\b", re.IGNORECASE),
     re.compile(r"\bday[\s_-]?of[\s_-]?week\b", re.IGNORECASE),
+    re.compile(r"\bby[\s_-]?measure\b", re.IGNORECASE),  # CoStar tab name
+    re.compile(r"\bclassic\b.*\btrend\b", re.IGNORECASE),  # CoStar tab name
+    # Publisher footer.
+    re.compile(r"\bsmith[\s_-]?travel\b", re.IGNORECASE),
+    re.compile(r"\bcostar\b", re.IGNORECASE),
+    re.compile(r"\bstr\.com\b", re.IGNORECASE),
+)
+
+# Tier 2 — STR VOCABULARY: words a report uses that a narrative (business
+# plan, OM, market study) also uses when it talks about the comp set.
+_STR_VOCAB_MARKERS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bcomp[\s_-]?set\b", re.IGNORECASE),
+    re.compile(r"\bcompetitive[\s_-]?set\b", re.IGNORECASE),
     re.compile(r"\bmpi\b", re.IGNORECASE),
     re.compile(r"\bari\b", re.IGNORECASE),
     re.compile(r"\brgi\b", re.IGNORECASE),
-    re.compile(r"\bsmith[\s_-]?travel\b", re.IGNORECASE),
-    re.compile(r"\bcostar\b", re.IGNORECASE),
-    re.compile(r"\bstr[\s_-]?trend\b", re.IGNORECASE),
     re.compile(r"\boccupancy[\s_-]?index\b", re.IGNORECASE),
     re.compile(r"\badr[\s_-]?index\b", re.IGNORECASE),
     re.compile(r"\brevpar[\s_-]?index\b", re.IGNORECASE),
     re.compile(r"\bpenetration[\s_-]?index\b", re.IGNORECASE),
-    re.compile(r"\bby[\s_-]?measure\b", re.IGNORECASE),  # CoStar tab name
-    re.compile(r"\bclassic\b.*\btrend\b", re.IGNORECASE),  # CoStar tab name
+)
+
+# Both tiers — ``str_marker_hits`` counts distinct matches over this list.
+_STR_TEXT_MARKERS: tuple[re.Pattern[str], ...] = (
+    *_STR_TEMPLATE_MARKERS,
+    *_STR_VOCAB_MARKERS,
 )
 
 
@@ -1029,13 +1070,19 @@ _PNL_TEXT_MARKERS: tuple[re.Pattern[str], ...] = (
 )
 
 
-# Minimum number of distinct STR text markers required before the
-# extractor fail-fast guard considers the doc "structurally STR-shaped".
-# 4 is conservative: a real STR Trend report's first sheet alone
-# (Custom Trend / By Measure) typically hits ≥ 8 of the markers above.
+# Minimum number of distinct STR text markers (both tiers) required
+# before the doc is considered "structurally STR-shaped". 4 is
+# conservative: a real STR report's first sheet alone (header + Table of
+# Contents) typically hits >= 8 of the markers above.
 _STR_TEXT_MIN_HITS = 4
 
-# Only fail-fast when STR markers OUTWEIGH P&L markers by at least 2x.
+# FON-123 — and at least this many of them must be TEMPLATE markers
+# (``_STR_TEMPLATE_MARKERS``). The live false positive hit 5 vocabulary
+# markers and 0 template markers; the three live STR workbooks hit 11-12
+# template markers each (the synthetic CoStar dump in the tests hits 8).
+_STR_TEMPLATE_MIN_HITS = 2
+
+# Only fire when STR markers OUTWEIGH P&L markers by at least 2x.
 # Belt-and-braces: a real P&L that happens to mention "comp set" once
 # in a single paragraph won't trigger the guard because the P&L vocab
 # would dominate.
@@ -1045,24 +1092,32 @@ _STR_TEXT_VS_PNL_RATIO = 2.0
 @dataclass(frozen=True)
 class TextSignals:
     """Lightweight text-level signal counts for the extractor's
-    fail-fast guard. Computed BEFORE the LLM call, so the classifier
-    above (which needs an extracted field tree) cannot be used.
+    fail-fast guard and the pre-router STR override. Computed BEFORE the
+    LLM call, so the classifier above (which needs an extracted field
+    tree) cannot be used.
 
     Fields:
-        str_marker_hits: number of distinct STR markers matched in the
-            raw text (each pattern counts at most once even if it
-            appears many times).
+        str_marker_hits: number of distinct STR markers (both tiers)
+            matched in the raw text (each pattern counts at most once
+            even if it appears many times).
         pnl_marker_hits: number of distinct P&L markers matched.
-        looks_str: True when STR markers cross the floor AND outweigh
-            P&L markers by ``_STR_TEXT_VS_PNL_RATIO``.
+        looks_str: True when STR markers cross the floor, outweigh P&L
+            markers by ``_STR_TEXT_VS_PNL_RATIO`` AND at least
+            ``_STR_TEMPLATE_MIN_HITS`` of them are STR TEMPLATE markers
+            (FON-123 — vocabulary alone never pins STR_TREND).
         str_markers_matched: ordered list of marker source patterns
             (for the deviation log).
+        template_marker_hits: how many of the matches are template
+            (tier 1) markers.
+        template_markers_matched: their source patterns.
     """
 
     str_marker_hits: int
     pnl_marker_hits: int
     looks_str: bool
     str_markers_matched: list[str] = field(default_factory=list)
+    template_marker_hits: int = 0
+    template_markers_matched: list[str] = field(default_factory=list)
 
 
 def detect_text_signals(content: str) -> TextSignals:
@@ -1086,15 +1141,21 @@ def detect_text_signals(content: str) -> TextSignals:
             str_markers_matched=[],
         )
 
-    str_hits: list[str] = []
-    for rx in _STR_TEXT_MARKERS:
+    template_hits: list[str] = []
+    for rx in _STR_TEMPLATE_MARKERS:
         if rx.search(content):
-            str_hits.append(rx.pattern)
+            template_hits.append(rx.pattern)
+    vocab_hits: list[str] = []
+    for rx in _STR_VOCAB_MARKERS:
+        if rx.search(content):
+            vocab_hits.append(rx.pattern)
+    str_hits = [*template_hits, *vocab_hits]
 
     pnl_hits = sum(1 for rx in _PNL_TEXT_MARKERS if rx.search(content))
 
     looks_str = (
         len(str_hits) >= _STR_TEXT_MIN_HITS
+        and len(template_hits) >= _STR_TEMPLATE_MIN_HITS
         and (
             pnl_hits == 0
             or (len(str_hits) / float(pnl_hits)) >= _STR_TEXT_VS_PNL_RATIO
@@ -1106,6 +1167,8 @@ def detect_text_signals(content: str) -> TextSignals:
         pnl_marker_hits=pnl_hits,
         looks_str=looks_str,
         str_markers_matched=str_hits,
+        template_marker_hits=len(template_hits),
+        template_markers_matched=template_hits,
     )
 
 

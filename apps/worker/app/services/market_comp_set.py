@@ -38,6 +38,18 @@ The roster is the UNION of every STR / STR_TREND extraction on the deal
 (live case: the May trend report lists "Blue Moon Hotel · 75 rooms" with
 no marker while the July daily report lists "Closed - Blue Moon Hotel · 0
 rooms" — reading only the newest report could never see the closure).
+
+Which extractions feed the roster — STR identifiers required (FON-123)
+----------------------------------------------------------------------
+Only an extraction whose comp-set rows carry STR's own property
+identifier (``ttm_performance.compset.<n>.str_id`` on at least one row —
+the STR template emits one per competitor) joins the union. Live
+(2026-11): a one-page Business Plan .docx reached the STR lane and its
+"HOTEL SUPPLY" table (five hotels, one "officially closed") was unioned
+in; the Market tab read 7 hotels / 978 keys instead of 4 / 344. A roster
+without any STR id is not an STR roster: it contributes nothing, and the
+derivation records it in ``skipped_documents`` with the reason
+(``no_str_identifiers``) so the tab can say "1 document skipped".
 Hotels are matched across reports in this order (first rule that applies):
 
 1. **STR id** — when BOTH the row and a unioned hotel carry one, that id
@@ -192,6 +204,9 @@ class CompSetDerivation:
     #: Every STR extraction on the deal in the order the union read them
     #: (most recent report period first) with the period end each resolved to.
     ordering: list[StrReportOrder] = field(default_factory=list)
+    #: Rosters that reached the STR lane but did not join the union and why
+    #: (FON-123 — no STR identifier on any comp row).
+    skipped_documents: list[SkippedRoster] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -203,6 +218,52 @@ class RosterSnapshot:
     doc_id: str | None = None
     page: int | None = None
     extraction_id: str | None = None
+
+
+SkipReason = Literal["no_str_identifiers"]
+SKIP_REASON_TEXT: dict[str, str] = {"no_str_identifiers": "no STR identifiers"}
+
+
+@dataclass(frozen=True)
+class SkippedRoster:
+    """A comp-set roster that reached the STR lane but did not join the union
+    (FON-123) — the document, how many hotels it listed, and why."""
+
+    doc_name: str | None
+    doc_id: str | None
+    extraction_id: str | None
+    hotels_listed: int
+    reason: SkipReason = "no_str_identifiers"
+
+
+def roster_has_str_identifiers(rows: Mapping[int, Mapping[str, Any]]) -> bool:
+    """True when at least one ``ttm_performance.compset.<n>.*`` row carries
+    STR's property id (``str_id``). The STR template emits one per
+    competitor; a narrative's comp list never has one (FON-123)."""
+    return any(_str_id(entry.get("str_id")) for entry in rows.values())
+
+
+def skipped_rosters_note(skipped: Sequence[SkippedRoster]) -> str:
+    """``"1 document skipped: no STR identifiers (<name> — 5 hotels listed); …"``
+    Empty when nothing was skipped."""
+    if not skipped:
+        return ""
+    parts = []
+    for sk in skipped:
+        label = sk.doc_name or "an untitled document"
+        count = f"{sk.hotels_listed} hotel{'s' if sk.hotels_listed != 1 else ''} listed"
+        parts.append(f"{label} — {count}")
+    reasons = sorted({SKIP_REASON_TEXT.get(sk.reason, sk.reason) for sk in skipped})
+    n = len(skipped)
+    tail = (
+        "its comp list is not an STR roster and was not counted."
+        if n == 1
+        else "their comp lists are not STR rosters and were not counted."
+    )
+    return (
+        f"{n} document{'s' if n != 1 else ''} skipped: {', '.join(reasons)} "
+        f"({'; '.join(parts)}); {tail}"
+    )
 
 
 def classify_hotel_status(
@@ -317,6 +378,7 @@ def derive_comp_set_union(
     *,
     reported_comp_set_size: Any = None,
     reported_total_keys: Any = None,
+    skipped: Sequence[SkippedRoster] = (),
 ) -> CompSetDerivation:
     """The ONE comp-set derivation: count AND keys over the active roster,
     unioned across every STR report on the deal.
@@ -334,6 +396,9 @@ def derive_comp_set_union(
     from the first report in that order listing a positive count. Rows with
     neither a name nor a positive key count are ignored. Falls back to the
     report's rollups only when no roster was extracted at all, and says so.
+    ``skipped`` are the rosters the caller refused to union (FON-123, see
+    :func:`roster_has_str_identifiers`); they are named in the note and
+    exposed as ``skipped_documents`` — never counted.
     """
     size_reported = coerce_int(reported_comp_set_size)
     keys_reported = coerce_int(reported_total_keys)
@@ -433,6 +498,9 @@ def derive_comp_set_union(
             "report's own comp-set rollup is shown; closed hotels cannot be "
             "identified from a rollup."
         )
+        skipped_note = skipped_rosters_note(skipped)
+        if skipped_note:
+            note += " " + skipped_note
         return CompSetDerivation(
             hotels=[],
             active_count=size_reported,
@@ -449,6 +517,7 @@ def derive_comp_set_union(
             source_page=source_page,
             note=note,
             documents=documents,
+            skipped_documents=list(skipped),
         )
 
     active_keys_sum = sum(h.keys for h in active if h.keys and h.keys > 0)
@@ -495,6 +564,9 @@ def derive_comp_set_union(
         ) + "."
     if keys_basis == "reported_rollup":
         note += " Keys are the report's rollup (the roster carried no room counts)."
+    skipped_note = skipped_rosters_note(skipped)
+    if skipped_note:
+        note += " " + skipped_note
 
     return CompSetDerivation(
         hotels=hotels,
@@ -512,6 +584,7 @@ def derive_comp_set_union(
         source_page=source_page,
         note=note,
         documents=documents,
+        skipped_documents=list(skipped),
     )
 
 
@@ -824,7 +897,8 @@ class StrMarketInputs:
     report's rows apart so the blend reads ONE report. ``rosters`` holds
     EVERY extraction's ``ttm_performance.compset.<n>.*`` rows in the same
     order — the comp set is their union; ``roster`` (+ ``roster_doc_*``) is
-    the first one. ``blend_extraction`` is the first report in the order
+    the first one. A roster without any STR id on any row is not an STR
+    roster (FON-123): it lands in ``skipped_rosters`` instead. ``blend_extraction`` is the first report in the order
     carrying a blend row (subject TTM or an index); ``monthly_periods`` are
     the ``YYYY-MM`` periods of ITS subject monthly series.
     """
@@ -835,6 +909,9 @@ class StrMarketInputs:
     roster_doc_id: str | None = None
     roster_page: int | None = None
     rosters: list[RosterSnapshot] = field(default_factory=list)
+    #: Rosters that reached the STR lane without any STR id (FON-123) — not
+    #: in ``rosters``; the derivation names them.
+    skipped_rosters: list[SkippedRoster] = field(default_factory=list)
     monthly_periods: set[str] = field(default_factory=set)
     extractions: list[StrReportOrder] = field(default_factory=list)
     fields_by_extraction: dict[str | None, dict[str, FieldRef]] = field(default_factory=dict)
@@ -856,33 +933,71 @@ def _normalize_period(raw: str) -> str | None:
     return f"{year:04d}-{month:02d}"
 
 
+def _compset_row(lname: str) -> tuple[int, str] | None:
+    """``ttm_performance.compset.<n>.<attr>`` → ``(n, attr)``; None otherwise."""
+    if not lname.startswith(COMPSET_PREFIX):
+        return None
+    rest = lname[len(COMPSET_PREFIX):]
+    try:
+        idx_str, attr = rest.split(".", 1)
+        return int(idx_str), attr
+    except (ValueError, IndexError):
+        return None
+
+
 def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
     out = StrMarketInputs()
-    out.extractions = order_str_extractions(rows)
+    all_extractions = order_str_extractions(rows)
     by_ext: dict[str | None, list[FieldRow]] = {}
     for r in rows:
         by_ext.setdefault(r.extraction_id, []).append(r)
-    ordered_rows = [r for o in out.extractions for r in by_ext.get(o.extraction_id, [])]
+    ordered_rows = [r for o in all_extractions for r in by_ext.get(o.extraction_id, [])]
 
+    # Pass 1 — bucket every extraction's ``ttm_performance.compset.<n>.*``
+    # rows (report-period order) and decide which rosters are STR rosters.
+    # FON-123: a roster with no STR id on any row is a narrative's comp list
+    # that reached the STR lane; that extraction is recorded in
+    # ``skipped_rosters`` and contributes NOTHING below — not its roster,
+    # not its rollups, not a blend row.
     roster_rows: dict[str | None, dict[int, dict[str, Any]]] = {}
     roster_meta: dict[str | None, tuple[str | None, str | None, int | None]] = {}
     roster_order: list[str | None] = []
+    for r in ordered_rows:
+        parsed = _compset_row(r.lname)
+        if parsed is None:
+            continue
+        idx, attr = parsed
+        if r.extraction_id not in roster_rows:
+            roster_rows[r.extraction_id] = {}
+            roster_meta[r.extraction_id] = (r.doc_name, r.doc_id, r.page)
+            roster_order.append(r.extraction_id)
+        roster_rows[r.extraction_id].setdefault(idx, {}).setdefault(attr, r.value)
+    skipped_ext: set[str | None] = set()
+    for ext in roster_order:
+        rows_for_ext = roster_rows[ext]
+        if roster_has_str_identifiers(rows_for_ext):
+            continue
+        doc_name, doc_id, _page = roster_meta[ext]
+        skipped_ext.add(ext)
+        out.skipped_rosters.append(
+            SkippedRoster(
+                doc_name=doc_name, doc_id=doc_id, extraction_id=ext,
+                hotels_listed=sum(
+                    1 for entry in rows_for_ext.values()
+                    if entry.get("name") or coerce_int(entry.get("keys"))
+                ),
+            )
+        )
+    out.extractions = [o for o in all_extractions if o.extraction_id not in skipped_ext]
+
+    # Pass 2 — everything else, from the extractions that are STR reports.
     monthly_by_ext: dict[str | None, set[str]] = {}
     for r in ordered_rows:
+        if r.extraction_id in skipped_ext:
+            continue
         lname = r.lname
         if lname.startswith(COMPSET_PREFIX):
-            rest = lname[len(COMPSET_PREFIX):]
-            try:
-                idx_str, attr = rest.split(".", 1)
-                idx = int(idx_str)
-            except (ValueError, IndexError):
-                continue
-            if r.extraction_id not in roster_rows:
-                roster_rows[r.extraction_id] = {}
-                roster_meta[r.extraction_id] = (r.doc_name, r.doc_id, r.page)
-                roster_order.append(r.extraction_id)
-            roster_rows[r.extraction_id].setdefault(idx, {}).setdefault(attr, r.value)
-            continue
+            continue  # bucketed (or dropped as malformed) in pass 1
         if lname.startswith(SUBJECT_MONTHLY_PREFIX):
             rest = lname[len(SUBJECT_MONTHLY_PREFIX):]
             period = _normalize_period(rest.split(".", 1)[0]) if rest else None
@@ -912,8 +1027,10 @@ def build_str_inputs(rows: list[FieldRow]) -> StrMarketInputs:
             if o.extraction_id in monthly_by_ext:
                 out.monthly_periods = set(monthly_by_ext[o.extraction_id])
                 break
-    # Rosters, most recent report period first.
+    # Rosters, most recent report period first (STR rosters only — see pass 1).
     for ext in roster_order:
+        if ext in skipped_ext:
+            continue
         doc_name, doc_id, page = roster_meta[ext]
         out.rosters.append(
             RosterSnapshot(rows=roster_rows[ext], doc_name=doc_name, doc_id=doc_id, page=page, extraction_id=ext)
@@ -985,6 +1102,7 @@ def derive_comp_set_from_inputs(inputs: StrMarketInputs) -> CompSetDerivation:
         snapshots,
         reported_comp_set_size=size.value if size else None,
         reported_total_keys=keys.value if keys else None,
+        skipped=inputs.skipped_rosters,
     )
     return replace(derived, ordering=list(inputs.extractions))
 
@@ -1154,6 +1272,9 @@ __all__ = [
     "derive_comp_set",
     "derive_comp_set_from_inputs",
     "derive_comp_set_union",
+    "SkippedRoster",
+    "roster_has_str_identifiers",
+    "skipped_rosters_note",
     "derive_ttm_blend",
     "display_name",
     "names_are_aliases",
