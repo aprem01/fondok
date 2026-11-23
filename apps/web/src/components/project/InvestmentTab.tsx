@@ -47,7 +47,7 @@ import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { NOT_YET_OPEN, ON_RUN_RATE_CLOSING, closedAtEntry, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
+import { ENTRY_CAP_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, inPlaceCap, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -636,20 +636,28 @@ export default function InvestmentTab() {
   const pricePerKey = wPricePerKey;
   const purchase = wPurchase
     ?? (has(pricePerKey) && has(keys) ? pricePerKey * keys : undefined);
+  // FON-122 (Sam, 2026-11-23) — the entry NOI is Year 1 with no closure and no
+  // displacement (the engine's `run_rate_noi_at_entry`), preferred whenever the
+  // run published it; an older run's open hotel falls back to its Year 1.
   const atEntry = closedAtEntry(
     getEngineField<number>(outputs, 'revenue', 'closed_months'),
     getEngineField<number>(outputs, 'expense', 'run_rate_noi_at_entry'),
     purchase,
     getEngineField<string>(outputs, 'expense', 't12_period_end'),
     getEngineField<number>(outputs, 'expense', 't12_months_before_close'),
+    entryNoi,
   );
   // FON-122 — "n/a, …" when a closed-at-purchase hotel has no cap to print.
   const { na: capNa } = atEntry;
   const entryCap = atEntry.closed
     ? atEntry.cap
-    : (has(entryNoi) && has(purchase) && purchase > 0)
-      ? entryNoi / purchase
-      : wEntryCap;
+    : has(atEntry.cap)
+      ? atEntry.cap
+      : (has(entryNoi) && has(purchase) && purchase > 0)
+        ? entryNoi / purchase
+        : wEntryCap;
+  // FON-122 — the in-place cap beside it: the T-12's own NOI before reserve ÷ price.
+  const inPlace = inPlaceCap(getEngineField<number>(outputs, 'expense', 't12_ebitda'), purchase);
   // W5 "price" — Entry Cap and Price / Key are the LAST RUN's figures. Between
   // a price save and the run that uses it they would silently disagree with
   // the Purchase Price row (which shows the saved price at once), so they say
@@ -830,7 +838,8 @@ export default function InvestmentTab() {
             // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
-              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : '' },
+              // FON-122 — the going-in cap on the undisplaced Year 1, and the in-place (T-12) cap beside it when the T-12 states one.
+              { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${atEntry.normalized ? ` ${ON_UNDISPLACED_YEAR_ONE}` : ''}${has(inPlace) ? ` · ${fmtPct(inPlace, 2)} in-place (T-12)` : ''}` : '' },
               // FON-101 — the tile names the source the budget is on (OM broker ·
               // PIP / CapEx document · analyst override) after the per-key figure.
               { label: 'Renovation / PIP', value: mm(renoTotal),
@@ -868,15 +877,24 @@ export default function InvestmentTab() {
               },
               {
                 id: 'entryNoi', label: `Entry / Run-Rate ${wEntryNoi.label}`, kind: 'linked', state: 'linked',
-                value: atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
-                // FON-44 — the headline NOI states its basis (full definition in Methodology).
-                note: wEntryNoi.basisConfirmed ? NOI_BEFORE_RESERVE_DEFINITION : undefined,
+                value: has(atEntry.entryNoi) ? money(atEntry.entryNoi) : atEntry.closed ? NOT_YET_OPEN : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
+                // FON-44 — the headline NOI states its basis (full definition in Methodology);
+                // FON-122 — and that it is Year 1 with no closure and no displacement.
+                note: [wEntryNoi.basisConfirmed ? NOI_BEFORE_RESERVE_DEFINITION : null, has(atEntry.entryNoi) ? ENTRY_NOI_BASIS : null].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: capNa ?? pctv(entryCap, 2),
-                note: [capNa ? 'See Yield on Cost on Returns' : has(atEntry.cap) ? ON_RUN_RATE_CLOSING : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                // FON-122 — the basis sits on the Entry NOI row above; this row says so only when the entry NOI is not the projected Year 1.
+                note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? `${ENTRY_CAP_SUB} (${ON_UNDISPLACED_YEAR_ONE})` : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+              },
+              {
+                // FON-122 — the in-place cap: the T-12's own NOI before reserve ÷ price; "—" when it states none.
+                id: 'inPlaceCap', label: IN_PLACE_CAP_LABEL, kind: 'calc',
+                state: has(inPlace) ? 'calculated' : 'awaiting_data',
+                value: pctv(inPlace, 2),
+                note: [has(inPlace) ? IN_PLACE_CAP_SUB : IN_PLACE_CAP_MISSING, has(inPlace) ? priceRunMarker : null].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,

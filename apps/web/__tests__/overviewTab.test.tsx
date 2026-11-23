@@ -210,7 +210,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import { NOT_YET_OPEN, closedAtEntry, t12OutOfDate } from '@/lib/purchasePrice';
+import { ENTRY_CAP_SUB, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, NOT_YET_OPEN, closedAtEntry, inPlaceCap, t12OutOfDate } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
@@ -763,8 +763,10 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     const sub = within(row).getByTestId('overview-row-label-sub');
     expect(sub).toHaveTextContent(NOI_BEFORE_RESERVE_DEFINITION);
     expect(NOI_BEFORE_RESERVE_DEFINITION).toBe('After property tax and insurance, before the FF&E reserve');
-    // It is the only row that carries one, and the value is untouched.
-    expect(screen.getAllByTestId('overview-row-label-sub')).toHaveLength(1);
+    // FON-122 (Sam, 2026-11-23) — the two cap rows carry their basis the same way; no other row does.
+    expect(screen.getAllByTestId('overview-row-label-sub').map((el) => el.textContent)).toEqual([
+      NOI_BEFORE_RESERVE_DEFINITION, ENTRY_CAP_SUB, IN_PLACE_CAP_SUB,
+    ]);
     expect(rowValue('Run-Rate / Entry NOI (before FF&E reserve)')).toBe('$3,100,000');
   });
 
@@ -1727,17 +1729,64 @@ describe('OverviewTab — FON-98 stabilization anchor (reopening / opening date)
     outputsRef.value = OUTPUTS;
   });
 
-  it('a closed hotel quotes the cap on its run-rate NOI, not on the closed Year 1 (FON-122)', () => {
+  it('a closed hotel quotes the cap on its entry NOI, not on the closed Year 1 (FON-122)', () => {
     expect(closedAtEntry(9, 4_000_000, 50_000_000, '2025-06-30', 3)).toEqual({
-      closed: true, entryNoi: 4_000_000, cap: 0.08, outOfDate: undefined, notYetOpen: false, na: undefined,
+      closed: true, entryNoi: 4_000_000, cap: 0.08, outOfDate: undefined, notYetOpen: false, na: undefined, normalized: true,
     });
     // An undated current T-12 says nothing about staleness: the cap reads.
     expect(closedAtEntry(9, 4_000_000, 50_000_000).cap).toBe(0.08);
     // "n/a, not yet open" only when no entry NOI can be built at all.
     expect(closedAtEntry(9, null, 50_000_000)).toMatchObject({ notYetOpen: true, na: NOT_YET_OPEN, cap: undefined });
-    expect(closedAtEntry(0, 4_000_000, 50_000_000)).toEqual({
-      closed: false, entryNoi: undefined, cap: undefined, outOfDate: undefined, notYetOpen: false, na: undefined,
+  });
+
+  it('every deal prefers the undisplaced entry NOI; it is "normalized" only when it differs from Year 1 (FON-122, Sam 2026-11-23)', () => {
+    // An open, displaced deal: the entry NOI is Year 1 with the displacement taken out.
+    expect(closedAtEntry(0, 4_000_000, 50_000_000, null, null, 3_500_000)).toEqual({
+      closed: false, entryNoi: 4_000_000, cap: 0.08, outOfDate: undefined, notYetOpen: false, na: undefined, normalized: true,
     });
+    // Nothing suppressed Year 1: the same figure, nothing to say about it.
+    expect(closedAtEntry(0, 4_000_000, 50_000_000, null, null, 4_000_000)).toMatchObject({ cap: 0.08, normalized: false });
+    // A run before the rule (no entry NOI on an open hotel): the caller falls back to Year 1.
+    expect(closedAtEntry(0, null, 50_000_000, null, null, 4_000_000)).toEqual({
+      closed: false, entryNoi: undefined, cap: undefined, outOfDate: undefined, notYetOpen: false, na: undefined, normalized: false,
+    });
+    // The in-place cap: the T-12's own NOI before reserve ÷ price, nothing without both.
+    expect(inPlaceCap(3_000_000, 50_000_000)).toBe(0.06);
+    expect(inPlaceCap(null, 50_000_000)).toBeUndefined();
+    expect(inPlaceCap(3_000_000, 0)).toBeUndefined();
+    expect(inPlaceCap(3_000_000, undefined)).toBeUndefined();
+  });
+
+  it('renders the entry cap on the undisplaced Year 1 and the in-place (T-12) cap beside it; "—" without a T-12 NOI', () => {
+    const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    outputsRef.value = {
+      ...OUTPUTS,
+      engines: {
+        ...base.engines,
+        // Year 1 is displaced ($3.1M); the entry NOI with the displacement out is $3.4M; the T-12 states $2.72M.
+        expense: { ...base.engines.expense, outputs: { ...base.engines.expense.outputs, run_rate_noi_at_entry: 3_400_000, t12_ebitda: 2_720_000 } },
+      },
+    } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Run-Rate / Entry NOI (before FF&E reserve)')).toBe('$3,400,000');
+    expect(rowValue('Entry Cap Rate')).toBe('10.00%'); // 3.4M ÷ 34M, not 3.1M ÷ 34M
+    expect(rowValue(IN_PLACE_CAP_LABEL)).toBe('8.00%'); // 2.72M ÷ 34M
+    expect(screen.getByText(IN_PLACE_CAP_SUB)).toBeInTheDocument();
+    expect(screen.getByText(ENTRY_CAP_SUB)).toBeInTheDocument();
+    cleanup();
+
+    // No T-12 NOI before reserve on the basis statement: a dash, never a derived figure.
+    outputsRef.value = {
+      ...OUTPUTS,
+      engines: {
+        ...base.engines,
+        expense: { ...base.engines.expense, outputs: { ...base.engines.expense.outputs, run_rate_noi_at_entry: 3_100_000 } },
+      },
+    } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Entry Cap Rate')).toBe('9.12%'); // 3.1M ÷ 34M: nothing suppressed Year 1
+    expect(rowValue(IN_PLACE_CAP_LABEL)).toBe('—');
+    outputsRef.value = OUTPUTS;
   });
 
   it('a T-12 ending more than twelve months before the close is n/a with the date; exactly twelve still reads', () => {
