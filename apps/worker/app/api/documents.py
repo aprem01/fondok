@@ -773,7 +773,10 @@ async def _audit_re_extract_requested(
 # grows ADR past the forecast at it. A CoStar report cached under v10 never
 # read it and must re-run once (until then the computed average applies,
 # labelled).
-EXTRACTION_PIPELINE_VERSION = "v11"
+# v12 (FON-123, 2026-11-23): the structural recognizer now requires STR
+# template markers before it types a document STR_TREND. A Business Plan
+# cached under v11 as STR_TREND must re-run once.
+EXTRACTION_PIPELINE_VERSION = "v12"
 
 
 # Phase 0.2 provenance stamps. Every persisted ``agent_version`` now reads
