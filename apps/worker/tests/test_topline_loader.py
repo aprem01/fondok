@@ -334,3 +334,32 @@ async def test_a_hotel_closing_at_purchase_dates_its_t12_against_the_close(
     )
     if expected is not None and base.get("acquisition_close_date"):
         assert isinstance(base["t12_months_before_close"], int)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stated,twelve,expected",
+    [
+        ({"ebitda": 3_100_000.0, "noi": 2_800_000.0}, True, 3_100_000.0),
+        ({"ebitda": 3_100_000.0}, False, None),  # a shorter period is not a T-12
+        ({"noi": 2_800_000.0}, True, None),  # no stated NOI before reserve: never derived
+    ],
+)
+async def test_the_loader_reads_the_t12s_stated_noi_before_reserve_for_every_deal(
+    monkeypatch: pytest.MonkeyPatch, stated: dict[str, float], twelve: bool, expected: float | None
+) -> None:
+    """FON-122 (Sam, 2026-11-23) — the in-place cap's numerator is the basis
+    statement's own twelve-month EBITDA (NOI before reserve), read for an open
+    deal too; absent when the statement states none or covers less than a year."""
+    from types import SimpleNamespace
+
+    from app.services import engine_runner
+
+    async def statement(*_a: object, **_k: object) -> SimpleNamespace:
+        return SimpleNamespace(stated=stated, twelve=twelve, period_end="2025-03-31")
+
+    monkeypatch.setattr(engine_runner, "year_one_actual_lines", statement)
+    deal_id, tenant_id = await _docs_deal()
+    base = await _load(deal_id, tenant_id)
+    assert base.get("t12_ebitda") == expected
+    assert "t12_period_end" not in base  # open: the dated flag is a closed hotel's

@@ -165,12 +165,17 @@ def _build_investment(
     t12_months_before_close: int | None = None,
     cash_noi_y1: float | None = None,
     stabilized_cash_noi: float | None = None,
+    t12_ebitda: float | None = None,
 ) -> dict[str, Any]:
     """``investment_engine`` block from the capital engine + a derived cap/yield.
 
-    ``noi_y1`` is Year-1 NOI BEFORE the FF&E reserve (the entry-cap basis);
-    ``cash_noi_y1`` / ``stabilized_cash_noi`` are AFTER it — the yield-on-cost
-    basis since FON-82 (Sam, 2026-11-11: "same for yield on cost").
+    ``noi_y1`` is the projection's Year-1 NOI BEFORE the FF&E reserve;
+    ``run_rate_noi`` (FON-122, Sam 2026-11-23) is the same Year 1 with no closure
+    and no displacement — the entry-cap basis for every deal, preferred over
+    ``noi_y1`` whenever the engine published it. ``t12_ebitda`` is the basis
+    statement's own NOI before reserve: the in-place (T-12) cap's numerator.
+    ``cash_noi_y1`` / ``stabilized_cash_noi`` are AFTER the reserve — the
+    yield-on-cost basis since FON-82 (Sam, 2026-11-11: "same for yield on cost").
     """
     out: dict[str, Any] = {}
     uses = capital.get("uses") if isinstance(capital.get("uses"), list) else []
@@ -207,22 +212,28 @@ def _build_investment(
     # FON-82 (Sam, 2026-11-11): yield on cost rides on NOI AFTER the FF&E
     # reserve — the exit-NOI basis and how a lender reads it. The entry cap
     # keeps the before-reserve basis (FON-59 #1).
-    # FON-122 (Sam, 2026-11-05): a hotel closing at purchase quotes its cap on
-    # the same normalized entry / run-rate NOI an open hotel does (Year 1
-    # priced without the closure), never on its closed Year 1. A T-12 that
-    # ends more than twelve months before the close is out of date: "n/a"
-    # with the dated flag. With no entry NOI at all it has no entry cap
-    # (yield on cost is the measure).
+    # FON-122 (Sam, 2026-11-23): every deal's entry cap is struck on Year 1's
+    # NOI before the FF&E reserve with no closure and no displacement
+    # (``run_rate_noi``; a run before this rule published it only for a closed
+    # hotel, so an open hotel's bare Year 1 stands in — a closed Year 1 never
+    # does). A closed hotel keeps its two refusals:
+    # a T-12 that ends more than twelve months before the close is out of date
+    # ("n/a" with the dated flag), and with no entry NOI at all it has no entry
+    # cap (yield on cost is the measure). Beside it, the in-place cap: the
+    # T-12's own NOI before reserve ÷ price — absent (never invented) without both.
+    entry_noi = run_rate_noi if run_rate_noi is not None else (None if closed_at_entry else noi_y1)
     if closed_at_entry:
         out_of_date = t12_out_of_date(t12_period_end, t12_months_before_close)
         if out_of_date is not None:
             out["entry_cap_t12_out_of_date"] = out_of_date
-        elif run_rate_noi is not None and purchase and purchase > 0:
-            out["entry_cap_rate_run_rate"] = run_rate_noi / purchase
+        elif entry_noi is not None and purchase and purchase > 0:
+            out["entry_cap_rate_run_rate"] = entry_noi / purchase
         else:
             out["entry_cap_not_yet_open"] = True
-    elif noi_y1 is not None and purchase and purchase > 0:
-        out["entry_cap_rate_year1_uw"] = noi_y1 / purchase
+    elif entry_noi is not None and purchase and purchase > 0:
+        out["entry_cap_rate_year1_uw"] = entry_noi / purchase
+    if t12_ebitda is not None and purchase and purchase > 0:
+        out["entry_cap_rate_t12"] = t12_ebitda / purchase
     if cash_noi_y1 is not None and total_capital and total_capital > 0:
         out["year1_yield_on_cost"] = cash_noi_y1 / total_capital
     if stabilized_cash_noi is not None and total_capital and total_capital > 0:
@@ -1884,7 +1895,8 @@ async def _assemble_live_payload(
 
     t12_months = expense.get("t12_months_before_close")
     # FON-82 — the stabilized-year block (after-reserve Stabilized NOI) and the
-    # Year-1 Cash NOI feed both yields on cost; the entry cap keeps ``noi_y1``.
+    # Year-1 Cash NOI feed both yields on cost; the entry cap is on the
+    # before-reserve entry NOI (FON-122: undisplaced, unclosed Year 1).
     stabilization = _build_stabilization(expense)
     investment = _build_investment(
         capital,
@@ -1896,6 +1908,7 @@ async def _assemble_live_payload(
         int(t12_months) if isinstance(t12_months, (int, float)) and not isinstance(t12_months, bool) else None,
         cash_noi_y1=_year_one_cash_noi(expense),
         stabilized_cash_noi=stabilization.get("stabilized_cash_noi_usd"),
+        t12_ebitda=_num(expense.get("t12_ebitda")),
     )
     if investment:
         model["investment_engine"] = investment
