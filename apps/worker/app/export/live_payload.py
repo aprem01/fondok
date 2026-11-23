@@ -736,6 +736,7 @@ def _build_memo(
     ai_confidence: float | None,
     engines_run: list[str],
     documents_reviewed: list[str],
+    state: str | None = None,
 ) -> dict[str, Any]:
     """Translate the live memo (overrides applied) into the builder memo shape.
 
@@ -802,6 +803,12 @@ def _build_memo(
     }
     if ai_confidence is not None:
         appendix["ai_confidence"] = ai_confidence
+    # FON-80 — the deal state lets the export footers reach "Validated"
+    # (export/readiness.py). ONBOARDING is the column default and carries no
+    # readiness information, so it is omitted: payloads captured before the
+    # key existed (tests/fixtures/live_payload_snapshot.json) keep their shape.
+    if state and state != "ONBOARDING":
+        appendix["state"] = state
 
     return {"header": header, "sections": sections, "appendix": appendix}
 
@@ -816,7 +823,7 @@ async def _deal_row(session: AsyncSession, deal_id: str, tenant_id: str) -> dict
                 # tenant-scope predicate required by tenant_middleware
                 """
                 SELECT name, city, keys, brand, service, status, deal_stage,
-                       ai_confidence, field_overrides
+                       ai_confidence, field_overrides, state
                   FROM deals
                  WHERE id = :id AND tenant_id = :tenant
                  LIMIT 1
@@ -1825,6 +1832,7 @@ async def _assemble_live_payload(
     service = (row or {}).get("service")
     deal_stage = (row or {}).get("deal_stage") or (row or {}).get("status")
     ai_confidence = _num((row or {}).get("ai_confidence"))
+    deal_state = (row or {}).get("state")
     keys_val = (row or {}).get("keys")
     try:
         keys = int(keys_val) if keys_val is not None else None
@@ -2069,6 +2077,7 @@ async def _assemble_live_payload(
         ai_confidence=ai_confidence,
         engines_run=engines_run,
         documents_reviewed=documents_reviewed,
+        state=str(deal_state) if deal_state is not None else None,
     )
 
     return deal, model, memo

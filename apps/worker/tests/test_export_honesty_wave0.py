@@ -131,7 +131,10 @@ def test_deck_carries_no_kimpton_next_steps_and_no_default_verdict(tmp_path: Pat
     assert "PROCEED TO LOI" not in text_blob
     assert "Lifestyle Boutique" not in text_blob and "Miami Beach" not in text_blob
     assert f"{NOT_AVAILABLE_PREFIX}: no IC recommendation confirmed by the analyst" in text_blob
-    assert f"AI Confidence: {NOT_AVAILABLE_PREFIX}: no confidence score" in text_blob
+    # FON-80 — the deck footer is the deal's Model/Data Readiness, as on the
+    # web header; a memo with no appendix at all has no step to state either.
+    assert "AI Confidence" not in text_blob
+    assert f"Readiness: {NOT_AVAILABLE_PREFIX}: no processing state recorded" in text_blob
     # No "0%" / "$0" anywhere on a deal with no figures.
     assert " 0%" not in text_blob and "$0" not in text_blob
 
