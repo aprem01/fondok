@@ -361,5 +361,7 @@ async def test_the_loader_reads_the_t12s_stated_noi_before_reserve_for_every_dea
     monkeypatch.setattr(engine_runner, "year_one_actual_lines", statement)
     deal_id, tenant_id = await _docs_deal()
     base = await _load(deal_id, tenant_id)
-    assert base.get("t12_ebitda") == expected
+    # A dunder key: a document line, never a public assumption value.
+    assert base.get("__t12_ebitda__") == expected
+    assert "t12_ebitda" not in base
     assert "t12_period_end" not in base  # open: the dated flag is a closed hotel's

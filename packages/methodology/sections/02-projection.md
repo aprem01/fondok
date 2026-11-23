@@ -337,20 +337,18 @@ The entry cap rate is struck on NOI *before* the reserve while the exit — and,
 stabilized NOI and the yield on cost — is struck on Cash NOI *after* it. Both are defensible
 conventions; Fondok keeps both and names each one wherever it prints it, never a bare “NOI”.
 
-**The entry cap's basis (Sam, 2026-11-23).** For every deal — closed at purchase or merely
-displaced — the entry cap is **Year 1 projected NOI before the FF&E reserve with no closure and no
-displacement, ÷ purchase price**. Whenever something suppresses Year 1 (a closure, an analyst's
-renovation displacement schedule, or a PIP's displacement), the expense engine prices Year 1 once
-more from the same deal with every lever off and publishes that NOI as the entry NOI
-(`expense.run_rate_noi_at_entry` — the field keeps its older name; for a deal with neither it
-equals `years[0].noi_institutional`). The projection's own years are untouched: displacement
-still hits Year 1's revenue, costs and returns; it just does not sit in the cap's denominator.
-Beside it, every surface prints the **In-place cap (T-12)**: the basis statement's own
-twelve-month NOI before the FF&E reserve (its stated EBITDA line) ÷ purchase price — the going-in
+**The entry cap's basis.** For every deal — closed at purchase or merely displaced — the entry cap
+is **Year 1 projected NOI before the FF&E reserve with no closure and no displacement, ÷ purchase
+price**. Whenever something suppresses Year 1 (a closure, a renovation displacement schedule, or a
+PIP's displacement), the model prices Year 1 once more from the same deal with every lever off and
+quotes the cap on that entry NOI; a deal with neither reads its own Year 1. The projection's own
+years are untouched: displacement still hits Year 1's revenue, costs and returns; it just does not
+sit in the cap's denominator. Beside it, every surface prints the **In-place cap (T-12)**: the
+basis statement's own twelve-month NOI before the FF&E reserve ÷ purchase price — the going-in
 yield buyers and lenders anchor on. It is derived from nothing: a statement that states no such
-line, or covers less than twelve months, or a deal with no purchase price, prints "—"
-(`entry_cap_rate_t12` absent). Each row carries its basis under its label ("Year 1 NOI before FF&E
-reserve, no closure, no displacement ÷ price"; "T-12 NOI before reserve ÷ price").
+line, or covers less than twelve months, or a deal with no purchase price, prints "—". Each row
+carries its basis under its label ("Year 1 NOI before FF&E reserve, no closure, no displacement ÷
+price"; "T-12 NOI before reserve ÷ price").
 
 :::
 

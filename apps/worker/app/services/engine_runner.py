@@ -2866,8 +2866,10 @@ async def _load_engine_inputs(
     year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=effective_tenant)
     if year_one is not None:
         # A twelve-month statement only: a shorter period's EBITDA is not a T-12.
+        # A dunder key: a document line, not an assumption, so it stays off the
+        # public ``assumption_sources.values`` (Phase 2.1 snapshot).
         if year_one.twelve and year_one.stated.get("ebitda") is not None:
-            base["t12_ebitda"] = year_one.stated["ebitda"]
+            base["__t12_ebitda__"] = year_one.stated["ebitda"]
         if _closed_months_for(base) > 0 and year_one.twelve and year_one.period_end:
             base["t12_period_end"] = year_one.period_end
             base["t12_months_before_close"] = _t12_months_before_close(
@@ -9257,7 +9259,7 @@ def _build_input_for(
             t12_months_before_close=base.get("t12_months_before_close"),
             # FON-122 — the basis statement's stated NOI before reserve (its
             # EBITDA line), for the in-place (T-12) cap; absent → no cap, never invented.
-            t12_ebitda=_optional_float(base.get("t12_ebitda")),
+            t12_ebitda=_optional_float(base.get("__t12_ebitda__")),
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             entry_revenue=entry_revenue,
