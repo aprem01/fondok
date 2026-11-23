@@ -102,30 +102,34 @@ _fmt_mult = fmt_mult
 _fmt_int = fmt_int
 
 
-def _entry_cap_basis(inv: dict[str, Any]) -> str:
-    """The Executive Summary cap-rate label suffix: the run-rate basis of a hotel
-    closed at purchase (FON-122); a payload's own ``entry_cap_rate_t12`` (the
-    Kimpton reference states one) as before; else nothing."""
-    if inv.get("entry_cap_rate_run_rate") is not None:
-        return " on run-rate NOI (closing for renovation)"
-    if inv.get("entry_cap_rate_t12") is not None:
-        return " on T-12 (closing for renovation)"
-    return ""
+#: FON-122 (Sam, 2026-11-23) — the Executive Summary's two cap tiles: the entry
+#: cap on Year 1 NOI before the FF&E reserve with no closure and no displacement,
+#: and the in-place cap on the T-12's own NOI before reserve.
+ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
+ENTRY_CAP_DEFINITION = "Year 1 NOI before FF&E reserve, no closure, no displacement ÷ price"
+IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
+IN_PLACE_CAP_DEFINITION = "T-12 NOI before reserve ÷ price"
 
 
 def _entry_cap_cell(inv: dict[str, Any]) -> str:
-    """The Executive Summary cap-rate cell. FON-122: a hotel closed at purchase
-    strikes it on the run-rate NOI; an out-of-date T-12 prints its dated flag,
+    """The Executive Summary entry-cap cell. FON-122: a closed hotel's
+    ``entry_cap_rate_run_rate`` or an open one's ``entry_cap_rate_year1_uw``
+    (the same basis under two keys); an out-of-date T-12 prints its dated flag,
     and with no entry NOI at all it is "n/a, not yet open"."""
     out_of_date = inv.get("entry_cap_t12_out_of_date")
     if isinstance(out_of_date, str) and out_of_date:
         return html.escape(f"n/a, {out_of_date}")
     if inv.get("entry_cap_not_yet_open"):
         return "n/a, not yet open"
-    for key in ("entry_cap_rate_run_rate", "entry_cap_rate_t12"):
-        if inv.get(key) is not None:
-            return _fmt_pct(inv.get(key), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
+    if inv.get("entry_cap_rate_run_rate") is not None:
+        return _fmt_pct(inv.get("entry_cap_rate_run_rate"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
     return _fmt_pct(inv.get("entry_cap_rate_year1_uw"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
+
+
+def _in_place_cap_cell(inv: dict[str, Any]) -> str:
+    """The in-place (T-12) cap cell: ``entry_cap_rate_t12`` or a reasoned dash —
+    the basis statement states no NOI before reserve, or there is no price."""
+    return _fmt_pct(inv.get("entry_cap_rate_t12"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
 _as_float = as_float
 _sum_strict = sum_strict
 
@@ -1536,7 +1540,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 <div class="metrics">
   <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
   <div class="metric"><div class="k">NOI (Y1, before FF&amp;E reserve)</div><div class="d">{html.escape(NOI_BEFORE_RESERVE_DEFINITION)}</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
-  <div class="metric"><div class="k">Cap Rate{_entry_cap_basis(inv)}</div><div class="v">{_entry_cap_cell(inv)}</div></div>
+  <div class="metric"><div class="k">{html.escape(ENTRY_CAP_LABEL)}</div><div class="d">{html.escape(ENTRY_CAP_DEFINITION)}</div><div class="v">{_entry_cap_cell(inv)}</div></div>
+  <div class="metric"><div class="k">{html.escape(IN_PLACE_CAP_LABEL)}</div><div class="d">{html.escape(IN_PLACE_CAP_DEFINITION)}</div><div class="v">{_in_place_cap_cell(inv)}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
 

@@ -19,6 +19,7 @@
  *     data-integrity bug.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, ON_UNDISPLACED_YEAR_ONE } from '@/lib/purchasePrice';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
@@ -286,6 +287,36 @@ describe('InvestmentTab — engine-sourced KPI tiles (no provider present)', () 
     expect(screen.getByText('$4.62M')).toBeInTheDocument();  // renovation / PIP
     expect(screen.getByText('$17.00M')).toBeInTheDocument(); // required equity
     expect(screen.getByText('$52.00M')).toBeInTheDocument(); // gross exit value
+  });
+});
+
+describe('InvestmentTab — entry cap on the undisplaced Year 1 and the in-place (T-12) cap (FON-122, Sam 2026-11-23)', () => {
+  const expense = (OUTPUTS as unknown as { engines: { expense: { outputs: Record<string, unknown> } } }).engines.expense.outputs;
+  afterEach(() => {
+    delete expense.run_rate_noi_at_entry;
+    delete expense.t12_ebitda;
+  });
+
+  it('strikes the Entry Cap Rate on the entry NOI (not the displaced Year 1) and prints the in-place cap row and tile beside it', () => {
+    expense.run_rate_noi_at_entry = 3_400_000; // Year 1 ($3.1M) with its displacement taken out
+    expense.t12_ebitda = 2_720_000; // the basis statement's own NOI before reserve
+    render(<InvestmentTab />);
+    expect(rowValueCell('Entry Cap Rate').textContent).toContain('10.00%'); // 3.4M ÷ 34M
+    expect(screen.getAllByText(ON_UNDISPLACED_YEAR_ONE, { exact: false }).length).toBeGreaterThan(0);
+    expect(rowValueCell(IN_PLACE_CAP_LABEL).textContent).toContain('8.00%'); // 2.72M ÷ 34M
+    expect(screen.getAllByText(IN_PLACE_CAP_SUB, { exact: false }).length).toBeGreaterThan(0);
+    // The Purchase Price tile carries both caps.
+    expect(screen.getByText(`10.00% going-in ${ON_UNDISPLACED_YEAR_ONE} · 8.00% in-place (T-12)`)).toBeInTheDocument();
+  });
+
+  it('an undisturbed deal reads its own Year 1 with nothing to say; no T-12 NOI → a dash, never a derived figure', () => {
+    expense.run_rate_noi_at_entry = 3_100_000;
+    render(<InvestmentTab />);
+    expect(rowValueCell('Entry Cap Rate').textContent).toContain('9.12%'); // 3.1M ÷ 34M
+    expect(screen.queryAllByText(ON_UNDISPLACED_YEAR_ONE, { exact: false })).toHaveLength(0);
+    expect(rowValueCell(IN_PLACE_CAP_LABEL).textContent).toContain('—');
+    expect(screen.getAllByText(IN_PLACE_CAP_MISSING, { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getByText('9.12% going-in')).toBeInTheDocument();
   });
 });
 

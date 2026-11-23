@@ -96,7 +96,7 @@ from ..extraction.field_catalog import (
     T12_REVENUE_FIELD_ALIASES as _CATALOG_T12_REVENUE_FIELD_ALIASES,
 )
 
-from ..engines.fb_revenue import FBRevenueYear
+from ..engines.fb_revenue import FBRevenueOutput, FBRevenueYear
 from ..engines import (
     CapitalEngine,
     CapitalEngineInput,
@@ -2855,14 +2855,22 @@ async def _load_engine_inputs(
     # FON-121 review I1 — deal years govern Returns timing too.
     _apply_deal_year_timing(base, reasons)
 
-    # FON-122 (Sam, 2026-11-05) — a hotel that closes at purchase quotes its
-    # going-in cap on the same normalized entry NOI an open hotel does (the
-    # expense engine's Year 1 priced without the closure). What is read here is
-    # only WHEN its T-12 ends: one that ends more than twelve months before the
-    # close is out of date, and the export says so instead of a cap.
-    if _closed_months_for(base) > 0:
-        year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=effective_tenant)
-        if year_one is not None and year_one.twelve and year_one.period_end:
+    # FON-122 (Sam, 2026-11-23) — the going-in cap is struck on Year 1's NOI
+    # before the FF&E reserve with no closure and no displacement (the expense
+    # engine builds it). What is read here off the basis statement: its own
+    # stated NOI before reserve (EBITDA) for the in-place (T-12) cap — absent
+    # when the statement states none, never derived — and, for a hotel that
+    # closes at purchase, WHEN its T-12 ends: one that ends more than twelve
+    # months before the close is out of date, and the export says so instead
+    # of a cap.
+    year_one = await year_one_actual_lines(session, deal_id=deal_id, tenant_id=effective_tenant)
+    if year_one is not None:
+        # A twelve-month statement only: a shorter period's EBITDA is not a T-12.
+        # A dunder key: a document line, not an assumption, so it stays off the
+        # public ``assumption_sources.values`` (Phase 2.1 snapshot).
+        if year_one.twelve and year_one.stated.get("ebitda") is not None:
+            base["__t12_ebitda__"] = year_one.stated["ebitda"]
+        if _closed_months_for(base) > 0 and year_one.twelve and year_one.period_end:
             base["t12_period_end"] = year_one.period_end
             base["t12_months_before_close"] = _t12_months_before_close(
                 year_one.period_end, base.get("acquisition_close_date")
@@ -8912,6 +8920,17 @@ def _optional_nonneg(raw: Any) -> float | None:
     return v if v >= 0 else None
 
 
+def _optional_float(raw: Any) -> float | None:
+    """A finite number of either sign, else None (blank / unreadable → no value)."""
+    if raw in (None, "") or isinstance(raw, bool):
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def _optional_rate(raw: Any) -> float | None:
     """An annual rate within ±50%, else None."""
     if raw in (None, "") or isinstance(raw, bool):
@@ -8981,17 +9000,37 @@ _UNDISPLACED_REVENUE: dict[str, Any] = {
 }
 
 
-def _seed_year_one(
-    deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
-) -> FBRevenueYear | None:
-    """Year 1 without its displacement or closure (``ExpenseEngineInput.seed_year_one``);
-    ``None`` when Year 1 has neither."""
+def _year_one_displaced(accumulated: dict[str, BaseModel]) -> bool:
+    """Year 1's occupancy or ADR is held below the open hotel's by an analyst
+    schedule or a PIP's displacement."""
     y1 = accumulated["revenue"].years[0]
-    if y1.occupancy_displacement_factor >= 1.0 and y1.adr_displacement_factor >= 1.0:
+    return y1.occupancy_displacement_factor < 1.0 or y1.adr_displacement_factor < 1.0
+
+
+def _entry_revenue(
+    deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
+) -> FBRevenueOutput | None:
+    """FON-122 (Sam, 2026-11-23) — the deal's revenue with the closure and every
+    displacement lever off (``ExpenseEngineInput.entry_revenue``), built whenever
+    anything suppresses Year 1: a closure OR a displacement factor below 1. One
+    path for a closed and a merely displaced deal. ``None`` when Year 1 has
+    neither — the projection's own Year 1 is then the entry NOI."""
+    if _closed_months_for(base) <= 0 and not _year_one_displaced(accumulated):
         return None
     payload = _build_input_for("revenue", deal_id, base, accumulated)
     revenue = RevenueEngine().run(payload.model_copy(update=_UNDISPLACED_REVENUE))
-    return FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue})).years[0]
+    return FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
+
+
+def _seed_year_one(
+    accumulated: dict[str, BaseModel], entry: FBRevenueOutput | None
+) -> FBRevenueYear | None:
+    """Year 1 without its displacement or closure (``ExpenseEngineInput.seed_year_one``);
+    ``None`` when Year 1 is not displaced (a closure alone seeds through
+    :func:`_expense_revenue_basis`, as before)."""
+    if entry is None or not _year_one_displaced(accumulated):
+        return None
+    return entry.years[0]
 
 
 def _expense_revenue_basis(
@@ -9049,7 +9088,7 @@ def _full_year_noi_by_year(
         return []
     as_if_open = ExpenseEngine().run(
         _build_input_for("expense", deal_id, base, accumulated).model_copy(
-            update={"open_shares_by_year": {}, "actual_revenue": None, "actual_occupancy_by_year": None}
+            update={"open_shares_by_year": {}, "actual_revenue": None, "actual_occupancy_by_year": None, "entry_revenue": None}
         )
     )
     return [
@@ -9209,15 +9248,22 @@ def _build_input_for(
 
     if engine_name == "expense":
         expense_basis, open_shares, actual_revenue = _expense_revenue_basis(deal_id, base, accumulated)
+        # FON-122 (Sam, 2026-11-23) — the entry NOI's revenue: no closure, no
+        # displacement, built when either suppresses Year 1 (one path for both).
+        entry_revenue = _entry_revenue(deal_id, base, accumulated)
         return ExpenseEngineInput(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
             open_shares_by_year=open_shares,
             t12_period_end=base.get("t12_period_end"),
             t12_months_before_close=base.get("t12_months_before_close"),
+            # FON-122 — the basis statement's stated NOI before reserve (its
+            # EBITDA line), for the in-place (T-12) cap; absent → no cap, never invented.
+            t12_ebitda=_optional_float(base.get("__t12_ebitda__")),
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
-            seed_year_one=_seed_year_one(deal_id, base, accumulated),
+            entry_revenue=entry_revenue,
+            seed_year_one=_seed_year_one(accumulated, entry_revenue),
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],

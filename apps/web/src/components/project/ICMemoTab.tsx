@@ -80,7 +80,7 @@
  * because keeping the analyst's words does not make their figures current.
  */
 
-import { ON_RUN_RATE_CLOSING, closedAtEntry } from '@/lib/purchasePrice';
+import { ON_UNDISPLACED_YEAR_ONE, closedAtEntry } from '@/lib/purchasePrice';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -181,16 +181,21 @@ function extractMetrics(
   }
 
   const noi = y1exp ? num(y1exp.noi_institutional) ?? num(y1exp.noi) : null;
+  // FON-122 (Sam, 2026-11-23) — the going-in cap is on Year 1 with no closure
+  // and no displacement whenever the run published that figure.
   const atEntry = closedAtEntry(
     g<number>('revenue', 'closed_months'),
     g<number>('expense', 'run_rate_noi_at_entry'),
     purchasePrice,
     g<string>('expense', 't12_period_end'),
     g<number>('expense', 't12_months_before_close'),
+    noi,
   );
   const capNa = atEntry.na ?? null;
-  const capOnRunRate = atEntry.cap != null;
-  const capRate = atEntry.closed ? atEntry.cap ?? null : noi != null && purchasePrice ? noi / purchasePrice : null;
+  const capOnRunRate = atEntry.normalized;
+  const capRate = atEntry.closed
+    ? atEntry.cap ?? null
+    : atEntry.cap ?? (noi != null && purchasePrice ? noi / purchasePrice : null);
 
   // FON-118 — the returns headline through the ONE reader (sentinel-free; the
   // headline is the selected row of the exit schedule). Nothing derived here.
@@ -308,7 +313,7 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
     thesisBits.push(`the deal underwrites to a ${fmtPct(irr, 1)} levered IRR over a ${hold}-year hold`);
   }
   if (m.capOnRunRate && m.capRate != null) {
-    thesisBits.push(`entering on a ${fmtPct(m.capRate, 1)} going-in cap ${ON_RUN_RATE_CLOSING}`);
+    thesisBits.push(`entering on a ${fmtPct(m.capRate, 1)} going-in cap ${ON_UNDISPLACED_YEAR_ONE}`);
   } else if (m.noi != null && m.capRate != null) {
     thesisBits.push(
       `entering on a ${fmtPct(m.capRate, 1)} going-in cap against ${fmtCurrency(m.noi, { compact: true })} of Year-1 NOI`,
@@ -1304,7 +1309,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
-    { label: metrics.capOnRunRate ? `Going-In Cap Rate ${ON_RUN_RATE_CLOSING}` : 'Going-In Cap Rate', value: metrics.capNa ?? pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
+    { label: metrics.capOnRunRate ? `Going-In Cap Rate ${ON_UNDISPLACED_YEAR_ONE}` : 'Going-In Cap Rate', value: metrics.capNa ?? pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
     { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Financing', engine: 'debt', path: 'year_one_dscr' },

@@ -397,17 +397,104 @@ def test_a_t12_exactly_twelve_months_before_the_close_still_strikes_the_cap() ->
 
 
 def test_the_expense_engine_publishes_the_open_hotels_year_1_noi_for_a_closed_year_1() -> None:
-    """FON-122: the run-rate NOI the cap is struck on is the open hotel's Year 1 — the
-    figure the closed Year 1 was priced from before it was brought to its months open."""
+    """FON-122 (Sam, 2026-11-23): the entry NOI the cap is struck on is Year 1 with no
+    closure and no displacement — for a closed Year 1, the open hotel's Year 1."""
     open_hotel = _revenue()
     baseline = _expense(open_hotel)
     closed = _expense(open_hotel, _revenue(closed_months=18))
     assert closed.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
     assert closed.years[0].noi_institutional != pytest.approx(closed.run_rate_noi_at_entry)
-    assert baseline.run_rate_noi_at_entry is None
+    # A deal with neither reads its own Year 1 there — the field is never a dash for it.
+    assert baseline.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
     assert closed.t12_period_end is None and closed.t12_months_before_close is None
     dated = _expense(open_hotel, _revenue(closed_months=18), t12_period_end="2025-03-31", t12_months_before_close=14)
     assert dated.t12_period_end == "2025-03-31" and dated.t12_months_before_close == 14
+    # The T-12's stated NOI before reserve is an echo: absent unless stated, never derived.
+    assert baseline.t12_ebitda is None
+    assert _expense(open_hotel, t12_ebitda=2_500_000.0).t12_ebitda == 2_500_000.0
+
+
+_QUARTER_OFF_SIX_MONTHS = [{"start_month": 1, "end_month": 6, "rooms_offline_pct": 0.25, "rate_discount_pct": 0.0}]
+
+
+def test_the_entry_noi_is_year_1_with_no_closure_and_no_displacement_on_one_path() -> None:
+    """FON-122 (Sam, 2026-11-23): a merely displaced deal (the QA deal's shape — a
+    quarter of the rooms off for six months, no closure), a closed-and-displaced
+    deal and an undisturbed one all publish the same figure: Year 1 priced with
+    every lever off. ``entry_revenue`` is that revenue; the engine reprices it."""
+
+    def fb(out):
+        return FBRevenueEngine().run(FBRevenueInput(deal_id=uuid4(), revenue=out))
+
+    open_hotel = _revenue()
+    baseline = _expense(open_hotel)
+    schedule = [RenovationDisplacementPeriod(**p) for p in _QUARTER_OFF_SIX_MONTHS]
+    displaced_rev = _revenue(renovation_displacement_schedule=schedule)
+    assert displaced_rev.years[0].occupancy_displacement_factor < 1.0
+    # (a) displacement only: Year 1 is the displaced year; the entry NOI is the undisplaced one.
+    displaced = _expense(displaced_rev, entry_revenue=fb(open_hotel), seed_year_one=fb(open_hotel).years[0])
+    assert displaced.years[0].noi_institutional < baseline.years[0].noi_institutional
+    assert displaced.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
+    # (b) closure + displacement after it: the same figure, the same path.
+    closed_rev = _revenue(closed_months=6, renovation_displacement_schedule=[
+        RenovationDisplacementPeriod(start_month=7, end_month=12, rooms_offline_pct=0.25, rate_discount_pct=0.0)
+    ])
+    both = _expense(open_hotel, closed_rev, entry_revenue=fb(open_hotel))
+    assert both.years[0].noi_institutional < baseline.years[0].noi_institutional
+    assert both.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
+    # (c) neither: Year 1 itself.
+    assert baseline.run_rate_noi_at_entry == pytest.approx(baseline.years[0].noi_institutional)
+    # The entry pass does not touch the years the model runs on.
+    assert [y.noi for y in displaced.years] != [y.noi for y in baseline.years]
+    assert displaced.years[1].noi == pytest.approx(_expense(displaced_rev, seed_year_one=fb(open_hotel).years[0]).years[1].noi)
+
+
+@pytest.mark.asyncio
+async def test_the_runner_builds_the_entry_revenue_for_a_displaced_or_closed_year_1_only() -> None:
+    """FON-122 (Sam, 2026-11-23), through the runner on the Kimpton fixture: an
+    undisturbed deal passes no ``entry_revenue`` and its entry NOI is its Year 1;
+    a displaced-only deal and a closed-and-displaced deal get the undisplaced,
+    unclosed Year 1 — the open hotel's — and their ``years[]`` stay what they were."""
+    open_hotel = await _model()
+    assert open_hotel["expense_input"].entry_revenue is None
+    y1_open = open_hotel["expense"].years[0].noi_institutional
+    assert open_hotel["expense"].run_rate_noi_at_entry == pytest.approx(y1_open)
+
+    displaced = await _model(renovation_displacement_schedule=_QUARTER_OFF_SIX_MONTHS)
+    assert displaced["expense_input"].entry_revenue is not None
+    assert displaced["revenue"].years[0].occupancy_displacement_factor < 1.0
+    assert displaced["expense"].years[0].noi_institutional < y1_open
+    assert displaced["expense"].run_rate_noi_at_entry == pytest.approx(y1_open)
+
+    both = await _model(reopening_date="2026-03-31", renovation_displacement_schedule=[
+        {"start_month": 7, "end_month": 12, "rooms_offline_pct": 0.25, "rate_discount_pct": 0.0}
+    ])
+    assert both["expense_input"].entry_revenue is not None
+    assert both["expense"].years[0].noi_institutional < y1_open
+    assert both["expense"].run_rate_noi_at_entry == pytest.approx(y1_open)
+    # A closure alone takes the same path.
+    closed = await _model(reopening_date="2026-03-31")
+    assert closed["expense_input"].entry_revenue is not None
+    assert closed["expense"].run_rate_noi_at_entry == pytest.approx(y1_open)
+
+
+def test_the_in_place_cap_is_the_t12_noi_before_reserve_over_the_price_or_absent() -> None:
+    """FON-122 (Sam, 2026-11-23): ``entry_cap_rate_t12`` = T-12 EBITDA ÷ purchase
+    price; absent (never invented) without either. It sits beside the entry cap,
+    which every deal now strikes on the undisplaced Year 1 when the engine published it."""
+    with_t12 = _build_investment(_CAPITAL, 100, 500_000.0, t12_ebitda=3_000_000.0)
+    assert with_t12["entry_cap_rate_t12"] == pytest.approx(0.06)
+    assert with_t12["entry_cap_rate_year1_uw"] == pytest.approx(0.01)
+    assert "entry_cap_rate_t12" not in _build_investment(_CAPITAL, 100, 500_000.0)
+    assert "entry_cap_rate_t12" not in _build_investment({"uses": []}, 100, 500_000.0, t12_ebitda=3_000_000.0)
+    # An open but displaced deal: the undisplaced entry NOI wins over the displaced Year 1.
+    displaced = _build_investment(_CAPITAL, 100, 500_000.0, False, 4_000_000.0, t12_ebitda=3_000_000.0)
+    assert displaced["entry_cap_rate_year1_uw"] == pytest.approx(0.08)
+    assert displaced["entry_cap_rate_t12"] == pytest.approx(0.06)
+    # A closed hotel's stale-T-12 flag still wins over both the entry NOI and the price.
+    stale = _build_investment(_CAPITAL, 100, -500_000.0, True, 4_000_000.0, "2025-03-31", 14, t12_ebitda=3_000_000.0)
+    assert _NO_CAP_KEYS & stale.keys() == {"entry_cap_t12_out_of_date"}
+    assert stale["entry_cap_rate_t12"] == pytest.approx(0.06)
 
 
 def test_the_loader_dates_the_t12_and_the_runner_measures_it_against_the_close() -> None:

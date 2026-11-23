@@ -112,20 +112,27 @@ from .refusals import (
 # ─────────────────────────── styling helpers ───────────────────────────
 
 NOT_YET_OPEN = "n/a, not yet open: see yield on cost"
-#: FON-122 — a hotel closed at purchase strikes its cap on the run-rate NOI
-#: (Year 1 priced without the closure).
-ENTRY_CAP_RUN_RATE_LABEL = "Entry Cap (on run-rate NOI, closing for renovation)"
+#: FON-122 (Sam, 2026-11-23) — every deal's entry cap is struck on Year 1's NOI
+#: before the FF&E reserve with no closure and no displacement; beside it the
+#: in-place cap on the T-12's own NOI before reserve.
+ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
+IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
+IN_PLACE_CAP_MISSING = "no T-12 NOI before reserve on the basis statement, or no purchase price"
+#: Kept for callers that imported the old name; the label it carried is retired.
+ENTRY_CAP_RUN_RATE_LABEL = ENTRY_CAP_LABEL
+
+
+def _entry_cap_value(inv: dict[str, Any]) -> Any:
+    """The entry cap on the payload: a closed hotel's ``entry_cap_rate_run_rate``
+    or an open one's ``entry_cap_rate_year1_uw`` — the same basis under two keys."""
+    if inv.get("entry_cap_rate_run_rate") is not None:
+        return inv.get("entry_cap_rate_run_rate")
+    return inv.get("entry_cap_rate_year1_uw")
 
 
 def _entry_cap_headline(inv: dict[str, Any]) -> tuple[str, Any]:
-    """``(label, value)`` for the cover's entry-cap row: the run-rate cap of a
-    hotel closed at purchase (FON-122); else a payload's own ``entry_cap_rate_t12``
-    (the Kimpton reference payload states one); else the Year-1 UW cap."""
-    if inv.get("entry_cap_rate_run_rate") is not None:
-        return ENTRY_CAP_RUN_RATE_LABEL, inv.get("entry_cap_rate_run_rate")
-    if inv.get("entry_cap_rate_t12") is not None:
-        return "Entry Cap (on T-12, closing for renovation)", inv.get("entry_cap_rate_t12")
-    return "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw")
+    """``(label, value)`` for the cover's entry-cap row (FON-122)."""
+    return ENTRY_CAP_LABEL, _entry_cap_value(inv)
 
 
 def _entry_cap_missing(inv: dict[str, Any], default: str) -> str:
@@ -522,6 +529,8 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
             PCT_FMT, "entry_cap_rate",
             _entry_cap_missing(inv, "no Year 1 NOI or purchase price to derive the entry cap"),
         ),
+        # FON-122 — the in-place cap beside it: T-12 NOI before reserve ÷ price.
+        (IN_PLACE_CAP_LABEL, inv.get("entry_cap_rate_t12"), PCT_FMT, "entry_cap_rate", IN_PLACE_CAP_MISSING),
     ]
     benchmark_note = debt.get("benchmark_note")
     for label, val, fmt, concept, missing in metrics:
@@ -586,14 +595,16 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Loan Costs", inv, "loan_costs_usd", USD_FMT, "", "loan_costs", "capital engine"),
                 item("Total Capital", inv, "total_capital_usd", USD_FMT, "All-in", "total_capital", "capital engine"),
                 item("Total Capital / Key", inv, "total_capital_per_key_usd", USD_FMT, "", "total_capital_per_key", "capital engine"),
-                # FON-122 — a hotel closed at purchase: its run-rate cap; else the
-                # payload's own T-12 cap row, as before (the Kimpton reference states one).
-                item("Entry Cap (run-rate NOI)", inv, "entry_cap_rate_run_rate", PCT_FMT, "", "entry_cap_rate_run_rate", "P&L / capital engine")
-                if inv.get("entry_cap_rate_run_rate") is not None
-                else item("Entry Cap (T-12)", inv, "entry_cap_rate_t12", PCT_FMT, "", "entry_cap_rate_t12", "T-12 / capital engine"),
+                # FON-122 (Sam, 2026-11-23) — the entry cap on Year 1 NOI before the
+                # FF&E reserve with no closure and no displacement, and beside it
+                # the in-place cap on the T-12's own NOI before reserve.
                 (
-                    "Entry Cap (Y1 UW)", inv.get("entry_cap_rate_year1_uw"), PCT_FMT, "", "entry_cap_rate",
-                    _entry_cap_missing(inv, "no entry cap (y1 uw) on the deal's capital engine output"),
+                    ENTRY_CAP_LABEL, _entry_cap_value(inv), PCT_FMT, "no closure, no displacement", "entry_cap_rate",
+                    _entry_cap_missing(inv, "no entry cap on the deal's capital engine output"),
+                ),
+                (
+                    IN_PLACE_CAP_LABEL, inv.get("entry_cap_rate_t12"), PCT_FMT, "T-12 NOI before reserve ÷ price",
+                    "entry_cap_rate", IN_PLACE_CAP_MISSING,
                 ),
                 # FON-82 — both yields on cost ride on NOI AFTER the FF&E reserve.
                 item("Year 1 Yield on Cost (on NOI after FF&E reserve)", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),

@@ -106,9 +106,15 @@ import {
   PURCHASE_PRICE_INPUT_FROM,
   PURCHASE_PRICE_KEY,
   entryCapRate,
+  ENTRY_CAP_SUB,
+  ENTRY_NOI_BASIS,
+  IN_PLACE_CAP_LABEL,
+  IN_PLACE_CAP_MISSING,
+  IN_PLACE_CAP_SUB,
   NOT_YET_OPEN,
-  ON_RUN_RATE_CLOSING,
+  ON_UNDISPLACED_YEAR_ONE,
   closedAtEntry,
+  inPlaceCap,
   resolvePurchasePrice,
 } from '@/lib/purchasePrice';
 import { returnProfiles, positioningTiers, brandFamilies, brandDefaultPositioning, brandPositioningLabel } from '@/lib/catalogs';
@@ -775,19 +781,26 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // the engine's, then what the loader resolves: deal record / OM asking
   // price) and the Entry Cap Rate calculated FROM it.
   const priceInput = resolvePurchasePrice({ overrides, enginePrice: purchase, resolved: priceSource });
-  const entryCapCalc = entryCapRate(y1Noi, priceInput.value, outputs?.engines?.expense);
+  // FON-122 (Sam, 2026-11-23) — the entry NOI is Year 1 with no closure and no
+  // displacement (the engine's `run_rate_noi_at_entry`), preferred whenever the
+  // run published it; an older run's open hotel falls back to its Year 1.
   const atEntry = closedAtEntry(
     getEngineField<number>(outputs, 'revenue', 'closed_months'),
     getEngineField<number>(outputs, 'expense', 'run_rate_noi_at_entry'),
     priceInput.value,
     getEngineField<string>(outputs, 'expense', 't12_period_end'),
     getEngineField<number>(outputs, 'expense', 't12_months_before_close'),
+    y1Noi,
   );
+  const entryCapCalc = entryCapRate(atEntry.entryNoi ?? y1Noi, priceInput.value, outputs?.engines?.expense);
   // FON-122 — "n/a, …" when a closed-at-purchase hotel has no cap to print.
   const { na: capNa } = atEntry;
   // The capital engine publishes no entry cap rate: it is always this
   // derivation, so it can never disagree with the price on screen.
   const entryCap = atEntry.closed ? atEntry.cap : entryCapCalc.value;
+  // FON-122 — the in-place cap beside it: the T-12's own NOI before reserve ÷ price.
+  const t12Ebitda = getEngineField<number>(outputs, 'expense', 't12_ebitda');
+  const inPlace = inPlaceCap(t12Ebitda, priceInput.value);
   // Price / Key follows the same price on screen, so a just-saved price moves
   // it with the Entry Cap Rate rather than leaving it on the last run's price.
   const pricePerKey = has(priceInput.value) && has(keys)
@@ -995,19 +1008,34 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // insurance, before the FF&E reserve (the full definition is in Methodology).
       // FON-44 / FON-82 — the definition sits under the label in plain sight
       // (`labelSub`) as well as in the popover (`sub`).
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', atEntry.closed ? (has(atEntry.entryNoi) ? money(atEntry.entryNoi) : NOT_YET_OPEN) : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}.`, labelSub: NOI_BEFORE_RESERVE_DEFINITION }),
+      // FON-122 (Sam, 2026-11-23) — the entry NOI is Year 1 with no closure and
+      // no displacement; the popover states that basis.
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', has(atEntry.entryNoi) ? money(atEntry.entryNoi) : atEntry.closed ? NOT_YET_OPEN : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}. ${ENTRY_NOI_BASIS}.`, labelSub: NOI_BEFORE_RESERVE_DEFINITION }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
       cal('entryCap', 'Entry Cap Rate', capNa ?? pctv(entryCap), {
-        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.cap) ? 'Run-rate NOI (Year 1 priced without the closure) ÷ Purchase Price' : ENTRY_CAP_FORMULA,
+        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.entryNoi) ? `Entry NOI (${ENTRY_NOI_BASIS}) ÷ Purchase Price` : ENTRY_CAP_FORMULA,
+        labelSub: ENTRY_CAP_SUB,
         inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
         ...(atEntry.outOfDate
           ? { sub: `The T-12 is out of date for a going-in cap (${atEntry.outOfDate}). See Yield on Cost on Returns.` }
           : atEntry.notYetOpen
           ? { sub: 'The hotel earns nothing at purchase and no entry NOI could be built to quote a going-in cap on. See Yield on Cost on Returns.' }
-          : has(atEntry.cap) ? { sub: ON_RUN_RATE_CLOSING }
-          : has(entryCap) ? {} : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
+          : atEntry.normalized ? { sub: `Struck ${ON_UNDISPLACED_YEAR_ONE}: ${ENTRY_NOI_BASIS}.` }
+          : has(entryCap) ? { sub: `${ENTRY_NOI_BASIS}.` } : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
+      }),
+      // FON-122 — the in-place cap beside it: the T-12's own NOI before reserve
+      // ÷ price. Nothing is derived when the basis statement states none.
+      cal('inPlaceCap', IN_PLACE_CAP_LABEL, pctv(inPlace), {
+        formula: 'T-12 NOI before reserve (the basis statement\'s own line) ÷ Purchase Price',
+        labelSub: IN_PLACE_CAP_SUB,
+        inputs: [{ name: 'T-12 NOI before reserve', from: 'P&L → Historical P&L', kind: 'doc' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
+        ...(has(inPlace)
+          ? { sub: 'Buyers and lenders anchor on the T-12 going-in; the entry cap above takes the displacement out of Year 1.' }
+          : has(priceInput.value)
+          ? { reason: 'no_source', reasonDetail: IN_PLACE_CAP_MISSING }
+          : { reason: 'missing_identity_inputs', reasonDetail: 'No purchase price — enter it on the Overview or CAPEX tab.' }),
       }),
       mk({
         id: 'purchase', label: 'Purchase Price', kind: 'input', bold: true,
@@ -1361,8 +1389,8 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
     }
     if (cfg === 'core') {
       return [
-        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : undefined },
-        { label: 'Going-In Cap', value: capNa ?? pctv(entryCap), sub: capNa ? 'see Yield on Cost on Returns' : has(atEntry.cap) ? ON_RUN_RATE_CLOSING : undefined },
+        { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${atEntry.normalized ? ` ${ON_UNDISPLACED_YEAR_ONE}` : ''}` : undefined },
+        { label: 'Going-In Cap', value: capNa ?? pctv(entryCap), sub: capNa ? 'see Yield on Cost on Returns' : has(inPlace) ? `${fmtPct(inPlace, 2)} in-place (T-12)` : atEntry.normalized ? ON_UNDISPLACED_YEAR_ONE : undefined },
         { label: 'Equity', value: mm(equity), sub: has(equity) && has(totalCapital) && totalCapital > 0 ? `${fmtPct(equity / totalCapital, 1)} of total uses` : undefined },
         { label: 'Exit Value', value: mm(grossExit), sub: has(exitCap) ? `${fmtPct(exitCap, 2)} exit cap` : undefined },
         leveredTile,
@@ -1370,7 +1398,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       ];
     }
     return [
-      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${has(atEntry.cap) ? ` ${ON_RUN_RATE_CLOSING}` : ''}` : undefined },
+      { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${atEntry.normalized ? ` ${ON_UNDISPLACED_YEAR_ONE}` : ''}${has(inPlace) ? ` · ${fmtPct(inPlace, 2)} in-place (T-12)` : ''}` : undefined },
       { label: 'Total Capitalization', value: mm(totalCapital), sub: has(totalPerKey) ? `${fmtCurrency(totalPerKey)} / key` : undefined },
       { label: 'Renovation', value: mm(renoBudget),
         sub: [
@@ -1382,7 +1410,7 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       unleveredTile,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, atEntry, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
+  }, [cfg, atEntry, inPlace, purchase, entryCap, totalCapital, totalPerKey, equity, grossExit, exitCap, terminalNoi, renoBudget, hasReno, keys, leveredIrr, unleveredIrr, stabNoi, stab, stabCalendarYear, stabYearLabel, renoSource?.source]);
 
   // ─── R-051 — Asking vs Bidding price ───────────────────────────────────
   // One read-only worker call prices the deal at the seller's asking price and
