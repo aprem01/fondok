@@ -27,7 +27,7 @@ is **conditional** — it renders only when its data is present on the
 
 Section catalog (in render order):
 
-    1.  Header (recommendation chip, AI confidence, deal stage)
+    1.  Header (recommendation chip, Model/Data Readiness, deal stage)
     2.  Executive Summary + Thesis + Recommendation paragraphs
     3.  KPI tiles (RevPAR, NOI, Cap Rate, IRR)
     4.  Highlights / Risks two-col
@@ -71,6 +71,7 @@ from .labels import (
     line_label,
     source_display,
 )
+from .readiness import readiness_footer
 from .refusals import (
     as_float,
     coerce_reason,
@@ -1395,14 +1396,9 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
     )
     location = header.get("location", "")
     rec = header.get("recommendation", "")
-    confidence = _as_float(appendix.get("ai_confidence"))
-    confidence_badge = (
-        f"AI Confidence: {round(confidence * 100)}%"
-        if confidence is not None
-        else "AI Confidence: " + unavailable(
-            ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"
-        )
-    )
+    # FON-80 — the deal header shows Model/Data Readiness, not an "AI
+    # Confidence" score; the memo badge prints the same line (export/readiness.py).
+    confidence_badge = readiness_footer(appendix)
     keys_txt = (
         f"{int(keys):,} Keys"
         if keys is not None

@@ -33,6 +33,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.slide import Slide
 from pptx.util import Inches, Pt
 
+from .readiness import readiness_footer
 from .refusals import (
     collect_refusals,
     fmt_int,
@@ -332,19 +333,13 @@ def _slide_exec_summary(prs: Presentation, memo: dict[str, Any], model: dict[str
     takeaways = takeaways[:4] or ["—"]
     _add_bullet_list(slide, 0.8, 1.4, 11.5, 4.8, takeaways, font_size=14)
 
-    # Confidence footer — stated only when the deal recorded one.
+    # Readiness footer (FON-80) — the same Model/Data Readiness line the web
+    # deal header prints (export/readiness.py); the extraction score is stated
+    # only when the deal recorded one.
     appendix = memo.get("appendix") or {}
-    confidence = appendix.get("ai_confidence")
-    confidence_txt = (
-        f"{round(float(confidence) * 100)}%"
-        if confidence is not None
-        else unavailable(
-            ReasonCode.NO_SOURCE, "no confidence score recorded on the deal", "ai_confidence"
-        )
-    )
     _add_textbox(
         slide, 0.8, 6.6, 11.5, 0.4,
-        f"AI Confidence: {confidence_txt}   ·   Engines: {len(appendix.get('engines_run', []))}",
+        f"{readiness_footer(appendix)}   ·   Engines: {len(appendix.get('engines_run', []))}",
         10, False, INK_500,
     )
 
