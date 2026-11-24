@@ -19,6 +19,10 @@ import {
   summarizeDocProcessing,
   formatProcessingSummary,
   deriveEngineStage,
+  engineSkippedCopy,
+  formatRunCompletionToast,
+  formatRunHistorySummary,
+  tallyEngineRows,
   lastRunTookMs,
   formatLastRunTook,
   describeDocYear,
@@ -173,6 +177,33 @@ describe('deriveEngineStage', () => {
     expect(st.failed).toBe(0);
   });
 
+  it('FON-125 — counts a skipped engine separately so ran + skipped = steps', () => {
+    const rows = expected.map((engine) => ({ engine, status: engine === 'partnership' ? 'not_applicable' : 'complete' }));
+    const st = deriveEngineStage({ expected, rows, startedAt, now: startedAt + 3_500 });
+    expect(st.completed).toBe(8);
+    expect(st.skipped).toBe(1);
+    expect(st.total).toBe(9);
+    expect(st.completed + st.skipped + st.failed).toBe(st.total);
+    expect(st.copy).toBe('Finished · 8 of 9 complete · 1 skipped · 0:03');
+  });
+
+  it('FON-125 — says "skipped" mid-run too, once the worker has written the row', () => {
+    const rows = [
+      ...['revenue', 'fb', 'expense', 'capital', 'debt', 'returns', 'sensitivity'].map((engine) => ({ engine, status: 'complete' })),
+      { engine: 'partnership', status: 'not_applicable' },
+      { engine: 'cash_flow', status: 'running' },
+    ];
+    const st = deriveEngineStage({ expected, rows, startedAt, now: startedAt + 3_000 });
+    expect(st.copy).toBe('Running Cash Flow · 7 of 9 complete · 1 skipped · 0:03');
+  });
+
+  it('omits the skipped part entirely when nothing was skipped', () => {
+    const rows = expected.map((engine) => ({ engine, status: 'complete' }));
+    const st = deriveEngineStage({ expected, rows, startedAt, now: startedAt });
+    expect(st.skipped).toBe(0);
+    expect(st.copy).not.toContain('skipped');
+  });
+
   it('never hard-codes the engine count — uses the kickoff list, else the rows', () => {
     const st = deriveEngineStage({
       expected: [],
@@ -194,6 +225,68 @@ describe('deriveEngineStage', () => {
 
   it('falls back to the raw engine name when no label is known', () => {
     expect(engineLabel('mystery')).toBe('mystery');
+  });
+});
+
+describe('FON-125 — run completion tally, toast and history summary', () => {
+  const nineRows = (partnership: string) => [
+    ...['revenue', 'fb', 'expense', 'capital', 'debt', 'returns', 'sensitivity', 'cash_flow'].map((engine) => ({ engine, status: 'complete' })),
+    { engine: 'partnership', status: partnership },
+  ];
+
+  it('tallies ran / failed / skipped out of every row the run reported', () => {
+    expect(tallyEngineRows(nineRows('not_applicable'))).toEqual({ completed: 8, failed: 0, skipped: 1, total: 9 });
+    expect(tallyEngineRows(nineRows('complete'))).toEqual({ completed: 9, failed: 0, skipped: 0, total: 9 });
+    expect(tallyEngineRows(nineRows('failed'))).toEqual({ completed: 8, failed: 1, skipped: 0, total: 9 });
+    expect(tallyEngineRows([])).toEqual({ completed: 0, failed: 0, skipped: 0, total: 0 });
+  });
+
+  it('the toast names the skipped engine count, so 8 engines · 1 skipped matches a 9-step panel', () => {
+    const t = tallyEngineRows(nineRows('not_applicable'));
+    expect(formatRunCompletionToast(t, 3_500)).toEqual({
+      text: 'Underwriting complete · 8 engines · 1 skipped · 3.5s · $0.00',
+      type: 'success',
+    });
+  });
+
+  it('the toast is unchanged when every engine ran', () => {
+    const t = tallyEngineRows(nineRows('complete'));
+    expect(formatRunCompletionToast(t, 3_500)).toEqual({
+      text: 'Underwriting complete · 9 engines · 3.5s · $0.00',
+      type: 'success',
+    });
+  });
+
+  it('a failure reads partially complete, still counting the skipped step', () => {
+    const rows = [
+      ...['revenue', 'fb', 'expense', 'capital', 'debt', 'returns', 'sensitivity'].map((engine) => ({ engine, status: 'complete' })),
+      { engine: 'partnership', status: 'not_applicable' },
+      { engine: 'cash_flow', status: 'failed' },
+    ];
+    const t = tallyEngineRows(rows);
+    expect(formatRunCompletionToast(t, 3_500)).toEqual({
+      text: 'Underwriting partially complete · 7 of 9 · 1 skipped',
+      type: 'error',
+    });
+    expect(formatRunHistorySummary(t, 3_500)).toBe('7 of 9 complete · 1 failed · 1 skipped');
+  });
+
+  it('the run-history footer carries the same tally as the toast', () => {
+    expect(formatRunHistorySummary(tallyEngineRows(nineRows('not_applicable')), 3_500)).toBe('8 engines · 1 skipped · 3.5s');
+    expect(formatRunHistorySummary(tallyEngineRows(nineRows('complete')), 1_100)).toBe('9 engines · 1.1s');
+  });
+
+  it('singular when one engine ran', () => {
+    expect(formatRunHistorySummary({ completed: 1, failed: 0, skipped: 0, total: 1 }, 400)).toBe('1 engine · 0.4s');
+  });
+
+  it("the skipped step's detail is the worker's own sentence; without one it says only what the status says", () => {
+    expect(engineSkippedCopy('no partnership terms on this deal')).toBe('skipped · no partnership terms on this deal');
+    expect(engineSkippedCopy('partnership terms incomplete on this deal: no pref rate')).toBe(
+      'skipped · partnership terms incomplete on this deal: no pref rate',
+    );
+    expect(engineSkippedCopy(undefined)).toBe('skipped · not applicable to this deal');
+    expect(engineSkippedCopy('  ')).toBe('skipped · not applicable to this deal');
   });
 });
 

@@ -12,6 +12,11 @@ import {
 } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import {
+  formatRunCompletionToast,
+  formatRunHistorySummary,
+  tallyEngineRows,
+} from '@/lib/progress';
+import {
   notifyEngineOutputsChanged,
   recordEngineRun,
 } from './useEngineOutputs';
@@ -150,10 +155,11 @@ export function useEngineRun(
           if (allDone) {
             stopPolling();
             const runtimeMs = Date.now() - runStartedRef.current;
-            const completeCount = res.engines.filter(
-              (e) => e.status === 'complete',
-            ).length;
-            const failedCount = res.engines.filter((e) => e.status === 'failed').length;
+            // FON-125 — one tally (ran / failed / skipped) feeds the history
+            // record and the toast, so both agree with the progress panel:
+            // a `not_applicable` engine is counted as skipped, never dropped
+            // ("8 engines · 1 skipped" ↔ the panel's "8 of 9 complete · 1 skipped").
+            const tally = tallyEngineRows(res.engines);
 
             // Mark the per-deal run history record complete.
             recordEngineRun(dealId, {
@@ -161,26 +167,15 @@ export function useEngineRun(
               startedAt: new Date(runStartedRef.current),
               completedAt: new Date(),
               engineCount: res.engines.length,
-              status: failedCount > 0 ? 'failed' : 'complete',
-              summary: failedCount > 0
-                ? `${completeCount} of ${res.engines.length} complete · ${failedCount} failed`
-                : `${completeCount} engines · ${(runtimeMs / 1000).toFixed(1)}s`,
+              status: tally.failed > 0 ? 'failed' : 'complete',
+              summary: formatRunHistorySummary(tally, runtimeMs),
               costUsd: 0,
             });
 
             // Pop one summary toast for the entire run-all (cleaner than
             // 8 individual toasts firing in sequence).
-            if (failedCount === 0) {
-              toast(
-                `Underwriting complete · ${completeCount} engines · ${(runtimeMs / 1000).toFixed(1)}s · $0.00`,
-                { type: 'success' },
-              );
-            } else {
-              toast(
-                `Underwriting partially complete · ${completeCount} of ${res.engines.length}`,
-                { type: 'error' },
-              );
-            }
+            const done = formatRunCompletionToast(tally, runtimeMs);
+            toast(done.text, { type: done.type });
 
             // Find the row for the engine this hook is wired to, fall
             // back to the last row otherwise.
