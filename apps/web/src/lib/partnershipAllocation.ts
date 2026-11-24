@@ -40,6 +40,31 @@ export type AllocationRowStatus =
 
 export interface AllocationPreviewRow extends TierAllocationRow {
   status: AllocationRowStatus;
+  /**
+   * FON-66 (Sam's QA, 2026-11-23) — what the preview SHOWS for the row: the
+   * same name the Promote Waterfall tier table gives the band ("Promote — to
+   * 12% LP IRR", "Tier II — Preferred Return"). `label` stays the engine's
+   * positional key ("Tier 1 (to 12%)") so rows still match `tier_allocations`;
+   * it is never displayed for a band the configured stack accounts for. An
+   * engine promote row no configured band names keeps its engine label — the
+   * only name there is for it.
+   */
+  displayLabel: string;
+}
+
+/**
+ * The tier table's names for the engine's structural rows (return of capital,
+ * preferred return, GP catch-up). One source for both tables so the
+ * allocation preview and the Promote Waterfall never disagree.
+ */
+export const STRUCTURAL_TIER_NAME: Readonly<Record<Exclude<AllocationKind, 'promote'>, string>> = {
+  return_of_capital: 'Tier I — Return of Capital',
+  preferred: 'Tier II — Preferred Return',
+  catch_up: 'Tier III — GP Catch-Up',
+};
+
+function structuralDisplayLabel(row: TierAllocationRow): string {
+  return row.kind === 'promote' ? row.label : (STRUCTURAL_TIER_NAME[row.kind] ?? row.label);
 }
 
 /**
@@ -106,6 +131,22 @@ export function promoteTierHurdleCell(hurdle: number): string {
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /**
+ * The name the Promote Waterfall tier table shows for the configured band at
+ * `pos` (0-based, over the VISIBLE stack in order — incomplete bands count,
+ * as the table numbers them): a half-entered band reads "Promote — tier N ·
+ * incomplete"; otherwise `promoteTierName` over the band's hurdle, the
+ * preceding visible band's hurdle (when it has one) and whether this is the
+ * top row. The tier table and the allocation preview both read this, so the
+ * two tables name a band identically.
+ */
+export function promoteRowName(tiers: readonly ConfiguredTier[], pos: number): string {
+  const t = tiers[pos];
+  if (t == null || !isNum(t.hurdle) || !isNum(t.gp)) return `Promote — tier ${pos + 1} · incomplete`;
+  const prev = pos > 0 ? tiers[pos - 1]?.hurdle : undefined;
+  return promoteTierName(pos, t.hurdle, isNum(prev) ? prev : undefined, pos === tiers.length - 1);
+}
+
+/**
  * The preview rows: the engine's structural rows (return of capital,
  * preferred, catch-up) in the order it emitted them, then one row per
  * configured promote band in stack order — the engine's row when it carries
@@ -121,7 +162,11 @@ export function allocationPreviewRows(
   allocations: readonly TierAllocationRow[] | undefined,
   configured: readonly ConfiguredTier[],
 ): AllocationPreviewRow[] {
-  const engineRows: AllocationPreviewRow[] = (allocations ?? []).map((a) => ({ ...a, status: 'reached' }));
+  const engineRows: AllocationPreviewRow[] = (allocations ?? []).map((a) => ({
+    ...a,
+    status: 'reached',
+    displayLabel: structuralDisplayLabel(a),
+  }));
   if (engineRows.length === 0 || configured.length === 0) return engineRows;
 
   // The packed stack the worker builds: complete bands only, in stack order,
@@ -143,10 +188,13 @@ export function allocationPreviewRows(
   const used = new Set<number>();
   const merged: AllocationPreviewRow[] = [];
   configured.forEach((t, i) => {
+    // Shown under the tier table's name for the band; matched on the engine's.
+    const displayLabel = promoteRowName(configured, i);
     const label = labelByIndex.get(i);
     if (label == null) {
       merged.push({
         label: `Tier ${i + 1} · incomplete`,
+        displayLabel,
         kind: 'promote',
         gp_amount: 0,
         lp_amount: 0,
@@ -158,9 +206,11 @@ export function allocationPreviewRows(
     const at = promoteRows.findIndex((r, k) => !used.has(k) && r.label === label);
     if (at >= 0) {
       used.add(at);
-      merged.push(promoteRows[at]);
+      merged.push({ ...promoteRows[at], displayLabel });
     } else {
-      merged.push({ label, kind: 'promote', gp_amount: 0, lp_amount: 0, total_amount: 0, status: 'not_reached' });
+      merged.push({
+        label, displayLabel, kind: 'promote', gp_amount: 0, lp_amount: 0, total_amount: 0, status: 'not_reached',
+      });
     }
   });
   const leftovers = promoteRows.filter((_, k) => !used.has(k));

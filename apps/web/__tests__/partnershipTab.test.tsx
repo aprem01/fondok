@@ -288,9 +288,11 @@ describe('PartnershipTab — dollar waterfall from tier_allocations', () => {
     // Summary shows the "Waterfall Allocation Preview" dollar waterfall.
     expect(screen.getByText('Waterfall Allocation Preview')).toBeInTheDocument();
 
-    // One row per typed tier (labels straight from the engine envelope).
-    expect(screen.getAllByText('Return of Capital').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Preferred Return').length).toBeGreaterThan(0);
+    // One row per typed tier. FON-66 (Sam, 2026-11-23): structural rows are
+    // shown under the tier table's names; a promote row no configured band
+    // accounts for keeps the engine envelope's label.
+    expect(screen.getAllByText('Tier I — Return of Capital').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Tier II — Preferred Return').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Promote — above 15% LP IRR').length).toBeGreaterThan(0);
 
     // Engine dollar amounts, not prototype placeholders.
@@ -308,16 +310,18 @@ describe('PartnershipTab — dollar waterfall from tier_allocations', () => {
 
   it('surfaces the catch-up tier both as a dollar row and a typed waterfall tier', () => {
     render(<PartnershipTab />);
-    // Summary allocation row.
-    expect(screen.getAllByText('GP Catch-Up').length).toBeGreaterThan(0);
+    // Summary allocation row (under the tier table's name for the step).
+    expect(screen.getAllByText('Tier III — GP Catch-Up').length).toBeGreaterThan(0);
 
     // Waterfall sub-tab: the typed Promote Waterfall carries the Catch-Up tier.
     fireEvent.click(screen.getByRole('tab', { name: 'Waterfall' }));
     expect(screen.getByText('Allocation of Projected Proceeds')).toBeInTheDocument();
     expect(screen.getByText('Promote Waterfall')).toBeInTheDocument();
-    expect(screen.getByText('Tier I — Return of Capital')).toBeInTheDocument();
-    expect(screen.getByText('Tier II — Preferred Return')).toBeInTheDocument();
-    expect(screen.getByText('Tier III — GP Catch-Up')).toBeInTheDocument();
+    // FON-66 (Sam, 2026-11-23) — the tier table AND the allocation preview on
+    // this sub-tab both carry the tier table's names for the structural steps.
+    expect(screen.getAllByText('Tier I — Return of Capital').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('Tier II — Preferred Return').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('Tier III — GP Catch-Up').length).toBeGreaterThan(1);
   });
 });
 
@@ -919,5 +923,82 @@ describe('PartnershipTab — the engine does not apply (not_applicable)', () => 
     render(<PartnershipTab />);
     expect(screen.queryByTestId('partnership-not-applicable')).toBeNull();
     expect(screen.queryByTestId('partnership-terms-incomplete')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 (Sam's QA, 2026-11-23, d0bfe816 — one promote tier, 12% hurdle,
+// 20 / 80 after an 8% pref). Two nits:
+//  1. The Allocation Preview still called the band "Tier 1 (to 12%)" while
+//     the tier table above it said "Promote — to 12% LP IRR". The preview now
+//     shows the tier table's name; the engine label stays the matching key.
+//  2. "Initial Promote Split" read "—" although the tier is 20 / 80: the row
+//     read `visibleTierIndices[1]`, assuming index 0 was a pref tier. The pref
+//     is the engine's own `pref_rate` step; waterfall[0] IS the first promote
+//     band, so a one-tier stack reads "20% GP" and has no additional hurdles.
+// ─────────────────────────────────────────────────────────────────────────
+describe('PartnershipTab — one-tier stack: preview name + Initial Promote Split (FON-66, Sam 2026-11-23)', () => {
+  /** The engine's run on Sam's one-tier stack: it keys the band "Tier 1 (to 12%)". */
+  const ONE_TIER_RUN = withPartnershipOutputs({
+    tier_allocations: [
+      { label: 'Return of Capital', kind: 'return_of_capital', gp_amount: 1_883_668, lp_amount: 16_953_008, total_amount: 18_836_676 },
+      { label: 'Preferred Return', kind: 'preferred', gp_amount: 200_000, lp_amount: 1_800_000, total_amount: 2_000_000 },
+      { label: 'Tier 1 (to 12%)', kind: 'promote', gp_amount: 2_500_000, lp_amount: 8_000_000, total_amount: 10_500_000 },
+    ],
+    catch_up_amount: 0,
+  });
+
+  /** The allocation preview rows on the Summary, by what they display. */
+  const previewRowTexts = () => screen.getAllByTestId('allocation-row').map((r) => r.textContent ?? '');
+
+  it('the preview shows the band under the tier table’s name, never the engine’s "Tier 1 (to 12%)"', async () => {
+    sources.payload = ONE_TIER_PAYLOAD;
+    activeOutputs = ONE_TIER_RUN;
+    renderWithSources();
+    const tiers = screen.getByTestId('summary-waterfall-tiers');
+    expect(await within(tiers).findByText('Promote — to 12% LP IRR')).toBeInTheDocument();
+
+    const rows = previewRowTexts();
+    expect(rows.some((t) => t.includes('Tier 1 (to 12%)'))).toBe(false);
+    const promoteRow = screen.getAllByTestId('allocation-row').find((r) => r.textContent?.includes('Promote — to 12% LP IRR'));
+    expect(promoteRow, 'preview row named as the tier table names it').toBeTruthy();
+    // Matched to the engine row: the engine's dollars, reached, no caption.
+    expect(promoteRow).toHaveAttribute('data-status', 'reached');
+    expect(promoteRow).toHaveTextContent('$10,500,000');
+    expect(promoteRow).not.toHaveTextContent('not reached');
+    // Structural rows carry the tier table's names too.
+    expect(rows.some((t) => t.includes('Tier I — Return of Capital'))).toBe(true);
+    expect(rows.some((t) => t.includes('Tier II — Preferred Return'))).toBe(true);
+  });
+
+  it('Initial Promote Split reads "20% GP" and Additional Hurdles "None"', async () => {
+    sources.payload = ONE_TIER_PAYLOAD;
+    activeOutputs = ONE_TIER_RUN;
+    renderWithSources();
+    await waitFor(() => expect(rowFor('Initial Promote Split')).toHaveTextContent('20% GP'));
+    expect(rowFor('Initial Promote Split')).not.toHaveTextContent('—');
+    expect(rowFor('Additional Hurdles')).toHaveTextContent('None');
+    expect(rowFor('Additional Hurdles')).not.toHaveTextContent('12%');
+  });
+
+  it('a two-tier stack: Initial Promote Split is the FIRST band, Additional Hurdles the second band’s hurdle', async () => {
+    // The carried two-tier stack (13% / 20% GP, then 18% / 35% GP) on a run
+    // the engine keyed "Tier 1 (to 13%)" / "Tier 2 (>13%)".
+    activeOutputs = withPartnershipOutputs({
+      tier_allocations: [
+        { label: 'Return of Capital', kind: 'return_of_capital', gp_amount: 1_883_668, lp_amount: 16_953_008, total_amount: 18_836_676 },
+        { label: 'Tier 1 (to 13%)', kind: 'promote', gp_amount: 500_000, lp_amount: 2_000_000, total_amount: 2_500_000 },
+        { label: 'Tier 2 (>13%)', kind: 'promote', gp_amount: 3_500_000, lp_amount: 6_500_000, total_amount: 10_000_000 },
+      ],
+      catch_up_amount: 0,
+    });
+    renderWithSources();
+    await waitFor(() => expect(rowFor('Initial Promote Split')).toHaveTextContent('20% GP'));
+    expect(rowFor('Additional Hurdles')).toHaveTextContent('18% LP IRR · +1 tier');
+
+    const rows = previewRowTexts();
+    expect(rows.some((t) => t.includes('Promote — to 13% LP IRR'))).toBe(true);
+    expect(rows.some((t) => t.includes('Promote — above 13% LP IRR'))).toBe(true);
+    expect(rows.some((t) => /Tier [12] \(/.test(t))).toBe(false);
   });
 });
