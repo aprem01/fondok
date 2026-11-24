@@ -5,14 +5,17 @@
  * `runMode='all'` is in flight (and briefly after, before auto-dismiss).
  *
  * Visualises each engine's status as the worker's run-row table evolves:
- * queued ◯, running ⟳, complete ✓ + summary, failed ✕.
+ * queued ◯, running ⟳, complete ✓ + summary, failed ✕, skipped ⊖ + the
+ * worker's own reason (FON-125: a `not_applicable` row, e.g. Partnership on
+ * a deal with no partnership terms). The footer counts skipped steps
+ * separately so "8 of 9 complete · 1 skipped" matches the completion toast.
  *
  * Smaller `inline` variant used for single-engine runs is rendered
  * directly above the EngineHeader card by callers when desired.
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, X, Loader2, Circle } from 'lucide-react';
+import { Check, X, Loader2, Circle, MinusCircle } from 'lucide-react';
 import {
   EngineName,
   EngineOutputResponse,
@@ -24,6 +27,7 @@ import { useNow } from '@/lib/hooks/useNow';
 import {
   deriveEngineStage,
   engineLabel,
+  engineSkippedCopy,
   formatElapsed,
   formatLastRunTook,
 } from '@/lib/progress';
@@ -84,7 +88,7 @@ export default function EngineRunProgress({
     !(expectedEngines.length > 0 && terminal >= expectedEngines.length);
   const now = useNow(inFlight);
   const stage = deriveEngineStage({ expected: expectedEngines, rows, startedAt, now });
-  const { completed, failed, total, allDone } = stage;
+  const { completed, failed, skipped, total, allDone } = stage;
   const lastRunTook = formatLastRunTook(lastRunTookMs);
 
   // Auto-dismiss 2 seconds after completion.
@@ -164,6 +168,11 @@ export default function EngineRunProgress({
               · {failed} failed
             </span>
           )}
+          {skipped > 0 && (
+            // FON-125 — a skipped step is neither complete nor failed; it is
+            // counted here so the footer, the toast and the step list agree.
+            <span className="ml-1">· {skipped} skipped</span>
+          )}
         </span>
         <span className="tabular-nums">
           {formatElapsed(stage.elapsedSeconds)} · $0.00 spent
@@ -190,6 +199,8 @@ function EngineRow({
   const label = engineLabel(name);
   const summary = row?.summary || '';
   const runtime = row?.runtime_ms;
+  // FON-125 — the worker's own sentence for a skipped step.
+  const skippedCopy = engineSkippedCopy(row?.not_applicable?.message);
 
   return (
     <li
@@ -212,7 +223,7 @@ function EngineRow({
           <X size={12} className="text-danger-700 check-pop" />
         )}
         {status === 'not_applicable' && (
-          <Circle size={12} className="text-ink-300" aria-label="not applicable" />
+          <MinusCircle size={12} className="text-ink-400" aria-label="skipped" />
         )}
       </span>
       <span
@@ -233,7 +244,9 @@ function EngineRow({
         {status === 'running' && '…running'}
         {status === 'queued' && '(queued)'}
         {status === 'failed' && (row?.error || 'failed')}
-        {status === 'not_applicable' && 'not applicable to this deal'}
+        {status === 'not_applicable' && (
+          <span title={skippedCopy}>{skippedCopy}</span>
+        )}
       </span>
       {status === 'complete' && runtime != null && (
         <span className="text-[10.5px] text-ink-500 tabular-nums flex-shrink-0">

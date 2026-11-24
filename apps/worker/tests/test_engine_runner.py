@@ -79,6 +79,14 @@ async def test_run_all_engines_kimpton() -> None:
     y1_noi = results["expense"]["outputs"]["years"][0]["noi"]
     assert 3_500_000 <= y1_noi <= 6_500_000, f"Y1 NOI out of band: {y1_noi}"
 
+    # FON-124 — the engine card / run-panel headline reads Year 1 NOI BEFORE
+    # the FF&E reserve (``noi_institutional``), the figure every other tab
+    # labels "NOI"; never the after-reserve ``noi``.
+    y1 = results["expense"]["outputs"]["years"][0]
+    assert y1["ffe_reserve"] > 0  # the two figures must actually differ here
+    assert results["expense"]["summary"] == f"Y1 NOI ${y1['noi_institutional'] / 1e6:.2f}M"
+    assert results["expense"]["summary"] != f"Y1 NOI ${y1['noi'] / 1e6:.2f}M"
+
     # FON-116 / FON-117 (topline v2, re-checked 2026-11-02 — not loosened
     # silently): the seed fixture carries no documents and, since the growth
     # seeds were retired, no growth. Its rates are held flat for the hold (the
@@ -1588,3 +1596,64 @@ async def test_loader_feeds_the_topline_and_the_resolved_growth_lists() -> None:
     assert revenue_input.adr_growth_by_year == [None] * 5
     assert revenue_input.occupancy_by_year_override is None
     assert revenue_input.index_drivers_by_year == []
+
+
+# ─────────────── FON-124 — the expense engine's one-line headline ───────────────
+
+
+def test_expense_headline_reads_noi_before_reserve() -> None:
+    """Sam (QA of deal b67bfdee): the card said "Y1 NOI $1.15M" — NOI AFTER the
+    $491,668 FF&E reserve — while Overview, Entry Valuation and the Cash Flow
+    statement all show $1,646,245. The headline reads the before-reserve
+    figure, from the live model and from the persisted JSON alike."""
+    from app.services.engine_runner import _summary_for, _summary_from_dict
+
+    years = [{"noi": 1_154_577.0, "noi_institutional": 1_646_245.0}]
+    assert _summary_from_dict("expense", {"years": years}) == "Y1 NOI $1.65M"
+
+    class _Year:
+        noi = 1_154_577.0
+        noi_institutional = 1_646_245.0
+
+    class _Out:
+        years = [_Year()]
+
+    assert _summary_for("expense", _Out()) == "Y1 NOI $1.65M"  # type: ignore[arg-type]
+
+
+def test_expense_headline_labels_a_legacy_after_reserve_figure() -> None:
+    """A row persisted before ``noi_institutional`` existed carries only the
+    after-reserve ``noi``: it is still shown, labelled for what it is — never
+    passed off as "Y1 NOI"."""
+    from app.services.engine_runner import _summary_for, _summary_from_dict
+
+    assert (
+        _summary_from_dict("expense", {"years": [{"noi": 1_154_577.0}]})
+        == "Y1 NOI after reserve $1.15M"
+    )
+    assert (
+        _summary_from_dict("expense", {"years": [{"noi": 1_154_577.0, "noi_institutional": None}]})
+        == "Y1 NOI after reserve $1.15M"
+    )
+
+    class _Year:
+        noi = 1_154_577.0
+        noi_institutional = None
+
+    class _Out:
+        years = [_Year()]
+
+    assert _summary_for("expense", _Out()) == "Y1 NOI after reserve $1.15M"  # type: ignore[arg-type]
+
+
+def test_expense_headline_is_empty_without_years() -> None:
+    """No years → no headline. "$0.00M" would be an invented figure."""
+    from app.services.engine_runner import _summary_for, _summary_from_dict
+
+    assert _summary_from_dict("expense", {"years": []}) == ""
+    assert _summary_from_dict("expense", {}) == ""
+
+    class _Out:
+        years: list = []
+
+    assert _summary_for("expense", _Out()) == ""  # type: ignore[arg-type]

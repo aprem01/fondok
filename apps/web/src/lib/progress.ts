@@ -155,11 +155,17 @@ export interface EngineStage {
   currentLabel: string | null;
   completed: number;
   failed: number;
+  /** FON-125 — engines the worker marked ``not_applicable``: skipped by
+   *  reason (Partnership on a deal with no partnership terms), not failed.
+   *  ``completed + skipped + failed === total`` once ``allDone``. */
+  skipped: number;
   total: number;
   elapsedSeconds: number;
   allDone: boolean;
   /** ``"Running Revenue · 2 of 9 complete · 0:42"`` while in flight;
-   *  ``"Finished · 9 of 9 complete · 1:58"`` once terminal. */
+   *  ``"Finished · 9 of 9 complete · 1:58"`` once terminal — or
+   *  ``"Finished · 8 of 9 complete · 1 skipped · 1:58"`` when an engine was
+   *  skipped, so the count reads as ran + skipped = steps. */
   copy: string;
 }
 
@@ -178,15 +184,15 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
 
   let completed = 0;
   let failed = 0;
-  let notApplicable = 0;
+  let skipped = 0;
   for (const name of order) {
     const s = byEngine.get(name)?.status;
     if (s === 'complete') completed += 1;
     else if (s === 'failed') failed += 1;
-    else if (s === 'not_applicable') notApplicable += 1;
+    else if (s === 'not_applicable') skipped += 1;
   }
   const total = order.length;
-  const allDone = total > 0 && completed + failed + notApplicable === total;
+  const allDone = total > 0 && completed + failed + skipped === total;
 
   // Prefer the engine the worker says is running; otherwise the first one
   // (in dependency order) that hasn't reached a terminal state — i.e. the
@@ -210,7 +216,7 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
 
   const elapsedSeconds = startedAt == null ? 0 : Math.max(0, (now - startedAt) / 1000);
   const currentLabel = currentEngine == null ? null : engineLabel(currentEngine);
-  const progress = `${completed} of ${total} complete`;
+  const progress = `${completed} of ${total} complete${skippedPart(skipped)}`;
   const tail = `${progress} · ${formatElapsed(elapsedSeconds)}`;
   const copy = allDone
     ? `Finished · ${tail}`
@@ -223,11 +229,97 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
     currentLabel,
     completed,
     failed,
+    skipped,
     total,
     elapsedSeconds,
     allDone,
     copy,
   };
+}
+
+// ─── Run completion (FON-125) ────────────────────────────────────────────
+//
+// Sam (QA of deal b67bfdee): the progress panel listed 9 steps while the
+// completion toast said "8 engines". The ninth, Partnership, did not run —
+// the worker wrote an explicit ``not_applicable`` row carrying its own
+// reason ("no partnership terms on this deal"). The panel footer, the toast
+// and the run-history record now read ONE tally, so "8 engines · 1 skipped"
+// and "8 of 9 complete · 1 skipped" are the same statement: ran + skipped =
+// steps. Nothing is dropped from the count and nothing is counted twice.
+
+export interface EngineRunTally {
+  /** Rows that reached ``complete``. */
+  completed: number;
+  failed: number;
+  /** Rows the worker marked ``not_applicable`` — skipped by reason. */
+  skipped: number;
+  /** Every row the run reported (``completed + failed + skipped`` once
+   *  terminal). */
+  total: number;
+}
+
+export function tallyEngineRows(rows: ReadonlyArray<{ status: string }>): EngineRunTally {
+  let completed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    if (r.status === 'complete') completed += 1;
+    else if (r.status === 'failed') failed += 1;
+    else if (r.status === 'not_applicable') skipped += 1;
+  }
+  return { completed, failed, skipped, total: rows.length };
+}
+
+/** ``" · 1 skipped"`` when anything was skipped, else ``""``. */
+function skippedPart(skipped: number): string {
+  return skipped > 0 ? ` · ${skipped} skipped` : '';
+}
+
+function engines(n: number): string {
+  return `${n} engine${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The run-all completion toast.
+ *   - every engine ran: ``"Underwriting complete · 9 engines · 3.5s · $0.00"``
+ *   - one skipped:      ``"Underwriting complete · 8 engines · 1 skipped · 3.5s · $0.00"``
+ *   - a failure:        ``"Underwriting partially complete · 7 of 9 · 1 skipped"``
+ * The seconds are the measured wall time of this run.
+ */
+export function formatRunCompletionToast(
+  t: EngineRunTally,
+  runtimeMs: number,
+): { text: string; type: 'success' | 'error' } {
+  if (t.failed > 0) {
+    return {
+      text: `Underwriting partially complete · ${t.completed} of ${t.total}${skippedPart(t.skipped)}`,
+      type: 'error',
+    };
+  }
+  return {
+    text: `Underwriting complete · ${engines(t.completed)}${skippedPart(t.skipped)} · ${(runtimeMs / 1000).toFixed(1)}s · $0.00`,
+    type: 'success',
+  };
+}
+
+/** The run-history record's one-line summary — the toast's tally without
+ *  the "Underwriting …" lead: ``"8 engines · 1 skipped · 3.5s"``, or
+ *  ``"7 of 9 complete · 1 failed · 1 skipped"`` after a failure. */
+export function formatRunHistorySummary(t: EngineRunTally, runtimeMs: number): string {
+  if (t.failed > 0) {
+    return `${t.completed} of ${t.total} complete · ${t.failed} failed${skippedPart(t.skipped)}`;
+  }
+  return `${engines(t.completed)}${skippedPart(t.skipped)} · ${(runtimeMs / 1000).toFixed(1)}s`;
+}
+
+/** The panel's detail line for a skipped step: ``"skipped · no partnership
+ *  terms on this deal"`` — the worker's own ``not_applicable.message``. An
+ *  older worker that sent the status without a sentence reads ``"skipped ·
+ *  not applicable to this deal"``: what the status itself says, nothing
+ *  invented. */
+export function engineSkippedCopy(message: string | null | undefined): string {
+  const why = (message ?? '').trim();
+  return `skipped · ${why || 'not applicable to this deal'}`;
 }
 
 /**
