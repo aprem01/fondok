@@ -160,6 +160,12 @@ NOT_PIPELINE_STATUS_TOKENS = frozenset(
 
 Bucket = Literal["under_construction", "final_planning", "planned"]
 ShareBasis = Literal["reported", "computed"]
+#: FON-126 — where a pipeline ROOM total came from: ``"reported"`` = the
+#: report's own stated total row (``under_construction.total_rooms``,
+#: ``property_overview.rooms_under_construction_total`` …); ``"summed"`` =
+#: the listed projects' keys added up by status, used only when the report
+#: states no total.
+RoomsBasis = Literal["reported", "summed"]
 
 # Unit guard for ``*_change*`` growth candidates. The live CBRE Horizons
 # rows ``cbre_horizons.overall_supply.2025_ytd.demand_change = -35997`` and
@@ -288,6 +294,13 @@ class PipelineFilter:
     #: which is not the deal's — never listed. Export rows naming another
     #: market are the unmatched remainder of ``total`` − ``matched``.
     other_market_rows: int = 0
+    #: FON-126 — the projects that ARE listed (from any source) and the
+    #: documents they came from, so the note and the table can say where the
+    #: listed hotels come from when the export contributed none of them
+    #: (live: 9 projects from the CoStar submarket PDF under a note about the
+    #: Supply workbook's 45 market-less rows).
+    listed_count: int = 0
+    listed_docs: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -318,6 +331,12 @@ class SupplyReading:
     #: the unit guard kept OUT of ``reported_supply_change_pct``.
     supply_rooms_change: FieldRef | None = None
     supply_rooms_change_period: str | None = None
+    #: FON-126 — whether each room total is the report's own stated figure
+    #: ("reported") or the listed projects summed by status ("summed").
+    #: None when the figure is unavailable.
+    under_construction_rooms_basis: RoomsBasis | None = None
+    final_planning_rooms_basis: RoomsBasis | None = None
+    planned_rooms_basis: RoomsBasis | None = None
 
 
 # ───────────────────────────── growth candidates ─────────────────────────────
@@ -806,6 +825,7 @@ def _collect_pipeline_hotels(
         # An export row naming another market is simply unmatched — the
         # "N of M rows … are in <market>" line already says so.
 
+    listed_docs = list(dict.fromkeys(h.doc_name for h in hotels if h.doc_name))
     pfilter: PipelineFilter | None = None
     if export_total or other_market:
         doc_label = ", ".join(export_docs) if export_docs else "the pipeline export"
@@ -837,13 +857,30 @@ def _collect_pipeline_hotels(
         else:
             note = None
         if other_note:
-            note = f"{note} {other_note.capitalize()}." if note else f"{other_note.capitalize()}."
+            note = f"{_end_sentence(note)} {other_note.capitalize()}." if note else f"{other_note.capitalize()}."
+        if hotels and export_total and not export_matched:
+            # FON-126 (Sam QA 2026-11-23) — the listed projects are NOT the
+            # export's rows (none of those matched); say which document they
+            # are from so the table above and this note agree.
+            n = len(hotels)
+            listed_label = " and ".join(listed_docs) if listed_docs else "the submarket report's own list"
+            listed_note = (
+                f"The {n} project{'s' if n != 1 else ''} listed {'are' if n != 1 else 'is'} from "
+                f"{listed_label}, not from {doc_label}."
+            )
+            note = f"{_end_sentence(note)} {listed_note}" if note else listed_note
         pfilter = PipelineFilter(
             terms=list(terms), matched=export_matched, total=export_total,
             doc_name=export_docs[0] if export_docs else None, note=note,
             market_unknown_rows=export_unknown, other_market_rows=other_market,
+            listed_count=len(hotels), listed_docs=listed_docs,
         )
     return hotels, pfilter
+
+
+def _end_sentence(s: str) -> str:
+    s = s.rstrip()
+    return s if s.endswith((".", "!", "?")) else f"{s}."
 
 
 _SPREADSHEET_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv")
@@ -950,11 +987,14 @@ def read_supply_growth(
             forbid=(uc_forbid - {"subject"}) | frozenset({"segment"}), as_of_year=as_of,
         )
     )
+    uc_rooms_basis: RoomsBasis | None = None
     if uc is not None:
         uc_rooms: int | None = uc[0]
+        uc_rooms_basis = "reported"
         inputs.append(uc[2])
     elif "under_construction" in sums:
         uc_rooms, refs = sums["under_construction"]
+        uc_rooms_basis = "summed"
         inputs.extend(refs)
     else:
         uc_rooms = None
@@ -963,11 +1003,14 @@ def read_supply_growth(
         rows, prefixes=("market_study.", "property_overview.", UNDER_CONSTRUCTION_PREFIX),
         require_all=frozenset({"final", "planning"}), forbid=NOT_SUBMARKET_TOKENS, as_of_year=as_of,
     )
+    fp_rooms_basis: RoomsBasis | None = None
     if fp is not None:
         fp_rooms: int | None = fp[0]
+        fp_rooms_basis = "reported"
         inputs.append(fp[2])
     elif "final_planning" in sums:
         fp_rooms, refs = sums["final_planning"]
+        fp_rooms_basis = "summed"
         inputs.extend(refs)
     else:
         fp_rooms = None
@@ -977,11 +1020,14 @@ def read_supply_growth(
         prefixes=("market_study.", "property_overview."), require_any=ROOMS_TOKENS,
         forbid=NOT_SUBMARKET_TOKENS | frozenset({"under", "construction", "final"}), as_of_year=as_of,
     )
+    planned_rooms_basis: RoomsBasis | None = None
     if planned is not None:
         planned_rooms: int | None = planned[0]
+        planned_rooms_basis = "reported"
         inputs.append(planned[2])
     elif "planned" in sums:
         planned_rooms, refs = sums["planned"]
+        planned_rooms_basis = "summed"
         inputs.extend(refs)
     else:
         planned_rooms = None
@@ -1049,6 +1095,9 @@ def read_supply_growth(
         pipeline_filter=pfilter,
         supply_rooms_change=level.ref if level else None,
         supply_rooms_change_period=level.label if level else None,
+        under_construction_rooms_basis=uc_rooms_basis,
+        final_planning_rooms_basis=fp_rooms_basis,
+        planned_rooms_basis=planned_rooms_basis,
     )
 
 

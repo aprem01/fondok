@@ -263,6 +263,50 @@ def test_spreadsheet_pipeline_rows_naming_no_market_are_not_listed_as_the_deals_
         f"{XLSX} names no market for any of its 4 pipeline rows; none was counted as Miami Beach, FL supply."
     )
     assert s.pipeline_filter.note in (s.detail or "")
+    assert s.pipeline_filter.listed_count == 0 and s.pipeline_filter.listed_docs == []
+    assert s.under_construction_rooms_basis is None and s.final_planning_rooms_basis is None
+
+
+def test_report_list_under_a_market_less_export_names_where_the_listed_projects_come_from() -> None:
+    """FON-126 (Sam QA 2026-11-23) — live: the Pipeline Hotel table listed 9
+    Miami Beach projects (Grand Hyatt Miami Beach Convention Center, Hilton
+    Miami Beach, Delano South Beach …) while the note under it said the
+    Supply workbook's 45 rows named no market, so a reader could not tell
+    whether the 9 fed the 1,326 / 1,300 room totals. The listed projects
+    are the CoStar submarket PDF's own list; the export contributed none.
+    The note must say so, and each room total must say whether it is the
+    report's own stated figure or the listed projects summed."""
+    rows = [
+        *_hotel_rows("under_construction.1", PDF, "p", "Grand Hyatt Miami Beach Convention Center", 800, "under_construction"),
+        *_hotel_rows("under_construction.2", PDF, "p", "Hilton Miami Beach", 289, "under_construction"),
+        _row("property_overview.pipeline_hotel_1_name", "Delano South Beach", doc=PDF, doc_id="p"),
+        _row("property_overview.pipeline_hotel_1_rooms", 170, doc=PDF, doc_id="p"),
+        _row("property_overview.pipeline_hotel_1_status", "Final Planning", doc=PDF, doc_id="p"),
+        # The report's own stated under-construction total (≠ 800 + 289).
+        _row("property_overview.rooms_under_construction_total", 1326, doc=PDF, doc_id="p"),
+        *_hotel_rows("under_construction.1", XLSX, "x", "Home2 Suites by Hilton San Diego Downtown", 130, "under_construction"),
+        *_hotel_rows("under_construction.23", XLSX, "x", "Bally's Chicago Hotel", 500, "final_planning"),
+    ]
+    s = read_supply_growth(rows, has_documents=True, as_of_year=2025, market_terms=["Miami Beach, FL"])
+    assert [h.name for h in (s.pipeline_hotels or [])] == [
+        "Grand Hyatt Miami Beach Convention Center",
+        "Hilton Miami Beach",
+        "Delano South Beach",
+    ]
+    assert all(h.doc_name == PDF for h in (s.pipeline_hotels or []))
+    # The headline is the report's stated total, not the sum of the listed rows.
+    assert s.under_construction_rooms == 1326 and s.under_construction_rooms_basis == "reported"
+    # No final-planning total is stated → the listed final-planning project is summed.
+    assert s.final_planning_rooms == 170 and s.final_planning_rooms_basis == "summed"
+    assert s.planned_rooms is None and s.planned_rooms_basis is None
+    f = s.pipeline_filter
+    assert f is not None and (f.total, f.matched, f.market_unknown_rows, f.other_market_rows) == (2, 0, 2, 0)
+    assert f.listed_count == 3 and f.listed_docs == [PDF]
+    assert f.note == (
+        f"{XLSX} names no market for any of its 2 pipeline rows; none was counted as Miami Beach, FL supply. "
+        f"The 3 projects listed are from {PDF}, not from {XLSX}."
+    )
+    assert f.note in (s.detail or "")
 
 
 def test_spreadsheet_rows_count_only_when_they_name_the_deals_market() -> None:

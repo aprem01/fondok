@@ -364,12 +364,17 @@ class PipelineFilterOut(BaseModel):
     market_unknown_rows: int = 0
     # FON-60 — rows of any source naming a market that is not the deal's.
     other_market_rows: int = 0
+    # FON-126 — the projects that ARE listed (any source) and the documents
+    # they come from, so the table caption can name them.
+    listed_count: int = 0
+    listed_docs: list[str] = Field(default_factory=list)
 
     @classmethod
     def of(cls, f: PipelineFilter) -> PipelineFilterOut:
         return cls(
             terms=list(f.terms), matched=f.matched, total=f.total, doc_name=f.doc_name, note=f.note,
             market_unknown_rows=f.market_unknown_rows, other_market_rows=f.other_market_rows,
+            listed_count=f.listed_count, listed_docs=list(f.listed_docs),
         )
 
 
@@ -402,6 +407,12 @@ class MarketSupplyGrowthBlock(BaseModel):
     # the unit guard kept out of ``reported_supply_change_pct``.
     supply_rooms_change: FieldRefOut | None = None
     supply_rooms_change_period: str | None = None
+    # FON-126 — "reported" = the report's own stated room total; "summed" =
+    # the listed projects' keys added up by status (only when no total is
+    # stated). None when the figure is unavailable.
+    under_construction_rooms_basis: Literal["reported", "summed"] | None = None
+    final_planning_rooms_basis: Literal["reported", "summed"] | None = None
+    planned_rooms_basis: Literal["reported", "summed"] | None = None
 
     @classmethod
     def of(cls, s: SupplyReading) -> MarketSupplyGrowthBlock:
@@ -421,6 +432,9 @@ class MarketSupplyGrowthBlock(BaseModel):
             pipeline_filter=PipelineFilterOut.of(s.pipeline_filter) if s.pipeline_filter else None,
             supply_rooms_change=FieldRefOut.of(s.supply_rooms_change) if s.supply_rooms_change else None,
             supply_rooms_change_period=s.supply_rooms_change_period,
+            under_construction_rooms_basis=s.under_construction_rooms_basis,
+            final_planning_rooms_basis=s.final_planning_rooms_basis,
+            planned_rooms_basis=s.planned_rooms_basis,
         )
 
 

@@ -298,6 +298,13 @@ async def test_live_costar_paths_feed_the_tiles_and_the_export_is_filtered_to_th
     assert s["pipeline_filter"]["matched"] == 1 and s["pipeline_filter"]["total"] == 3
     assert s["pipeline_filter"]["terms"] == ["miami beach"]
     assert s["pipeline_filter"]["market_unknown_rows"] == 0  # every export row carries a market
+    # FON-126 — the API says where the listed projects come from and that the
+    # room totals are the report's own stated figures, not a sum of the list.
+    assert s["pipeline_filter"]["listed_count"] == 1
+    assert s["pipeline_filter"]["listed_docs"] == ["Miami Beach Supply 12.10.25.xlsx"]
+    assert s["under_construction_rooms_basis"] == "reported"
+    assert s["final_planning_rooms_basis"] == "reported"
+    assert s["planned_rooms_basis"] is None
 
 
 async def _add_document(

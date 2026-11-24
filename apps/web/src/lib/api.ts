@@ -2646,6 +2646,10 @@ export interface MarketPipelineFilter {
   market_unknown_rows?: number;
   /** FON-60 — rows of any source naming a market that is not the deal's. */
   other_market_rows?: number;
+  /** FON-126 — the projects that ARE listed (any source) and the documents
+   *  they come from. Absent on an older worker. */
+  listed_count?: number;
+  listed_docs?: string[];
 }
 
 /** FON-61 E-008 — Supply Growth = pipeline rooms ÷ existing inventory, or the
@@ -2673,6 +2677,12 @@ export interface MarketSupplyGrowthBlock {
    *  worker's unit guard kept out of `reported_supply_change_pct`. */
   supply_rooms_change?: MarketFieldRef | null;
   supply_rooms_change_period?: string | null;
+  /** FON-126 — "reported" = the report's own stated room total; "summed" =
+   *  the listed projects' keys added up by status (only when no total is
+   *  stated). Absent on an older worker; null when the figure is unavailable. */
+  under_construction_rooms_basis?: 'reported' | 'summed' | null;
+  final_planning_rooms_basis?: 'reported' | 'summed' | null;
+  planned_rooms_basis?: 'reported' | 'summed' | null;
 }
 
 // ─────────────── FON-41 E-011 / E-013 / E-017 — P&L comments + round-trip ───────────────

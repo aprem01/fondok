@@ -30,6 +30,8 @@ import {
   CompSetRoster,
   SubmarketSnapshot,
   SupplyPipeline,
+  pipelineRoomsBasisNote,
+  plainPipelineNote,
   ttmBlendMethodology,
   demandGrowthTile,
   supplyGrowthTile,
@@ -155,6 +157,15 @@ describe('CompSetRoster — closed hotels are marked and excluded (E-009)', () =
     expect(screen.queryByText('Closed - Blue Moon Hotel')).not.toBeInTheDocument();
   });
 
+  it('FON-126 — joins alias names on " · ", since a roster name can itself contain a comma', () => {
+    const hotels = COMP_SET.hotels.map((h) =>
+      h.index === 3 ? { ...h, merged_names: ['The Betsy Hotel', 'Betsy, The'] } : h,
+    );
+    render(<CompSetRoster hotels={hotels} perf={PERF} note={COMP_SET.note} />);
+    expect(screen.getByTestId('comp-set-alias')).toHaveTextContent('also listed as The Betsy Hotel · Betsy, The');
+    expect(screen.getByTestId('comp-set-alias')).not.toHaveTextContent('The Betsy Hotel, Betsy');
+  });
+
   it('with no closed marker every hotel is a plain row and the note says so', () => {
     const hotels = COMP_SET.hotels.map((h) => ({ ...h, status: 'active' as const, status_source: null }));
     const note = 'No hotel in the roster carries a closed marker (status field or STR "Closed - " label), so every listed hotel is counted as active.';
@@ -210,7 +221,8 @@ describe('SubmarketSnapshot — one derivation feeds the count and the keys', ()
     expect(line).toHaveTextContent('Occupancy ÷ MPI, ADR ÷ ARI, RevPAR ÷ RGI');
     expect(line).toHaveTextContent(`Source: ${STR_DOC}`);
     expect(line).toHaveTextContent('Jul 2025 – Jun 2026 (12 months, subject monthly series)');
-    expect(line).toHaveTextContent('4 active hotels: Z Ocean Hotel, The Betsy South Beach, The Tony Hotel, Dream South Beach; 344 keys; Blue Moon Hotel closed — excluded');
+    // FON-126 — hotel names join on " · ": a name can itself contain a comma.
+    expect(line).toHaveTextContent('4 active hotels: Z Ocean Hotel · The Betsy South Beach · The Tony Hotel · Dream South Beach; 344 keys; Blue Moon Hotel closed — excluded');
     expect(line).toHaveTextContent('Fondok applies no weighting of its own');
   });
 
@@ -388,5 +400,91 @@ describe('SupplyPipeline — live CoStar shape: reported share, forecast, filter
     );
     expect(screen.getByTestId('pipeline-filter')).toHaveTextContent('No pipeline rows for Austin in Miami Beach Supply 12.10.25.xlsx');
     expect(screen.queryAllByTestId('pipeline-hotel')).toHaveLength(0);
+    expect(screen.queryByTestId('pipeline-listed')).not.toBeInTheDocument();
+  });
+
+  it('captions the list with the documents the listed projects come from, and claims no basis an older worker did not send', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={LIVE_SUPPLY} />);
+    const caption = screen.getByTestId('pipeline-listed');
+    expect(caption).toHaveTextContent('2 projects listed in Miami Beach Supply 12.10.25.xlsx.');
+    expect(caption).not.toHaveTextContent('stated total');
+    expect(caption).not.toHaveTextContent('sum of');
+  });
+});
+
+// FON-126 (Sam QA 2026-11-23, deal b67bfdee) — the Pipeline Hotel table
+// listed 9 Miami Beach projects from the CoStar submarket PDF while the
+// note under it said the Supply workbook named no market for its 45 rows,
+// so a reader could not tell whether the 9 fed the 1,326 / 1,300 totals.
+describe('SupplyPipeline — FON-126: table caption and filter note agree on where the listed projects come from', () => {
+  const PDF = 'Miami Beach-Hospitality-Submarket-2025-12-10.pdf';
+  const XLSX = 'Miami Beach Supply 12.10.25.xlsx';
+  const SAM_SUPPLY: MarketSupplyGrowthBlock = {
+    existing_rooms: null,
+    existing_period_label: null,
+    under_construction_rooms: 1326,
+    final_planning_rooms: 1300,
+    planned_rooms: null,
+    under_construction_pct: 5.7,
+    final_planning_pct: null,
+    under_construction_pct_basis: 'reported',
+    final_planning_pct_basis: null,
+    under_construction_rooms_basis: 'reported',
+    final_planning_rooms_basis: 'reported',
+    planned_rooms_basis: null,
+    inputs: [{ field_name: 'property_overview.rooms_under_construction_total', value: 1326, doc_name: PDF, doc_id: 'doc-a', page: 15 }],
+    pipeline_hotels: [
+      { name: 'Grand Hyatt Miami Beach Convention Center', keys: 800, status: 'Under Construction', bucket: 'under_construction', doc_name: PDF, doc_id: 'doc-a', page: 15 },
+      { name: 'Hilton Miami Beach', keys: 289, status: 'Under Construction', bucket: 'under_construction', doc_name: PDF, doc_id: 'doc-a', page: 15 },
+      { name: 'Delano South Beach', keys: 170, status: 'Final Planning', bucket: 'final_planning', doc_name: PDF, doc_id: 'doc-a', page: 15 },
+    ],
+    pipeline_filter: {
+      terms: ['miami beach, fl'],
+      matched: 0,
+      total: 45,
+      doc_name: XLSX,
+      market_unknown_rows: 45,
+      listed_count: 3,
+      listed_docs: [PDF],
+      note: `${XLSX} names no market for any of its 45 pipeline rows; none was counted as Miami Beach, FL supply. The 3 projects listed are from ${PDF}, not from ${XLSX}.`,
+    },
+    reason: null,
+    detail: null,
+  };
+
+  it('names the PDF above the table and says the totals are the report’s own, not a sum of the rows', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={SAM_SUPPLY} />);
+    expect(screen.getByTestId('pipeline-listed')).toHaveTextContent(
+      `3 projects listed in ${PDF}. Under construction and final planning are the report’s own stated totals, not a sum of the listed projects.`,
+    );
+    expect(within(screen.getByTestId('pipeline-hotels')).getAllByTestId('pipeline-hotel')).toHaveLength(3);
+    expect(screen.getByTestId('pipeline-filter')).toHaveTextContent(
+      `${XLSX} names no market for any of its 45 pipeline rows; none was counted as Miami Beach, FL supply. The 3 projects listed are from ${PDF}, not from ${XLSX}.`,
+    );
+  });
+
+  it('says which total is a sum of the listed projects when the report states no total for it', () => {
+    render(
+      <SupplyPipeline
+        compKeyCount={344}
+        supply={{ ...SAM_SUPPLY, final_planning_rooms: 170, final_planning_rooms_basis: 'summed' }}
+      />,
+    );
+    expect(screen.getByTestId('pipeline-listed')).toHaveTextContent(
+      'Under construction is the report’s own stated total, not a sum of the listed projects; final planning is the sum of the listed projects by status.',
+    );
+  });
+
+  it('pipelineRoomsBasisNote claims nothing without a basis, and plainPipelineNote strips the diagnostics wherever they sit', () => {
+    expect(pipelineRoomsBasisNote(null)).toBeNull();
+    expect(pipelineRoomsBasisNote({ ...SAM_SUPPLY, under_construction_rooms_basis: undefined, final_planning_rooms_basis: undefined })).toBeNull();
+    expect(pipelineRoomsBasisNote({ ...SAM_SUPPLY, final_planning_rooms: null })).toBe(
+      'Under construction is the report’s own stated total, not a sum of the listed projects.',
+    );
+    expect(
+      plainPipelineNote(
+        `no pipeline rows for Austin in ${XLSX} (1 of 3 rows carry no market or submarket and were not counted). The 2 projects listed are from ${PDF}, not from ${XLSX}.`,
+      ),
+    ).toBe(`No pipeline rows for Austin in ${XLSX}. The 2 projects listed are from ${PDF}, not from ${XLSX}.`);
   });
 });

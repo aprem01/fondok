@@ -545,7 +545,7 @@ def derive_comp_set_union(
 
         note = (
             f"{len(closed)} closed hotel{'s' if len(closed) != 1 else ''} "
-            f"({', '.join(h.name for h in closed)}) excluded from the count and "
+            f"({' · '.join(h.name for h in closed)}) excluded from the count and "
             f"the keys — marked closed by {'; '.join(_marker(h) for h in closed)}."
         )
     elif status_available:
@@ -560,7 +560,7 @@ def derive_comp_set_union(
     aliased = [h for h in hotels if h.merged_names]
     if aliased:
         note += " Same hotel under different roster names: " + "; ".join(
-            f"{h.name} (also listed as {', '.join(h.merged_names)})" for h in aliased
+            f"{h.name} (also listed as {' · '.join(h.merged_names)})" for h in aliased
         ) + "."
     if keys_basis == "reported_rollup":
         note += " Keys are the report's rollup (the roster carried no room counts)."

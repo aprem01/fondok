@@ -320,11 +320,13 @@ export function ttmBlendMethodology(
         : 'trailing twelve months as reported';
   let hotels = 'the comp set as reported';
   if (compSet && compSet.active_count != null) {
+    // FON-126 — hotel-name lists join on " · ", never ", ": a roster name can
+    // itself contain a comma ("Z Ocean Hotel, Classico A Sonesta Collection").
     const active = compSet.hotels.filter((h) => h.status === 'active').map((h) => h.name);
-    const names = active.length ? `: ${active.join(', ')}` : '';
+    const names = active.length ? `: ${active.join(HOTEL_NAME_SEP)}` : '';
     const keys = compSet.active_keys != null ? `; ${compSet.active_keys.toLocaleString('en-US')} keys` : '';
     const closed = compSet.closed_count
-      ? `; ${compSet.closed_names.join(', ')} closed — excluded`
+      ? `; ${compSet.closed_names.join(HOTEL_NAME_SEP)} closed — excluded`
       : '';
     hotels = `${compSet.active_count} active ${plural(compSet.active_count, 'hotel', 'hotels')}${names}${keys}${closed}`;
   }
@@ -455,11 +457,51 @@ export function mergePipelineHotels(hotels: MarketPipelineHotel[]): MarketPipeli
 
 /**
  * The worker's pipeline-filter note as a reader sees it: sentence case, and
- * without the row-count diagnostics it appends in parentheses.
+ * without the row-count diagnostics it puts in parentheses (FON-126: the
+ * worker may append a sentence after them, so they are not only at the end).
  */
 export function plainPipelineNote(note: string): string {
-  const stripped = note.replace(/\s*\([^()]*rows? carry no market[^()]*\)\s*$/i, '').trim();
+  const stripped = note.replace(/\s*\([^()]*rows? carry no market[^()]*\)/i, '').trim();
   return stripped ? stripped.charAt(0).toUpperCase() + stripped.slice(1) : stripped;
+}
+
+/** FON-126 — separator for lists of hotel names (a name can contain a comma). */
+export const HOTEL_NAME_SEP = ' · ';
+
+/**
+ * FON-126 — whether the Under construction / Final planning / Planned room
+ * totals are the report's own stated figures or the listed projects summed
+ * by status, from the worker's `*_rooms_basis`. Null when the worker sends
+ * no basis (older worker) or no total is shown, so nothing is claimed.
+ */
+export function pipelineRoomsBasisNote(supply: MarketSupplyGrowthBlock | null | undefined): string | null {
+  if (!supply) return null;
+  const parts: { label: string; basis: 'reported' | 'summed' }[] = [];
+  if (supply.under_construction_rooms != null && supply.under_construction_rooms_basis) {
+    parts.push({ label: 'under construction', basis: supply.under_construction_rooms_basis });
+  }
+  if (supply.final_planning_rooms != null && supply.final_planning_rooms_basis) {
+    parts.push({ label: 'final planning', basis: supply.final_planning_rooms_basis });
+  }
+  if (supply.planned_rooms != null && supply.planned_rooms_basis) {
+    parts.push({ label: 'planned', basis: supply.planned_rooms_basis });
+  }
+  if (!parts.length) return null;
+  const reported = parts.filter((p) => p.basis === 'reported').map((p) => p.label);
+  const summed = parts.filter((p) => p.basis === 'summed').map((p) => p.label);
+  const clauses: string[] = [];
+  if (reported.length) {
+    clauses.push(
+      `${reported.join(' and ')} ${reported.length === 1 ? 'is' : 'are'} the report’s own stated ${
+        reported.length === 1 ? 'total' : 'totals'
+      }, not a sum of the listed projects`,
+    );
+  }
+  if (summed.length) {
+    clauses.push(`${summed.join(' and ')} ${summed.length === 1 ? 'is' : 'are'} the sum of the listed projects by status`);
+  }
+  const text = `${clauses.join('; ')}.`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // ─── §1 Submarket Snapshot ──────────────────────────────────────────────────
@@ -743,10 +785,10 @@ export function CompSetRoster({
             {r.aliases.length > 0 && (
               <span
                 data-testid="comp-set-alias"
-                title={`Listed as ${r.aliases.join(', ')} in another STR report — the same hotel, counted once`}
+                title={`Listed as ${r.aliases.join(HOTEL_NAME_SEP)} in another STR report — the same hotel, counted once`}
                 style={{ color: palette.textFaint, marginLeft: 6, fontSize: 10.5 }}
               >
-                also listed as {r.aliases.join(', ')}
+                also listed as {r.aliases.join(HOTEL_NAME_SEP)}
               </span>
             )}
             {r.closed && (
@@ -1132,6 +1174,18 @@ export function SupplyPipeline({
       : 'Pipeline shares = rooms ÷ existing submarket inventory.';
   const hotels = mergePipelineHotels(supply?.pipeline_hotels ?? []);
   const filter = supply?.pipeline_filter ?? null;
+  // FON-126 (Sam QA 2026-11-23) — say where the listed projects come from
+  // (their own documents, never inferred) and whether the room totals above
+  // are the report's stated figures or a sum of the list, so the table and
+  // the filter note under it cannot be read as contradicting each other.
+  const listedDocs = Array.from(new Set(hotels.map((h) => h.doc_name).filter((d): d is string => !!d)));
+  const roomsBasisNote = pipelineRoomsBasisNote(supply);
+  const listedCaption =
+    hotels.length > 0
+      ? `${hotels.length} ${plural(hotels.length, 'project', 'projects')} listed${
+          listedDocs.length ? ` in ${listedDocs.join(' and ')}` : ''
+        }.${roomsBasisNote ? ` ${roomsBasisNote}` : ''}`
+      : null;
   const bucketLabel = (b: MarketPipelineHotel['bucket'], status: string | null | undefined): string =>
     status?.trim() ||
     (b === 'under_construction' ? 'Under construction' : b === 'final_planning' ? 'Final planning' : b === 'planned' ? 'Planned' : '—');
@@ -1171,6 +1225,14 @@ export function SupplyPipeline({
           of its rows matched, or that none did. */}
       {(hotels.length > 0 || (filter && filter.total > 0)) && (
         <div data-testid="pipeline-hotels" style={{ marginTop: 10 }}>
+          {listedCaption && (
+            <div
+              data-testid="pipeline-listed"
+              style={{ fontSize: 11, color: palette.textMuted, marginBottom: 6, lineHeight: 1.45 }}
+            >
+              {listedCaption}
+            </div>
+          )}
           <div
             style={{
               fontSize: 10,

@@ -710,7 +710,15 @@ themselves; the export's own header is never a term). A row the export names no 
 counted in the filter line (“names no market for … rows; none was counted as … supply”) and is
 never listed or summed as the deal's supply — no market is invented for it. The live Supply workbook
 arrived as 45 rows naming no market (Home2 Suites San Diego, Bally's Chicago, Fairmont Orlando among
-them) and had been listed as Miami Beach's pipeline until 2026-11-16.
+them) and had been listed as Miami Beach's pipeline until 2026-11-16. When projects are listed but
+none of them is an export row (live: the submarket PDF's own nine projects under the note about the
+workbook), the filter line also names where the listed projects come from (“The N projects listed
+are from \<report>, not from \<export>”), and the Supply Pipeline table carries a caption naming the
+document(s) the listed projects come from. Each room total also states its basis
+(`under_construction_rooms_basis` / `final_planning_rooms_basis` / `planned_rooms_basis`):
+`reported` when it is the report's own stated total row (the headline whenever the report states
+one), `summed` when it is the listed projects' keys added up by status (only when no total is
+stated) — so the caption can say whether the listed projects feed the totals or not.
 
 :::
 
