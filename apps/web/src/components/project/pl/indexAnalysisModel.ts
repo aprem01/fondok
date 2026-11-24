@@ -13,6 +13,16 @@
  * calendar year Year 1 starts in. With no close date the forecast columns
  * carry the ordinal ("Year 1") and the historical columns carry the years
  * the documents themselves report — never a guessed year.
+ *
+ * STR TTM column (Sam QA, 2026-11-23): the STR comp set, the market TTM rows
+ * and the subject's STR TTM are one trailing-twelve-month window, not a
+ * calendar year. They anchor the last historical column ONLY when that
+ * window ends inside that column's calendar year; when the stated period
+ * end (``str_trend.ttm_period_end``, else ``report_month``) falls in another
+ * year, a dedicated column headed with the period ("TTM May 2025") is
+ * inserted between the last historical year and Year 1, so a May 2025 actual
+ * never sits under a "2024" header. With no stated period end nothing is
+ * inserted — a period is never invented.
  */
 
 import type { EngineOutputsResponse, HistoricalBaselineResponse, IndexCompSetYear, IndexFigure } from '@/lib/api';
@@ -122,8 +132,12 @@ export interface IaColumn {
   dealYear?: DealYearSpan | null;
   /** Model year ordinal (1..hold) for forecast columns; null for historical. */
   ordinal: number | null;
-  /** Header text: "2025", "Year 1" (no close date), "STR TTM". */
+  /** Header text: "2025", "Year 1" (no close date), "STR TTM", "TTM May 2025". */
   label: string;
+  /** The STR TTM period end (ISO, "2025-05") this column stands for — set
+   *  only on the dedicated TTM column inserted before Year 1 when the TTM
+   *  window ends outside the last historical calendar year. */
+  ttmPeriodEnd?: string | null;
 }
 
 /** Historical columns shown before Year 1 when the calendar is known. */
@@ -143,8 +157,23 @@ export function isLeapYear(y: number): boolean {
   return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 }
 
+/** Days in the trailing-twelve-month window ending in the month ``iso``
+ *  names: 366 when that window contains a 29 February (the window's February
+ *  is in the end year for a Feb–Dec end, in the prior year for a Jan end),
+ *  else 365. A year-only or unparseable period end reads 365. */
+export function daysForTtmWindow(iso: string | null | undefined): number {
+  const m = /^((?:19|20)\d{2})-(\d{2})/.exec(String(iso ?? '').trim());
+  if (!m) return 365;
+  const endYear = Number(m[1]);
+  const endMonth = Number(m[2]);
+  if (!(endMonth >= 1 && endMonth <= 12)) return 365;
+  const febYear = endMonth >= 2 ? endYear : endYear - 1;
+  return isLeapYear(febYear) ? 366 : 365;
+}
+
 export function daysForColumn(col: IaColumn): number {
   if (col.kind === 'forecast') return DAYS_PER_PROJECTION_YEAR;
+  if (col.ttmPeriodEnd) return daysForTtmWindow(col.ttmPeriodEnd);
   return col.calendarYear != null ? (isLeapYear(col.calendarYear) ? 366 : 365) : 365;
 }
 
@@ -160,6 +189,11 @@ export interface DeriveColumnsInput {
   /** Whether an STR TTM comp-set anchor exists and needs a column when no
    *  other historical column does. */
   hasStrTtm?: boolean;
+  /** The STR TTM window's stated period end (ISO "2025-05" / "2025-05-31" —
+   *  ``strTtmPeriodEnd(str)``). With a calendar, a period end whose year is
+   *  not the last historical column's year inserts a dedicated "TTM <Mon
+   *  YYYY>" column before Year 1. Null / unparseable inserts nothing. */
+  strTtmPeriodEnd?: string | null;
 }
 
 export interface IaColumns {
@@ -172,12 +206,46 @@ export interface IaColumns {
 const finiteInt = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : null;
 
+/** The calendar year an ISO period end falls in, or null. */
+export function periodEndYear(iso: string | null | undefined): number | null {
+  const m = /^((?:19|20)\d{2})/.exec(String(iso ?? '').trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** "TTM May 2025" — the header of the dedicated STR TTM column, from the
+ *  document's stated period end; null when there is none to state. */
+export function ttmColumnLabel(iso: string | null | undefined): string | null {
+  const end = periodEndText(iso);
+  return end ? `TTM ${end}` : null;
+}
+
+/**
+ * The dedicated STR TTM column, or null when none is needed: the TTM window
+ * ends inside the last historical column's calendar year (it anchors that
+ * column, as before), or the period end is unknown (nothing is invented).
+ */
+export function ttmColumnFor(iso: string | null | undefined, lastHistoricalYear: number): IaColumn | null {
+  const year = periodEndYear(iso);
+  const label = ttmColumnLabel(iso);
+  if (year == null || label == null || year === lastHistoricalYear) return null;
+  return { key: 'h-ttm', kind: 'historical', calendarYear: null, ordinal: null, label, ttmPeriodEnd: iso ?? null };
+}
+
+/** The column the STR TTM figures (comp set, market TTM rows, subject TTM)
+ *  anchor: the dedicated TTM column when one exists, else the last
+ *  historical column (``firstForecastIndex − 1``); −1 with no history. */
+export function ttmAnchorIndex(cols: IaColumns): number {
+  const dedicated = cols.columns.findIndex((c) => c.kind === 'historical' && !!c.ttmPeriodEnd);
+  return dedicated >= 0 ? dedicated : cols.firstForecastIndex - 1;
+}
+
 /**
  * FON-94 — the year columns, derived from the acquisition close calendar.
  *
  *  • With a calendar: historical = the six calendar years before the one
- *    Year 1 starts in; forecast = the engine's deal years, exactly the model
- *    horizon. Nothing beyond it.
+ *    Year 1 starts in, plus a dedicated "TTM <Mon YYYY>" column when the STR
+ *    TTM window ends outside the last of those years; forecast = the
+ *    engine's deal years, exactly the model horizon. Nothing beyond it.
  *  • Without one: forecast columns are "Year N"; historical columns are the
  *    last six calendar years the documents report (or one "STR TTM" anchor
  *    column when only the STR comp set exists).
@@ -194,6 +262,10 @@ export function deriveIndexColumns(i: DeriveColumnsInput): IaColumns {
       const y = base - k;
       columns.push({ key: `h-${y}`, kind: 'historical', calendarYear: y, ordinal: null, label: String(y) });
     }
+    // The STR TTM window gets its own column when it ends outside the last
+    // historical calendar year (a May 2025 actual is not a 2024 figure).
+    const ttm = ttmColumnFor(i.strTtmPeriodEnd, base - 1);
+    if (ttm) columns.push(ttm);
     for (let n = 0; n < forecastCount; n++) {
       // The engine emits one deal year per row (revenue.projection_deal_years).
       // A row the engine did not label is NOT extrapolated: the column stays an
@@ -407,9 +479,11 @@ export interface SubjectSeriesResult {
 /**
  * FON-95 — the subject rows. Historical columns: the STR Trend annual
  * subject figures (``ttm_performance.subject.annual.<YYYY>``) first, the
- * multi-year P&L fiscal year as the fallback. Forecast columns: the revenue
- * engine's ``years[ordinal − 1]`` — Year 1 in the first forecast column,
- * exactly as the Future P&L places it (E-027).
+ * multi-year P&L fiscal year as the fallback; the dedicated TTM column (when
+ * the deal has one) carries the subject's own STR TTM figures, so the
+ * variances and shares against the comp set compare one window. Forecast
+ * columns: the revenue engine's ``years[ordinal − 1]`` — Year 1 in the first
+ * forecast column, exactly as the Future P&L places it (E-027).
  */
 export function buildSubjectSeries(
   cols: IaColumns,
@@ -431,6 +505,24 @@ export function buildSubjectSeries(
 
   columns.forEach((col, i) => {
     if (col.kind === 'historical') {
+      if (col.ttmPeriodEnd) {
+        // The subject's STR TTM — the same window the comp set is derived on.
+        const tOcc = occFraction(str?.subject_occupancy_pct);
+        const tAdr = posOrNull(str?.subject_adr_usd);
+        const tRev = posOrNull(str?.subject_revpar_usd);
+        if (tOcc == null && tAdr == null && tRev == null) return;
+        series.occupancy[i] = tOcc;
+        series.adr[i] = tAdr;
+        series.revpar[i] = tRev ?? (tOcc != null && tAdr != null ? tOcc * tAdr : null);
+        sources[i] = {
+          kind: 'str_ttm',
+          label: 'STR TTM',
+          detail: `STR Trend subject trailing twelve months, ${strPeriodLabel(str) ?? 'trailing twelve months'}${docRef(str?.ttm_doc_name ?? str?.doc_name)}`,
+          basis: 'actual',
+          basisLabel: strTtmBasisLabel(str),
+        };
+        return;
+      }
       if (col.calendarYear == null) return;
       const a = strAnnual.get(col.calendarYear);
       const aOcc = occFraction(a?.occupancy_pct);
@@ -498,7 +590,9 @@ export function buildSubjectSeries(
       const basis =
         src?.kind === 'str_annual'
           ? 'the STR calendar-year actual'
-          : 'a full fiscal year of P&L actuals';
+          : src?.kind === 'str_ttm'
+            ? 'the STR trailing-twelve-month actual'
+            : 'a full fiscal year of P&L actuals';
       boundary = {
         comparable: false,
         note: boundaryNote(columns[lastHist].label, columns[firstForecastIndex].label, basis),
@@ -611,8 +705,10 @@ const figureDocs = (f: IndexFigure | null | undefined): string => {
  * performance but publishes the subject's penetration indices — MPI (occ),
  * ARI (ADR), RGI (RevPAR), each = subject ÷ comp — so the blended comp set is
  * comp = subject ÷ index, the SAME derivation Market Overview uses. It lands
- * on the last historical column (the TTM window's anchor). Every other cell
- * is "—": STR publishes no prior-year comp set and no comp-set forecast.
+ * on the TTM anchor column (``ttmAnchorIndex``): the dedicated "TTM <Mon
+ * YYYY>" column when the window ends outside the last historical calendar
+ * year, else the last historical column. Every other cell is "—": STR
+ * publishes no prior-year comp set and no comp-set forecast.
  */
 export function buildCompSeries(
   cols: IaColumns,
@@ -625,7 +721,7 @@ export function buildCompSeries(
   const { columns, firstForecastIndex } = cols;
   const series = emptySeries(columns.length);
   const sources: (CellSource | null)[] = columns.map(() => null);
-  const anchorIndex = firstForecastIndex - 1;
+  const anchorIndex = ttmAnchorIndex(cols);
   if (str && anchorIndex >= 0) {
     const occR = indexRatio(str.mpi_occupancy_index);
     const adrR = indexRatio(str.ari_adr_index);
@@ -798,9 +894,11 @@ export function buildMarketSeries(cols: IaColumns, market: MarketDataAPIResponse
       if (i != null && columns[i].kind === 'historical') fill(i, p, marketSource(p, String(p.calendar_year)));
     }
   }
-  // The TTM / undated market figure anchors the last historical column only
-  // where no calendar-year actual filled it.
-  const anchor = firstForecastIndex - 1;
+  // The TTM / undated market figure anchors the TTM anchor column — the
+  // dedicated "TTM <Mon YYYY>" column when the deal has one (the STR market
+  // rows share the comp set's window), else the last historical column —
+  // only where no calendar-year actual filled it.
+  const anchor = ttmAnchorIndex(cols);
   if (anchor >= 0) {
     for (const p of chosen) {
       if (p.period === 'ttm' || p.period === 'undated') {
@@ -1007,9 +1105,9 @@ const usd = (v: number) => `$${v.toLocaleString('en-US', { maximumFractionDigits
  * inputs. A cell renders only where BOTH inputs are reported.
  */
 export function computePenetration(i: PenetrationInput): PenetrationRow[] {
-  const { columns, firstForecastIndex } = i.cols;
+  const { columns } = i.cols;
   const n = columns.length;
-  const anchor = firstForecastIndex - 1;
+  const anchor = ttmAnchorIndex(i.cols);
   const kv = i.subjectKeys != null && i.subjectKeys > 0 ? i.subjectKeys : null;
   const ckv = i.compKeys != null && i.compKeys > 0 ? i.compKeys : null;
   const idx = (k: number) => columns[k];

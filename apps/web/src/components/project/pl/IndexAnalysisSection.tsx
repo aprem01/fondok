@@ -16,8 +16,10 @@
  *  • Subject history → STR Trend annual subject figures
  *    (``ttm_performance.subject.annual.<YYYY>``), then the multi-year P&L
  *    fiscal year. Subject forecast → revenue engine ``years[ordinal − 1]``.
- *  • Comp set → STR TTM blend (subject ÷ MPI / ARI / RGI) in the last
- *    historical column; the forecast half is the worker's ``comp_set_by_year``
+ *  • Comp set → STR TTM blend (subject ÷ MPI / ARI / RGI) in the TTM anchor
+ *    column — the last historical column when the window ends in that
+ *    calendar year, else a dedicated "TTM May 2025" column before Year 1
+ *    (``ttmAnchorIndex``); the forecast half is the worker's ``comp_set_by_year``
  *    — the TTM level grown at the market occupancy / ADR growth assumption
  *    (document default or analyst override), the same series the STR comp-set
  *    index method runs on, labelled as an assumption. With no growth value the
@@ -72,7 +74,9 @@ import {
   occFraction,
   posOrNull,
   strPeriodLabel,
+  strTtmPeriodEnd,
   subjectDocumentYears,
+  ttmAnchorIndex,
   type CellSource,
   type ForecastBoundary,
   type IaColumns,
@@ -95,7 +99,7 @@ const COMP_GROWN_AT: Record<CompForecastBasisMix, string> = {
 };
 
 const NOTES_TEXT =
-  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; it sits in the last historical column because STR publishes it for the trailing twelve months only. Its forecast columns are the benchmark the model runs on (the topline): that level grown by the market growth for each year — the CBRE or CoStar forecast, your override, or carried forward — each column labelled with its basis, and blank with the reason when the model’s benchmark is another level. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (a market forecast for that calendar year, with document and page) or Assumption (a growth carried forward), so reported history is never read as a projected benchmark.';
+  'Notes: (1) Competitive-set performance is the STR comp-set aggregate, recovered from the subject’s published penetration indices (MPI occupancy, ARI rate, RGI RevPAR) — comp = subject ÷ index — matching Market Overview; STR publishes it for the trailing twelve months only, so it sits in the last historical column when that window ends in that calendar year, else in its own column headed with the window’s stated period end (“TTM May 2025”) between the last historical year and Year 1 — a TTM actual never sits under another year’s header. Its forecast columns are the benchmark the model runs on (the topline): that level grown by the market growth for each year — the CBRE or CoStar forecast, your override, or carried forward — each column labelled with its basis, and blank with the reason when the model’s benchmark is another level. STR anonymizes per-property comp performance, so individual competitor Occ/ADR/RevPAR are not published. (2) The MPI/ARI/RGI penetration indices are the STR-published values, measured on STR’s trailing-twelve-month subject basis; the subject history rows are the STR annual subject figures where the report carries them, else the operating P&L fiscal years — the Source row says which. (3) The forecast band of each table names its own origin; the Market table’s forecast is CBRE Horizons placed by its own calendar year, and is a market forecast, not a comp-set forecast. (4) The first forecast year shows no growth rate when the last historical column is a reported actual on a different period basis from the model’s Base Year. (5) Forecast columns use the model’s 365-day year so Occupied Rooms foot to the Future P&L. (6) Blank cells are unreported data, not zero. (7) Every benchmark column carries a basis chip and label: Actual (a reported figure — the STR TTM with its period end, an STR annual or market-study year, a P&L fiscal year), Forecast (a market forecast for that calendar year, with document and page) or Assumption (a growth carried forward), so reported history is never read as a projected benchmark.';
 
 /**
  * FON-41 E-027 — where an Index Analysis SUBJECT column's numbers come from.
@@ -134,7 +138,14 @@ function YearHeaderRow({ cols, firstLabel }: { cols: IaColumns; firstLabel: stri
             i === 0 && 'border-l border-border',
             i === firstForecastIndex && 'border-l border-border',
           )}
-          title={c.ordinal != null && c.dealYear != null ? `Model Year ${c.ordinal}` : undefined}
+          title={
+            c.ordinal != null && c.dealYear != null
+              ? `Model Year ${c.ordinal}`
+              : c.ttmPeriodEnd
+                ? `STR trailing twelve months to ${c.label.replace(/^TTM /, '')} — its own column because the window ends outside the last historical calendar year`
+                : undefined
+          }
+          data-ttm-column={c.ttmPeriodEnd ? 'true' : undefined}
         >
           <div>{c.label}</div>
           {c.ordinal != null && c.dealYear != null && (
@@ -437,6 +448,9 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
         forecastCount: revYears.length,
         documentYears: subjectDocumentYears(historicalBaseline, str),
         hasStrTtm: !!str,
+        // Sam QA (2026-11-23) — the STR TTM window gets its own "TTM May
+        // 2025" column when it ends outside the last historical year.
+        strTtmPeriodEnd: strTtmPeriodEnd(str),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dealYears.map((d) => d.label).join(','), revYears.length, historicalBaseline, str],
@@ -582,7 +596,7 @@ export default function IndexAnalysisSection({ dealId }: { dealId: string }) {
       series.revpar[i] = o != null && a != null ? o * a : null;
       details[i] = detail;
     };
-    const anchor = cols.firstForecastIndex - 1;
+    const anchor = ttmAnchorIndex(cols);
     if (m.available && anchor >= 0) {
       put(anchor, m.occupancy.value, m.adr.value, m.occupancy.detail ?? m.occupancy.period_label ?? null);
     }

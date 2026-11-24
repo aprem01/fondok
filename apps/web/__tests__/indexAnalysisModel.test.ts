@@ -19,17 +19,32 @@ import {
   COMP_FORECAST_MIXED_LABEL,
   COMP_FORECAST_NONE_REASON,
   daysForColumn,
+  daysForTtmWindow,
   deriveIndexColumns,
   emptySeries,
   MARKET_FORECAST_NONE_REASON,
   MARKET_FORECAST_UNPLACED_REASON,
   targetForColumn,
+  ttmAnchorIndex,
+  ttmColumnFor,
+  ttmColumnLabel,
   type IaColumns,
   type StrTrendAPI,
 } from '@/components/project/pl/indexAnalysisModel';
 import { calDealYears } from './fixtures/dealYears';
 
 const labels = (c: IaColumns) => c.columns.map((x) => x.label);
+
+/** FON-121 — Oct–Sep deal years (a 30 Sep close), e.g. octDealYears(2025, 2) →
+ *  "Oct 2025–Sep 2026", "Oct 2026–Sep 2027". */
+const octDealYears = (firstOct: number, count: number) =>
+  Array.from({ length: count }, (_, i) => {
+    const c = firstOct + i;
+    return {
+      year: i + 1, start: `${c}-10-01`, end: `${c + 1}-09-30`, label: `Oct ${c}–Sep ${c + 1}`,
+      calendar_months: [{ calendar_year: c, months: 3 }, { calendar_year: c + 1, months: 9 }], days: 365,
+    };
+  });
 
 describe('deriveIndexColumns (FON-94)', () => {
   it('with a calendar: six historical years then exactly the engine horizon', () => {
@@ -102,6 +117,140 @@ describe('deriveIndexColumns (FON-94)', () => {
     expect(by['2024']).toBe(366);
     expect(by['2023']).toBe(365);
     expect(by['Jan–Dec 2025']).toBe(365);
+  });
+});
+
+// ─────────────── Sam QA (2026-11-23, deal b67bfdee) — the STR TTM column ───────────────
+// "the comp set's TTM May 2025 actual sits under a '2024' column header."
+
+describe('deriveIndexColumns — the STR TTM window gets its own column when it ends outside the last historical year', () => {
+  const STR_MAY_2025: StrTrendAPI = {
+    subject_occupancy_pct: 0.716,
+    subject_adr_usd: 288,
+    subject_revpar_usd: 206.2,
+    mpi_occupancy_index: 103.2,
+    ari_adr_index: 94.2,
+    rgi_revpar_index: 97.2,
+    ttm_period_end: '2025-05',
+    ttm_doc_name: 'STR Trend May 2025.xlsx',
+    doc_name: 'STR Trend May 2025.xlsx',
+    compset: [{ name: 'A', keys: 61 }],
+    subject_annual: [{ calendar_year: 2024, occupancy_pct: 70.1, adr_usd: 275, page: 3 }],
+  };
+  const MARKET_HISTORY = [
+    { calendar_year: 2024, period: 'annual' as const, segment: null, occupancy_pct: 0.7, adr_usd: 231, doc_type: 'MARKET_STUDY', doc_name: 'Study.pdf', page: 12 },
+    { period: 'ttm' as const, segment: null, occupancy_pct: 71, adr_usd: 240, doc_type: 'STR_TREND', doc_name: 'STR Trend May 2025.xlsx' },
+  ];
+
+  it('close 30 Sep 2025 + STR TTM to May 2025 → a "TTM May 2025" column between 2024 and Year 1; 2024 keeps the calendar-year actuals', () => {
+    const cols = deriveIndexColumns({ dealYears: octDealYears(2025, 2), forecastCount: 2, documentYears: [], hasStrTtm: true, strTtmPeriodEnd: '2025-05' });
+    expect(labels(cols)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'TTM May 2025', 'Oct 2025–Sep 2026', 'Oct 2026–Sep 2027']);
+    expect(cols.firstForecastIndex).toBe(7);
+    const ttm = cols.columns[6];
+    expect(ttm).toMatchObject({ key: 'h-ttm', kind: 'historical', calendarYear: null, ordinal: null, label: 'TTM May 2025', ttmPeriodEnd: '2025-05' });
+    expect(ttmAnchorIndex(cols)).toBe(6);
+    // Jun 2024–May 2025 holds no 29 February.
+    expect(daysForColumn(ttm)).toBe(365);
+    expect(cols.columns[7]).toMatchObject({ kind: 'forecast', ordinal: 1, label: 'Oct 2025–Sep 2026' });
+
+    // Comp set: the TTM blend anchors the TTM column, not 2024.
+    const comp = buildCompSeries(cols, STR_MAY_2025);
+    expect(comp.anchorIndex).toBe(6);
+    expect(comp.series.occupancy[6]).toBeCloseTo(0.716 / 1.032, 6);
+    expect(comp.series.adr[6]).toBeCloseTo(288 / 0.942, 6);
+    expect(comp.sources[6]).toMatchObject({ kind: 'str_ttm', basis: 'actual', basisLabel: 'Actual · STR TTM May 2025 · STR Trend May 2025.xlsx' });
+    expect(comp.series.adr[5]).toBeNull(); // 2024 — STR publishes no calendar-year comp set
+    expect(comp.sources[5]).toBeNull();
+
+    // Market: the 2024 market-study actual stays in 2024; the STR market TTM row anchors the TTM column.
+    const market = buildMarketSeries(cols, { deal_id: 'd', market_history: MARKET_HISTORY });
+    expect(market.series.adr[5]).toBe(231);
+    expect(market.sources[5]?.detail).toMatch(/actual, 2024/);
+    expect(market.series.adr[6]).toBe(240);
+    expect(market.series.occupancy[6]).toBeCloseTo(0.71, 9);
+    expect(market.sources[6]?.detail).toMatch(/trailing twelve months/);
+
+    // Subject: 2024 is the STR annual actual; the TTM column is the subject's own STR TTM.
+    const subject = buildSubjectSeries(cols, outputsOf([{ occupancy: 0.72, adr: 295 }, { occupancy: 0.73, adr: 305 }]), null, STR_MAY_2025);
+    expect(subject.series.adr[5]).toBe(275);
+    expect(subject.sources[5]?.kind).toBe('str_annual');
+    expect(subject.series.adr[6]).toBe(288);
+    expect(subject.series.occupancy[6]).toBeCloseTo(0.716, 9);
+    expect(subject.series.revpar[6]).toBeCloseTo(206.2, 9);
+    expect(subject.sources[6]).toMatchObject({ kind: 'str_ttm', label: 'STR TTM', basis: 'actual', basisLabel: 'Actual · STR TTM May 2025 · STR Trend May 2025.xlsx' });
+    expect(subject.series.adr[7]).toBe(295); // Year 1 ← revenue.years[0]
+    // The boundary step from the TTM column to Year 1 is refused and names the TTM basis.
+    expect(subject.boundary.comparable).toBe(false);
+    if (!subject.boundary.comparable) {
+      expect(subject.boundary.note).toMatch(/the TTM May 2025 column is the STR trailing-twelve-month actual while Oct 2025–Sep 2026 is the model's Base Year/);
+    }
+
+    // Penetration: the published indices sit in the TTM column; 2024 is "—" (no comp set that year).
+    const rows = computePenetration({
+      cols, subject: subject.series, comp: comp.series, market: market.series,
+      indices: { mpi: 103.2, ari: 94.2, rgi: 97.2 }, subjectKeys: 132, compKeys: 61, targets: null,
+    });
+    const mpi = rows.find((r) => r.key === 'mpi')!;
+    expect(mpi.cells[6].text).toBe('103.2');
+    expect(mpi.cells[5].text).toBe('—');
+    const occVar = rows.find((r) => r.key === 'occ-var')!;
+    expect(occVar.cells[6].value).toBeCloseTo((0.716 - 0.716 / 1.032) * 100, 9);
+    expect(occVar.cells[5].text).toBe('—');
+    // Fair-share rooms revenue on the TTM column uses the window's own day count.
+    expect(rows.find((r) => r.key === 'fair-share-rev')!.cells[6].trace).toMatch(/132 × 365 days/);
+  });
+
+  it('close 30 Sep 2025 + STR TTM to Dec 2024 → no extra column; the TTM anchors 2024 as before', () => {
+    const cols = deriveIndexColumns({ dealYears: octDealYears(2025, 2), forecastCount: 2, documentYears: [], hasStrTtm: true, strTtmPeriodEnd: '2024-12' });
+    expect(labels(cols)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'Oct 2025–Sep 2026', 'Oct 2026–Sep 2027']);
+    expect(cols.firstForecastIndex).toBe(6);
+    expect(ttmAnchorIndex(cols)).toBe(5);
+    const str = { ...STR_MAY_2025, ttm_period_end: '2024-12' };
+    const comp = buildCompSeries(cols, str);
+    expect(comp.anchorIndex).toBe(5);
+    expect(comp.series.adr[5]).toBeCloseTo(288 / 0.942, 6);
+    expect(comp.sources[5]?.basisLabel).toBe('Actual · STR TTM Dec 2024 · STR Trend May 2025.xlsx');
+    const market = buildMarketSeries(cols, { deal_id: 'd', market_history: MARKET_HISTORY });
+    expect(market.series.adr[5]).toBe(231); // the calendar-year actual wins the 2024 cell
+    expect(market.sources[5]?.kind).toBe('market_actual');
+    // The subject's 2024 column stays the STR annual actual (no dedicated TTM column to fill).
+    const subject = buildSubjectSeries(cols, null, null, str);
+    expect(subject.series.adr[5]).toBe(275);
+    expect(subject.sources[5]?.kind).toBe('str_annual');
+  });
+
+  it('with no close date the "STR TTM" column is unchanged, whatever the period end', () => {
+    const c = deriveIndexColumns({ dealYears: [], forecastCount: 2, documentYears: [], hasStrTtm: true, strTtmPeriodEnd: '2025-05' });
+    expect(labels(c)).toEqual(['STR TTM', 'Year 1', 'Year 2']);
+    expect(c.columns[0]).toMatchObject({ key: 'h-ttm', calendarYear: null, label: 'STR TTM' });
+    expect(c.columns[0].ttmPeriodEnd).toBeUndefined();
+    expect(ttmAnchorIndex(c)).toBe(0);
+    const withDocs = deriveIndexColumns({ dealYears: null, forecastCount: 1, documentYears: [2023, 2024], hasStrTtm: true, strTtmPeriodEnd: '2025-05' });
+    expect(labels(withDocs)).toEqual(['2023', '2024', 'Year 1']);
+  });
+
+  it('an unknown period end inserts nothing — a period is never invented', () => {
+    for (const end of [null, undefined, '', 'May 2025', 'TTM']) {
+      const c = deriveIndexColumns({ dealYears: octDealYears(2025, 1), forecastCount: 1, documentYears: [], hasStrTtm: true, strTtmPeriodEnd: end });
+      expect(labels(c)).toEqual(['2019', '2020', '2021', '2022', '2023', '2024', 'Oct 2025–Sep 2026']);
+    }
+    expect(ttmColumnFor(null, 2024)).toBeNull();
+    expect(ttmColumnFor('2024-07', 2024)).toBeNull(); // inside the last historical year
+    expect(ttmColumnFor('2025-05', 2024)?.label).toBe('TTM May 2025');
+    expect(ttmColumnFor('2025-05-31', 2024)?.label).toBe('TTM May 2025');
+    // A window ending BEFORE the last historical year is not a 2024 figure either.
+    expect(ttmColumnFor('2023-11', 2024)?.label).toBe('TTM Nov 2023');
+    expect(ttmColumnLabel('2025-05')).toBe('TTM May 2025');
+    expect(ttmColumnLabel(null)).toBeNull();
+  });
+
+  it('the TTM column counts the days of its own window', () => {
+    expect(daysForTtmWindow('2025-05')).toBe(365); // Jun 2024–May 2025
+    expect(daysForTtmWindow('2024-05')).toBe(366); // Jun 2023–May 2024 holds 29 Feb 2024
+    expect(daysForTtmWindow('2025-01')).toBe(366); // Feb 2024–Jan 2025 holds 29 Feb 2024
+    expect(daysForTtmWindow('2024-01')).toBe(365); // Feb 2023–Jan 2024
+    expect(daysForTtmWindow('2024')).toBe(365);
+    expect(daysForTtmWindow(null)).toBe(365);
   });
 });
 
