@@ -19,7 +19,7 @@
  *     its `assumption_sources` tag is `deal_type_default`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, within, waitFor } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, ReturnsExitScheduleRow, ScenarioRecord } from '@/lib/api';
 import {
@@ -42,7 +42,7 @@ import {
   SELECTED_EXIT_MISSING,
 } from '@/lib/engines/returns';
 import { REASONS } from '@/lib/ontology/reasons.generated';
-import { EXIT_SCHEDULE_ANCHOR_ID, returnsHref } from '@/lib/returnsSection';
+import { EXIT_SCHEDULE_ANCHOR_ID, RETURNS_ANCHOR_PARAM, returnsHref } from '@/lib/returnsSection';
 
 // ── Fixture: a five-year hold sold at month 60, peak levered IRR in Year 3 ──
 const SELECTED_LEVERED = 0.2301;
@@ -625,23 +625,34 @@ describe('FON-67 — "Returns by exit year →" lands on the table', () => {
     expect(calls[0].el).toBe(screen.getByTestId('overview-returns'));
   });
 
-  it('a fragment that arrives before the Returns outputs is honoured once they render', () => {
+  it('the same request on ?anchor= (no fragment) lands on the card too', () => {
+    nav.params = new URLSearchParams(`tab=overview&sub=returns-summary&${RETURNS_ANCHOR_PARAM}=${EXIT_SCHEDULE_ANCHOR_ID}`);
+    render(<ReturnsTab />);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].el).toBe(screen.getByTestId('exit-schedule-card'));
+  });
+
+  it('a fragment that arrives before the Returns outputs is honoured once they render', async () => {
     nav.params = new URLSearchParams('tab=overview&sub=returns-summary');
     window.location.hash = `#${EXIT_SCHEDULE_ANCHOR_ID}`;
     outputsRef.value = null; // no run yet → no card to land on
     const { rerender } = render(<ReturnsTab />);
     expect(screen.queryByTestId('exit-schedule-card')).toBeNull();
+    // Meanwhile the section itself is brought into view.
     expect(calls.map((c) => c.el)).toEqual([screen.getByTestId('overview-returns')]);
 
     outputsRef.value = fullRun();
     rerender(<ReturnsTab />);
     const card = screen.getByTestId('exit-schedule-card');
-    expect(calls).toHaveLength(2);
+    // Landed on as soon as its insertion is observed — not on one retry keyed
+    // on the data flip (the first click used to miss when that single retry did).
+    await waitFor(() => expect(calls).toHaveLength(2));
     expect(calls[1].el).toBe(card);
     expect(calls[1].opts).toEqual({ behavior: 'smooth', block: 'start' });
 
     // Done once — a later re-render does not scroll again.
     rerender(<ReturnsTab />);
+    await new Promise((r) => setTimeout(r, 25));
     expect(calls).toHaveLength(2);
   });
 });

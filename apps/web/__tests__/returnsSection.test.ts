@@ -6,9 +6,11 @@ import {
   legacyReturnsRedirect,
   returnsHref,
   returnsAnchorFromHash,
+  returnsAnchorFromUrl,
   isReturnsView,
   RETURNS_VIEW_IDS,
   EXIT_SCHEDULE_ANCHOR_ID,
+  RETURNS_ANCHOR_PARAM,
 } from '@/lib/returnsSection';
 
 describe('FON-67 — a Returns link may land on one card inside the section', () => {
@@ -25,6 +27,19 @@ describe('FON-67 — a Returns link may land on one card inside the section', ()
     expect(returnsAnchorFromHash('#overview-returns')).toBeNull();
     expect(returnsAnchorFromHash('')).toBeNull();
     expect(returnsAnchorFromHash(null)).toBeNull();
+  });
+
+  it('returnsAnchorFromUrl reads the fragment first, then ?anchor= (a redirect drops fragments)', () => {
+    expect(RETURNS_ANCHOR_PARAM).toBe('anchor');
+    const asParam = new URLSearchParams(`sub=returns-summary&${RETURNS_ANCHOR_PARAM}=${EXIT_SCHEDULE_ANCHOR_ID}`);
+    expect(returnsAnchorFromUrl('#returns-by-exit-year', null)).toBe(EXIT_SCHEDULE_ANCHOR_ID);
+    expect(returnsAnchorFromUrl('#returns-by-exit-year', new URLSearchParams('anchor=bogus'))).toBe(EXIT_SCHEDULE_ANCHOR_ID);
+    expect(returnsAnchorFromUrl('', asParam)).toBe(EXIT_SCHEDULE_ANCHOR_ID);
+    expect(returnsAnchorFromUrl(null, asParam)).toBe(EXIT_SCHEDULE_ANCHOR_ID);
+    expect(returnsAnchorFromUrl('#overview-returns', new URLSearchParams('anchor=bogus'))).toBeNull();
+    expect(returnsAnchorFromUrl('', new URLSearchParams('sub=returns-summary'))).toBeNull();
+    expect(returnsAnchorFromUrl('', null)).toBeNull();
+    expect(returnsAnchorFromUrl(undefined, undefined)).toBeNull();
   });
 });
 
