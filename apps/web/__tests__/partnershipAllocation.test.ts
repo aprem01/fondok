@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest';
 import {
   allocationPreviewRows,
   pct0,
+  promoteRowName,
   promoteTierHurdleCell,
   promoteTierLabel,
   promoteTierName,
+  STRUCTURAL_TIER_NAME,
   type ConfiguredTier,
   type TierAllocationRow,
 } from '@/lib/partnershipAllocation';
@@ -105,7 +107,7 @@ describe('allocationPreviewRows', () => {
       row('Tier 4 (>15%)', 'promote', 6_825_175, 10_237_763),
     ];
     const rows = allocationPreviewRows(engine, SAM);
-    expect(rows).toEqual(engine.map((r) => ({ ...r, status: 'reached' })));
+    expect(rows.map(({ displayLabel: _d, ...r }) => r)).toEqual(engine.map((r) => ({ ...r, status: 'reached' })));
   });
 
   it('keeps the GP catch-up row ahead of the promote bands', () => {
@@ -152,14 +154,105 @@ describe('allocationPreviewRows', () => {
       row('Tier 2 (to 25%)', 'promote', 3, 7), // an older run's label
     ];
     const rows = allocationPreviewRows(engine, SAM);
-    expect(rows[rows.length - 1]).toEqual({ ...engine[1], status: 'reached' });
+    // No configured band names it, so the engine label is the only name it has.
+    expect(rows[rows.length - 1]).toEqual({ ...engine[1], status: 'reached', displayLabel: 'Tier 2 (to 25%)' });
     expect(rows.reduce((s, r) => s + r.total_amount, 0)).toBe(20);
   });
 
   it('returns the engine rows untouched with no configured stack, and nothing with no run', () => {
     const engine = [row('Return of Capital', 'return_of_capital', 1, 9)];
-    expect(allocationPreviewRows(engine, [])).toEqual([{ ...engine[0], status: 'reached' }]);
+    expect(allocationPreviewRows(engine, [])).toEqual([
+      { ...engine[0], status: 'reached', displayLabel: STRUCTURAL_TIER_NAME.return_of_capital },
+    ]);
     expect(allocationPreviewRows(undefined, SAM)).toEqual([]);
     expect(allocationPreviewRows([], SAM)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// FON-66 (Sam's QA, 2026-11-23, d0bfe816) — the Allocation Preview still
+// called the promote tier "Tier 1 (to 12%)" while the tier table above it
+// said "Promote — to 12% LP IRR". The preview now DISPLAYS the tier table's
+// name (`displayLabel`) and keeps the engine's positional label only as the
+// key it matches `tier_allocations` rows by.
+// ─────────────────────────────────────────────────────────────────────────
+describe('allocationPreviewRows — displayLabel is the tier table’s name (FON-66, Sam 2026-11-23)', () => {
+  /** Sam's one-tier entry: 12% hurdle, 20 / 80 — the engine labels it "Tier 1 (to 12%)". */
+  const ONE_TIER: ConfiguredTier[] = [{ hurdle: 0.12, gp: 0.2 }];
+
+  it('a one-tier 20/80 stack shows the promote under the tier table’s name, matched on the engine label', () => {
+    const engine = [
+      row('Return of Capital', 'return_of_capital', 1_000_000, 9_000_000),
+      row('Preferred Return', 'preferred', 80_000, 720_000),
+      row('Tier 1 (to 12%)', 'promote', 400_000, 1_600_000),
+    ];
+    const rows = allocationPreviewRows(engine, ONE_TIER);
+    expect(rows.map((r) => r.displayLabel)).toEqual([
+      'Tier I — Return of Capital', 'Tier II — Preferred Return', 'Promote — to 12% LP IRR',
+    ]);
+    // The same name the tier table computes for the band.
+    expect(rows[2].displayLabel).toBe(promoteRowName(ONE_TIER, 0));
+    expect(rows[2].displayLabel).toBe(promoteTierName(0, 0.12, undefined, true));
+    // Matched on the engine's key, dollars untouched, nothing invented.
+    expect(rows[2].label).toBe('Tier 1 (to 12%)');
+    expect(rows[2].status).toBe('reached');
+    expect(rows[2].total_amount).toBe(2_000_000);
+    expect(rows.some((r) => r.displayLabel.startsWith('Tier 1'))).toBe(false);
+  });
+
+  it('a one-tier stack the waterfall never reached is a $0 row under the same name', () => {
+    const engine = [row('Return of Capital', 'return_of_capital', 1, 9)];
+    const rows = allocationPreviewRows(engine, ONE_TIER);
+    expect(rows[1]).toEqual({
+      label: 'Tier 1 (to 12%)', displayLabel: 'Promote — to 12% LP IRR', kind: 'promote',
+      gp_amount: 0, lp_amount: 0, total_amount: 0, status: 'not_reached',
+    });
+  });
+
+  it('a two-tier stack names the capped band "to" and the open-ended top band "above" the previous hurdle', () => {
+    const twoTier: ConfiguredTier[] = [{ hurdle: 0.13, gp: 0.2 }, { hurdle: 0.18, gp: 0.35 }];
+    const engine = [
+      row('Return of Capital', 'return_of_capital', 1, 9),
+      row('Tier 1 (to 13%)', 'promote', 2, 8),
+      row('Tier 2 (>13%)', 'promote', 7, 13),
+    ];
+    const rows = allocationPreviewRows(engine, twoTier);
+    expect(rows.map((r) => [r.label, r.displayLabel, r.status])).toEqual([
+      ['Return of Capital', 'Tier I — Return of Capital', 'reached'],
+      ['Tier 1 (to 13%)', 'Promote — to 13% LP IRR', 'reached'],
+      ['Tier 2 (>13%)', 'Promote — above 13% LP IRR', 'reached'],
+    ]);
+    expect(rows.slice(1).map((r) => r.displayLabel)).toEqual([promoteRowName(twoTier, 0), promoteRowName(twoTier, 1)]);
+  });
+
+  it('names Sam’s 9-14 stack as the tier table does, including the incomplete and catch-up rows', () => {
+    const configured: ConfiguredTier[] = [
+      { hurdle: 0.08, gp: 0 },
+      { hurdle: 0.12, gp: 0.2 },
+      { hurdle: undefined, gp: 0.3 },
+      { hurdle: 0.20, gp: 0.4 },
+    ];
+    const engine = [
+      row('Return of Capital', 'return_of_capital', 1, 9),
+      row('Preferred Return', 'preferred', 1, 9),
+      row('GP Catch-Up', 'catch_up', 5, 0),
+      row('Tier 2 (to 12%)', 'promote', 2, 8),
+    ];
+    const rows = allocationPreviewRows(engine, configured);
+    expect(rows.map((r) => r.displayLabel)).toEqual([
+      'Tier I — Return of Capital',
+      'Tier II — Preferred Return',
+      'Tier III — GP Catch-Up',
+      'Promote — to 8% LP IRR',
+      'Promote — to 12% LP IRR',
+      'Promote — tier 3 · incomplete',
+      // The top band after an incomplete neighbour has no previous hurdle to be
+      // open-ended above — exactly what the tier table renders for it.
+      'Promote — to 20% LP IRR',
+    ]);
+    // The engine keys are untouched underneath.
+    expect(rows.slice(3).map((r) => r.label)).toEqual([
+      'Preferred (to 8%)', 'Tier 2 (to 12%)', 'Tier 3 · incomplete', 'Tier 3 (>12%)',
+    ]);
   });
 });

@@ -26,9 +26,11 @@ import { IntroCard } from '@/components/help/IntroCard';
 import { fmtCurrency, fmtPct, cn } from '@/lib/format';
 import {
   allocationPreviewRows,
+  promoteRowName,
   promoteTierHurdleCell,
-  promoteTierName,
+  STRUCTURAL_TIER_NAME,
   type AllocationPreviewRow,
+  type ConfiguredTier,
 } from '@/lib/partnershipAllocation';
 import {
   SectionCard,
@@ -480,9 +482,25 @@ export default function PartnershipTab() {
     },
     [liveMode, tierCount, visibleTierIndices, carriedTiers.length, onSaveOverride, toast],
   );
-  // Summary-tab helper: the first promote band above the preferred tier is the
-  // SECOND visible tier (not a fixed index — a tombstone may have removed 1).
-  const promoteAbovePrefIdx: number | undefined = visibleTierIndices[1];
+  // Summary-tab helper — which visible tier is the INITIAL promote band.
+  //
+  // FON-66 (Sam's QA, 2026-11-23, d0bfe816): waterfall[0] IS the first promote
+  // band above the pref. The preferred return is the engine's own `pref_rate`
+  // step (apps/worker/app/engines/partnership.py — "Tier 1 — preferred return"
+  // accrues from `payload.pref_rate`; the promote loop then walks EVERY
+  // `payload.waterfall` tier), and the worker builds waterfall[i] straight from
+  // `partnership.waterfall.<i>.{hurdle_rate, gp_split}` (engine_runner.py
+  // `_assemble_indexed_tiers`) — there is no pref tier in the stack. The old
+  // `visibleTierIndices[1]` assumed a seed whose index 0 was the pref, so a
+  // one-tier 20/80 stack read "—" here. The one exception mirrors the worker's
+  // `promote_tier_label`: a LEADING 100%-LP band (position 0, GP 0%) is the
+  // band it labels "Preferred (to X%)", not a promote, so the initial promote
+  // is the band after it. −1 → no promote band is configured at all.
+  const initialPromotePos = visibleTierIndices.findIndex((i, pos) => !(pos === 0 && tierGpAt(i) === 0));
+  const initialPromoteIdx: number | undefined =
+    initialPromotePos >= 0 ? visibleTierIndices[initialPromotePos] : undefined;
+  // The hurdles ABOVE the initial promote band, in stack order.
+  const additionalHurdleIdx: number[] = initialPromotePos >= 0 ? visibleTierIndices.slice(initialPromotePos + 1) : [];
 
   // ─── Worker partnership fields (dual-shape: nested objects OR flat export) ──
   const wGp = getEngineField<PartnerReturn>(outputs, 'partnership', 'gp');
@@ -845,23 +863,31 @@ export default function PartnershipTab() {
                   {/* FON-66 (Sam, 2026-09-09) — this row is the GP share of the FIRST
                       promote tier above the pref (a single tier, not a multi-tier
                       summary — "Additional Hurdles" below covers the rest), so it is
-                      labelled "Initial Promote Split: 20% GP". */}
+                      labelled "Initial Promote Split: 20% GP". That tier is
+                      waterfall[0] (see `initialPromotePos`): a one-tier 20/80 stack
+                      reads "20% GP", not "—". "—" only when the band's split is
+                      not entered yet; "None configured" when no promote band exists. */}
                   <KeyRow
                     label="Initial Promote Split"
                     dot="assumption"
-                    value={promoteAbovePrefIdx == null
-                      ? '—'
-                      : `${pctv(tierGpAt(promoteAbovePrefIdx), 0)} GP`}
-                    valueColor={prov.blue}
+                    value={initialPromoteIdx == null
+                      ? 'None configured'
+                      : tierGpAt(initialPromoteIdx) == null
+                        ? '—'
+                        : `${pctv(tierGpAt(initialPromoteIdx), 0)} GP`}
+                    valueColor={initialPromoteIdx == null ? prov.muted : prov.blue}
                     note="Edit in the Waterfall tab"
                   />
+                  {/* The hurdles ABOVE the initial promote band: the next band's
+                      hurdle and how many further bands there are. A one-tier
+                      stack has none. */}
                   <KeyRow
                     label="Additional Hurdles"
                     dot="calculated"
-                    value={promoteAbovePrefIdx == null
-                      ? '—'
-                      : `${pctv(tierHurdleAt(promoteAbovePrefIdx), 0)} LP IRR · +${Math.max(0, visibleTierIndices.length - 2)} tiers`}
-                    valueColor={prov.gray}
+                    value={additionalHurdleIdx.length === 0
+                      ? 'None'
+                      : `${pctv(tierHurdleAt(additionalHurdleIdx[0]), 0)} LP IRR · +${additionalHurdleIdx.length} tier${additionalHurdleIdx.length === 1 ? '' : 's'}`}
+                    valueColor={additionalHurdleIdx.length === 0 ? prov.muted : prov.gray}
                   />
                 </SectionCard>
               </div>
@@ -1396,24 +1422,13 @@ function MetricCard({
 // ─────────────────────────────────────────────────────────────────────
 const ALLOC_GRID = 'minmax(190px,1.6fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1fr)';
 
-// Renumber the "Tier N" captions to visible order — DISPLAY ONLY. After a
-// mid-stack removal the worker keeps each surviving tier's original label (the
-// labels key the tier_allocations rows, so the default stays byte-identical),
-// which leaves gaps like "Tier 4" sitting at position 3. Here we rewrite only
-// the leading tier number to a running counter, preserving each tier's own
-// hurdle suffix (e.g. " (to 25%)") and every amount/kind/order. The first
-// Tier-numbered row keeps its base number; later ones increment from it, so a
-// deck that starts at "Tier 2" (after the Preferred row) still reads 2,3,4…
-function renumberTierLabels<T extends TierAllocation>(rows: T[]): T[] {
-  let n: number | null = null;
-  return rows.map((a) => {
-    const m = /^Tier\s+(\d+)(.*)$/i.exec(a.label ?? '');
-    if (!m) return a;
-    n = n === null ? parseInt(m[1], 10) : n + 1;
-    return { ...a, label: `Tier ${n}${m[2]}` };
-  });
-}
-
+// FON-66 (Sam's QA, 2026-11-23) — each row is shown under `displayLabel`: the
+// Promote Waterfall tier table's name for the same band ("Promote — to 12% LP
+// IRR"), computed once in `allocationPreviewRows` from the configured stack.
+// The engine's positional label ("Tier 1 (to 12%)") stays on `label` as the
+// key the rows are matched by and is no longer displayed, so the old
+// "renumber Tier N to visible order" display pass is gone with it: the name
+// carries the hurdle, not a position.
 function AllocationTable({
   allocations, lpTotal, gpTotal, total, reconciles, footnote,
 }: {
@@ -1464,7 +1479,7 @@ function AllocationTable({
         <span style={{ textAlign: 'right' }}>GP</span>
         <span style={{ textAlign: 'right' }}>Allocated proceeds</span>
       </div>
-      {renumberTierLabels(allocations).map((a, i) => {
+      {allocations.map((a, i) => {
         const reached = a.status === 'reached';
         const incomplete = a.status === 'incomplete';
         const amountColor = reached ? prov.gray : palette.textFaint;
@@ -1476,7 +1491,7 @@ function AllocationTable({
             <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
               <ProvenanceDot state={incomplete ? 'assumption' : 'calculated'} size={8} />
               <span style={{ color: incomplete ? prov.amber : reached ? palette.ink : palette.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {a.label}
+                {a.displayLabel}
               </span>
               {caption(a.status)}
             </span>
@@ -1587,19 +1602,21 @@ function PromoteWaterfall({
   // a control that only appears on :hover is unreachable by keyboard.
   const [revealed, setRevealed] = useState<number | null>(null);
   // Structural (read-only) rows first, then the editable promote bands.
+  // Names come from `STRUCTURAL_TIER_NAME` — the allocation preview shows the
+  // engine's structural rows under the same ones.
   const structural: Array<{ name: string; hurdle: string; gp: string; lp: string; desc: string; dot: ValueState }> = [
     {
-      name: 'Tier I — Return of Capital', hurdle: 'Contributed capital', gp: '—', lp: '—',
+      name: STRUCTURAL_TIER_NAME.return_of_capital, hurdle: 'Contributed capital', gp: '—', lp: '—',
       desc: 'Contributed capital returned pro-rata before any return', dot: 'calculated',
     },
     {
-      name: 'Tier II — Preferred Return', hurdle: `${pctv(prefRate, 0)} preferred return`, gp: '—', lp: '—',
+      name: STRUCTURAL_TIER_NAME.preferred, hurdle: `${pctv(prefRate, 0)} preferred return`, gp: '—', lp: '—',
       desc: 'LP preferred return on unreturned capital', dot: 'calculated',
     },
   ];
   if (hasCatchUp) {
     structural.push({
-      name: 'Tier III — GP Catch-Up', hurdle: 'Until GP catches up', gp: '100%', lp: '0%',
+      name: STRUCTURAL_TIER_NAME.catch_up, hurdle: 'Until GP catches up', gp: '100%', lp: '0%',
       desc: 'Until the GP has caught up to its promote share', dot: 'calculated',
     });
   }
@@ -1627,6 +1644,14 @@ function PromoteWaterfall({
 
 
   const visibleCount = tierIndices.length;
+  // The visible stack as configured (override, else the carried term; undefined
+  // when neither) — the SAME shape `allocationPreviewRows` names its rows from,
+  // so this table and the allocation preview call every band by one name.
+  const configuredVisible: ConfiguredTier[] = tierIndices.map((i) => {
+    const gp = readOverrideNum(overrides, `partnership.waterfall.${i}.gp_split`, carriedTierList[i]?.gp ?? NaN);
+    const hurdle = readOverrideNum(overrides, `partnership.waterfall.${i}.hurdle_rate`, carriedTierList[i]?.hurdle ?? NaN);
+    return { hurdle: Number.isFinite(hurdle) ? hurdle : undefined, gp: Number.isFinite(gp) ? gp : undefined };
+  });
   // Rows are the SURVIVING indices, numbered contiguously (`idx`) so the
   // display matches the packed stack the worker builds; `i` stays the raw
   // override index each row's edits persist under.
@@ -1660,9 +1685,8 @@ function PromoteWaterfall({
       ? undefined
       : readOverrideNum(overrides, `partnership.waterfall.${prevIdx}.hurdle_rate`, carriedTierList[prevIdx]?.hurdle ?? NaN);
     const openEnded = last && pos > 0 && Number.isFinite(prevHurdleFrac);
-    const name = incomplete
-      ? `Promote — tier ${pos + 1} · incomplete`
-      : promoteTierName(pos, hurdleFrac, Number.isFinite(prevHurdleFrac) ? prevHurdleFrac : undefined, last);
+    // One naming function with the allocation preview (`promoteRowName`).
+    const name = promoteRowName(configuredVisible, pos);
     const hurdleOverridden = overrides[hurdlePath] != null;
     const splitOverridden = overrides[gpPath] != null || overrides[`partnership.waterfall.${i}.lp_split`] != null;
     const hurdleId = `t${i}-h`;
