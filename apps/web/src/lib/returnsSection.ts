@@ -54,6 +54,25 @@ export function returnsAnchorFromHash(hash: string | null | undefined): string |
 }
 
 /**
+ * `?anchor=<id>` — the same request as the `#` fragment, for a caller that
+ * cannot carry one (a server redirect drops fragments; a search param
+ * survives it and reaches `useSearchParams`).
+ */
+export const RETURNS_ANCHOR_PARAM = 'anchor';
+
+/**
+ * The Returns card the URL asks for: the `#` fragment first, else
+ * `?anchor=`. `ReturnsSection` reads both so the request is honoured
+ * whichever half of the URL carried it.
+ */
+export function returnsAnchorFromUrl(
+  hash: string | null | undefined,
+  params?: { get(name: string): string | null } | null,
+): string | null {
+  return returnsAnchorFromHash(hash) ?? returnsAnchorFromHash(params?.get(RETURNS_ANCHOR_PARAM));
+}
+
+/**
  * The URL a legacy `?tab=returns[&sub=…]` link is redirected to: same params,
  * `tab=overview`, and a valid Returns view in `sub` (unknown → Summary).
  */
