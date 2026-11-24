@@ -365,3 +365,52 @@ def test_removed_tier_with_stale_terms_does_not_block() -> None:
         }
     )
     assert terms.applicable
+
+
+# ───────── FON-125 — the run panel's poll sees the skipped engine, by reason ─────────
+
+
+@pytest.mark.asyncio
+async def test_run_status_carries_the_skipped_partnership_row_with_its_reason() -> None:
+    """Sam (QA of deal b67bfdee): the progress panel listed 9 steps and the
+    toast said "8 engines". ``GET …/engines/run/{run_id}`` — what the panel
+    polls — must serve ALL nine rows: eight ``complete`` and one explicit
+    ``not_applicable`` row for Partnership carrying the engine's own reason
+    sentence, so the panel can mark the step skipped and both counts agree
+    (8 ran + 1 skipped = 9 steps)."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.database import get_session_factory
+    from app.main import app
+    from app.services.engine_runner import ENGINE_NAMES, run_all_engines
+
+    run_id = str(uuid4())
+    async with get_session_factory()() as session:
+        deal_id, tenant_id = await _deal(session, {})
+        await run_all_engines(session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-Tenant-Id": tenant_id},
+    ) as client:
+        r = await client.get(f"/deals/{deal_id}/engines/run/{run_id}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rows = {e["engine"]: e for e in body["engines"]}
+    assert set(rows) == set(ENGINE_NAMES)
+    assert len(rows) == 9
+
+    by_status: dict[str, list[str]] = {}
+    for name, row in rows.items():
+        by_status.setdefault(row["status"], []).append(name)
+    assert by_status.get("not_applicable") == ["partnership"]
+    assert sorted(by_status["complete"]) == sorted(set(ENGINE_NAMES) - {"partnership"})
+    assert len(by_status["complete"]) == 8
+    assert body["failures"] == []
+
+    part = rows["partnership"]
+    assert part["failure"] is None
+    assert part["error"] is None
+    assert part["not_applicable"]["engine"] == "partnership"
+    assert part["not_applicable"]["reason"] == "not_applicable"
+    assert part["not_applicable"]["message"] == "no partnership terms on this deal"
