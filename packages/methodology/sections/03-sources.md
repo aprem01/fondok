@@ -229,7 +229,12 @@ and the value names its own unit. A stored target outside the accepted range is 
 ::: badge {source=index_assumption name="Index Analysis · Columns & Rows"}
 The Index Analysis year columns follow the acquisition close calendar — the same calendar the Future
 P&L prints. The six columns before Year 1 are history; the forecast columns are exactly the model
-horizon, and nothing is carried beyond it. Each benchmark value names its kind with a worded chip —
+horizon, and nothing is carried beyond it. The STR comp set, the STR market rows and the subject's
+STR figures are one trailing-twelve-month window, not a calendar year: they sit in the last
+historical column when that window ends in its year, and otherwise in their own column headed with
+the report's stated period end ("TTM May 2025") between the last historical year and Year 1 — a
+May 2025 actual is never printed under a 2024 header. With no stated period end no column is
+added. Each benchmark value names its kind with a worded chip —
 **Actual** with its period and document, **Forecast** with the report and year, or **Assumption**
 for a comp set grown at market growth — never colour alone. STR publishes no comp-set forecast: the
 comp-set out-years are the STR TTM level grown at the market growth for each year, and the band
@@ -946,7 +951,12 @@ read "Year N" with a one-line note; a year is never guessed. Subject history is 
 subject figures (`ttm_performance.subject.annual.<YYYY>`) where the report carries them, else the
 P&L fiscal year — a Source row says which per column. The comp-set table (titled **STR Competitive
 Set** — it is STR data, never labelled a CoStar market table) is the STR TTM blend (subject ÷ MPI /
-ARI / RGI) in the last historical column. When the model's benchmark is the competitive set its
+ARI / RGI) in the TTM anchor column: the last historical column when the STR TTM window
+(`str_trend.ttm_period_end`, else `report_month`) ends in that calendar year, otherwise a dedicated
+column headed with the stated period end ("TTM May 2025", `periodEndText`) inserted between the
+last historical year and Year 1 — the subject's STR TTM and the market TTM rows anchor the same
+column, and a TTM actual never sits under another year's header; with no stated period end nothing
+is inserted and the blend stays in the last historical column. When the model's benchmark is the competitive set its
 forecast columns are that benchmark by year — the level grown by each year's market growth (the CBRE
 or CoStar forecast, your override, or carried forward), each column labelled with its basis; when
 the model runs on the submarket or market level the comp-set forecast is blank with the reason and

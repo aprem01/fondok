@@ -615,10 +615,18 @@ describe('Index Analysis — reconciliation to Projections (FON-41 E-027)', () =
     expect(text).not.toMatch(/model Year 2/);
     // The STR TTM is named as a different source and period.
     expect(text).toMatch(/STR subject TTM to 2025-05 84\.6% \/ \$255\.00 is a different source and period/);
-    // The subject table's 2025 cell agrees with the line.
+    // The subject table's 2025 cell agrees with the line. The STR TTM to May
+    // 2025 ends outside 2024, so it has its own column before Year 1 (Sam QA
+    // 2026-11-23) and Year 1 sits one column further right.
     const table = tableOf('Subject Property');
-    expect(rowCells('ADR', table)[FIRST_FORECAST]).toHaveTextContent('$245');
-    expect(rowCells('Occupancy', table)[FIRST_FORECAST]).toHaveTextContent('83.9%');
+    const headers = yearHeaders(table);
+    const y1 = headers.indexOf('Jan–Dec 2025');
+    expect(headers.slice(FIRST_FORECAST - 1, y1 + 1)).toEqual(['2024', 'TTM May 2025', 'Jan–Dec 2025']);
+    expect(rowCells('ADR', table)[y1]).toHaveTextContent('$245');
+    expect(rowCells('Occupancy', table)[y1]).toHaveTextContent('83.9%');
+    // The TTM column is the STR subject TTM the line names.
+    expect(rowCells('ADR', table)[y1 - 1]).toHaveTextContent('$255');
+    expect(rowCells('Occupancy', table)[y1 - 1]).toHaveTextContent('84.6%');
   });
 
   it('lists every step from the source to the Base Year, including displacement', async () => {
@@ -945,20 +953,47 @@ describe('Index Analysis — every benchmark value names its basis (Sam #6)', ()
     };
     await renderSettled();
     await screen.findByText('Subject Property');
-    // Comp set: the STR TTM anchor (2024 column) is an actual with its period end.
+    // Sam QA (2026-11-23): the STR TTM to May 2025 is not a 2024 figure — it
+    // heads its own column between 2024 and Year 1, and 2024 keeps the
+    // calendar-year actuals.
     const comp = tableOf('STR Competitive Set');
+    const headers = yearHeaders(comp);
+    const TTM = headers.indexOf('TTM May 2025');
+    expect(TTM).toBe(FIRST_FORECAST);
+    expect(headers.slice(TTM - 1, TTM + 2)).toEqual(['2024', 'TTM May 2025', 'Jan–Dec 2025']);
+    const Y1 = TTM + 1;
+    // Comp set: the STR TTM anchor is the TTM column, an actual with its period end; 2024 is blank.
     const compBasis = rowCells('Basis', comp);
-    expect(compBasis[FIRST_FORECAST - 1]).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
-    expect(within(rowCells('Source', comp)[FIRST_FORECAST - 1]).getByTestId('basis-chip-actual')).toBeInTheDocument();
+    expect(compBasis[TTM]).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
+    expect(within(rowCells('Source', comp)[TTM]).getByTestId('basis-chip-actual')).toBeInTheDocument();
+    expect(rowCells('ADR', comp)[TTM - 1]).toHaveTextContent('—');
+    expect(within(rowCells('Source', comp)[TTM - 1]).queryByTestId(/basis-chip-/)).toBeNull();
     // Market: the 2026 column is the CBRE forecast with document + page.
     const market = tableOf('Market');
     const mBasis = rowCells('Basis', market);
-    expect(mBasis[FIRST_FORECAST + 1]).toHaveTextContent(`Forecast · CBRE Horizons 2026 · ${CBRE_DOC} p.4`);
-    expect(within(rowCells('Source', market)[FIRST_FORECAST + 1]).getByTestId('basis-chip-forecast')).toBeInTheDocument();
-    // Subject history (P&L fiscal year) is an actual; the subject projection is the model — no chip.
+    expect(mBasis[Y1 + 1]).toHaveTextContent(`Forecast · CBRE Horizons 2026 · ${CBRE_DOC} p.4`);
+    expect(within(rowCells('Source', market)[Y1 + 1]).getByTestId('basis-chip-forecast')).toBeInTheDocument();
+    // Subject history (P&L fiscal year) is an actual in 2024; the TTM column is the subject's own STR
+    // TTM; the subject projection is the model — no chip.
     const subject = tableOf('Subject Property');
-    expect(rowCells('Basis', subject)[FIRST_FORECAST - 1]).toHaveTextContent('Actual · P&L FY 2024');
-    expect(within(rowCells('Source', subject)[FIRST_FORECAST]).queryByTestId(/basis-chip-/)).toBeNull();
+    expect(rowCells('Basis', subject)[TTM - 1]).toHaveTextContent('Actual · P&L FY 2024');
+    expect(rowCells('Basis', subject)[TTM]).toHaveTextContent(`Actual · STR TTM May 2025 · ${STR_DOC}`);
+    expect(rowCells('ADR', subject)[TTM]).toHaveTextContent('$288');
+    expect(within(rowCells('Source', subject)[Y1]).queryByTestId(/basis-chip-/)).toBeNull();
+  });
+
+  it('an STR TTM ending inside the last historical year keeps anchoring that column — no extra column', async () => {
+    mockMarket = {
+      ...MARKET_NO_CBRE,
+      str_trend: { ...MARKET_NO_CBRE.str_trend, ttm_period_end: '2024-12', doc_name: STR_DOC },
+    };
+    await renderSettled();
+    await screen.findByText('Subject Property');
+    const comp = tableOf('STR Competitive Set');
+    const headers = yearHeaders(comp);
+    expect(headers).not.toContain('TTM Dec 2024');
+    expect(headers.slice(FIRST_FORECAST - 1, FIRST_FORECAST + 1)).toEqual(['2024', 'Jan–Dec 2025']);
+    expect(rowCells('Basis', comp)[FIRST_FORECAST - 1]).toHaveTextContent(`Actual · STR TTM Dec 2024 · ${STR_DOC}`);
   });
 });
 

@@ -15,7 +15,10 @@
  *   columns from the same ``projection_deal_years``: Year 1 sits in the
  *   first forecast column, so the two tabs now print the same figure for the
  *   same calendar year. A third figure — the STR subject TTM — anchors the comp
- *   set and the MPI / ARI indices, on another source and period.
+ *   set and the MPI / ARI indices, on another source and period; it sits in
+ *   its own "TTM <Mon YYYY>" column when that window ends outside the last
+ *   historical calendar year (``indexAnalysisModel.ttmColumnFor``), never
+ *   under another year's header.
  *
  *   ``ProjectionsReconciliation`` still puts the Projections Base Year (value,
  *   source, and every step between source and engine) next to what Index
