@@ -10071,6 +10071,22 @@ def _report_load_error(
 # ────────────────────────────── Runners ───────────────────────────────
 
 
+def _y1_noi_headline(noi_institutional: Any, noi: Any) -> str:
+    """FON-124 — the expense engine's one-line headline ("Y1 NOI $1.65M").
+
+    The figure is Year 1 NOI BEFORE the FF&E reserve (``noi_institutional``),
+    the same NOI Overview, Entry Valuation and the Cash Flow statement label
+    "NOI" (FON-82 / FON-44). A row written before ``noi_institutional`` existed
+    carries only the after-reserve ``noi``; that figure is still shown, but
+    labelled for what it is. No years → no headline (never "$0.00M").
+    """
+    if isinstance(noi_institutional, (int, float)) and not isinstance(noi_institutional, bool):
+        return f"Y1 NOI ${noi_institutional / 1e6:.2f}M"
+    if isinstance(noi, (int, float)) and not isinstance(noi, bool):
+        return f"Y1 NOI after reserve ${noi / 1e6:.2f}M"
+    return ""
+
+
 def _summary_for(engine_name: str, output: BaseModel) -> str:
     """Compact one-line headline shown next to the Run button."""
     try:
@@ -10080,8 +10096,12 @@ def _summary_for(engine_name: str, output: BaseModel) -> str:
                 f"· Multiple {output.equity_multiple:.2f}x"
             )
         if engine_name == "expense":
-            y1 = output.years[0].noi if output.years else 0.0
-            return f"Y1 NOI ${y1 / 1e6:.2f}M"
+            if not output.years:
+                return ""
+            y1 = output.years[0]
+            return _y1_noi_headline(
+                getattr(y1, "noi_institutional", None), getattr(y1, "noi", None)
+            )
         if engine_name == "revenue":
             cagr = getattr(output, "total_revenue_cagr", 0.0)
             return f"Revenue CAGR {cagr * 100:.1f}%"
@@ -10975,8 +10995,10 @@ def _summary_from_dict(engine_name: str, output: dict[str, Any]) -> str:
             )
         if engine_name == "expense":
             years = output.get("years") or []
-            y1 = years[0]["noi"] if years else 0.0
-            return f"Y1 NOI ${y1 / 1e6:.2f}M"
+            if not years:
+                return ""
+            y1 = years[0] or {}
+            return _y1_noi_headline(y1.get("noi_institutional"), y1.get("noi"))
         if engine_name == "revenue":
             cagr = output.get("total_revenue_cagr", 0.0)
             return f"Revenue CAGR {cagr * 100:.1f}%"
