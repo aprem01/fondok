@@ -68,6 +68,24 @@ def test_closed_hotel_excluded_from_both_count_and_keys() -> None:
     assert "Blue Moon Hotel" in d.note and "excluded" in d.note
 
 
+def test_hotel_name_lists_in_the_note_join_on_a_middle_dot_not_a_comma() -> None:
+    """FON-126 (Sam QA 2026-11-23) — a roster name can itself contain a
+    comma ("Z Ocean Hotel, Classico A Sonesta Collection"), so a ", "-joined
+    list reads as one hotel more than there are. Hotel-name lists join on
+    " · " everywhere they are printed."""
+    roster = {
+        1: {"name": "Z Ocean Hotel, Classico A Sonesta Collection", "keys": 40},
+        2: {"name": "Closed - Blue Moon Hotel", "keys": 0},
+        3: {"name": "Closed - Shelborne South Beach", "keys": 0},
+        4: {"name": "Dream South Beach", "keys": 107},
+    }
+    d = derive_comp_set(roster, reported_comp_set_size=4, reported_total_keys=147)
+    assert d.active_count == 2 and d.closed_count == 2
+    assert d.closed_names == ["Blue Moon Hotel", "Shelborne South Beach"]
+    assert "2 closed hotels (Blue Moon Hotel · Shelborne South Beach) excluded" in d.note
+    assert "Blue Moon Hotel, " not in d.note
+
+
 def test_closed_hotel_with_keys_is_still_excluded_from_keys() -> None:
     """A closed hotel that still lists rooms contributes nothing — the count
     and the keys are over the same set."""

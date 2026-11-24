@@ -178,6 +178,10 @@ def test_supply_growth_pipeline_over_existing_with_final_planning_separately() -
     assert s.planned_rooms == 1_200
     assert s.under_construction_pct == 5.0  # 600 ÷ 12,000
     assert s.final_planning_pct == 2.5  # 300 ÷ 12,000
+    # FON-126 — every room total here is the report's own stated row.
+    assert s.under_construction_rooms_basis == "reported"
+    assert s.final_planning_rooms_basis == "reported"
+    assert s.planned_rooms_basis == "reported"
     assert s.reported_supply_change_pct == 1.2 and s.reported_supply_change_period == "TTM"
     assert s.reason is None and s.detail is None
     names = [r.field_name for r in s.inputs]
@@ -212,6 +216,10 @@ def test_supply_growth_sums_listed_projects_by_status_when_no_total() -> None:
     assert s.planned_rooms == 90
     assert s.under_construction_pct == 3.5
     assert s.final_planning_pct == 4.0
+    # FON-126 — no total is stated, so each figure is the listed projects summed.
+    assert s.under_construction_rooms_basis == "summed"
+    assert s.final_planning_rooms_basis == "summed"
+    assert s.planned_rooms_basis == "summed"
     assert {r.field_name for r in s.inputs} >= {
         "under_construction.1.rooms", "under_construction.2.rooms",
         "under_construction.3.rooms", "under_construction.4.rooms",
