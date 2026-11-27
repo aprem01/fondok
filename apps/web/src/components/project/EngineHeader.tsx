@@ -60,6 +60,7 @@ export default function EngineHeader({
   onRunComplete,
   onRunStart,
   lastRunRows,
+  engineRow = null,
 }: {
   name: string;
   desc: string;
@@ -87,6 +88,13 @@ export default function EngineHeader({
       falls back to the previous run it saw in this session, and shows
       nothing otherwise. */
   lastRunRows?: EngineOutputResponse[];
+  /** The persisted row for THIS engine (``useEngineOutputs().outputs
+      .engines[engineName]``). When the worker wrote it ``not_applicable``
+      (Partnership on a deal with no partnership terms) the card reads
+      "Skipped · <the worker's own sentence>" instead of inviting a run it
+      already knows will be skipped. Without it the card only knows what the
+      runs it started in this session told it. */
+  engineRow?: EngineOutputResponse | null;
 }) {
   const { toast } = useToast();
   // E-024 — final rows of the previous run-all this header saw, so the
@@ -149,9 +157,21 @@ export default function EngineHeader({
   // fake a spinner (E-024).
   const running = isWired && wired.status === 'running';
   const justFailed = isWired && wired.status === 'failed';
-  const complete = isWired
-    ? wired.complete || initialComplete
-    : initialComplete;
+  // Skipped by reason — the worker's `not_applicable` row for this engine.
+  // A verdict from a run this session started wins; otherwise the persisted
+  // row speaks (the card used to read "Ready to run" here, as if the engine
+  // had never been considered — Sam, QA of deal b67bfdee).
+  const skippedRow: EngineOutputResponse | null =
+    isWired && wired.status === 'not_applicable'
+      ? wired.output
+      : isWired && wired.status === 'idle' && engineRow?.status === 'not_applicable'
+        ? engineRow
+        : null;
+  const skipped = skippedRow != null;
+  const skippedReason = (skippedRow?.not_applicable?.message ?? '').trim();
+  const skippedLabel = skippedReason ? `Skipped · ${skippedReason}` : 'Skipped';
+  const complete =
+    !skipped && (isWired ? wired.complete || initialComplete : initialComplete);
   // Prefer the live engine summary when we have one; fall back to the
   // tab's seeded "Model complete" badge otherwise.
   const summary = isWired ? wired.summary : '';
@@ -215,12 +235,27 @@ export default function EngineHeader({
 
   return (
     <>
-      <Card tone={complete ? 'default' : 'luxe'} className="p-5 mb-5">
+      <Card tone={complete || skipped ? 'default' : 'luxe'} className="p-5 mb-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="eyebrow mb-1.5">
+            <div className="eyebrow mb-1.5" data-testid="engine-card-state">
               Engine ·{' '}
-              {complete ? 'Complete' : running ? 'Running' : 'Ready to run'}
+              {complete ? (
+                'Complete'
+              ) : running ? (
+                'Running'
+              ) : skipped ? (
+                // The worker's sentence, verbatim and in its own case — muted,
+                // because nothing is wrong and nothing is waiting on a click.
+                <span
+                  className="text-ink-400 normal-case tracking-normal"
+                  title={skippedReason || undefined}
+                >
+                  {skippedLabel}
+                </span>
+              ) : (
+                'Ready to run'
+              )}
               {lastRunLabel && (
                 <span className="ml-2 inline-flex items-center gap-1 text-ink-500 normal-case tracking-normal">
                   <Clock size={10} />
@@ -288,16 +323,22 @@ export default function EngineHeader({
             </Button>
             {/* Per-engine Re-run — primary manual affordance now that
                 engines auto-fire on extraction. Sits top-right of each
-                engine card so users always have a one-click refresh. */}
+                engine card so users always have a one-click refresh.
+                On a skipped engine it reads "Run anyway": the worker
+                re-checks the terms and writes another not_applicable row
+                (run_single_engine refuses before the engine), so the click
+                is honest about buying nothing new for this engine — it still
+                refreshes the rest of the chain in runMode 'all'. */}
             <Button
               variant="secondary"
               size="sm"
               onClick={handleRun}
               loading={running}
               type="button"
+              title={!running && skipped ? skippedReason || undefined : undefined}
             >
               {!running && (complete ? <RotateCcw size={12} /> : <Play size={12} />)}{' '}
-              {running ? 'Running…' : complete ? 'Re-run' : 'Run'}
+              {running ? 'Running…' : complete ? 'Re-run' : skipped ? 'Run anyway' : 'Run'}
             </Button>
           </div>
         </div>

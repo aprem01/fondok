@@ -6,7 +6,6 @@ import {
   EngineName,
   EngineOutputResponse,
   EngineStatus,
-  isTerminalEngineStatus,
   isWorkerConnected,
   WorkerError,
 } from '@/lib/api';
@@ -14,6 +13,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   formatRunCompletionToast,
   formatRunHistorySummary,
+  isEngineRunDone,
   tallyEngineRows,
 } from '@/lib/progress';
 import {
@@ -30,7 +30,11 @@ import {
  *     deterministic and run in <1s on Kimpton). No polling needed.
  *   - `runMode: 'all'` hits POST /deals/{id}/engines/run which kicks off
  *     a background task; we then poll GET /deals/{id}/engines/run/{run_id}
- *     every second until every engine row is `complete` or `failed`.
+ *     every 750 ms until EVERY engine the kickoff scheduled has a terminal
+ *     row (`complete`, `failed` or `not_applicable`). The worker inserts a
+ *     run's rows one engine at a time, so "every row we can see is
+ *     terminal" is NOT the same as "the run is finished" — see
+ *     `isEngineRunDone` for the stall this caused (Sam, deal b67bfdee).
  *
  * When the worker isn't configured (NEXT_PUBLIC_WORKER_URL unset) the hook
  * surfaces an info toast and stays in `idle` so the legacy mock-data UI
@@ -80,12 +84,21 @@ export function useEngineRun(
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runStartedRef = useRef<number>(0);
+  // The engines the kickoff scheduled for the run being polled — the list
+  // the terminal check is judged against. Empty when the worker named none
+  // (then the run's own rows define it).
+  const expectedEnginesRef = useRef<EngineName[]>([]);
+  // Bumped on every pollRun()/stopPolling() so a tick whose request resolves
+  // after polling stopped (or after a newer run started) is discarded
+  // instead of completing a run twice or completing the wrong run.
+  const pollGenerationRef = useRef(0);
   // Keep latest callbacks/options on a ref so the polling loop sees fresh
   // values without resetting the interval on every render.
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
   const stopPolling = useCallback(() => {
+    pollGenerationRef.current += 1;
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -136,22 +149,32 @@ export function useEngineRun(
   );
 
   const pollRun = useCallback(
-    (runId: string) => {
+    (runId: string, expectedEngines: EngineName[]) => {
       stopPolling();
+      expectedEnginesRef.current = expectedEngines;
+      const generation = pollGenerationRef.current;
       // Slightly tighter than 1s — engine deltas land sub-second so 750ms
       // makes the progress strip feel reactive without thrashing the API.
       pollTimerRef.current = setInterval(async () => {
         try {
           const res = await api.engines.getRun(dealId, runId);
+          // Polling stopped (completion, timeout, unmount) or a newer run
+          // started while this request was in flight: its rows are stale.
+          if (pollGenerationRef.current !== generation) return;
           // Stream every row to subscribers (the floating progress strip
           // morphs spinners → checks as rows complete).
           optsRef.current.onRunAllProgress?.(res.engines);
 
-          const allDone =
-            res.engines.length > 0 &&
-            // `not_applicable` is terminal too (and not a failure) — without
-            // it a run whose Partnership has no terms would poll forever.
-            res.engines.every((e) => isTerminalEngineStatus(e.status));
+          // Done only when EVERY engine the kickoff scheduled has a terminal
+          // row — `complete`, `failed`, or `not_applicable` (skipped by
+          // reason, not a failure; without it a run whose Partnership has no
+          // terms would poll forever). Rows alone are not enough: the worker
+          // writes them one engine at a time, and a tick that lands between
+          // "expense complete" and "capital running" sees 3 terminal rows of
+          // a 9-engine run. Judged by rows, that ended the run here ("3
+          // engines", polling stopped) while the panel, judging by the
+          // kickoff list, sat on "Running Capital · 3 of 9" for ever.
+          const allDone = isEngineRunDone(expectedEnginesRef.current, res.engines);
           if (allDone) {
             stopPolling();
             const runtimeMs = Date.now() - runStartedRef.current;
@@ -241,11 +264,11 @@ export function useEngineRun(
           summary: 'running…',
           costUsd: 0,
         });
-        optsRef.current.onRunAllStarted?.(
-          kickoff.run_id,
-          kickoff.engines.map((e) => e.name),
-        );
-        pollRun(kickoff.run_id);
+        // One engine list for the strip AND the poller's terminal check, so
+        // they finish on the same tick.
+        const expected = kickoff.engines.map((e) => e.name);
+        optsRef.current.onRunAllStarted?.(kickoff.run_id, expected);
+        pollRun(kickoff.run_id, expected);
       } else {
         const row = await api.engines.runOne(dealId, engineName);
         handleResult(row);

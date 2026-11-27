@@ -149,6 +149,9 @@ export interface EngineStageInput {
 }
 
 export interface EngineStage {
+  /** The run's engines in step order (``runEngineOrder``) — what the panel
+   *  lists. ``total === engines.length``. */
+  engines: string[];
   /** Engine currently ``running``, or the next ``queued`` one after the last
    *  completed engine; ``null`` once everything is terminal. */
   currentEngine: string | null;
@@ -169,15 +172,53 @@ export interface EngineStage {
   copy: string;
 }
 
+/**
+ * The engines that belong to ONE run, in step order: the kickoff's list
+ * (``POST …/engines/run`` names every engine it scheduled, in dependency
+ * order) followed by any engine the worker reported a row for that the
+ * kickoff did not name. With no kickoff list the run's own rows define it.
+ * Never a hard-coded count — a 3-engine run has 3 steps, a full run 9.
+ */
+export function runEngineOrder(
+  expected: ReadonlyArray<string>,
+  rows: ReadonlyArray<{ engine: string }>,
+): string[] {
+  const order: string[] =
+    expected.length > 0 ? [...expected] : Array.from(new Set(rows.map((r) => r.engine)));
+  for (const r of rows) if (!order.includes(r.engine)) order.push(r.engine);
+  return order;
+}
+
+function isTerminalRowStatus(status: string | undefined): boolean {
+  return status === 'complete' || status === 'failed' || status === 'not_applicable';
+}
+
+/**
+ * True once EVERY engine of the run has a terminal row — complete, failed
+ * or not_applicable. This is the one rule the poller, the progress panel
+ * and the completion toast share (Sam, QA of deal b67bfdee, 2026-11-27):
+ * the worker inserts a run's rows one engine at a time, so a poll that
+ * lands between "expense complete" and "capital running" sees three rows,
+ * all terminal. Judged by rows alone that read as a finished run — the
+ * toast said "3 engines" and polling stopped — while the panel, which knew
+ * the kickoff had scheduled nine, sat on "Running Capital · 3 of 9" with
+ * the clock climbing. Judged against the run's own engine list, three of
+ * nine is still in flight for everyone.
+ */
+export function isEngineRunDone(
+  expected: ReadonlyArray<string>,
+  rows: ReadonlyArray<{ engine: string; status: string }>,
+): boolean {
+  const order = runEngineOrder(expected, rows);
+  if (order.length === 0) return false;
+  const byEngine = new Map<string, string>();
+  for (const r of rows) byEngine.set(r.engine, r.status);
+  return order.every((name) => isTerminalRowStatus(byEngine.get(name)));
+}
+
 export function deriveEngineStage(input: EngineStageInput): EngineStage {
   const { rows, startedAt, now } = input;
-  // Fall back to the engines the worker actually reported if the kickoff
-  // list was empty — never a hard-coded count.
-  const order: string[] =
-    input.expected.length > 0
-      ? [...input.expected]
-      : Array.from(new Set(rows.map((r) => r.engine)));
-  for (const r of rows) if (!order.includes(r.engine)) order.push(r.engine);
+  const order = runEngineOrder(input.expected, rows);
 
   const byEngine = new Map<string, EngineRunRowLike>();
   for (const r of rows) byEngine.set(r.engine, r);
@@ -225,6 +266,7 @@ export function deriveEngineStage(input: EngineStageInput): EngineStage {
       : `Running · ${tail}`;
 
   return {
+    engines: order,
     currentEngine,
     currentLabel,
     completed,

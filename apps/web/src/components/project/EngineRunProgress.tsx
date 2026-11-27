@@ -20,7 +20,6 @@ import {
   EngineName,
   EngineOutputResponse,
   EngineStatus,
-  isTerminalEngineStatus,
 } from '@/lib/api';
 import { cn } from '@/lib/format';
 import { useNow } from '@/lib/hooks/useNow';
@@ -30,12 +29,16 @@ import {
   engineSkippedCopy,
   formatElapsed,
   formatLastRunTook,
+  isEngineRunDone,
 } from '@/lib/progress';
 
 interface EngineRunProgressProps {
   /** When null, the strip is hidden. */
   runId: string | null;
-  /** Engines kicked off, in dependency order. */
+  /** Engines THIS run kicked off, in dependency order — the kickoff's own
+   *  list (`onRunAllStarted(runId, engines)`), never a hard-coded nine. A
+   *  3-engine run lists 3 steps and finishes at 3 of 3; a full run lists 9.
+   *  Any engine the worker reports a row for beyond this list is appended. */
   expectedEngines: EngineName[];
   /** Latest polled rows from the worker. */
   rows: EngineOutputResponse[];
@@ -79,13 +82,13 @@ export default function EngineRunProgress({
   // E-024 — stage, k-of-n and elapsed are derived from the polled rows and
   // a 1 Hz wall-clock sample that ticks only while the run is in flight
   // (the poll itself re-renders every 750 ms, but a stalled poll must not
-  // freeze the clock). Once everything is terminal the sample stops and
-  // the final elapsed stays put.
-  const terminal = rows.filter((r) => isTerminalEngineStatus(r.status)).length;
-  const inFlight =
-    Boolean(runId) &&
-    !hidden &&
-    !(expectedEngines.length > 0 && terminal >= expectedEngines.length);
+  // freeze the clock). Once every engine of THIS run is terminal the sample
+  // stops and the final elapsed stays put. `isEngineRunDone` is the same
+  // rule the poller in useEngineRun applies, so the strip and the toast
+  // finish on the same tick (Sam, deal b67bfdee: the toast once said "3
+  // engines" while this strip sat on "Running Capital · 3 of 9" for ever).
+  const done = isEngineRunDone(expectedEngines, rows);
+  const inFlight = Boolean(runId) && !hidden && !done;
   const now = useNow(inFlight);
   const stage = deriveEngineStage({ expected: expectedEngines, rows, startedAt, now });
   const { completed, failed, skipped, total, allDone } = stage;
@@ -150,7 +153,11 @@ export default function EngineRunProgress({
       </div>
 
       <ul className="px-2 py-2 space-y-0.5 max-h-[60vh] overflow-y-auto scrollbar-thin">
-        {expectedEngines.map((name) => {
+        {/* The steps are THIS run's engines (the kickoff list plus any the
+            worker reported), so the list, the footer and the header count
+            the same set. */}
+        {stage.engines.map((engine) => {
+          const name = engine as EngineName;
           const row = rowByEngine.get(name);
           const status: EngineStatus | 'queued' = row?.status ?? 'queued';
           return <EngineRow key={name} name={name} status={status} row={row} />;
