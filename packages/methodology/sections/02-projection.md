@@ -354,12 +354,11 @@ the NOI each is struck on under the percent ("Entry NOI $5.31M", "T-12 NOI $4.18
 sub-lines, the entry one ending "… ÷ price" like the T-12's. A run made before this rule published no entry NOI for
 an open hotel, so its cap is the projected Year 1 ÷ price; every surface then says exactly that
 ("Projected Year 1 NOI ÷ price · re-run the model for the entry basis") and never attaches the basis
-above to it. In the Excel acquisition model (cover and Assumptions
-sheet) each numerator is its own row in whole dollars — *Entry NOI (Year 1, undisplaced)* and *T-12
-NOI (before FF&E reserve)* — and each cap is the Excel formula NOI ÷ Purchase Price over those cells,
-so a reader can trace it; a deal without a twelve-month statement reads "not available: no
-twelve-month statement" on both rows. The cover's headline Year 1 NOI is the same whole-dollar figure,
-not the $000 proforma row read back.
+above to it. In the Excel model (cover and Assumptions) each numerator is its own
+whole-dollar row — *Entry NOI (Year 1, undisplaced)* and *T-12 NOI (before FF&E reserve)* — and each
+cap is the formula NOI ÷ Purchase Price over those cells; without a twelve-month statement both rows
+read "not available: no twelve-month statement". The cover's Year 1 NOI is the same whole-dollar
+figure, not the $000 proforma row.
 
 :::
 
