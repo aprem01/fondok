@@ -661,6 +661,7 @@ export default function PartnershipTab() {
           complete={hasWorkerPartnership}
           dealId={dealId}
           engineName="partnership"
+          engineRow={partnershipRow ?? null}
           runMode="all"
           onRunStart={() => setComputing(true)}
           onRunComplete={() => {
