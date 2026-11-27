@@ -30,6 +30,16 @@ NOI_BEFORE_RESERVE = "NOI (before FF&E reserve)"
 #: ``NOI_BEFORE_RESERVE_DEFINITION`` (apps/web/src/lib/engines/noi.ts).
 NOI_BEFORE_RESERVE_DEFINITION = "After property tax and insurance, before the FF&E reserve"
 
+#: FON-122 follow-up (Sam, 2026-11-26) — the entry cap's basis, the sub-line
+#: under every "Entry Cap (Year 1, undisplaced)" tile: Year 1 priced at the
+#: T-12's own occupancy and ADR (the penetration held at today's index, no
+#: movement toward the stabilized target), no closure, no displacement, on
+#: Year 1's cost structure, before the FF&E reserve. ONE string on this side
+#: (the memo reads it here; ``services.engine_runner`` builds that revenue);
+#: the web's ``ENTRY_NOI_BASIS`` (apps/web/src/lib/purchasePrice.ts) is the
+#: same words.
+ENTRY_NOI_BASIS = "Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve"
+
 #: NOI net of the FF&E reserve.
 CASH_NOI = "Cash NOI (after FF&E reserve)"
 

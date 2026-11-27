@@ -200,12 +200,13 @@ class ExpenseEngineInput(BaseModel):
     # renovation year's revenue must not set the cost level every later year grows
     # from. Year 1's own figures are unchanged.
     seed_year_one: FBRevenueYear | None = None
-    # FON-122 (Sam, 2026-11-23) — the deal's revenue with the closure and every
-    # displacement lever off (every year), set whenever something suppresses
-    # Year 1: a closure, an analyst's renovation schedule or a PIP's displacement.
-    # The engine prices it once more on this run's costs and publishes its Year-1
-    # NOI before the FF&E reserve as ``run_rate_noi_at_entry``. ``None`` when
-    # nothing suppresses Year 1 — Year 1 itself is then that figure.
+    # FON-122 (Sam, 2026-11-23 / 2026-11-26) — the entry basis' revenue: the deal
+    # with the closure and every displacement lever off AND Year 1's penetration
+    # held at the T-12's own index (no ramp toward the stabilized target), set
+    # whenever any of the three would move Year 1. The engine prices it once more
+    # on this run's costs and publishes its Year-1 NOI before the FF&E reserve as
+    # ``run_rate_noi_at_entry``. ``None`` when none applies — Year 1 itself is
+    # then that figure.
     entry_revenue: FBRevenueOutput | None = None
     # FON-122 — the basis statement's own full-period NOI before the FF&E reserve
     # (its stated EBITDA); echoed for the in-place (T-12) cap. ``None`` unless stated.
@@ -430,11 +431,12 @@ class ExpenseEngineOutput(BaseModel):
     # The web app surfaces this list as a footnote on the Operating
     # Statement so reviewers know which numbers are real vs synthesized.
     sourced_from_t12: list[str] = Field(default_factory=list)
-    # FON-122 (Sam, 2026-11-23) — the entry NOI the going-in cap is struck on,
-    # for every deal: Year 1's NOI before the FF&E reserve with NO closure and NO
-    # displacement, priced on this run's costs. A deal with neither reads its
-    # own ``years[0].noi_institutional`` here. The field keeps its name for
-    # payload compatibility. ``None`` only when the engine built no years.
+    # FON-122 (Sam, 2026-11-23 / 2026-11-26) — the entry NOI the going-in cap is
+    # struck on, for every deal: Year 1 at the T-12's own occupancy and ADR (the
+    # penetration held at today's index, no ramp), NO closure, NO displacement,
+    # NOI before the FF&E reserve priced on this run's costs. A deal with none of
+    # the three reads its own ``years[0].noi_institutional`` here. The field keeps
+    # its name for payload compatibility. ``None`` only when the engine built no years.
     run_rate_noi_at_entry: float | None = None
     # FON-122 — the basis statement's own full-period NOI before the FF&E
     # reserve (T-12 EBITDA, an input echo): the in-place cap's numerator.
@@ -536,8 +538,9 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
     def _entry_year_one_noi(self, payload: ExpenseEngineInput) -> float | None:
         """FON-122 — Year 1's NOI before the FF&E reserve priced on
         ``payload.entry_revenue`` (the deal with its closure and every
-        displacement lever off) with this run's cost inputs: no closure share,
-        no earned-revenue override and no seed (an undisplaced year seeds itself)."""
+        displacement lever off, Year 1 at the T-12's own index) with this run's
+        cost inputs: no closure share, no earned-revenue override and no seed (an
+        undisplaced year seeds itself)."""
         entry = self.run(
             payload.model_copy(
                 update={
@@ -1386,10 +1389,11 @@ class ExpenseEngine(BaseEngine[ExpenseEngineInput, ExpenseEngineOutput]):
 
         # NOI CAGR above stays the open hotel's: a closed Year 1 has no growth to report.
         open_shares = payload.open_shares_by_year
-        # FON-122 (Sam, 2026-11-23) — the entry NOI: Year 1 before the FF&E
-        # reserve with no closure and no displacement. When something suppresses
-        # Year 1 it is priced once more from the revenue with every lever off;
-        # otherwise Year 1 (as projected, before any closure share) is that figure.
+        # FON-122 (Sam, 2026-11-23 / 2026-11-26) — the entry NOI: Year 1 at the
+        # T-12's own occupancy and ADR, before the FF&E reserve, no closure, no
+        # displacement. When a closure, a displacement or the penetration ramp
+        # moves Year 1 it is priced once more from the entry revenue; otherwise
+        # Year 1 (as projected, before any closure share) is that figure.
         run_rate_noi_at_entry: float | None = None
         if payload.entry_revenue is not None:
             run_rate_noi_at_entry = self._entry_year_one_noi(payload)

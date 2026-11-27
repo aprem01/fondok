@@ -60,6 +60,7 @@ from typing import Any
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
 from .labels import (
+    ENTRY_NOI_BASIS,
     EXIT_SCHEDULE_COLUMNS,
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
     EXIT_SCHEDULE_STALE_NOTE,
@@ -102,11 +103,13 @@ _fmt_mult = fmt_mult
 _fmt_int = fmt_int
 
 
-#: FON-122 (Sam, 2026-11-23) — the Executive Summary's two cap tiles: the entry
-#: cap on Year 1 NOI before the FF&E reserve with no closure and no displacement,
-#: and the in-place cap on the T-12's own NOI before reserve.
+#: FON-122 (Sam, 2026-11-23 / 2026-11-26) — the Executive Summary's two cap
+#: tiles: the entry cap on Year 1 at the T-12's own occupancy and ADR (no ramp),
+#: no closure, no displacement, NOI before the FF&E reserve; and the in-place cap
+#: on the T-12's own NOI before reserve. The entry sub-line is the ONE basis
+#: string (``labels.ENTRY_NOI_BASIS``; the web prints the same words).
 ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
-ENTRY_CAP_DEFINITION = "Year 1 NOI before FF&E reserve, no closure, no displacement ÷ price"
+ENTRY_CAP_DEFINITION = ENTRY_NOI_BASIS
 IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
 IN_PLACE_CAP_DEFINITION = "T-12 NOI before reserve ÷ price"
 

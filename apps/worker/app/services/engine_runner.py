@@ -9007,30 +9007,89 @@ def _year_one_displaced(accumulated: dict[str, BaseModel]) -> bool:
     return y1.occupancy_displacement_factor < 1.0 or y1.adr_displacement_factor < 1.0
 
 
-def _entry_revenue(
+def _year_one_penetration_moves(topline: ToplineDrivers, hold_years: int) -> dict[str, float]:
+    """The metrics whose Year 1 the topline moves off today's index — the T-12's
+    own level against the benchmark (``start_index_*``) — and that index. Empty
+    when Year 1 already runs at it for every metric that has one: a metric with
+    no index (no T-12, a new or reopened hotel), an explicit Year-1 value or no
+    Year-1 benchmark is not penetrated and is left as it runs."""
+    from ..engines.revenue import penetration_for_year
+
+    bench = next((b for b in topline.benchmark_by_year if b.year == 1), None)
+    moved: dict[str, float] = {}
+    for metric, start, by_year in (
+        ("occupancy", topline.start_index_occ, topline.penetration_occ_by_year),
+        ("adr", topline.start_index_adr, topline.penetration_adr_by_year),
+    ):
+        if start is None or metric in topline.explicit_year1:
+            continue
+        if bench is None or getattr(bench, metric) is None:
+            continue
+        v = by_year[0] if by_year else None
+        pen = v if v is not None else penetration_for_year(topline, metric, 1, hold_years)[0]
+        if abs(pen - start) > 1e-9:
+            moved[metric] = start
+    return moved
+
+
+def _entry_topline(topline: ToplineDrivers | None, hold_years: int) -> ToplineDrivers | None:
+    """FON-122 follow-up (Sam, 2026-11-26) — the entry run's topline, or ``None``
+    when the deal's own already is it.
+
+    Sam's QA: the undisplaced Year 1 still carried the penetration RAMP (Year 1
+    ADR $263 against a T-12 of $233), so the entry cap stripped the renovation's
+    disruption but kept its upside. The entry basis is Year 1 AT the T-12's own
+    occupancy and ADR: each metric whose today's index is known runs Year 1 at
+    that index — no movement toward the stabilized penetration, whether the
+    straight line, an analyst's ramp or a by-year target would move it. Held
+    through the Year-1 per-year override, which the engine applies before any
+    ramp; nothing else about the topline changes, and the deal's own years are
+    never run on it. The benchmark's own Year-1 level (the comp set grown by the
+    year's market growth) is kept: the index is what is held."""
+    if topline is None:
+        return None
+    moved = _year_one_penetration_moves(topline, hold_years)
+    if not moved:
+        return None
+    update: dict[str, Any] = {}
+    for metric, key in (("occupancy", "penetration_occ_by_year"), ("adr", "penetration_adr_by_year")):
+        if metric in moved:
+            current = list(getattr(topline, key))
+            update[key] = [moved[metric], *current[1:]]
+    return topline.model_copy(update=update)
+
+
+def _entry_basis(
     deal_id: str, base: dict[str, Any], accumulated: dict[str, BaseModel]
-) -> FBRevenueOutput | None:
-    """FON-122 (Sam, 2026-11-23) — the deal's revenue with the closure and every
-    displacement lever off (``ExpenseEngineInput.entry_revenue``), built whenever
-    anything suppresses Year 1: a closure OR a displacement factor below 1. One
-    path for a closed and a merely displaced deal. ``None`` when Year 1 has
-    neither — the projection's own Year 1 is then the entry NOI."""
-    if _closed_months_for(base) <= 0 and not _year_one_displaced(accumulated):
-        return None
+) -> tuple[FBRevenueOutput | None, FBRevenueYear | None]:
+    """``(entry_revenue, seed_year_one)`` for ``ExpenseEngineInput``.
+
+    FON-122 (Sam, 2026-11-23) — the entry NOI's revenue is the deal's with the
+    closure and every displacement lever off, built whenever anything suppresses
+    Year 1: a closure OR a displacement factor below 1 (one path for both). FON-122
+    follow-up (Sam, 2026-11-26) — and with Year 1's penetration held at the T-12's
+    own index (:func:`_entry_topline`), built whenever the topline moves it. ``None``
+    when Year 1 has none of the three — the projection's own Year 1 is then the
+    entry NOI, exactly as before.
+
+    The seed (the cost level later years grow from when Year 1 is displaced) stays
+    the UNDISPLACED Year 1 with the deal's own topline, ramp included, so the
+    projection's ``years[]`` never move with the entry basis."""
+    closed = _closed_months_for(base) > 0
+    displaced = _year_one_displaced(accumulated)
     payload = _build_input_for("revenue", deal_id, base, accumulated)
-    revenue = RevenueEngine().run(payload.model_copy(update=_UNDISPLACED_REVENUE))
-    return FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
+    held = _entry_topline(payload.topline, payload.hold_years)
+    if not closed and not displaced and held is None:
+        return None, None
 
+    def run(update: dict[str, Any]) -> FBRevenueOutput:
+        revenue = RevenueEngine().run(payload.model_copy(update=update))
+        return FBRevenueEngine().run(_build_input_for("fb", deal_id, base, {"revenue": revenue}))
 
-def _seed_year_one(
-    accumulated: dict[str, BaseModel], entry: FBRevenueOutput | None
-) -> FBRevenueYear | None:
-    """Year 1 without its displacement or closure (``ExpenseEngineInput.seed_year_one``);
-    ``None`` when Year 1 is not displaced (a closure alone seeds through
-    :func:`_expense_revenue_basis`, as before)."""
-    if entry is None or not _year_one_displaced(accumulated):
-        return None
-    return entry.years[0]
+    undisplaced = run(_UNDISPLACED_REVENUE) if displaced or held is None else None
+    entry = run({**_UNDISPLACED_REVENUE, "topline": held}) if held is not None else undisplaced
+    seed = undisplaced.years[0] if displaced and undisplaced is not None else None
+    return entry, seed
 
 
 def _expense_revenue_basis(
@@ -9248,9 +9307,10 @@ def _build_input_for(
 
     if engine_name == "expense":
         expense_basis, open_shares, actual_revenue = _expense_revenue_basis(deal_id, base, accumulated)
-        # FON-122 (Sam, 2026-11-23) — the entry NOI's revenue: no closure, no
-        # displacement, built when either suppresses Year 1 (one path for both).
-        entry_revenue = _entry_revenue(deal_id, base, accumulated)
+        # FON-122 (Sam, 2026-11-23 / 2026-11-26) — the entry NOI's revenue: no
+        # closure, no displacement, Year 1 at the T-12's own index (no ramp),
+        # built when any of the three would move Year 1 (one path for all).
+        entry_revenue, seed_year_one = _entry_basis(deal_id, base, accumulated)
         return ExpenseEngineInput(
             deal_id=deal_uuid,
             revenue=expense_basis["fb"],
@@ -9263,7 +9323,7 @@ def _build_input_for(
             actual_revenue=actual_revenue,
             actual_occupancy_by_year=_occupancy_by_year(accumulated) if actual_revenue is not None else None,
             entry_revenue=entry_revenue,
-            seed_year_one=_seed_year_one(accumulated, entry_revenue),
+            seed_year_one=seed_year_one,
             hotel_type=base.get("hotel_type", "full"),
             mgmt_fee_pct=base["mgmt_fee_pct"],
             ffe_reserve_pct=base["ffe_reserve_pct"],
