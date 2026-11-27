@@ -1002,3 +1002,36 @@ describe('PartnershipTab — one-tier stack: preview name + Initial Promote Spli
     expect(rows.some((t) => /Tier [12] \(/.test(t))).toBe(false);
   });
 });
+
+/**
+ * Sam QA 2026-11-27 (deal b67bfdee) — the Allocation Preview footnote said
+ * "above the preferred return and catch-up" on a waterfall with no catch-up
+ * tier. The sentence names a catch-up only when the structure has one
+ * (`hasCatchUp`: a `catch_up` tier allocation or a positive `catch_up_amount`).
+ */
+describe('PartnershipTab — Allocation Preview footnote names the catch-up only when there is one', () => {
+  const footnote = () => screen.getByText(/Allocation of all projected distributions/);
+
+  it('with a catch-up tier: "…above the preferred return and catch-up."', () => {
+    render(<PartnershipTab />);
+    expect(footnote()).toHaveTextContent(
+      'Allocation of all projected distributions across the 5-year hold. The promote applies only to residual proceeds above the preferred return and catch-up.',
+    );
+  });
+
+  it('without a catch-up (no catch_up tier, catch_up_amount 0): "…above the preferred return."', () => {
+    activeOutputs = withPartnershipOutputs({
+      catch_up_amount: 0,
+      tier_allocations: [
+        { label: 'Return of Capital', kind: 'return_of_capital', gp_amount: 1_883_668, lp_amount: 16_953_008, total_amount: 18_836_676 },
+        { label: 'Preferred Return', kind: 'preferred', gp_amount: 200_000, lp_amount: 1_800_000, total_amount: 2_000_000 },
+        { label: 'Promote — above 15% LP IRR', kind: 'promote', gp_amount: 2_000_000, lp_amount: 8_000_000, total_amount: 10_000_000 },
+      ],
+    });
+    render(<PartnershipTab />);
+    expect(footnote()).toHaveTextContent(
+      'Allocation of all projected distributions across the 5-year hold. The promote applies only to residual proceeds above the preferred return.',
+    );
+    expect(footnote()).not.toHaveTextContent('catch-up');
+  });
+});

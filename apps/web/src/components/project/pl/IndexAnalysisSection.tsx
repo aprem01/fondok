@@ -31,7 +31,7 @@
  * All pure logic lives in ``indexAnalysisModel.ts``.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -123,17 +123,134 @@ function GrowthCell({ value }: { value: number | null }) {
   return <span>{(value * 100).toFixed(1)}%</span>;
 }
 
-const stickyL = 'sticky left-0 bg-card z-10 border-r border-border';
+/**
+ * The frozen label column's width, in px, for the three metric tables
+ * (labels up to "Occupancy Growth"). One number for the column's width, the
+ * table's width floor and the scroller's snap padding, so the three cannot
+ * drift apart.
+ */
+export const LABEL_COL_PX = 180;
+/** The penetration table's label column — "Occupancy Variance to Comp Set
+ *  (pts)" needs the room. */
+export const PENETRATION_LABEL_COL_PX = 260;
+/** Width floor per data column, in px (the `minWidth` math). */
+export const DATA_COL_MIN_PX = 82;
+/** The frozen width in force for the label cells under a scroller. */
+const LabelWidthCtx = createContext<number>(LABEL_COL_PX);
+const labelCellStyle = (w: number): React.CSSProperties => ({ width: w, minWidth: w, maxWidth: w });
+
+/**
+ * Sam QA 2026-11-27 (deal b67bfdee) — "the 2019 Available Rooms cell is
+ * clipped to ',180'" (48,180 with its first digits hidden).
+ *
+ * Cause: the label column is `position: sticky` (`stickyL`), so the moment
+ * the table is wider than its card any horizontal scroll slides the first
+ * data column UNDER the frozen labels. The STR TTM column (e3294633) added
+ * a column to the `180 + n × 82` width floor, which is what made these
+ * tables overflow at Sam's width in the first place, and macOS overlay
+ * scrollbars give no cue that the pane is scrolled — a 20 px trackpad nudge
+ * reads as a clipped cell. Nothing is clipped at scroll 0, at any column
+ * count: the label column has an explicit width (`labelCellStyle`, from the
+ * scroller's `labelWidth`) and the data columns start after it.
+ *
+ * The fix keeps the labels frozen (an analyst reading Year 5 needs the row
+ * names) and makes a partial column beside them impossible at rest:
+ *
+ *  1. the scroller snaps to column boundaries (`snap-x snap-mandatory`, each
+ *     header cell a `snap-start` area) with the frozen width as its snap
+ *     padding, so after any scroll the column beside the labels is whole;
+ *  2. its end is padded so the LAST snap position is also a column boundary
+ *     (a filler no wider than one column, measured from the header cells);
+ *  3. a shadow on the frozen edge says "scrolled" while `scrollLeft > 0`.
+ *
+ * Label cells no longer force `nowrap`: a label the frozen width cannot hold
+ * wraps inside it rather than running under the first data column.
+ */
+const stickyL = 'sticky left-0 bg-card z-10 border-r border-border box-border';
+/** Snap area: each data column's header cell (one per column). */
+const DATA_COL_HEADER = 'snap-start';
+
+export function FrozenLabelScroller({
+  labelWidth = LABEL_COL_PX,
+  children,
+  testId,
+}: {
+  labelWidth?: number;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [scrolled, setScrolled] = useState(false);
+  const [endFiller, setEndFiller] = useState(0);
+  const onScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (el) setScrolled(el.scrollLeft > 0);
+  }, []);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const table = el.querySelector('table');
+      const heads = table ? Array.from(table.querySelectorAll<HTMLElement>('[data-ia-col]')) : [];
+      if (!table || heads.length === 0) { setEndFiller(0); return; }
+      const tableBox = table.getBoundingClientRect();
+      const overflow = tableBox.width - el.clientWidth;
+      if (overflow <= 0.5) { setEndFiller(0); return; }
+      // The scrollLeft that puts each column's start on the frozen edge;
+      // the first one at or past the natural end becomes the end.
+      const stops = heads
+        .map((h) => h.getBoundingClientRect().left - tableBox.left - labelWidth)
+        .filter((s) => s > 0.5)
+        .sort((a, b) => a - b);
+      const last = stops.find((s) => s >= overflow - 0.5);
+      setEndFiller(last == null ? 0 : Math.max(0, Math.round(last - overflow)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    const table = el.querySelector('table');
+    if (table) ro.observe(table);
+    return () => ro.disconnect();
+  }, [labelWidth]);
+  return (
+    <LabelWidthCtx.Provider value={labelWidth}>
+      <div className="relative">
+        <div
+          ref={scrollerRef}
+          onScroll={onScroll}
+          data-testid={testId}
+          data-frozen-px={labelWidth}
+          data-scrolled={scrolled ? 'true' : undefined}
+          className="overflow-x-auto snap-x snap-mandatory"
+          style={{ scrollPaddingLeft: labelWidth }}
+        >
+          <div style={{ width: 'max-content', minWidth: '100%', paddingRight: endFiller }}>{children}</div>
+        </div>
+        {scrolled && (
+          <div
+            aria-hidden="true"
+            data-testid="frozen-edge-shadow"
+            className="pointer-events-none absolute inset-y-0 z-20 w-2 bg-gradient-to-r from-black/10 to-transparent"
+            style={{ left: labelWidth }}
+          />
+        )}
+      </div>
+    </LabelWidthCtx.Provider>
+  );
+}
 
 function YearHeaderRow({ cols, firstLabel }: { cols: IaColumns; firstLabel: string }) {
   const { columns, firstForecastIndex } = cols;
+  const labelWidth = useContext(LabelWidthCtx);
   return (
     <tr className="text-ink-500 text-[10.5px] border-b border-border">
-      <th className={cn(stickyL, 'text-left font-medium px-3 py-1.5')}>{firstLabel}</th>
+      <th className={cn(stickyL, 'text-left font-medium px-3 py-1.5')} style={labelCellStyle(labelWidth)}>{firstLabel}</th>
       {columns.map((c, i) => (
         <th
           key={c.key}
+          data-ia-col={c.key}
           className={cn(
+            DATA_COL_HEADER,
             'text-right font-medium px-2 py-1.5 tabular-nums',
             i === 0 && 'border-l border-border',
             i === firstForecastIndex && 'border-l border-border',
@@ -171,9 +288,15 @@ function BandRow({
   const { columns, firstForecastIndex } = cols;
   const histCount = firstForecastIndex;
   const fcCount = columns.length - firstForecastIndex;
+  const labelWidth = useContext(LabelWidthCtx);
   return (
     <tr className="text-ink-700 border-b border-border">
-      <th className={cn(stickyL, 'text-left font-semibold uppercase tracking-wide text-[11px] px-3 py-2')}>{title}</th>
+      <th
+        className={cn(stickyL, 'text-left font-semibold uppercase tracking-wide text-[11px] px-3 py-2')}
+        style={labelCellStyle(labelWidth)}
+      >
+        {title}
+      </th>
       {histCount > 0 && (
         <th
           colSpan={histCount}
@@ -214,7 +337,7 @@ interface TableProps {
   boundary: ForecastBoundary;
 }
 
-function IndexTable({ title, cols, keys, series, sources, subject = false, forecastBand, forecastReason, boundary }: TableProps) {
+export function IndexTable({ title, cols, keys, series, sources, subject = false, forecastBand, forecastReason, boundary }: TableProps) {
   const { columns, firstForecastIndex } = cols;
   const metricClass = (i: number): string =>
     subject && i >= firstForecastIndex ? 'text-brand-700' : 'text-success-700';
@@ -247,8 +370,11 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
   );
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[12px] border-collapse" style={{ minWidth: Math.max(900, 180 + columns.length * 82) }}>
+    <FrozenLabelScroller testId={`index-table-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+      <table
+        className="w-full text-[12px] border-collapse"
+        style={{ minWidth: Math.max(900, LABEL_COL_PX + columns.length * DATA_COL_MIN_PX) }}
+      >
         <thead>
           <BandRow cols={cols} title={title} forecastBand={forecastBand} forecastReason={forecastReason} />
           <YearHeaderRow cols={cols} firstLabel="Metric" />
@@ -315,14 +441,17 @@ function IndexTable({ title, cols, keys, series, sources, subject = false, forec
           />
         </tbody>
       </table>
-    </div>
+    </FrozenLabelScroller>
   );
 }
 
 function PenetrationTable({ cols, rows, forecastBand }: { cols: IaColumns; rows: PenetrationRow[]; forecastBand: string }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[12px] border-collapse" style={{ minWidth: Math.max(900, 180 + cols.columns.length * 82) }}>
+    <FrozenLabelScroller labelWidth={PENETRATION_LABEL_COL_PX} testId="index-table-penetration">
+      <table
+        className="w-full text-[12px] border-collapse"
+        style={{ minWidth: Math.max(900, PENETRATION_LABEL_COL_PX + cols.columns.length * DATA_COL_MIN_PX) }}
+      >
         <thead>
           <BandRow cols={cols} title="Penetration Index" forecastBand={forecastBand} />
           <YearHeaderRow cols={cols} firstLabel="Subject ÷ Benchmark × 100 · shares · variances" />
@@ -343,7 +472,7 @@ function PenetrationTable({ cols, rows, forecastBand }: { cols: IaColumns; rows:
           ))}
         </tbody>
       </table>
-    </div>
+    </FrozenLabelScroller>
   );
 }
 
@@ -363,12 +492,14 @@ function Row({
   testId?: string;
 }) {
   const { firstForecastIndex } = cols;
+  const labelWidth = useContext(LabelWidthCtx);
   return (
     <tr className={cn('border-b border-border/40', zebra && 'bg-ink-300/[0.03]')} data-testid={testId}>
       <td
-        className={cn(stickyL, 'text-left font-medium text-ink-900 px-3 py-1.5 whitespace-nowrap', zebra && 'bg-card')}
-        style={zebra ? { backgroundColor: 'var(--card, #fff)' } : undefined}
+        className={cn(stickyL, 'text-left font-medium text-ink-900 px-3 py-1.5', zebra && 'bg-card')}
+        style={zebra ? { ...labelCellStyle(labelWidth), backgroundColor: 'var(--card, #fff)' } : labelCellStyle(labelWidth)}
         title={labelTitle}
+        data-ia-label
       >
         {label}
       </td>

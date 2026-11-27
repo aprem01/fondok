@@ -14,7 +14,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSubTab } from '@/lib/hooks/useSubTab';
 import { TrendingUp } from 'lucide-react';
 import NoiWarningStrip from './NoiWarningStrip';
-import { RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, returnsAnchorFromUrl, type ReturnsViewId } from '@/lib/returnsSection';
+import { RETURNS_HEADER_ID, RETURNS_SECTION_ID, RETURNS_VIEWS, RETURNS_VIEW_IDS, isReturnsView, returnsLandingAnchor, type ReturnsViewId } from '@/lib/returnsSection';
 import { scrollToAnchorWhenReady } from '@/lib/anchorScroll';
 import PricingSensitivityPanel from './PricingSensitivityPanel';
 import MaxPricePanel from './MaxPricePanel';
@@ -121,22 +121,33 @@ export function ReturnsSection() {
   const internalNav = useRef(false);
   const requestedSub = searchParams?.get('sub') ?? null;
   const query = searchParams?.toString() ?? '';
-  // FON-67 — a `#returns-by-exit-year` fragment (or `?anchor=`) on the URL
-  // asks for one card inside the section (the Cash Flow IRR footnote's
-  // "Returns by exit year →"). Following that link mounts Overview fresh, so
-  // the card is not in the DOM yet — its Returns outputs are still loading —
-  // and the sections above it are still filling in. The section scrolls
-  // into view meanwhile; `scrollToAnchorWhenReady` then lands on the card
-  // the moment it is inserted and holds it at the top while the page above
-  // settles (bounded; the user's first wheel / touch / key ends it). The
-  // disposer runs on unmount or a URL change, so nothing scrolls late.
+  // Sam QA 2026-11-27 — a visit that arrives by link is being scrolled into
+  // place; the section's coach mark ("Why this number leads") must not open
+  // on its own on top of that. Held (not dismissed) until the user acts
+  // inside the section (a view change). Read at mount so the mark never
+  // flashes open for one commit.
+  const [hintsSuspended, setHintsSuspended] = useState(() => isReturnsView(requestedSub));
+  // FON-67 — following a "View Returns →" link mounts Overview fresh, so
+  // what the link asks for is not in the DOM yet — the Returns outputs are
+  // still loading — and the sections above it are still filling in. The
+  // target is the card the URL names (`#returns-by-exit-year` / `?anchor=`,
+  // the Cash Flow IRR footnote) or, with no anchor, the section header (the
+  // IC Memo's and Overview's "View Returns →"); both render only once the
+  // outputs are in. The section scrolls into view meanwhile;
+  // `scrollToAnchorWhenReady` then lands on the target the moment it is
+  // inserted and holds it at the top while the page above settles (bounded;
+  // the user's first wheel / touch / key ends it). A one-shot scroll of the
+  // `<section>` was not enough: the cards above kept growing after it and
+  // pushed the section back down (Sam, 2026-11-27: "landed on Entry
+  // Valuation / Capitalization"). The disposer runs on unmount or a URL
+  // change, so nothing scrolls late.
   useEffect(() => {
     if (internalNav.current) { internalNav.current = false; return; }
     if (!isReturnsView(requestedSub)) return;
+    setHintsSuspended(true);
     const hash = typeof window !== 'undefined' ? window.location.hash : null;
-    const anchor = returnsAnchorFromUrl(hash, searchParams);
+    const anchor = returnsLandingAnchor(hash, searchParams);
     const scrollSection = () => sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-    if (!anchor) { scrollSection(); return; }
     return scrollToAnchorWhenReady(anchor, { root: sectionRef.current, onPending: scrollSection });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
@@ -171,7 +182,8 @@ export function ReturnsSection() {
         <ReturnsWorkspace
           outputs={outputs}
           dealId={dealId}
-          onInternalNav={() => { internalNav.current = true; }}
+          hintsSuspended={hintsSuspended}
+          onInternalNav={() => { internalNav.current = true; setHintsSuspended(false); }}
         />
       ) : readFailed ? (
         <SectionCard title="Returns" note="What the deal earns, and what price it can carry">
@@ -460,10 +472,14 @@ function useReturnsSandbox(outputs: EngineOutputs, dealId: string): SandboxState
 function ReturnsWorkspace({
   outputs,
   dealId,
+  hintsSuspended = false,
   onInternalNav,
 }: {
   outputs: EngineOutputs;
   dealId: string;
+  /** True while the section was reached by link and is being scrolled into
+   *  place — its coach mark stays closed (not dismissed) meanwhile. */
+  hintsSuspended?: boolean;
   /** Called before a view change made inside the section, so the section
    *  does not scroll the page to its own top on the resulting URL change. */
   onInternalNav?: () => void;
@@ -511,9 +527,13 @@ function ReturnsWorkspace({
   return (
     <div style={{ maxWidth: 1320 }}>
       {/* Section header — R-061: the former Returns tab's title card, now the
-          heading of Overview's Returns section. */}
+          heading of Overview's Returns section. Its id is where every
+          anchor-less "View Returns →" link lands (`returnsLandingAnchor`). */}
       <div
+        id={RETURNS_HEADER_ID}
+        data-testid="overview-returns-header"
         style={{
+          scrollMarginTop: 16,
           background: palette.cardWhite,
           border: `1px solid ${palette.border}`,
           borderRadius: radius.card,
@@ -601,6 +621,7 @@ function ReturnsWorkspace({
           outputs={outputs}
           preview={preview}
           dirty={dirty}
+          hintsSuspended={hintsSuspended}
           onEditInvestment={goInvestment}
           onViewCashFlow={goCashFlow}
         />
@@ -681,6 +702,7 @@ function ReturnsSummary({
   outputs,
   preview,
   dirty = false,
+  hintsSuspended = false,
   onEditInvestment,
   onViewCashFlow,
 }: {
@@ -689,6 +711,8 @@ function ReturnsSummary({
   preview?: ReturnsPreviewResponse | null;
   /** True while the Live-Assumptions sandbox differs from the base case. */
   dirty?: boolean;
+  /** Hold the "Why this number leads" coach mark closed (arrived by link). */
+  hintsSuspended?: boolean;
   onEditInvestment: () => void;
   onViewCashFlow: () => void;
 }) {
@@ -828,6 +852,7 @@ function ReturnsSummary({
             anchorId="returns-levered-irr"
             viewKey="returns"
             order={0}
+            suspended={hintsSuspended}
             title="Why this number leads"
             body="Levered IRR is the most institutionally cited return — it captures what your equity actually earns after debt service. Fondok solves it with Newton's method and a bisection fallback for numerical stability, same approach Argus uses."
             side="top"

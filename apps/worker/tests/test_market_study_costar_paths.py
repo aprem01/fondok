@@ -501,3 +501,79 @@ def test_canonical_paths_still_win_over_the_live_names() -> None:
     assert s.under_construction_rooms == 600  # canonical total before the property_overview one
     # … but a reported share still beats the computed one.
     assert s.under_construction_pct == 5.7 and s.under_construction_pct_basis == "reported"
+
+
+# ───────────── FON-126 — the b67bfdee-shaped list (Sam QA 2026-11-27) ─────────────
+#
+# The live deal's submarket PDF listed nine projects with the extraction's
+# snake_case statuses — four "under_construction", five "planned" — beside
+# the report's own totals: 1,326 rooms under construction (the p.4 TTM
+# figure) and 1,300 rooms in Final Planning (p.3, stated for 7 projects).
+# The five "planned" projects are NOT the report's Final Planning set (five
+# listed vs seven counted), so CoStar's "planned" stays in the ``planned``
+# bucket; Final Planning stays the report's stated total, never a sum of
+# those five. Locked here: the raw status is kept on the row, the bucket is
+# read from it, each stage total names its basis. Keys other than Shore Club
+# (100) and Aman (56) are synthetic test values.
+
+
+def _report_hotel(n: int, *, name: str, keys: int, status: str) -> list[FieldRow]:
+    p = f"property_overview.pipeline_hotel_{n}"
+    return [
+        _row(f"{p}_name", name, page=15),
+        _row(f"{p}_keys", keys, page=15),
+        _row(f"{p}_status", status, page=15),
+    ]
+
+
+B67_ROWS: list[FieldRow] = [
+    _row("property_overview.submarket", "Miami Beach", page=1),
+    _row("property_overview.market", "Miami, FL", page=1),
+    _row("ttm_performance.subject.rooms_under_construction", 1326, page=4),
+    _row("property_overview.final_planning_rooms", 1300, page=3),
+    _row("property_overview.final_planning_projects_count", 7, page=3),
+    *_report_hotel(1, name="Shore Club Miami Beach", keys=100, status="under_construction"),
+    *_report_hotel(2, name="Aman Miami Beach", keys=56, status="under_construction"),
+    *_report_hotel(3, name="Project C", keys=230, status="under_construction"),
+    *_report_hotel(4, name="Project D", keys=940, status="under_construction"),
+    *_report_hotel(5, name="Project E", keys=90, status="planned"),
+    *_report_hotel(6, name="Project F", keys=150, status="planned"),
+    *_report_hotel(7, name="Project G", keys=200, status="planned"),
+    *_report_hotel(8, name="Project H", keys=275, status="planned"),
+    *_report_hotel(9, name="Project I", keys=320, status="planned"),
+]
+
+
+def test_fon126_b67bfdee_shape_buckets_from_raw_status_and_keeps_the_report_totals() -> None:
+    s = read_supply_growth(B67_ROWS, has_documents=True, as_of_year=AS_OF, market_terms=["Miami Beach"])
+    hotels = s.pipeline_hotels or []
+    assert len(hotels) == 9
+    # The bucket is read from the raw status; the status itself is kept as listed.
+    by_bucket = {b: [h for h in hotels if h.bucket == b] for b in ("under_construction", "final_planning", "planned")}
+    assert len(by_bucket["under_construction"]) == 4
+    assert len(by_bucket["planned"]) == 5
+    assert by_bucket["final_planning"] == []
+    assert {h.status for h in by_bucket["under_construction"]} == {"under_construction"}
+    assert {h.status for h in by_bucket["planned"]} == {"planned"}
+    # The report's own totals, as stated — 1,326 / 1,300 — not sums of the list.
+    assert s.under_construction_rooms == 1326 and s.under_construction_rooms_basis == "reported"
+    assert s.final_planning_rooms == 1300 and s.final_planning_rooms_basis == "reported"
+    # Planned has no stated total: the five "planned" projects' keys, summed.
+    assert s.planned_rooms == 90 + 150 + 200 + 275 + 320 and s.planned_rooms_basis == "summed"
+    # Final Planning never absorbs the "planned" list (7 counted ≠ 5 listed).
+    assert s.final_planning_rooms != s.planned_rooms
+    names = [r.field_name for r in s.inputs]
+    assert "ttm_performance.subject.rooms_under_construction" in names
+    assert "property_overview.final_planning_rooms" in names
+    assert "property_overview.final_planning_projects_count" not in names
+
+
+def test_fon126_snake_case_statuses_map_like_the_printed_ones() -> None:
+    from app.services.market_study_reader import _bucket_for
+
+    assert _bucket_for("under_construction", default=None) == "under_construction"
+    assert _bucket_for("Under Construction", default=None) == "under_construction"
+    assert _bucket_for("planned", default=None) == "planned"
+    assert _bucket_for("Planned", default=None) == "planned"
+    assert _bucket_for("final_planning", default=None) == "final_planning"
+    assert _bucket_for("Final Planning", default=None) == "final_planning"

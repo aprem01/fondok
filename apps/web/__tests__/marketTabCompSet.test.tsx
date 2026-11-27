@@ -30,6 +30,9 @@ import {
   CompSetRoster,
   SubmarketSnapshot,
   SupplyPipeline,
+  PIPELINE_BUCKET_LABEL,
+  pipelineBucketLabel,
+  pipelineStatusTooltip,
   pipelineRoomsBasisNote,
   plainPipelineNote,
   ttmBlendMethodology,
@@ -380,7 +383,9 @@ describe('SupplyPipeline — live CoStar shape: reported share, forecast, filter
     const list = screen.getByTestId('pipeline-hotels');
     expect(within(list).getAllByTestId('pipeline-hotel')).toHaveLength(2);
     expect(within(list).getByText('Shore Club')).toBeInTheDocument();
-    expect(within(list).getByText('Final Planning')).toBeInTheDocument();
+    // FON-126 — the stage from the bucket, the status as listed on hover.
+    const raleighStage = within(list).getByText('Final planning');
+    expect(raleighStage).toHaveAttribute('title', 'Status as listed: Final Planning');
     expect(screen.getByTestId('pipeline-filter')).toHaveTextContent(
       '2 of 7 rows in Miami Beach Supply 12.10.25.xlsx are in miami beach; the rest were not counted.',
     );
@@ -486,5 +491,113 @@ describe('SupplyPipeline — FON-126: table caption and filter note agree on whe
         `no pipeline rows for Austin in ${XLSX} (1 of 3 rows carry no market or submarket and were not counted). The 2 projects listed are from ${PDF}, not from ${XLSX}.`,
       ),
     ).toBe(`No pipeline rows for Austin in ${XLSX}. The 2 projects listed are from ${PDF}, not from ${XLSX}.`);
+  });
+});
+
+/**
+ * FON-126 (Sam QA 2026-11-27, deal b67bfdee) — the Pipeline Hotel table
+ * showed raw status values ("under_construction", "planned") and its five
+ * "planned" projects appeared to sit under a "Final planning 1,300" summary
+ * row while "Planned / unentitled" showed nothing. The summary rows and the
+ * table now share one set of stage names, the raw status is a tooltip, and a
+ * stage the report gives no rooms for shows the dash — never "0 rooms".
+ *
+ * Shape pinned: 4 under construction + 5 planned projects, the report's own
+ * totals 1,326 (under construction) / 1,300 (final planning). Project keys
+ * other than Shore Club (100) and Aman (56) are synthetic test values.
+ */
+describe('FON-126 — Supply Pipeline stage labels (Sam 2026-11-27)', () => {
+  const CO_STAR = 'Miami Beach-Hospitality-Submarket-2025-12-10';
+  const project = (name: string, keys: number, status: 'under_construction' | 'planned') => ({
+    name, keys, status, bucket: status, market: null, submarket: null, expected_open: null,
+    doc_name: CO_STAR, doc_id: 'doc-a', page: 15,
+  });
+  const B67_SUPPLY: MarketSupplyGrowthBlock = {
+    existing_rooms: null,
+    existing_period_label: null,
+    under_construction_rooms: 1326,
+    under_construction_pct: 5.7,
+    under_construction_pct_basis: 'reported',
+    under_construction_rooms_basis: 'reported',
+    final_planning_rooms: 1300,
+    final_planning_pct: null,
+    final_planning_pct_basis: null,
+    final_planning_rooms_basis: 'reported',
+    planned_rooms: 1035,
+    planned_rooms_basis: 'summed',
+    reported_supply_change_pct: null,
+    reported_supply_change_period: null,
+    forecast_supply_change_pct: null,
+    forecast_supply_change_period: null,
+    inputs: [{ field_name: 'ttm_performance.subject.rooms_under_construction', value: 1326, doc_name: CO_STAR, doc_id: 'doc-a', page: 4 }],
+    pipeline_hotels: [
+      project('Shore Club Miami Beach', 100, 'under_construction'),
+      project('Aman Miami Beach', 56, 'under_construction'),
+      project('Project C', 230, 'under_construction'),
+      project('Project D', 940, 'under_construction'),
+      project('Project E', 90, 'planned'),
+      project('Project F', 150, 'planned'),
+      project('Project G', 200, 'planned'),
+      project('Project H', 275, 'planned'),
+      project('Project I', 320, 'planned'),
+    ],
+    pipeline_filter: null,
+    reason: null,
+    detail: null,
+  };
+
+  it('the table shows the stage from the bucket — "Under construction" ×4, "Planned" ×5 — with the raw status as a tooltip', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={B67_SUPPLY} />);
+    const list = screen.getByTestId('pipeline-hotels');
+    const stages = within(list).getAllByTestId('pipeline-hotel-status');
+    expect(stages.map((s) => s.textContent)).toEqual([
+      'Under construction', 'Under construction', 'Under construction', 'Under construction',
+      'Planned', 'Planned', 'Planned', 'Planned', 'Planned',
+    ]);
+    expect(stages[0]).toHaveAttribute('title', 'Status as listed: under_construction');
+    expect(stages[4]).toHaveAttribute('title', 'Status as listed: planned');
+    expect(within(list).queryByText('under_construction')).toBeNull();
+    expect(within(list).queryByText('planned')).toBeNull();
+  });
+
+  // The summary row carrying `label` — the rows sit above the project list,
+  // which now uses the SAME words (so a plain getByText is ambiguous by design).
+  const summaryRow = (label: string): HTMLElement => {
+    const span = screen
+      .getAllByText(label, { selector: 'span' })
+      .find((el) => !el.closest('[data-testid="pipeline-hotels"]'));
+    if (!span) throw new Error(`no summary row "${label}"`);
+    return span.closest('div') as HTMLElement;
+  };
+
+  it('the summary rows use the table’s own terms and the report’s totals: Under construction 1,326 · Final planning 1,300 · Planned 1,035', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={B67_SUPPLY} />);
+    expect(summaryRow('Under construction')).toHaveTextContent('1,326 rooms (+5.7%)');
+    expect(summaryRow('Final planning')).toHaveTextContent('1,300 rooms');
+    expect(summaryRow('Planned')).toHaveTextContent('1,035 rooms');
+    expect(screen.queryByText('Planned / unentitled')).toBeNull();
+    // The caption says which totals are the report's and which are summed.
+    expect(screen.getByTestId('pipeline-listed')).toHaveTextContent(
+      `9 projects listed in ${CO_STAR}. Under construction and final planning are the report’s own stated totals, not a sum of the listed projects; planned is the sum of the listed projects by status.`,
+    );
+  });
+
+  it('a stage the report gives no rooms for shows the dash, never "0 rooms"', () => {
+    render(<SupplyPipeline compKeyCount={344} supply={{ ...B67_SUPPLY, planned_rooms: null, planned_rooms_basis: null }} />);
+    const planned = summaryRow('Planned');
+    expect(planned).toHaveTextContent('—');
+    expect(planned).not.toHaveTextContent('0 rooms');
+  });
+
+  it('pipelineBucketLabel / pipelineStatusTooltip: the bucket names the stage; with no bucket the status is shown as listed', () => {
+    expect(pipelineBucketLabel('under_construction', 'under_construction')).toBe('Under construction');
+    expect(pipelineBucketLabel('final_planning', 'Final Planning')).toBe('Final planning');
+    expect(pipelineBucketLabel('planned', 'planned')).toBe('Planned');
+    expect(pipelineBucketLabel(null, 'Abandoned')).toBe('Abandoned');
+    expect(pipelineBucketLabel(null, null)).toBe('—');
+    expect(pipelineStatusTooltip('planned', 'planned')).toBe('Status as listed: planned');
+    expect(pipelineStatusTooltip('planned', 'Planned')).toBeUndefined();
+    expect(pipelineStatusTooltip('under_construction', null)).toBeUndefined();
+    expect(Object.values(PIPELINE_BUCKET_LABEL)).toEqual(['Under construction', 'Final planning', 'Planned']);
   });
 });

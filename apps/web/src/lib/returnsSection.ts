@@ -26,6 +26,19 @@ export function isReturnsView(sub: string | null | undefined): sub is ReturnsVie
 }
 
 /**
+ * DOM id of the Returns section's header card ("Returns" + its one-line
+ * description, above the view tabs). Sam QA 2026-11-27 (FON-67, deals
+ * b67bfdee / d0bfe816): a "View Returns →" link with no `#anchor` (IC Memo,
+ * Overview's "→ Returns" rows) scrolled the `<section>` once at mount, and
+ * the Overview cards above it — still loading — then pushed it back down,
+ * so the first click "landed" on Entry Valuation / Capitalization. The
+ * header is what such a link lands on now, via the same waiting helper the
+ * exit-year card uses; it renders only once the Returns outputs are in, so
+ * the helper waits for it like any other late card.
+ */
+export const RETURNS_HEADER_ID = 'overview-returns-header';
+
+/**
  * DOM id of the "Returns by exit year" card on the Returns Summary view
  * (FON-67 — the Cash Flow IRR footnote lands on the table, not the section).
  */
@@ -70,6 +83,18 @@ export function returnsAnchorFromUrl(
   params?: { get(name: string): string | null } | null,
 ): string | null {
   return returnsAnchorFromHash(hash) ?? returnsAnchorFromHash(params?.get(RETURNS_ANCHOR_PARAM));
+}
+
+/**
+ * Where a link INTO the Returns section lands: the card the URL names
+ * (`#returns-by-exit-year` / `?anchor=`), else the section header. Never
+ * null — every "View Returns →" entry point waits for a real element.
+ */
+export function returnsLandingAnchor(
+  hash: string | null | undefined,
+  params?: { get(name: string): string | null } | null,
+): string {
+  return returnsAnchorFromUrl(hash, params) ?? RETURNS_HEADER_ID;
 }
 
 /**

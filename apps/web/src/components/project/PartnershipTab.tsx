@@ -993,7 +993,9 @@ export default function PartnershipTab() {
                   gpTotal={gpAllocTotal}
                   total={allocTotal}
                   reconciles={reconcilesFlag === true}
-                  footnote={`Allocation of all projected distributions across the ${has(holdYears) ? holdYears : '—'}-year hold. The promote applies only to residual proceeds above the preferred return and catch-up.`}
+                  // Sam QA 2026-11-27 — name a catch-up only when the
+                  // waterfall has one (deal b67bfdee has none).
+                  footnote={`Allocation of all projected distributions across the ${has(holdYears) ? holdYears : '—'}-year hold. The promote applies only to residual proceeds above the preferred return${hasCatchUp ? ' and catch-up' : ''}.`}
                 />
               </SectionCard>
             </div>
