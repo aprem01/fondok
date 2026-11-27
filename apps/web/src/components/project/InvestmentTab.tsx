@@ -47,7 +47,7 @@ import RenovationBudgetSources from './RenovationBudgetSources';
 import PurchasePriceField, { type PurchasePriceRunner } from './PurchasePriceField';
 import CloseDateField, { closeDatePatch } from './CloseDateField';
 import { useDocuments } from '@/lib/hooks/useDocuments';
-import { ENTRY_CAP_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, inPlaceCap, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_CAP_SUB, ENTRY_NOI_BASIS, ENTRY_NOI_PROJECTED_NOTE, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, entryNoiIsProjected, inPlaceCap, missingIdentityInputs, resolvePurchasePrice } from '@/lib/purchasePrice';
 import RenovationDisplacementSchedule, {
   RENOVATION_SCHEDULE_KEY,
   parseRenovationSchedule,
@@ -649,6 +649,10 @@ export default function InvestmentTab() {
   );
   // FON-122 — "n/a, …" when a closed-at-purchase hotel has no cap to print.
   const { na: capNa } = atEntry;
+  // Review 2026-11-27 (nit 4) — the entry NOI on screen is the bare projected
+  // Year 1 (the run published none): the two rows say so, in the same words
+  // as the exports, instead of an empty note and an unlabelled figure.
+  const entryProjected = entryNoiIsProjected(atEntry);
   const entryCap = atEntry.closed
     ? atEntry.cap
     : has(atEntry.cap)
@@ -880,7 +884,7 @@ export default function InvestmentTab() {
                 value: has(atEntry.entryNoi) ? money(atEntry.entryNoi) : atEntry.closed ? NOT_YET_OPEN : money(entryNoi), link: { label: '→ P&L', tab: 'pl' },
                 // FON-44 — the headline NOI states its basis (full definition in Methodology);
                 // FON-122 — and that it is Year 1 with no closure and no displacement.
-                note: [wEntryNoi.basisConfirmed ? NOI_BEFORE_RESERVE_DEFINITION : null, has(atEntry.entryNoi) ? ENTRY_NOI_BASIS : null].filter(Boolean).join(' · ') || undefined,
+                note: [wEntryNoi.basisConfirmed ? NOI_BEFORE_RESERVE_DEFINITION : null, has(atEntry.entryNoi) ? ENTRY_NOI_BASIS : entryProjected ? ENTRY_NOI_PROJECTED_NOTE : null].filter(Boolean).join(' · ') || undefined,
               },
               {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
@@ -888,8 +892,9 @@ export default function InvestmentTab() {
                 value: capNa ?? pctv(entryCap, 2),
                 // FON-122 — the basis sentence sits on the Entry NOI row above; this row carries the brief
                 // formula (review 2026-11-27: `ENTRY_CAP_SUB`, no longer the same 70-character sentence twice)
-                // only when the entry NOI is not the projected Year 1.
-                note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? ENTRY_CAP_SUB : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                // only when the entry NOI is not the projected Year 1; on a projected
+                // fallback it says so and asks for a re-run (nit 4).
+                note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? ENTRY_CAP_SUB : entryProjected && has(entryCap) ? ENTRY_CAP_PROJECTED_SUB : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 // FON-122 — the in-place cap: the T-12's own NOI before reserve ÷ price; "—" when it states none.

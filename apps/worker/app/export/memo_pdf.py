@@ -60,8 +60,13 @@ from typing import Any
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
 from .labels import (
+    ENTRY_CAP_LABEL,
     ENTRY_CAP_PROJECTED_SUB,
     ENTRY_NOI_BASIS,
+    ENTRY_NOI_PROJECTED_LABEL,
+    T12_NOI_MISSING,
+    entry_basis_is_projected,
+    entry_cap_label,
     EXIT_SCHEDULE_COLUMNS,
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
     EXIT_SCHEDULE_STALE_NOTE,
@@ -111,51 +116,119 @@ _fmt_int = fmt_int
 #: string (``labels.ENTRY_NOI_BASIS``; the web prints the same words) in the
 #: same "<numerator> ÷ price" shape as the T-12 tile beside it. Review
 #: 2026-11-27: a cap that fell back to the projected Year 1 (an open hotel's
-#: pre-FON-122 run, ``entry_noi_basis == "projected_year1"``) says so instead.
-ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
+#: pre-FON-122 run, ``entry_noi_basis == "projected_year1"``) says so instead —
+#: and is LABELLED "Entry Cap (projected Year 1)" (``labels.entry_cap_label``,
+#: nit 4: never "undisplaced" about a figure that may carry the displacement).
+#: ``ENTRY_CAP_LABEL`` is the shared ``labels`` string, imported above.
 ENTRY_CAP_DEFINITION = f"{ENTRY_NOI_BASIS} ÷ price"
 ENTRY_CAP_PROJECTED_DEFINITION = ENTRY_CAP_PROJECTED_SUB
 IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
 IN_PLACE_CAP_DEFINITION = "T-12 NOI before reserve ÷ price"
+#: Review 2026-11-27 (findings 1 / 2) — a closed hotel's REFUSED entry cap
+#: (FON-122: the T-12 is out of date, or the hotel is not yet open with no
+#: entry NOI). The definition line then says why — never "<basis> ÷ price"
+#: about a cap that was not struck — and the figure line points where the web
+#: tile does ("See Yield on Cost on Returns"); neither records a refusal: the
+#: absence is by design, and the "n/a" cell is the reason itself.
+ENTRY_CAP_T12_OUT_OF_DATE_DEFINITION = "The T-12 is out of date for a going-in cap"
+ENTRY_CAP_NOT_YET_OPEN_DEFINITION = "Closed at purchase: no entry NOI to quote a cap on"
+ENTRY_CAP_REFUSED_SUB = "See Yield on Cost"
+#: The short figure label under the entry tile ("Entry NOI $5.31M"); on a
+#: projected fallback the figure names itself (nit 4, the shared label).
+ENTRY_NOI_SHORT = "Entry NOI"
+#: Why the in-place cap cell is a dash — the ONE refusal the T-12 tile records
+#: (``no_source``, the reader's "no twelve-month statement" / no price).
+IN_PLACE_CAP_NO_T12 = "no T-12 NOI before reserve on the basis statement"
+IN_PLACE_CAP_NO_PRICE = "no purchase price to divide the T-12 NOI by"
+
+
+def _entry_cap_refusal(inv: dict[str, Any]) -> str | None:
+    """Why the entry cap reads "n/a": the dated T-12 flag (FON-122) or
+    "not yet open"; None when nothing refused it (a cap the payload simply
+    lacks is a dash, not an n/a)."""
+    out_of_date = inv.get("entry_cap_t12_out_of_date")
+    if isinstance(out_of_date, str) and out_of_date:
+        return out_of_date
+    if inv.get("entry_cap_not_yet_open"):
+        return "not yet open"
+    return None
 
 
 def _entry_cap_definition(inv: dict[str, Any]) -> str:
-    """The entry tile's sub-line: the FON-122 basis ÷ price, or — when the
-    payload says the cap is on the bare projected Year 1 — that, with the
-    re-run ask. Never the basis for a figure that was not struck on it."""
-    if inv.get("entry_noi_basis") == "projected_year1":
+    """The entry tile's definition line: the FON-122 basis ÷ price; on a
+    projected fallback, that with the re-run ask; on a refused cap (out-of-date
+    T-12 / not yet open), the reason — never a basis the cap was not struck on."""
+    out_of_date = inv.get("entry_cap_t12_out_of_date")
+    if isinstance(out_of_date, str) and out_of_date:
+        return ENTRY_CAP_T12_OUT_OF_DATE_DEFINITION
+    if inv.get("entry_cap_not_yet_open"):
+        return ENTRY_CAP_NOT_YET_OPEN_DEFINITION
+    if entry_basis_is_projected(inv):
         return ENTRY_CAP_PROJECTED_DEFINITION
     return ENTRY_CAP_DEFINITION
 
 
-def _noi_behind(label: str, value: Any, concept: str, what: str) -> str:
+def _noi_behind(
+    label: str, value: Any, concept: str, what: str, *, absent: str | None = None
+) -> str:
     """The dollar figure a cap tile is struck on, under the percent
-    ("Entry NOI $5.31M" / "T-12 NOI $4.18M"); a reasoned dash when the
-    payload carries none — never derived back from the cap."""
+    ("Entry NOI $5.31M" / "T-12 NOI $4.18M") — never derived back from the cap.
+
+    ``absent`` names an absence BY DESIGN (the cap was refused; the deal has
+    no twelve-month statement): the short reason prints plainly and NO refusal
+    is recorded — the cap cell beside it already carries the one that is right.
+    Otherwise a figure the payload lacks is a dash recorded with the cap cell's
+    own code (``no_source``; nothing was skipped, so never ``engine_skipped``)."""
+    if absent is not None:
+        return html.escape(absent)
     if value is None:
-        return html.escape(f"{label} ") + refuse(ReasonCode.ENGINE_SKIPPED, f"no {what} on the export payload", concept)
+        return html.escape(f"{label} ") + refuse(ReasonCode.NO_SOURCE, f"no {what} on the export payload", concept)
     return html.escape(f"{label} {_fmt_usd_m(value)}")
+
+
+def _entry_noi_behind(inv: dict[str, Any]) -> str:
+    """Under the entry-cap tile: the entry NOI it is struck on; "See Yield on
+    Cost" (no figure, no refusal) when the cap was refused — a refused cap
+    shows no basis (finding 2) — and the projected label on a fallback."""
+    if _entry_cap_refusal(inv) is not None:
+        return _noi_behind(ENTRY_NOI_SHORT, inv.get("entry_noi_usd"), "entry_noi", "entry NOI", absent=ENTRY_CAP_REFUSED_SUB)
+    label = ENTRY_NOI_PROJECTED_LABEL if entry_basis_is_projected(inv) else ENTRY_NOI_SHORT
+    return _noi_behind(label, inv.get("entry_noi_usd"), "entry_noi", "entry NOI")
+
+
+def _t12_noi_behind(inv: dict[str, Any]) -> str:
+    """Under the in-place tile: the T-12's own NOI before reserve, or the plain
+    "no twelve-month statement" (the cap cell beside it records the refusal)."""
+    t12 = inv.get("t12_noi_before_reserve_usd")
+    if t12 is None:
+        return _noi_behind("T-12 NOI", None, "t12_noi", "T-12 NOI before reserve", absent=T12_NOI_MISSING)
+    return _noi_behind("T-12 NOI", t12, "t12_noi", "T-12 NOI before reserve")
 
 
 def _entry_cap_cell(inv: dict[str, Any]) -> str:
     """The Executive Summary entry-cap cell. FON-122: a closed hotel's
     ``entry_cap_rate_run_rate`` or an open one's ``entry_cap_rate_year1_uw``
     (the same basis under two keys); an out-of-date T-12 prints its dated flag,
-    and with no entry NOI at all it is "n/a, not yet open"."""
-    out_of_date = inv.get("entry_cap_t12_out_of_date")
-    if isinstance(out_of_date, str) and out_of_date:
-        return html.escape(f"n/a, {out_of_date}")
-    if inv.get("entry_cap_not_yet_open"):
-        return "n/a, not yet open"
+    and with no entry NOI at all it is "n/a, not yet open" — both reasons in
+    words, no refusal recorded. A cap the payload simply lacks is a
+    ``no_source`` dash."""
+    refused = _entry_cap_refusal(inv)
+    if refused is not None:
+        return html.escape(f"n/a, {refused}")
     if inv.get("entry_cap_rate_run_rate") is not None:
-        return _fmt_pct(inv.get("entry_cap_rate_run_rate"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
-    return _fmt_pct(inv.get("entry_cap_rate_year1_uw"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
+        return _fmt_pct(inv.get("entry_cap_rate_run_rate"), code=ReasonCode.NO_SOURCE, concept="entry_cap_rate")
+    return _fmt_pct(inv.get("entry_cap_rate_year1_uw"), code=ReasonCode.NO_SOURCE, concept="entry_cap_rate")
 
 
 def _in_place_cap_cell(inv: dict[str, Any]) -> str:
     """The in-place (T-12) cap cell: ``entry_cap_rate_t12`` or a reasoned dash —
-    the basis statement states no NOI before reserve, or there is no price."""
-    return _fmt_pct(inv.get("entry_cap_rate_t12"), code=ReasonCode.ENGINE_SKIPPED, concept="entry_cap_rate")
+    the basis statement states no NOI before reserve, or there is no price.
+    This is the ONE refusal the T-12 tile records (``no_source``)."""
+    cap = inv.get("entry_cap_rate_t12")
+    if cap is None:
+        detail = IN_PLACE_CAP_NO_T12 if inv.get("t12_noi_before_reserve_usd") is None else IN_PLACE_CAP_NO_PRICE
+        return refuse(ReasonCode.NO_SOURCE, detail, "entry_cap_rate")
+    return _fmt_pct(cap, code=ReasonCode.NO_SOURCE, concept="entry_cap_rate")
 _as_float = as_float
 _sum_strict = sum_strict
 
@@ -1567,8 +1640,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 <div class="metrics">
   <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
   <div class="metric"><div class="k">NOI (Y1, before FF&amp;E reserve)</div><div class="d">{html.escape(NOI_BEFORE_RESERVE_DEFINITION)}</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
-  <div class="metric"><div class="k">{html.escape(ENTRY_CAP_LABEL)}</div><div class="d">{html.escape(_entry_cap_definition(inv))}</div><div class="v">{_entry_cap_cell(inv)}</div><div class="s">{_noi_behind("Entry NOI", inv.get("entry_noi_usd"), "entry_noi", "entry NOI")}</div></div>
-  <div class="metric"><div class="k">{html.escape(IN_PLACE_CAP_LABEL)}</div><div class="d">{html.escape(IN_PLACE_CAP_DEFINITION)}</div><div class="v">{_in_place_cap_cell(inv)}</div><div class="s">{_noi_behind("T-12 NOI", inv.get("t12_noi_before_reserve_usd"), "t12_noi", "T-12 NOI before reserve")}</div></div>
+  <div class="metric"><div class="k">{html.escape(entry_cap_label(inv))}</div><div class="d">{html.escape(_entry_cap_definition(inv))}</div><div class="v">{_entry_cap_cell(inv)}</div><div class="s">{_entry_noi_behind(inv)}</div></div>
+  <div class="metric"><div class="k">{html.escape(IN_PLACE_CAP_LABEL)}</div><div class="d">{html.escape(IN_PLACE_CAP_DEFINITION)}</div><div class="v">{_in_place_cap_cell(inv)}</div><div class="s">{_t12_noi_behind(inv)}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
 

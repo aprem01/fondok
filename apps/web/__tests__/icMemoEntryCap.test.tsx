@@ -180,3 +180,49 @@ describe('ICMemoTab — the entry cap shows the entry NOI it is struck on (FON-1
     expect(screen.getByText(/entering on a 0\.0% going-in cap against \$0 of Year-1 NOI/)).toBeInTheDocument();
   });
 });
+
+describe('ICMemoTab — a refused cap shows no basis (review 2026-11-27 round 2, finding 2)', () => {
+  /** A closed-at-purchase hotel: `closedAtEntry` keeps the entry NOI even when the T-12 is out of date. */
+  function closedOutputs(expense: Record<string, unknown>): EngineOutputsResponse {
+    const o = outputs(expense) as unknown as { engines: { revenue: { outputs: Record<string, unknown> } } };
+    o.engines.revenue.outputs = { ...o.engines.revenue.outputs, closed_months: 6 };
+    return o as unknown as EngineOutputsResponse;
+  }
+
+  it('T-12 out of date: the tile reads "n/a, T-12 ends …" over "See Yield on Cost on Returns" — never "Entry NOI $X · <basis>"', () => {
+    fx.outputs = closedOutputs({
+      years: [{ year: 1, noi: 1_200_000, noi_institutional: 1_646_245 }],
+      run_rate_noi_at_entry: 3_028_877, // published, and NOT the cap's basis: the cap was refused
+      t12_period_end: '2025-03-31',
+      t12_months_before_close: 14,
+      t12_ebitda: 2_347_800,
+    });
+    render(<ICMemoTab project={PROJECT} />);
+
+    const na = 'n/a, T-12 ends Mar 2025, 14 months before close';
+    const cap = tile('Going-In Cap Rate');
+    expect(within(cap).getByText(na)).toBeInTheDocument();
+    expect(within(cap).getByText('See Yield on Cost on Returns')).toBeInTheDocument();
+    expect(within(cap).queryByText(/Entry NOI \$/)).toBeNull();
+    expect(within(cap).queryByText(ENTRY_NOI_BASIS)).toBeNull();
+    expect(within(cap).queryByText('$3.03M', { exact: false })).toBeNull();
+    // The Capitalization row carries the refusal alone — no "· Entry NOI $3.03M" after it.
+    expect(screen.getAllByText(na).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/n\/a, T-12 ends .* · Entry NOI/)).toBeNull();
+    // The in-place cap beside it still reads (6.45% = $2.35M ÷ $36.4M).
+    expect(within(tile(IN_PLACE_CAP_LABEL)).getByText('6.45%')).toBeInTheDocument();
+  });
+
+  it('not yet open: the same order — the refusal, then yield on cost, no figure', () => {
+    fx.outputs = closedOutputs({
+      years: [{ year: 1, noi: -400_000, noi_institutional: -200_000 }],
+      t12_ebitda: 2_347_800,
+    });
+    render(<ICMemoTab project={PROJECT} />);
+    const cap = tile('Going-In Cap Rate');
+    expect(within(cap).getByText('n/a, not yet open')).toBeInTheDocument();
+    expect(within(cap).getByText('See Yield on Cost on Returns')).toBeInTheDocument();
+    expect(within(cap).queryByText(/Entry NOI/)).toBeNull();
+    expect(within(cap).queryByText(ENTRY_CAP_PROJECTED_SUB)).toBeNull();
+  });
+});

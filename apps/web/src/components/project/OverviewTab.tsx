@@ -108,6 +108,9 @@ import {
   entryCapRate,
   ENTRY_CAP_PROJECTED_SUB,
   ENTRY_CAP_SUB,
+  ENTRY_NOI_PROJECTED_LABEL,
+  ENTRY_NOI_PROJECTED_NOTE,
+  entryNoiIsProjected,
   ENTRY_NOI_BASIS,
   IN_PLACE_CAP_LABEL,
   IN_PLACE_CAP_MISSING,
@@ -799,6 +802,10 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
   // The capital engine publishes no entry cap rate: it is always this
   // derivation, so it can never disagree with the price on screen.
   const entryCap = atEntry.closed ? atEntry.cap : entryCapCalc.value;
+  // Review 2026-11-27 (nit 4) — the entry NOI on screen is the bare projected
+  // Year 1 (an open hotel's run that published none): every line that names
+  // it says so, none claims the T-12-index basis or an "Entry NOI" bare.
+  const entryProjected = entryNoiIsProjected(atEntry);
   // FON-122 — the in-place cap beside it: the T-12's own NOI before reserve ÷ price.
   const t12Ebitda = getEngineField<number>(outputs, 'expense', 't12_ebitda');
   const inPlace = inPlaceCap(t12Ebitda, priceInput.value);
@@ -1011,7 +1018,9 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // (`labelSub`) as well as in the popover (`sub`).
       // FON-122 (Sam, 2026-11-23) — the entry NOI is Year 1 with no closure and
       // no displacement; the popover states that basis.
-      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', has(atEntry.entryNoi) ? money(atEntry.entryNoi) : atEntry.closed ? NOT_YET_OPEN : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}. ${ENTRY_NOI_BASIS}.`, labelSub: NOI_BEFORE_RESERVE_DEFINITION }),
+      // Review 2026-11-27 (nit 4) — on a projected fallback the popover says
+      // what the figure is and asks for a re-run instead of claiming the basis.
+      lnk('entryNOI', 'Run-Rate / Entry NOI (before FF&E reserve)', has(atEntry.entryNoi) ? money(atEntry.entryNoi) : atEntry.closed ? NOT_YET_OPEN : money(y1Noi), '→ P&L', 'pl', { linkSub: 'historicals', sub: `${NOI_BEFORE_RESERVE_DEFINITION}. ${entryProjected ? ENTRY_NOI_PROJECTED_NOTE : ENTRY_NOI_BASIS}.`, labelSub: NOI_BEFORE_RESERVE_DEFINITION }),
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
@@ -1019,11 +1028,12 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // the bare "Entry NOI ÷ Purchase Price", the label-sub the brief
       // "Entry NOI ÷ price", and the sub one statement (the basis sentence
       // lives on the Entry NOI row above). A cap on the projected Year 1 (no
-      // entry NOI on the run) says so instead of claiming the basis.
+      // entry NOI on the run) says so instead of claiming the basis — on the
+      // label-sub and the input's name too (nit 4), not only in the popover.
       cal('entryCap', 'Entry Cap Rate', capNa ?? pctv(entryCap), {
         trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: ENTRY_CAP_FORMULA,
-        labelSub: ENTRY_CAP_SUB,
-        inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
+        labelSub: entryProjected ? ENTRY_CAP_PROJECTED_SUB : ENTRY_CAP_SUB,
+        inputs: [{ name: entryProjected ? ENTRY_NOI_PROJECTED_LABEL : 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
         ...(atEntry.outOfDate
           ? { sub: `The T-12 is out of date for a going-in cap (${atEntry.outOfDate}). See Yield on Cost on Returns.` }
           : atEntry.notYetOpen

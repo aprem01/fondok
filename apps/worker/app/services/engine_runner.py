@@ -10511,6 +10511,16 @@ def run_aborted_message(exc: BaseException) -> str:
     )
 
 
+def run_aborted_while_running_message(exc: BaseException) -> str:
+    """The ``error`` text on the ``running`` row the RAISING step left behind
+    (review 2026-11-27, nit 3b): that engine was not "before" the abort — it
+    was the one running when the chain died. Type only, as above."""
+    return (
+        f"run aborted while this engine was running ({type(exc).__name__}); "
+        "the failure has been logged"
+    )
+
+
 async def _abort_remaining_engines(
     session: AsyncSession,
     *,
@@ -10522,12 +10532,23 @@ async def _abort_remaining_engines(
     exc: BaseException,
 ) -> None:
     """Land a ``failed`` row for every engine in ``ENGINE_NAMES`` that has
-    none for this run (``engine_error``, "run aborted before this engine:
-    <error>"), and fail a ``running`` row the raising step left behind the
-    same way, so ``get_run_status`` reports a terminal run.
+    none for this run (``engine_error``, "run aborted before this engine
+    (<Type>); the failure has been logged"), and fail the ``running`` row the
+    raising step left behind with its own words ("run aborted while this
+    engine was running (<Type>); the failure has been logged"), so
+    ``get_run_status`` reports a terminal run. Row text names the exception
+    TYPE only (:func:`run_aborted_message`); the message goes to the log.
 
-    Best-effort: a persistence failure here is logged, never raised over the
-    original exception."""
+    Best-effort: a persistence failure on one engine is logged, never raised
+    over the original exception, and the session is rolled back before the
+    next engine is tried — on Postgres one failed INSERT aborts the whole
+    transaction, and without that rollback every later row would fail too.
+
+    Out of scope: ``asyncio.CancelledError`` (worker shutdown, a cancelled
+    request) is a ``BaseException`` that the ``except Exception`` clauses here
+    let through on purpose. The terminal-row guarantee holds for exceptions;
+    a cancelled task is not caught to write rows (never ``except
+    BaseException`` here)."""
     # On Postgres the failed statement aborted the transaction; nothing can be
     # written until it is rolled back (see the loader branch above).
     try:
@@ -10535,6 +10556,7 @@ async def _abort_remaining_engines(
     except Exception:  # noqa: BLE001
         logger.debug("abort: rollback failed", exc_info=True)
     message = run_aborted_message(exc)
+    running_message = run_aborted_while_running_message(exc)
     try:
         rows = (
             await session.execute(
@@ -10552,15 +10574,16 @@ async def _abort_remaining_engines(
     for name in ENGINE_NAMES:
         if name in results:
             continue
+        row = written.get(name)
+        was_running = row is not None and row["status"] == "running"
         failure = EngineFailure(
             engine=name,
             reason=ReasonCode.ENGINE_ERROR,
-            message=message,
+            message=running_message if was_running else message,
             exception_type=type(exc).__name__,
         )
         try:
-            row = written.get(name)
-            if row is not None and row["status"] == "running":
+            if was_running:
                 await _persist_failed(session, row_id=str(row["id"]), tenant_id=tenant_id, failure=failure)
                 record(_failed_result(failure, runtime_ms=0))
             elif row is None:
@@ -10571,6 +10594,12 @@ async def _abort_remaining_engines(
                 )
         except Exception:  # noqa: BLE001
             logger.exception("abort: could not fail engine %s on run %s", name, run_id)
+            # Postgres: the failed statement aborted the transaction; roll it
+            # back so the NEXT engine's row can still be written (nit 3a).
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                logger.debug("abort: rollback after a failed row write failed", exc_info=True)
 
 
 async def _run_chain(

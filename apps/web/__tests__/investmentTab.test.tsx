@@ -19,7 +19,7 @@
  *     data-integrity bug.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, ON_UNDISPLACED_YEAR_ONE } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_CAP_SUB, ENTRY_NOI_BASIS, ENTRY_NOI_PROJECTED_NOTE, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_MISSING, IN_PLACE_CAP_SUB, ON_UNDISPLACED_YEAR_ONE } from '@/lib/purchasePrice';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import type { EngineOutputsResponse, TimelineResponse } from '@/lib/api';
@@ -307,6 +307,24 @@ describe('InvestmentTab — entry cap on the undisplaced Year 1 and the in-place
     expect(screen.getAllByText(IN_PLACE_CAP_SUB, { exact: false }).length).toBeGreaterThan(0);
     // The Purchase Price tile carries both caps.
     expect(screen.getByText(`10.00% going-in ${ON_UNDISPLACED_YEAR_ONE} · 8.00% in-place (T-12)`)).toBeInTheDocument();
+  });
+
+  it('review 2026-11-27 round 2 (nit 4) — a run with no entry NOI: the Entry Cap note says projected and the Entry NOI row names the figure, never the basis', () => {
+    // No `run_rate_noi_at_entry` on the fixture: an open hotel's pre-FON-122 run.
+    render(<InvestmentTab />);
+    expect(rowValueCell('Entry Cap Rate').textContent).toContain('9.12%'); // 3.1M ÷ 34M, the projected Year 1
+    expect(screen.getAllByText(ENTRY_CAP_PROJECTED_SUB, { exact: false }).length).toBeGreaterThan(0);
+    expect(ENTRY_CAP_PROJECTED_SUB).toBe('Projected Year 1 NOI ÷ price · re-run the model for the entry basis');
+    expect(screen.getAllByText(ENTRY_NOI_PROJECTED_NOTE, { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(ENTRY_NOI_BASIS, { exact: false })).toHaveLength(0);
+    expect(screen.queryAllByText(ENTRY_CAP_SUB, { exact: true })).toHaveLength(0);
+    cleanup();
+    // The engine's own entry NOI: the basis is back and nothing says projected.
+    expense.run_rate_noi_at_entry = 3_100_000;
+    render(<InvestmentTab />);
+    expect(screen.getAllByText(ENTRY_NOI_BASIS, { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(ENTRY_CAP_PROJECTED_SUB, { exact: false })).toHaveLength(0);
+    expect(screen.queryAllByText(ENTRY_NOI_PROJECTED_NOTE, { exact: false })).toHaveLength(0);
   });
 
   it('an undisturbed deal reads its own Year 1 with nothing to say; no T-12 NOI → a dash, never a derived figure', () => {
@@ -1260,13 +1278,14 @@ describe('InvestmentTab — E-020 Entry Cap Rate comps range hint', () => {
   it('shows the range, median and deal count from comps that disclose a cap rate', async () => {
     compsRange = { low_pct: 6.8, high_pct: 8.1, median_pct: 7.5, n: 3 };
     render(<InvestmentTab />);
-    expect(await screen.findByText('Comps range: 6.8%–8.1% (median 7.5%, 3 deals)')).toBeInTheDocument();
+    // The hint shares the Entry Cap note with the basis line (on this fixture the projected sub, nit 4), so match the substring.
+    expect(await screen.findByText('Comps range: 6.8%–8.1% (median 7.5%, 3 deals)', { exact: false })).toBeInTheDocument();
   });
 
   it('says so when fewer than two comps carry a cap rate', async () => {
     compsRange = null;
     render(<InvestmentTab />);
-    expect(await screen.findByText('Comps range: no comparable cap rates extracted')).toBeInTheDocument();
+    expect(await screen.findByText('Comps range: no comparable cap rates extracted', { exact: false })).toBeInTheDocument();
   });
 });
 

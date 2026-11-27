@@ -210,7 +210,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import { ENTRY_CAP_PROJECTED_SUB, ENTRY_CAP_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, inPlaceCap, t12OutOfDate } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_CAP_SUB, ENTRY_NOI_BASIS, ENTRY_NOI_PROJECTED_LABEL, ENTRY_NOI_PROJECTED_NOTE, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, entryNoiIsProjected, inPlaceCap, t12OutOfDate } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
@@ -474,8 +474,55 @@ describe('OverviewTab — "Where this came from" popover', () => {
     dialog = openEntryCap();
     expect(dialog).toContain(ENTRY_CAP_PROJECTED_SUB);
     expect(count(dialog, ENTRY_NOI_BASIS)).toBe(0);
-    // ...while the Entry NOI row itself still carries the basis in its own popover.
+    // Review round 2 (nit 4): the label-sub under the row says the same — not the bare formula.
+    expect(screen.getAllByText(ENTRY_CAP_PROJECTED_SUB).length).toBeGreaterThan(0);
+    expect(screen.queryByText(ENTRY_CAP_SUB)).toBeNull();
+  });
+
+  it('review 2026-11-27 round 2 (nit 4) — a projected fallback is labelled projected on every line: label-sub, the cap input, the Entry NOI popover', () => {
+    // The default fixture publishes no `run_rate_noi_at_entry`: an open hotel's pre-FON-122 run.
+    outputsRef.value = OUTPUTS;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const entry = screen.getByTestId('overview-section-entry-valuation');
+    expect(rowValue('Entry Cap Rate')).toBe('9.12%');
+    // The label-subs: the Entry NOI definition, the PROJECTED cap sub, the in-place sub.
+    expect(screen.getAllByTestId('overview-row-label-sub').map((el) => el.textContent)).toEqual([
+      'After property tax and insurance, before the FF&E reserve', ENTRY_CAP_PROJECTED_SUB, IN_PLACE_CAP_SUB,
+    ]);
+    // The cap popover names its input as the projected figure, never "Entry NOI" bare.
+    fireEvent.click(within(entry).getByText('Entry Cap Rate'));
+    let dialog = screen.getByRole('dialog', { name: /Where Entry Cap Rate came from/i }).textContent ?? '';
+    expect(dialog).toContain(ENTRY_NOI_PROJECTED_LABEL);
+    expect(ENTRY_NOI_PROJECTED_LABEL).toBe('Entry NOI (projected Year 1)');
+    expect(dialog).not.toContain(ENTRY_NOI_BASIS);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    cleanup();
+
+    // The Entry NOI row's own popover says what the figure is and asks for a re-run — not the basis.
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    const label = 'Run-Rate / Entry NOI (before FF&E reserve)';
+    fireEvent.click(rowFor(label).lastElementChild as HTMLElement);
+    dialog = screen.getByRole('dialog', { name: /Where Run-Rate \/ Entry NOI \(before FF&E reserve\) came from/i }).textContent ?? '';
+    expect(dialog).toContain(ENTRY_NOI_PROJECTED_NOTE);
+    expect(ENTRY_NOI_PROJECTED_NOTE).toBe('Projected Year 1 NOI · re-run the model for the entry basis');
+    expect(dialog).not.toContain(ENTRY_NOI_BASIS);
+    cleanup();
+
+    // With the engine's entry NOI on the run nothing is "projected" anywhere.
+    const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    outputsRef.value = {
+      ...OUTPUTS,
+      engines: { ...base.engines, expense: { ...base.engines.expense, outputs: { ...base.engines.expense.outputs, run_rate_noi_at_entry: 3_100_000 } } },
+    } as unknown as EngineOutputsResponse;
+    render(<OverviewTab projectId="deal-uuid-1" />);
     expect(screen.getByText(ENTRY_CAP_SUB)).toBeInTheDocument();
+    expect(screen.queryByText(ENTRY_CAP_PROJECTED_SUB)).toBeNull();
+    expect(screen.queryByText(ENTRY_NOI_PROJECTED_LABEL)).toBeNull();
+    // The helper itself: open + no entry NOI → projected; closed, or an entry NOI, → not.
+    expect(entryNoiIsProjected(closedAtEntry(0, null, 34_000_000))).toBe(true);
+    expect(entryNoiIsProjected(closedAtEntry(0, 3_100_000, 34_000_000))).toBe(false);
+    expect(entryNoiIsProjected(closedAtEntry(6, null, 34_000_000))).toBe(false);
+    outputsRef.value = OUTPUTS;
   });
 });
 
@@ -814,8 +861,9 @@ describe('OverviewTab — deep links name the target sub-tab', () => {
     expect(sub).toHaveTextContent(NOI_BEFORE_RESERVE_DEFINITION);
     expect(NOI_BEFORE_RESERVE_DEFINITION).toBe('After property tax and insurance, before the FF&E reserve');
     // FON-122 (Sam, 2026-11-23) — the two cap rows carry their basis the same way; no other row does.
+    // (The default fixture publishes no entry NOI, so the cap's sub is the projected one — nit 4.)
     expect(screen.getAllByTestId('overview-row-label-sub').map((el) => el.textContent)).toEqual([
-      NOI_BEFORE_RESERVE_DEFINITION, ENTRY_CAP_SUB, IN_PLACE_CAP_SUB,
+      NOI_BEFORE_RESERVE_DEFINITION, ENTRY_CAP_PROJECTED_SUB, IN_PLACE_CAP_SUB,
     ]);
     expect(rowValue('Run-Rate / Entry NOI (before FF&E reserve)')).toBe('$3,100,000');
   });
