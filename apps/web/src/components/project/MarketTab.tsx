@@ -474,6 +474,46 @@ export const HOTEL_NAME_SEP = ' · ';
  * by status, from the worker's `*_rooms_basis`. Null when the worker sends
  * no basis (older worker) or no total is shown, so nothing is claimed.
  */
+/**
+ * FON-126 (Sam QA 2026-11-27, deal b67bfdee) — the Pipeline Hotel table
+ * showed the extraction's raw status values ("under_construction",
+ * "planned") while the summary rows above it said "Under construction" /
+ * "Final planning" / "Planned / unentitled", so five "planned" projects
+ * appeared to sit under a "Final planning 1,300" row that is the report's
+ * own stated Final Planning total (CoStar p.3: 1,300 rooms / 7 projects),
+ * not a sum of those five. The buckets are unchanged — the report's Final
+ * Planning figure and its list's "planned" projects are different stage
+ * counts and do not add up — but the three stage names are now one map,
+ * used by the summary rows and the table alike, and the status as listed
+ * in the document is kept on the row as a tooltip.
+ */
+export const PIPELINE_BUCKET_LABEL: Record<NonNullable<MarketPipelineHotel['bucket']>, string> = {
+  under_construction: 'Under construction',
+  final_planning: 'Final planning',
+  planned: 'Planned',
+};
+
+/** The stage shown in the table: the bucket's label; with no bucket, the
+ *  status exactly as the document lists it (never an invented stage). */
+export function pipelineBucketLabel(
+  bucket: MarketPipelineHotel['bucket'],
+  status: string | null | undefined,
+): string {
+  if (bucket) return PIPELINE_BUCKET_LABEL[bucket];
+  return status?.trim() || '—';
+}
+
+/** Tooltip: the raw status when it is not already the label. */
+export function pipelineStatusTooltip(
+  bucket: MarketPipelineHotel['bucket'],
+  status: string | null | undefined,
+): string | undefined {
+  const raw = status?.trim();
+  if (!raw) return undefined;
+  const label = pipelineBucketLabel(bucket, status);
+  return raw === label ? undefined : `Status as listed: ${raw}`;
+}
+
 export function pipelineRoomsBasisNote(supply: MarketSupplyGrowthBlock | null | undefined): string | null {
   if (!supply) return null;
   const parts: { label: string; basis: 'reported' | 'summed' }[] = [];
@@ -1148,17 +1188,20 @@ export function SupplyPipeline({
       'Submarket inventory',
       rooms(supply?.existing_rooms, null, supply?.existing_period_label ? ` · ${supply.existing_period_label}` : ''),
     ),
+    // FON-126 (Sam QA 2026-11-27) — the summary rows and the project list
+    // use the same three stage names (`PIPELINE_BUCKET_LABEL`), so a project
+    // labelled "Planned" can never sit under a row called something else.
     row(
-      'Under construction',
+      PIPELINE_BUCKET_LABEL.under_construction,
       rooms(supply?.under_construction_rooms, supply?.under_construction_pct),
       shareColor(supply?.under_construction_pct_basis),
     ),
     row(
-      'Final planning',
+      PIPELINE_BUCKET_LABEL.final_planning,
       rooms(supply?.final_planning_rooms, supply?.final_planning_pct),
       shareColor(supply?.final_planning_pct_basis),
     ),
-    row('Planned / unentitled', rooms(supply?.planned_rooms)),
+    row(PIPELINE_BUCKET_LABEL.planned, rooms(supply?.planned_rooms)),
     { label: 'Expected deliveries', value: '—', color: MUTED, weight: 400, awaiting: true },
     row('Submarket supply growth', reported),
   ];
@@ -1186,9 +1229,6 @@ export function SupplyPipeline({
           listedDocs.length ? ` in ${listedDocs.join(' and ')}` : ''
         }.${roomsBasisNote ? ` ${roomsBasisNote}` : ''}`
       : null;
-  const bucketLabel = (b: MarketPipelineHotel['bucket'], status: string | null | undefined): string =>
-    status?.trim() ||
-    (b === 'under_construction' ? 'Under construction' : b === 'final_planning' ? 'Final planning' : b === 'planned' ? 'Planned' : '—');
   return (
     <SectionCard title="Supply Pipeline" note="CoStar Hospitality">
       <div style={{ marginTop: 10 }}>
@@ -1273,7 +1313,13 @@ export function SupplyPipeline({
                 )}
               </span>
               <span style={{ textAlign: 'right', color: '#3a3f47', fontVariantNumeric: 'tabular-nums' }}>{h.keys ?? '—'}</span>
-              <span style={{ color: '#3a3f47' }}>{bucketLabel(h.bucket, h.status)}</span>
+              <span
+                style={{ color: '#3a3f47' }}
+                data-testid="pipeline-hotel-status"
+                title={pipelineStatusTooltip(h.bucket, h.status)}
+              >
+                {pipelineBucketLabel(h.bucket, h.status)}
+              </span>
               <span style={{ color: h.expected_open ? '#3a3f47' : palette.textFaint }}>{h.expected_open ?? '—'}</span>
             </div>
           ))}

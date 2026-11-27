@@ -55,6 +55,12 @@ export interface CoachMarkProps {
   viewKey?: string;
   /** Default 0 — lower numbers render first when sequencing on a view. */
   order?: number;
+  /** Hold the mark closed WITHOUT dismissing it — e.g. while the view it
+   *  sits on was reached by a deep link and is being scrolled into place
+   *  (Sam QA 2026-11-27: the Returns hint opened over a page still moving).
+   *  The mark keeps its place in the view's queue, so no later mark jumps
+   *  in; it opens as soon as the flag drops. */
+  suspended?: boolean;
   /** Wrapper layout. Defaults to `block` so full-width form fields and
    *  cards keep their dimensions. Switch to `inline` when the target is
    *  a chip / badge inside running text. */
@@ -244,6 +250,7 @@ export function CoachMark({
   learnMoreHref,
   viewKey,
   order = 0,
+  suspended = false,
   layout = 'block',
   children,
 }: CoachMarkProps) {
@@ -338,7 +345,7 @@ export function CoachMark({
     return () => window.removeEventListener('keydown', onKey);
   }, [active, dismiss]);
 
-  const showCoach = hintsEnabled && active;
+  const showCoach = hintsEnabled && active && !suspended;
 
   return (
     <>

@@ -42,7 +42,7 @@ import {
   SELECTED_EXIT_MISSING,
 } from '@/lib/engines/returns';
 import { REASONS } from '@/lib/ontology/reasons.generated';
-import { EXIT_SCHEDULE_ANCHOR_ID, RETURNS_ANCHOR_PARAM, returnsHref } from '@/lib/returnsSection';
+import { EXIT_SCHEDULE_ANCHOR_ID, RETURNS_ANCHOR_PARAM, RETURNS_HEADER_ID, returnsHref } from '@/lib/returnsSection';
 
 // ── Fixture: a five-year hold sold at month 60, peak levered IRR in Year 3 ──
 const SELECTED_LEVERED = 0.2301;
@@ -618,11 +618,12 @@ describe('FON-67 — "Returns by exit year →" lands on the table', () => {
     expect(calls[0].opts).toEqual({ behavior: 'smooth', block: 'start' });
   });
 
-  it('without the fragment the section scrolls as before', () => {
+  it('without the fragment the landing is the Returns header (Sam 2026-11-27 — not a one-shot scroll of the bare section)', () => {
     nav.params = new URLSearchParams('tab=overview&sub=returns-summary');
     render(<ReturnsTab />);
     expect(calls).toHaveLength(1);
-    expect(calls[0].el).toBe(screen.getByTestId('overview-returns'));
+    expect(calls[0].el).toBe(screen.getByTestId('overview-returns-header'));
+    expect(calls[0].el.id).toBe(RETURNS_HEADER_ID);
   });
 
   it('the same request on ?anchor= (no fragment) lands on the card too', () => {
