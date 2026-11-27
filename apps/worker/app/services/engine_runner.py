@@ -10498,8 +10498,17 @@ async def run_all_engines(
 
 
 def run_aborted_message(exc: BaseException) -> str:
-    """The ``error`` text on an engine row the chain never reached."""
-    return f"run aborted before this engine: {exc}"
+    """The ``error`` text on an engine row the chain never reached.
+
+    Names only the exception TYPE: this text is served to the browser on the
+    run-status endpoint, and a driver or ORM error's ``str()`` can carry SQL,
+    a host name or a connection string. The full exception goes to the log
+    (``logger.exception`` in ``run_all_engines``), never to the row.
+    """
+    return (
+        f"run aborted before this engine ({type(exc).__name__}); "
+        "the failure has been logged"
+    )
 
 
 async def _abort_remaining_engines(

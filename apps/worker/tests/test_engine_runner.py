@@ -232,7 +232,10 @@ async def test_an_exception_mid_chain_still_lands_a_terminal_row_for_every_engin
     for name in ("expense", "capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
         row = by_engine[name]
         assert row["status"] == "failed", (name, row["status"])
-        assert row["error"] == "run aborted before this engine: database went away", name
+        assert row["error"] == (
+            "run aborted before this engine (RuntimeError); the failure has been logged"
+        ), name
+        assert "database went away" not in row["error"], "raw exception text must not reach the row"
         assert row["failure"]["reason"] == "engine_error"
         assert row["failure"]["exception_type"] == "RuntimeError"
         assert row["completed_at"] is not None
