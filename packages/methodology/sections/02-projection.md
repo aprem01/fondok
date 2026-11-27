@@ -353,8 +353,11 @@ the In-place cap row its own ("T-12 NOI before reserve ÷ price"); the IC memo's
 the NOI each is struck on under the percent ("Entry NOI $5.31M", "T-12 NOI $4.18M") with the same two
 sub-lines, the entry one ending "… ÷ price" like the T-12's. A run made before this rule published no entry NOI for
 an open hotel, so its cap is the projected Year 1 ÷ price; every surface then says exactly that
-("Projected Year 1 NOI ÷ price · re-run the model for the entry basis") and never attaches the basis
-above to it. In the Excel acquisition model (cover and Assumptions
+("Projected Year 1 NOI ÷ price · re-run the model for the entry basis"), labels the pair *Entry NOI
+(projected Year 1)* / *Entry Cap (projected Year 1)* — never "undisplaced" — and never attaches the
+basis above to it. A closed hotel whose cap is refused (its T-12 is out of date, or it is not yet open
+with no entry NOI) shows the reason and "See Yield on Cost", not a basis or an entry NOI figure, and
+the memo records no refusal for an absence the reason already explains. In the Excel acquisition model (cover and Assumptions
 sheet) each numerator is its own row in whole dollars — *Entry NOI (Year 1, undisplaced)* and *T-12
 NOI (before FF&E reserve)* — and each cap is the Excel formula NOI ÷ Purchase Price over those cells,
 so a reader can trace it; a deal without a twelve-month statement reads "not available: no

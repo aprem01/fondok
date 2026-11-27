@@ -415,23 +415,27 @@ const xMult = (v: number | null): string => (v == null ? '—' : `${v.toFixed(2)
 const pctOr = (v: number | null, d = 1): string => (v == null ? '—' : fmtPct(v, d));
 
 /**
- * The lines under the Going-In Cap tile (review 2026-11-27). The entry NOI
- * and its basis only when the run published that NOI (`!= null`: an entry NOI
- * of $0 is still one); a refused cap (closed hotel: stale T-12 / not yet open)
- * points at yield on cost; a cap on the projected Year 1 says so.
+ * The lines under the Going-In Cap tile (review 2026-11-27). A REFUSED cap
+ * (closed hotel: stale T-12 / not yet open) is checked first and points at
+ * yield on cost — `closedAtEntry` keeps `entryNoi` when the T-12 is out of
+ * date, and the tile used to print "n/a, T-12 ends …" over "Entry NOI $X ·
+ * <basis>" (a refused cap shows no basis). Then the entry NOI and its basis
+ * when the run published that NOI (`!= null`: an entry NOI of $0 is still
+ * one); a cap on the projected Year 1 says so.
  */
 function entryCapSub(m: DealMetrics): string[] {
-  if (m.entryNoi != null) return [`Entry NOI ${mm(m.entryNoi)}`, ENTRY_NOI_BASIS];
   if (m.capNa != null) return ['See Yield on Cost on Returns'];
+  if (m.entryNoi != null) return [`Entry NOI ${mm(m.entryNoi)}`, ENTRY_NOI_BASIS];
   if (m.capRate != null) return [ENTRY_CAP_PROJECTED_SUB];
   return [];
 }
 
-/** The Capitalization row's value for the same cap: "8.32% · Entry NOI $3.03M", or the cap alone when the run published no entry NOI. */
+/** The Capitalization row's value for the same cap: the refusal alone ("n/a, …"), "8.32% · Entry NOI $3.03M", or the cap alone when the run published no entry NOI. */
 function entryCapRow(m: DealMetrics): string {
-  const cap = m.capNa ?? pctOr(m.capRate, 2);
+  if (m.capNa != null) return m.capNa;
+  const cap = pctOr(m.capRate, 2);
   if (m.entryNoi != null) return `${cap} · Entry NOI ${mm(m.entryNoi)}`;
-  if (m.capNa == null && m.capRate != null) return `${cap} · projected Year 1 NOI`;
+  if (m.capRate != null) return `${cap} · projected Year 1 NOI`;
   return cap;
 }
 

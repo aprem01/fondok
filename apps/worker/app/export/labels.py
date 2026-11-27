@@ -49,6 +49,40 @@ ENTRY_CAP_PROJECTED_SUB = "Projected Year 1 NOI ÷ price · re-run the model for
 #: sheet), where "÷ price" would mis-describe a dollar figure.
 ENTRY_NOI_PROJECTED_NOTE = "Projected Year 1 NOI · re-run the model for the entry basis"
 
+#: Sam QA 2026-11-27 — the Entry NOI row and the entry-cap row / tile labels
+#: every export prints (workbook cover + Assumptions, memo Executive Summary).
+ENTRY_NOI_LABEL = "Entry NOI (Year 1, undisplaced)"
+ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
+#: Review 2026-11-27 (nit 4) — and what the pair is called INSTEAD when the cap
+#: fell back to the bare projected Year 1 (``entry_noi_basis ==
+#: "projected_year1"``): "undisplaced" is a claim about a figure that may still
+#: carry the displacement, so the label names the figure. ONE rule on every
+#: surface — the web's ``ENTRY_NOI_PROJECTED_LABEL`` / ``ENTRY_CAP_PROJECTED_LABEL``
+#: (apps/web/src/lib/purchasePrice.ts) are the same words.
+ENTRY_NOI_PROJECTED_LABEL = "Entry NOI (projected Year 1)"
+ENTRY_CAP_PROJECTED_LABEL = "Entry Cap (projected Year 1)"
+#: ``investment_engine.entry_noi_basis`` when the projected Year 1 stands in
+#: (``live_payload.ENTRY_NOI_BASIS_PROJECTED_Y1`` writes the same code).
+ENTRY_NOI_BASIS_PROJECTED = "projected_year1"
+#: The in-place pair's numerator row, and why it is absent.
+T12_NOI_LABEL = "T-12 NOI (before FF&E reserve)"
+T12_NOI_MISSING = "no twelve-month statement"
+
+
+def entry_basis_is_projected(inv: Any) -> bool:
+    """True when the payload says the entry NOI is the bare projected Year 1."""
+    return isinstance(inv, dict) and inv.get("entry_noi_basis") == ENTRY_NOI_BASIS_PROJECTED
+
+
+def entry_noi_label(inv: Any) -> str:
+    """The Entry NOI row label for this payload (nit 4: one rule everywhere)."""
+    return ENTRY_NOI_PROJECTED_LABEL if entry_basis_is_projected(inv) else ENTRY_NOI_LABEL
+
+
+def entry_cap_label(inv: Any) -> str:
+    """The entry-cap row / tile label for this payload."""
+    return ENTRY_CAP_PROJECTED_LABEL if entry_basis_is_projected(inv) else ENTRY_CAP_LABEL
+
 #: NOI net of the FF&E reserve.
 CASH_NOI = "Cash NOI (after FF&E reserve)"
 

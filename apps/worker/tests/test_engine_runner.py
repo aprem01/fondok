@@ -194,8 +194,10 @@ async def test_an_exception_mid_chain_still_lands_a_terminal_row_for_every_engin
     error, which ``run_single_engine`` catches) used to leave the engines after
     it with no row at all: the web polled until its 60 s timeout. Now every
     scheduled engine without a row lands ``failed`` with "run aborted before
-    this engine: <error>", the exception still propagates, and the run is
-    terminal (no ``running`` row, one row per engine)."""
+    this engine (<Type>); the failure has been logged", the exception still
+    propagates, and the run is terminal (no ``running`` row, one row per
+    engine). Here the raise happens BEFORE expense's own row exists, so
+    expense too is "before this engine"."""
     from app.database import get_session_factory
     from app.services import engine_runner
     from app.services.engine_runner import ENGINE_NAMES, get_run_status, run_all_engines
@@ -243,6 +245,119 @@ async def test_an_exception_mid_chain_still_lands_a_terminal_row_for_every_engin
     # The on_complete hook saw every engine reach a terminal state too.
     assert sorted(seen) == sorted(ENGINE_NAMES)
     assert {seen[n] for n in ("expense", "cash_flow")} == {"failed"}
+
+
+@pytest.mark.asyncio
+async def test_the_engine_that_raised_gets_its_own_aborted_message(monkeypatch) -> None:
+    """Review 2026-11-27 (nit 3b) — when the chain dies AFTER an engine's
+    ``running`` row exists (here: persisting expense's completed output
+    raises), that row is failed with "run aborted while this engine was
+    running (<Type>)…", and only the engines after it read "before this
+    engine". Type only, never the exception text."""
+    from app.database import get_session_factory
+    from app.engines.expense import ExpenseEngineOutput
+    from app.services import engine_runner
+    from app.services.engine_runner import ENGINE_NAMES, get_run_status, run_all_engines
+
+    real_complete = engine_runner._persist_complete
+
+    async def boom_persisting_expense(session, **kw):
+        if isinstance(kw.get("output"), ExpenseEngineOutput):
+            raise RuntimeError("database went away: host=db.internal")
+        return await real_complete(session, **kw)
+
+    monkeypatch.setattr(engine_runner, "_persist_complete", boom_persisting_expense)
+
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        with pytest.raises(RuntimeError, match="database went away"):
+            await run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id, assumptions=kimpton_seed(),
+            )
+        rows = await get_run_status(session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id)
+
+    by_engine = {r["engine"]: r for r in rows}
+    assert sorted(by_engine) == sorted(ENGINE_NAMES) and len(rows) == len(ENGINE_NAMES)
+    assert by_engine["revenue"]["status"] == "complete"
+    expense = by_engine["expense"]
+    assert expense["status"] == "failed"
+    assert expense["error"] == (
+        "run aborted while this engine was running (RuntimeError); the failure has been logged"
+    )
+    for name in ("capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
+        assert by_engine[name]["status"] == "failed", name
+        assert by_engine[name]["error"] == (
+            "run aborted before this engine (RuntimeError); the failure has been logged"
+        ), name
+    blob = "\n".join(str(r["error"]) for r in rows)
+    assert "db.internal" not in blob and "database went away" not in blob
+    assert not any(r["status"] == "running" for r in rows), "the run is terminal"
+
+
+@pytest.mark.asyncio
+async def test_one_failed_abort_row_does_not_stop_the_later_engines_getting_rows(monkeypatch) -> None:
+    """Review 2026-11-27 (nit 3a) — the first abort-row INSERT raises once.
+    The failure is logged, the session is rolled back (on Postgres the failed
+    statement aborted the transaction; nothing else could be written until
+    then), and every LATER engine still lands its ``failed`` row. The engine
+    whose own row write failed is the one gap — the original exception is
+    still what propagates."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.engine_runner import ENGINE_NAMES, get_run_status, run_all_engines
+
+    real_single = engine_runner.run_single_engine
+    real_failure_row = engine_runner._persist_failure_row
+    events: list[str] = []
+
+    async def boom_on_expense(session, **kw):
+        if kw["engine_name"] == "expense":
+            raise RuntimeError("database went away")
+        return await real_single(session, **kw)
+
+    async def failure_row_raises_once(session, **kw):
+        if not any(e.startswith("persist-failed:") for e in events):
+            events.append(f"persist-failed:{kw['failure'].engine}")
+            raise RuntimeError("INSERT failed: current transaction is aborted")
+        events.append(f"persisted:{kw['failure'].engine}")
+        return await real_failure_row(session, **kw)
+
+    monkeypatch.setattr(engine_runner, "run_single_engine", boom_on_expense)
+    monkeypatch.setattr(engine_runner, "_persist_failure_row", failure_row_raises_once)
+
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    factory = get_session_factory()
+    async with factory() as session:
+        real_rollback = session.rollback
+
+        async def counting_rollback():
+            events.append("rollback")
+            await real_rollback()
+
+        session.rollback = counting_rollback  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="database went away"):
+            await run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id, assumptions=kimpton_seed(),
+            )
+        rows = await get_run_status(session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id)
+
+    # expense's own abort row was the one that failed to write…
+    assert events[events.index("persist-failed:expense") + 1] == "rollback", events
+    by_engine = {r["engine"]: r for r in rows}
+    assert "expense" not in by_engine
+    # …and every engine after it still has a terminal row.
+    for name in ("capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
+        assert by_engine[name]["status"] == "failed", (name, events)
+        assert by_engine[name]["error"] == (
+            "run aborted before this engine (RuntimeError); the failure has been logged"
+        )
+    assert sorted(by_engine) == sorted(n for n in ENGINE_NAMES if n != "expense")
+    assert not any(r["status"] == "running" for r in rows)
 
 
 @pytest.mark.asyncio

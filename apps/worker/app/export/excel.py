@@ -98,8 +98,16 @@ from .labels import (
     year_heading,
     line_label,
     source_display,
+    ENTRY_CAP_LABEL,
+    ENTRY_CAP_PROJECTED_SUB,
     ENTRY_NOI_BASIS,
+    ENTRY_NOI_LABEL,
     ENTRY_NOI_PROJECTED_NOTE,
+    T12_NOI_LABEL,
+    T12_NOI_MISSING,
+    entry_basis_is_projected,
+    entry_cap_label,
+    entry_noi_label,
 )
 from .refusals import (
     as_float,
@@ -116,8 +124,9 @@ from .refusals import (
 NOT_YET_OPEN = "n/a, not yet open: see yield on cost"
 #: FON-122 (Sam, 2026-11-23) — every deal's entry cap is struck on Year 1's NOI
 #: before the FF&E reserve with no closure and no displacement; beside it the
-#: in-place cap on the T-12's own NOI before reserve.
-ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
+#: in-place cap on the T-12's own NOI before reserve. ``ENTRY_CAP_LABEL`` /
+#: ``ENTRY_NOI_LABEL`` and their projected-fallback pair are the shared
+#: ``labels`` strings (imported above; nit 4: one rule on every surface).
 IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
 IN_PLACE_CAP_MISSING = "no T-12 NOI before reserve on the basis statement, or no purchase price"
 #: Kept for callers that imported the old name; the label it carried is retired.
@@ -133,8 +142,19 @@ def _entry_cap_value(inv: dict[str, Any]) -> Any:
 
 
 def _entry_cap_headline(inv: dict[str, Any]) -> tuple[str, Any]:
-    """``(label, value)`` for the cover's entry-cap row (FON-122)."""
-    return ENTRY_CAP_LABEL, _entry_cap_value(inv)
+    """``(label, value)`` for the cover's entry-cap row (FON-122). The cover has
+    no note column, so on a projected fallback the LABEL carries the honesty
+    ("Entry Cap (projected Year 1)", nit 4)."""
+    return entry_cap_label(inv), _entry_cap_value(inv)
+
+
+def _entry_cap_note(inv: dict[str, Any]) -> str:
+    """The Assumptions Entry Cap row's note: the formula over the two cells, or
+    — when the cap is on the bare projected Year 1 — what it is on and the
+    re-run ask (the one sentence every surface prints for that case)."""
+    if entry_basis_is_projected(inv):
+        return ENTRY_CAP_PROJECTED_SUB
+    return "= Entry NOI ÷ Purchase Price"
 
 
 def _entry_cap_missing(inv: dict[str, Any], default: str) -> str:
@@ -149,11 +169,9 @@ def _entry_cap_missing(inv: dict[str, Any], default: str) -> str:
 
 
 # Sam QA 2026-11-27 — the entry cap and the in-place cap are FORMULAS over the
-# NOI row and the Purchase Price row beside them, so a reader can trace them.
-ENTRY_NOI_LABEL = "Entry NOI (Year 1, undisplaced)"
+# NOI row and the Purchase Price row beside them, so a reader can trace them
+# (``ENTRY_NOI_LABEL`` / ``T12_NOI_LABEL`` / ``T12_NOI_MISSING`` come from ``labels``).
 ENTRY_NOI_MISSING = "no entry NOI on the deal's expense engine output"
-T12_NOI_LABEL = "T-12 NOI (before FF&E reserve)"
-T12_NOI_MISSING = "no twelve-month statement"
 #: The cover's Model Version is the worker build (``/health.build_sha``) + run.
 MODEL_VERSION_MISSING = (
     "no build SHA in the worker environment (RAILWAY_GIT_COMMIT_SHA / FONDOK_BUILD_SHA unset)"
@@ -664,9 +682,9 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     price_row = quick_rows.get("purchase_price")
     entry_cap_label, entry_cap = _entry_cap_headline(inv)
     cover_caps = [
-        (ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, "entry_noi",
+        (entry_noi_label(inv), inv.get("entry_noi_usd"), USD_FMT, "entry_noi",
          _entry_cap_missing(inv, ENTRY_NOI_MISSING)),
-        (entry_cap_label, _Ratio(ENTRY_NOI_LABEL, "Purchase Price", entry_cap), PCT_FMT, "entry_cap_rate",
+        (entry_cap_label, _Ratio(entry_noi_label(inv), "Purchase Price", entry_cap), PCT_FMT, "entry_cap_rate",
          _entry_cap_missing(inv, "no Year 1 NOI or purchase price to derive the entry cap")),
         (T12_NOI_LABEL, inv.get("t12_noi_before_reserve_usd"), USD_FMT, "t12_noi", T12_NOI_MISSING),
         (IN_PLACE_CAP_LABEL, _Ratio(T12_NOI_LABEL, "Purchase Price", inv.get("entry_cap_rate_t12")),
@@ -812,12 +830,12 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 # 2026-11-27: each NOI is its own row and each cap is the FORMULA
                 # NOI ÷ Purchase Price over this sheet's cells, so it traces.
                 (
-                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, _entry_noi_note(inv),
+                    entry_noi_label(inv), inv.get("entry_noi_usd"), USD_FMT, _entry_noi_note(inv),
                     "entry_noi", _entry_cap_missing(inv, ENTRY_NOI_MISSING),
                 ),
                 (
-                    ENTRY_CAP_LABEL, _Ratio(ENTRY_NOI_LABEL, "Purchase Price", _entry_cap_value(inv)), PCT_FMT,
-                    "= Entry NOI ÷ Purchase Price", "entry_cap_rate",
+                    entry_cap_label(inv), _Ratio(entry_noi_label(inv), "Purchase Price", _entry_cap_value(inv)), PCT_FMT,
+                    _entry_cap_note(inv), "entry_cap_rate",
                     _entry_cap_missing(inv, "no entry cap on the deal's capital engine output"),
                 ),
                 (

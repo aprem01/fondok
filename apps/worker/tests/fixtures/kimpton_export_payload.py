@@ -64,9 +64,11 @@ def kimpton_model() -> dict[str, Any]:
             "renovation_contingency_usd": 0.0,
             "renovation_total_usd": 5_280_000,
             "renovation_per_key_usd": 40_000,
-            # Deal-level Soft Costs / Contingency use lines (outside the renovation).
-            "soft_costs_usd": 528_000,
-            "contingency_usd": 528_000,
+            # No deal-level Soft Costs / Contingency: the live builder sets
+            # ``soft_costs_usd`` / ``contingency_usd`` ONLY from a Sources &
+            # Uses line, and this deal's ``uses`` carry none — so the block
+            # foots to ``total_capital_usd`` (review 2026-11-27: a stray
+            # ``contingency_usd`` over-footed it by $528,000).
             "working_capital_usd": 500_000,
             "loan_costs_usd": 364_368,
             # = the ``uses`` lines below (36.4M + 728,736 + 5.28M + 500K + 364,368).

@@ -135,4 +135,9 @@ atlas:
   # names the workbook's Entry NOI / T-12 NOI rows and formula caps; the
   # `projection` selection now needs 56,430 characters (+1,000 headroom =
   # 57,430). Same rule — the projection split is still the structural fix.
-  max_chars: 58000
+  # 59000, was 58000 (review 2026-11-27 round 2): the entry-cap paragraph
+  # names the projected-fallback labels ("Entry NOI / Entry Cap (projected
+  # Year 1)") and what a refused cap shows; the `projection` selection now
+  # needs 57,407 characters (+1,000 headroom = 58,407). Same rule — the
+  # projection split is still the structural fix.
+  max_chars: 59000

@@ -238,7 +238,11 @@ def test_live_investment_block_falls_back_to_the_renovation_line_for_a_pre_fon71
 
 
 def test_assumptions_sheet_prints_hard_soft_fees_contingency_and_total(tmp_out: Path) -> None:
-    ws = _workbook(tmp_out, _kimpton())["Assumptions"]
+    model = _kimpton()
+    # A deal-level S&U Soft Costs line (the fixture itself carries none — its
+    # investment block foots to its uses lines).
+    model["investment_engine"]["soft_costs_usd"] = 528_000
+    ws = _workbook(tmp_out, model)["Assumptions"]
     acquisition = _block(ws, "Acquisition")
 
     want = [
@@ -516,18 +520,38 @@ def test_live_investment_block_says_which_noi_the_entry_cap_is_on() -> None:
 def test_assumptions_entry_noi_note_does_not_claim_the_basis_for_a_projected_fallback(tmp_out: Path) -> None:
     from app.export.labels import ENTRY_NOI_PROJECTED_NOTE
 
+    from app.export.labels import ENTRY_CAP_PROJECTED_LABEL, ENTRY_CAP_PROJECTED_SUB, ENTRY_NOI_PROJECTED_LABEL
+
     model = _kimpton()
     model["investment_engine"]["entry_noi_basis"] = "projected_year1"
-    ws = _workbook(tmp_out, model)["Assumptions"]
-    assert _cell(ws, ENTRY_NOI, 3).value == ENTRY_NOI_PROJECTED_NOTE
+    wb = _workbook(tmp_out, model)
+    ws = wb["Assumptions"]
+    # Review 2026-11-27 round 2 (nit 4): the pair is LABELLED projected on both
+    # sheets — "undisplaced" is never said about the bare projected Year 1 —
+    # and the cap row's note is the one sentence every surface prints for it.
+    for sheet in ("Cover", "Assumptions"):
+        rows = _rows(wb[sheet])
+        assert ENTRY_NOI not in rows and ENTRY_CAP not in rows, sheet
+        assert ENTRY_NOI_PROJECTED_LABEL in rows and ENTRY_CAP_PROJECTED_LABEL in rows, sheet
+        # The NOI row still sits directly above its cap.
+        assert rows[ENTRY_CAP_PROJECTED_LABEL] == rows[ENTRY_NOI_PROJECTED_LABEL] + 1, sheet
+    assert ENTRY_NOI_PROJECTED_LABEL == "Entry NOI (projected Year 1)"
+    assert ENTRY_CAP_PROJECTED_LABEL == "Entry Cap (projected Year 1)"
+    assert _cell(ws, ENTRY_NOI_PROJECTED_LABEL, 3).value == ENTRY_NOI_PROJECTED_NOTE
     assert ENTRY_NOI_PROJECTED_NOTE == "Projected Year 1 NOI · re-run the model for the entry basis"
-    assert _cell(ws, ENTRY_NOI, 3).value != ENTRY_NOI_BASIS
-    # The figure and the formula are unchanged — only the note is honest.
-    assert _cell(ws, ENTRY_NOI).value == 5_308_245
-    assert str(_cell(ws, ENTRY_CAP).value).startswith("=")
-    # The engine's own entry NOI (and a payload that predates the marker) keep the basis.
+    assert _cell(ws, ENTRY_NOI_PROJECTED_LABEL, 3).value != ENTRY_NOI_BASIS
+    assert _cell(ws, ENTRY_CAP_PROJECTED_LABEL, 3).value == ENTRY_CAP_PROJECTED_SUB
+    # The figure and the formula are unchanged — only the words are honest.
+    assert _cell(ws, ENTRY_NOI_PROJECTED_LABEL).value == 5_308_245
+    cap_formula = str(_cell(ws, ENTRY_CAP_PROJECTED_LABEL).value)
+    assert cap_formula == f"=B{_rows(ws)[ENTRY_NOI_PROJECTED_LABEL]}/B{_rows(ws)['Purchase Price']}"
+    assert str(_cell(wb["Cover"], ENTRY_CAP_PROJECTED_LABEL).value).startswith("=")
+    # The engine's own entry NOI (and a payload that predates the marker) keep the basis and the labels.
     model["investment_engine"]["entry_noi_basis"] = "run_rate"
-    assert _cell(_workbook(tmp_out, model)["Assumptions"], ENTRY_NOI, 3).value == ENTRY_NOI_BASIS
+    ws = _workbook(tmp_out, model)["Assumptions"]
+    assert _cell(ws, ENTRY_NOI, 3).value == ENTRY_NOI_BASIS
+    assert _cell(ws, ENTRY_CAP, 3).value == "= Entry NOI ÷ Purchase Price"
+    assert ENTRY_NOI_PROJECTED_LABEL not in _rows(ws)
     del model["investment_engine"]["entry_noi_basis"]
     assert _cell(_workbook(tmp_out, model)["Assumptions"], ENTRY_NOI, 3).value == ENTRY_NOI_BASIS
 

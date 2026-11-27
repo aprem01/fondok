@@ -166,6 +166,17 @@ export const ENTRY_CAP_SUB = 'Entry NOI ÷ price';
  * The worker's `labels.ENTRY_CAP_PROJECTED_SUB` is the same words.
  */
 export const ENTRY_CAP_PROJECTED_SUB = 'Projected Year 1 NOI ÷ price · re-run the model for the entry basis';
+/**
+ * Review 2026-11-27 (nit 4) — what the pair is CALLED on that fallback. The
+ * exports label it "Entry NOI (Year 1, undisplaced)" / "Entry Cap (Year 1,
+ * undisplaced)"; said about the bare projected Year 1 that is a false claim,
+ * so every surface names the figure instead. The worker's
+ * `labels.ENTRY_NOI_PROJECTED_LABEL` / `ENTRY_CAP_PROJECTED_LABEL` are the same words.
+ */
+export const ENTRY_NOI_PROJECTED_LABEL = 'Entry NOI (projected Year 1)';
+export const ENTRY_CAP_PROJECTED_LABEL = 'Entry Cap (projected Year 1)';
+/** Beside the Entry NOI figure itself on that fallback (the worker's `labels.ENTRY_NOI_PROJECTED_NOTE`). */
+export const ENTRY_NOI_PROJECTED_NOTE = 'Projected Year 1 NOI · re-run the model for the entry basis';
 /** Said beside a cap whose entry NOI is NOT the projected Year 1 (a closure, a displacement or the ramp was taken out). */
 export const ON_UNDISPLACED_YEAR_ONE = 'on Year 1 at T-12 occupancy and ADR, without the closure, displacement or ramp';
 /** @deprecated the "closing for renovation" wording is retired; the old name maps to the new text. */
@@ -247,6 +258,15 @@ export function closedAtEntry(
   const normalized = entryNoi !== undefined
     && (closed || (typeof year1Noi === 'number' && Number.isFinite(year1Noi) && Math.abs(entryNoi - year1Noi) > 0.5));
   return { closed, entryNoi, cap, outOfDate, notYetOpen, na, normalized };
+}
+
+/**
+ * The entry NOI on screen is the bare projected Year 1: an open hotel whose
+ * run published no entry NOI (pre-FON-122). A closed hotel never falls back
+ * (its cap is refused instead), so this is false for it.
+ */
+export function entryNoiIsProjected(atEntry: Pick<ClosedAtEntry, 'closed' | 'entryNoi'>): boolean {
+  return !atEntry.closed && atEntry.entryNoi === undefined;
 }
 
 export function entryCapRate(
