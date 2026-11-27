@@ -189,6 +189,60 @@ async def test_engine_failure_doesnt_block_independent_engines() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_exception_mid_chain_still_lands_a_terminal_row_for_every_engine(monkeypatch) -> None:
+    """Review 2026-11-27 — an exception ESCAPING the chain (not an engine's own
+    error, which ``run_single_engine`` catches) used to leave the engines after
+    it with no row at all: the web polled until its 60 s timeout. Now every
+    scheduled engine without a row lands ``failed`` with "run aborted before
+    this engine: <error>", the exception still propagates, and the run is
+    terminal (no ``running`` row, one row per engine)."""
+    from app.database import get_session_factory
+    from app.services import engine_runner
+    from app.services.engine_runner import ENGINE_NAMES, get_run_status, run_all_engines
+
+    real = engine_runner.run_single_engine
+
+    async def boom_on_expense(session, **kw):
+        if kw["engine_name"] == "expense":
+            raise RuntimeError("database went away")
+        return await real(session, **kw)
+
+    monkeypatch.setattr(engine_runner, "run_single_engine", boom_on_expense)
+
+    deal_id = KIMPTON_FIXTURE_DEAL_ID
+    tenant_id = str(uuid4())
+    run_id = str(uuid4())
+    seen: dict[str, str] = {}
+
+    factory = get_session_factory()
+    async with factory() as session:
+        with pytest.raises(RuntimeError, match="database went away"):
+            await run_all_engines(
+                session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+                assumptions=kimpton_seed(),
+                on_complete=lambda name, result: seen.__setitem__(name, result["status"]),
+            )
+        rows = await get_run_status(session, deal_id=deal_id, run_id=run_id, tenant_id=tenant_id)
+
+    by_engine = {r["engine"]: r for r in rows}
+    assert sorted(by_engine) == sorted(ENGINE_NAMES), "one row per scheduled engine"
+    assert len(rows) == len(ENGINE_NAMES), "no duplicate rows"
+    assert by_engine["revenue"]["status"] == "complete"
+    assert by_engine["fb"]["status"] == "complete"
+    for name in ("expense", "capital", "debt", "returns", "sensitivity", "partnership", "cash_flow"):
+        row = by_engine[name]
+        assert row["status"] == "failed", (name, row["status"])
+        assert row["error"] == "run aborted before this engine: database went away", name
+        assert row["failure"]["reason"] == "engine_error"
+        assert row["failure"]["exception_type"] == "RuntimeError"
+        assert row["completed_at"] is not None
+    assert not any(r["status"] == "running" for r in rows), "the run is terminal"
+    # The on_complete hook saw every engine reach a terminal state too.
+    assert sorted(seen) == sorted(ENGINE_NAMES)
+    assert {seen[n] for n in ("expense", "cash_flow")} == {"failed"}
+
+
+@pytest.mark.asyncio
 async def test_run_persists_to_db() -> None:
     """run_all → engine_outputs has one row per engine (9 incl. cash_flow),
     all 'complete', for the run."""
