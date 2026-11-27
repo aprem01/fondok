@@ -131,4 +131,8 @@ atlas:
   # (after property tax and insurance, before the reserve); the `projection`
   # selection now needs 54,296 characters (+1,000 headroom = 55,296). Raised
   # per the rule above — the projection split is still the structural fix.
-  max_chars: 57000
+  # 58000, was 57000 (Sam QA 2026-11-27, Excel export): the entry cap's basis
+  # names the workbook's Entry NOI / T-12 NOI rows and formula caps; the
+  # `projection` selection now needs 56,430 characters (+1,000 headroom =
+  # 57,430). Same rule — the projection split is still the structural fix.
+  max_chars: 58000

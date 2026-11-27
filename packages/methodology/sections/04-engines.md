@@ -152,7 +152,11 @@ the needed type, or no field that states the figure) wherever it is printed.
 The renovation budget's breakdown into hard costs, soft costs and professional fees uses the
 platform default split of 75% / 15% / 10% when no itemized renovation budget is on file. The
 breakdown is badged Platform default and carries that reason; it never reads as the deal's own
-breakdown. When only some parts are entered, each part is badged by its own source.
+breakdown. When only some parts are entered, each part is badged by its own source. The Excel
+Assumptions sheet prints the same engine fields the Investment tab shows — the budget before
+contingency, Hard Costs, Soft Costs, Professional Fees, the contingency (its percent of hard costs
+named beside it) and the Renovation Total that is the Sources & Uses line — with the engine's badge
+beside each split part; a run that published no breakdown says so rather than showing a $0 split.
 
 :::
 
@@ -296,7 +300,10 @@ capitalised from it.
   when a priced PACE adds to it — an unpriced PACE's fees are in neither; the capital engine also
   publishes the senior-only LTC, and run-compare lists senior and junior debt as separate sources.
   The exports keep one basis per block: **Senior Debt** (senior amount, LTV, LTC and terms) and
-  **All Debt** (total debt, LTV, LTC, any pending principal, debt service and coverage).
+  **All Debt** (total debt, LTV, LTC, any pending principal, debt service and coverage) — one LTC
+  row in each (the senior's is senior loan ÷ total uses); there is no separate "LTV (cost)" row.
+  The workbook's cover names the worker build (commit SHA) and the model run the figures came from
+  as its Model Version, or says that no build SHA is set.
 - **Covenants.** Maximum LTV / LTC and minimum DSCR / debt yield are thresholds you enter. There is no
   default package — a covenant without an entered threshold shows its live Current reading, an “Enter
   threshold” input, and no pass / fail verdict. Entered thresholds are tested against the modeled
