@@ -144,6 +144,65 @@ def _entry_cap_missing(inv: dict[str, Any], default: str) -> str:
     if inv.get("entry_cap_not_yet_open"):
         return NOT_YET_OPEN
     return default
+
+
+# Sam QA 2026-11-27 — the entry cap and the in-place cap are FORMULAS over the
+# NOI row and the Purchase Price row beside them, so a reader can trace them.
+ENTRY_NOI_LABEL = "Entry NOI (Year 1, undisplaced)"
+ENTRY_NOI_MISSING = "no entry NOI on the deal's expense engine output"
+T12_NOI_LABEL = "T-12 NOI (before FF&E reserve)"
+T12_NOI_MISSING = "no twelve-month statement"
+#: The cover's Model Version is the worker build (``/health.build_sha``) + run.
+MODEL_VERSION_MISSING = (
+    "no build SHA in the worker environment (RAILWAY_GIT_COMMIT_SHA / FONDOK_BUILD_SHA unset)"
+)
+RENOVATION_BREAKDOWN_MISSING = (
+    "no renovation breakdown on the deal's capital engine output — run the model again"
+)
+RENOVATION_NO_BUDGET_MISSING = "no renovation budget on the deal's capital engine output"
+
+
+def _model_version_label(model: dict[str, Any]) -> str | None:
+    """``"84f2281b · run 5d8ebae8"`` from the payload's ``build_sha`` / ``run_id``;
+    ``None`` (→ "not available") when no build SHA is set. Never a placeholder."""
+    sha = model.get("build_sha")
+    if not isinstance(sha, str) or not sha.strip():
+        return None
+    label = sha.strip()[:8]
+    run_id = model.get("run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        label += f" · run {run_id.strip()[:8]}"
+    return label
+
+
+def _in_place_cap_missing(inv: dict[str, Any]) -> str:
+    """Why there is no in-place cap: no T-12 statement first, then no price."""
+    if inv.get("t12_noi_before_reserve_usd") is None:
+        return T12_NOI_MISSING
+    if inv.get("purchase_price_usd") is None:
+        return "no purchase price on the deal's capital engine output"
+    return IN_PLACE_CAP_MISSING
+
+
+def _renovation_part_missing(inv: dict[str, Any]) -> str:
+    """A breakdown part the payload lacks: because there is no renovation budget,
+    or because the run predates the engine publishing the split."""
+    if inv.get("renovation_budget_usd") is None and inv.get("renovation_total_usd") is None:
+        return RENOVATION_NO_BUDGET_MISSING
+    return RENOVATION_BREAKDOWN_MISSING
+
+
+class _Ratio:
+    """An Assumptions-sheet value written as ``=B<numerator>/B<denominator>``
+    over two rows of the same section (found by label), carrying the engine's
+    own value as the fallback when either row is not a number."""
+
+    __slots__ = ("denominator", "numerator", "value")
+
+    def __init__(self, numerator: str, denominator: str, value: Any) -> None:
+        self.numerator = numerator
+        self.denominator = denominator
+        self.value = value
 USD_FMT = '$#,##0;[Red]($#,##0)'
 USD_2_FMT = '$#,##0.00'
 PCT_FMT = '0.00%'
@@ -278,6 +337,47 @@ def _write_value(
 def _write_note(ws: Worksheet, row: int, col: int, text: str) -> None:
     c = ws.cell(row=row, column=col, value=text)
     c.font = _NA_FONT
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _write_ratio(
+    ws: Worksheet,
+    row: int,
+    col: int,
+    *,
+    value: Any,
+    numerator_row: int | None,
+    denominator_row: int | None,
+    fmt: str,
+    concept: str,
+    missing: str,
+) -> None:
+    """Write a ratio as the Excel formula ``=<col><num>/<col><den>`` so it traces
+    to the two cells it divides. The formula is written only when the engine
+    published the ratio (``value`` is not ``None``) AND both referenced cells
+    hold numbers (the denominator non-zero); a payload that carries the ratio
+    but not its numerator writes the value itself, and no ratio at all writes
+    ``not available: <missing>``. Nothing is computed here that the engine did
+    not — the formula reproduces the engine's division in the reader's hands.
+    """
+    if value is None:
+        _write_value(ws, row, col, None, fmt, concept=concept, missing=missing)
+        return
+    if numerator_row is not None and denominator_row is not None:
+        num = ws.cell(row=numerator_row, column=col).value
+        den = ws.cell(row=denominator_row, column=col).value
+        if _is_number(num) and _is_number(den) and den != 0:
+            letter = get_column_letter(col)
+            c = ws.cell(
+                row=row, column=col,
+                value=f"={letter}{numerator_row}/{letter}{denominator_row}",
+            )
+            c.number_format = fmt
+            return
+    _write_value(ws, row, col, value, fmt, concept=concept, missing=missing)
 
 
 def _aggregate_wave2_3_for_excel(model: dict[str, Any]) -> dict[str, Any]:
@@ -428,9 +528,15 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     # FON-44: after property tax and insurance, before the reserve); the
     # proforma also carries a "Cash NOI (after FF&E reserve)" row below the
     # reserve line, which this cell deliberately does NOT use.
-    noi_row = next((row for row in pl_lines if row.get("label") in NOI_HEADLINE_LABELS), None)
-    noi_y1 = _as_float(noi_row.get("y1")) if noi_row else None
-    noi_y1 = noi_y1 * 1000 if noi_y1 is not None else None
+    # Sam QA 2026-11-27 — the whole-dollar figure the live payload carries
+    # (``year1_noi_before_reserve_usd``) is preferred: the proforma rows are in
+    # $000s, so reading them back printed $1,646,000 for $1,646,245. The $000
+    # row × 1000 stands in only for a payload without the exact figure.
+    noi_y1 = _as_float(inv.get("year1_noi_before_reserve_usd"))
+    if noi_y1 is None:
+        noi_row = next((row for row in pl_lines if row.get("label") in NOI_HEADLINE_LABELS), None)
+        noi_y1 = _as_float(noi_row.get("y1")) if noi_row else None
+        noi_y1 = noi_y1 * 1000 if noi_y1 is not None else None
     # FON-82 — Stabilized NOI is the stabilized year's Cash NOI (AFTER the
     # FF&E reserve) off the published stabilization block, never "Year 5" of
     # the proforma. Absent block → a reasoned "not available".
@@ -456,13 +562,15 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     ws["A6"] = "Keys"
     ws["B6"] = keys
     ws["A7"] = "Generated"
-    ws["B7"] = (
-        f"Generated by Fondok · "
-        f"{model.get('model_version', 'fondok-engine-3.x')} · "
-        f"{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"
-    )
+    ws["B7"] = f"Generated by Fondok · {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"
+    # Sam QA 2026-11-27 — the worker build SHA (``/health.build_sha``) and the
+    # canonical run the figures came from; "not available" when no SHA is set,
+    # never the old "fondok-engine-live" placeholder.
     ws["A8"] = "Model Version"
-    ws["B8"] = model.get("model_version", "fondok-engine-3.x")
+    _write_value(
+        ws, 8, 2, _model_version_label(model), None,
+        concept="model_version", missing=MODEL_VERSION_MISSING,
+    )
 
     for r in range(3, 9):
         ws.cell(row=r, column=1).font = Font(bold=True, size=11)
@@ -493,6 +601,7 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
     # sight, in the cell beside the value (not only in a comment).
     quick_notes = {"noi": NOI_BEFORE_RESERVE_DEFINITION}
     row = 11
+    quick_rows: dict[str, int] = {}
     for label, val, fmt, concept, missing in quick:
         ws.cell(row=row, column=1, value=label).font = Font(bold=True)
         _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
@@ -500,6 +609,7 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
             ws.cell(row=row, column=3, value=quick_notes[concept]).font = Font(
                 italic=True, color="6B7280"
             )
+        quick_rows[concept] = row
         row += 1
 
     # ── Key Metrics block (existing) ────────────────────────────────
@@ -524,13 +634,6 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
          "no hold period on the deal's returns engine output"),
         ("Exit Cap Rate", ret.get("exit_cap_rate_pct"), PCT_FMT, "exit_cap_rate",
          "no exit cap rate on the deal's returns engine output"),
-        (
-            *_entry_cap_headline(inv),
-            PCT_FMT, "entry_cap_rate",
-            _entry_cap_missing(inv, "no Year 1 NOI or purchase price to derive the entry cap"),
-        ),
-        # FON-122 — the in-place cap beside it: T-12 NOI before reserve ÷ price.
-        (IN_PLACE_CAP_LABEL, inv.get("entry_cap_rate_t12"), PCT_FMT, "entry_cap_rate", IN_PLACE_CAP_MISSING),
     ]
     benchmark_note = debt.get("benchmark_note")
     for label, val, fmt, concept, missing in metrics:
@@ -538,6 +641,37 @@ def _build_cover(wb: Workbook, model: dict[str, Any], sections: list[str]) -> No
         _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
         if label in ("Loan Rate", "Year 1 DSCR") and benchmark_note:
             _write_note(ws, row, 4, str(benchmark_note))
+        row += 1
+
+    # FON-122 / Sam QA 2026-11-27 — the entry NOI (Year 1, no closure, no
+    # displacement) in whole dollars, then the entry cap as a FORMULA over that
+    # cell and the Purchase Price cell above; beside them the T-12's own NOI
+    # before reserve and the in-place cap, the same formula shape. A cap the
+    # engine refused (stale T-12, not yet open) keeps its reason in words.
+    price_row = quick_rows.get("purchase_price")
+    entry_cap_label, entry_cap = _entry_cap_headline(inv)
+    cover_caps = [
+        (ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, "entry_noi",
+         _entry_cap_missing(inv, ENTRY_NOI_MISSING)),
+        (entry_cap_label, _Ratio(ENTRY_NOI_LABEL, "Purchase Price", entry_cap), PCT_FMT, "entry_cap_rate",
+         _entry_cap_missing(inv, "no Year 1 NOI or purchase price to derive the entry cap")),
+        (T12_NOI_LABEL, inv.get("t12_noi_before_reserve_usd"), USD_FMT, "t12_noi", T12_NOI_MISSING),
+        (IN_PLACE_CAP_LABEL, _Ratio(T12_NOI_LABEL, "Purchase Price", inv.get("entry_cap_rate_t12")),
+         PCT_FMT, "entry_cap_rate", _in_place_cap_missing(inv)),
+    ]
+    cover_rows: dict[str, int] = {"Purchase Price": price_row} if price_row else {}
+    for label, val, fmt, concept, missing in cover_caps:
+        ws.cell(row=row, column=1, value=label).font = Font(bold=True)
+        if isinstance(val, _Ratio):
+            _write_ratio(
+                ws, row, 2, value=val.value,
+                numerator_row=cover_rows.get(val.numerator),
+                denominator_row=cover_rows.get(val.denominator),
+                fmt=fmt, concept=concept, missing=missing,
+            )
+        else:
+            _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
+        cover_rows[label] = row
         row += 1
 
     # ── Sections Included — conditional list ────────────────────────
@@ -569,6 +703,18 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
     debt = model.get("debt_engine") or {}
     refi = model.get("refi_engine") or {}
     ret = model.get("returns_engine") or {}
+    # The capital engine's own provenance note for the hard/soft/fees split
+    # (platform default 75/15/10 vs. an itemized budget), and the contingency
+    # rule it applied — printed beside the values, never re-derived here.
+    reno_split_note = str(
+        inv.get("renovation_split_note") or "Share of the renovation budget (before contingency)"
+    )
+    reno_contingency_pct = _as_float(inv.get("renovation_contingency_pct"))
+    reno_contingency_note = (
+        f"{reno_contingency_pct:.2%} of renovation hard costs"
+        if reno_contingency_pct is not None
+        else "Percent of renovation hard costs"
+    )
 
     ws["A1"] = "Assumption"
     ws["B1"] = "Value"
@@ -587,24 +733,80 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 item("Purchase Price", inv, "purchase_price_usd", USD_FMT, "USD", "purchase_price", "capital engine"),
                 item("Price / Key", inv, "price_per_key_usd", USD_FMT, "USD/key", "price_per_key", "capital engine"),
                 item("Closing Costs", inv, "closing_costs_usd", USD_FMT, "USD", "closing_costs", "capital engine"),
-                item("Renovation Budget", inv, "renovation_budget_usd", USD_FMT, "PIP / capex", "renovation_budget", "capital engine"),
-                item("Renovation / Key", inv, "renovation_per_key_usd", USD_FMT, "USD/key", "renovation_per_key", "capital engine"),
-                item("Soft Costs", inv, "soft_costs_usd", USD_FMT, "", "soft_costs", "capital engine"),
-                item("Contingency", inv, "contingency_usd", USD_FMT, "", "contingency", "capital engine"),
+                # Sam QA 2026-11-27 — the renovation breakdown the Investment tab
+                # shows, read from the capital engine's own fields (FON-71): the
+                # analyst's budget, its Hard / Soft / Professional Fees split, the
+                # contingency (pct × hard costs) and the total that IS the
+                # Renovation use line. A part the engine did not emit says why.
+                (
+                    "Renovation Budget (before contingency)", inv.get("renovation_base_usd"), USD_FMT,
+                    "PIP / capex, the analyst's budget", "renovation_budget",
+                    RENOVATION_NO_BUDGET_MISSING,
+                ),
+                (
+                    "Hard Costs", inv.get("renovation_hard_costs_usd"), USD_FMT, reno_split_note,
+                    "renovation_hard_costs", _renovation_part_missing(inv),
+                ),
+                (
+                    "Soft Costs", inv.get("renovation_soft_costs_usd"), USD_FMT, reno_split_note,
+                    "renovation_soft_costs", _renovation_part_missing(inv),
+                ),
+                (
+                    "Professional Fees", inv.get("renovation_professional_fees_usd"), USD_FMT, reno_split_note,
+                    "renovation_professional_fees", _renovation_part_missing(inv),
+                ),
+                (
+                    "Contingency", inv.get("renovation_contingency_usd"), USD_FMT, reno_contingency_note,
+                    "renovation_contingency", _renovation_part_missing(inv),
+                ),
+                (
+                    "Renovation Total (incl. contingency)", inv.get("renovation_total_usd"), USD_FMT,
+                    "Budget + contingency; the Renovation line in Sources & Uses", "renovation_total",
+                    RENOVATION_NO_BUDGET_MISSING,
+                ),
+                item("Renovation / Key", inv, "renovation_per_key_usd", USD_FMT, "USD/key, on the total", "renovation_per_key", "capital engine"),
+                # Deal-level Soft Costs / Contingency use lines (outside the
+                # renovation) — only when the analyst entered them, so the sheet
+                # never shows two "Soft Costs" rows meaning different things.
+                *(
+                    [(
+                        "Soft Costs (Sources & Uses line, outside renovation)", inv.get("soft_costs_usd"),
+                        USD_FMT, "Analyst assumption, not a calculated line", "soft_costs", "",
+                    )]
+                    if inv.get("soft_costs_usd") is not None else []
+                ),
+                *(
+                    [(
+                        "Contingency (Sources & Uses line, outside renovation)", inv.get("contingency_usd"),
+                        USD_FMT, "Analyst assumption, not a calculated line", "contingency", "",
+                    )]
+                    if inv.get("contingency_usd") is not None else []
+                ),
                 item("Working Capital", inv, "working_capital_usd", USD_FMT, "", "working_capital", "capital engine"),
                 item("Loan Costs", inv, "loan_costs_usd", USD_FMT, "", "loan_costs", "capital engine"),
                 item("Total Capital", inv, "total_capital_usd", USD_FMT, "All-in", "total_capital", "capital engine"),
                 item("Total Capital / Key", inv, "total_capital_per_key_usd", USD_FMT, "", "total_capital_per_key", "capital engine"),
                 # FON-122 (Sam, 2026-11-23) — the entry cap on Year 1 NOI before the
                 # FF&E reserve with no closure and no displacement, and beside it
-                # the in-place cap on the T-12's own NOI before reserve.
+                # the in-place cap on the T-12's own NOI before reserve. Sam QA
+                # 2026-11-27: each NOI is its own row and each cap is the FORMULA
+                # NOI ÷ Purchase Price over this sheet's cells, so it traces.
                 (
-                    ENTRY_CAP_LABEL, _entry_cap_value(inv), PCT_FMT, "no closure, no displacement", "entry_cap_rate",
+                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, "Year 1 NOI before FF&E reserve, no closure, no displacement",
+                    "entry_noi", _entry_cap_missing(inv, ENTRY_NOI_MISSING),
+                ),
+                (
+                    ENTRY_CAP_LABEL, _Ratio(ENTRY_NOI_LABEL, "Purchase Price", _entry_cap_value(inv)), PCT_FMT,
+                    "= Entry NOI ÷ Purchase Price", "entry_cap_rate",
                     _entry_cap_missing(inv, "no entry cap on the deal's capital engine output"),
                 ),
                 (
-                    IN_PLACE_CAP_LABEL, inv.get("entry_cap_rate_t12"), PCT_FMT, "T-12 NOI before reserve ÷ price",
-                    "entry_cap_rate", IN_PLACE_CAP_MISSING,
+                    T12_NOI_LABEL, inv.get("t12_noi_before_reserve_usd"), USD_FMT, "The twelve-month statement's own NOI before reserve",
+                    "t12_noi", T12_NOI_MISSING,
+                ),
+                (
+                    IN_PLACE_CAP_LABEL, _Ratio(T12_NOI_LABEL, "Purchase Price", inv.get("entry_cap_rate_t12")), PCT_FMT,
+                    "= T-12 NOI ÷ Purchase Price", "entry_cap_rate", _in_place_cap_missing(inv),
                 ),
                 # FON-82 — both yields on cost ride on NOI AFTER the FF&E reserve.
                 item("Year 1 Yield on Cost (on NOI after FF&E reserve)", inv, "year1_yield_on_cost", PCT_FMT, "", "yield_on_cost", "capital engine"),
@@ -617,9 +819,12 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
             "no debt engine output on the deal's canonical run",
             [
                 item("Loan Amount", debt, "loan_amount_usd", USD_FMT, "", "loan_amount", "debt engine"),
-                item("LTV (cost)", debt, "ltv_cost", PCT_FMT, "", "ltv_cost", "debt engine"),
                 item("LTV (value)", debt, "ltv_value", PCT_FMT, "", "ltv", "debt engine"),
-                item("LTC", debt, "ltc", PCT_FMT, "", "ltc", "debt engine"),
+                # Sam QA 2026-11-27 — one LTC row. ``ltc`` here is the senior-only
+                # loan-to-cost the capital engine publishes (``senior_ltc``, equal
+                # to ``ltc`` without a junior tranche); the retired "LTV (cost)"
+                # row read a key no engine emits and always said "not available".
+                item("LTC", debt, "ltc", PCT_FMT, "Senior loan ÷ total uses", "ltc", "debt engine"),
                 item("Interest Rate", debt, "interest_rate_pct", PCT_FMT, "", "interest_rate", "debt engine"),
                 item("Amortization (yrs)", debt, "amortization_years", INT_FMT, "", "amortization_years", "debt engine"),
                 item("Term (yrs)", debt, "term_years", INT_FMT, "", "term_years", "debt engine"),
@@ -713,10 +918,22 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
             )
             row += 2
             continue
+        # Row of each label in this section, so a ``_Ratio`` item can be written
+        # as a formula over the two rows it divides.
+        row_of: dict[str, int] = {}
         for label, val, fmt, note, concept, missing in items:
             ws.cell(row=row, column=1, value=label)
-            _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
+            if isinstance(val, _Ratio):
+                _write_ratio(
+                    ws, row, 2, value=val.value,
+                    numerator_row=row_of.get(val.numerator),
+                    denominator_row=row_of.get(val.denominator),
+                    fmt=fmt, concept=concept, missing=missing,
+                )
+            else:
+                _write_value(ws, row, 2, val, fmt, concept=concept, missing=missing)
             ws.cell(row=row, column=3, value=note)
+            row_of[label] = row
             row += 1
         if section_name == "Senior Debt" and src.get("benchmark_note"):
             ws.cell(row=row, column=1, value="Benchmark rate basis")

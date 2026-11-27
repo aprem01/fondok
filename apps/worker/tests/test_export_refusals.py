@@ -457,3 +457,47 @@ def test_dedupe_and_distinct_codes_read_models_and_dicts_alike() -> None:
     ]
     assert len(dedupe(items)) == 2
     assert distinct_codes(items) == [ReasonCode.NO_SOURCE, ReasonCode.UNIT_UNKNOWN]
+
+
+# ═════════════════ Sam QA 2026-11-27 — Model Version = build SHA · run ═════════════════
+
+
+@pytest.mark.asyncio
+async def test_live_payload_carries_the_build_sha_and_canonical_run_for_the_cover(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The live model's ``build_sha`` is what ``/health`` reports (here via
+    ``FONDOK_BUILD_SHA``), ``run_id`` is the deal's canonical run, and the
+    workbook's cover prints "<sha8> · run <run8>" off them. With no SHA set the
+    model says ``None`` and the cover "not available" — never a placeholder."""
+    from openpyxl import load_workbook
+
+    from app.database import get_session_factory
+    from app.export import build_excel
+    from app.services.engine_runner import get_canonical_run_id
+
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("FONDOK_BUILD_SHA", "84f2281b9c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f")
+    deal_id, (_deal, model, _memo) = await _modeled_payload()
+
+    assert model["build_sha"] == "84f2281b9c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f"
+    assert "model_version" not in model
+    async with get_session_factory()() as session:
+        tenant_id = (
+            await session.execute(
+                text("SELECT tenant_id FROM deals WHERE id = :id"), {"id": deal_id}
+            )
+        ).scalar_one()
+        canonical = await get_canonical_run_id(session, deal_id=deal_id, tenant_id=str(tenant_id))
+    assert canonical is not None
+    assert model["run_id"] == str(canonical)
+
+    ws = load_workbook(build_excel(deal_id, model, tmp_path / "live.xlsx"), read_only=True)["Cover"]
+    assert ws["A8"].value == "Model Version"
+    assert ws["B8"].value == f"84f2281b · run {model['run_id'][:8]}"
+
+    # No SHA in the environment: the bare payload carries None.
+    monkeypatch.delenv("FONDOK_BUILD_SHA", raising=False)
+    _d, bare, _m = await _bare_payload()
+    assert bare["build_sha"] is None
+    assert "run_id" not in bare

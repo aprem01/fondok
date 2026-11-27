@@ -348,7 +348,12 @@ basis statement's own twelve-month NOI before the FF&E reserve ÷ purchase price
 yield buyers and lenders anchor on. It is derived from nothing: a statement that states no such
 line, or covers less than twelve months, or a deal with no purchase price, prints "—". Each row
 carries its basis under its label ("Year 1 NOI before FF&E reserve, no closure, no displacement ÷
-price"; "T-12 NOI before reserve ÷ price").
+price"; "T-12 NOI before reserve ÷ price"). In the Excel acquisition model (cover and Assumptions
+sheet) each numerator is its own row in whole dollars — *Entry NOI (Year 1, undisplaced)* and *T-12
+NOI (before FF&E reserve)* — and each cap is the Excel formula NOI ÷ Purchase Price over those cells,
+so a reader can trace it; a deal without a twelve-month statement reads "not available: no
+twelve-month statement" on both rows. The cover's headline Year 1 NOI is the same whole-dollar figure,
+not the $000 proforma row read back.
 
 :::
 

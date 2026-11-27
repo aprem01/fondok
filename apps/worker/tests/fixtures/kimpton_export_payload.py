@@ -41,21 +41,47 @@ def kimpton_model() -> dict[str, Any]:
         "location": "Miami Beach, FL",
         "brand": "Kimpton",
         "keys": 132,
-        "model_version": "fondok-engine-1.0",
+        # No ``build_sha`` / ``run_id``: this dict was never a worker build, so the
+        # cover's Model Version reads "not available" off it (the live payload
+        # carries both — see ``_assemble_live_payload``).
         "investment_engine": {
             "purchase_price_usd": 36_400_000,
             "price_per_key_usd": 275_758,
             "closing_costs_usd": 728_736,
             "renovation_budget_usd": 5_280_000,
+            # The capital engine's renovation breakdown (FON-71): the platform
+            # default 75 / 15 / 10 split of the $5.28M budget, no contingency, so
+            # the total equals the budget (the Renovation use line).
+            "renovation_base_usd": 5_280_000,
+            "renovation_hard_costs_usd": 3_960_000,
+            "renovation_soft_costs_usd": 792_000,
+            "renovation_professional_fees_usd": 528_000,
+            "renovation_split_note": (
+                "Platform default split — 75% hard costs / 15% soft costs / 10% professional fees; "
+                "the deal carried no itemized renovation budget"
+            ),
+            "renovation_contingency_pct": 0.0,
+            "renovation_contingency_usd": 0.0,
+            "renovation_total_usd": 5_280_000,
             "renovation_per_key_usd": 40_000,
+            # Deal-level Soft Costs / Contingency use lines (outside the renovation).
             "soft_costs_usd": 528_000,
             "contingency_usd": 528_000,
             "working_capital_usd": 500_000,
             "loan_costs_usd": 364_368,
             "total_capital_usd": 43_309_906,
             "total_capital_per_key_usd": 328_105,
-            "entry_cap_rate_t12": 0.1148,
-            "entry_cap_rate_year1_uw": 0.1293,
+            # Whole-dollar NOI figures (the proforma rows below are in $000s):
+            # Year 1 before reserve, the undisplaced entry NOI (this fixture's
+            # Year 1 carries no displacement) and the T-12's own NOI before
+            # reserve (the memo's "T-12 actual of $4.18M").
+            "year1_noi_before_reserve_usd": 5_308_245,
+            "entry_noi_usd": 5_308_245,
+            "t12_noi_before_reserve_usd": 4_180_000,
+            # The caps are these NOIs ÷ the purchase price (the workbook writes
+            # them as formulas over those cells).
+            "entry_cap_rate_t12": 4_180_000 / 36_400_000,
+            "entry_cap_rate_year1_uw": 5_308_245 / 36_400_000,
             "year1_yield_on_cost": 0.1086,
         },
         "p_and_l_engine_proforma": {
@@ -76,8 +102,8 @@ def kimpton_model() -> dict[str, Any]:
         },
         "debt_engine": {
             "loan_amount_usd": 23_683_922,
-            "ltv_cost": 0.547,
             "ltv_value": 0.65,
+            # Senior-only LTC (capital.senior_ltc); no ``ltv_cost`` — no engine emits one.
             "ltc": 0.547,
             # Senior-only deal: the all-debt basis equals the senior's.
             "total_debt_usd": 23_683_922,
