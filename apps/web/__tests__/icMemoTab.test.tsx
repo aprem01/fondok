@@ -488,9 +488,15 @@ describe('ICMemoTab — no Preview Memo step (FON-54 §7)', () => {
     expect(screen.queryByText(/Preview Memo/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Preview reviewed/)).not.toBeInTheDocument();
     expect(screen.queryByText(/previewed/i)).not.toBeInTheDocument();
-    // Excel is the only export card; no locked "Coming Soon" controls remain.
+    // Sam, 2026-11-27 — all three exports are self-serve cards; no locked
+    // "Coming Soon" controls and no "ask your Fondok contact" note remain.
     expect(screen.queryByText(/Coming Soon/)).toBeNull();
-    expect(screen.getByTestId('memo-export-note')).toBeInTheDocument();
+    expect(screen.queryByTestId('memo-export-note')).toBeNull();
+    expect(screen.queryByText(/Fondok contact/)).toBeNull();
+    expect(screen.getByText('Excel Model')).toBeInTheDocument();
+    expect(screen.getByText('Deal Presentation')).toBeInTheDocument();
+    expect(screen.getAllByText('IC Memo').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByTitle(/Download \.(xlsx|pdf|pptx)|Available after model run/)).toHaveLength(3);
   });
 
   it('can mark IC Ready with an acknowledged critical without any preview step — persisted as the deal status', async () => {

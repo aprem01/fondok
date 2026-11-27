@@ -1828,14 +1828,16 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 {canExport ? 'Base Case · Latest model run' : 'Awaiting model run'}
               </span>
             </div>
-            <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)', gap: 14, alignItems: 'start' }}>
-              {/* The Excel model is the deliverable today. The IC Memo PDF and
-                  Deal Presentation PPTX exports are not shipped, so no card
-                  pretends they are — the plain line beside the Excel card says
-                  what exists. The worker endpoints and `api.exports.download`
-                  stay wired; add a card here when a deliverable is live. */}
+            <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 14, alignItems: 'start' }}>
+              {/* Sam, 2026-11-27 — the IC Memo PDF and Deal Presentation PPTX
+                  are self-serve: the worker endpoints (`/export/memo.pdf`,
+                  `/export/presentation.pptx`) render from the latest model run
+                  and carry the deal's Readiness in the footer (FON-80), so a
+                  reader always sees how far the model is. */}
               {([
                 { title: 'Excel Model', ext: '.xlsx', body: 'Complete underwriting model with assumptions, calculations and source references.', path: 'excel', live: true },
+                { title: 'IC Memo', ext: '.pdf', body: 'Committee memo from the latest model run. The footer carries the deal\'s Readiness and extraction score.', path: 'memo.pdf', live: true },
+                { title: 'Deal Presentation', ext: '.pptx', body: 'Committee deck from the latest model run, same figures and footer as the memo.', path: 'presentation.pptx', live: true },
               ] as { title: string; ext: string; body: string; path: 'excel' | 'memo.pdf' | 'presentation.pptx'; live: boolean }[]).map(({ title, ext, body, path, live }) => {
                 const busy = exportBusy === path;
                 return (
@@ -1868,14 +1870,6 @@ export default function ICMemoTab({ project }: { project: Project }) {
                 </div>
                 );
               })}
-              <p
-                data-testid="memo-export-note"
-                style={{ fontSize: 12, color: palette.textSecondary, lineHeight: 1.6, margin: 0, padding: '14px 15px' }}
-              >
-                PDF and presentation exports are produced from the Excel model today — download the Excel
-                model and build the committee pack from it. Ask your Fondok contact for a prepared PDF memo
-                or deck.
-              </p>
             </div>
           </div>
 
