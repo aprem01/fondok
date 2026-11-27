@@ -210,7 +210,7 @@ vi.mock('@/lib/hooks/useDealProvenance', () => ({
     key && mockReasons[key] ? { source: '', value: null, reason: mockReasons[key] } : null,
 }));
 
-import { ENTRY_CAP_SUB, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, NOT_YET_OPEN, closedAtEntry, inPlaceCap, t12OutOfDate } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_CAP_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, NOT_YET_OPEN, ON_UNDISPLACED_YEAR_ONE, closedAtEntry, inPlaceCap, t12OutOfDate } from '@/lib/purchasePrice';
 import OverviewTab, { EXIT_NOI_LABEL, exitNoiLabel, FUTURE_PL_REVENUE_LABEL, FUTURE_PL_LINK_LABEL, TARGET_LIRR_LABEL, TARGET_YOC_LABEL, TARGET_YOC_KEY } from '@/components/project/OverviewTab';
 import { REASONS } from '@/lib/ontology/reasons.generated';
 import { NOI_BEFORE_RESERVE_DEFINITION } from '@/lib/engines/noi';
@@ -426,6 +426,56 @@ describe('OverviewTab — "Where this came from" popover', () => {
     expect(screen.getByText('Entry NOI ÷ Purchase Price')).toBeInTheDocument();
     // Its Purchase Price input is named as an input, not "Calculated".
     expect(screen.getByText('Input · Overview / CAPEX ↗')).toBeInTheDocument();
+  });
+
+  it('review 2026-11-27 — the Entry Cap popover states the basis once (or, on a projected fallback, says so); the brief sub sits under the label', () => {
+    const base = OUTPUTS as unknown as { engines: Record<string, { outputs: Record<string, unknown> }> };
+    const withEntryNoi = (runRate: number) => ({
+      ...OUTPUTS,
+      engines: {
+        ...base.engines,
+        expense: { ...base.engines.expense, outputs: { ...base.engines.expense.outputs, run_rate_noi_at_entry: runRate } },
+      },
+    } as unknown as EngineOutputsResponse);
+    const openEntryCap = () => {
+      const entry = screen.getByTestId('overview-section-entry-valuation');
+      fireEvent.click(within(entry).getByText('Entry Cap Rate'));
+      return screen.getByRole('dialog', { name: /Where Entry Cap Rate came from/i }).textContent ?? '';
+    };
+    const count = (hay: string, needle: string) => hay.split(needle).length - 1;
+
+    // The label-sub is the brief formula, not the 70-character basis sentence.
+    expect(ENTRY_CAP_SUB).toBe('Entry NOI ÷ price');
+    expect(ENTRY_CAP_SUB).not.toBe(ENTRY_NOI_BASIS);
+
+    // (a) the engine's entry NOI equals Year 1: the basis, once; the formula is the bare one.
+    outputsRef.value = withEntryNoi(3_100_000);
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    let dialog = openEntryCap();
+    expect(count(dialog, ENTRY_NOI_BASIS)).toBe(1);
+    expect(count(dialog, 'Entry NOI ÷ Purchase Price')).toBe(1);
+    expect(dialog).not.toContain(`Entry NOI (${ENTRY_NOI_BASIS}) ÷ Purchase Price`);
+    expect(dialog).not.toContain(ENTRY_CAP_PROJECTED_SUB);
+    cleanup();
+
+    // (b) normalized (Year 1 displaced): one statement about what was taken out — the basis sentence stays on the Entry NOI row.
+    outputsRef.value = withEntryNoi(3_400_000);
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    dialog = openEntryCap();
+    expect(dialog).toContain(`Struck ${ON_UNDISPLACED_YEAR_ONE}.`);
+    expect(count(dialog, ENTRY_NOI_BASIS)).toBe(0);
+    expect(count(dialog, ON_UNDISPLACED_YEAR_ONE)).toBe(1);
+    cleanup();
+
+    // (c) a run that published no entry NOI (pre-FON-122): the cap is on the projected Year 1 and says so.
+    outputsRef.value = OUTPUTS;
+    render(<OverviewTab projectId="deal-uuid-1" />);
+    expect(rowValue('Entry Cap Rate')).toBe('9.12%'); // 3.1M ÷ 34M, the projected Year 1
+    dialog = openEntryCap();
+    expect(dialog).toContain(ENTRY_CAP_PROJECTED_SUB);
+    expect(count(dialog, ENTRY_NOI_BASIS)).toBe(0);
+    // ...while the Entry NOI row itself still carries the basis in its own popover.
+    expect(screen.getByText(ENTRY_CAP_SUB)).toBeInTheDocument();
   });
 });
 

@@ -80,7 +80,7 @@
  * because keeping the analyst's words does not make their figures current.
  */
 
-import { ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, closedAtEntry, inPlaceCap } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, closedAtEntry, inPlaceCap } from '@/lib/purchasePrice';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -345,7 +345,8 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
           m.noi != null ? `, not the ${fmtCurrency(m.noi, { compact: true })} projected Year-1 NOI` : ''
         }`,
       );
-    } else if (m.entryNoi ?? m.noi) {
+    } else if (m.entryNoi != null || m.noi != null) {
+      // `!= null`, not truthiness: an entry NOI of exactly $0 still prints "$0".
       thesisBits.push(`${cap} against ${fmtCurrency((m.entryNoi ?? m.noi) as number, { compact: true })} of Year-1 NOI`);
     } else {
       thesisBits.push(cap);
@@ -412,6 +413,27 @@ const perKeyK = (v: number | null): string => (v == null ? '—' : `$${Math.roun
 const whole$ = (v: number | null): string => (v == null ? '—' : `$${Math.round(v)}`);
 const xMult = (v: number | null): string => (v == null ? '—' : `${v.toFixed(2)}x`);
 const pctOr = (v: number | null, d = 1): string => (v == null ? '—' : fmtPct(v, d));
+
+/**
+ * The lines under the Going-In Cap tile (review 2026-11-27). The entry NOI
+ * and its basis only when the run published that NOI (`!= null`: an entry NOI
+ * of $0 is still one); a refused cap (closed hotel: stale T-12 / not yet open)
+ * points at yield on cost; a cap on the projected Year 1 says so.
+ */
+function entryCapSub(m: DealMetrics): string[] {
+  if (m.entryNoi != null) return [`Entry NOI ${mm(m.entryNoi)}`, ENTRY_NOI_BASIS];
+  if (m.capNa != null) return ['See Yield on Cost on Returns'];
+  if (m.capRate != null) return [ENTRY_CAP_PROJECTED_SUB];
+  return [];
+}
+
+/** The Capitalization row's value for the same cap: "8.32% · Entry NOI $3.03M", or the cap alone when the run published no entry NOI. */
+function entryCapRow(m: DealMetrics): string {
+  const cap = m.capNa ?? pctOr(m.capRate, 2);
+  if (m.entryNoi != null) return `${cap} · Entry NOI ${mm(m.entryNoi)}`;
+  if (m.capNa == null && m.capRate != null) return `${cap} · projected Year 1 NOI`;
+  return cap;
+}
 
 // ─────────────────────────── memo point model ─────────────────────────────
 interface MemoPoint {
@@ -1344,12 +1366,15 @@ export default function ICMemoTab({ project }: { project: Project }) {
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
     // FON-122 (Sam, 2026-11-26) — the cap shows the entry NOI it is struck on and
-    // its basis, so an 8.3% cap beside a lower NOI (Y1) reads as intended; "—"
-    // when the run published no entry NOI.
+    // its basis, so an 8.3% cap beside a lower NOI (Y1) reads as intended.
+    // Review 2026-11-27 — the basis is attached only when the run published
+    // that entry NOI; a cap that fell back to the projected Year 1 ÷ price says
+    // so (and asks for a re-run) rather than printing "Entry NOI —" under a
+    // basis it was not struck on. A refused cap (n/a) points at yield on cost.
     {
       label: 'Going-In Cap Rate', value: metrics.capNa ?? pctOr(metrics.capRate, 2),
       state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate',
-      sub: [`Entry NOI ${mm(metrics.entryNoi)}`, ENTRY_NOI_BASIS],
+      sub: entryCapSub(metrics),
     },
     // FON-122 — the in-place (T-12) cap beside it: the T-12's own NOI before
     // reserve ÷ price; "—" when the statement states none. The dated flag rides
@@ -1384,7 +1409,8 @@ export default function ICMemoTab({ project }: { project: Project }) {
       rows: [
         ['Purchase Price', mm(metrics.purchasePrice)],
         // FON-122 — the two caps, each with the NOI it is struck on; "—" when unsourced.
-        ['Going-In Cap Rate', `${metrics.capNa ?? pctOr(metrics.capRate, 2)} · Entry NOI ${mm(metrics.entryNoi)}`],
+        // Review 2026-11-27 — no "Entry NOI —" beside a cap on the projected Year 1.
+        ['Going-In Cap Rate', entryCapRow(metrics)],
         [IN_PLACE_CAP_LABEL, `${pctOr(metrics.inPlaceCap, 2)} · T-12 NOI ${mm(metrics.t12Ebitda)}`],
         ['Renovation / CapEx', mm(metrics.renovation)],
         ['Total Project Cost', mm(metrics.totalCost)],

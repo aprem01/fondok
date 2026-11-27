@@ -10459,6 +10459,128 @@ async def run_all_engines(
     missing_identity = set(missing_identity_inputs(base_inputs))
     accumulated: dict[str, BaseModel] = {}
 
+    # Review 2026-11-27 — an exception escaping the chain (a persistence error,
+    # a bug in the runner itself; engine exceptions are caught inside
+    # ``run_single_engine``) used to leave every later engine with NO row: the
+    # web polled the run until its 60 s timeout and printed a generic message.
+    # The run must still reach a terminal state, so every scheduled engine
+    # that has no row yet lands ``failed`` naming the abort, and the exception
+    # then propagates as before (the background task logs it).
+    try:
+        await _run_chain(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            overrides=overrides, scenario_id=scenario_id, base_inputs=base_inputs,
+            missing_identity=missing_identity, accumulated=accumulated,
+            results=results, record=_record,
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised after the rows land
+        await _abort_remaining_engines(
+            session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id,
+            results=results, record=_record, exc=exc,
+        )
+        raise
+
+    # Phase 2.1 — persist this run's value lineage. Best-effort by design:
+    # a lineage failure must never fail a model run, and the module is
+    # landing on a sibling branch, so the import is guarded too.
+    if persist_for_run is not None:
+        try:
+            await persist_for_run(session, deal_id, tenant_id, run_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "lineage: persist_for_run failed for deal %s run %s "
+                "(engine results are unaffected)",
+                deal_id,
+                run_id,
+            )
+
+    return results
+
+
+def run_aborted_message(exc: BaseException) -> str:
+    """The ``error`` text on an engine row the chain never reached."""
+    return f"run aborted before this engine: {exc}"
+
+
+async def _abort_remaining_engines(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    results: dict[str, dict[str, Any]],
+    record: Callable[[dict[str, Any]], None],
+    exc: BaseException,
+) -> None:
+    """Land a ``failed`` row for every engine in ``ENGINE_NAMES`` that has
+    none for this run (``engine_error``, "run aborted before this engine:
+    <error>"), and fail a ``running`` row the raising step left behind the
+    same way, so ``get_run_status`` reports a terminal run.
+
+    Best-effort: a persistence failure here is logged, never raised over the
+    original exception."""
+    # On Postgres the failed statement aborted the transaction; nothing can be
+    # written until it is rolled back (see the loader branch above).
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001
+        logger.debug("abort: rollback failed", exc_info=True)
+    message = run_aborted_message(exc)
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, engine_name, status FROM engine_outputs "
+                    "WHERE run_id = :run AND tenant_id = :tenant"
+                ),
+                {"run": run_id, "tenant": str(tenant_id)},
+            )
+        ).mappings().all()
+    except Exception:  # noqa: BLE001
+        logger.exception("abort: could not read run %s rows; recording nothing", run_id)
+        return
+    written = {r["engine_name"]: r for r in rows}
+    for name in ENGINE_NAMES:
+        if name in results:
+            continue
+        failure = EngineFailure(
+            engine=name,
+            reason=ReasonCode.ENGINE_ERROR,
+            message=message,
+            exception_type=type(exc).__name__,
+        )
+        try:
+            row = written.get(name)
+            if row is not None and row["status"] == "running":
+                await _persist_failed(session, row_id=str(row["id"]), tenant_id=tenant_id, failure=failure)
+                record(_failed_result(failure, runtime_ms=0))
+            elif row is None:
+                record(
+                    await _persist_failure_row(
+                        session, deal_id=deal_id, tenant_id=tenant_id, run_id=run_id, failure=failure,
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("abort: could not fail engine %s on run %s", name, run_id)
+
+
+async def _run_chain(
+    session: AsyncSession,
+    *,
+    deal_id: str,
+    tenant_id: str,
+    run_id: str,
+    overrides: dict[str, Any] | None,
+    scenario_id: str | None,
+    base_inputs: Any,
+    missing_identity: set[str],
+    accumulated: dict[str, BaseModel],
+    results: dict[str, dict[str, Any]],
+    record: Callable[[dict[str, Any]], None],
+) -> None:
+    """The per-engine loop of :func:`run_all_engines` (split out so an
+    exception from any step is caught in one place)."""
+    _record = record
     for name in ENGINE_NAMES:
         needed = identity_inputs_needed(name) & missing_identity
         if needed:
@@ -10521,22 +10643,6 @@ async def run_all_engines(
             scenario_id=scenario_id,
         )
         _record(result)
-
-    # Phase 2.1 — persist this run's value lineage. Best-effort by design:
-    # a lineage failure must never fail a model run, and the module is
-    # landing on a sibling branch, so the import is guarded too.
-    if persist_for_run is not None:
-        try:
-            await persist_for_run(session, deal_id, tenant_id, run_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "lineage: persist_for_run failed for deal %s run %s "
-                "(engine results are unaffected)",
-                deal_id,
-                run_id,
-            )
-
-    return results
 
 
 # ─────────────────────── Ephemeral sandbox preview ────────────────────

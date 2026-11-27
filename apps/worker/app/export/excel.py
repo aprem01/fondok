@@ -99,6 +99,7 @@ from .labels import (
     line_label,
     source_display,
     ENTRY_NOI_BASIS,
+    ENTRY_NOI_PROJECTED_NOTE,
 )
 from .refusals import (
     as_float,
@@ -160,7 +161,7 @@ MODEL_VERSION_MISSING = (
 RENOVATION_BREAKDOWN_MISSING = (
     "no renovation breakdown on the deal's capital engine output — run the model again"
 )
-RENOVATION_NO_BUDGET_MISSING = "no renovation budget on the deal's capital engine output"
+RENOVATION_NO_BUDGET_MISSING = "no renovation budget on this deal"
 
 
 def _model_version_label(model: dict[str, Any]) -> str | None:
@@ -186,11 +187,22 @@ def _in_place_cap_missing(inv: dict[str, Any]) -> str:
 
 
 def _renovation_part_missing(inv: dict[str, Any]) -> str:
-    """A breakdown part the payload lacks: because there is no renovation budget,
+    """A breakdown part the payload lacks: because there is no renovation budget
+    (no total, or a zero one — the engine's default when the deal has none),
     or because the run predates the engine publishing the split."""
-    if inv.get("renovation_budget_usd") is None and inv.get("renovation_total_usd") is None:
+    if not inv.get("renovation_total_usd"):
         return RENOVATION_NO_BUDGET_MISSING
     return RENOVATION_BREAKDOWN_MISSING
+
+
+def _entry_noi_note(inv: dict[str, Any]) -> str:
+    """The Entry NOI row's note: the FON-122 basis string, unless the payload
+    says the figure is the bare projected Year 1 (an open hotel's pre-FON-122
+    run) — then the note says that, and asks for a re-run, rather than
+    claiming a basis the cap was not struck on."""
+    if inv.get("entry_noi_basis") == "projected_year1":
+        return ENTRY_NOI_PROJECTED_NOTE
+    return ENTRY_NOI_BASIS
 
 
 class _Ratio:
@@ -765,7 +777,14 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                     "Budget + contingency; the Renovation line in Sources & Uses", "renovation_total",
                     RENOVATION_NO_BUDGET_MISSING,
                 ),
-                item("Renovation / Key", inv, "renovation_per_key_usd", USD_FMT, "USD/key, on the total", "renovation_per_key", "capital engine"),
+                # ...and the per-key figure names the same reason as the rows above it when
+                # the deal has no renovation budget (not a different "no renovation / key").
+                (
+                    "Renovation / Key", inv.get("renovation_per_key_usd"), USD_FMT, "USD/key, on the total",
+                    "renovation_per_key",
+                    RENOVATION_NO_BUDGET_MISSING if not inv.get("renovation_total_usd")
+                    else "no renovation / key on the deal's capital engine output",
+                ),
                 # Deal-level Soft Costs / Contingency use lines (outside the
                 # renovation) — only when the analyst entered them, so the sheet
                 # never shows two "Soft Costs" rows meaning different things.
@@ -793,7 +812,7 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 # 2026-11-27: each NOI is its own row and each cap is the FORMULA
                 # NOI ÷ Purchase Price over this sheet's cells, so it traces.
                 (
-                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, ENTRY_NOI_BASIS,
+                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, _entry_noi_note(inv),
                     "entry_noi", _entry_cap_missing(inv, ENTRY_NOI_MISSING),
                 ),
                 (

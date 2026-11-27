@@ -886,7 +886,9 @@ export default function InvestmentTab() {
                 id: 'entryCap', label: 'Entry Cap Rate', kind: 'calc',
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: capNa ?? pctv(entryCap, 2),
-                // FON-122 — the basis sits on the Entry NOI row above; this row says so only when the entry NOI is not the projected Year 1.
+                // FON-122 — the basis sentence sits on the Entry NOI row above; this row carries the brief
+                // formula (review 2026-11-27: `ENTRY_CAP_SUB`, no longer the same 70-character sentence twice)
+                // only when the entry NOI is not the projected Year 1.
                 note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? ENTRY_CAP_SUB : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {

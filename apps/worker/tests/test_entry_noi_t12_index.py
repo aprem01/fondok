@@ -79,10 +79,13 @@ def _year_one(build, topline):
 
 
 def test_the_sub_line_is_the_one_basis_string() -> None:
-    from app.export.memo_pdf import ENTRY_CAP_DEFINITION, ENTRY_CAP_LABEL
+    """The memo's entry tile reads the ONE basis string, in the same
+    "<numerator> ÷ price" shape as the T-12 tile beside it (review 2026-11-27)."""
+    from app.export.memo_pdf import ENTRY_CAP_DEFINITION, ENTRY_CAP_LABEL, IN_PLACE_CAP_DEFINITION
 
     assert ENTRY_NOI_BASIS == "Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve"
-    assert ENTRY_CAP_DEFINITION is ENTRY_NOI_BASIS
+    assert ENTRY_CAP_DEFINITION == f"{ENTRY_NOI_BASIS} ÷ price"
+    assert ENTRY_CAP_DEFINITION.endswith(" ÷ price") and IN_PLACE_CAP_DEFINITION.endswith(" ÷ price")
     assert ENTRY_CAP_LABEL == "Entry Cap (Year 1, undisplaced)"
 
 

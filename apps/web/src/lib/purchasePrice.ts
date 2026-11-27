@@ -153,7 +153,19 @@ export const NOT_YET_OPEN = 'n/a, not yet open';
  * is the same words).
  */
 export const ENTRY_NOI_BASIS = 'Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve';
-export const ENTRY_CAP_SUB = ENTRY_NOI_BASIS;
+/**
+ * Under the Entry Cap row: the formula in brief. The basis sentence itself
+ * sits ONCE, on the Entry NOI row above it (review 2026-11-27: the two
+ * adjacent rows used to print the same 70-character sentence).
+ */
+export const ENTRY_CAP_SUB = 'Entry NOI ÷ price';
+/**
+ * Review 2026-11-27 — what the entry-cap tile / row says instead when the run
+ * published no entry NOI and the cap fell back to the projected Year 1 ÷ price
+ * (an open hotel's pre-FON-122 run): the basis above is NOT claimed for it.
+ * The worker's `labels.ENTRY_CAP_PROJECTED_SUB` is the same words.
+ */
+export const ENTRY_CAP_PROJECTED_SUB = 'Projected Year 1 NOI ÷ price · re-run the model for the entry basis';
 /** Said beside a cap whose entry NOI is NOT the projected Year 1 (a closure, a displacement or the ramp was taken out). */
 export const ON_UNDISPLACED_YEAR_ONE = 'on Year 1 at T-12 occupancy and ADR, without the closure, displacement or ramp';
 /** @deprecated the "closing for renovation" wording is retired; the old name maps to the new text. */

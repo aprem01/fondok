@@ -40,6 +40,15 @@ NOI_BEFORE_RESERVE_DEFINITION = "After property tax and insurance, before the FF
 #: same words.
 ENTRY_NOI_BASIS = "Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve"
 
+#: Review 2026-11-27 — what the entry-cap tile says instead when the cap fell
+#: back to the bare projected Year 1 ÷ price (an open hotel's run that predates
+#: FON-122 published no ``run_rate_noi_at_entry``): the basis above is NOT
+#: claimed for it. The web's ``ENTRY_CAP_PROJECTED_SUB`` is the same words.
+ENTRY_CAP_PROJECTED_SUB = "Projected Year 1 NOI ÷ price · re-run the model for the entry basis"
+#: The same honesty on the Entry NOI row itself (the workbook's Assumptions
+#: sheet), where "÷ price" would mis-describe a dollar figure.
+ENTRY_NOI_PROJECTED_NOTE = "Projected Year 1 NOI · re-run the model for the entry basis"
+
 #: NOI net of the FF&E reserve.
 CASH_NOI = "Cash NOI (after FF&E reserve)"
 
