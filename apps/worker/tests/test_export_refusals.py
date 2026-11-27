@@ -162,6 +162,25 @@ async def _modeled_payload():
 
 
 @pytest.mark.asyncio
+async def test_build_sha_is_absent_not_null_when_the_worker_has_none(monkeypatch) -> None:
+    """Review 2026-11-27 — the payload never carries ``build_sha: null``: the
+    key is absent when no SHA is set (the cover's "not available: no build SHA
+    …" reads the absence the same), and the SHA itself when one is."""
+    from app.api.health import build_info
+
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("FONDOK_BUILD_SHA", raising=False)
+    assert build_info()["build_sha"] is None
+    _deal, model, _memo = await _bare_payload()
+    assert "build_sha" not in model
+    assert None not in model.values()
+
+    monkeypatch.setenv("FONDOK_BUILD_SHA", "84f2281b9c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f")
+    _deal, model, _memo = await _bare_payload()
+    assert model["build_sha"] == "84f2281b9c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f"
+
+
+@pytest.mark.asyncio
 async def test_payload_matches_the_snapshot_but_for_refusals() -> None:
     """``deal`` / ``memo`` byte-identical to the snapshot; the ``model`` key
     set equal to it plus ``refusals``.
@@ -469,7 +488,7 @@ async def test_live_payload_carries_the_build_sha_and_canonical_run_for_the_cove
     """The live model's ``build_sha`` is what ``/health`` reports (here via
     ``FONDOK_BUILD_SHA``), ``run_id`` is the deal's canonical run, and the
     workbook's cover prints "<sha8> · run <run8>" off them. With no SHA set the
-    model says ``None`` and the cover "not available" — never a placeholder."""
+    model omits the key and the cover says "not available" — never a placeholder."""
     from openpyxl import load_workbook
 
     from app.database import get_session_factory
@@ -496,8 +515,9 @@ async def test_live_payload_carries_the_build_sha_and_canonical_run_for_the_cove
     assert ws["A8"].value == "Model Version"
     assert ws["B8"].value == f"84f2281b · run {model['run_id'][:8]}"
 
-    # No SHA in the environment: the bare payload carries None.
+    # No SHA in the environment: the bare payload carries no key at all
+    # (review 2026-11-27 — never ``build_sha: null``).
     monkeypatch.delenv("FONDOK_BUILD_SHA", raising=False)
     _d, bare, _m = await _bare_payload()
-    assert bare["build_sha"] is None
+    assert "build_sha" not in bare
     assert "run_id" not in bare

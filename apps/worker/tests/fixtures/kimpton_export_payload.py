@@ -69,8 +69,9 @@ def kimpton_model() -> dict[str, Any]:
             "contingency_usd": 528_000,
             "working_capital_usd": 500_000,
             "loan_costs_usd": 364_368,
-            "total_capital_usd": 43_309_906,
-            "total_capital_per_key_usd": 328_105,
+            # = the ``uses`` lines below (36.4M + 728,736 + 5.28M + 500K + 364,368).
+            "total_capital_usd": 43_273_104,
+            "total_capital_per_key_usd": 327_827,
             # Whole-dollar NOI figures (the proforma rows below are in $000s):
             # Year 1 before reserve, the undisplaced entry NOI (this fixture's
             # Year 1 carries no displacement) and the T-12's own NOI before
@@ -245,13 +246,18 @@ def kimpton_model() -> dict[str, Any]:
             {"name": "Base Case", "irr": 0.2348, "unlevered_irr": 0.1684, "multiple": 2.12, "avg_coc": 0.046, "exit_value_usd": 73_142_000, "base": True},
             {"name": "Upside", "irr": 0.3120, "unlevered_irr": 0.2210, "multiple": 2.58, "avg_coc": 0.061, "exit_value_usd": 84_500_000},
         ],
-        # UI / chrome — Sources & Uses, comps, variance
+        # UI / chrome — Sources & Uses, comps, variance. Review 2026-11-27: the
+        # live payload builds ``uses`` from the SAME ``capital.uses`` rows
+        # ``investment_engine.purchase_price_usd`` is read from, so the Purchase
+        # Price line is the deal's $36,400,000 (it used to carry the original
+        # model.json's $36,436,802 and the deck's slide 5 disagreed with slide 3).
+        # Equity and Total Capital move by the same $36,802 so the stack foots.
         "sources": [
             {"label": "Senior Debt", "amount": 23_683_922, "pct": 0.547},
-            {"label": "Equity", "amount": 19_625_984, "pct": 0.453},
+            {"label": "Equity", "amount": 19_589_182, "pct": 0.453},
         ],
         "uses": [
-            {"label": "Purchase Price", "amount": 36_436_802},
+            {"label": "Purchase Price", "amount": 36_400_000},
             {"label": "Closing Costs", "amount": 728_736},
             {"label": "Renovation", "amount": 5_280_000},
             {"label": "Working Capital", "amount": 500_000},

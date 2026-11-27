@@ -159,20 +159,63 @@ def test_live_investment_block_carries_the_capital_engines_renovation_breakdown(
     assert "75% hard costs" in inv["renovation_split_note"]
 
 
-def test_live_investment_block_omits_the_breakdown_the_engine_did_not_emit() -> None:
-    """No renovation budget → the engine publishes no breakdown → the payload
-    carries none (the sheet then says why), never a $0 split."""
+NO_RENO = "not available: no renovation budget on this deal"
+RENO_ROWS = (
+    "Renovation Budget (before contingency)", "Hard Costs", "Soft Costs", "Professional Fees",
+    "Contingency", "Renovation Total (incl. contingency)",
+)
+
+
+def _no_renovation_capital():
+    """The REAL capital engine on a deal with no renovation budget. Its pydantic
+    defaults still publish ``renovation_base_usd`` / ``_total_usd`` /
+    ``_contingency_usd`` as 0.0 (not None) with no Renovation use line and no
+    breakdown — the shape the review (2026-11-27) caught printing $0."""
     from app.engines.capital import CapitalEngine, CapitalEngineInput
-    from app.export.live_payload import _build_investment
 
     cap = CapitalEngine().run(
         CapitalEngineInput(deal_id=uuid4(), purchase_price=36_400_000, keys=132, renovation_budget=0)
     )
+    raw = cap.model_dump(mode="json")
     assert cap.renovation_breakdown is None
-    inv = _build_investment(cap.model_dump(mode="json"), 132, None)
+    assert raw["renovation_base_usd"] == 0.0 and raw["renovation_total_usd"] == 0.0
+    assert raw["renovation_contingency_usd"] == 0.0
+    assert not any("renovation" in u["label"].lower() for u in raw["uses"])
+    return cap
+
+
+def test_live_investment_block_omits_the_breakdown_the_engine_did_not_emit(tmp_out: Path) -> None:
+    """No renovation budget → the engine publishes no breakdown → the payload
+    carries none (the sheet then says why), never a $0 split — and (review
+    2026-11-27) none of the fold-in fields either, although the engine emits
+    them as 0.0: the Assumptions sheet prints "not available: no renovation
+    budget on this deal" on every renovation row, not $0 and not the
+    "run the model again" reason meant for a pre-split run."""
+    from app.export.excel import _renovation_part_missing
+    from app.export.live_payload import _build_investment
+
+    cap = _no_renovation_capital()
+    inv = _build_investment(cap.model_dump(mode="json"), 132, 1_646_245.0)
     for key in ("renovation_hard_costs_usd", "renovation_soft_costs_usd",
-                "renovation_professional_fees_usd", "renovation_split_note", "renovation_budget_usd"):
+                "renovation_professional_fees_usd", "renovation_split_note", "renovation_budget_usd",
+                "renovation_base_usd", "renovation_total_usd", "renovation_contingency_usd",
+                "renovation_contingency_pct", "renovation_per_key_usd"):
         assert key not in inv, key
+    assert _renovation_part_missing(inv) == "no renovation budget on this deal"
+    # A payload that still says total == 0 (an older worker) names the same reason.
+    assert _renovation_part_missing({"renovation_total_usd": 0.0}) == "no renovation budget on this deal"
+    assert _renovation_part_missing({"renovation_total_usd": 5_280_000.0}).startswith("no renovation breakdown")
+
+    model = _kimpton()
+    model["investment_engine"] = inv
+    ws = _workbook(tmp_out, model)["Assumptions"]
+    for label in (*RENO_ROWS, "Renovation / Key"):
+        cell = _cell(ws, label)
+        assert cell.value == NO_RENO, (label, cell.value)
+        assert cell.value != 0
+    # The rest of the Acquisition block is the engine's own figures.
+    assert _cell(ws, "Purchase Price").value == 36_400_000
+    assert _cell(ws, "Total Capital").value == pytest.approx(cap.total_capital)
 
 
 def test_live_investment_block_falls_back_to_the_renovation_line_for_a_pre_fon71_run() -> None:
@@ -267,9 +310,7 @@ def test_assumptions_sheet_says_why_when_the_engine_emitted_no_breakdown(tmp_out
         inv.pop(key)
     ws = _workbook(tmp_out, model)["Assumptions"]
     for label in ("Renovation Budget (before contingency)", "Hard Costs", "Renovation Total (incl. contingency)"):
-        assert _cell(ws, label).value == (
-            "not available: no renovation budget on the deal's capital engine output"
-        ), label
+        assert _cell(ws, label).value == NO_RENO, label
 
 
 # ═══════════════ 2. one LTC row, reading what the engine emits ═══════════════
@@ -445,6 +486,50 @@ def test_live_investment_block_carries_the_entry_noi_and_t12_noi() -> None:
     closed = _build_investment(cap, 132, -200_000.0, True)
     assert "entry_noi_usd" not in closed
     assert closed["entry_cap_not_yet_open"] is True
+
+
+def test_live_investment_block_says_which_noi_the_entry_cap_is_on() -> None:
+    """Review 2026-11-27 — ``entry_noi_basis``: ``run_rate`` when the engine
+    published the FON-122 entry NOI, ``projected_year1`` when an open hotel's
+    pre-FON-122 run fell back to the bare Year 1, absent with no entry NOI at
+    all. The exports print the T-12-index basis only for the first."""
+    from app.export.live_payload import (
+        ENTRY_NOI_BASIS_PROJECTED_Y1,
+        ENTRY_NOI_BASIS_RUN_RATE,
+        _build_investment,
+    )
+
+    cap = _sam_capital().model_dump(mode="json")
+    assert _build_investment(cap, 132, 1_500_000.0, False, 1_646_245.0)["entry_noi_basis"] == ENTRY_NOI_BASIS_RUN_RATE
+    assert ENTRY_NOI_BASIS_RUN_RATE == "run_rate"
+    fallback = _build_investment(cap, 132, 1_500_000.0)
+    assert fallback["entry_noi_basis"] == ENTRY_NOI_BASIS_PROJECTED_Y1 == "projected_year1"
+    assert fallback["entry_noi_usd"] == 1_500_000.0
+    assert fallback["entry_cap_rate_year1_uw"] == pytest.approx(1_500_000.0 / 36_400_000)
+    # A Year 1 of exactly $0 is still an entry NOI (and a projected one).
+    zero = _build_investment(cap, 132, 0.0)
+    assert zero["entry_noi_usd"] == 0.0 and zero["entry_noi_basis"] == "projected_year1"
+    assert "entry_noi_basis" not in _build_investment(cap, 132, -200_000.0, True)
+    assert "entry_noi_basis" not in _build_investment(cap, 132, None)
+
+
+def test_assumptions_entry_noi_note_does_not_claim_the_basis_for_a_projected_fallback(tmp_out: Path) -> None:
+    from app.export.labels import ENTRY_NOI_PROJECTED_NOTE
+
+    model = _kimpton()
+    model["investment_engine"]["entry_noi_basis"] = "projected_year1"
+    ws = _workbook(tmp_out, model)["Assumptions"]
+    assert _cell(ws, ENTRY_NOI, 3).value == ENTRY_NOI_PROJECTED_NOTE
+    assert ENTRY_NOI_PROJECTED_NOTE == "Projected Year 1 NOI · re-run the model for the entry basis"
+    assert _cell(ws, ENTRY_NOI, 3).value != ENTRY_NOI_BASIS
+    # The figure and the formula are unchanged — only the note is honest.
+    assert _cell(ws, ENTRY_NOI).value == 5_308_245
+    assert str(_cell(ws, ENTRY_CAP).value).startswith("=")
+    # The engine's own entry NOI (and a payload that predates the marker) keep the basis.
+    model["investment_engine"]["entry_noi_basis"] = "run_rate"
+    assert _cell(_workbook(tmp_out, model)["Assumptions"], ENTRY_NOI, 3).value == ENTRY_NOI_BASIS
+    del model["investment_engine"]["entry_noi_basis"]
+    assert _cell(_workbook(tmp_out, model)["Assumptions"], ENTRY_NOI, 3).value == ENTRY_NOI_BASIS
 
 
 def _assert_formula_caps(ws, *, price_label: str = "Purchase Price") -> None:

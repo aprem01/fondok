@@ -154,6 +154,12 @@ def t12_out_of_date(period_end: str | None, months_before_close: int | None) -> 
     ends = f"ends {end.strftime('%b %Y')}" if end is not None else "ends"
     return f"T-12 {ends}, {months_before_close} months before close"
 
+#: ``investment_engine.entry_noi_basis`` — which NOI ``entry_noi_usd`` is:
+#: the engine's FON-122 entry NOI, or the bare projected Year 1 an open
+#: hotel's pre-FON-122 run falls back to.
+ENTRY_NOI_BASIS_RUN_RATE = "run_rate"
+ENTRY_NOI_BASIS_PROJECTED_Y1 = "projected_year1"
+
 
 def _build_investment(
     capital: dict[str, Any],
@@ -227,10 +233,18 @@ def _build_investment(
     reno_base = _num(capital.get("renovation_base_usd"))
     reno_total = _num(capital.get("renovation_total_usd"))
     legacy_reno = "renovation_base_usd" not in capital and "renovation_total_usd" not in capital
-    _set(out, "renovation_base_usd", reno_base if not legacy_reno else renovation)
-    _set(out, "renovation_total_usd", reno_total if not legacy_reno else renovation)
-    _set(out, "renovation_contingency_pct", _num(capital.get("renovation_contingency_pct")))
-    _set(out, "renovation_contingency_usd", _num(capital.get("renovation_contingency_usd")))
+    # Review 2026-11-27 — with ``renovation_budget=0`` the engine's pydantic
+    # defaults still publish ``renovation_base_usd`` / ``_total_usd`` /
+    # ``_contingency_usd`` as 0.0 while emitting NO Renovation use line and
+    # NO breakdown. That is "no renovation on this deal", not a $0 budget:
+    # the fold-in fields are omitted too, so the sheet says why instead of
+    # printing $0 three times (and the split parts name the right reason).
+    no_renovation = renovation is None and not breakdown and not reno_base and not reno_total
+    if not no_renovation:
+        _set(out, "renovation_base_usd", reno_base if not legacy_reno else renovation)
+        _set(out, "renovation_total_usd", reno_total if not legacy_reno else renovation)
+        _set(out, "renovation_contingency_pct", _num(capital.get("renovation_contingency_pct")))
+        _set(out, "renovation_contingency_usd", _num(capital.get("renovation_contingency_usd")))
 
     # Sam QA 2026-11-27 — the whole-dollar NOI figures the cover and the
     # Assumptions sheet print and divide by the price: the proforma rows are in
@@ -259,6 +273,15 @@ def _build_investment(
     # The entry NOI itself, in whole dollars — the numerator the workbook's
     # entry-cap FORMULA divides by the purchase price cell, so the cap traces.
     _set(out, "entry_noi_usd", entry_noi)
+    # Review 2026-11-27 — and WHICH figure it is: ``run_rate`` when the engine
+    # published the FON-122 entry NOI; ``projected_year1`` when an open hotel's
+    # run predates the rule and the bare projected Year 1 stands in. The memo,
+    # the workbook and the web print the T-12-index basis only for the former
+    # — a fallback cap never claims a basis it was not struck on.
+    if entry_noi is not None:
+        out["entry_noi_basis"] = (
+            ENTRY_NOI_BASIS_RUN_RATE if run_rate_noi is not None else ENTRY_NOI_BASIS_PROJECTED_Y1
+        )
     if closed_at_entry:
         out_of_date = t12_out_of_date(t12_period_end, t12_months_before_close)
         if out_of_date is not None:
@@ -1930,13 +1953,13 @@ async def _assemble_live_payload(
     # Sam QA 2026-11-27 — the cover's "Model Version" is the worker build that
     # produced the workbook (the same ``build_sha`` ``/health`` reports:
     # RAILWAY_GIT_COMMIT_SHA, else FONDOK_BUILD_SHA, else null) plus the
-    # canonical run the figures came from. Null when no SHA is set — the cover
-    # then says "not available" rather than a placeholder string.
+    # canonical run the figures came from. Absent (never ``null``) when no SHA
+    # is set — the cover then says "not available" rather than a placeholder.
     model: dict[str, Any] = {
         "deal_id": deal_id,
         "deal_name": deal_name,
-        "build_sha": build_info()["build_sha"],
     }
+    _set(model, "build_sha", build_info()["build_sha"])
     try:
         canonical_run_id = await get_canonical_run_id(
             session, deal_id=deal_id, tenant_id=tenant_id

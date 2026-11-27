@@ -346,9 +346,15 @@ that; a deal with none reads its own Year 1, and a metric with no index today is
 The projection's own years are untouched. Beside it sits the **In-place cap (T-12)**: the basis
 statement's own twelve-month NOI before the FF&E reserve ÷ purchase price — the going-in yield
 buyers and lenders anchor on. It is derived from nothing: a statement that states no such line, or
-covers less than twelve months, or a deal with no purchase price, prints "—". Each row carries its
-basis under its label ("Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve";
-"T-12 NOI before reserve ÷ price"). In the Excel acquisition model (cover and Assumptions
+covers less than twelve months, or a deal with no purchase price, prints "—". The basis is stated
+once: the Entry NOI row carries it under its label ("Year 1 at T-12 occupancy and ADR · no
+displacement · before FF&E reserve"), the Entry Cap row the brief formula ("Entry NOI ÷ price"), and
+the In-place cap row its own ("T-12 NOI before reserve ÷ price"); the IC memo's two cap tiles print
+the NOI each is struck on under the percent ("Entry NOI $5.31M", "T-12 NOI $4.18M") with the same two
+sub-lines, the entry one ending "… ÷ price" like the T-12's. A run made before this rule published no entry NOI for
+an open hotel, so its cap is the projected Year 1 ÷ price; every surface then says exactly that
+("Projected Year 1 NOI ÷ price · re-run the model for the entry basis") and never attaches the basis
+above to it. In the Excel acquisition model (cover and Assumptions
 sheet) each numerator is its own row in whole dollars — *Entry NOI (Year 1, undisplaced)* and *T-12
 NOI (before FF&E reserve)* — and each cap is the Excel formula NOI ÷ Purchase Price over those cells,
 so a reader can trace it; a deal without a twelve-month statement reads "not available: no

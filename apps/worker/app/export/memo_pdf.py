@@ -60,6 +60,7 @@ from typing import Any
 from fondok_schemas.reasons import REFUSAL_GLYPH, ReasonCode
 
 from .labels import (
+    ENTRY_CAP_PROJECTED_SUB,
     ENTRY_NOI_BASIS,
     EXIT_SCHEDULE_COLUMNS,
     EXIT_SCHEDULE_NO_RETURNS_NOTE,
@@ -107,11 +108,33 @@ _fmt_int = fmt_int
 #: tiles: the entry cap on Year 1 at the T-12's own occupancy and ADR (no ramp),
 #: no closure, no displacement, NOI before the FF&E reserve; and the in-place cap
 #: on the T-12's own NOI before reserve. The entry sub-line is the ONE basis
-#: string (``labels.ENTRY_NOI_BASIS``; the web prints the same words).
+#: string (``labels.ENTRY_NOI_BASIS``; the web prints the same words) in the
+#: same "<numerator> ÷ price" shape as the T-12 tile beside it. Review
+#: 2026-11-27: a cap that fell back to the projected Year 1 (an open hotel's
+#: pre-FON-122 run, ``entry_noi_basis == "projected_year1"``) says so instead.
 ENTRY_CAP_LABEL = "Entry Cap (Year 1, undisplaced)"
-ENTRY_CAP_DEFINITION = ENTRY_NOI_BASIS
+ENTRY_CAP_DEFINITION = f"{ENTRY_NOI_BASIS} ÷ price"
+ENTRY_CAP_PROJECTED_DEFINITION = ENTRY_CAP_PROJECTED_SUB
 IN_PLACE_CAP_LABEL = "In-place Cap (T-12)"
 IN_PLACE_CAP_DEFINITION = "T-12 NOI before reserve ÷ price"
+
+
+def _entry_cap_definition(inv: dict[str, Any]) -> str:
+    """The entry tile's sub-line: the FON-122 basis ÷ price, or — when the
+    payload says the cap is on the bare projected Year 1 — that, with the
+    re-run ask. Never the basis for a figure that was not struck on it."""
+    if inv.get("entry_noi_basis") == "projected_year1":
+        return ENTRY_CAP_PROJECTED_DEFINITION
+    return ENTRY_CAP_DEFINITION
+
+
+def _noi_behind(label: str, value: Any, concept: str, what: str) -> str:
+    """The dollar figure a cap tile is struck on, under the percent
+    ("Entry NOI $5.31M" / "T-12 NOI $4.18M"); a reasoned dash when the
+    payload carries none — never derived back from the cap."""
+    if value is None:
+        return html.escape(f"{label} ") + refuse(ReasonCode.ENGINE_SKIPPED, f"no {what} on the export payload", concept)
+    return html.escape(f"{label} {_fmt_usd_m(value)}")
 
 
 def _entry_cap_cell(inv: dict[str, Any]) -> str:
@@ -232,6 +255,7 @@ h3.sub {
 .metric .k { font-size: 7.5pt; color: #6B7280; text-transform: uppercase; letter-spacing: 0.06em; }
 .metric .v { font-size: 14pt; font-weight: 700; color: #1F2937; margin-top: 3pt; }
 .metric .d { font-size: 6.5pt; color: #9CA3AF; margin-top: 2pt; line-height: 1.3; }
+.metric .s { font-size: 7pt; color: #6B7280; margin-top: 2pt; }
 .two-col {
     display: flex;
     gap: 10pt;
@@ -1543,8 +1567,8 @@ def _render_html_body(memo: dict[str, Any], model: dict[str, Any]) -> str:
 <div class="metrics">
   <div class="metric"><div class="k">RevPAR (Y1)</div><div class="v">{("$" + f"{revpar_y1:,.0f}") if revpar_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 RevPAR on the export payload (needs the key count and Year-1 room revenue)", "revpar")}</div></div>
   <div class="metric"><div class="k">NOI (Y1, before FF&amp;E reserve)</div><div class="d">{html.escape(NOI_BEFORE_RESERVE_DEFINITION)}</div><div class="v">{_fmt_usd_m(noi_y1 * 1000) if noi_y1 is not None else refuse(ReasonCode.ENGINE_SKIPPED, "no Year-1 NOI on the export payload", "noi")}</div></div>
-  <div class="metric"><div class="k">{html.escape(ENTRY_CAP_LABEL)}</div><div class="d">{html.escape(ENTRY_CAP_DEFINITION)}</div><div class="v">{_entry_cap_cell(inv)}</div></div>
-  <div class="metric"><div class="k">{html.escape(IN_PLACE_CAP_LABEL)}</div><div class="d">{html.escape(IN_PLACE_CAP_DEFINITION)}</div><div class="v">{_in_place_cap_cell(inv)}</div></div>
+  <div class="metric"><div class="k">{html.escape(ENTRY_CAP_LABEL)}</div><div class="d">{html.escape(_entry_cap_definition(inv))}</div><div class="v">{_entry_cap_cell(inv)}</div><div class="s">{_noi_behind("Entry NOI", inv.get("entry_noi_usd"), "entry_noi", "entry NOI")}</div></div>
+  <div class="metric"><div class="k">{html.escape(IN_PLACE_CAP_LABEL)}</div><div class="d">{html.escape(IN_PLACE_CAP_DEFINITION)}</div><div class="v">{_in_place_cap_cell(inv)}</div><div class="s">{_noi_behind("T-12 NOI", inv.get("t12_noi_before_reserve_usd"), "t12_noi", "T-12 NOI before reserve")}</div></div>
   <div class="metric"><div class="k">Levered IRR</div><div class="v">{_fmt_pct(ret.get('levered_irr'), code=ReasonCode.ENGINE_SKIPPED, concept='levered_irr')}</div></div>
 </div>
 
