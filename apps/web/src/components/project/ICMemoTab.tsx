@@ -80,13 +80,13 @@
  * because keeping the analyst's words does not make their figures current.
  */
 
-import { ON_UNDISPLACED_YEAR_ONE, closedAtEntry } from '@/lib/purchasePrice';
+import { ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB, closedAtEntry, inPlaceCap } from '@/lib/purchasePrice';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { History, RefreshCw, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import { fmtCurrency, fmtPct } from '@/lib/format';
+import { fmtCurrency, fmtPct, withArticle } from '@/lib/format';
 import { stabilizedNoiAfterReserve, STABILIZED_NOI_LABEL } from '@/lib/engines/noi';
 import { EXIT_SCHEDULE_MISSING, EXIT_SCHEDULE_TITLE, headlineReturns } from '@/lib/engines/returns';
 import { ExitScheduleTable } from '@/components/project/ExitScheduleCard';
@@ -130,6 +130,17 @@ interface DealMetrics {
   /** FON-122 — what prints instead of the going-in cap for a closed-at-purchase hotel without one. */
   capNa: string | null;
   capOnRunRate: boolean;
+  /**
+   * FON-122 (Sam, 2026-11-26) — the entry NOI the going-in cap is struck on
+   * (`expense.run_rate_noi_at_entry`: Year 1 at T-12 occupancy and ADR, no
+   * displacement, before FF&E reserve); null when the run did not publish it.
+   */
+  entryNoi: number | null;
+  /** The in-place cap (T-12): the basis statement's own NOI before reserve ÷ price; null without both. */
+  inPlaceCap: number | null;
+  t12Ebitda: number | null;
+  /** The dated flag when the T-12 is out of date for a going-in cap (closed-at-purchase rule); null otherwise. */
+  t12OutOfDate: string | null;
   revpar: number | null;
   adr: number | null;
   occupancy: number | null;
@@ -181,8 +192,9 @@ function extractMetrics(
   }
 
   const noi = y1exp ? num(y1exp.noi_institutional) ?? num(y1exp.noi) : null;
-  // FON-122 (Sam, 2026-11-23) — the going-in cap is on Year 1 with no closure
-  // and no displacement whenever the run published that figure.
+  // FON-122 (Sam, 2026-11-23 / 2026-11-26) — the going-in cap is on the entry
+  // NOI (Year 1 at T-12 occupancy and ADR, no closure, no displacement)
+  // whenever the run published that figure; the in-place (T-12) cap sits beside it.
   const atEntry = closedAtEntry(
     g<number>('revenue', 'closed_months'),
     g<number>('expense', 'run_rate_noi_at_entry'),
@@ -196,6 +208,8 @@ function extractMetrics(
   const capRate = atEntry.closed
     ? atEntry.cap ?? null
     : atEntry.cap ?? (noi != null && purchasePrice ? noi / purchasePrice : null);
+  const t12Ebitda = num(g<number>('expense', 't12_ebitda'));
+  const inPlace = inPlaceCap(t12Ebitda, purchasePrice);
 
   // FON-118 — the returns headline through the ONE reader (sentinel-free; the
   // headline is the selected row of the exit schedule). Nothing derived here.
@@ -221,6 +235,10 @@ function extractMetrics(
     capRate,
     capNa,
     capOnRunRate,
+    entryNoi: atEntry.entryNoi ?? null,
+    inPlaceCap: inPlace ?? null,
+    t12Ebitda,
+    t12OutOfDate: atEntry.outOfDate ?? null,
     revpar,
     adr: y1rev && y1rev.occupancy !== 0 ? num(y1rev.adr) : null,
     occupancy: y1rev ? num(y1rev.occupancy) : null,
@@ -301,23 +319,37 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
   const hold = m.holdYears ?? 5;
   const basis = m.pricePerKey != null ? `${fmtCurrency(m.pricePerKey, { compact: true })}/key` : null;
 
+  // Sam's QA (2026-11-26): "a 8.3%" — every number-led phrase takes the article
+  // it is read with (`withArticle`: "an 8.3%", "an 11%", "a 7%").
   const thesisBits: string[] = [];
   if (m.purchasePrice != null) {
-    thesisBits.push(`At a ${fmtCurrency(m.purchasePrice, { compact: true })} basis${basis ? ` (${basis})` : ''}`);
+    const amount = fmtCurrency(m.purchasePrice, { compact: true });
+    thesisBits.push(`At ${withArticle(amount)} basis${basis ? ` (${basis})` : ''}`);
   }
+  const holdPhrase = withArticle(`${hold}-year hold`);
   if (irr != null && mult != null) {
     thesisBits.push(
-      `the deal underwrites to a ${fmtPct(irr, 1)} levered IRR and a ${mult.toFixed(2)}x equity multiple over a ${hold}-year hold`,
+      `the deal underwrites to ${withArticle(fmtPct(irr, 1))} levered IRR and ${withArticle(`${mult.toFixed(2)}x`)} equity multiple over ${holdPhrase}`,
     );
   } else if (irr != null) {
-    thesisBits.push(`the deal underwrites to a ${fmtPct(irr, 1)} levered IRR over a ${hold}-year hold`);
+    thesisBits.push(`the deal underwrites to ${withArticle(fmtPct(irr, 1))} levered IRR over ${holdPhrase}`);
   }
-  if (m.capOnRunRate && m.capRate != null) {
-    thesisBits.push(`entering on a ${fmtPct(m.capRate, 1)} going-in cap ${ON_UNDISPLACED_YEAR_ONE}`);
-  } else if (m.noi != null && m.capRate != null) {
-    thesisBits.push(
-      `entering on a ${fmtPct(m.capRate, 1)} going-in cap against ${fmtCurrency(m.noi, { compact: true })} of Year-1 NOI`,
-    );
+  if (m.capRate != null) {
+    // FON-122 — the cap names the entry NOI it is struck on; when that is not
+    // the projected Year 1 (a closure, displacement or ramp was taken out) it
+    // says so and prints both figures, so "8.3% beside $1.65M" reads as intended.
+    const cap = `entering on ${withArticle(fmtPct(m.capRate, 1))} going-in cap`;
+    if (m.capOnRunRate && m.entryNoi != null) {
+      thesisBits.push(
+        `${cap} against ${fmtCurrency(m.entryNoi, { compact: true })} of entry NOI (${ENTRY_NOI_BASIS})${
+          m.noi != null ? `, not the ${fmtCurrency(m.noi, { compact: true })} projected Year-1 NOI` : ''
+        }`,
+      );
+    } else if (m.entryNoi ?? m.noi) {
+      thesisBits.push(`${cap} against ${fmtCurrency((m.entryNoi ?? m.noi) as number, { compact: true })} of Year-1 NOI`);
+    } else {
+      thesisBits.push(cap);
+    }
   }
   let thesis = thesisBits.length ? `${thesisBits.join(', ')}. ` : '';
   thesis +=
@@ -330,7 +362,7 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
   const highlights: string[] = [];
   if (irr != null) {
     highlights.push(
-      `Levered IRR of ${fmtPct(irr, 1)} ${irr >= IRR_STRONG ? 'clears' : irr >= IRR_FLOOR ? 'approaches' : 'sits below'} a ${Math.round(IRR_STRONG * 100)}% target over a ${hold}-year hold.`,
+      `Levered IRR of ${fmtPct(irr, 1)} ${irr >= IRR_STRONG ? 'clears' : irr >= IRR_FLOOR ? 'approaches' : 'sits below'} ${withArticle(`${Math.round(IRR_STRONG * 100)}%`)} target over ${withArticle(`${hold}-year hold`)}.`,
     );
   }
   if (mult != null) highlights.push(`Equity multiple of ${mult.toFixed(2)}x returns ${mult.toFixed(2)}× invested capital across the hold.`);
@@ -365,7 +397,7 @@ function buildRecommendation(m: DealMetrics): Recommendation | null {
     risks.push(`In-place occupancy of ${fmtPct(m.occupancy, 0)} leaves limited occupancy upside; RevPAR growth must come from ADR.`);
   }
   if (m.revenueCagr != null && m.revenueCagr > 0) {
-    risks.push(`Pro forma assumes a ${fmtPct(m.revenueCagr, 1)} revenue CAGR — a softer demand environment compresses returns.`);
+    risks.push(`Pro forma assumes ${withArticle(fmtPct(m.revenueCagr, 1))} revenue CAGR — a softer demand environment compresses returns.`);
   }
   if (m.debtYield != null && m.debtYield < 0.1) risks.push(`Debt yield of ${fmtPct(m.debtYield, 1)} is thin — refinance risk if rates stay elevated at exit.`);
   if (risks.length < 3) risks.push('Exit value depends on cap-rate assumptions at sale; cap-rate expansion would compress the equity multiple.');
@@ -1299,6 +1331,8 @@ export default function ICMemoTab({ project }: { project: Project }) {
      *  figure ("kpi:returns.levered_irr"). Phase 2.4. */
     engine: string;
     path: string;
+    /** FON-122 — the figure(s) behind a derived tile, printed under the value (the entry NOI behind the cap, the T-12 NOI behind the in-place cap). */
+    sub?: string[];
   }
   const overriddenPP = (deal?.field_overrides ?? {})['purchase_price'] != null;
   const snapshot: Snap[] = [
@@ -1309,7 +1343,23 @@ export default function ICMemoTab({ project }: { project: Project }) {
     // FF&E reserve, the canonical bare-"NOI" basis), so the provenance popover
     // must point at THAT field, not the after-reserve `noi` it used to explain.
     { label: 'NOI (Y1)', value: mm(metrics.noi), state: provState('expense', 'years.0.noi_institutional', 'calculated'), src: 'P&L / Future P&L', engine: 'expense', path: 'years.0.noi_institutional' },
-    { label: metrics.capOnRunRate ? `Going-In Cap Rate ${ON_UNDISPLACED_YEAR_ONE}` : 'Going-In Cap Rate', value: metrics.capNa ?? pctOr(metrics.capRate, 2), state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate' },
+    // FON-122 (Sam, 2026-11-26) — the cap shows the entry NOI it is struck on and
+    // its basis, so an 8.3% cap beside a lower NOI (Y1) reads as intended; "—"
+    // when the run published no entry NOI.
+    {
+      label: 'Going-In Cap Rate', value: metrics.capNa ?? pctOr(metrics.capRate, 2),
+      state: provState('capital', 'entry_cap_rate', 'calculated'), src: 'CAPEX', engine: 'capital', path: 'entry_cap_rate',
+      sub: [`Entry NOI ${mm(metrics.entryNoi)}`, ENTRY_NOI_BASIS],
+    },
+    // FON-122 — the in-place (T-12) cap beside it: the T-12's own NOI before
+    // reserve ÷ price; "—" when the statement states none. The dated flag rides
+    // along when the T-12 is out of date for a going-in cap.
+    {
+      label: IN_PLACE_CAP_LABEL, value: pctOr(metrics.inPlaceCap, 2),
+      state: metrics.inPlaceCap != null ? provState('expense', 't12_ebitda', 'calculated') : 'awaiting_data',
+      src: 'P&L / Historical P&L', engine: 'expense', path: 't12_ebitda',
+      sub: [`T-12 NOI ${mm(metrics.t12Ebitda)}`, metrics.t12OutOfDate ?? IN_PLACE_CAP_SUB],
+    },
     { label: 'Levered IRR', value: pctOr(metrics.leveredIrr), state: provState('returns', 'levered_irr', 'calculated'), src: 'Returns', engine: 'returns', path: 'levered_irr' },
     { label: 'Equity Multiple', value: xMult(metrics.equityMultiple), state: provState('returns', 'equity_multiple', 'calculated'), src: 'Returns', engine: 'returns', path: 'equity_multiple' },
     { label: 'DSCR (Y1)', value: xMult(metrics.dscr), state: provState('debt', 'year_one_dscr', 'calculated'), src: 'Financing', engine: 'debt', path: 'year_one_dscr' },
@@ -1333,6 +1383,9 @@ export default function ICMemoTab({ project }: { project: Project }) {
       title: 'Capitalization', link: 'View CAPEX →', tab: 'investment', sub: 'sources-and-uses',
       rows: [
         ['Purchase Price', mm(metrics.purchasePrice)],
+        // FON-122 — the two caps, each with the NOI it is struck on; "—" when unsourced.
+        ['Going-In Cap Rate', `${metrics.capNa ?? pctOr(metrics.capRate, 2)} · Entry NOI ${mm(metrics.entryNoi)}`],
+        [IN_PLACE_CAP_LABEL, `${pctOr(metrics.inPlaceCap, 2)} · T-12 NOI ${mm(metrics.t12Ebitda)}`],
         ['Renovation / CapEx', mm(metrics.renovation)],
         ['Total Project Cost', mm(metrics.totalCost)],
         ['Initial Equity', mm(metrics.equity)],
@@ -1523,7 +1576,7 @@ export default function ICMemoTab({ project }: { project: Project }) {
           {sections.deal && (
             <div style={{ ...card(), borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '14px 24px 16px', marginBottom: 16 }}>
               <HeaderRow title="Deal snapshot" note="Base Case · Latest model run" />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${snapshot.length}, 1fr)`, gap: 0 }}>
                 {snapshot.map((m, i) => (
                   <SnapshotTile key={m.label} m={m} first={i === 0} dealId={dealId} />
                 ))}
@@ -1982,7 +2035,7 @@ function SnapshotTile({
   first,
   dealId,
 }: {
-  m: { label: string; value: string; state: ValueState; src: string; engine: string; path: string };
+  m: { label: string; value: string; state: ValueState; src: string; engine: string; path: string; sub?: string[] };
   first: boolean;
   dealId: string;
 }) {
@@ -2021,6 +2074,13 @@ function SnapshotTile({
         <ProvenanceDot state={m.state} size={7} />
         {m.value}
       </span>
+      {m.sub?.map((line) => (
+        // FON-122 — the figure behind a derived tile (the entry NOI behind the
+        // cap; the T-12 NOI behind the in-place cap) and its basis, in plain sight.
+        <span key={line} style={{ fontSize: 9.5, color: palette.textMuted, lineHeight: 1.3 }}>
+          {line}
+        </span>
+      ))}
       {hover && (
         <span style={{ position: 'absolute', top: '100%', left: first ? 0 : 14, marginTop: 1, fontSize: 9, fontWeight: 600, letterSpacing: '.02em', color: LINK, whiteSpace: 'nowrap', pointerEvents: 'none' }}>
           Trace to source →

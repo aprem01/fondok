@@ -245,8 +245,9 @@ def _build_investment(
     # FON-82 (Sam, 2026-11-11): yield on cost rides on NOI AFTER the FF&E
     # reserve — the exit-NOI basis and how a lender reads it. The entry cap
     # keeps the before-reserve basis (FON-59 #1).
-    # FON-122 (Sam, 2026-11-23): every deal's entry cap is struck on Year 1's
-    # NOI before the FF&E reserve with no closure and no displacement
+    # FON-122 (Sam, 2026-11-23 / 2026-11-26): every deal's entry cap is struck
+    # on Year 1 at the T-12's own occupancy and ADR (no ramp), NOI before the
+    # FF&E reserve with no closure and no displacement
     # (``run_rate_noi``; a run before this rule published it only for a closed
     # hotel, so an open hotel's bare Year 1 stands in — a closed Year 1 never
     # does). A closed hotel keeps its two refusals:

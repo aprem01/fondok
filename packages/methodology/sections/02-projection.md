@@ -85,9 +85,9 @@ assumed without a business plan.
 **Hotels that are closed or not yet open.** Set the opening or reopening date on the Overview. Revenue
 and operating costs start at that date, and the opening year counts only the months open. Property
 taxes, insurance and debt service keep running while the hotel is closed, pre-opening costs go in
-Soft Costs, and the going-in cap reads on the same entry NOI every deal's does (below): Year 1 NOI
-before the FF&E reserve with no closure and no displacement — never on the closed year; it is
-"n/a, not yet open" only when no entry NOI can be built at all. A T-12 that ends more than twelve
+Soft Costs, and the going-in cap reads on the same entry NOI every deal's does (below): Year 1 at
+T-12 occupancy and ADR, no closure, no displacement, NOI before the FF&E reserve — never on the
+closed year; it is "n/a, not yet open" only when no entry NOI can be built at all. A T-12 that ends more than twelve
 months before the close is out of date, and the cap reads "n/a" with the date instead ("T-12 ends
 Mar 2025, 14 months before close").
 A sale or refinance in the opening year prices a full year's income, and a hotel still closed at the
@@ -337,18 +337,18 @@ The entry cap rate is struck on NOI *before* the reserve while the exit — and,
 stabilized NOI and the yield on cost — is struck on Cash NOI *after* it. Both are defensible
 conventions; Fondok keeps both and names each one wherever it prints it, never a bare “NOI”.
 
-**The entry cap's basis.** For every deal — closed at purchase or merely displaced — the entry cap
-is **Year 1 projected NOI before the FF&E reserve with no closure and no displacement, ÷ purchase
-price**. Whenever something suppresses Year 1 (a closure, a renovation displacement schedule, or a
-PIP's displacement), the model prices Year 1 once more from the same deal with every lever off and
-quotes the cap on that entry NOI; a deal with neither reads its own Year 1. The projection's own
-years are untouched: displacement still hits Year 1's revenue, costs and returns; it just does not
-sit in the cap's denominator. Beside it, every surface prints the **In-place cap (T-12)**: the
-basis statement's own twelve-month NOI before the FF&E reserve ÷ purchase price — the going-in
-yield buyers and lenders anchor on. It is derived from nothing: a statement that states no such
-line, or covers less than twelve months, or a deal with no purchase price, prints "—". Each row
-carries its basis under its label ("Year 1 NOI before FF&E reserve, no closure, no displacement ÷
-price"; "T-12 NOI before reserve ÷ price"). In the Excel acquisition model (cover and Assumptions
+**The entry cap's basis.** For every deal the entry cap is **Year 1 at the T-12's own occupancy
+and ADR, no closure, no displacement, NOI before the FF&E reserve, ÷ purchase price**. Today's
+penetration index is held — no movement toward the stabilized target, whatever the ramp — so Year 1
+ADR is the T-12's at the year's market step. Whenever a closure, a displacement or the ramp moves
+Year 1, the model prices it once more with every lever off and the index held and quotes the cap on
+that; a deal with none reads its own Year 1, and a metric with no index today is left as it runs.
+The projection's own years are untouched. Beside it sits the **In-place cap (T-12)**: the basis
+statement's own twelve-month NOI before the FF&E reserve ÷ purchase price — the going-in yield
+buyers and lenders anchor on. It is derived from nothing: a statement that states no such line, or
+covers less than twelve months, or a deal with no purchase price, prints "—". Each row carries its
+basis under its label ("Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve";
+"T-12 NOI before reserve ÷ price"). In the Excel acquisition model (cover and Assumptions
 sheet) each numerator is its own row in whole dollars — *Entry NOI (Year 1, undisplaced)* and *T-12
 NOI (before FF&E reserve)* — and each cap is the Excel formula NOI ÷ Purchase Price over those cells,
 so a reader can trace it; a deal without a twelve-month statement reads "not available: no
@@ -651,7 +651,8 @@ property tax and insurance** and before the FF&E reserve (FON-44, Sam 2026-11-11
 as the reference model's NOI line — "keep ours"; the earlier "$2.5–4M Year-1 NOI (~25% margin)"
 pass band was struck before tax and insurance and is retired). Cash NOI (after FF&E reserve) =
 NOI (before reserve) − FF&E reserve. The entry cap rate is struck on the before-reserve figure
-(Year 1 with no closure and no displacement, Sam 2026-11-23 — see "The entry cap's basis" above);
+(Year 1 at T-12 occupancy and ADR, no closure, no displacement, Sam 2026-11-26 — see "The entry
+cap's basis" above);
 debt coverage, the exit valuation, the stabilized NOI and the yield on cost (FON-82) use the
 after-reserve figure. Wherever the before-reserve NOI is a headline — Overview's Entry NOI row, the
 Future P&L and Cash Flow NOI rows, CAPEX's Entry NOI, the workbook cover, the memo's NOI (Y1)
@@ -1263,8 +1264,9 @@ The waterfall produces **two** distinct NOI figures, and every screen names whic
 - **NOI (before FF&E reserve)** — GOP minus management fee (base, plus the incentive fee when one is
   modelled) minus fixed charges, *excluding* the FF&E reserve, matching the US cap-rate convention.
   Engine field `expense.years[].noi_institutional` (registry concept `ebitda`). This is the headline
-  figure and, as Year 1 with no closure and no displacement (`expense.run_rate_noi_at_entry`), the
-  numerator of the entry cap rate; the T-12's own line of it (`expense.t12_ebitda`, the basis
+  figure and, as Year 1 at T-12 occupancy and ADR, no closure, no displacement
+  (`expense.run_rate_noi_at_entry`), the numerator of the entry cap rate; the T-12's own line of it
+  (`expense.t12_ebitda`, the basis
   statement's stated EBITDA) is the numerator of the in-place cap (T-12). Where the product says
   simply "NOI", it means this.
 - **Cash NOI (after FF&E reserve)** — the same waterfall less the FF&E reserve, i.e. cash flow after

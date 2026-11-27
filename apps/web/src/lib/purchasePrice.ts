@@ -133,22 +133,29 @@ export type EntryCapRate =
  *  - otherwise (it completed without a Year-1 NOI) → `engine_skipped`.
  */
 /**
- * FON-122 (Sam, 2026-11-23): every deal's going-in cap is struck on Year 1 NOI
- * before the FF&E reserve with NO closure and NO displacement — the expense
- * engine's `run_rate_noi_at_entry` (the name is kept for payload compatibility;
- * a deal with neither reads its own Year 1 there) — never on a closed or
- * displaced Year 1. Beside it the in-place cap: the T-12's own NOI before
- * reserve ÷ price, "—" when the basis statement states none. A closed hotel
- * keeps its refusals: a T-12 that ends more than twelve months before the close
- * is out of date ("n/a" with the dated flag), and with no entry NOI at all it
- * has no entry cap; yield on cost is the measure.
+ * FON-122 (Sam, 2026-11-23 / 2026-11-26): every deal's going-in cap is struck on
+ * Year 1 at the T-12's own occupancy and ADR (the penetration held at today's
+ * index — no ramp toward the stabilized target), NO closure, NO displacement,
+ * NOI before the FF&E reserve on Year 1's cost structure — the expense engine's
+ * `run_rate_noi_at_entry` (the name is kept for payload compatibility; a deal
+ * none of the three moves reads its own Year 1 there) — never on a closed,
+ * displaced or ramped Year 1. Sam's QA: the earlier "undisplaced" Year 1 still
+ * carried the ramp (ADR $263 against a T-12 of $233). Beside it the in-place
+ * cap: the T-12's own NOI before reserve ÷ price, "—" when the basis statement
+ * states none. A closed hotel keeps its refusals: a T-12 that ends more than
+ * twelve months before the close is out of date ("n/a" with the dated flag),
+ * and with no entry NOI at all it has no entry cap; yield on cost is the measure.
  */
 export const NOT_YET_OPEN = 'n/a, not yet open';
-/** The entry NOI's basis, in plain sight under the rows that carry it. */
-export const ENTRY_NOI_BASIS = 'Year 1 NOI before FF&E reserve, no closure, no displacement';
-export const ENTRY_CAP_SUB = `${ENTRY_NOI_BASIS} ÷ price`;
-/** Said beside a cap whose entry NOI is NOT the projected Year 1 (a closure or displacement was taken out). */
-export const ON_UNDISPLACED_YEAR_ONE = 'on Year 1 NOI without the closure or displacement';
+/**
+ * The entry NOI's basis, in plain sight under every row and tile that carries
+ * the entry cap — ONE string on this side (the worker's `labels.ENTRY_NOI_BASIS`
+ * is the same words).
+ */
+export const ENTRY_NOI_BASIS = 'Year 1 at T-12 occupancy and ADR · no displacement · before FF&E reserve';
+export const ENTRY_CAP_SUB = ENTRY_NOI_BASIS;
+/** Said beside a cap whose entry NOI is NOT the projected Year 1 (a closure, a displacement or the ramp was taken out). */
+export const ON_UNDISPLACED_YEAR_ONE = 'on Year 1 at T-12 occupancy and ADR, without the closure, displacement or ramp';
 /** @deprecated the "closing for renovation" wording is retired; the old name maps to the new text. */
 export const ON_RUN_RATE_CLOSING = ON_UNDISPLACED_YEAR_ONE;
 export const IN_PLACE_CAP_LABEL = 'In-place cap (T-12)';
@@ -189,7 +196,7 @@ export function t12OutOfDate(
 export interface ClosedAtEntry {
   /** The hotel is closed at purchase. */
   closed: boolean;
-  /** Year 1 NOI before FF&E reserve with no closure and no displacement — the entry NOI the cap is struck on. */
+  /** Year 1 at T-12 occupancy and ADR, no closure, no displacement, before FF&E reserve — the entry NOI the cap is struck on. */
   entryNoi: number | undefined;
   /** Entry NOI ÷ price, when the T-12 is current. */
   cap: number | undefined;
@@ -199,13 +206,14 @@ export interface ClosedAtEntry {
   notYetOpen: boolean;
   /** What prints instead of the cap, when it does not read; undefined when it does. */
   na: string | undefined;
-  /** The entry NOI is not the projected Year 1: a closure or a displacement was taken out of it. */
+  /** The entry NOI is not the projected Year 1: a closure, a displacement or the penetration ramp was taken out of it. */
   normalized: boolean;
 }
 
 /**
- * The entry basis (FON-122). `runRateNoi` is the engine's undisplaced, unclosed
- * Year 1 NOI and is preferred whenever present; a run before this rule
+ * The entry basis (FON-122). `runRateNoi` is the engine's entry NOI — Year 1 at
+ * the T-12's own occupancy and ADR, unclosed, undisplaced — and is preferred
+ * whenever present; a run before this rule
  * published it only for a closed hotel, so an open hotel without it falls back
  * to its own Year 1 on the caller's side (`entryNoi` undefined here). `year1Noi`
  * (the projected Year 1) only says whether the entry NOI was normalized.

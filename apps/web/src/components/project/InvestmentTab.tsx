@@ -838,7 +838,7 @@ export default function InvestmentTab() {
             // ─── KPI tiles (5) — design/canonical `kpis` ──────────────
             const kpis = [
               { label: 'Total Cost Basis', value: mm(totalUses), sub: has(totalUsesPerKey) ? `${fmtCurrency(totalUsesPerKey)} / key` : '' },
-              // FON-122 — the going-in cap on the undisplaced Year 1, and the in-place (T-12) cap beside it when the T-12 states one.
+              // FON-122 — the going-in cap on the entry NOI (Year 1 at T-12 occupancy and ADR, no displacement), and the in-place (T-12) cap beside it when the T-12 states one.
               { label: 'Purchase Price', value: mm(purchase), sub: has(entryCap) ? `${fmtPct(entryCap, 2)} going-in${atEntry.normalized ? ` ${ON_UNDISPLACED_YEAR_ONE}` : ''}${has(inPlace) ? ` · ${fmtPct(inPlace, 2)} in-place (T-12)` : ''}` : '' },
               // FON-101 — the tile names the source the budget is on (OM broker ·
               // PIP / CapEx document · analyst override) after the per-key figure.
@@ -887,7 +887,7 @@ export default function InvestmentTab() {
                 state: tracedState('capital', 'entry_cap_rate') ?? 'calculated',
                 value: capNa ?? pctv(entryCap, 2),
                 // FON-122 — the basis sits on the Entry NOI row above; this row says so only when the entry NOI is not the projected Year 1.
-                note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? `${ENTRY_CAP_SUB} (${ON_UNDISPLACED_YEAR_ONE})` : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
+                note: [capNa ? 'See Yield on Cost on Returns' : atEntry.normalized ? ENTRY_CAP_SUB : null, priceRunMarker, compCapRangeHint(compCapRange)].filter(Boolean).join(' · ') || undefined,
               },
               {
                 // FON-122 — the in-place cap: the T-12's own NOI before reserve ÷ price; "—" when it states none.

@@ -367,7 +367,11 @@ describe('ICMemoTab — diligence (FON-54a consolidated flags)', () => {
         'Rooms revenue: broker materials report $9.7M against $9.5M (derived: RevPAR × 132 keys × 366 days; the statement states no full-period rooms revenue line) in Copy of Angler_s 2024 Full Year Detailed P&L.xlsm.',
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/T-12/)).not.toBeInTheDocument();
+    // The diligence card names the actual statement, never an assumed "T-12"
+    // (the Deal snapshot's in-place cap (T-12) tile is a different surface).
+    const dilCard = screen.getByText('Diligence & open items').closest('div')!.parentElement!;
+    expect(dilCard.textContent).toContain('Rooms revenue — broker overstates the actual by 2.2%');
+    expect(dilCard.textContent).not.toMatch(/T-12/);
   });
 
   it('lists the raw paths + rule ids under Technical detail', () => {

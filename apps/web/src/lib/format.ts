@@ -9,6 +9,32 @@ export const fmtCurrency = (n: number, opts: { compact?: boolean } = {}) => {
 };
 
 export const fmtPct = (n: number, decimals = 1) => `${(n * 100).toFixed(decimals)}%`;
+
+/**
+ * The indefinite article a phrase takes when read aloud — "an 8.3% cap", "an
+ * 11% IRR", "an 18-year hold", but "a 1.5% step", "a 7% cap", "a $36.4M basis".
+ * A phrase that opens with a number (after an optional currency sign) is read
+ * by its leading digits: eight, eleven and eighteen (and the eighties, eight
+ * hundreds, …) begin with a vowel sound; every other number does not. A phrase
+ * that opens with a word falls back to the vowel-letter rule.
+ */
+export function indefiniteArticle(phrase: string): 'a' | 'an' {
+  const s = phrase.trim().replace(/^[$€£]/, '');
+  const m = /^(\d+)/.exec(s);
+  if (m) {
+    const digits = m[1];
+    const whole = Number(digits);
+    if (whole === 11 || whole === 18) return 'an';
+    // Grouped digits read by their leading group: 8,000 → eight thousand; 1,100 → one thousand…
+    // A number with a leading 8 is "eight…" whatever follows (8, 80, 800, 8.3, 85,000).
+    if (digits.startsWith('8')) return 'an';
+    return 'a';
+  }
+  return /^[aeiou]/i.test(s) ? 'an' : 'a';
+}
+
+/** `withArticle('8.3%')` → `"an 8.3%"`. */
+export const withArticle = (phrase: string) => `${indefiniteArticle(phrase)} ${phrase}`;
 export const fmtPctRaw = (n: number, decimals = 1) => `${n.toFixed(decimals)}%`;
 export const fmtNumber = (n: number) => n.toLocaleString('en-US');
 export const fmtMillions = (n: number, decimals = 1) => `$${(n / 1e6).toFixed(decimals)}M`;

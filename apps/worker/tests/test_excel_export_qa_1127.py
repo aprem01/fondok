@@ -34,6 +34,8 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
+from app.export.labels import ENTRY_NOI_BASIS
+
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./fondok.db")
@@ -483,7 +485,7 @@ def test_assumptions_entry_noi_row_and_formula_caps(tmp_out: Path) -> None:
     _assert_formula_caps(ws)
     assert _cell(ws, ENTRY_CAP, 3).value == "= Entry NOI ÷ Purchase Price"
     assert _cell(ws, IN_PLACE_CAP, 3).value == "= T-12 NOI ÷ Purchase Price"
-    assert _cell(ws, ENTRY_NOI, 3).value == "Year 1 NOI before FF&E reserve, no closure, no displacement"
+    assert _cell(ws, ENTRY_NOI, 3).value == ENTRY_NOI_BASIS  # one basis string, shared with the web and the memo
 
 
 def test_formula_caps_reproduce_the_engines_caps() -> None:

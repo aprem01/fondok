@@ -98,6 +98,7 @@ from .labels import (
     year_heading,
     line_label,
     source_display,
+    ENTRY_NOI_BASIS,
 )
 from .refusals import (
     as_float,
@@ -792,7 +793,7 @@ def _build_assumptions(wb: Workbook, model: dict[str, Any]) -> None:
                 # 2026-11-27: each NOI is its own row and each cap is the FORMULA
                 # NOI ÷ Purchase Price over this sheet's cells, so it traces.
                 (
-                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, "Year 1 NOI before FF&E reserve, no closure, no displacement",
+                    ENTRY_NOI_LABEL, inv.get("entry_noi_usd"), USD_FMT, ENTRY_NOI_BASIS,
                     "entry_noi", _entry_cap_missing(inv, ENTRY_NOI_MISSING),
                 ),
                 (
