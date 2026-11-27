@@ -24,21 +24,21 @@
       "sections": []
     },
     "model": {
+      "build_sha": null,
       "deal_name": "",
       "market": {
         "kpis": {
           "Submarket": "\u2014"
         }
       },
-      "model_version": "fondok-engine-live",
       "sensitivity_engine": {
         "unavailable_reason": "the sensitivity engine has not run on this deal's canonical run"
       }
     },
     "model_keys": [
+      "build_sha",
       "deal_name",
       "market",
-      "model_version",
       "sensitivity_engine"
     ]
   },
@@ -77,6 +77,7 @@
       "sections": []
     },
     "model_keys": [
+      "build_sha",
       "capex_schedule",
       "cash_flow_engine",
       "deal_name",
@@ -85,13 +86,13 @@
       "keys",
       "location",
       "market",
-      "model_version",
       "named_scenarios",
       "op_ratio_provenance",
       "p_and_l_engine_proforma",
       "partnership_engine",
       "pricing_unavailable",
       "returns_engine",
+      "run_id",
       "scenario_outputs",
       "sensitivity_engine",
       "sources",

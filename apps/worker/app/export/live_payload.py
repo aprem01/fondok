@@ -205,6 +205,39 @@ def _build_investment(
         if renovation is not None:
             out["renovation_per_key_usd"] = round(renovation / keys)
 
+    # Sam QA 2026-11-27 — the renovation breakdown the Investment tab shows
+    # (Hard / Soft / Professional Fees off ``renovation_breakdown``, FON-71) and
+    # the contingency fold-in (``renovation_base_usd`` + ``renovation_contingency_usd``
+    # = ``renovation_total_usd``, the Renovation use line). Read straight from the
+    # capital engine, never re-split here; absent when the engine did not emit
+    # them (no renovation budget → breakdown is null), so the sheet says so.
+    # ``renovation_split_note`` is the engine's own provenance badge (platform
+    # default 75/15/10 vs. an itemized budget) so the sheet can print it.
+    breakdown = capital.get("renovation_breakdown")
+    breakdown = breakdown if isinstance(breakdown, dict) else {}
+    _set(out, "renovation_hard_costs_usd", _num(breakdown.get("hard")))
+    _set(out, "renovation_soft_costs_usd", _num(breakdown.get("soft")))
+    _set(out, "renovation_professional_fees_usd", _num(breakdown.get("fees")))
+    split_note = breakdown.get("note")
+    if isinstance(split_note, str) and split_note:
+        out["renovation_split_note"] = split_note
+    # A run persisted before FON-71's fold-in has no base/total fields; with no
+    # contingency base == total == the Renovation use line (the same fallback
+    # the Investment tab applies), so the line stands in for both.
+    reno_base = _num(capital.get("renovation_base_usd"))
+    reno_total = _num(capital.get("renovation_total_usd"))
+    legacy_reno = "renovation_base_usd" not in capital and "renovation_total_usd" not in capital
+    _set(out, "renovation_base_usd", reno_base if not legacy_reno else renovation)
+    _set(out, "renovation_total_usd", reno_total if not legacy_reno else renovation)
+    _set(out, "renovation_contingency_pct", _num(capital.get("renovation_contingency_pct")))
+    _set(out, "renovation_contingency_usd", _num(capital.get("renovation_contingency_usd")))
+
+    # Sam QA 2026-11-27 — the whole-dollar NOI figures the cover and the
+    # Assumptions sheet print and divide by the price: the proforma rows are in
+    # $000s, so a cover that read them back printed $1,646,000 for $1,646,245.
+    _set(out, "year1_noi_before_reserve_usd", noi_y1)
+    _set(out, "t12_noi_before_reserve_usd", t12_ebitda)
+
     # Derived display ratios (two real engine outputs each; not engine math):
     #   entry cap (Y1 UW) = Y1 underwritten NOI / purchase price
     #   Y1 yield on cost         = Y1 Cash NOI (after FF&E reserve) / all-in total capital
@@ -222,6 +255,9 @@ def _build_investment(
     # cap (yield on cost is the measure). Beside it, the in-place cap: the
     # T-12's own NOI before reserve ÷ price — absent (never invented) without both.
     entry_noi = run_rate_noi if run_rate_noi is not None else (None if closed_at_entry else noi_y1)
+    # The entry NOI itself, in whole dollars — the numerator the workbook's
+    # entry-cap FORMULA divides by the purchase price cell, so the cap traces.
+    _set(out, "entry_noi_usd", entry_noi)
     if closed_at_entry:
         out_of_date = t12_out_of_date(t12_period_end, t12_months_before_close)
         if out_of_date is not None:
@@ -1833,8 +1869,9 @@ async def _assemble_live_payload(
     session: AsyncSession, deal_id: str, tenant_id: str
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """The assembly itself — see :func:`load_live_payload`, which wraps it."""
+    from ..api.health import build_info
     from ..api.market import _extracted_property_meta
-    from ..services.engine_runner import get_run_scoped_outputs
+    from ..services.engine_runner import get_canonical_run_id, get_run_scoped_outputs
 
     row = await _deal_row(session, deal_id, tenant_id)
     deal_name = str((row or {}).get("name") or "")
@@ -1889,11 +1926,25 @@ async def _assemble_live_payload(
 
     proforma, cash_flow_engine, noi_y1 = _build_proforma_and_cf(revenue, expense, debt)
 
+    # Sam QA 2026-11-27 — the cover's "Model Version" is the worker build that
+    # produced the workbook (the same ``build_sha`` ``/health`` reports:
+    # RAILWAY_GIT_COMMIT_SHA, else FONDOK_BUILD_SHA, else null) plus the
+    # canonical run the figures came from. Null when no SHA is set — the cover
+    # then says "not available" rather than a placeholder string.
     model: dict[str, Any] = {
         "deal_id": deal_id,
         "deal_name": deal_name,
-        "model_version": "fondok-engine-live",
+        "build_sha": build_info()["build_sha"],
     }
+    try:
+        canonical_run_id = await get_canonical_run_id(
+            session, deal_id=deal_id, tenant_id=tenant_id
+        )
+    except Exception:  # the run id is a label; never block the export
+        logger.debug("live export: canonical run id read failed", exc_info=True)
+        canonical_run_id = None
+    if canonical_run_id:
+        model["run_id"] = str(canonical_run_id)
     if keys is not None:
         model["keys"] = keys
     if brand:
