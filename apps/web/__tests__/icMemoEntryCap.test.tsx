@@ -83,7 +83,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import ICMemoTab from '@/components/project/ICMemoTab';
-import { ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB } from '@/lib/purchasePrice';
+import { ENTRY_CAP_PROJECTED_SUB, ENTRY_NOI_BASIS, IN_PLACE_CAP_LABEL, IN_PLACE_CAP_SUB } from '@/lib/purchasePrice';
 import type { Project } from '@/lib/project';
 
 const PROJECT = { id: 0, name: 'Kimpton Hotel' } as unknown as Project;
@@ -134,14 +134,22 @@ describe('ICMemoTab — the entry cap shows the entry NOI it is struck on (FON-1
     expect(screen.queryByText(/\ba 8\.0% revenue CAGR/)).not.toBeInTheDocument();
   });
 
-  it('renders "—" for the entry NOI and the T-12 cap when the run published neither, and never derives them', () => {
+  it('pre-FON-122 run (no entry NOI published): the cap on the projected Year 1 says so, claims no basis, prints no "Entry NOI —"; the T-12 cap is "—"', () => {
     fx.outputs = outputs({ years: [{ year: 1, noi: 1_210_000, noi_institutional: 1_650_000 }] });
     render(<ICMemoTab project={PROJECT} />);
 
-    // No entry NOI on the run: the cap falls back to Year 1 ÷ price (4.53%) and says the entry NOI is unsourced.
+    // No entry NOI on the run: the cap falls back to Year 1 ÷ price (4.53%) and
+    // (review 2026-11-27) says which NOI that is instead of attaching the
+    // T-12-index basis to a figure not struck on it.
     const cap = tile('Going-In Cap Rate');
     expect(within(cap).getByText('4.53%')).toBeInTheDocument();
-    expect(within(cap).getByText('Entry NOI —')).toBeInTheDocument();
+    expect(within(cap).getByText(ENTRY_CAP_PROJECTED_SUB)).toBeInTheDocument();
+    expect(ENTRY_CAP_PROJECTED_SUB).toBe('Projected Year 1 NOI ÷ price · re-run the model for the entry basis');
+    expect(within(cap).queryByText(ENTRY_NOI_BASIS)).toBeNull();
+    expect(within(cap).queryByText('Entry NOI —')).toBeNull();
+    expect(screen.queryByText(/Entry NOI —/)).toBeNull();
+    // The underwriting summary row carries the cap without a dashed entry NOI.
+    expect(screen.getByText('4.53% · projected Year 1 NOI')).toBeInTheDocument();
 
     const inPlace = tile(IN_PLACE_CAP_LABEL);
     expect(within(inPlace).getByText('—')).toBeInTheDocument();
@@ -149,5 +157,26 @@ describe('ICMemoTab — the entry cap shows the entry NOI it is struck on (FON-1
     expect(screen.getByText('— · T-12 NOI —')).toBeInTheDocument();
     // The thesis quotes the Year-1 NOI the cap is actually on, with the right article.
     expect(screen.getByText(/entering on a 4\.5% going-in cap against \$1\.[67]M of Year-1 NOI/)).toBeInTheDocument();
+  });
+
+  it('an entry NOI of exactly $0 is still an entry NOI: the tile prints "$0.00M" with its basis and the thesis "$0", never a dropped figure', () => {
+    // Zero NOI shape: the run published the entry NOI (0) and Year 1 is 0 too,
+    // so the cap is 0.00% and nothing was normalized out of it.
+    fx.outputs = outputs({
+      years: [{ year: 1, noi: -400_000, noi_institutional: 0 }],
+      run_rate_noi_at_entry: 0,
+      t12_ebitda: 0,
+    });
+    render(<ICMemoTab project={PROJECT} />);
+
+    const cap = tile('Going-In Cap Rate');
+    expect(within(cap).getByText('0.00%')).toBeInTheDocument();
+    expect(within(cap).getByText('Entry NOI $0.00M')).toBeInTheDocument();
+    expect(within(cap).getByText(ENTRY_NOI_BASIS)).toBeInTheDocument();
+    expect(within(cap).queryByText(ENTRY_CAP_PROJECTED_SUB)).toBeNull();
+    expect(screen.getByText('0.00% · Entry NOI $0.00M')).toBeInTheDocument();
+    expect(screen.getByText('0.00% · T-12 NOI $0.00M')).toBeInTheDocument();
+    // The falsy-zero bug: `entryNoi ?? noi` of 0 used to drop the NOI from the thesis.
+    expect(screen.getByText(/entering on a 0\.0% going-in cap against \$0 of Year-1 NOI/)).toBeInTheDocument();
   });
 });

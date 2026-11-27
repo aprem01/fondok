@@ -123,9 +123,12 @@ export function ReturnsSection() {
   const query = searchParams?.toString() ?? '';
   // Sam QA 2026-11-27 — a visit that arrives by link is being scrolled into
   // place; the section's coach mark ("Why this number leads") must not open
-  // on its own on top of that. Held (not dismissed) until the user acts
-  // inside the section (a view change). Read at mount so the mark never
-  // flashes open for one commit.
+  // on its own on top of that. Held (not dismissed) ONLY while landing: the
+  // helper's `onSettled` releases it when the hold window ends, the user takes
+  // over, or the landing is cancelled (review 2026-11-27 — before, any URL
+  // carrying a Returns `sub` — a reload, a bookmark — held it closed for good,
+  // since only a view change inside the section released it). Read at mount
+  // so the mark never flashes open for one commit.
   const [hintsSuspended, setHintsSuspended] = useState(() => isReturnsView(requestedSub));
   // FON-67 — following a "View Returns →" link mounts Overview fresh, so
   // what the link asks for is not in the DOM yet — the Returns outputs are
@@ -148,7 +151,11 @@ export function ReturnsSection() {
     const hash = typeof window !== 'undefined' ? window.location.hash : null;
     const anchor = returnsLandingAnchor(hash, searchParams);
     const scrollSection = () => sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-    return scrollToAnchorWhenReady(anchor, { root: sectionRef.current, onPending: scrollSection });
+    return scrollToAnchorWhenReady(anchor, {
+      root: sectionRef.current,
+      onPending: scrollSection,
+      onSettled: () => setHintsSuspended(false),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 

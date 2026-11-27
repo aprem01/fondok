@@ -106,6 +106,7 @@ import {
   PURCHASE_PRICE_INPUT_FROM,
   PURCHASE_PRICE_KEY,
   entryCapRate,
+  ENTRY_CAP_PROJECTED_SUB,
   ENTRY_CAP_SUB,
   ENTRY_NOI_BASIS,
   IN_PLACE_CAP_LABEL,
@@ -1014,16 +1015,22 @@ export default function OverviewTab({ projectId }: { projectId: number | string 
       // W5 "price" — one-way dependency: the Purchase Price is an INPUT
       // (editable here and on CAPEX, one shared editor + save path) and the
       // Entry Cap Rate is calculated from it. A missing input is a reasoned dash.
+      // Review 2026-11-27 — the popover states the basis ONCE: the formula is
+      // the bare "Entry NOI ÷ Purchase Price", the label-sub the brief
+      // "Entry NOI ÷ price", and the sub one statement (the basis sentence
+      // lives on the Entry NOI row above). A cap on the projected Year 1 (no
+      // entry NOI on the run) says so instead of claiming the basis.
       cal('entryCap', 'Entry Cap Rate', capNa ?? pctv(entryCap), {
-        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: has(atEntry.entryNoi) ? `Entry NOI (${ENTRY_NOI_BASIS}) ÷ Purchase Price` : ENTRY_CAP_FORMULA,
+        trace: { engine: 'capital', path: 'entry_cap_rate' }, formula: ENTRY_CAP_FORMULA,
         labelSub: ENTRY_CAP_SUB,
         inputs: [{ name: 'Entry NOI', from: 'P&L → Historical P&L', kind: 'linked' }, { name: 'Purchase Price', from: PURCHASE_PRICE_INPUT_FROM, kind: 'input' }],
         ...(atEntry.outOfDate
           ? { sub: `The T-12 is out of date for a going-in cap (${atEntry.outOfDate}). See Yield on Cost on Returns.` }
           : atEntry.notYetOpen
           ? { sub: 'The hotel earns nothing at purchase and no entry NOI could be built to quote a going-in cap on. See Yield on Cost on Returns.' }
-          : atEntry.normalized ? { sub: `Struck ${ON_UNDISPLACED_YEAR_ONE}: ${ENTRY_NOI_BASIS}.` }
-          : has(entryCap) ? { sub: `${ENTRY_NOI_BASIS}.` } : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
+          : atEntry.normalized ? { sub: `Struck ${ON_UNDISPLACED_YEAR_ONE}.` }
+          : has(entryCap) ? { sub: has(atEntry.entryNoi) ? `${ENTRY_NOI_BASIS}.` : ENTRY_CAP_PROJECTED_SUB }
+          : { reason: entryCapCalc.reason ?? undefined, reasonDetail: entryCapCalc.detail ?? undefined }),
       }),
       // FON-122 — the in-place cap beside it: the T-12's own NOI before reserve
       // ÷ price. Nothing is derived when the basis statement states none.

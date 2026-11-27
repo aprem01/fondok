@@ -35,6 +35,15 @@ export interface AnchorScrollOptions {
   timeoutMs?: number;
   /** The first scroll's behaviour (default `'smooth'`); re-pins are instant. */
   behavior?: ScrollBehavior;
+  /**
+   * Called exactly once when the landing is over and the page is the user's
+   * again: the hold window ended (deadline), the user took over (first wheel
+   * / touch / key), the target never appeared before the deadline, or the
+   * caller's disposer cancelled it. Review 2026-11-27: the Returns coach mark
+   * is held closed while landing and released here — before, a URL carrying
+   * a Returns `sub` (a reload, a bookmark) held it closed for good.
+   */
+  onSettled?: () => void;
 }
 
 export const ANCHOR_SCROLL_TIMEOUT_MS = 3000;
@@ -43,7 +52,7 @@ const USER_INTENT_EVENTS = ['wheel', 'touchstart', 'keydown'] as const;
 
 export function scrollToAnchorWhenReady(id: string, opts: AnchorScrollOptions = {}): () => void {
   if (typeof document === 'undefined' || typeof window === 'undefined') return () => {};
-  const { root = document.body, onPending, timeoutMs = ANCHOR_SCROLL_TIMEOUT_MS, behavior = 'smooth' } = opts;
+  const { root = document.body, onPending, onSettled, timeoutMs = ANCHOR_SCROLL_TIMEOUT_MS, behavior = 'smooth' } = opts;
   const deadline = Date.now() + timeoutMs;
   let cancelled = false;
   let observer: MutationObserver | null = null;
@@ -52,6 +61,7 @@ export function scrollToAnchorWhenReady(id: string, opts: AnchorScrollOptions = 
   const hasRaf = typeof requestAnimationFrame === 'function';
 
   const stop = () => {
+    if (cancelled) return; // settle exactly once, whichever path got here first
     cancelled = true;
     observer?.disconnect();
     observer = null;
@@ -60,13 +70,18 @@ export function scrollToAnchorWhenReady(id: string, opts: AnchorScrollOptions = 
     if (frame != null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
     frame = null;
     for (const ev of USER_INTENT_EVENTS) window.removeEventListener(ev, stop);
+    onSettled?.();
   };
 
   /** Document-relative top: unchanged by scrolling, changed by layout above. */
   const docTop = (el: Element) => el.getBoundingClientRect().top + window.scrollY;
 
   const hold = (el: Element) => {
-    if (!hasRaf) return;
+    if (!hasRaf) {
+      // Nothing to hold with: the landing is the one scroll, and it is over.
+      stop();
+      return;
+    }
     let last = docTop(el);
     const tick = () => {
       if (cancelled) return;
